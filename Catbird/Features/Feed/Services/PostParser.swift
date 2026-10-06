@@ -16,6 +16,8 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
   let title: String
   let description: String
   let image: String
+  let associatedRefs: [ComAtprotoRepoStrongRef]?
+  let externalView: AppBskyEmbedExternal.View?
   
   /// Original URL detected in the composer text. Card service may canonicalize `url`,
   /// so keep the full user-provided link for embeds and local caching.
@@ -24,6 +26,51 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
   /// Cached thumbnail blob after upload (not persisted)
   var thumbnailBlob: Blob? = nil
 
+  init(
+    error: String, likelyType: String, url: String, title: String,
+    description: String, image: String, sourceURL: String? = nil,
+    thumbnailBlob: Blob? = nil, associatedRefs: [ComAtprotoRepoStrongRef]? = nil,
+    externalView: AppBskyEmbedExternal.View? = nil
+  ) {
+    self.error = error
+    self.likelyType = likelyType
+    self.url = url
+    self.title = title
+    self.description = description
+    self.image = image
+    self.sourceURL = sourceURL
+    self.thumbnailBlob = thumbnailBlob
+    self.associatedRefs = associatedRefs
+    self.externalView = externalView
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    error = try container.decode(String.self, forKey: .error)
+    likelyType = try container.decode(String.self, forKey: .likelyType)
+    url = try container.decode(String.self, forKey: .url)
+    title = try container.decode(String.self, forKey: .title)
+    description = try container.decode(String.self, forKey: .description)
+    image = try container.decode(String.self, forKey: .image)
+
+    // Enhanced metadata is optional; a malformed extension must not discard the card.
+    associatedRefs = try? container.decodeIfPresent([ComAtprotoRepoStrongRef].self, forKey: .associatedRefs)
+    externalView = (try? container.decodeIfPresent(AppBskyEmbedExternal.View.self, forKey: .externalView))
+      ?? (try? container.decodeIfPresent(AppBskyEmbedExternal.View.self, forKey: .legacyExternalView))
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(error, forKey: .error)
+    try container.encode(likelyType, forKey: .likelyType)
+    try container.encode(url, forKey: .url)
+    try container.encode(title, forKey: .title)
+    try container.encode(description, forKey: .description)
+    try container.encode(image, forKey: .image)
+    try container.encodeIfPresent(associatedRefs, forKey: .associatedRefs)
+    try container.encodeIfPresent(externalView, forKey: .externalView)
+  }
+
   enum CodingKeys: String, CodingKey {
     case error
     case likelyType = "likely_type"
@@ -31,6 +78,9 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
     case title
     case description
     case image
+    case associatedRefs = "associated_refs"
+    case externalView = "view"
+    case legacyExternalView = "external_view"
     // thumbnailBlob is excluded from coding
   }
 

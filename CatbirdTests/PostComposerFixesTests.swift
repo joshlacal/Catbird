@@ -264,7 +264,8 @@ func testSubmitValidationReasons() async throws {
         var imageItem = PostComposerViewModel.MediaItem()
         imageItem.isLoading = false
         viewModel.mediaItems = [imageItem]
-        #expect(viewModel.submitValidationState.canSubmit)
+        #expect(!viewModel.submitValidationState.canSubmit)
+        #expect(viewModel.submitValidationState.reason == .mediaUnavailable)
     }
 }
 

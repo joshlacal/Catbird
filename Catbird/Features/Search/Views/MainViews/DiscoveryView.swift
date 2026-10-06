@@ -19,6 +19,7 @@ struct DiscoveryView: View {
     let onQueryLoaded: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppState.self) private var appState
+    @Environment(\.displayScale) private var displayScale
     @State private var showInterestPicker = false
     @State private var showInviteFriends = false
     @State private var showInviteScanner = false
@@ -126,7 +127,7 @@ struct DiscoveryView: View {
         .scrollDismissesKeyboard(.immediately)
         .refreshable {
             guard let client = appState.atProtoClient else { return }
-            await viewModel.refreshDiscoveryContent(client: client)
+            await viewModel.refreshDiscoveryContent(client: client, displayScale: displayScale)
         }
         .sheet(isPresented: $showInterestPicker) {
             InterestPickerSheet(
@@ -229,6 +230,7 @@ struct AllTrendingTopicsView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
     @State private var selectedCategory: String?
     @State private var showContributors: Bool = false
     @State private var viewMode: ViewMode = .list
@@ -285,7 +287,6 @@ private struct InlineTopicSummaryLine: View {
                 VStack(spacing: 20) {
                     // Categories filter
                     categoriesFilterView
-                        .padding(.horizontal, 16)
                     
                     if filteredTopics.isEmpty {
                         emptyStateView
@@ -321,8 +322,9 @@ private struct InlineTopicSummaryLine: View {
                                   systemImage: showContributors ? "eye.slash" : "eye")
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "ellipsis")
                     }
+                    .accessibilityLabel("View options")
                 }
                 
                 ToolbarItem(placement: .cancellationAction) {
@@ -333,7 +335,7 @@ private struct InlineTopicSummaryLine: View {
             }
         }
         .task(id: appState.topicPreviewPrefetchIdentity(links: filteredTopics.map(\.link))) {
-            appState.prefetchTopicPreviews(trends: filteredTopics, owner: .search)
+            appState.prefetchTopicPreviews(trends: filteredTopics, displayScale: displayScale, owner: .search)
         }
         .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
     }
@@ -389,7 +391,7 @@ private struct InlineTopicSummaryLine: View {
                 .background(
                     Capsule()
                         .fill(selectedCategory == category ?
-                              TrendingTopicCategoryStyle.color(for: category) :
+                              (category == nil ? Color.accentColor : TrendingTopicCategoryStyle.color(for: category)) :
                               Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
                 )
                 .foregroundColor(selectedCategory == category ?
@@ -436,23 +438,11 @@ private struct InlineTopicSummaryLine: View {
                 // Main topic info
                 HStack(alignment: .top, spacing: 24) {
                     VStack(alignment: .leading, spacing: 8) {
-                        // Category and badges
-                        HStack {
-                            Spacer()
-                            
-                            HStack(spacing: 6) {
-                                if let status = topic.status, status == "hot" {
-                                    trendingBadge(status: status)
-                                }
-                                
-                                if isWithinLastThirtyMinutes(date: topic.startedAt.date) {
-                                    newBadge()
-                                }
-                            }
-                        }
-                        
                         // Topic name
                         TrendingTopicHeading(title: topic.displayName, category: topic.category)
+                        if topic.status == "hot" {
+                            trendingLabel
+                        }
                         TrendingTopicArtwork(link: topic.link, actors: topic.actors)
                         // Topic summary
                         InlineTopicSummaryLine(topic: topic)
@@ -517,8 +507,8 @@ private struct InlineTopicSummaryLine: View {
         } label: {
             VStack(alignment: .leading, spacing: 12) {
                 TrendingTopicHeading(title: topic.displayName, category: topic.category, size: 20)
-                if let status = topic.status, status == "hot" {
-                    trendingBadge(status: status)
+                if topic.status == "hot" {
+                    trendingLabel
                 }
                 TrendingTopicArtwork(link: topic.link, actors: topic.actors)
                 InlineTopicSummaryLine(topic: topic)
@@ -586,34 +576,10 @@ private struct InlineTopicSummaryLine: View {
     }
     
     // Helper functions
-    private func trendingBadge(status: String) -> some View {
-        Text(status.uppercased())
-            .appFont(size: 10)
-            .foregroundColor(.white)
-            .padding(.vertical, 2)
-            .padding(.horizontal, 6)
-            .background(
-                Capsule()
-                    .fill(Color.red)
-            )
-    }
-    
-    private func newBadge() -> some View {
-        Text("NEW")
-            .appFont(size: 10)
-            .foregroundColor(.white)
-            .padding(.vertical, 2)
-            .padding(.horizontal, 6)
-            .background(
-                Capsule()
-                    .fill(Color.green)
-            )
-    }
-    
-    private func isWithinLastThirtyMinutes(date: Date) -> Bool {
-        let now = Date()
-        let thirtyMinutesAgo = now.addingTimeInterval(-30 * 60)
-        return date >= thirtyMinutesAgo
+    private var trendingLabel: some View {
+        Label("Trending", systemImage: "flame.fill")
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.orange)
     }
     
     private func formatPostCount(_ count: Int) -> String {
@@ -629,16 +595,7 @@ private struct InlineTopicSummaryLine: View {
     }
     
     private func formatTimeSince(_ date: Date) -> String {
-        let now = Date()
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date, to: now)
-        
-        if let hours = components.hour, hours > 0 {
-            return hours == 1 ? "1 hour ago" : "\(hours) hours ago"
-        } else if let minutes = components.minute, minutes > 0 {
-            return minutes == 1 ? "1 min ago" : "\(minutes) mins ago"
-        } else {
-            return "just now"
-        }
+        TrendStartedLabel.text(since: date)
     }
 }
 

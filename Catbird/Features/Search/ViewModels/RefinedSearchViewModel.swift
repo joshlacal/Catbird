@@ -137,11 +137,11 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     loadSavedSearches()
   }
 
-  public func subscribeToEvents() {
+  public func subscribeToEvents(displayScale: CGFloat) {
     guard !isSubscribed else { return }
     appState.stateInvalidationBus.subscribe(self)
     isSubscribed = true
-    appState.prefetchTopicPreviews(trends: trendingTopics, owner: .search)
+    appState.prefetchTopicPreviews(trends: trendingTopics, displayScale: displayScale, owner: .search)
     logger.debug("RefinedSearchViewModel subscribed to state invalidation bus")
   }
 
@@ -165,17 +165,17 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   /// rebuilt per account via `.id(userDID)`, so account switches still load fresh content.
   private var hasLoadedDiscoveryContent = false
 
-  public func initialize(client: ATProtoClient) {
+  public func initialize(client: ATProtoClient, displayScale: CGFloat) {
     guard !hasLoadedDiscoveryContent else { return }
     hasLoadedDiscoveryContent = true
     Task {
-      await refreshDiscoveryContent(client: client)
+      await refreshDiscoveryContent(client: client, displayScale: displayScale)
     }
   }
 
-  public func refreshDiscoveryContent(client: ATProtoClient) async {
+  public func refreshDiscoveryContent(client: ATProtoClient, displayScale: CGFloat) async {
     hasLoadedDiscoveryContent = true
-    async let trendsTask: Void = fetchTrendingTopics(client: client)
+    async let trendsTask: Void = fetchTrendingTopics(client: client, displayScale: displayScale)
     async let suggestedTask: Void = fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
     async let videosTask: Void = fetchTrendingVideos(client: client)
     async let interestsTask: Void = loadUserInterests()
@@ -209,7 +209,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     }
   }
 
-  public func fetchTrendingTopics(client: ATProtoClient) async {
+  public func fetchTrendingTopics(client: ATProtoClient, displayScale: CGFloat) async {
     guard !isTrendingTopicsLoading else { return }
     isTrendingTopicsLoading = true
     defer {
@@ -228,7 +228,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       if let topicsResponse = response, !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID {
         trendingTopics = topicsResponse.trends
         if isSubscribed {
-          appState.prefetchTopicPreviews(trends: topicsResponse.trends, owner: .search)
+          appState.prefetchTopicPreviews(trends: topicsResponse.trends, displayScale: displayScale, owner: .search)
         }
       }
     } catch {
@@ -423,10 +423,10 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     typeaheadSuggestions = []
   }
 
-  public func refreshSearch(client: ATProtoClient) async {
+  public func refreshSearch(client: ATProtoClient, displayScale: CGFloat) async {
     guard isCommittedSearch, !searchQuery.isEmpty else {
       if searchState == .idle {
-        await refreshDiscoveryContent(client: client)
+        await refreshDiscoveryContent(client: client, displayScale: displayScale)
       }
       return
     }

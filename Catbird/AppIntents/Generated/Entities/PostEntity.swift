@@ -17,6 +17,9 @@ struct PostEntity: AppEntity {
     @Property(title: "Author Handle")
     var authorHandle: String
 
+    @Property(title: "Author Avatar")
+    var authorAvatar: URL?
+
     @Property(title: "Like Count")
     var likeCount: Int?
 
@@ -39,9 +42,9 @@ struct PostEntity: AppEntity {
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
-            title: "\(text ?? authorHandle)",
-            subtitle: "\(authorHandle)",
-            image: nil
+            title: "\(authorDisplayName ?? authorHandle)",
+            subtitle: text.map { "\($0)" },
+            image: authorAvatar.map { DisplayRepresentation.Image(url: $0) }
         )
     }
 
@@ -51,6 +54,8 @@ struct PostEntity: AppEntity {
         authorDisplayName = view.author.displayName
 
         authorHandle = view.author.handle.value
+
+        authorAvatar = view.author.avatar?.url
 
         likeCount = view.likeCount
 

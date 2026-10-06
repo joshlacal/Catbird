@@ -29,7 +29,7 @@ struct ProfileAccountLabelsView: View {
               Text(info.name)
                 .appFont(AppTextRole.subheadline)
                 .foregroundStyle(Color.accentColor)
-              Text("Issued by \(info.issuer)")
+              Text(info.attribution)
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }

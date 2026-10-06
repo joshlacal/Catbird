@@ -96,7 +96,8 @@ struct ReplySourcePostView: View {
             timeAgo: feedPost.createdAt.date,
             pronouns: post.author.pronouns,
             verificationKind: VerificationBadge.kind(for: post.author.verification,
-                                                     did: post.author.did)
+                                                     did: post.author.did),
+            isAutomated: AutomationBadge.isSelfDeclared(labels: post.author.labels, authorDID: post.author.did)
           )
           .frame(maxWidth: .infinity, alignment: .leading)
           Post(post: feedPost, isSelectable: true, path: $path, useUIKitSelectableText: true)
@@ -104,7 +105,8 @@ struct ReplySourcePostView: View {
           VStack(alignment: .leading, spacing: 2) {
             EmbeddedAuthorNameView(
               name: post.author.displayName ?? post.author.handle.description,
-              verification: post.author.verification
+              verification: post.author.verification,
+              isAutomated: AutomationBadge.isSelfDeclared(labels: post.author.labels, authorDID: post.author.did)
             )
             .appHeadline()
             Text(verbatim: "@\(post.author.handle.description)")

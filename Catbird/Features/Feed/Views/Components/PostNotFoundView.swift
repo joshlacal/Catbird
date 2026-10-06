@@ -2,41 +2,39 @@ import SwiftUI
 import Petrel
 import OSLog
 
+/// The quiet row shown in place of a post that couldn't be loaded.
+///
+/// Feed rows, thread rows and post views all hold this view as one branch of
+/// their bodies, and Debug builds give every branch its own stack slot, so it
+/// keeps the URI and any retried post boxed instead of inline.
 struct PostNotFoundView: View {
-    let uri: ATProtocolURI?
+    private let uri: EquatableBox<ATProtocolURI>?
     let reason: PostNotFoundReason
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     
     @State private var isRetrying = false
     @State private var retryFailed = false
-    @State private var fetchedPost: AppBskyFeedDefs.PostView?
+    @State private var fetchedPost: EquatableBox<AppBskyFeedDefs.PostView>?
     
     private let logger = Logger(subsystem: "blue.catbird", category: "PostNotFoundView")
 
     init(uri: ATProtocolURI?, reason: PostNotFoundReason, path: Binding<NavigationPath>) {
-        self.uri = uri
+        self.uri = uri.map { EquatableBox($0) }
         self.reason = reason
         self._path = path
     }
 
     init(postURI: ATProtocolURI, postCID: CID? = nil, didTapAccount: ((DID) -> Void)? = nil) {
-        self.uri = postURI
+        self.uri = EquatableBox(postURI)
         self.reason = .notFound
         self._path = .constant(NavigationPath())
     }
     
     var body: some View {
-        if let post = fetchedPost {
+        if let fetchedPost {
             // A transient failure that cleared on retry shows the post itself.
-            PostView(
-                post: post,
-                grandparentAuthor: nil,
-                isParentPost: false,
-                isSelectable: true,
-                path: $path,
-                appState: appState
-            )
+            PostNotFoundRetriedPost(post: fetchedPost, path: $path)
         } else {
             unavailableRow
         }
@@ -157,15 +155,15 @@ extension PostNotFoundView {
         
         Task {
             do {
-                logger.debug("Retrying fetch for post: \(uri)")
+                logger.debug("Retrying fetch for post: \(uri.value)")
                 
                 let response = try await client.app.bsky.feed.getPosts(
-                    input: AppBskyFeedGetPosts.Parameters(uris: [uri])
+                    input: AppBskyFeedGetPosts.Parameters(uris: [uri.value])
                 )
                 
                 if let post = response.1?.posts.first {
                     await MainActor.run {
-                        fetchedPost = post
+                        fetchedPost = EquatableBox(post)
                         isRetrying = false
                     }
                     logger.debug("Successfully fetched post on retry")
@@ -184,6 +182,33 @@ extension PostNotFoundView {
                 logger.error("Retry fetch failed: \(error)")
             }
         }
+    }
+}
+
+// MARK: - Retried Post
+
+/// The post a successful retry fetched. A separate view, so the not-found
+/// row's body type carries only the box rather than the post view built from it.
+private struct PostNotFoundRetriedPost: View {
+    let post: EquatableBox<AppBskyFeedDefs.PostView>
+    @Binding var path: NavigationPath
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        makePostView()
+    }
+
+    /// Builds the post view in its own short-lived frame, so the copy of the
+    /// boxed post that `PostView.init` takes never gets a slot in `body`'s frame.
+    private func makePostView() -> PostView {
+        PostView(
+            post: post.value,
+            grandparentAuthor: nil,
+            isParentPost: false,
+            isSelectable: true,
+            path: $path,
+            appState: appState
+        )
     }
 }
 

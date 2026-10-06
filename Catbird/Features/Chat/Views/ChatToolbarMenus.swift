@@ -27,7 +27,7 @@ struct ChatToolbarMenu: View {
         Label("Chat Settings", systemImage: "gear")
       }
     } label: {
-      Image(systemName: "ellipsis.circle")
+      Label("More", systemImage: "ellipsis")
     }
     .sheet(isPresented: $showingSettings) {
       ChatSettingsView()
@@ -72,7 +72,7 @@ struct ConversationToolbarMenu: View {
         }
       }
     } label: {
-      Image(systemName: "ellipsis.circle")
+      Label("More", systemImage: "ellipsis")
     }
     .sheet(isPresented: $showingSettings) {
       if let convo = conversation {
@@ -196,7 +196,7 @@ struct MessageRequestsButton: View {
             .foregroundColor(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(unreadRequestsCount > 0 ? Color.red : Color.blue)
+            .background(unreadRequestsCount > 0 ? Color.red : Color.accentColor)
             .clipShape(Capsule())
             .offset(x: 12, y: -8)
         }

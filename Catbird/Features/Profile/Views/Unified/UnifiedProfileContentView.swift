@@ -15,6 +15,10 @@ struct UnifiedProfileContentView: View {
   let refreshAllContent: @MainActor () async -> Void
   let onTabChange: @MainActor (ProfileTab) -> Void
   let requestUnblock: @MainActor () -> Void
+  /// Reports whether the banner has scrolled fully out of view, taking the header name under the bar.
+  var onHeaderScrolledPastChange: @MainActor (Bool) -> Void = { _ in }
+
+  private static let bannerHeight: CGFloat = 200
 
   var body: some View {
     ZStack {
@@ -43,6 +47,11 @@ struct UnifiedProfileContentView: View {
         .frame(maxWidth: .infinity, alignment: .center)
       }
       .flexibleHeaderScrollView()
+      .onScrollGeometryChange(for: Bool.self) { geometry in
+        geometry.contentOffset.y + geometry.contentInsets.top > Self.bannerHeight
+      } action: { _, isPast in
+        onHeaderScrolledPastChange(isPast)
+      }
       .refreshable { await refreshAllContent() }
       .ignoresSafeArea(edges: .top)
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
@@ -201,7 +210,8 @@ private struct ProfileCurrentTabView: View {
       ProfileFeedTabView(
         viewModel: viewModel,
         posts: viewModel.replies,
-        emptyMessage: "No replies",
+        emptyTitle: "No Replies",
+        emptyMessage: "This account hasn’t replied to anyone yet.",
         hasAttemptedLoad: hasAttemptedLoadReplies,
         hasMore: viewModel.hasMoreReplies,
         loadAction: viewModel.loadMoreReplies,
@@ -212,7 +222,8 @@ private struct ProfileCurrentTabView: View {
       ProfileFeedTabView(
         viewModel: viewModel,
         posts: viewModel.postsWithMedia,
-        emptyMessage: "No media posts",
+        emptyTitle: "No Media Posts",
+        emptyMessage: "This account hasn’t shared photos or videos yet.",
         hasAttemptedLoad: hasAttemptedLoadMedia,
         hasMore: viewModel.hasMoreMedia,
         loadAction: viewModel.loadMoreMediaPosts,
@@ -243,8 +254,8 @@ private struct ProfilePostsTabView: View {
           .frame(maxWidth: .infinity, alignment: .center)
       } else if viewModel.posts.isEmpty && viewModel.pinnedPost == nil {
         ProfileEmptyStateView(
-          title: "No Content",
-          message: "No posts",
+          title: "No Posts",
+          message: "This account hasn’t posted yet.",
           isCurrentUser: viewModel.isCurrentUser
         )
         .padding(.top, 40)
@@ -281,6 +292,7 @@ private struct ProfilePostsTabView: View {
 private struct ProfileFeedTabView: View {
   let viewModel: ProfileViewModel
   let posts: [AppBskyFeedDefs.FeedViewPost]
+  let emptyTitle: String
   let emptyMessage: String
   let hasAttemptedLoad: Bool
   let hasMore: Bool
@@ -317,7 +329,7 @@ private struct ProfileFeedTabView: View {
         .frame(maxWidth: .infinity, alignment: .center)
       } else if posts.isEmpty {
         ProfileEmptyStateView(
-          title: "No Content",
+          title: emptyTitle,
           message: emptyMessage,
           isCurrentUser: viewModel.isCurrentUser
         )

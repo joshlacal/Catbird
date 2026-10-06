@@ -18,6 +18,7 @@ struct RefinedSearchView: View {
     
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
     @State private var viewModel: RefinedSearchViewModel
     @Binding var selectedTab: Int
     @Binding var lastTappedTab: Int?
@@ -231,7 +232,7 @@ struct RefinedSearchView: View {
                 }
             } else if viewModel.isCommittedSearch {
                 logger.debug("Refreshing existing committed search for new scope: \(newValue.title)")
-                Task { await viewModel.refreshSearch(client: client) }
+                Task { await viewModel.refreshSearch(client: client, displayScale: displayScale) }
             } else {
                 logger.debug("No action taken - empty search text and no committed search")
             }
@@ -275,7 +276,7 @@ struct RefinedSearchView: View {
                 }
             } else if viewModel.isCommittedSearch {
                 logger.debug("Refreshing existing committed search for new scope: \(newValue.title)")
-                Task { await viewModel.refreshSearch(client: client) }
+                Task { await viewModel.refreshSearch(client: client, displayScale: displayScale) }
             } else {
                 logger.debug("No action taken - empty search text and no committed search")
             }
@@ -429,8 +430,9 @@ struct RefinedSearchView: View {
                 Label("Reset Search", systemImage: "arrow.counterclockwise")
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "ellipsis")
         }
+        .accessibilityLabel("Search options")
     }
     
     // MARK: - Search Suggestions
@@ -650,11 +652,11 @@ struct RefinedSearchView: View {
     private func initializeOnAppear() {
         // Subscribe to events only if this is the active search tab
         if selectedTab == 1 {
-            viewModel.subscribeToEvents()
+            viewModel.subscribeToEvents(displayScale: displayScale)
         }
         
         if let client = appState.atProtoClient {
-            viewModel.initialize(client: client)
+            viewModel.initialize(client: client, displayScale: displayScale)
         }
     }
     
@@ -666,7 +668,7 @@ struct RefinedSearchView: View {
     private func handleTabChange(_ newTab: Int) {
         if newTab == 1 {
             // Search tab became active - subscribe to events
-            viewModel.subscribeToEvents()
+            viewModel.subscribeToEvents(displayScale: displayScale)
         } else {
             // Search tab became inactive - unsubscribe from events
             viewModel.unsubscribeFromEvents()

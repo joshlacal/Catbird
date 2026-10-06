@@ -742,7 +742,7 @@ import os
 
         // User-initiated refresh should override background flag
         // This ensures pull-to-refresh works even if background flag is stuck
-        await stateManager.refreshUserInitiated()
+        await stateManager.refreshUserInitiated(displayScale: self.traitCollection.displayScale)
         if case .error = stateManager.loadingState, !stateManager.posts.isEmpty {
           stateManager.appState.toastManager.show(
             ToastItem(
@@ -778,11 +778,7 @@ import os
       }
       if case .error(let error) = manager.loadingState {
         controllerLogger.error("Feed update error: \(error.localizedDescription)")
-        // A failed load still permits theme and feedback changes on retained rows.
-        if !shouldReloadDataOnce && !shouldReconfigureAllOnce {
-          updateBackgroundState()
-          return
-        }
+        // A failed supplemental request can still have accepted cached rows to display.
       }
 
       let capturedPosts = manager.posts
@@ -980,7 +976,7 @@ import os
         // Already at top - refresh to get new posts
         controllerLogger.debug("🔝 Already at top - refreshing feed")
         Task { @MainActor in
-          await stateManager.refreshUserInitiated()
+          await stateManager.refreshUserInitiated(displayScale: self.traitCollection.displayScale)
         }
       } else {
         // Not at top - just scroll to top (no refresh)
@@ -1314,18 +1310,20 @@ import os
   @available(iOS 16.0, *)
   extension FeedCollectionViewControllerIntegrated {
     private var currentBackgroundState: FeedBackgroundState {
-      if stateManager.posts.isEmpty, case .error(let error) = stateManager.loadingState {
-        let message = UserFacingError.message(for: error, action: "load this feed")
-          ?? "Couldn’t load this feed. Try again."
+      switch stateManager.contentState {
+      case .error:
+        let message = stateManager.feedLoadError.flatMap {
+          UserFacingError.message(for: $0, action: "load this feed")
+        } ?? "Couldn’t load this feed. Try again."
         return .error(message: message) { [weak self] in
           guard let self else { return }
           Task { @MainActor in
             await self.stateManager.retry()
           }
         }
-      } else if stateManager.posts.isEmpty && stateManager.isLoading {
+      case .loading:
         return .loading(message: "Loading feed…")
-      } else if stateManager.posts.isEmpty && !stateManager.isLoading {
+      case .empty:
         switch stateManager.currentFeedType {
         case .timeline:
           return .emptyTimeline { [weak self] in
@@ -1335,11 +1333,11 @@ import os
           return .emptyFeed { [weak self] in
             guard let self else { return }
             Task { @MainActor in
-              await self.stateManager.refreshUserInitiated()
+              await self.stateManager.refreshUserInitiated(displayScale: self.traitCollection.displayScale)
             }
           }
         }
-      } else {
+      case .content:
         return .content
       }
     }

@@ -23,7 +23,7 @@ public enum FeedTypeOption: String, CaseIterable, AppEnum {
 
     public static var caseDisplayRepresentations: [FeedTypeOption: DisplayRepresentation] {
         [
-            .timeline: DisplayRepresentation(title: "Following", subtitle: "Posts from people you follow"),
+            .timeline: DisplayRepresentation(title: "Timeline", subtitle: "Posts from people you follow"),
             .pinnedFeed: DisplayRepresentation(title: "Pinned Feed", subtitle: "Choose from your pinned feeds"),
             .savedFeed: DisplayRepresentation(title: "Saved Feed", subtitle: "Choose from your saved feeds")
         ]

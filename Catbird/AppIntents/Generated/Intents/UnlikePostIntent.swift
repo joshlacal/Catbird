@@ -28,7 +28,7 @@ struct UnlikePostIntent: AppIntent {
         }
 
         guard let existingURI = view.viewer?.like else {
-            return .result(dialog: IntentDialog(stringLiteral: "You haven't liked that post."))
+            return .result(dialog: IntentDialog("You haven't liked that post."))
         }
         let rkey = try IntentRecordWriteSupport.recordKey(fromViewerURI: existingURI)
         let userDID = try await client.getDid()
@@ -41,7 +41,7 @@ struct UnlikePostIntent: AppIntent {
         guard (200..<300).contains(responseCode) else {
             throw IntentError.httpError(responseCode)
         }
-        return .result(dialog: IntentDialog(stringLiteral: "Removed your like."))
+        return .result(dialog: IntentDialog("Removed your like."))
 
     }
 }

@@ -122,7 +122,7 @@ struct NotificationsView: View {
                 navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
               }
             } label: {
-              Image(systemName: "bell.badge")
+              Image(systemName: "gearshape")
                 .imageScale(.medium)
             }
             .accessibilityLabel("Notification Options")
@@ -308,6 +308,7 @@ struct NotificationsView: View {
             .frame(maxWidth: .infinity, alignment: .center)
             #endif
             .listRowSeparator(.hidden)
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           } else if viewModel.hasMoreNotifications {
             HStack {
               Spacer()
@@ -321,6 +322,7 @@ struct NotificationsView: View {
             #endif
             .id("loadingIndicator")
             .listRowSeparator(.hidden)
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           }
         }
         .listSectionSeparator(.hidden, edges: .top)
@@ -415,7 +417,9 @@ struct NotificationCard: View {
         expandedFollowersList
       }
     }
-    .padding(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
+    // Leading 5pt puts icons and reply avatars ~11pt from the edge, the same
+    // column as avatars in the home feed, instead of hugging the screen edge.
+    .padding(EdgeInsets(top: 0, leading: 5, bottom: 0, trailing: 16))
     .animation(.none, value: isFollowExpanded)
     .frame(maxWidth: contentMaxWidth, alignment: .center)
     .frame(maxWidth: .infinity, alignment: .center)
@@ -426,12 +430,6 @@ struct NotificationCard: View {
 
   private var expandedFollowersList: some View {
     VStack(alignment: .leading, spacing: 4) {
-      Rectangle()
-        .frame(height: 1)
-        .foregroundColor(Color.systemGray5)
-        .padding(.horizontal)
-        .padding(.top, 8)
-
       ForEach(group.notifications, id: \.cid) { notification in
         Button {
           onTap(NavigationDestination.profile(notification.author.did.didString()))
@@ -443,7 +441,10 @@ struct NotificationCard: View {
                   .resizable()
                   .aspectRatio(contentMode: .fill)
               } else {
-                Color.gray
+                Image(systemName: "person.crop.circle")
+                  .resizable()
+                  .aspectRatio(contentMode: .fit)
+                  .foregroundStyle(.gray)
               }
             }
             .frame(width: 36, height: 36)
@@ -451,7 +452,11 @@ struct NotificationCard: View {
 
             VStack(alignment: .leading, spacing: 2) {
               HStack(spacing: 4) {
-                Text(notification.author.displayName ?? notification.author.handle.description)
+                Text(
+                  notification.author.displayName.flatMap {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+                  } ?? notification.author.handle.description
+                )
                   .fontWeight(.semibold)
                   .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                   .lineLimit(1)
@@ -487,10 +492,11 @@ struct NotificationCard: View {
 
         if notification.cid != group.notifications.last?.cid {
           Divider()
-            .padding(.leading, 36 + 12)
+            .padding(.leading, DesignTokens.Spacing.base + 36 + DesignTokens.Spacing.base)
         }
       }
     }
+    .padding(.leading, 50)
     .clipShape(RoundedRectangle(cornerRadius: 8))
     .padding(.bottom, 8)
   }
@@ -625,7 +631,7 @@ struct NotificationCard: View {
   /// First author's display name (falls back to @handle, then "Someone").
   private var notificationAuthorName: String {
     let firstAuthor = group.notifications.first?.author
-    if let displayName = firstAuthor?.displayName, !displayName.isEmpty {
+    if let displayName = firstAuthor?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
       return displayName
     } else if let handle = firstAuthor?.handle {
       return "@" + handle.description
@@ -1088,9 +1094,10 @@ struct AvatarStack: View {
               .resizable()
               .aspectRatio(contentMode: .fill)
           } else {
-            Image(systemName: "person.crop.circle.fill")
+            Image(systemName: "person.crop.circle")
               .resizable()
-              .aspectRatio(contentMode: .fill)
+              .aspectRatio(contentMode: .fit)
+              .foregroundStyle(.gray)
           }
         }
         .onTapGesture {

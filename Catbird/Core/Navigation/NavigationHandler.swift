@@ -23,7 +23,7 @@ struct NavigationHandler {
         appState: appState,
         path: path
       )
-      .ignoresSafeArea()
+      .ignoresSafeArea(edges: .vertical)
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
       #endif

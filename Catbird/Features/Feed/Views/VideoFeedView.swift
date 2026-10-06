@@ -572,6 +572,7 @@ private struct VideoFeedItemView: View {
     Button { onProfileTap(item.post.author.did.didString()) } label: {
       HStack(spacing: 8) {
         AvatarView(did: item.post.author.did.didString(), client: appState.atProtoClient, size: 38)
+          .frame(width: 38, height: 38)
         VStack(alignment: .leading, spacing: 1) {
           Text(item.post.author.displayName ?? item.post.author.handle.description)
             .font(.subheadline.bold())
@@ -585,7 +586,7 @@ private struct VideoFeedItemView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .frame(minHeight: 44)
+      .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)

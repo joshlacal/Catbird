@@ -207,15 +207,14 @@ struct ChatMessageComposerView: View {
     } label: {
       Image(systemName: "arrow.up")
         .font(.system(size: 15, weight: .semibold))
-        .foregroundStyle(Color.white)
+        .foregroundStyle(canSend ? Color.white : Color.secondary)
         .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
-        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.25))
+        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.15))
         .clipShape(.circle)
         .frame(minWidth: 44, minHeight: 44)
         .contentShape(Circle())
     }
     .disabled(!canSend)
-    .opacity(canSend ? 1 : 0.5)
     .accessibilityLabel("Send message")
     .accessibilityIdentifier("chat.composer.sendButton.\(accessibilityConvoIdPrefix)")
     .padding(.bottom, 3)

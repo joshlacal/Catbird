@@ -26,19 +26,24 @@ struct AccountDeletionSheet: View {
           LabeledContent("Account Provider") {
             if let host = providerHost {
               Text(host)
-            } else {
+            } else if flow.isResolvingDestination {
               ProgressView()
                 .accessibilityLabel("Finding your account provider")
+            } else {
+              Text("Unavailable")
+                .foregroundStyle(.secondary)
             }
           }
         }
 
         Section {
-          Text("Deleting your account is permanent and can’t be undone.")
-          Text("Catbird can’t delete accounts directly. You’ll finish on your account provider’s website: sign in there if asked, then choose Delete account.")
+          if flow.target.purpose == .deletionOptions {
+            Text("Deleting your hosted account is permanent.")
+          }
+          Text(handoffExplanation)
             .foregroundStyle(.secondary)
 
-          Button(role: .destructive, action: openAccountPage) {
+          Button(action: openAccountPage) {
             HStack {
               Text(continueTitle)
               Spacer()
@@ -49,7 +54,7 @@ struct AccountDeletionSheet: View {
               }
             }
           }
-          .disabled(!flow.canOpen || appState.userDID != flow.target.did)
+          .disabled(!flow.canOpen || !isCurrentAccount)
           .accessibilityIdentifier("AccountDeletion.OpenProvider")
 
           if let statusMessage {
@@ -59,29 +64,29 @@ struct AccountDeletionSheet: View {
               .accessibilityIdentifier("AccountDeletion.Status")
           }
           if flow.phase == .failed, let destination = flow.destination {
-            Text(destination.absoluteString)
+            Text(destination.url.absoluteString)
               .appFont(AppTextRole.footnote)
               .textSelection(.enabled)
           }
         } footer: {
-          Text("If the website is signed in to a different account, switch accounts there first. Want a break instead? Deactivating your account is reversible.")
+          Text("If the website is signed in to a different account, switch accounts there first. Opening this page does not change or delete an account.")
         }
 
         if let privacyURL = LegalConfig.privacyPolicyURL {
           Section {
             Link("Catbird Privacy Policy", destination: privacyURL)
           } footer: {
-            Text("Explains what Catbird stores and how to remove it.")
+            Text("Hosted account deletion and removal of data held by Catbird are separate. See the privacy policy for Catbird data-removal instructions.")
           }
         }
       }
-      .navigationTitle("Delete Account")
+      .navigationTitle(flow.target.purpose == .manageAccount ? "Hosted Account" : "Account Deletion Options")
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
       #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel", role: .cancel) {
+          Button("Done", role: .cancel) {
             flow.cancel()
             dismiss()
           }
@@ -92,7 +97,10 @@ struct AccountDeletionSheet: View {
         await resolveAccountPage()
       }
       .onChange(of: appState.userDID) { _, did in
-        flow.accountDidChange(to: did)
+        flow.accountDidChange(to: did, revision: accountRevision)
+      }
+      .onChange(of: accountRevision) { _, revision in
+        flow.accountDidChange(to: appState.userDID, revision: revision)
       }
       .onDisappear {
         flow.cancel()
@@ -101,7 +109,16 @@ struct AccountDeletionSheet: View {
   }
 
   private var providerHost: String? {
-    flow.destination.map(AccountManagementPageResolver.displayHost(of:))
+    flow.destination.map { AccountManagementPageResolver.displayHost(of: $0.url) }
+  }
+
+  private var accountRevision: UInt64 {
+    AppStateManager.shared.settingsAccountContextRevision
+  }
+
+  private var isCurrentAccount: Bool {
+    appState.userDID == flow.target.did
+      && SettingsAccountBoundary.isCurrent(flow.target.did, revision: flow.target.accountRevision)
   }
 
   private var isOpening: Bool {
@@ -110,8 +127,20 @@ struct AccountDeletionSheet: View {
   }
 
   private var continueTitle: String {
-    guard let providerHost else { return "Finding Your Account Provider…" }
-    return "Continue to \(providerHost)"
+    guard let destination = flow.destination else {
+      return flow.isResolvingDestination ? "Finding Your Account Provider…" : "Provider Website Unavailable"
+    }
+    return destination.kind == .accountSettings ? "Open Account Settings" : "Open Hosting Provider Website"
+  }
+
+  private var handoffExplanation: String {
+    if flow.target.purpose == .deletionOptions {
+      return "Catbird can’t delete your hosted account directly. Open your provider’s website and look for its account-deletion instructions."
+    }
+    if flow.destination?.kind == .providerWebsite {
+      return "Open your hosting provider’s website and look for account settings to manage your handle, email, or sign-in options."
+    }
+    return "Manage your handle, email, and sign-in options on your hosting provider’s website."
   }
 
   private var statusMessage: String? {
@@ -119,30 +148,53 @@ struct AccountDeletionSheet: View {
     case .ready, .cancelled, .opening:
       return nil
     case .opened:
-      return "Finish deleting your account on \(providerHost ?? "your provider’s website"). Catbird can’t confirm when it’s done."
+      return "The website opened. Catbird can’t confirm changes or deletion made there."
     case .failed:
       return "Couldn’t open the website. Copy this address into your browser instead:"
     case .accountChanged:
-      return "You switched accounts. Close this and start again from the account you want to delete."
+      return "Your account changed. Close this page and start again from the account you want to manage."
+    case .unavailable:
+      return "Your hosting provider couldn’t be resolved. Close this page and try again."
     }
   }
 
   private func resolveAccountPage() async {
+    flow.accountDidChange(to: appState.userDID, revision: accountRevision)
     guard flow.isResolvingDestination else { return }
-    let did = flow.target.did
-    var pdsURL: URL?
-    if !did.isEmpty, let client = appState.atProtoClient {
-      pdsURL = try? await client.resolveDIDToPDSURL(did: did)
+    let target = flow.target
+    guard isCurrentAccount, let client = appState.atProtoClient else {
+      flow.resolveDestination(nil, currentDID: appState.userDID, currentRevision: accountRevision)
+      return
     }
-    let pageURL = await AccountManagementPageResolver().accountPageURL(forPDS: pdsURL)
-    guard !Task.isCancelled else { return }
-    flow.resolveDestination(pageURL)
+    let originatingAppState = appState
+    do {
+      let destination = try await originatingAppState.performSettingsAccountOperation {
+        try Task.checkCancellation()
+        guard (await client.getCurrentAccount())?.did == target.did,
+              SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
+          throw CancellationError()
+        }
+        try Task.checkCancellation()
+        let pdsURL = try await client.resolveDIDToPDSURL(did: target.did)
+        try Task.checkCancellation()
+        guard SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
+          throw CancellationError()
+        }
+        return await AccountManagementPageResolver().destination(forPDS: pdsURL)
+      }
+      guard !Task.isCancelled else { return }
+      flow.resolveDestination(destination, currentDID: appState.userDID, currentRevision: accountRevision)
+    } catch {
+      guard !Task.isCancelled else { return }
+      flow.resolveDestination(nil, currentDID: appState.userDID, currentRevision: accountRevision)
+    }
   }
 
   private func openAccountPage() {
-    guard let attempt = flow.prepareToOpen(currentDID: appState.userDID) else { return }
+    guard isCurrentAccount,
+          let attempt = flow.prepareToOpen(currentDID: appState.userDID, currentRevision: accountRevision) else { return }
     openURL(attempt.url) { accepted in
-      flow.finishOpening(attempt.id, accepted: accepted, currentDID: appState.userDID)
+      flow.finishOpening(attempt.id, accepted: accepted, currentDID: appState.userDID, currentRevision: accountRevision)
     }
   }
 }

@@ -63,27 +63,6 @@ struct ResponsiveContentView<Content: View>: View {
   }
 }
 
-// MARK: - Device Detection Utilities
-
-@MainActor
-struct DeviceInfo {
-  static let isIPad = PlatformDeviceInfo.isIPad
-  static let isIPhone = PlatformDeviceInfo.isIPhone
-  
-  static var screenWidth: CGFloat {
-    return PlatformScreenInfo.width
-  }
-  
-  static var screenHeight: CGFloat {
-    return PlatformScreenInfo.height
-  }
-  
-  /// Returns true if the device is likely to benefit from constrained content width
-  static var shouldConstrainContentWidth: Bool {
-    return isIPad || screenWidth > 768
-  }
-}
-
 // MARK: - Responsive Grid Configuration
 
 struct ResponsiveGridConfig {
@@ -131,9 +110,9 @@ extension View {
     }
   }
   
-  /// Applies device-specific padding
+  /// Applies wider horizontal padding when the scene has regular width
   func responsivePadding() -> some View {
-    self.padding(.horizontal, DeviceInfo.isIPad ? 24 : 16)
+    modifier(SizeClassHorizontalPadding(regular: 24, compact: 16))
   }
   
   /// Applies responsive frame constraints for main content areas
@@ -141,7 +120,7 @@ extension View {
     #if os(macOS)
     self.responsiveContentWidth(maxWidth: 700)
     #else
-    self.responsiveContentWidth(maxWidth: DeviceInfo.shouldConstrainContentWidth ? 600 : nil)
+    modifier(SizeClassContentWidth(regularMaxWidth: 600))
     #endif
   }
 }
@@ -172,17 +151,41 @@ struct ResponsiveAdaptiveGrid<Content: View>: View {
 extension View {
   /// Applies responsive layout optimized for main app content (feeds, profiles, etc.)
   func responsiveAppContent() -> some View {
-    self.responsiveContentWidth(maxWidth: DeviceInfo.isIPad ? 700 : nil)
+    modifier(SizeClassContentWidth(regularMaxWidth: 700))
   }
   
   /// Applies responsive layout optimized for reading content (articles, long text)
   func responsiveReadingContent() -> some View {
-    self.responsiveContentWidth(maxWidth: DeviceInfo.isIPad ? 600 : nil)
+    modifier(SizeClassContentWidth(regularMaxWidth: 600))
   }
   
   /// Applies responsive layout optimized for settings and forms
   func responsiveFormContent() -> some View {
-    self.responsiveContentWidth(maxWidth: DeviceInfo.isIPad ? 500 : nil)
+    modifier(SizeClassContentWidth(regularMaxWidth: 500))
+  }
+}
+
+// MARK: - Size Class Modifiers
+
+/// Caps content width in a regular-width scene and leaves it full width in a
+/// compact one. Reads the size class where it is applied, so the cap follows
+/// the scene as it resizes (iPad Split View, an iPhone Duo folding or unfolding).
+private struct SizeClassContentWidth: ViewModifier {
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  let regularMaxWidth: CGFloat
+
+  func body(content: Content) -> some View {
+    content.responsiveContentWidth(maxWidth: horizontalSizeClass == .regular ? regularMaxWidth : nil)
+  }
+}
+
+private struct SizeClassHorizontalPadding: ViewModifier {
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  let regular: CGFloat
+  let compact: CGFloat
+
+  func body(content: Content) -> some View {
+    content.padding(.horizontal, horizontalSizeClass == .regular ? regular : compact)
   }
 }
 

@@ -71,9 +71,13 @@ struct FeedsStartPage: View {
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.displayScale) private var displayScale
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.containerViewportSize) private var parentViewportSize
   @State private var measuredContainerSize = CGSize.zero
+  /// True once the banner has scrolled up under the drawer's top bar, when the
+  /// rows beneath it need the system scroll-edge fade.
+  @State private var hasScrolledPastBanner = false
   #if os(iOS)
   @Environment(\.inSideDrawer) private var inSideDrawer
   #else
@@ -158,7 +162,6 @@ struct FeedsStartPage: View {
 
   // Sizing properties
   private var viewportSize: CGSize { parentViewportSize ?? measuredContainerSize }
-  private let isIPad = PlatformDeviceInfo.isIPad
   private var drawerWidth: CGFloat {
     viewportSize.width
   }
@@ -166,6 +169,8 @@ struct FeedsStartPage: View {
   private var isNarrowDrawer: Bool { drawerWidth < 360 }
   // Single source of truth for drawer card corner rounding (HIG: consistent shapes).
   private let cardCornerRadius: CGFloat = 12
+  // Concentric with the 12pt icon inside `FeedsGridFeedLabel`'s padding.
+  private var gridCellCornerRadius: CGFloat { cardCornerRadius + DesignTokens.Spacing.sm }
   private var gridSpacing: CGFloat {
     isNarrowDrawer ? DesignTokens.Spacing.sm : DesignTokens.Spacing.base  // 6 / 12
   }
@@ -299,8 +304,7 @@ struct FeedsStartPage: View {
   // Build a Nuke ImageRequest that decodes at the exact pixel size for avatars
   private func avatarImageRequest(from urlString: String?, sizeInPoints: CGFloat) -> ImageRequest? {
     guard let urlString, let url = URL(string: urlString) else { return nil }
-    let scale = PlatformScreenInfo.scale
-    let pixelSize = CGSize(width: sizeInPoints * scale, height: sizeInPoints * scale)
+    let pixelSize = CGSize(width: sizeInPoints * displayScale, height: sizeInPoints * displayScale)
     let processors: [any ImageProcessing] = [
       ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
     ]
@@ -624,7 +628,7 @@ struct FeedsStartPage: View {
   private func timelineListIcon() -> some View {
     ZStack {
       LinearGradient(
-        gradient: Gradient(colors: [Color.blue.opacity(0.8), Color.blue.opacity(0.6)]),
+        gradient: Gradient(colors: [Color.accentColor.opacity(0.8), Color.accentColor.opacity(0.6)]),
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       )
@@ -843,12 +847,12 @@ struct FeedsStartPage: View {
         LaunchpadSelectionGlass(
           isSelected: isSelected(feedURI: feedURI),
           isDropTarget: dropTargetItem == feedURI,
-          cornerRadius: cardCornerRadius,
+          cornerRadius: gridCellCornerRadius,
           namespace: glassNamespace,
           isEnabled: inSideDrawer
         )
       )
-      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
+      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: gridCellCornerRadius))
 
     }
     .buttonStyle(PlainButtonStyle())
@@ -914,7 +918,7 @@ struct FeedsStartPage: View {
         // Timeline icon
         ZStack {
           LinearGradient(
-            gradient: Gradient(colors: [Color.blue.opacity(0.8), Color.blue.opacity(0.6)]),
+            gradient: Gradient(colors: [Color.accentColor.opacity(0.8), Color.accentColor.opacity(0.6)]),
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           )
@@ -938,12 +942,12 @@ struct FeedsStartPage: View {
         LaunchpadSelectionGlass(
           isSelected: isSelected(feedURI: feedURI),
           isDropTarget: dropTargetItem == feedURI,
-          cornerRadius: cardCornerRadius,
+          cornerRadius: gridCellCornerRadius,
           namespace: glassNamespace,
           isEnabled: inSideDrawer
         )
       )
-      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
+      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: gridCellCornerRadius))
     }
     .buttonStyle(PlainButtonStyle())
     .feedLegacyDragAndDrop { content in
@@ -1107,11 +1111,18 @@ struct FeedsStartPage: View {
         .frame(maxWidth: contentWidth, alignment: .center)
       }
       .flexibleHeaderScrollView()
+      .onScrollGeometryChange(for: Bool.self) { geometry in
+        // The top bar (status bar + close button) is roughly 56pt below the
+        // banner's top inset, so its bottom edge meets the account row here.
+        geometry.contentOffset.y + geometry.contentInsets.top > max(0, bannerHeight - 56)
+      } action: { _, scrolledPast in
+        hasScrolledPastBanner = scrolledPast
+      }
       .frame(width: contentWidth)
       .frame(maxWidth: drawerWidth)
       .clipped()
       .ignoresSafeArea(edges: [.top, .bottom])
-      .modifier(DrawerAwareScrollBackground())
+      .modifier(DrawerAwareScrollBackground(showsTopEdgeEffect: hasScrolledPastBanner))
       .refreshable {
         await handleRefresh()
       }
@@ -1277,7 +1288,6 @@ struct FeedsStartPage: View {
                 )
                 .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
             }
-            .tint(.accentColor.opacity(0.8))
             .accessibilityLabel(layoutMode.accessibilityLabel)
             .accessibilityAddTraits(.isButton)
 
@@ -1290,10 +1300,10 @@ struct FeedsStartPage: View {
                     hitTarget44(
                       Image(systemName: "checkmark")
                         .appFont(size: 16)
+                        .foregroundStyle(Color.accentColor)
                     )
                     .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
                 }
-                .tint(.accentColor.opacity(0.8))
                 .accessibilityLabel("Done Editing")
                 .accessibilityAddTraits(.isButton)
             } else {
@@ -1305,10 +1315,10 @@ struct FeedsStartPage: View {
                     hitTarget44(
                       Image(systemName: "pencil")
                         .appFont(size: 16)
+                        .foregroundStyle(Color.accentColor)
                     )
                     .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
                 }
-                .tint(.accentColor.opacity(0.8))
                 .accessibility(label: Text("Edit Feeds"))
                 .accessibility(hint: Text("Double tap to enter edit mode"))
                 .accessibilityAddTraits(.isButton)
@@ -1576,7 +1586,7 @@ struct FeedsDefaultFeedLabel<Icon: View>: View {
     HStack(spacing: DesignTokens.Spacing.base) {
       icon()
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-        Text("Default feed")
+        Text("Default Feed")
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
         Text(name)
@@ -1750,6 +1760,7 @@ private struct DrawerAwareThemedBackground: ViewModifier {
 }
 
 private struct DrawerAwareScrollBackground: ViewModifier {
+    let showsTopEdgeEffect: Bool
     #if os(iOS)
     @Environment(\.inSideDrawer) private var inSideDrawer
     #else
@@ -1761,19 +1772,24 @@ private struct DrawerAwareScrollBackground: ViewModifier {
             content
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
-                .modifier(DrawerBannerScrollEdgeModifier())
+                .modifier(DrawerBannerScrollEdgeModifier(isHidden: !showsTopEdgeEffect))
         } else {
             content
         }
     }
 }
 
-/// The banner supplies its own blur behind the top controls. The system scroll
-/// edge effect would cover that artwork with the drawer's backdrop color.
+/// While the banner is on screen it supplies its own blur behind the top
+/// controls, and the system scroll edge effect would cover that artwork with the
+/// drawer's backdrop color. Once the banner has scrolled away the effect returns,
+/// so rows passing under the status bar and close button fade instead of
+/// colliding with them.
 private struct DrawerBannerScrollEdgeModifier: ViewModifier {
+  let isHidden: Bool
+
   func body(content: Content) -> some View {
     if #available(iOS 26.0, macOS 26.0, *) {
-      content.scrollEdgeEffectHidden(true, for: .top)
+      content.scrollEdgeEffectHidden(isHidden, for: .top)
     } else {
       content
     }
@@ -1843,7 +1859,7 @@ private extension View {
         self
             .sheet(isPresented: showAddFeedSheet) {
                 AddFeedSheet(initialQuery: discoveryInitialQuery, onOpen: onOpenDiscoveredFeed)
-                    .presentationDetents([.medium, .large])
+                    .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(.thinMaterial)
             }

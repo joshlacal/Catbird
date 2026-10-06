@@ -73,6 +73,7 @@ struct LanguagePickerSheet: View {
       }
       .searchable(text: $searchText)
       .navigationTitle("Post Languages")
+      .platformInlineNavigationTitle()
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") {

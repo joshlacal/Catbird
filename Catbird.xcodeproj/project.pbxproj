@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		21094CF42EBD09010084BFBD /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 21094CF32EBD09010084BFBD /* GRDB */; };
-		B1A7E0000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B1A7E0000000000000000002 /* GRDB */; };
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -31,6 +30,7 @@
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
+		B1A7E0000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B1A7E0000000000000000002 /* GRDB */; };
 		B1A7E000000000000000000B /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0A2EB53D9300E707B6 /* CatbirdNotificationWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B1A7E000000000000000000C /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0B2EB53D9300E707B6 /* CatbirdFeedWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B1A7E000000000000000000D /* SharedDraftImporter.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0C2EB53D9300E707B6 /* SharedDraftImporter.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -204,6 +204,9 @@
 				LinkCreationUITests.swift,
 				LiveEventServiceTests.swift,
 				LiveStatusValidationTests.swift,
+				MacOSMessageRequestsTests.swift,
+				MacOSSceneDeactivationTests.swift,
+				MessageDeliveryStateTests.swift,
 				MLSAPIClientTests.swift,
 				MLSBlockCoordinatorTests.swift,
 				MLSConversationCreationRetryTests.swift,
@@ -215,10 +218,10 @@
 				MLSGroupAvatarImageTests.swift,
 				MLSImageCacheIsolationTests.swift,
 				MLSImageCacheTests.swift,
-				MLSInitialLifecycleCoordinatorTests.swift,
 				MLSInitializationWaiterTests.swift,
-				MLSKeyCleanupTests.swift,
+				MLSInitialLifecycleCoordinatorTests.swift,
 				MLSKeychainManagerTests.swift,
+				MLSKeyCleanupTests.swift,
 				MLSMessageDisplayOrderTests.swift,
 				MLSMessageObservationTests.swift,
 				MLSMessageOrderingTests.swift,
@@ -232,9 +235,6 @@
 				MLSStorageTests.swift,
 				MLSSuspensionCloseCoordinatorTests.swift,
 				MLSSystemMessageAdapterTests.swift,
-				MacOSMessageRequestsTests.swift,
-				MacOSSceneDeactivationTests.swift,
-				MessageDeliveryStateTests.swift,
 				NotificationServiceRequestPreviewTests.swift,
 				NotificationThumbnailTests.swift,
 				PostComposerAccessibilityTests.swift,
@@ -243,9 +243,9 @@
 				RejoinStatusPresentationTests.swift,
 				ThreadScrollPositionTrackerTests.swift,
 				TopicSummaryServiceTests.swift,
+				UnifiedScrollPreservationTests.swift,
 				URLHandlerActualTests.swift,
 				URLHandlerTests.swift,
-				UnifiedScrollPreservationTests.swift,
 			);
 			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
 		};
@@ -269,7 +269,6 @@
 				"App/Info-Debug.plist",
 				App/Info.plist,
 				AppIntents/README.md,
-				Services/MLS/IMPLEMENTATION_COMPLETE.md,
 			);
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
 		};
@@ -305,8 +304,8 @@
 		212D4B402ED1FE740036E016 /* NotificationServiceExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				212D4B4A2ED1FE740036E016 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */,
 				21A1B3C42F80000000C3B2A1 /* Exceptions for "NotificationServiceExtension" folder in "CatbirdTests" target */,
+				212D4B4A2ED1FE740036E016 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */,
 			);
 			path = NotificationServiceExtension;
 			sourceTree = "<group>";
@@ -1090,7 +1089,6 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = LaunchScreen.storyboard;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(inherited)",
@@ -1108,9 +1106,6 @@
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
-				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphoneos*]" = LaunchScreen;
-				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphonesimulator*]" = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
@@ -1182,7 +1177,6 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = LaunchScreen.storyboard;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(inherited)",
@@ -1200,9 +1194,6 @@
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
-				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphoneos*]" = LaunchScreen;
-				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphonesimulator*]" = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
@@ -1769,11 +1760,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		B1A7E0000000000000000002 /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
 		21094CF32EBD09010084BFBD /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
@@ -1840,6 +1826,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2194B3C42D70AA13004268BE /* XCRemoteSwiftPackageReference "swift-collections" */;
 			productName = OrderedCollections;
+		};
+		B1A7E0000000000000000002 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

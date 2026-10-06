@@ -26,9 +26,10 @@ extension PostComposerViewModel {
         var imageEmbeds: [AppBskyEmbedImages.Image] = []
 
         for (index, item) in mediaItems.enumerated() {
-            guard let rawData = item.rawData else { 
-                logger.warning("PostComposerUploading: Skipping image at index \(index) - no raw data")
-                continue 
+            guard let rawData = item.rawData, item.image != nil, !item.isGifConversion else {
+                throw NSError(domain: "ComposerMedia", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "An attachment couldn’t be loaded. Retry it or remove it before posting."
+                ]) 
             }
 
             logger.debug("PostComposerUploading: Processing image \(index + 1)/\(self.mediaItems.count) - size: \(rawData.count) bytes")
@@ -92,13 +93,44 @@ extension PostComposerViewModel {
         return .appBskyEmbedImages(AppBskyEmbedImages(images: imageEmbeds))
     }
 
-    func createVideoEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        guard let videoItem = videoItem, let mediaUploadManager = mediaUploadManager else {
-            logger.debug("DEBUG: Missing videoItem or mediaUploadManager")
-            return nil
+    func createVideoEmbed(
+        for suppliedItem: MediaItem? = nil, entryID: UUID? = nil
+    ) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        guard let videoItem = suppliedItem ?? videoItem else { return nil }
+        guard let mediaUploadManager = mediaUploadManager, let client = appState.atProtoClient else {
+            throw VideoUploadError.noClientAvailable
         }
 
+        let context = mediaLoadContext()
+        guard let accountDID = context.accountDID else { throw VideoUploadError.noClientAvailable }
+        let videoID = videoItem.id
+        let originalURL = videoItem.rawVideoURL
+        let originalData = videoItem.videoData
+        guard let owner = videoUploadOwner(for: videoID, entryID: entryID) else {
+            throw VideoUploadError.noClientAvailable
+        }
+        let initiatingAppState = appState
+        let isAccountCurrent: @MainActor @Sendable () -> Bool = { [weak initiatingAppState] in
+            guard let initiatingAppState else { return false }
+            return initiatingAppState.userDID == accountDID && initiatingAppState.atProtoClient === client
+        }
+        let isCurrent: @MainActor @Sendable () -> Bool = { [weak self, weak mediaUploadManager] in
+            guard let self, let mediaUploadManager,
+                  self.ownsMediaLoad(context), self.appState.atProtoClient === client,
+                  self.mediaUploadManager === mediaUploadManager else { return false }
+            let currentItem: MediaItem?
+            if let entryID {
+                currentItem = self.threadEntries.first(where: { $0.id == entryID })?.videoItem
+            } else {
+                currentItem = self.videoItem
+            }
+            return currentItem?.id == videoID && currentItem?.rawVideoURL == originalURL
+                && currentItem?.videoData == originalData
+        }
+        guard isCurrent() else { throw CancellationError() }
+
         isVideoUploading = true
+        defer { if isCurrent() { isVideoUploading = false } }
         logger.debug("DEBUG: Creating video embed, starting upload process")
 
         do {
@@ -106,6 +138,7 @@ extension PostComposerViewModel {
             if let caption = videoItem.caption {
                 logger.info("PostComposerUploading: Uploading video caption (.vtt) for language \(caption.lang.lang.minimalIdentifier)")
                 let uploadedCaption = try await mediaUploadManager.uploadCaptionBlob(caption)
+                guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
                 uploadedCaptions = [uploadedCaption]
                 logger.info("PostComposerUploading: Video caption uploaded successfully")
             }
@@ -114,7 +147,10 @@ extension PostComposerViewModel {
 
             if let videoURL = videoItem.rawVideoURL {
                 logger.debug("DEBUG: Using URL for video upload: \(videoURL)")
-                blob = try await mediaUploadManager.uploadVideo(url: videoURL, alt: videoItem.altText)
+                blob = try await mediaUploadManager.uploadVideo(
+                    url: videoURL, alt: videoItem.altText, owner: owner,
+                    isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
+                )
             } else if let videoAsset = videoItem.rawVideoAsset {
                 logger.debug("DEBUG: Using AVAsset for video upload")
 
@@ -124,9 +160,13 @@ extension PostComposerViewModel {
 
                 logger.debug("DEBUG: Exporting asset to temporary file: \(tempFileURL.path)")
                 let _ = try await exportAsset(videoAsset, to: tempFileURL)
+                guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
 
                 logger.debug("DEBUG: Asset export successful, uploading from: \(tempFileURL.path)")
-                blob = try await mediaUploadManager.uploadVideo(url: tempFileURL, alt: videoItem.altText)
+                blob = try await mediaUploadManager.uploadVideo(
+                    url: tempFileURL, alt: videoItem.altText, owner: owner,
+                    isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
+                )
             } else if let videoData = videoItem.videoData {
                 logger.debug("DEBUG: Using Data for video upload, size: \(videoData.count) bytes")
 
@@ -138,13 +178,16 @@ extension PostComposerViewModel {
                 try videoData.write(to: tempFileURL)
 
                 logger.debug("DEBUG: Uploading from temporary file: \(tempFileURL.path)")
-                blob = try await mediaUploadManager.uploadVideo(url: tempFileURL, alt: videoItem.altText)
+                blob = try await mediaUploadManager.uploadVideo(
+                    url: tempFileURL, alt: videoItem.altText, owner: owner,
+                    isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
+                )
             } else {
                 logger.error("ERROR: No video source available for upload")
-                isVideoUploading = false
                 throw VideoUploadError.uploadFailed
             }
 
+            guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
             logger.debug("DEBUG: Video upload successful, creating embed")
             let embed = mediaUploadManager.createVideoEmbed(
                 aspectRatio: videoItem.aspectRatio,
@@ -153,14 +196,26 @@ extension PostComposerViewModel {
                 captions: uploadedCaptions
             )
 
-            isVideoUploading = false
             return embed
         } catch {
-            isVideoUploading = false
             logger.error("ERROR: Video upload failed: \(error)")
             // Rethrow unchanged so the composer can explain the failure to the user.
             throw error
         }
+    }
+
+    func videoUploadOwner(for videoID: UUID, entryID: UUID? = nil) -> VideoUploadOwner? {
+        let context = mediaLoadContext()
+        guard let accountDID = context.accountDID else { return nil }
+        // The containing entry survives saving, reordering and account restoration. A saved-row
+        // identifier or the first thread entry would change the key for the same attachment.
+        let entryNamespace = (entryID ?? context.entryID)?.uuidString ?? videoID.uuidString
+        return VideoUploadOwner(
+            accountDID: accountDID,
+            draftID: entryNamespace,
+            entryID: entryNamespace,
+            mediaID: videoID.uuidString
+        )
     }
 
     private func exportAsset(_ asset: AVAsset, to outputURL: URL) async throws -> AVAssetExportSession {
@@ -178,8 +233,12 @@ extension PostComposerViewModel {
         }
 
         logger.debug("DEBUG: Starting export operation")
+        let preparation = MediaPreviewLoadAttempt(timeout: .seconds(120))
+        defer { preparation.cancel() }
         do {
-            try await exportSession.export(to: outputURL, as: .mp4)
+            try await preparation.value {
+                try await exportSession.export(to: outputURL, as: .mp4)
+            }
             logger.debug("DEBUG: Export completed successfully")
         } catch {
             logger.debug("DEBUG: Export failed with error: \(error)")

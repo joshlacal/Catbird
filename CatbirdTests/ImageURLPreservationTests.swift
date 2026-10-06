@@ -36,7 +36,7 @@ struct ImageURLPreservationTests {
   @Test(arguments: suppliedImageURLs)
   func avatarRequestsPreserveSuppliedURL(_ suppliedURL: String) throws {
     let url = try #require(URL(string: suppliedURL))
-    let request = try #require(AsyncProfileImage.resizedRequest(for: url, sizeInPoints: 40))
+    let request = try #require(AsyncProfileImage.resizedRequest(for: url, sizeInPoints: 40, displayScale: 3))
 
     #expect(request.url?.absoluteString == suppliedURL)
     #expect(request.urlRequest?.url?.absoluteString == suppliedURL)
@@ -44,7 +44,7 @@ struct ImageURLPreservationTests {
   }
 
   @Test func missingAvatarDoesNotCreateRequest() {
-    #expect(AsyncProfileImage.resizedRequest(for: nil, sizeInPoints: 40) == nil)
+    #expect(AsyncProfileImage.resizedRequest(for: nil, sizeInPoints: 40, displayScale: 3) == nil)
   }
 
   @Test func avatarThumbnailVariantRetainsFormatQueryAndFragment() throws {
@@ -55,7 +55,7 @@ struct ImageURLPreservationTests {
     ])
     let profile = try JSONDecoder().decode(AppBskyActorDefs.ProfileViewBasic.self, from: data)
     let url = try #require(profile.finalAvatarURL())
-    let request = try #require(AsyncProfileImage.resizedRequest(for: url, sizeInPoints: 40))
+    let request = try #require(AsyncProfileImage.resizedRequest(for: url, sizeInPoints: 40, displayScale: 3))
 
     #expect(request.url?.absoluteString == "https://cdn.bsky.app/img/avatar_thumbnail/plain/did:plc:abcdefghijklmnopqrstuvwx/example-cid@jpeg?quality=80#face")
   }
@@ -71,8 +71,8 @@ struct ImageURLPreservationTests {
     #expect(ImageLoadingManager.imageRequest(for: url, targetSize: CGSize(width: 320, height: 320)).priority == .normal)
     #expect(ImageLoadingManager.imageRequest(for: url, targetSize: CGSize(width: 1000, height: 1000)).priority == .low)
 
-    let avatar = try #require(AsyncProfileImage.resizedRequest(for: url, sizeInPoints: 40))
-    let pixels = (40 * PlatformScreenInfo.scale).rounded(.toNearestOrAwayFromZero)
+    let avatar = try #require(AsyncProfileImage.resizedRequest(for: url, sizeInPoints: 40, displayScale: 3))
+    let pixels = (40 * 3.0).rounded(.toNearestOrAwayFromZero)
     let avatarResize = ImageProcessors.Resize(size: CGSize(width: pixels, height: pixels), unit: .pixels, contentMode: .aspectFill)
     #expect(avatar.processors.count == 1)
     #expect(avatar.processors.first?.identifier == avatarResize.identifier)

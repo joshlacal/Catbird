@@ -52,7 +52,7 @@ struct ThreadView: View {
                     }
                     .pickerStyle(.inline)
                 } label: {
-                    Image(systemName: "ellipsis")
+                    Image(systemName: "arrow.up.arrow.down")
                         .accessibilityLabel("Thread options")
                 }
             }

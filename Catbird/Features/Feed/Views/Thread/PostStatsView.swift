@@ -12,7 +12,9 @@ import Petrel
 struct PostStatsView: View {
     let post: AppBskyFeedDefs.PostView
     @Binding var path: NavigationPath
-    
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+
     private static let baseUnit: CGFloat = 3
     
     // Only display if any stat is available
@@ -111,7 +113,7 @@ struct PostStatsView: View {
                     .padding(.top, Self.baseUnit * 2)
                     .padding(.horizontal, Self.baseUnit * 2)
                     .padding(.vertical, Self.baseUnit * 3)
-                    .appFont(AppTextRole.headline)
+                    .appFont(AppTextRole.body)
                 }
                 Divider()
                     .padding(.horizontal, Self.baseUnit * 2)
@@ -151,7 +153,10 @@ private extension PostStatsView {
                     .frame(width: avatarSize, height: avatarSize)
                     .clipShape(Circle())
                     .overlay(
-                        Circle().stroke(Color(platformColor: .platformSystemBackground), lineWidth: 1.5)
+                        Circle().stroke(
+                            Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme),
+                            lineWidth: 1.5
+                        )
                     )
                     .zIndex(Double(maxAvatars - index))
                 }

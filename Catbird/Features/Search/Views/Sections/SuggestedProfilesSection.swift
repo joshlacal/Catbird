@@ -24,16 +24,17 @@ public struct SuggestedProfilesSection: View {
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+  /// Bluesky interest ids, as `getSuggestedUsers` expects them.
   public static let standardCategories: [String] = [
-    "Art",
-    "Gaming",
-    "Sports",
-    "Music",
-    "Politics",
-    "Photography",
-    "Science",
-    "News",
-    "Technology",
+    "art",
+    "gaming",
+    "sports",
+    "music",
+    "politics",
+    "photography",
+    "science",
+    "news",
+    "tech",
   ]
 
   public init(
@@ -62,10 +63,11 @@ public struct SuggestedProfilesSection: View {
 
     // Boosted user interests
     for interest in userInterests {
-      let formatted = interest.trimmingCharacters(in: .whitespacesAndNewlines).capitalized
-      if !formatted.isEmpty && !seen.contains(formatted.lowercased()) {
-        categories.append(formatted)
-        seen.insert(formatted.lowercased())
+      let id = BlueskyInterest.normalize(interest)?.rawValue
+        ?? interest.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      if !id.isEmpty && !seen.contains(id) {
+        categories.append(id)
+        seen.insert(id)
       }
     }
 
@@ -114,7 +116,7 @@ public struct SuggestedProfilesSection: View {
 
   private func categoryPill(_ category: String?) -> some View {
     let isSelected = (selectedCategory?.lowercased() == category?.lowercased())
-    let title = category ?? "For You"
+    let title = category.map { BlueskyInterest(rawValue: $0)?.displayName ?? $0.capitalized } ?? "For You"
 
     return Button {
       onSelectCategory(category)
@@ -124,12 +126,13 @@ public struct SuggestedProfilesSection: View {
         .fontWeight(isSelected ? .semibold : .regular)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .frame(minHeight: 44)
         .foregroundStyle(isSelected ? Color.white : Color.primary)
         .background(
           Capsule()
             .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
         )
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .accessibilityAddTraits(isSelected ? [.isSelected] : [])

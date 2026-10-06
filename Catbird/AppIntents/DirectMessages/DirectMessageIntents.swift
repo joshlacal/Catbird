@@ -21,10 +21,10 @@ struct SendDirectMessageIntent: AppIntent {
   @Parameter(title: "Account")
   var account: AccountEntity?
 
-  @Parameter(title: "Recipient")
+  @Parameter(title: "Recipient", requestValueDialog: IntentDialog("Who do you want to message?"))
   var recipient: ProfileEntity
 
-  @Parameter(title: "Message")
+  @Parameter(title: "Message", requestValueDialog: IntentDialog("What do you want to say?"))
   var message: String
 
   init() {}
@@ -51,7 +51,7 @@ struct SendDirectMessageIntent: AppIntent {
     // recipient and text first (Siri may have misheard either).
     try await requestConfirmation(
       actionName: .send,
-      dialog: IntentDialog(stringLiteral: "Send “\(text)” to \(recipientName)?"))
+      dialog: IntentDialog("Send “\(text)” to \(recipientName)?"))
 
     _ = try unwrapIntentResponse(
       await client.chat.bsky.convo.sendMessage(
@@ -60,7 +60,7 @@ struct SendDirectMessageIntent: AppIntent {
           message: ChatBskyConvoDefs.MessageInput(
             text: text, facets: nil, embed: nil, replyTo: nil))))
 
-    return .result(dialog: IntentDialog(stringLiteral: "Sent to \(recipientName)."))
+    return .result(dialog: IntentDialog("Sent to \(recipientName)."))
   }
 }
 
@@ -84,12 +84,12 @@ struct GetConversationsIntent: AppIntent {
       limit: limit ?? 25, accountDID: did)
 
     let dialog: IntentDialog
-    if let first = conversations.first {
-      dialog = IntentDialog(
-        stringLiteral:
-          "Found \(conversations.count) conversation\(conversations.count == 1 ? "" : "s"). Latest: \(first.title).")
+    if let first = conversations.first, conversations.count == 1 {
+      dialog = IntentDialog("Found 1 conversation: \(first.title).")
+    } else if let first = conversations.first {
+      dialog = IntentDialog("Found \(conversations.count) conversations. Latest: \(first.title).")
     } else {
-      dialog = IntentDialog(stringLiteral: "No conversations found.")
+      dialog = IntentDialog("No conversations found.")
     }
     return .result(value: conversations, dialog: dialog)
   }
@@ -115,10 +115,13 @@ struct GetUnreadDMCountIntent: AppIntent {
         input: ChatBskyConvoListConvos.Parameters(limit: 100)))
     let unread = output.convos.reduce(0) { $0 + $1.unreadCount }
 
-    return .result(
-      value: unread,
-      dialog: IntentDialog(
-        stringLiteral: "You have \(unread) unread direct message\(unread == 1 ? "" : "s")."))
+    let dialog: IntentDialog
+    if unread == 1 {
+      dialog = IntentDialog("You have 1 unread direct message.")
+    } else {
+      dialog = IntentDialog("You have \(unread) unread direct messages.")
+    }
+    return .result(value: unread, dialog: dialog)
   }
 }
 
@@ -145,6 +148,6 @@ struct MarkConversationReadIntent: AppIntent {
         input: ChatBskyConvoUpdateRead.Input(convoId: conversation.id)))
 
     return .result(
-      dialog: IntentDialog(stringLiteral: "Marked \(conversation.title) as read."))
+      dialog: IntentDialog("Marked \(conversation.title) as read."))
   }
 }

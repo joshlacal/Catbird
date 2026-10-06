@@ -68,53 +68,53 @@ enum CopilotProposalCoordinator {
 
         // MARK: Post Context Actions
         case "likePost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .likePost(uri: uri, cid: cid)
 
         case "unlikePost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .unlikePost(uri: uri, cid: cid)
 
         case "repostPost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .repostPost(uri: uri, cid: cid)
 
         case "unrepostPost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .unrepostPost(uri: uri, cid: cid)
 
         case "bookmarkPost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .bookmarkPost(uri: uri, cid: cid)
 
         case "unbookmarkPost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .unbookmarkPost(uri: uri, cid: cid)
 
         case "hidePost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .hidePost(uri: uri, cid: cid)
 
         case "unhidePost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .unhidePost(uri: uri, cid: cid)
 
         case "prepareReply":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty,
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty,
                   let text = trimmedPayload, !text.isEmpty else { return nil }
             return .prepareReply(uri: uri, cid: cid, text: text)
 
         case "prepareQuote":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty,
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty,
                   let text = trimmedPayload, !text.isEmpty else { return nil }
             return .prepareQuote(uri: uri, cid: cid, text: text)
 
         case "reportPost":
-            guard case .post(let uri, let cid?, _, _) = context, !cid.isEmpty else { return nil }
+            guard case .post(let uri, let cid?, _, _, _) = context, !cid.isEmpty else { return nil }
             return .reportPost(uri: uri, cid: cid)
 
         case "deletePost":
-            guard case .post(let uri, let cid?, let authorDID, _) = context,
+            guard case .post(let uri, let cid?, let authorDID, _, _) = context,
                   !cid.isEmpty,
                   authorDID == accountDID else { return nil }
             return .deletePost(uri: uri, cid: cid)
@@ -213,7 +213,7 @@ enum CopilotProposalCoordinator {
              .prepareQuote(let uri, let cid, _),
              .reportPost(let uri, let cid),
              .deletePost(let uri, let cid):
-            guard case .post(let postUri, let postCid, let authorDID, _) = context,
+            guard case .post(let postUri, let postCid, let authorDID, _, _) = context,
                   uri == postUri, cid == postCid else {
                 throw CopilotProposalError.staleTarget
             }

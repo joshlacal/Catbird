@@ -35,8 +35,7 @@ struct CloudView: UIViewRepresentable {
         mtkView.preferredFramesPerSecond = animationSpeed == 0 ? 1 : 60
 
         // Render at reduced resolution for performance (clouds are soft/blurry anyway)
-        let screenScale = UIScreen.main.scale
-        mtkView.contentScaleFactor = screenScale * resolutionScale
+        mtkView.contentScaleFactor = context.environment.displayScale * resolutionScale
 
         // Configure renderer
         renderer.opacity = opacity
@@ -56,6 +55,11 @@ struct CloudView: UIViewRepresentable {
         renderer.animationSpeed = animationSpeed
         renderer.shaderMode = shaderMode
         uiView.preferredFramesPerSecond = animationSpeed == 0 ? 1 : 60
+        // The scene can move to a display with a different scale while visible.
+        let contentScaleFactor = context.environment.displayScale * resolutionScale
+        if uiView.contentScaleFactor != contentScaleFactor {
+            uiView.contentScaleFactor = contentScaleFactor
+        }
     }
     
     func makeCoordinator() -> Coordinator {

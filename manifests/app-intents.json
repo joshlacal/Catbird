@@ -21,7 +21,7 @@
         "description": "Find Bluesky profiles matching a search query.",
         "excludeParameters": ["term", "cursor"],
         "parameters": {
-          "q": { "title": "Search Query", "requestValue": true },
+          "q": { "title": "Search Query", "requestValue": true, "prompt": "Who do you want to find?" },
           "limit": { "title": "Result Limit" }
         },
         "confirmation": false,
@@ -62,7 +62,7 @@
           "sort", "since", "until", "mentions", "author", "lang", "domain", "url", "tag", "cursor"
         ],
         "parameters": {
-          "q": { "title": "Search Query", "requestValue": true },
+          "q": { "title": "Search Query", "requestValue": true, "prompt": "What do you want to search for?" },
           "limit": { "title": "Result Limit" }
         },
         "confirmation": false,
@@ -118,6 +118,7 @@
         "excludeParameters": ["priority", "seenAt"],
         "confirmation": false,
         "dialog": "You have {value} unread notifications.",
+        "dialogOne": "You have 1 unread notification.",
         "returns": { "scalar": "Int", "outputPath": "count" }
       },
       {
@@ -126,7 +127,7 @@
         "structName": "FollowersIntent",
         "title": "Followers",
         "description": "Get the accounts following a Bluesky account.",
-        "excludeParameters": ["cursor"],
+        "excludeParameters": ["cursor", "sort"],
         "parameters": {
           "actor": { "title": "Handle or DID" },
           "limit": { "title": "Result Limit" }
@@ -140,7 +141,7 @@
         "structName": "FollowingIntent",
         "title": "Following",
         "description": "Get the accounts a Bluesky account follows.",
-        "excludeParameters": ["cursor"],
+        "excludeParameters": ["cursor", "sort"],
         "parameters": {
           "actor": { "title": "Handle or DID" },
           "limit": { "title": "Result Limit" }
@@ -168,6 +169,7 @@
         "structName": "MuteActorIntent",
         "title": "Mute Profile",
         "description": "Mute a Bluesky account.",
+        "excludeParameters": ["onlyReposts", "onlyQuoteposts"],
         "parameterOverrides": {
           "actor": { "resolveAs": "ProfileEntity", "bridge": "id" }
         },
@@ -373,13 +375,15 @@
         "syncable": true,
         "indexed": true,
         "display": {
-          "title": "text",
+          "title": "author.displayName",
           "titleFallback": "author.handle",
-          "subtitle": "author.handle"
+          "subtitle": "text",
+          "image": "author.avatar"
         },
         "properties": [
           { "path": "author.displayName", "title": "Author Name" },
           { "path": "author.handle", "title": "Author Handle" },
+          { "path": "author.avatar", "title": "Author Avatar" },
           { "path": "likeCount", "title": "Like Count" },
           { "path": "repostCount", "title": "Repost Count" },
           { "path": "replyCount", "title": "Reply Count" },
@@ -387,7 +391,7 @@
         ],
         "customProperties": [
           { "name": "text", "swiftType": "String", "optional": true, "title": "Text", "expr": "IntentEntityBridges.postText(view)" },
-          { "name": "rkey", "swiftType": "String", "optional": false, "title": "Record Key", "expr": "IntentEntityBridges.recordKey(view.uri)" }
+          { "name": "rkey", "swiftType": "String", "optional": false, "title": "Record Key", "expr": "IntentEntityBridges.recordKey(view.uri)", "exposed": false, "default": "\"\"" }
         ],
         "query": {
           "kind": "string",
@@ -404,6 +408,7 @@
       },
       {
         "name": "FeedGeneratorEntity",
+        "typeDisplayName": "Feed",
         "source": "app.bsky.feed.defs#generatorView",
         "identifier": "uri",
         "syncable": true,

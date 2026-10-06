@@ -49,12 +49,6 @@ class PostHeightCalculator {
         let galleryCarouselHeight: CGFloat
 
         @MainActor
-        @available(*, deprecated, message: "Use standard(containerWidth:traitCollection:) for view-relative estimates")
-        static var standard: Config {
-            standard(containerWidth: PlatformScreenInfo.width, traitCollection: .current)
-        }
-
-        @MainActor
         static func standard(containerWidth: CGFloat, traitCollection: UITraitCollection) -> Config {
             Config(
                 maxWidth: max(1, min(600, containerWidth) - 9),
@@ -102,11 +96,6 @@ class PostHeightCalculator {
         setupCacheConfiguration()
     }
 
-    @available(*, deprecated, message: "Pass a view-relative Config for adaptive estimates")
-    convenience init() {
-        self.init(config: .standard)
-    }
-    
     /// Configure cache settings for optimal memory usage
     private func setupCacheConfiguration() {
         // Configure height cache
@@ -119,23 +108,6 @@ class PostHeightCalculator {
     }
     
     // MARK: - Public API
-    
-    /// Shared instance for convenience
-    static let shared = PostHeightCalculator()
-    
-    /// Static helper for quick height estimation
-    static func estimatedHeight(for post: AppBskyFeedDefs.PostView, mode: CalculationMode = .compact) -> CGFloat {
-        return shared.calculateHeight(for: post, mode: mode)
-    }
-    
-    /// Static helper for thread-aware height estimation
-    static func estimatedThreadHeight(
-        for post: AppBskyFeedDefs.PostView,
-        threadContext: ThreadContext,
-        mode: CalculationMode = .compact
-    ) -> CGFloat {
-        return shared.calculateThreadHeight(for: post, threadContext: threadContext, mode: mode)
-    }
     
     /// Calculates height for a post, with caching for performance
     func calculateHeight(for post: AppBskyFeedDefs.PostView, mode: CalculationMode = .compact) -> CGFloat {
@@ -567,6 +539,9 @@ class PostHeightCalculator {
     }
 
     private func calculateExternalEmbedHeight(for externalView: AppBskyEmbedExternal.View) -> CGFloat {
+        if let card = StandardSiteCard(externalView.external) {
+            return calculateStandardSiteHeight(for: card)
+        }
         // Base height for the card
         var height = config.externalEmbedHeight
         
@@ -599,6 +574,50 @@ class PostHeightCalculator {
             height += config.externalEmbedThumbHeight
         }
         
+        return height
+    }
+
+    private func calculateStandardSiteHeight(for card: StandardSiteCard) -> CGFloat {
+        let scale = config.textFont.pointSize / 17
+        let width = max(1, config.maxWidth - 24)
+        func textHeight(_ text: String, size: CGFloat, weight: UIFont.Weight = .medium,
+            lines: Int? = nil, availableWidth: CGFloat) -> CGFloat {
+            guard !text.isEmpty else { return 0 }
+            let font = UIFont.systemFont(ofSize: size * scale, weight: weight)
+            let bounds = (text as NSString).boundingRect(
+                with: CGSize(width: max(1, availableWidth), height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font], context: nil
+            )
+            guard let lines else { return ceil(bounds.height) }
+            return min(ceil(bounds.height), ceil(font.lineHeight * CGFloat(lines)))
+        }
+        let metadataRows = [card.authorHandle, card.displayDomain].compactMap { $0 }.count
+        let metadataHeight = CGFloat(metadataRows) * (16 * scale + 2)
+        var height: CGFloat = 0
+        if !card.isPublicationOnly {
+            if card.thumbnailURL != nil { height += config.maxWidth / 1.91 + 8 }
+            height += 24
+            height += textHeight(card.external.title, size: 17, weight: .semibold, lines: 3, availableWidth: width)
+            height += textHeight(card.external.description, size: 15,
+                lines: card.thumbnailURL == nil ? 4 : 2, availableWidth: width) + 6
+            if card.external.createdAt != nil || card.readingMinutes != nil { height += 16 * scale + 6 }
+        }
+        if card.publicationURL != nil {
+            var identityHeight = textHeight(card.publicationTitle, size: 17, weight: .semibold,
+                lines: 2, availableWidth: width - 54)
+            if card.isPublicationOnly {
+                identityHeight += textHeight(card.external.description, size: 15, lines: 4, availableWidth: width - 54) + 4
+            }
+            identityHeight += metadataHeight + 4
+            let buttonTitle = card.publisher.map { String(localized: "Subscribe on \($0)") }
+                ?? String(localized: "View publication")
+            let buttonHeight = textHeight(buttonTitle, size: 15, weight: .semibold, availableWidth: width - 20)
+            height += max(44, identityHeight) + 24 + 12 + max(44, buttonHeight)
+            if !card.isPublicationOnly { height += 1 }
+        } else {
+            height += metadataHeight + 12
+        }
         return height
     }
     

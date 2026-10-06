@@ -4,8 +4,8 @@ import OSLog
 import NukeUI
 
 enum ListDetailTab: String, CaseIterable {
-  case members = "Members"
-  case feed = "Feed"
+  case feed = "Posts"
+  case members = "People"
 }
 
 @Observable
@@ -24,13 +24,18 @@ final class ListDetailViewModel {
   var isLoading = false
   var errorMessage: String?
   var showingError = false
-  var selectedTab: ListDetailTab = .members
+  var selectedTab: ListDetailTab = .feed
   
   // MARK: - Computed Properties
   
   var isOwnList: Bool {
     guard let listDetails = listDetails else { return false }
     return listDetails.creator.did.didString() == appState.userDID
+  }
+
+  /// Only curated lists have a post feed; moderation lists are just a set of accounts.
+  var hasPostsFeed: Bool {
+    listDetails?.purpose == .appbskygraphdefscuratelist
   }
   
   // MARK: - Initialization
@@ -95,6 +100,27 @@ final class ListDetailViewModel {
     } catch {
       logger.error("Failed to refresh list data: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
+      showingError = true
+    }
+  }
+
+  // MARK: - Member Actions
+
+  /// Removes an account from the viewer's own list, restoring it if the request fails.
+  @MainActor
+  func removeMember(_ member: AppBskyActorDefs.ProfileView) async {
+    guard let index = members.firstIndex(where: { $0.did == member.did }) else { return }
+    withAnimation { _ = members.remove(at: index) }
+
+    do {
+      try await appState.listManager.removeMember(userDID: member.did.didString(), from: listURI.description)
+      if let details = try? await appState.listManager.getListDetails(listURI.description) {
+        listDetails = details
+      }
+    } catch {
+      withAnimation { members.insert(member, at: min(index, members.count)) }
+      logger.error("Failed to remove list member: \(error.localizedDescription)")
+      errorMessage = UserFacingError.message(for: error, action: "remove this person from the list") ?? "Try again."
       showingError = true
     }
   }
@@ -206,8 +232,8 @@ struct ListDetailView: View {
           .padding()
       }
       
-      if usesLocalNavigation {
-        // In Settings this screen manages the list; reading its feed happens in the main app.
+      if usesLocalNavigation || (viewModel.listDetails != nil && !viewModel.hasPostsFeed) {
+        // Settings manages the list here, and moderation lists have no feed, so show people only.
         membersView(viewModel: viewModel)
       } else {
         // Tab Picker
@@ -217,17 +243,17 @@ struct ListDetailView: View {
           }
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
+        .padding(.bottom, 8)
         
         // Tab Content
         TabView(selection: $viewModel.selectedTab) {
-          membersView(viewModel: viewModel)
-            .tag(ListDetailTab.members)
-          
           feedView(viewModel: viewModel)
             .tag(ListDetailTab.feed)
+
+          membersView(viewModel: viewModel)
+            .tag(ListDetailTab.members)
         }
         #if os(iOS)
         .tabViewStyle(.page(indexDisplayMode: .never))
@@ -243,7 +269,7 @@ struct ListDetailView: View {
         Menu {
           listToolbarMenu(viewModel: viewModel)
         } label: {
-          Image(systemName: "ellipsis.circle")
+          Image(systemName: "ellipsis")
             .accessibilityLabel("More Options")
         }
       }
@@ -305,7 +331,7 @@ struct ListDetailView: View {
       Label("Refresh", systemImage: "arrow.clockwise")
     }
 
-    if let listDetails = viewModel.listDetails {
+    if viewModel.listDetails != nil {
       Divider()
       Button {
         isShowingReportSheet = true
@@ -350,58 +376,88 @@ struct ListDetailView: View {
   }
   
   private func listHeaderView(_ listDetails: AppBskyGraphDefs.ListView, viewModel: ListDetailViewModel) -> some View {
-    VStack(spacing: 12) {
-      HStack(spacing: 12) {
-        // List Avatar
-        LazyImage(url: listDetails.finalAvatarURL()) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .scaledToFill()
-          } else {
-            listPlaceholderIcon
-          }
-        }
-        .frame(width: 56, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .center, spacing: 14) {
+        ListAvatarView(list: listDetails, size: 64)
         
-        // List Info
         VStack(alignment: .leading, spacing: 4) {
-          HStack(spacing: 8) {
-            Text(listDetails.name)
-              .font(.headline)
-              .fontWeight(.semibold)
-              .lineLimit(1)
-            
-            purposeBadge(listDetails.purpose)
-          }
-          
-          if let description = listDetails.description, !description.isEmpty {
-            Text(description)
-              .font(.subheadline)
+          Text(listDetails.name)
+            .appFont(AppTextRole.title3)
+            .fontWeight(.bold)
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+
+          Button {
+            path.append(NavigationDestination.profile(listDetails.creator.did.didString()))
+          } label: {
+            Text(creatorLine(for: listDetails))
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
-              .lineLimit(2)
+              .lineLimit(1)
           }
-          
-          HStack(spacing: 16) {
+          .buttonStyle(.plain)
+          // Profiles open in the main app, not inside Settings.
+          .allowsHitTesting(!usesLocalNavigation)
+
+          HStack(spacing: 8) {
+            ListPurposeBadge(purpose: listDetails.purpose)
+
             Text("^[\(listDetails.listItemCount ?? viewModel.members.count) member](inflect: true)")
-              .font(.caption)
-              .foregroundStyle(.tertiary)
-            
-            Text("by @\(listDetails.creator.handle)")
-              .font(.caption)
-              .foregroundStyle(.tertiary)
+              .appFont(AppTextRole.caption)
+              .foregroundStyle(.secondary)
           }
         }
         
-        Spacer()
+        Spacer(minLength: 0)
       }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 12)
-      
-      Divider()
+
+      if let description = listDetails.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+         !description.isEmpty {
+        Text(description)
+          .appFont(AppTextRole.subheadline)
+          .foregroundStyle(.primary)
+          .lineLimit(4)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      if viewModel.isOwnList {
+        ownerActions(viewModel: viewModel)
+      }
     }
-    .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
+    .padding(.horizontal, 16)
+    .padding(.top, 8)
+    .padding(.bottom, 12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func ownerActions(viewModel: ListDetailViewModel) -> some View {
+    HStack(spacing: 10) {
+      Button {
+        navigate(to: .edit(viewModel.listURI))
+      } label: {
+        Label("Edit", systemImage: "pencil")
+          .frame(maxWidth: .infinity)
+      }
+
+      Button {
+        navigate(to: .members(viewModel.listURI))
+      } label: {
+        Label("Add People", systemImage: "person.badge.plus")
+          .frame(maxWidth: .infinity)
+      }
+    }
+    .appFont(AppTextRole.subheadline)
+    .fontWeight(.semibold)
+    .buttonStyle(.bordered)
+    .buttonBorderShape(.capsule)
+    .controlSize(.regular)
+  }
+
+  private func creatorLine(for listDetails: AppBskyGraphDefs.ListView) -> String {
+    if listDetails.creator.did.didString() == appState.userDID {
+      return String(localized: "List by you")
+    }
+    return String(localized: "List by @\(listDetails.creator.handle.description)")
   }
   
   @ViewBuilder
@@ -425,35 +481,48 @@ struct ListDetailView: View {
           Button {
             path.append(NavigationDestination.profile(member.did.didString()))
           } label: {
-            HStack(spacing: 12) {
-              LazyImage(url: member.finalAvatarURL()) { state in
-                if let image = state.image {
-                  image
-                    .resizable()
-                    .scaledToFill()
-                } else {
-                  Circle()
-                    .fill(.secondary.opacity(0.3))
-                }
-              }
-              .frame(width: 40, height: 40)
-              .clipShape(Circle())
+            HStack(alignment: .top, spacing: 12) {
+              AsyncProfileImage(url: member.finalAvatarURL(), size: 44, labels: member.labels)
+                .accessibilityHidden(true)
               
               VStack(alignment: .leading, spacing: 2) {
-                Text(member.displayName ?? member.handle.description)
-                  .font(.subheadline)
-                  .fontWeight(.medium)
+                Text(memberDisplayName(member))
+                  .appFont(AppTextRole.subheadline)
+                  .fontWeight(.semibold)
                   .foregroundStyle(.primary)
+                  .lineLimit(1)
                 
-                Text("@\(member.handle)")
-                  .font(.caption)
+                Text(verbatim: "@\(member.handle.description)")
+                  .appFont(AppTextRole.footnote)
                   .foregroundStyle(.secondary)
+                  .lineLimit(1)
+
+                if let bio = member.description?.trimmingCharacters(in: .whitespacesAndNewlines), !bio.isEmpty {
+                  Text(bio)
+                    .appFont(AppTextRole.footnote)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .padding(.top, 2)
+                }
               }
               
-              Spacer()
+              Spacer(minLength: 0)
             }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
+          .listRowBackground(Color.clear)
+          .listRowSeparator(member.did == viewModel.members.first?.did ? .hidden : .automatic, edges: .top)
+          .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if viewModel.isOwnList {
+              Button(role: .destructive) {
+                Task { await viewModel.removeMember(member) }
+              } label: {
+                Label("Remove from List", systemImage: "person.badge.minus")
+              }
+            }
+          }
           // Profiles open in the main app, not inside Settings.
           .allowsHitTesting(!usesLocalNavigation)
           .accessibilityRemoveTraits(usesLocalNavigation ? .isButton : [])
@@ -461,9 +530,14 @@ struct ListDetailView: View {
       }
     }
     .listStyle(.plain)
-    #if os(iOS)
     .scrollContentBackground(.hidden)
-    #endif
+  }
+
+  private func memberDisplayName(_ member: AppBskyActorDefs.ProfileView) -> String {
+    if let displayName = member.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
+      return displayName
+    }
+    return member.handle.description
   }
   
   @ViewBuilder
@@ -473,69 +547,6 @@ struct ListDetailView: View {
       path: $path,
       selectedTab: $feedSelectedTab
     )
-  }
-  
-  private var listPlaceholderIcon: some View {
-    RoundedRectangle(cornerRadius: 12)
-      .fill(.secondary.opacity(0.3))
-      .overlay {
-        Image(systemName: "list.bullet")
-          .font(.title2)
-          .foregroundStyle(.secondary)
-      }
-  }
-  
-  private func purposeBadge(_ purpose: AppBskyGraphDefs.ListPurpose) -> some View {
-    HStack(spacing: 4) {
-      Image(systemName: iconForPurpose(purpose))
-        .font(.caption2)
-      Text(textForPurpose(purpose))
-        .font(.caption2)
-    }
-    .foregroundStyle(colorForPurpose(purpose))
-    .padding(.horizontal, 6)
-    .padding(.vertical, 2)
-    .background(colorForPurpose(purpose).opacity(0.15))
-    .clipShape(Capsule())
-  }
-  
-  private func iconForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> String {
-    switch purpose {
-    case .appbskygraphdefscuratelist:
-      return "star.fill"
-    case .appbskygraphdefsmodlist:
-      return "shield.lefthalf.filled"
-    case .appbskygraphdefsreferencelist:
-      return "bookmark.fill"
-    default:
-      return "questionmark.circle"
-    }
-  }
-  
-  private func colorForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> Color {
-    switch purpose {
-    case .appbskygraphdefscuratelist:
-      return .yellow
-    case .appbskygraphdefsmodlist:
-      return .red
-    case .appbskygraphdefsreferencelist:
-      return .blue
-    default:
-      return .gray
-    }
-  }
-  
-  private func textForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> String {
-    switch purpose {
-    case .appbskygraphdefscuratelist:
-      return "Curated"
-    case .appbskygraphdefsmodlist:
-      return "Moderation"
-    case .appbskygraphdefsreferencelist:
-      return "Reference"
-    default:
-      return "Unknown"
-    }
   }
 }
 

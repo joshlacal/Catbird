@@ -52,7 +52,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private(set) var posts: [CachedFeedViewPost] = []
     
     /// Current loading state
-    private(set) var loadingState: LoadingState = .idle
+    private(set) var loadingState: LoadingState = .idle {
+        didSet {
+            if case .error(let error) = loadingState {
+                reconnectRetryState.requestFailed(error, allowsAutomaticRetry: reconnectRetryTask == nil)
+            }
+        }
+    }
     
     /// Whether we've reached the end of the feed
     var hasReachedEnd = false
@@ -63,9 +69,25 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// The failure of the most recent page request, shown in the feed's footer.
     private(set) var paginationError: Error?
     
-    /// Whether the feed is empty (no posts and not loading)
+    /// Shared full-screen presentation for UIKit and SwiftUI feeds.
+    var contentState: FeedContentState {
+        FeedContentState(
+            hasPosts: !posts.isEmpty,
+            hasLoadedInitialResponse: feedModel.hasLoadedInitialResponse,
+            isLoading: isLoading || feedModel.isLoading || feedModel.isLoadingMore || feedModel.isBackgroundRefreshing,
+            hasError: feedLoadError != nil
+        )
+    }
+
+    /// A failed refresh keeps existing rows visible; an empty feed exposes the error.
+    var feedLoadError: Error? {
+        if case .error(let error) = loadingState { return error }
+        return feedModel.error
+    }
+
+    /// Empty content is only established by a successful initial response.
     var isEmpty: Bool {
-        self.posts.isEmpty && !isLoading
+        contentState == .empty
     }
     
     /// New posts tracking for indicator
@@ -123,6 +145,16 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Automatic refresh coordination
     private var autoRefreshTask: Task<Void, Never>?
+    private var reconnectRetryTask: Task<Void, Never>?
+    private var reconnectRetryToken: UUID?
+    private var reconnectRetryState: FeedReconnectRetryState
+
+    var reconnectRetryKey: FeedReconnectRetryKey {
+        FeedReconnectRetryKey(
+            restorationGeneration: appState.networkMonitor.restorationGeneration,
+            failureRevision: reconnectRetryState.failureRevision,
+            isEligible: !isAppInBackground && isAutoRefreshEligible && !isCleanedUp)
+    }
 
     /// Only the feed the user most recently opened refreshes itself in the
     /// background; FeedStateStore moves this flag as feeds are switched.
@@ -156,6 +188,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         self.feedModel = feedModel
         self.feedType = feedType
         self.isAppInBackground = initialScenePhase == .background
+        self.reconnectRetryState = FeedReconnectRetryState(
+            restorationGeneration: appState.networkMonitor.restorationGeneration)
         
         // Initialize with current feed data
         self.posts = feedModel.posts
@@ -256,6 +290,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
         // Check if account is available (with retry for transient state issues)
         for attempt in 1...maxAttempts {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return false }
             let validSession = await client.hasValidSession()
             if validSession {
                 // Also check if we can get the handle, which confirms the session is truly usable
@@ -267,7 +302,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
             if attempt < maxAttempts {
                 // Exponential backoff: 100ms, 200ms, 400ms... capped at 1s
                 let delay = UInt64(min(100_000_000.0 * pow(2.0, Double(attempt - 1)), 1_000_000_000.0))
-                try? await Task.sleep(nanoseconds: delay)
+                do { try await Task.sleep(nanoseconds: delay) }
+                catch { return false }
             }
         }
         
@@ -284,8 +320,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         case .loading, .refreshing, .loadingMore:
             return
         }
+        guard await beginFeedRequest(), !isLoadingInitialData, !isLoading else { return }
         isLoadingInitialData = true
-        defer { isLoadingInitialData = false }
+        defer {
+            isLoadingInitialData = false
+            if (Task.isCancelled || isCleanedUp || appState.isAccountSwitchSuspended),
+               loadingState == .loading { loadingState = .idle }
+        }
 
         // If we already have posts (likely from cache restoration), check if cache needs refresh
         // Only skip refresh if this manager has previously refreshed successfully (lastRefreshTime != distantPast)
@@ -327,6 +368,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Wait for account to be ready
         if !(await waitForAccountAvailability()) {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot load initial data: Account unavailable after retries")
             errorMessage = "Account unavailable. Please try again."
             loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
@@ -334,7 +376,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
 
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
 
+        // Accepted cached/prewarmed rows survive a failed supplemental request.
+        if posts != feedModel.posts {
+            posts = feedModel.posts
+            cleanupViewModels()
+        }
         // Check if feed load encountered an error
         if let error = feedModel.error {
             logger.error("Initial load failed: \(error.localizedDescription)")
@@ -358,8 +406,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Load initial data with system flag - bypasses user-initiated check for post-authentication loading
     func loadInitialDataWithSystemFlag() async {
         guard !isLoadingInitialData, case .idle = loadingState else { return }
+        guard await beginFeedRequest(), !isLoadingInitialData, !isLoading else { return }
         isLoadingInitialData = true
-        defer { isLoadingInitialData = false }
+        defer {
+            isLoadingInitialData = false
+            if (Task.isCancelled || isCleanedUp || appState.isAccountSwitchSuspended),
+               loadingState == .loading { loadingState = .idle }
+        }
 
         logger.debug("Loading initial data with system flag - post-authentication")
 
@@ -369,6 +422,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Wait for account to be ready
         if !(await waitForAccountAvailability()) {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot load system initial data: Account unavailable after retries")
             errorMessage = "Account unavailable. Please try again."
             loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
@@ -377,7 +431,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
         // For system-initiated loads (like post-auth), always force refresh even if posts exist
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
 
+        // Accepted cached/prewarmed rows survive a failed supplemental request.
+        if posts != feedModel.posts {
+            posts = feedModel.posts
+            cleanupViewModels()
+        }
         // Check if feed load encountered an error
         if let error = feedModel.error {
             logger.error("System initial load failed: \(error.localizedDescription)")
@@ -400,7 +460,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Refreshes the feed data (user-initiated via pull-to-refresh or button).
     @MainActor
-    func refreshUserInitiated() async {
+    func refreshUserInitiated(displayScale: CGFloat) async {
         logger.debug("🔄 User-initiated refresh")
 
         // Delegate to standard refresh
@@ -410,18 +470,22 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // also replaces the trending set the feed is currently showing.
         if let trendingRequestID {
             trendingInvalidated = true
-            await loadTrendingIfNeeded(requestID: trendingRequestID)
+            await loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale)
         }
     }
     
     /// Refreshes the feed data (user-initiated)
     @MainActor
     func refresh() async {
+        guard !isLoadingInitialData, !isLoading,
+              !feedModel.isLoading, !feedModel.isBackgroundRefreshing else { return }
         // Don't start new tasks if app is in background
         guard !isAppInBackground else {
             logger.debug("Skipping refresh - app is in background")
             return
         }
+
+        guard await beginFeedRequest() else { return }
 
         // Validate account state before attempting refresh
         guard let client = appState.atProtoClient else {
@@ -433,11 +497,17 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
         // Check if account is available (with retry for transient state issues)
         if !(await waitForAccountAvailability(maxAttempts: 3)) {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot refresh: Account manager state is inconsistent after retries")
             errorMessage = "Account session lost. Please try again or restart the app."
             loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
             return
         }
+
+        // Account validation can suspend; coalesce another refresh admitted meanwhile.
+        guard !Task.isCancelled, !isCleanedUp, !isAppInBackground,
+              !appState.isAccountSwitchSuspended, !isLoadingInitialData, !isLoading,
+              !feedModel.isLoading, !feedModel.isBackgroundRefreshing else { return }
 
         // Mark this as a user-initiated action
         markUserAction()
@@ -448,7 +518,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("🔍 NEW_POSTS_DEBUG: Stored \(self.postsBeforeRefresh.count) posts before refresh for comparison")
         logger.debug("🔍 NEW_POSTS_DEBUG: First 3 post IDs before refresh: \(self.postsBeforeRefresh.prefix(3).map { $0.id })")
 
-        // Cancel any existing refresh task
+        // Reserve the state before the task starts so simultaneous pulls coalesce.
+        loadingState = .refreshing
         refreshTask?.cancel()
 
         refreshTask = Task {
@@ -463,6 +534,10 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
             guard !Task.isCancelled && !isAppInBackground else { return }
 
+            if posts != feedModel.posts {
+                posts = feedModel.posts
+                cleanupViewModels()
+            }
             // Check if feed load encountered an error
             if let error = feedModel.error {
                 logger.error("Feed refresh failed: \(error.localizedDescription)")
@@ -493,8 +568,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Loads more posts for infinite scroll (user-initiated)
     @MainActor
     func loadMore() async {
-        // More specific check - only prevent if already loading more
-        guard !isLoadingInitialData,
+        // A reconnect owns the first-page request until its account task completes.
+        guard reconnectRetryTask == nil,
+              !isLoadingInitialData,
               loadingState != .loadingMore,
               !hasReachedEnd,
               !isAppInBackground else {
@@ -550,16 +626,116 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Retries the last failed operation
     @MainActor
     func retry() async {
-        switch loadingState {
-        case .error:
-            if posts.isEmpty {
-                await loadInitialData()
-            } else {
-                await refresh()
-            }
-        default:
-            break
+        guard feedLoadError != nil else { return }
+        if posts.isEmpty {
+            await loadInitialData()
+        } else {
+            await refresh()
         }
+    }
+
+    // MARK: - Connectivity Recovery
+
+    private func beginFeedRequest() async -> Bool {
+        let previousRetry = reconnectRetryTask
+        let previousToken = reconnectRetryToken
+        cancelReconnectRetry()
+        await previousRetry?.value
+        if reconnectRetryToken == previousToken {
+            reconnectRetryToken = nil
+            reconnectRetryTask = nil
+        }
+        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return false }
+        reconnectRetryState.requestStarted(
+            restorationGeneration: appState.networkMonitor.restorationGeneration)
+        return true
+    }
+
+    private var canRetryAfterReconnect: Bool {
+        !Task.isCancelled && !isCleanedUp && !isAppInBackground && isAutoRefreshEligible
+            && !isLoadingInitialData && !isLoading
+            && !feedModel.isLoading && !feedModel.isBackgroundRefreshing && !feedModel.isLoadingMore
+            && !appState.isAccountSwitchSuspended
+            && appState.networkMonitor.isConnected
+            && AppStateManager.shared.lifecycle.appState === appState
+            && appState.atProtoClient != nil
+    }
+
+    /// Called by the visible feed's task; ordinary requests are never path-gated.
+    func retryAfterConnectionRestored() async {
+        guard reconnectRetryTask == nil, canRetryAfterReconnect,
+              case .error(let originalError) = loadingState,
+              reconnectRetryState.consumeRestoration(appState.networkMonitor.restorationGeneration) else { return }
+
+        let token = UUID()
+        let expectedFeed = feedType.identifier
+        reconnectRetryToken = token
+        let task = appState.startAccountTask { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.reconnectRetryToken == token {
+                    // Cancellation preserves the failed state and its manual retry action.
+                    if self.loadingState == .loading || self.loadingState == .refreshing {
+                        self.errorMessage = originalError.localizedDescription
+                        self.loadingState = .error(originalError)
+                    }
+                    self.reconnectRetryToken = nil
+                    self.reconnectRetryTask = nil
+                }
+            }
+            guard self.canRetryAfterReconnect, self.feedType.identifier == expectedFeed else { return }
+            self.loadingState = self.posts.isEmpty ? .loading : .refreshing
+            self.errorMessage = nil
+
+            let previousRefreshTime = self.feedModel.lastRefreshTime
+            // Stay inside account-owned work so account suspension cancels and drains the request.
+            await self.feedModel.loadFeed(fetch: self.feedType, forceRefresh: true)
+            guard !Task.isCancelled, self.reconnectRetryToken == token,
+                  !self.isCleanedUp, !self.isAppInBackground, self.isAutoRefreshEligible,
+                  !self.appState.isAccountSwitchSuspended,
+                  AppStateManager.shared.lifecycle.appState === self.appState,
+                  self.feedType.identifier == expectedFeed else { return }
+            if self.posts != self.feedModel.posts {
+                self.posts = self.feedModel.posts
+                self.cleanupViewModels()
+            }
+            if let error = self.feedModel.error {
+                self.errorMessage = error.localizedDescription
+                self.loadingState = .error(error)
+                return
+            }
+            // A coalesced or superseded model request is not a successful retry.
+            guard self.feedModel.lastRefreshTime != previousRefreshTime else { return }
+            // Publish synchronously after the ownership checks; no unstructured debounce task.
+            self.posts = self.feedModel.posts
+            self.cleanupViewModels()
+            self.hasReachedEnd = !self.feedModel.hasMore
+            self.paginationError = nil
+            self.loadingState = .idle
+        }
+        reconnectRetryTask = task
+        guard let task else {
+            reconnectRetryToken = nil
+            return
+        }
+        defer {
+            // Account suspension can cancel its wrapper before our operation starts.
+            if reconnectRetryToken == token {
+                reconnectRetryToken = nil
+                reconnectRetryTask = nil
+            }
+        }
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func cancelReconnectRetry() {
+        reconnectRetryTask?.cancel()
+        // Keep the task registered until it finishes; its defer releases the slot.
+        reconnectRetryState.invalidate()
     }
     
     // MARK: - Trending Interstitial
@@ -582,12 +758,12 @@ final class FeedStateManager: StateInvalidationSubscriber {
         trendingRequestID == requestID ? trendingContent : TrendingFeedContent()
     }
 
-    func loadTrendingIfNeeded(requestID: String) async {
+    func loadTrendingIfNeeded(requestID: String, displayScale: CGFloat) async {
         guard shouldReloadTrending(for: requestID, now: Date()) else {
-            appState.prefetchTopicPreviews(trends: trendingContent.trends, owner: .timeline)
+            appState.prefetchTopicPreviews(trends: trendingContent.trends, displayScale: displayScale, owner: .timeline)
             return
         }
-        let content = await TrendingFeedContent.load(appState: appState)
+        let content = await TrendingFeedContent.load(appState: appState, displayScale: displayScale)
         guard !Task.isCancelled else { return }
         trendingContent = content
         trendingRequestID = requestID
@@ -736,6 +912,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
             return
         }
         
+        guard await beginFeedRequest(), !isLoadingInitialData, !isLoading,
+              !feedModel.isLoading, !feedModel.isBackgroundRefreshing else { return }
+
         // Cancel any existing tasks
         refreshTask?.cancel()
         
@@ -754,6 +933,10 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
             guard !Task.isCancelled && !isAppInBackground else { return }
 
+            if posts != feedModel.posts {
+                posts = feedModel.posts
+                cleanupViewModels()
+            }
             // Check if feed load encountered an error
             if let error = feedModel.error {
                 logger.error("Smart refresh failed: \(error.localizedDescription)")
@@ -1031,6 +1214,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         case .background:
             guard !isAppInBackground else { return false }
             isAppInBackground = true
+            cancelReconnectRetry()
 
             // Reset only a loading state owned by work canceled here. Initial
             // loads remain owned by their callers across background/active cycles.
@@ -1102,6 +1286,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         if eligible {
             startAutomaticRefreshMonitoring()
         } else {
+            cancelReconnectRetry()
             stopAutomaticRefreshMonitoring()
         }
     }
@@ -1177,6 +1362,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // Retired managers cannot restart monitoring from a delayed phase callback.
         isCleanedUp = true
         isAppInBackground = true
+        cancelReconnectRetry()
         
         // Cancel all tasks
         refreshTask?.cancel()
@@ -1198,6 +1384,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     }
     
     isolated deinit {
+        reconnectRetryTask?.cancel()
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
@@ -1225,6 +1412,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         loadMoreTask?.cancel()
         updateTask?.cancel()
         
+        cancelReconnectRetry()
+
         // Update the feed type
         self.feedType = newFetchType
         
@@ -1289,6 +1478,7 @@ extension FeedStateManager {
             logger.debug("Feed list changed, but skipping automatic refresh")
             
         case .accountSwitched:
+            cancelReconnectRetry()
             // Account switches are critical - always clear and reload
             logger.debug("Account switched, clearing and reloading feed")
             posts.removeAll()

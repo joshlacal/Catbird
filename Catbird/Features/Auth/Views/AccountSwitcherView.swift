@@ -798,7 +798,7 @@ struct ProfileAvatarView: View {
   var body: some View {
     ZStack {
       Circle()
-        .fill(Color.blue.opacity(0.2))
+        .fill(Color.accentColor.opacity(0.2))
         .frame(width: size, height: size)
       
       if let url = url {
@@ -812,13 +812,13 @@ struct ProfileAvatarView: View {
           } else {
             Text(fallbackText)
               .appFont(size: size * 0.5)
-              .foregroundColor(.white)
+              .foregroundStyle(Color("AccentTextColor"))
           }
         }
       } else {
         Text(fallbackText)
           .appFont(size: size * 0.5)
-          .foregroundColor(.white)
+          .foregroundStyle(Color("AccentTextColor"))
       }
     }
   }

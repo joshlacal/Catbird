@@ -9,10 +9,11 @@ struct RecordEmbedView: View {
     @Binding var path: NavigationPath
     @Environment(\.postID) var postID
     @Environment(AppState.self) private var appState
+    @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
     // When true, render full post styling for quoted posts (used in thread main post view)
     var useFullPostStyle: Bool = false
     /// Quotes from muted accounts stay collapsed until the viewer asks to see them.
-    @State private var showsMutedQuote = false
+    @State private var revealedMutedQuote: [String]?
     
     var body: some View {
         switch record {
@@ -35,8 +36,10 @@ struct RecordEmbedView: View {
                 LabelerView(labeler: labeler)
             }
             .buttonStyle(.plain)
+            .modifier(ReadOnlyPostMediaModifier())
         case .appBskyGraphDefsStarterPackViewBasic(let starterPack):
                 StarterPackCardView(starterPack: starterPack, path: $path)
+                    .modifier(ReadOnlyPostMediaModifier())
                     .padding(.vertical, 4)
         case .unexpected:
             unsupportedView
@@ -45,14 +48,45 @@ struct RecordEmbedView: View {
     
     @ViewBuilder
     private func postView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
-        if post.author.viewer?.muted == true && !showsMutedQuote {
-            mutedQuoteView
+        if isReadOnlyPreview && BlockRelationship(viewer: post.author.viewer).direction != .unknown {
+            BlockedContentCard(
+                relationship: BlockRelationship(viewer: post.author.viewer),
+                authorDid: post.author.did.didString(),
+                postUri: post.uri,
+                variant: .embedCompact,
+                path: $path
+            )
+        } else if post.author.viewer?.muted == true && !showsMutedQuote(post) {
+            mutedQuoteView(for: post)
         } else {
-            quotedPostView(post)
+            VStack(alignment: .leading, spacing: 6) {
+                ContentLabelView(labels: post.labels, selfLabelValues: quotedSelfLabelValues(post),
+                    subject: PostLabelSubject(uri: post.uri.uriString(), cid: post.cid,
+                        authorDID: post.author.did.didString(), authorHandle: post.author.handle.description))
+                quotedPostView(post)
+                    .postRevealFade(isEnabled: showsMutedQuote(post))
+                    .environment(\.postLabelSummaryIDs, PostLabelSubject(uri: post.uri.uriString(), cid: post.cid,
+                        authorDID: post.author.did.didString(), authorHandle: post.author.handle.description).labelIDs(in: post.labels))
+            }
         }
     }
 
-    private var mutedQuoteView: some View {
+    private func quotedSelfLabelValues(_ post: AppBskyEmbedRecord.ViewRecord) -> [String] {
+        guard case .knownType(let record) = post.value, let feedPost = record as? AppBskyFeedPost,
+              let labels = feedPost.labels,
+              case .comAtprotoLabelDefsSelfLabels(let selfLabels) = labels else { return [] }
+        return selfLabels.values.map(\.val)
+    }
+
+    private func mutedQuoteIdentity(_ post: AppBskyEmbedRecord.ViewRecord) -> [String] {
+        [appState.userDID, post.uri.uriString(), post.cid.description]
+    }
+
+    private func showsMutedQuote(_ post: AppBskyEmbedRecord.ViewRecord) -> Bool {
+        revealedMutedQuote == mutedQuoteIdentity(post)
+    }
+
+    private func mutedQuoteView(for post: AppBskyEmbedRecord.ViewRecord) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "speaker.slash")
                 .foregroundStyle(Color.secondary)
@@ -62,15 +96,14 @@ struct RecordEmbedView: View {
                 .foregroundStyle(Color.secondary)
             Spacer(minLength: 0)
             Button("Show") {
-                showsMutedQuote = true
+                revealedMutedQuote = mutedQuoteIdentity(post)
             }
             .appFont(AppTextRole.subheadline)
             .buttonStyle(.borderless)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .feedEmbedCardStyle()
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -93,7 +126,7 @@ struct RecordEmbedView: View {
     @ViewBuilder
     private func quotedPostView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
         Group {
-            if useFullPostStyle {
+            if useFullPostStyle || isReadOnlyPreview {
                 // Render a fuller post style with standard card background and let tap navigate
                 VStack(alignment: .leading, spacing: 8) {
                     // Author row
@@ -106,17 +139,20 @@ struct RecordEmbedView: View {
                                 if let image = state.image {
                                     image.resizable().aspectRatio(contentMode: .fill)
                                 } else {
-                                    Image(systemName: "person.circle.fill").foregroundStyle(.secondary)
+                                    avatarPlaceholder(size: 36)
                                 }
                             }
                             .pipeline(ImageLoadingManager.shared.pipeline)
                             .frame(width: 36, height: 36)
                             .clipShape(Circle())
+                        } else {
+                            avatarPlaceholder(size: 36)
                         }
                         VStack(alignment: .leading, spacing: 2) {
                             EmbeddedAuthorNameView(
                                 name: post.author.displayName ?? post.author.handle.description,
-                                verification: post.author.verification
+                                verification: post.author.verification,
+                                isAutomated: AutomationBadge.isSelfDeclared(labels: post.author.labels, authorDID: post.author.did)
                             )
                                 .appFont(AppTextRole.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
@@ -144,15 +180,13 @@ struct RecordEmbedView: View {
                     embeddedContent(for: post)
                 }
                 .contentShape(Rectangle())
-                .onTapGesture { path.append(NavigationDestination.post(post.uri)) }
+                .onTapGesture {
+                    guard !isReadOnlyPreview else { return }
+                    path.append(NavigationDestination.post(post.uri))
+                }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                )
+                .feedEmbedCardStyle()
                 .fixedSize(horizontal: false, vertical: true)
             } else {
                 Button {
@@ -171,20 +205,22 @@ struct RecordEmbedView: View {
                                             .resizable()
                                             .aspectRatio(contentMode: .fill)
                                     } else {
-                                        Image(systemName: "person.circle.fill")
-                                            .foregroundStyle(.secondary)
+                                        avatarPlaceholder(size: 20)
                                     }
                                 }
                                 .pipeline(ImageLoadingManager.shared.pipeline)
                                 .frame(width: 20, height: 20)
                                 .clipShape(Circle())
+                            } else {
+                                avatarPlaceholder(size: 20)
                             }
                             
                             PostHeaderView(
                                 displayName: post.author.displayName ?? post.author.handle.description,
                                 handle: post.author.handle.description,
                                 timeAgo: post.indexedAt.date,
-                                verificationKind: VerificationBadge.metadataKind(for: post.author.verification)
+                                verificationKind: VerificationBadge.metadataKind(for: post.author.verification),
+                                isAutomated: AutomationBadge.isSelfDeclared(labels: post.author.labels, authorDID: post.author.did)
                             )
                                 .textScale(.secondary)
                                 .foregroundStyle(.primary)
@@ -211,12 +247,7 @@ struct RecordEmbedView: View {
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                    )
+                    .feedEmbedCardStyle()
                 }
                 .buttonStyle(.plain)
                 // Use fixed sizing to prevent layout jumps
@@ -248,6 +279,7 @@ struct RecordEmbedView: View {
                             viewImages: imageView.images,
                             shouldBlur: false // ContentLabelManager handles blurring
                         )
+                        .modifier(ReadOnlyPostMediaModifier())
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
@@ -261,6 +293,7 @@ struct RecordEmbedView: View {
                             gallery: galleryView,
                             shouldBlur: false // ContentLabelManager handles blurring
                         )
+                        .modifier(ReadOnlyPostMediaModifier())
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
@@ -270,9 +303,8 @@ struct RecordEmbedView: View {
                         labels: post.labels, // Use the embedded post's labels, not parent
                         contentType: "link"
                     ) {
-                        ExternalEmbedView(
+                        PostExternalEmbedContent(
                             external: external.external,
-                            shouldBlur: false, // ContentLabelManager handles content decisions
                             postID: postID
                         )
                     }
@@ -283,17 +315,7 @@ struct RecordEmbedView: View {
                         labels: post.labels, // Use the embedded post's labels, not parent
                         contentType: "video"
                     ) {
-                        if let playerView = ModernVideoPlayerView(
-                            bskyVideo: video,
-                            postID: postID
-                        ) {
-                            playerView
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text("Unable to load video")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        PostVideoEmbedContent(video: video, postID: postID)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
@@ -312,7 +334,8 @@ struct RecordEmbedView: View {
                                 
                                 EmbeddedAuthorNameView(
                                     name: "Quoting @\(viewRecord.author.handle)",
-                                    verification: viewRecord.author.verification
+                                    verification: viewRecord.author.verification,
+                                    isAutomated: AutomationBadge.isSelfDeclared(labels: viewRecord.author.labels, authorDID: viewRecord.author.did)
                                 )
                                     .appFont(AppTextRole.caption)
                                     .fontWeight(.medium)
@@ -372,6 +395,7 @@ struct RecordEmbedView: View {
                                     viewImages: imagesView.images,
                                     shouldBlur: false // ContentLabelManager handles blurring
                                 )
+                                .modifier(ReadOnlyPostMediaModifier())
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
@@ -385,6 +409,7 @@ struct RecordEmbedView: View {
                                     gallery: galleryView,
                                     shouldBlur: false // ContentLabelManager handles blurring
                                 )
+                                .modifier(ReadOnlyPostMediaModifier())
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
@@ -394,9 +419,8 @@ struct RecordEmbedView: View {
                                 labels: post.labels, // Use the embedded post's labels, not parent
                                 contentType: "link"
                             ) {
-                                ExternalEmbedView(
+                                PostExternalEmbedContent(
                                     external: externalView.external,
-                                    shouldBlur: false, // ContentLabelManager handles content decisions
                                     postID: "\(postID)-embedded"
                                 )
                             }
@@ -407,17 +431,7 @@ struct RecordEmbedView: View {
                                 labels: post.labels, // Use the embedded post's labels, not parent
                                 contentType: "video"
                             ) {
-                                if let playerView = ModernVideoPlayerView(
-                                    bskyVideo: videoView,
-                                    postID: "\(postID)-embedded-\(videoView.cid)"
-                                ) {
-                                    playerView
-                                        .frame(maxWidth: .infinity)
-                                } else {
-                                    Text("Unable to load video")
-                                        .appFont(AppTextRole.caption)
-                                        .foregroundStyle(.secondary)
-                                }
+                                PostVideoEmbedContent(video: videoView, postID: "\(postID)-embedded-\(videoView.cid)")
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
@@ -445,8 +459,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .feedEmbedCardStyle()
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -470,8 +483,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .feedEmbedCardStyle()
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -496,9 +508,9 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .feedEmbedCardStyle()
         .onTapGesture {
+            guard !isReadOnlyPreview else { return }
             path.append(NavigationDestination.feed(generator.uri))
         }
         // Use fixed sizing to prevent layout jumps
@@ -525,9 +537,9 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .feedEmbedCardStyle()
         .onTapGesture {
+            guard !isReadOnlyPreview else { return }
             path.append(NavigationDestination.list(list.uri))
         }
         // Use fixed sizing to prevent layout jumps
@@ -541,8 +553,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .feedEmbedCardStyle()
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -551,4 +562,29 @@ struct RecordEmbedView: View {
     
     // Note: Content label handling is now managed by ContentLabelManager
     // which provides proper user preference integration and age-based restrictions
+
+    /// Matches the feed cell's no-avatar glyph.
+    private func avatarPlaceholder(size: CGFloat) -> some View {
+        Image(systemName: "person.crop.circle")
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(.gray)
+            .frame(width: size, height: size)
+    }
+}
+
+// MARK: - Embed Card Style
+
+extension View {
+    /// Shared chrome for quote, link and site cards so sibling embeds share one
+    /// radius, fill and hairline.
+    func feedEmbedCardStyle() -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return self
+            .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+            .clipShape(shape)
+            .overlay {
+                shape.strokeBorder(Color.gray.opacity(0.3), lineWidth: 1)
+            }
+    }
 }

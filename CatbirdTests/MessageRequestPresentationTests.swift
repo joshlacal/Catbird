@@ -212,7 +212,7 @@ struct MessageRequestsSheetContentTests {
     let controller = UIHostingController(rootView: MessageRequestsScreen(
       store: store, initialRoutes: [.detail("bsky:maya")], onAccepted: { _ in }, onClose: {}
     ).environment(appState))
-    let window = UIWindow(frame: UIScreen.main.bounds)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
     window.rootViewController = controller
     window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }

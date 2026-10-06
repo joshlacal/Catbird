@@ -28,7 +28,7 @@ struct UnblockProfileIntent: AppIntent {
         }
 
         guard let existingURI = view.viewer?.blocking else {
-            return .result(dialog: IntentDialog(stringLiteral: "You haven't blocked them."))
+            return .result(dialog: IntentDialog("You haven't blocked them."))
         }
         let rkey = try IntentRecordWriteSupport.recordKey(fromViewerURI: existingURI)
         let userDID = try await client.getDid()
@@ -41,7 +41,7 @@ struct UnblockProfileIntent: AppIntent {
         guard (200..<300).contains(responseCode) else {
             throw IntentError.httpError(responseCode)
         }
-        return .result(dialog: IntentDialog(stringLiteral: "Unblocked."))
+        return .result(dialog: IntentDialog("Unblocked."))
 
     }
 }

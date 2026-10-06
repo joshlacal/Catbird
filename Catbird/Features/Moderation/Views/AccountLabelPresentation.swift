@@ -8,6 +8,15 @@ struct AccountLabelPresentation {
   let description: String?
   let issuer: String
   let severity: Severity
+  /// The account applied this label to itself, so there is no labeler to name.
+  let isSelfApplied: Bool
+
+  /// "Issued by …" line, or a plain self-applied note instead of the account's raw DID.
+  var attribution: String {
+    isSelfApplied
+      ? String(localized: "Self-applied by this account")
+      : String(localized: "Issued by \(issuer)")
+  }
 
   init(
     label: ComAtprotoLabelDefs.Label,
@@ -24,6 +33,7 @@ struct AccountLabelPresentation {
     } else {
       issuer = label.src.didString()
     }
+    isSelfApplied = labeler == nil && ReportingService.subjectOwnerDID(label) == label.src.didString()
     switch definition?.severity {
     case "inform": severity = .information
     case "alert": severity = .warning
@@ -50,7 +60,10 @@ struct AccountLabelPresentation {
   ) -> [ComAtprotoLabelDefs.Label] {
     var seen = Set<String>()
     return labels.filter {
-      ReportingService.isLabelActive($0)
+      // `!no-unauthenticated` only asks apps to hide the account from signed-out
+      // viewers; it carries no information for a signed-in viewer.
+      $0.val != "!no-unauthenticated"
+        && ReportingService.isLabelActive($0)
         && ($0.uri.uriString() == subjectDID || $0.uri.uriString() == "at://\(subjectDID)/app.bsky.actor.profile/self")
         && ($0.src.didString() == subjectDID || subscribedIssuers.contains($0.src.didString()))
         && seen.insert($0.id).inserted

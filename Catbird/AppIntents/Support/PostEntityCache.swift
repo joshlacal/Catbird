@@ -23,6 +23,7 @@ struct PersistedPostEntity: Codable {
   var id: String
   var authorDisplayName: String?
   var authorHandle: String
+  var authorAvatar: URL?
   var likeCount: Int?
   var repostCount: Int?
   var replyCount: Int?
@@ -34,6 +35,7 @@ struct PersistedPostEntity: Codable {
     self.id = view.uri.uriString()
     self.authorDisplayName = view.author.displayName
     self.authorHandle = view.author.handle.value
+    self.authorAvatar = view.author.avatar?.url
     self.likeCount = view.likeCount
     self.repostCount = view.repostCount
     self.replyCount = view.replyCount
@@ -130,6 +132,7 @@ extension PostEntity {
     self.id = persisted.id
     self.authorDisplayName = persisted.authorDisplayName
     self.authorHandle = persisted.authorHandle
+    self.authorAvatar = persisted.authorAvatar
     self.likeCount = persisted.likeCount
     self.repostCount = persisted.repostCount
     self.replyCount = persisted.replyCount

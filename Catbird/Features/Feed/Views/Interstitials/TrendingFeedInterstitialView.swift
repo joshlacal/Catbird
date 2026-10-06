@@ -137,14 +137,14 @@ struct TrendingFeedContent: Equatable {
     var isEmpty: Bool { trends.isEmpty && videos.isEmpty }
 
     @MainActor
-    static func load(appState: AppState) async -> Self {
-        async let trends = loadTrends(appState: appState)
+    static func load(appState: AppState, displayScale: CGFloat) async -> Self {
+        async let trends = loadTrends(appState: appState, displayScale: displayScale)
         async let videos = loadVideos(appState: appState)
         return await Self(trends: trends, videos: videos)
     }
 
     @MainActor
-    private static func loadTrends(appState: AppState) async -> [AppBskyUnspeccedDefs.TrendView] {
+    private static func loadTrends(appState: AppState, displayScale: CGFloat) async -> [AppBskyUnspeccedDefs.TrendView] {
         guard appState.appSettings.showTrendingTopics, let client = appState.atProtoClient else {
             return []
         }
@@ -153,7 +153,7 @@ struct TrendingFeedContent: Equatable {
             let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
             guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
             let trends = output?.trends ?? []
-            appState.prefetchTopicPreviews(trends: trends, owner: .timeline)
+            appState.prefetchTopicPreviews(trends: trends, displayScale: displayScale, owner: .timeline)
             return trends
         } catch {
             return []
@@ -181,11 +181,12 @@ struct TrendingFeedContent: Equatable {
 
 private struct TrendingTimelinePreviewPrefetch: ViewModifier {
   @Environment(AppState.self) private var appState
+  @Environment(\.displayScale) private var displayScale
   let trends: [AppBskyUnspeccedDefs.TrendView]
 
   func body(content: Content) -> some View {
     content.task(id: appState.topicPreviewPrefetchIdentity(links: trends.map(\.link))) {
-      appState.prefetchTopicPreviews(trends: trends, owner: .timeline)
+      appState.prefetchTopicPreviews(trends: trends, displayScale: displayScale, owner: .timeline)
     }
   }
 }

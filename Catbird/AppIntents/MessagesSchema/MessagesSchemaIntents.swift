@@ -15,12 +15,13 @@ import Foundation
 import GeoToolbox
 import Petrel
 import LinkPresentation
+import UniformTypeIdentifiers
 
 @available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.draftMessage)
 struct CatbirdDraftMessageSchemaIntent {
   static var title: LocalizedStringResource = "Draft Catbird Message"
-  static var openAppWhenRun = true
+  static var supportedModes: IntentModes { .foreground }
 
   @Parameter(title: "Destination")
   var destination: CatbirdMessagesDestination?
@@ -31,10 +32,10 @@ struct CatbirdDraftMessageSchemaIntent {
   @Parameter(title: "Content")
   var content: AttributedString?
 
-  @Parameter(title: "Attachments", default: [], supportedTypeIdentifiers: ["public.item"])
+  @Parameter(title: "Attachments", default: [], supportedContentTypes: [.item])
   var attachments: [IntentFile]
 
-  @Parameter(title: "Audio Message", supportedTypeIdentifiers: ["public.audio"])
+  @Parameter(title: "Audio Message", supportedContentTypes: [.audio])
   var audioMessage: IntentFile?
 
   @Parameter(title: "Locations", default: [])
@@ -54,10 +55,8 @@ struct CatbirdDraftMessageSchemaIntent {
       draftText = draftText.isEmpty ? linkText : draftText + "\n" + linkText
     }
 
-    let unsupportedNote =
-      (!attachments.isEmpty || audioMessage != nil || !locations.isEmpty || scheduledDate != nil)
-      ? " Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over."
-      : ""
+    let droppedUnsupportedContent =
+      !attachments.isEmpty || audioMessage != nil || !locations.isEmpty || scheduledDate != nil
 
     // Capture identity and preserve the text before client resolution can
     // suspend. A known scene can never be replaced by a later focused window.
@@ -162,18 +161,23 @@ struct CatbirdDraftMessageSchemaIntent {
         })
     }
 
-    let message: String
+    let status: LocalizedStringResource
     switch result {
     case .delivered:
-      message = conversationID == nil
+      status = conversationID == nil
         ? "Pick a conversation in Catbird to start your draft."
         : "Draft started in Catbird."
     case .queued, .duplicate:
-      message = "Your draft is waiting for its Catbird window to become available."
+      status = "Your draft is waiting for its Catbird window to become available."
     case .dropped:
-      message = "Catbird couldn't open the intended window. Your draft text has been retained."
+      status = "Catbird couldn't open the intended window. Your draft text has been retained."
     }
-    return .result(dialog: IntentDialog(stringLiteral: message + unsupportedNote))
+    guard droppedUnsupportedContent else {
+      return .result(dialog: IntentDialog(status))
+    }
+    return .result(
+      dialog: IntentDialog(
+        "\(status) Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over."))
   }
 }
 
@@ -191,10 +195,10 @@ struct CatbirdSendMessageSchemaIntent {
   @Parameter(title: "Content")
   var content: AttributedString?
 
-  @Parameter(title: "Attachments", default: [], supportedTypeIdentifiers: ["public.item"])
+  @Parameter(title: "Attachments", default: [], supportedContentTypes: [.item])
   var attachments: [IntentFile]
 
-  @Parameter(title: "Audio Message", supportedTypeIdentifiers: ["public.audio"])
+  @Parameter(title: "Audio Message", supportedContentTypes: [.audio])
   var audioMessage: IntentFile?
 
   @Parameter(title: "Locations", default: [])
@@ -328,7 +332,7 @@ struct CatbirdSetMessageReadStatusSchemaIntent {
         input: ChatBskyConvoUpdateRead.Input(
           convoId: message.conversation.id, messageId: message.id)))
 
-    return .result(dialog: isRead ? "Marked read." : "Marked unread.")
+    return .result(dialog: "Marked read.")
   }
 }
 

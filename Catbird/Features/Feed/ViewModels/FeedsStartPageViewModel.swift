@@ -156,8 +156,8 @@ final class FeedsStartPageViewModel {
     }
     
     // Add system feeds
-    feedGeneratorDisplayNames["timeline"] = "Home Timeline"
-    feedGeneratorDisplayNames["following"] = "Following"
+    feedGeneratorDisplayNames["timeline"] = "Timeline"
+    feedGeneratorDisplayNames["following"] = "Timeline"
     
     // Update widget with current preferences
     FeedWidgetDataProvider.shared.updateSharedFeedPreferences(

@@ -13,12 +13,16 @@ import OSLog
 struct BookmarksView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.colorScheme) private var colorScheme
   @Environment(\.horizontalSizeClass) private var hSizeClass
   @Binding var path: NavigationPath
 
   private var contentMaxWidth: CGFloat {
-    hSizeClass == .compact ? .infinity : 600
+    #if os(macOS)
+    return 700
+    #else
+    return hSizeClass == .compact ? .infinity : 600
+    #endif
   }
   
   // State
@@ -32,7 +36,7 @@ struct BookmarksView: View {
   // Performance
   private let logger = Logger(subsystem: "blue.catbird", category: "BookmarksView")
   
-    private static let baseUnit: CGFloat = 3
+  private static let baseUnit: CGFloat = 3
 
   // MARK: - Body
   var body: some View {
@@ -59,14 +63,6 @@ struct BookmarksView: View {
     #if os(iOS)
     .navigationBarTitleDisplayMode(.large)
     #endif
-    .toolbar {
-      ToolbarItem(placement: .automatic) {
-        if isLoading {
-          ProgressView()
-            .scaleEffect(0.8)
-        }
-      }
-    }
     .task {
       await loadInitialBookmarks()
     }
@@ -78,114 +74,106 @@ struct BookmarksView: View {
   
   // MARK: - Empty State
   private var emptyStateView: some View {
-    VStack(spacing: 24) {
-      Image(systemName: "bookmark.fill")
-        .font(.system(size: 64))
-        .foregroundColor(.secondary)
-      
-      VStack(spacing: 8) {
-        Text("No Bookmarks")
-          .appFont(AppTextRole.title2)
-          .fontWeight(.semibold)
-        
-        Text("Posts you bookmark will appear here.")
-          .appFont(AppTextRole.body)
-          .foregroundColor(.secondary)
-          .multilineTextAlignment(.center)
-      }
+    ContentUnavailableView {
+      Label("No Bookmarks", systemImage: "bookmark")
+    } description: {
+      Text("Tap the bookmark button on any post to save it here for later.")
     }
-    .padding()
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
   // MARK: - Bookmarks List
   private var bookmarksListView: some View {
     List {
-      ForEach(Array(bookmarks.enumerated()), id: \.element.subject.uri) { _, bookmarkView in
+      ForEach(bookmarks, id: \.subject.uri) { bookmarkView in
         bookmarkRowView(bookmarkView)
-              .listRowBackground(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
-
-          // Hide only the very top separator
+          .listRowInsets(EdgeInsets())
+          .listRowSeparator(.hidden)
+          .listRowBackground(Color.clear)
+          .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+              Task { await removeBookmark(bookmarkView) }
+            } label: {
+              Label("Remove Bookmark", systemImage: "bookmark.slash")
+            }
+          }
       }
       
       // Load more content
-      if hasMoreContent && !bookmarks.isEmpty && !isLoading {
-        HStack {
-          Spacer()
-          ProgressView()
-            .scaleEffect(0.8)
-          Spacer()
-        }
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
-
-        .task {
-          await loadMoreBookmarks()
-        }
+      if hasMoreContent && !isLoading {
+        ProgressView()
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, BookmarksView.baseUnit * 6)
+          .listRowInsets(EdgeInsets())
+          .listRowSeparator(.hidden)
+          .listRowBackground(Color.clear)
+          .task {
+            await loadMoreBookmarks()
+          }
       }
     }
-    .listRowInsets(EdgeInsets()) 
     .listStyle(.plain)
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+    .listSectionSeparator(.hidden)
+    .scrollContentBackground(.hidden)
+    .environment(\.defaultMinListRowHeight, 0)
   }
   
   // MARK: - Bookmark Row
+  /// Matches the main feed: the same post component, spacing, and full-width hairline divider.
   @ViewBuilder
   private func bookmarkRowView(_ bookmarkView: AppBskyBookmarkDefs.BookmarkView) -> some View {
-    switch bookmarkView.item {
-    case .appBskyFeedDefsPostView(let postView):
-      PostView(
-        post: postView,
-        grandparentAuthor: nil,
-        isParentPost: false,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .padding(.top, BookmarksView.baseUnit * 3)
-      .padding(.horizontal, BookmarksView.baseUnit * 1.5)
-      .fixedSize(horizontal: false, vertical: true)
-      .contentShape(Rectangle())
-      .allowsHitTesting(true)
-      .frame(maxWidth: contentMaxWidth, alignment: .center)
-      .frame(maxWidth: .infinity, alignment: .center)
-      .onTapGesture { path.append(NavigationDestination.post(postView.uri)) }
-      .alignmentGuide(.listRowSeparatorLeading) { _ in 0}
-      .alignmentGuide(.listRowSeparatorTrailing) { d in d.width}
-      .listRowSeparator(.visible)
-      .listRowInsets(EdgeInsets())
+    VStack(spacing: 0) {
+      switch bookmarkView.item {
+      case .appBskyFeedDefsPostView(let postView):
+        EnhancedFeedPost(
+          feedViewPost: AppBskyFeedDefs.FeedViewPost(post: postView),
+          path: $path
+        )
 
-    case .appBskyFeedDefsBlockedPost(let blocked):
-      BlockedContentCard(
-        relationship: BlockRelationship(blockedPost: blocked),
-        authorDid: blocked.author.did.didString(),
-        postUri: blocked.uri,
-        variant: .feed,
-        path: $path
-      )
-      .padding(.top, BookmarksView.baseUnit * 3)
-      .padding(.horizontal, BookmarksView.baseUnit * 1.5)
-      .listRowSeparator(.hidden)
-      .listRowInsets(EdgeInsets())
+      case .appBskyFeedDefsBlockedPost(let blocked):
+        BlockedContentCard(
+          relationship: BlockRelationship(blockedPost: blocked),
+          authorDid: blocked.author.did.didString(),
+          postUri: blocked.uri,
+          variant: .feed,
+          path: $path
+        )
+        .padding(.vertical, BookmarksView.baseUnit * 3)
+        .padding(.horizontal, BookmarksView.baseUnit * 4)
+        .frame(maxWidth: contentMaxWidth)
+        .frame(maxWidth: .infinity)
 
-    case .appBskyFeedDefsNotFoundPost:
-      VStack {
-        HStack {
-          Image(systemName: "exclamationmark.triangle")
-            .foregroundColor(.orange)
-          Text("Post unavailable")
-            .foregroundColor(.secondary)
-          Spacer()
-        }
-        .padding()
+      case .appBskyFeedDefsNotFoundPost:
+        unavailablePostRow
+
+      case .unexpected:
+        unavailablePostRow
       }
-      .background(Color.secondary.opacity(0.1))
-      .cornerRadius(8)
-      .listRowSeparator(.hidden)
 
-    case .unexpected:
-      EmptyView()
-}
+      Rectangle()
+        .fill(Color.separator)
+        .frame(height: 0.5)
+    }
+  }
+
+  private var unavailablePostRow: some View {
+    HStack(spacing: BookmarksView.baseUnit * 3) {
+      Image(systemName: "exclamationmark.triangle")
+        .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Post unavailable")
+          .appFont(AppTextRole.subheadline.weight(.semibold))
+        Text("It may have been deleted. Swipe to remove this bookmark.")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer(minLength: 0)
+    }
+    .padding(.vertical, BookmarksView.baseUnit * 4)
+    .padding(.horizontal, BookmarksView.baseUnit * 5)
+    .frame(maxWidth: contentMaxWidth)
+    .frame(maxWidth: .infinity)
+    .accessibilityElement(children: .combine)
   }
   
   // MARK: - Data Loading
@@ -284,6 +272,28 @@ struct BookmarksView: View {
       }
       showFailureToast(for: error, action: "load more bookmarks")
       logger.error("Failed to load more bookmarks: \(error)")
+    }
+  }
+
+  /// Removes a bookmark optimistically, restoring the row if the request fails.
+  private func removeBookmark(_ bookmarkView: AppBskyBookmarkDefs.BookmarkView) async {
+    guard let client = appState.atProtoClient,
+          let index = bookmarks.firstIndex(where: { $0.subject.uri == bookmarkView.subject.uri })
+    else { return }
+
+    let postUri = bookmarkView.subject.uri
+    let postUriString = postUri.uriString()
+    withAnimation { _ = bookmarks.remove(at: index) }
+    await appState.postShadowManager.setBookmarked(postUri: postUriString, isBookmarked: false)
+
+    do {
+      try await appState.bookmarksManager.deleteBookmark(postUri: postUri, client: client)
+      appState.toastManager.show(ToastItem(message: "Bookmark removed", icon: "bookmark"))
+    } catch {
+      withAnimation { bookmarks.insert(bookmarkView, at: min(index, bookmarks.count)) }
+      await appState.postShadowManager.setBookmarked(postUri: postUriString, isBookmarked: true)
+      showFailureToast(for: error, action: "remove this bookmark")
+      logger.error("Failed to remove bookmark: \(error)")
     }
   }
 

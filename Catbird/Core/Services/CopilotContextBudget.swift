@@ -8,24 +8,24 @@ struct CopilotHistorySelection: Sendable {
 }
 
 enum CopilotContextBudget {
-    private struct TurnPair {
+    struct TurnPair: Encodable {
         let user: CopilotStoredTurn
-        let assistant: CopilotStoredTurn
+        let previousAssistantAnswer: CopilotStoredTurn
+        let assistantTextStatus = "Previous answer, not factual evidence."
     }
 
     static let maximumTokens: Int = 8192
 
-    private static func format(_ pairs: [TurnPair]) -> String {
-        pairs.map { "User: \($0.user.text)\nAssistant: \($0.assistant.text)" }
-            .joined(separator: "\n")
-    }
-
     static func formatHistory(turns: [CopilotStoredTurn]) -> String {
-        format(extractPairs(from: turns))
+        CopilotPrompt.sourceJSON(extractPairs(from: turns))
     }
 
-    private static func extractPairs(from turns: [CopilotStoredTurn]) -> [TurnPair] {
-        let sortedTurns = turns.sorted { $0.createdAt < $1.createdAt }
+    static func extractPairs(from turns: [CopilotStoredTurn]) -> [TurnPair] {
+        // Keep persisted order when timestamps are equal, so a pair cannot be split.
+        let sortedTurns = turns.enumerated().sorted {
+            if $0.element.createdAt == $1.element.createdAt { return $0.offset < $1.offset }
+            return $0.element.createdAt < $1.element.createdAt
+        }.map(\.element)
         var pairs: [TurnPair] = []
         var index = 0
 
@@ -33,7 +33,7 @@ enum CopilotContextBudget {
             let user = sortedTurns[index]
             let assistant = sortedTurns[index + 1]
             if user.role == .user && assistant.role == .assistant {
-                pairs.append(TurnPair(user: user, assistant: assistant))
+                pairs.append(TurnPair(user: user, previousAssistantAnswer: assistant))
                 index += 2
             } else {
                 index += 1
@@ -48,9 +48,11 @@ enum CopilotContextBudget {
         reservedTokenCount: Int,
         candidateTokenCount: ([CopilotStoredTurn]) async throws -> Int
     ) async throws -> CopilotHistorySelection {
+        try Task.checkCancellation()
         let tokenLimit = min(modelContextSize, maximumTokens)
 
         let baseCandidateTokens = try await candidateTokenCount([])
+        try Task.checkCancellation()
         guard reservedTokenCount + baseCandidateTokens <= tokenLimit else {
             return CopilotHistorySelection(
                 tokenLimit: tokenLimit,
@@ -65,8 +67,10 @@ enum CopilotContextBudget {
 
         if !pairs.isEmpty {
             for count in 1...pairs.count {
-                let candidateTurns = pairs.suffix(count).flatMap { [$0.user, $0.assistant] }
+                try Task.checkCancellation()
+                let candidateTurns = pairs.suffix(count).flatMap { [$0.user, $0.previousAssistantAnswer] }
                 let candidateCost = try await candidateTokenCount(candidateTurns)
+                try Task.checkCancellation()
                 if reservedTokenCount + candidateCost <= tokenLimit {
                     bestTurns = candidateTurns
                 } else {
@@ -81,6 +85,23 @@ enum CopilotContextBudget {
             fits: true,
             retainedTurns: bestTurns,
             removedTurnCount: removedTurnCount
+        )
+    }
+
+    /// Before model token counting is available, bound the supplied text by UTF-8 bytes.
+    /// The turn runner supplies history only; this is not a full-session token preflight.
+    /// Callers supplying a whole prompt must also reserve instructions and tool/output space.
+    static func selectLegacyHistory(
+        turns: [CopilotStoredTurn],
+        modelContextSize: Int,
+        reservedTokenCount: Int,
+        candidatePrompt: ([CopilotStoredTurn]) -> String
+    ) async throws -> CopilotHistorySelection {
+        try await selectHistory(
+            turns: turns,
+            modelContextSize: modelContextSize,
+            reservedTokenCount: reservedTokenCount,
+            candidateTokenCount: { candidatePrompt($0).utf8.count }
         )
     }
 }

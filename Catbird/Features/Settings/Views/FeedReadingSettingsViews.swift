@@ -57,7 +57,7 @@ struct MediaLinksSettingsView: View {
         )).settingsControl(.init(rawValue: "media.embeddedPlayers"))
           .disabled(!appState.appSettings.canEditPersistedSettings)
         NavigationLink { ExternalMediaPreferencesView() } label: {
-          SettingsNavigationRow(title: "External Media Permissions", summary: "Ask, allow or block each provider", systemImage: "hand.raised", family: .media)
+          SettingsNavigationRow(title: "External Media Permissions", summary: "Ask, allow or block each provider", systemImage: "play.rectangle", family: .media)
         }.settingsControl(.init(rawValue: "media.providerPermissions"))
       } header: { Text("External Media") } footer: {
         Text("Embedded players connect to third-party providers. Provider permissions are separate from video autoplay.")

@@ -313,14 +313,15 @@ struct ViewImageGridView: View {
 
   @ViewBuilder
   private func singleImageLayout(_ viewImage: AppBskyEmbedImages.ViewImage) -> some View {
-    // Use a more consistent aspect ratio with maximum height to avoid large layout jumps
-    let aspectRatio =
-      viewImage.aspectRatio.map { CGFloat($0.width) / CGFloat($0.height) } ?? (16 / 9)
-    let maxHeight: CGFloat = 800  // Maximum height for any image
+    // Tall images center-crop to 3:4 so a single post cannot fill the screen
+    let rawRatio: CGFloat = viewImage.aspectRatio.flatMap { ratio -> CGFloat? in
+      guard ratio.width > 0, ratio.height > 0 else { return nil }
+      return CGFloat(ratio.width) / CGFloat(ratio.height)
+    } ?? (16 / 9)
+    let aspectRatio = max(rawRatio, 0.75)
 
     GeometryReader { geometry in
-      let calculatedHeight = geometry.size.width / aspectRatio
-      let height = min(calculatedHeight, maxHeight)  // Limit height
+      let height = geometry.size.width / aspectRatio
 
       ZStack {
         RoundedRectangle(cornerRadius: 10)
@@ -382,7 +383,6 @@ struct ViewImageGridView: View {
       .accessibilityHint(imageAccessibilityHint)
     }
     .aspectRatio(aspectRatio, contentMode: .fit)
-    .frame(maxHeight: maxHeight)
   }
 
   @ViewBuilder

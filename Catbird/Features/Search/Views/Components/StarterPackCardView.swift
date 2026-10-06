@@ -43,7 +43,8 @@ struct StarterPackCardView: View {
                         
                         EmbeddedAuthorNameView(
                             name: "By @\(starterPack.creator.handle)",
-                            verification: starterPack.creator.verification
+                            verification: starterPack.creator.verification,
+                            isAutomated: AutomationBadge.isSelfDeclared(labels: starterPack.creator.labels, authorDID: starterPack.creator.did)
                         )
                             .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)

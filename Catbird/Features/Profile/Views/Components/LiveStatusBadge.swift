@@ -27,6 +27,7 @@ struct LiveStatusBadge: View {
   let embedURL: URL?
 
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
 
   init(embedURL: URL? = nil) {
     self.embedURL = embedURL
@@ -60,7 +61,7 @@ struct LiveStatusBadge: View {
       .padding(.vertical, 2)
       .background(Capsule().fill(Color.red))
       .padding(DesignTokens.Size.borderBold)
-      .background(Capsule().fill(Color.systemBackground))
+      .background(Capsule().fill(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)))
       .contentShape(Capsule())
   }
 }

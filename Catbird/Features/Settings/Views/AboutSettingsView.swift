@@ -51,6 +51,10 @@ struct AboutSettingsView: View {
                     "Privacy Policy",
                     destination: LegalConfig.privacyPolicyURL ?? URL(string: "https://bsky.social/about/support/privacy-policy")!
                 )
+                externalLinkRow(
+                    "Safety & Community Guidelines",
+                    destination: CommunityStandards.communityGuidelinesURL
+                )
             }
 
             Section("Status") {

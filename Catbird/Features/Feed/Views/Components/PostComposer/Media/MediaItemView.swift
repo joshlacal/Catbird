@@ -15,6 +15,7 @@ struct MediaItemView: View {
     let onEditAlt: () -> Void
     let onEditImage: (() -> Void)?
     let isVideo: Bool
+    let onRetry: (() -> Void)?
 
     // Dimensions for thumbnails
     private let size: CGFloat = 100
@@ -24,13 +25,15 @@ struct MediaItemView: View {
       onRemove: @escaping () -> Void,
       onEditAlt: @escaping () -> Void,
       onEditImage: (() -> Void)? = nil,
-      isVideo: Bool = false
+      isVideo: Bool = false,
+      onRetry: (() -> Void)? = nil
     ) {
         self.item = item
         self.onRemove = onRemove
         self.onEditAlt = onEditAlt
         self.onEditImage = onEditImage
         self.isVideo = isVideo
+        self.onRetry = onRetry
     }
     
     var body: some View {
@@ -51,8 +54,21 @@ struct MediaItemView: View {
                                 .shadow(radius: 2)
                         }
                     }
-                } else {
+                } else if item.isLoading {
                     ProgressView()
+                        .accessibilityLabel("Loading media")
+                } else {
+                    VStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle")
+                        Text("Preview unavailable")
+                            .appFont(AppTextRole.caption2)
+                            .multilineTextAlignment(.center)
+                        if item.canRetryLoading, let onRetry {
+                            Button("Retry", action: onRetry)
+                                .appFont(AppTextRole.caption)
+                        }
+                    }
+                    .padding(.horizontal, 6)
                 }
             }
             .frame(width: size, height: size)
@@ -95,10 +111,7 @@ struct MediaItemView: View {
                 HStack {
                     Spacer()
                     Button(action: onRemove) {
-                        Image(systemName: "xmark.circle.fill")
-                            .appFont(size: 20)
-                            .foregroundStyle(.white, Color(platformColor: PlatformColor.platformSystemGray3))
-                            .background(Circle().fill(Color.black.opacity(0.3)))
+                        ComposerAttachmentRemoveLabel()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(isVideo ? "Remove Video" : "Remove Image")
@@ -107,6 +120,7 @@ struct MediaItemView: View {
             }
             .padding(4)
             
+            if item.image != nil {
             // Alt text status indicator
             VStack {
                 Spacer()
@@ -124,19 +138,53 @@ struct MediaItemView: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
+                        .modifier(MediaAltBadgeBackground())
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel(item.altText.isEmpty ? "Add description" : "Edit description")
                 }
                 .padding(6)
+            }
             }
         }
         .frame(width: size, height: size)
         .contentShape(Rectangle())
         .onTapGesture {
             // Tap on the image opens the alt text editor
-            onEditAlt()
+            if item.image != nil { onEditAlt() }
+        }
+    }
+}
+
+/// The remove control drawn over composer media, matching the glass edit button on iOS 26.
+struct ComposerAttachmentRemoveLabel: View {
+    var body: some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            Image(systemName: "xmark")
+                .appFont(size: 11, weight: .bold)
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+                .glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            Image(systemName: "xmark.circle.fill")
+                .appFont(size: 20)
+                .foregroundStyle(.white, Color(platformColor: PlatformColor.platformSystemGray3))
+                .background(Circle().fill(Color.black.opacity(0.3)))
+        }
+    }
+}
+
+private struct MediaAltBadgeBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content
+                .foregroundStyle(.white)
+                .glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            content
+                .foregroundStyle(.primary)
+                .background(.ultraThinMaterial, in: Capsule())
         }
     }
 }

@@ -1276,17 +1276,10 @@ private extension CatbirdApp {
         if shouldShowContentForAuthenticatedState,
            let context = scene.context, !context.isInvalidated,
            context.accountDID == appState.userDID {
-          if CommunityStandards.shared.requiresAgreement(for: appState.userDID) {
-            // One-time, per-account agreement before any posts are shown (App Review 1.2).
-            CommunityStandardsAgreementView(appState: appState)
-              .applyAppStateEnvironment(appState)
-              .environment(appStateManager)
-          } else {
-            SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
-              ContentView()
-            }
-            .id(context.activityRegistrationID)
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            ContentView()
           }
+          .id(context.activityRegistrationID)
         } else {
           LoadingView()  // For biometric check
         }
@@ -1403,6 +1396,7 @@ private extension CatbirdApp {
     let otherScenesActive = false
     #endif
     let isLeavingForeground = (newPhase == .inactive || newPhase == .background)
+    CopilotAvailability.setApplicationActive(newPhase == .active || otherScenesActive)
 
     if otherScenesActive && isLeavingForeground {
       logger.info("Scene transitioned to \(String(describing: newPhase)), but other connected scenes remain active in foreground. Preserving process-wide database connections.")
@@ -1584,23 +1578,26 @@ private extension CatbirdApp {
     return authenticated  // Show content only if biometric passed
   }
 
+  /// Picks up exactly where the launch screen leaves off: the same 250pt
+  /// `LaunchIcon`, centered on the system background, with progress below it,
+  /// so a cold launch doesn't jump to a smaller icon.
   struct LoadingView: View {
+    private static let launchIconSize: CGFloat = 250
+
     var body: some View {
-      VStack(spacing: 20) {
-        Image("CatbirdIcon")
-          .resizable()
-          .frame(width: 80, height: 80)
-          .cornerRadius(16)
-
-        ProgressView()
-          .scaleEffect(1.5)
-
-        Text("Loading…")
-          .font(.headline)
-          .foregroundColor(.secondary)
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.systemBackground)
+      Image("LaunchIcon")
+        .accessibilityHidden(true)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+          VStack(spacing: 12) {
+            ProgressView()
+            Text("Loading…")
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          }
+          .offset(y: Self.launchIconSize / 2 + 48)
+        }
+        .background(Color.systemBackground)
     }
   }
 

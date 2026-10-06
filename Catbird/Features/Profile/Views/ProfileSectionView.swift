@@ -35,6 +35,7 @@ struct ProfileSectionView: View {
             }
         }
         .navigationTitle(tab.title)
+        .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .task {
             // Load once; returning from a pushed list or post shouldn't reload and flash a spinner.
             guard !hasLoaded else { return }
@@ -60,10 +61,12 @@ struct ProfileSectionView: View {
         do {
             try await refreshContent()
         } catch {
-            if !(error is CancellationError) {
-                loadError = error
-            }
+            // A load cancelled because the view went away stays unloaded, so the
+            // next appearance loads again instead of showing an empty section.
+            guard !Task.isCancelled else { return }
+            loadError = error
         }
+        guard !Task.isCancelled else { return }
 
         hasLoaded = true
         isInitialLoading = false
@@ -88,21 +91,25 @@ struct ProfileSectionView: View {
     @ViewBuilder
     private var contentForTab: some View {
         List {
-            switch tab {
-            case .likes:
-                likesList
-            case .lists:
-                listsList
-            case .starterPacks:
-                starterPacksList
-            case .feeds:
-                feedsList
-            default:
-                Text("Content not available")
-                    .padding()
+            Group {
+                switch tab {
+                case .likes:
+                    likesList
+                case .lists:
+                    listsList
+                case .starterPacks:
+                    starterPacksList
+                case .feeds:
+                    feedsList
+                default:
+                    Text("Content not available")
+                        .padding()
+                }
             }
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .navigationTitle(tab.title)
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
@@ -198,9 +205,10 @@ struct ProfileSectionView: View {
           path.append(NavigationDestination.listFeed(list.uri))
         } label: {
           ListRow(list: list)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .listRowSeparator(list.uri == viewModel.lists.first?.uri ? .hidden : .automatic, edges: .top)
 
         // Load more when reaching the end
         if list == viewModel.lists.last && viewModel.hasMoreLists {
@@ -333,7 +341,7 @@ struct ProfileSectionView: View {
     VStack(spacing: 16) {
       Spacer()
 
-      Image(systemName: "square.stack.3d.up.slash")
+      Image(systemName: tab.systemImage)
         .appFont(size: 48)
         .foregroundColor(.secondary)
 
@@ -349,6 +357,7 @@ struct ProfileSectionView: View {
       Spacer()
     }
     .frame(maxWidth: .infinity, minHeight: 300)
+    .listRowSeparator(.hidden)
   }
 }
 
@@ -359,10 +368,15 @@ struct ProfileSectionHostView: View {
     @Binding var path: NavigationPath
     @State private var viewModel: ProfileViewModel
 
-    init(did: String, tab: ProfileTab, appState: AppState, path: Binding<NavigationPath>) {
+    /// - Parameter loadedViewModel: The presenting profile's view model, reused only when
+    ///   its profile has already loaded; otherwise this view loads the profile itself.
+    init(
+        did: String, tab: ProfileTab, appState: AppState, path: Binding<NavigationPath>,
+        loadedViewModel: ProfileViewModel? = nil
+    ) {
         self.tab = tab
         self._path = path
-        self._viewModel = State(initialValue: ProfileViewModel(
+        self._viewModel = State(initialValue: loadedViewModel ?? ProfileViewModel(
             client: appState.atProtoClient,
             userDID: did,
             currentUserDID: appState.userDID

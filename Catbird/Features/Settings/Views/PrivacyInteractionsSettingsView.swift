@@ -18,7 +18,7 @@ struct PrivacyInteractionsSettingsView: View {
                 SettingsLink(screen: .visibility, summary: "Signed-out visitors, recommendation requests, repost credit", systemImage: "eye", family: .privacy)
             }
             Section("Connected Content") {
-                SettingsLink(screen: .externalMedia, summary: "The same provider permissions used in Media & Links", systemImage: "play.rectangle", family: .media)
+                SettingsLink(screen: .externalMedia, summary: "Choose which external services can play media", systemImage: "play.rectangle", family: .media)
             }
             Section("People") {
                 SettingsLink(screen: .mutedAccounts, systemImage: "speaker.slash", family: .moderation)

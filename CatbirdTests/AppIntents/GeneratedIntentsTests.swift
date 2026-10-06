@@ -223,19 +223,26 @@ struct GeneratedIntentsTests {
   @Suite("PostEntity DisplayRepresentation")
   struct PostEntityDisplayRepresentationTests {
 
-    @Test("Title is the post text when the record decodes")
-    func titleUsesText() throws {
-      let entity = PostEntity(from: try Fixture.postView(text: "Hello Bluesky"))
+    @Test("Title is the author, subtitle the post text, image the author's avatar")
+    func titleIsAuthorSubtitleIsText() throws {
+      let avatar: URI = "https://cdn.bsky.app/img/avatar/plain/author.jpg"
+      let author = try Fixture.profileViewBasic(avatar: avatar)
+      let entity = PostEntity(from: try Fixture.postView(author: author, text: "Hello Bluesky"))
+      let rep = entity.displayRepresentation
       #expect(entity.text == "Hello Bluesky")
-      #expect(String(localized: entity.displayRepresentation.title) == "Hello Bluesky")
-      #expect(entity.displayRepresentation.subtitle.map { String(localized: $0) } == "author.bsky.social")
+      #expect(String(localized: rep.title) == "Author Name")
+      #expect(rep.subtitle.map { String(localized: $0) } == "Hello Bluesky")
+      #expect(rep.image == avatar.url.map { DisplayRepresentation.Image(url: $0) })
     }
 
-    @Test("Title falls back to the author handle for opaque records")
+    @Test("Title falls back to the author handle without a display name")
     func titleFallsBackToHandle() throws {
-      let entity = PostEntity(from: try Fixture.postView(text: nil))
+      let author = try Fixture.profileViewBasic(displayName: nil)
+      let entity = PostEntity(from: try Fixture.postView(author: author, text: nil))
       #expect(entity.text == nil)
       #expect(String(localized: entity.displayRepresentation.title) == "author.bsky.social")
+      #expect(entity.displayRepresentation.subtitle == nil)
+      #expect(entity.displayRepresentation.image == nil)
     }
 
     @Test("Counts and rkey project from the view")
@@ -418,7 +425,9 @@ struct GeneratedIntentsTests {
       #expect(set.textContent == "Searchable words")
       #expect(set.contentDescription == "Searchable words")
       #expect(set.authorNames == ["Author Name"])
-      #expect(set.title == "Searchable words")  // merged from defaultAttributeSet
+      #expect(set.title == "Author Name")
+      #expect(set.keywords == ["author.bsky.social", "Author Name"])
+      #expect(set.url?.absoluteString == "https://bsky.app/profile/author.bsky.social/post/abc123")
     }
 
     @Test("webURL is the bsky.app permalink")

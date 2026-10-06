@@ -239,6 +239,7 @@ enum MessagesSchemaRuntime {
     CatbirdMessagesPersonEntity(
       id: member.did,
       displayName: directory.name(for: member),
+      handle: directory.handle(for: member),
       isMe: member.did == directory.currentUserDID
     )
   }

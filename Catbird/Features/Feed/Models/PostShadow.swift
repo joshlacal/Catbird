@@ -211,6 +211,15 @@ actor PostShadowManager {
                 shadow.decideLike(nil)
             }
         }
+        if isLiked { donateEngagementToSpotlight(postUri: postUri) }
+    }
+
+    /// Makes a post the account just liked, reposted, or bookmarked findable in
+    /// Spotlight.
+    private func donateEngagementToSpotlight(postUri: String) {
+        Task {
+            await SpotlightEntityDonator.shared.donateEngagement(postURI: postUri)
+        }
     }
     
     
@@ -241,6 +250,7 @@ actor PostShadowManager {
                 shadow.decideRepost(nil)
             }
         }
+        if isReposted { donateEngagementToSpotlight(postUri: postUri) }
     }
     
     
@@ -265,6 +275,7 @@ actor PostShadowManager {
         updateShadow(forUri: postUri) { shadow in
             shadow.bookmarked = isBookmarked
         }
+        if isBookmarked { donateEngagementToSpotlight(postUri: postUri) }
     }
     
     // MARK: - Shadow Application

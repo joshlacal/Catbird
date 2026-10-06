@@ -19,61 +19,50 @@ extension PostComposerViewModel {
     
     @MainActor
     func addMediaItems(_ items: [PhotosPickerItem]) async {
-        logger.info("PostComposerMedia: addMediaItems called with \(items.count) items")
-        
-        // Clear selected GIF when adding other media
-        if selectedGif != nil {
-            logger.debug("PostComposerMedia: Clearing existing GIF selection")
-            selectedGif = nil
-        }
-        
-        // Check each item for GIFs before processing as regular images
-        for (index, item) in items.enumerated() {
-            logger.debug("PostComposerMedia: Checking item \(index + 1)/\(items.count) for GIF content")
-            
-            if let data = try? await item.loadTransferable(type: Data.self) {
-                logger.debug("PostComposerMedia: Loaded data for item \(index + 1) - size: \(data.count) bytes")
-                
-                if isDataAnimatedGIF(data) {
-                    logger.info("PostComposerMedia: Item \(index + 1) is an animated GIF - converting to video")
-                    // Clear other media when adding GIF
-                    mediaItems.removeAll()
-                    await processGIFAsVideoFromData(data)
-                    syncMediaStateToCurrentThread()
-                    return
-                } else {
-                    logger.trace("PostComposerMedia: Item \(index + 1) is not an animated GIF")
-                }
-            }
-        }
-        
-        // If no GIFs found, process as regular images
-        logger.info("PostComposerMedia: No animated GIFs found, processing \(items.count) items as regular images")
-        
-        // Clear video when adding images
-        videoItem = nil
-        
-        let availableSlots = maxImagesAllowed - mediaItems.count
-        guard availableSlots > 0 else { return }
+      let context = mediaLoadContext()
+      guard ownsMediaLoad(context) else { return }
+      guard videoItem == nil, selectedGif == nil else {
+        alertItem = AlertItem(title: "One Kind of Media per Post",
+          message: "Remove the existing video or GIF before adding images.")
+        return
+      }
+      let availableSlots = max(0, maxImagesAllowed - mediaItems.count)
+      guard availableSlots > 0 else { return }
+      let newMediaItems = items.prefix(availableSlots).map { MediaItem(pickerItem: $0) }
+      mediaItems.append(contentsOf: newMediaItems)
+      syncMediaStateToCurrentThread()
+      saveDraftIfNeeded()
 
-        let itemsToAdd = items.prefix(availableSlots)
-        let newMediaItems = itemsToAdd.map { MediaItem(pickerItem: $0) }
-
-        mediaItems.append(contentsOf: newMediaItems)
-
-        // Load each image asynchronously using IDs to avoid index invalidation
-        let itemsToLoad = mediaItems.filter { $0.image == nil }.map { $0.id }
-        for itemId in itemsToLoad {
-            await loadImageForItem(withId: itemId)
+      // Show all placeholders before starting their single transfer. Each loader has its own
+      // deadline, so this group never waits for an uncooperative Photos operation itself.
+      await withTaskGroup(of: Void.self) { group in
+        for id in newMediaItems.map(\.id) {
+          let attempt = mediaPreviewLoads.begin(for: id)
+          group.addTask { @MainActor [weak self] in
+            await self?.loadImageForItem(withId: id, context: context, attempt: attempt)
+          }
         }
-        
-        // Sync media state to current thread
+      }
+      guard !Task.isCancelled, ownsMediaLoad(context) else { return }
+      syncMediaStateToCurrentThread()
+      saveDraftIfNeeded()
+    }
+
+    @MainActor
+    func retryMediaLoading(withId id: UUID) async {
+        let context = mediaLoadContext()
+        if let item = videoItem, item.id == id {
+            guard !item.isLoading else { return }
+            await loadVideoThumbnail(for: item)
+        } else {
+            guard let item = mediaItems.first(where: { $0.id == id }), !item.isLoading else { return }
+            await loadImageForItem(withId: id)
+        }
+        guard !Task.isCancelled, ownsMediaLoad(context) else { return }
         syncMediaStateToCurrentThread()
-        
-        // Save draft after adding media
         saveDraftIfNeeded()
     }
-    
+
     // MARK: - Media State Synchronization
     
     func syncMediaStateToCurrentThread() {
@@ -84,108 +73,103 @@ extension PostComposerViewModel {
         }
     }
 
+    func ownsMediaPreviewLoad(
+      _ attempt: MediaPreviewLoadAttempt, for id: UUID, context: MediaLoadContext
+    ) -> Bool {
+      !Task.isCancelled && mediaPreviewLoads.owns(attempt, for: id) && ownsMediaLoad(context)
+    }
+
     @MainActor
-    private func loadImageForItem(withId id: UUID) async {
-        guard let index = mediaItems.firstIndex(where: { $0.id == id }) else {
-            logger.warning("PostComposerMedia: loadImageForItem - item with id \(id) not found")
-            return
+    func loadImageForItem(
+      withId id: UUID, context suppliedContext: MediaLoadContext? = nil,
+      attempt suppliedAttempt: MediaPreviewLoadAttempt? = nil
+    ) async {
+      let context = suppliedContext ?? mediaLoadContext()
+      let attempt = suppliedAttempt ?? mediaPreviewLoads.begin(for: id)
+      defer {
+        if mediaPreviewLoads.finish(attempt, for: id) {
+          finishMediaLoad(withId: id, context: context)
+        }
+      }
+      guard ownsMediaPreviewLoad(attempt, for: id, context: context),
+            let index = mediaItems.firstIndex(where: { $0.id == id }) else { return }
+      let item = mediaItems[index]
+      mediaItems[index].isLoading = true
+
+      do {
+        let data: Data
+        if let rawData = item.rawData {
+          data = rawData
+        } else if let url = item.rawImageURL {
+          data = try await attempt.value {
+            try await Task.detached(priority: .userInitiated) { try Data(contentsOf: url) }.value
+          }
+        } else if let pickerItem = item.pickerItem {
+          guard let loaded = try await attempt.value({
+            try await pickerItem.loadTransferable(type: Data.self)
+          }) else { throw MediaPreviewImageError.unavailable }
+          data = loaded
+        } else {
+          throw MediaPreviewImageError.unavailable
         }
 
-        // Skip loading if this is pasted content (already has image data)
-        guard let pickerItem = mediaItems[index].pickerItem else {
-            logger.debug("PostComposerMedia: Skipping load for pasted content item with id \(id)")
-            return
-        }
-
-        logger.debug("PostComposerMedia: Loading image for item with id \(id)")
-        
-        // Ensure isLoading is set to false even if we exit early or throw
-        defer {
-            if let currentIndex = mediaItems.firstIndex(where: { $0.id == id }) {
-                mediaItems[currentIndex].isLoading = false
-            }
-        }
-        
-        do {
-            let (data, platformImage) = try await loadImageData(from: pickerItem)
-
-            guard let currentIndex = mediaItems.firstIndex(where: { $0.id == id }) else {
-                logger.warning("PostComposerMedia: Item removed during loading for id \(id)")
-                return
-            }
-
-            if let platformImage = platformImage {
-                #if os(iOS)
-                mediaItems[currentIndex].image = Image(uiImage: platformImage)
-                #elseif os(macOS)
-                mediaItems[currentIndex].image = Image(nsImage: platformImage)
-                #endif
-                mediaItems[currentIndex].aspectRatio = CGSize(
-                    width: platformImage.imageSize.width, height: platformImage.imageSize.height)
-                mediaItems[currentIndex].rawData = data
-                logger.info("PostComposerMedia: Image loaded successfully for id \(id) - size: \(platformImage.imageSize.width)x\(platformImage.imageSize.height)")
-            } else {
-                logger.error("PostComposerMedia: Failed to create platform image from data for id \(id)")
-                mediaItems.removeAll(where: { $0.id == id })
-            }
-        } catch let error as NSError {
-            logger.error("PostComposerMedia: Error loading image for id \(id) - code: \(error.code), error: \(error.localizedDescription)")
-            
-            // Check if this is our special animated GIF error
-            if error.code == 100, let gifData = error.userInfo["gifData"] as? Data {
-                logger.info("PostComposerMedia: Caught animated GIF error for id \(id), converting to video")
-                // Remove this item from mediaItems
-                mediaItems.removeAll(where: { $0.id == id })
-                // Process as GIF video
-                await processGIFAsVideoFromData(gifData)
-            } else {
-                // Remove failed item
-                logger.warning("PostComposerMedia: Removing failed item with id \(id)")
-                mediaItems.removeAll(where: { $0.id == id })
-            }
-        } catch {
-            logger.error("PostComposerMedia: Unexpected error loading image for id \(id) - error: \(error.localizedDescription)")
-            // Remove failed item
-            mediaItems.removeAll(where: { $0.id == id })
-        }
-    }
-
-    private func loadImageData(from item: PhotosPickerItem) async throws -> (Data, PlatformImage?) {
-        logger.debug("DEBUG: Loading image data from PhotosPickerItem")
-        
-        guard let data = try await item.loadTransferable(type: Data.self) else {
-            throw NSError(
-                domain: "ImageLoadingError", code: 0,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to load image data"])
-        }
-        
-        logger.debug("DEBUG: Loaded \(data.count) bytes of image data")
-        
-        // Check if this is actually an animated GIF that slipped through
+        guard ownsMediaPreviewLoad(attempt, for: id, context: context),
+              let currentIndex = mediaItems.firstIndex(where: { $0.id == id }) else { return }
+        // Keep the bytes even if decoding or conversion fails, so retry never loses the source.
+        mediaItems[currentIndex].rawData = data
         if isDataAnimatedGIF(data) {
-            logger.debug("DEBUG: Detected animated GIF in loadImageData! Throwing error to trigger GIF conversion")
-            throw NSError(
-                domain: "ImageLoadingError", 
-                code: 100,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "This is an animated GIF",
-                    "gifData": data
-                ])
+          mediaItems[currentIndex].isGifConversion = true
+          guard mediaItems.count == 1, videoItem == nil, selectedGif == nil else {
+            alertItem = AlertItem(title: "GIF Needs Its Own Post",
+              message: "An animated GIF becomes a video. Remove the other attachments before retrying this GIF.")
+            return
+          }
+          let url = try await attempt.value { try await Self.convertGIFToVideo(data) }
+          guard ownsMediaPreviewLoad(attempt, for: id, context: context),
+                mediaItems.count == 1, videoItem == nil, selectedGif == nil,
+                let current = mediaItems.first(where: { $0.id == id }) else { return }
+          var converted = current
+          converted.rawVideoURL = url
+          converted.isGifConversion = true
+          mediaItems.removeAll(where: { $0.id == id })
+          videoItem = converted
+          // A new thumbnail attempt supersedes this conversion's token.
+          await loadVideoThumbnail(for: converted)
+          return
         }
-
-        let platformImage = PlatformImage(data: data)
-        return (data, platformImage)
+        guard let platformImage = PlatformImage(data: data) else {
+          throw MediaPreviewImageError.unavailable
+        }
+        #if os(iOS)
+        mediaItems[currentIndex].image = Image(uiImage: platformImage)
+        #elseif os(macOS)
+        mediaItems[currentIndex].image = Image(nsImage: platformImage)
+        #endif
+        mediaItems[currentIndex].aspectRatio = platformImage.imageSize
+      } catch is CancellationError {
+        // The matching finalizer exposes Retry without removing the attachment.
+      } catch {
+        guard ownsMediaPreviewLoad(attempt, for: id, context: context),
+              mediaItems.contains(where: { $0.id == id }) else { return }
+        let message = error is MediaPreviewLoadError
+          ? "Preview preparation timed out. The attachment is still here. Retry when it is available on this device."
+          : "Retry this attachment or remove it before posting."
+        alertItem = AlertItem(title: "Couldn’t Load Image", message: message)
+      }
     }
-    
+
     // MARK: - Removing Media Items
 
     func removeMediaItem(at index: Int) {
-        guard index < mediaItems.count else { return }
+        guard mediaItems.indices.contains(index) else { return }
+        mediaPreviewLoads.cancel(for: mediaItems[index].id)
         mediaItems.remove(at: index)
+        syncMediaStateToCurrentThread()
         saveDraftIfNeeded()
     }
 
     func removeMediaItem(withId id: UUID) {
+        mediaPreviewLoads.cancel(for: id)
         if videoItem?.id == id {
             videoItem = nil
         } else {
@@ -339,23 +323,31 @@ extension PostComposerViewModel {
     func loadVideoThumbnail(for videoItem: MediaItem) async {
         logger.debug("DEBUG: Loading video thumbnail")
         
-        guard (self.videoItem != nil ? 0 : nil) != nil else { return }
-        
+        let context = mediaLoadContext()
+        guard self.videoItem?.id == videoItem.id, ownsMediaLoad(context) else { return }
+        let attempt = mediaPreviewLoads.begin(for: videoItem.id)
+        self.videoItem?.isLoading = true
+        defer {
+          if mediaPreviewLoads.finish(attempt, for: videoItem.id) {
+            finishMediaLoad(withId: videoItem.id, context: context)
+          }
+        }
+
         do {
             var asset: AVAsset?
             var videoURL: URL?
             
-            if let pickerItem = videoItem.pickerItem {
+            if let rawVideoURL = videoItem.rawVideoURL {
+                videoURL = rawVideoURL
+                asset = AVURLAsset(url: rawVideoURL)
+            } else if let pickerItem = videoItem.pickerItem {
                 // Copy the movie file straight to disk instead of loading it into memory.
-                if let movie = try await pickerItem.loadTransferable(type: PickedMovie.self) {
+                if let movie = try await attempt.value({ try await pickerItem.loadTransferable(type: PickedMovie.self) }) {
+                    guard self.videoItem?.id == videoItem.id, ownsMediaPreviewLoad(attempt, for: videoItem.id, context: context) else { return }
                     videoURL = movie.url
                     asset = AVURLAsset(url: movie.url)
                     self.videoItem?.rawVideoURL = movie.url
                 }
-            } else if let rawVideoURL = videoItem.rawVideoURL {
-                // Load from URL (for GIF conversions)
-                videoURL = rawVideoURL
-                asset = AVURLAsset(url: rawVideoURL)
             }
             
             guard let asset = asset else {
@@ -364,16 +356,17 @@ extension PostComposerViewModel {
                 return
             }
 
-            // Bluesky accepts videos up to 100 MB and 3 minutes; say so now rather than at post time.
+            // Use the same policy as the multipart uploader before preparing a preview.
             if let videoURL,
                let fileSize = (try? FileManager.default.attributesOfItem(atPath: videoURL.path))?[.size] as? NSNumber,
                fileSize.int64Value > Self.maxVideoFileSize {
-                rejectVideo(videoItem, title: "Video Too Large", message: "Videos must be 100 MB or smaller.")
+                rejectVideo(videoItem, title: "Video Too Large", message: VideoUploadPolicy.sizeMessage)
                 return
             }
-            let duration = try await asset.load(.duration)
+            let duration = try await attempt.value { try await asset.load(.duration) }
+            guard self.videoItem?.id == videoItem.id, ownsMediaPreviewLoad(attempt, for: videoItem.id, context: context) else { return }
             if CMTimeGetSeconds(duration) > Self.maxVideoDurationSeconds {
-                rejectVideo(videoItem, title: "Video Too Long", message: "Videos must be 3 minutes or shorter.")
+                rejectVideo(videoItem, title: "Video Too Long", message: VideoUploadPolicy.durationMessage)
                 return
             }
             
@@ -385,7 +378,7 @@ extension PostComposerViewModel {
             imageGenerator.appliesPreferredTrackTransform = true
             
             let time = CMTime(seconds: 0, preferredTimescale: 1)
-            let cgImage = try await imageGenerator.image(at: time).image
+            let cgImage = try await attempt.value { try await imageGenerator.image(at: time).image }
             
             guard let platformImage = PlatformImage.image(from: cgImage) else {
                 throw NSError(
@@ -401,7 +394,8 @@ extension PostComposerViewModel {
             let imageSize = platformImage.size
             #endif
             
-            // Update the video item
+            guard self.videoItem?.id == videoItem.id, ownsMediaPreviewLoad(attempt, for: videoItem.id, context: context) else { return }
+            // Update only the attachment that requested this thumbnail.
             self.videoItem?.image = image
             self.videoItem?.isLoading = false
             self.videoItem?.aspectRatio = CGSize(width: imageSize.width, height: imageSize.height)
@@ -410,20 +404,26 @@ extension PostComposerViewModel {
             // After thumbnail, preflight eligibility (single-shot)
             await checkVideoUploadEligibility()
             
+        } catch is CancellationError {
+            // Leave the source and metadata available for retry.
         } catch {
+            guard self.videoItem?.id == videoItem.id, ownsMediaPreviewLoad(attempt, for: videoItem.id, context: context) else { return }
             logger.error("ERROR: Failed to load video thumbnail: \(error)")
-            rejectVideo(videoItem, title: "Couldn’t Load Video", message: "This video couldn’t be loaded. Try again.")
+            let message = error is MediaPreviewLoadError
+              ? "Preview preparation timed out. The attachment is still here. Retry when it is available on this device."
+              : "This video couldn’t be loaded. Try again."
+            rejectVideo(videoItem, title: "Couldn’t Load Video", message: message)
         }
     }
 
-    static let maxVideoFileSize: Int64 = 100 * 1024 * 1024
-    static let maxVideoDurationSeconds: Double = 180
+    static let maxVideoFileSize = VideoUploadPolicy.maximumBytes
+    static let maxVideoDurationSeconds = VideoUploadPolicy.maximumDuration
 
-    /// Removes a video that can't be posted and tells the user why, unless it was already replaced.
+    /// Keep the source, description and captions available for retry or explicit removal.
     @MainActor
     private func rejectVideo(_ rejected: MediaItem, title: String, message: String) {
         guard self.videoItem?.id == rejected.id else { return }
-        self.videoItem = nil
+        self.videoItem?.isLoading = false
         syncMediaStateToCurrentThread()
         alertItem = AlertItem(title: title, message: message)
     }
@@ -457,7 +457,7 @@ extension PostComposerViewModel {
 // MARK: - Picked Movie
 
 /// A movie from the photo picker, copied to the app group so drafts can reopen it.
-struct PickedMovie: Transferable {
+struct PickedMovie: Transferable, Sendable {
     let url: URL
 
     static var transferRepresentation: some TransferRepresentation {
@@ -477,4 +477,8 @@ struct PickedMovie: Transferable {
             return PickedMovie(url: destination)
         }
     }
+}
+
+private enum MediaPreviewImageError: Error {
+  case unavailable
 }

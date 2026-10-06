@@ -30,7 +30,7 @@ struct BlockProfileIntent: AppIntent {
         }
 
         if view.viewer?.blocking != nil {
-            return .result(dialog: IntentDialog(stringLiteral: "You already blocked them."))
+            return .result(dialog: IntentDialog("You already blocked them."))
         }
         let record = AppBskyGraphBlock(subject: view.did, createdAt: ATProtocolDate(date: Date()))
         let userDID = try await client.getDid()
@@ -40,7 +40,7 @@ struct BlockProfileIntent: AppIntent {
             record: .knownType(record)
         )
         _ = try unwrapIntentResponse(await client.com.atproto.repo.createRecord(input: input))
-        return .result(dialog: IntentDialog(stringLiteral: "Blocked."))
+        return .result(dialog: IntentDialog("Blocked."))
 
     }
 }

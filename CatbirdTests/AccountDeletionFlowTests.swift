@@ -5,16 +5,17 @@ import Testing
 @Suite("Account deletion provider handoff")
 struct AccountDeletionFlowTests {
   private let did = "did:plc:local-deletion-fixture"
-  private let providerPage = URL(string: "https://provider.example/account")!
+  private let revision: UInt64 = 42
+  private let providerPage = URL(string: "https://provider.example")!
 
   private func makeFlow(handle: String? = "fixture.example") -> AccountDeletionFlow {
-    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: handle))
-    flow.resolveDestination(providerPage)
+    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: handle, accountRevision: revision))
+    flow.resolveDestination(.init(url: providerPage, kind: .providerWebsite), currentDID: did, currentRevision: revision)
     return flow
   }
 
   private func openingAttempt(for flow: inout AccountDeletionFlow) throws -> AccountDeletionFlow.OpeningAttempt {
-    let pending = flow.prepareToOpen(currentDID: did)
+    let pending = flow.prepareToOpen(currentDID: did, currentRevision: revision)
     return try #require(pending)
   }
 
@@ -33,7 +34,7 @@ struct AccountDeletionFlowTests {
     #expect(flow.phase == .ready)
     #expect(opener.urls.isEmpty)
     flow.cancel()
-    opener.open(flow.prepareToOpen(currentDID: did))
+    opener.open(flow.prepareToOpen(currentDID: did, currentRevision: revision))
     #expect(opener.urls.isEmpty)
     #expect(flow.phase == .cancelled)
   }
@@ -55,19 +56,19 @@ struct AccountDeletionFlowTests {
 
   @Test("Nothing opens until the provider page is known")
   func waitsForDestination() {
-    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: "fixture.example"))
+    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: "fixture.example", accountRevision: revision))
     #expect(flow.isResolvingDestination)
     #expect(!flow.canOpen)
-    #expect(flow.prepareToOpen(currentDID: did) == nil)
+    #expect(flow.prepareToOpen(currentDID: did, currentRevision: revision) == nil)
     #expect(flow.phase == .ready)
   }
 
   @Test("Only plain HTTPS provider pages are accepted",
         arguments: ["http://provider.example/account", "https://user:pass@provider.example/account",
-                    "https://provider.example/account?did=fixture", "https://provider.example/account#x", "catbird://account"])
+                    "https://provider.example?did=fixture", "https://provider.example#x", "catbird://account"])
   func rejectsUnsafeDestination(address: String) throws {
-    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: nil))
-    flow.resolveDestination(try #require(URL(string: address)))
+    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: nil, accountRevision: revision))
+    flow.resolveDestination(.init(url: try #require(URL(string: address)), kind: .providerWebsite), currentDID: did, currentRevision: revision)
     #expect(flow.destination == nil)
     #expect(!flow.canOpen)
   }
@@ -77,7 +78,7 @@ struct AccountDeletionFlowTests {
     var flow = makeFlow()
     var opener = FakeURLOpener()
     opener.open(try openingAttempt(for: &flow))
-    opener.open(flow.prepareToOpen(currentDID: did))
+    opener.open(flow.prepareToOpen(currentDID: did, currentRevision: revision))
     #expect(opener.urls.count == 1)
     #expect(!flow.canOpen)
   }
@@ -86,7 +87,7 @@ struct AccountDeletionFlowTests {
   func acceptedLink() throws {
     var flow = makeFlow()
     let attempt = try openingAttempt(for: &flow)
-    flow.finishOpening(attempt.id, accepted: true, currentDID: did)
+    flow.finishOpening(attempt.id, accepted: true, currentDID: did, currentRevision: revision)
     #expect(flow.phase == .opened)
     #expect(flow.target.did == did)
     #expect(flow.canOpen)
@@ -96,12 +97,12 @@ struct AccountDeletionFlowTests {
   func retryAfterFailure() throws {
     var flow = makeFlow()
     let first = try openingAttempt(for: &flow)
-    flow.finishOpening(first.id, accepted: false, currentDID: did)
+    flow.finishOpening(first.id, accepted: false, currentDID: did, currentRevision: revision)
     #expect(flow.phase == .failed)
     let retry = try openingAttempt(for: &flow)
-    flow.finishOpening(first.id, accepted: true, currentDID: did)
+    flow.finishOpening(first.id, accepted: true, currentDID: did, currentRevision: revision)
     #expect(flow.phase == .opening(retry.id))
-    flow.finishOpening(retry.id, accepted: true, currentDID: did)
+    flow.finishOpening(retry.id, accepted: true, currentDID: did, currentRevision: revision)
     #expect(flow.phase == .opened)
   }
 
@@ -110,7 +111,7 @@ struct AccountDeletionFlowTests {
     var flow = makeFlow()
     let attempt = try openingAttempt(for: &flow)
     flow.cancel()
-    flow.finishOpening(attempt.id, accepted: true, currentDID: did)
+    flow.finishOpening(attempt.id, accepted: true, currentDID: did, currentRevision: revision)
     #expect(flow.phase == .cancelled)
     #expect(!flow.canOpen)
   }
@@ -119,8 +120,8 @@ struct AccountDeletionFlowTests {
   func switchBeforeOpening() {
     var flow = makeFlow()
     var opener = FakeURLOpener()
-    opener.open(flow.prepareToOpen(currentDID: "did:plc:other-local-fixture"))
-    opener.open(flow.prepareToOpen(currentDID: did))
+    opener.open(flow.prepareToOpen(currentDID: "did:plc:other-local-fixture", currentRevision: revision))
+    opener.open(flow.prepareToOpen(currentDID: did, currentRevision: revision))
     #expect(opener.urls.isEmpty)
     #expect(flow.phase == .accountChanged)
   }
@@ -129,7 +130,7 @@ struct AccountDeletionFlowTests {
   func signOutDuringOpening() throws {
     var flow = makeFlow()
     let attempt = try openingAttempt(for: &flow)
-    flow.finishOpening(attempt.id, accepted: true, currentDID: "")
+    flow.finishOpening(attempt.id, accepted: true, currentDID: "", currentRevision: revision)
     #expect(flow.phase == .accountChanged)
     #expect(!flow.canOpen)
   }
@@ -138,17 +139,63 @@ struct AccountDeletionFlowTests {
   func observedAccountChange() throws {
     var flow = makeFlow()
     let attempt = try openingAttempt(for: &flow)
-    flow.accountDidChange(to: "did:plc:other-local-fixture")
-    flow.finishOpening(attempt.id, accepted: true, currentDID: did)
+    flow.accountDidChange(to: "did:plc:other-local-fixture", revision: revision)
+    flow.finishOpening(attempt.id, accepted: true, currentDID: did, currentRevision: revision)
     #expect(flow.phase == .accountChanged)
   }
 
   @Test("A missing account cannot start a handoff")
   func missingAccount() {
-    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: "", handle: nil))
-    let pending = flow.prepareToOpen(currentDID: "")
+    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: "", handle: nil, accountRevision: revision))
+    let pending = flow.prepareToOpen(currentDID: "", currentRevision: revision)
     #expect(pending == nil)
     #expect(!flow.canOpen)
+  }
+
+  @Test("Unavailable discovery ends loading without a fallback URL")
+  func unavailableDestination() {
+    var flow = AccountDeletionFlow(target: .init(did: did, handle: nil, accountRevision: revision))
+    flow.resolveDestination(nil, currentDID: did, currentRevision: revision)
+    #expect(flow.phase == .unavailable)
+    #expect(!flow.isResolvingDestination)
+    #expect(!flow.canOpen)
+  }
+
+  @Test("Cancelled discovery cannot attach a provider URL")
+  func lateResolutionAfterCancel() {
+    var flow = AccountDeletionFlow(target: .init(did: did, handle: nil, accountRevision: revision))
+    flow.cancel()
+    flow.resolveDestination(.init(url: providerPage, kind: .providerWebsite), currentDID: did, currentRevision: revision)
+    #expect(flow.destination == nil)
+    #expect(flow.phase == .cancelled)
+  }
+
+  @Test("A same-DID return in a newer account context invalidates discovery")
+  func staleResolutionAfterReturningToAccount() {
+    var flow = AccountDeletionFlow(target: .init(did: did, handle: nil, accountRevision: revision))
+    flow.resolveDestination(.init(url: providerPage, kind: .providerWebsite), currentDID: did, currentRevision: revision + 2)
+    #expect(flow.destination == nil)
+    #expect(flow.phase == .accountChanged)
+    #expect(!flow.isResolvingDestination)
+    #expect(flow.prepareToOpen(currentDID: did, currentRevision: revision + 2) == nil)
+  }
+
+  @Test("Changed account discovery stays invalid after returning to the original DID")
+  func lateResolutionAfterSwitch() {
+    var flow = AccountDeletionFlow(target: .init(did: did, handle: nil, accountRevision: revision))
+    flow.accountDidChange(to: "did:plc:other-fixture", revision: revision + 1)
+    flow.resolveDestination(.init(url: providerPage, kind: .providerWebsite), currentDID: did, currentRevision: revision + 2)
+    #expect(flow.destination == nil)
+    #expect(flow.phase == .accountChanged)
+  }
+
+  @Test("A newer account revision cannot accept an opening callback")
+  func staleOpeningRevision() throws {
+    var flow = makeFlow()
+    let attempt = try openingAttempt(for: &flow)
+    flow.finishOpening(attempt.id, accepted: true, currentDID: did, currentRevision: revision + 2)
+    #expect(flow.phase == .accountChanged)
+    #expect(flow.destination == nil)
   }
 }
 
@@ -156,11 +203,16 @@ struct AccountDeletionFlowTests {
 struct AccountManagementPageResolverTests {
   private struct FetchFailure: Error {}
 
-  private func resolver(_ body: String?, recordInto log: FetchLog? = nil) -> AccountManagementPageResolver {
+  private func resolver(
+    _ body: String?,
+    issuerBody: String? = #"{"issuer":"https://bsky.social"}"#,
+    recordInto log: FetchLog? = nil
+  ) -> AccountManagementPageResolver {
     AccountManagementPageResolver { url in
       await log?.record(url)
-      guard let body else { throw FetchFailure() }
-      return Data(body.utf8)
+      let response = url.path == "/.well-known/oauth-authorization-server" ? issuerBody : body
+      guard let response else { throw FetchFailure() }
+      return Data(response.utf8)
     }
   }
 
@@ -169,46 +221,94 @@ struct AccountManagementPageResolverTests {
     func record(_ url: URL) { urls.append(url) }
   }
 
-  @Test("Uses the issuer from the PDS's protected-resource metadata")
-  func discoversIssuer() async {
+  @Test("A separate known issuer is bound to the PDS and identifies itself")
+  func discoversSeparateIssuer() async throws {
     let log = FetchLog()
-    let page = await resolver(#"{"resource":"https://morel.us-east.host.bsky.network","authorization_servers":["https://bsky.social"]}"#, recordInto: log)
-      .accountPageURL(forPDS: URL(string: "https://morel.us-east.host.bsky.network/xrpc/x?y=1"))
-    #expect(page.absoluteString == "https://bsky.social/account")
-    #expect(await log.urls.map(\.absoluteString) == ["https://morel.us-east.host.bsky.network/.well-known/oauth-protected-resource"])
+    let result = await resolver(#"{"resource":"https://morel.us-east.host.bsky.network","authorization_servers":["https://bsky.social"]}"#, recordInto: log)
+      .destination(forPDS: URL(string: "https://morel.us-east.host.bsky.network"))
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://bsky.social/account")
+    #expect(destination.kind == .accountSettings)
+    #expect(await log.urls.map(\.absoluteString) == [
+      "https://morel.us-east.host.bsky.network/.well-known/oauth-protected-resource",
+      "https://bsky.social/.well-known/oauth-authorization-server"
+    ])
   }
 
-  @Test("A self-hosted PDS that is its own issuer keeps its port")
-  func selfHostedIssuer() async {
-    let page = await resolver(#"{"authorization_servers":["https://pds.example:8443/"]}"#)
-      .accountPageURL(forPDS: URL(string: "https://pds.example:8443"))
-    #expect(page.absoluteString == "https://pds.example:8443/account")
-  }
-
-  @Test("Falls back to the PDS account page when discovery fails or the issuer isn't a bare HTTPS origin",
-        arguments: [nil, "not json", #"{}"#, #"{"authorization_servers":[]}"#,
-                    #"{"authorization_servers":["http://issuer.example"]}"#,
-                    #"{"authorization_servers":["https://issuer.example/oauth"]}"#,
-                    #"{"authorization_servers":["https://issuer.example?x=1"]}"#,
-                    #"{"authorization_servers":["https://user@issuer.example"]}"#] as [String?])
-  func fallsBackToPDS(body: String?) async {
-    let page = await resolver(body).accountPageURL(forPDS: URL(string: "https://pds.example"))
-    #expect(page.absoluteString == "https://pds.example/account")
-  }
-
-  @Test("Falls back to Bluesky's account settings when the PDS is unknown or not HTTPS",
-        arguments: [nil, "http://pds.example", "https://user:pass@pds.example"] as [String?])
-  func fallsBackToBluesky(pds: String?) async {
+  @Test("The known Bluesky PDS has an explicit account-page convention")
+  func knownProvider() async throws {
     let log = FetchLog()
-    let page = await resolver(#"{"authorization_servers":["https://bsky.social"]}"#, recordInto: log)
-      .accountPageURL(forPDS: pds.flatMap(URL.init(string:)))
-    #expect(page == AccountManagementPageResolver.fallbackURL)
+    let result = await resolver(nil, recordInto: log).destination(forPDS: URL(string: "https://bsky.social:443/"))
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://bsky.social/account")
+    #expect(destination.kind == .accountSettings)
+    #expect(await log.urls.isEmpty)
+  }
+
+  @Test("An unknown self-hosted provider keeps its origin and port without guessing a route")
+  func selfHostedProvider() async throws {
+    let result = await resolver(#"{"resource":"https://pds.example:8443","authorization_servers":["https://pds.example:8443/"]}"#)
+      .destination(forPDS: URL(string: "https://pds.example:8443"))
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://pds.example:8443")
+    #expect(destination.kind == .providerWebsite)
+  }
+
+  @Test("An unknown separate issuer does not become an invented management page")
+  func unknownIssuer() async throws {
+    let log = FetchLog()
+    let result = await resolver(#"{"resource":"https://pds.example","authorization_servers":["https://entryway.example"]}"#, recordInto: log)
+      .destination(forPDS: URL(string: "https://pds.example"))
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://pds.example")
+    #expect(destination.kind == .providerWebsite)
+    #expect(await log.urls.map(\.host) == ["pds.example"])
+  }
+
+  @Test("Unusable or mismatched resource metadata preserves only the PDS website",
+        arguments: [nil, "not json", #"{}"#,
+                    #"{"resource":"https://other.example","authorization_servers":["https://bsky.social"]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":[]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":["https://bsky.social","https://other.example"]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":["http://bsky.social"]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":["https://bsky.social/oauth"]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":["https://bsky.social?x=1"]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":["https://user@bsky.social"]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":["https://bsky.social.evil.example"]}"#,
+                    #"{"resource":"https://pds.example","authorization_servers":["https://bsky.social:8443"]}"#] as [String?])
+  func fallsBackToWebsite(body: String?) async throws {
+    let result = await resolver(body).destination(forPDS: URL(string: "https://pds.example"))
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://pds.example")
+    #expect(destination.kind == .providerWebsite)
+  }
+
+  @Test("A separate known issuer must match its own metadata",
+        arguments: [nil, "not json", #"{}"#, #"{"issuer":"https://other.example"}"#,
+                    #"{"issuer":"https://bsky.social/account"}"#, #"{"issuer":"https://bsky.social?x=1"}"#] as [String?])
+  func rejectsMismatchedIssuer(issuerBody: String?) async throws {
+    let result = await resolver(#"{"resource":"https://pds.example","authorization_servers":["https://bsky.social"]}"#, issuerBody: issuerBody)
+      .destination(forPDS: URL(string: "https://pds.example"))
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://pds.example")
+    #expect(destination.kind == .providerWebsite)
+  }
+
+  @Test("Missing or unsafe PDS information is unavailable with no network or Bluesky fallback",
+        arguments: [nil, "http://pds.example", "https://user:pass@pds.example",
+                    "https://pds.example?token=fixture", "https://pds.example#fixture",
+                    "https://pds.example/xrpc/x", "https://pds.example:70000"] as [String?])
+  func unavailablePDS(pds: String?) async {
+    let log = FetchLog()
+    let destination = await resolver(nil, recordInto: log)
+      .destination(forPDS: pds.flatMap(URL.init(string:)))
+    #expect(destination == nil)
     #expect(await log.urls.isEmpty)
   }
 
   @Test("Display host omits the default port")
   func displayHost() {
     #expect(AccountManagementPageResolver.displayHost(of: URL(string: "https://bsky.social/account")!) == "bsky.social")
-    #expect(AccountManagementPageResolver.displayHost(of: URL(string: "https://pds.example:8443/account")!) == "pds.example:8443")
+    #expect(AccountManagementPageResolver.displayHost(of: URL(string: "https://pds.example:8443")!) == "pds.example:8443")
   }
 }

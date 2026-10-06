@@ -145,10 +145,11 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   @State private var dragOffset: CGFloat = 0
   @State private var isDragging: Bool = false
 
-  private let isIPad = PlatformDeviceInfo.isIPad
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-  private var dragThreshold: CGFloat { isIPad ? 0.2 : 0.3 }
-  private var velocityThreshold: CGFloat { isIPad ? 150 : 100 }
+  // A wide drawer travels farther, so it commits at a smaller fraction of its width.
+  private var dragThreshold: CGFloat { horizontalSizeClass == .regular ? 0.2 : 0.3 }
+  private var velocityThreshold: CGFloat { horizontalSizeClass == .regular ? 150 : 100 }
 
   init(
     selectedTab: Binding<Int>,

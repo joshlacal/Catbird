@@ -2,7 +2,7 @@ import Foundation
 
 enum CopilotContext: Codable, Hashable, Sendable {
     case topic(name: String, description: String?, link: String)
-    case post(uri: String, cid: String?, authorDID: String, text: String)
+    case post(uri: String, cid: String?, authorDID: String, text: String, evidence: CopilotPostEvidence? = nil)
     case thread(anchorURI: String)
     case profile(did: String, handle: String, displayName: String?)
     case feed(uri: String?, name: String)
@@ -13,7 +13,8 @@ enum CopilotContext: Codable, Hashable, Sendable {
         switch self {
         case .topic(let name, let description, let link):
             return "Trending topic: \(name)\nService description: \(description ?? "Unavailable")\nLink: \(link)"
-        case .post(let uri, let cid, let authorDID, let text):
+        case .post(let uri, let cid, let authorDID, let text, let evidence):
+            if let evidence { return evidence.promptDescription }
             return "Post: \(uri)\nCID: \(cid ?? "Unavailable")\nAuthor DID: \(authorDID)\nAuthored text: \(text)"
         case .thread(let anchorURI):
             return "Thread anchor: \(anchorURI)"
@@ -30,7 +31,7 @@ enum CopilotContext: Codable, Hashable, Sendable {
 
     func matchesHistoryContext(_ other: CopilotContext) -> Bool {
         switch (self, other) {
-        case (.post(let uri1, let cid1, let authorDID1, _), .post(let uri2, let cid2, let authorDID2, _)):
+        case (.post(let uri1, let cid1, let authorDID1, _, _), .post(let uri2, let cid2, let authorDID2, _, _)):
             guard uri1 == uri2, authorDID1 == authorDID2 else { return false }
             if let cid1, let cid2 {
                 return cid1 == cid2
@@ -185,6 +186,8 @@ struct CopilotStoredTurn: Codable, Identifiable, Sendable {
     var route: CopilotModelRoute?
     var proposal: CopilotProposal?
     var sources: [CopilotSource]?
+    var evidence: [CopilotEvidence]?
+    var proposalOutcome: String?
 
     init(
         id: UUID = UUID(),
@@ -194,7 +197,9 @@ struct CopilotStoredTurn: Codable, Identifiable, Sendable {
         tokenCount: Int? = nil,
         route: CopilotModelRoute? = nil,
         proposal: CopilotProposal? = nil,
-        sources: [CopilotSource]? = nil
+        sources: [CopilotSource]? = nil,
+        evidence: [CopilotEvidence]? = nil,
+        proposalOutcome: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -204,6 +209,8 @@ struct CopilotStoredTurn: Codable, Identifiable, Sendable {
         self.route = route
         self.proposal = proposal
         self.sources = sources
+        self.evidence = evidence
+        self.proposalOutcome = proposalOutcome
     }
 }
 
@@ -211,9 +218,18 @@ enum CopilotTurnEvent: Sendable {
     case textDelta(String)
     case responseReset
     case source(CopilotSource)
+    case evidence(CopilotEvidence)
     case proposal(CopilotProposal)
     case route(CopilotModelRoute)
     case contextTrimmed(removedTurnCount: Int)
     case completed
     case failed(String)
+}
+
+/// Retrieved material retained with a completed answer, never assistant-authored facts.
+struct CopilotEvidence: Codable, Hashable, Sendable {
+  let origin: String
+  let text: String
+  let sources: [CopilotSource]
+  let wasTruncated: Bool
 }

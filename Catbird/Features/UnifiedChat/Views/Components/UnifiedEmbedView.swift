@@ -599,17 +599,20 @@ private struct RecordEmbedContainer: View {
 // MARK: - Embed Card Style
 
 extension View {
+  /// 12pt continuous, matching `feedEmbedCardStyle()` on the loaded quote card,
+  /// so a shared post keeps its shape when it finishes loading.
   fileprivate func embedCardStyle(colorScheme: ColorScheme) -> some View {
-    self
+    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+    return self
       .background(
-        RoundedRectangle(cornerRadius: 12)
+        shape
           .fill(colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.8))
       )
       .overlay(
-        RoundedRectangle(cornerRadius: 12)
+        shape
           .stroke(Color.gray.opacity(0.2), lineWidth: 1)
       )
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .clipShape(shape)
   }
 }
 

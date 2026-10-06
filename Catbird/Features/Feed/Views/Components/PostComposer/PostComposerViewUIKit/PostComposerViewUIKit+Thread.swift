@@ -240,19 +240,12 @@ extension PostComposerViewUIKit {
       pendingAudioAttachmentSection(vm: vm)
       if let gif = vm.selectedGif {
         selectedGifView(gif, vm: vm)
-      } else if let videoItem = vm.videoItem, let image = videoItem.image {
-        HStack(spacing: 12) {
-          image
-            .resizable()
-            .scaledToFit()
-            .frame(height: 120)
-            .cornerRadius(10)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.systemGray5, lineWidth: 1))
-          Spacer()
-          Button("Remove") { vm.removeMediaItem(withId: videoItem.id) }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      } else if let videoItem = vm.videoItem {
+        videoAttachmentView(videoItem: videoItem, vm: vm)
+          .padding(.horizontal)
       } else if !vm.mediaItems.isEmpty {
 #if os(iOS)
         MediaGalleryView(
@@ -270,6 +263,7 @@ extension PostComposerViewUIKit {
           ),
           maxImagesAllowed: vm.maxImagesAllowed,
           onAddMore: { presentPhotoPicker(vm: vm) },
+          onRetry: { id in Task { await vm.retryMediaLoading(withId: id) } },
           onMoveLeft: { id in vm.moveMediaItemLeft(id: id) },
           onMoveRight: { id in vm.moveMediaItemRight(id: id) },
           onCropSquare: { id in vm.cropMediaItemToSquare(id: id) },
@@ -303,6 +297,7 @@ extension PostComposerViewUIKit {
           ),
           maxImagesAllowed: vm.maxImagesAllowed,
           onAddMore: { presentPhotoPicker(vm: vm) },
+          onRetry: { id in Task { await vm.retryMediaLoading(withId: id) } },
           onMoveLeft: { id in vm.moveMediaItemLeft(id: id) },
           onMoveRight: { id in vm.moveMediaItemRight(id: id) },
           onCropSquare: { id in vm.cropMediaItemToSquare(id: id) },

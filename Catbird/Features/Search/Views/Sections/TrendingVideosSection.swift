@@ -25,6 +25,7 @@ public struct TrendingVideosSection: View {
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.fontManager) private var fontManager
+  @Environment(\.displayScale) private var displayScale
   @ScaledMetric(relativeTo: .caption) private var authorLineHeight: CGFloat = 18
 
   public static let thevidsURI = VideoFeedView.thevidsURI
@@ -63,7 +64,7 @@ public struct TrendingVideosSection: View {
       ) {
         Button(action: onSeeAll) {
           Label("Open The Vids", systemImage: "chevron.right")
-            .labelStyle(.titleAndIcon)
+            .labelStyle(DisclosureLinkLabelStyle())
             .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
             .fixedSize(horizontal: false, vertical: true)
             .frame(minHeight: 44)
@@ -111,7 +112,7 @@ public struct TrendingVideosSection: View {
         ZStack(alignment: .bottomLeading) {
           if let url = thumbnailURL {
             LazyImage(request: TrendingTopicImageRequests.request(url,
-              size: CGSize(width: cardWidth, height: presentation.thumbnailHeight), priority: .normal)) { state in
+              size: CGSize(width: cardWidth, height: presentation.thumbnailHeight), displayScale: displayScale, priority: .normal)) { state in
               if let image = state.image {
                 image.resizable().scaledToFill()
               } else if state.isLoading {

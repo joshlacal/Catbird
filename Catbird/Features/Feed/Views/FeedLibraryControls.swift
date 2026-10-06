@@ -8,6 +8,7 @@ struct FeedLibraryControls: View {
   var onOpen: (() -> Void)? = nil
   var compactLabels = false
   var alignsTrailing = false
+  var prominent = false
   @State private var showExplanation = false
 
   private var actions: FeedLibraryActions { appState.feedLibraryActions }
@@ -23,11 +24,17 @@ struct FeedLibraryControls: View {
           .accessibilityLabel("Saving \(feed.displayName)")
       } else if membership == .absent {
         Button { perform(.saved) } label: {
-          Label("Add", systemImage: "plus")
+          Label {
+            if prominent { Text("Add \(feed.displayName)") } else { Text("Add") }
+          } icon: {
+            Image(systemName: "plus")
+          }
             .labelStyle(FeedLibraryActionLabelStyle(compact: compactLabels))
             .frame(minWidth: 44, minHeight: 44)
+            .frame(maxWidth: prominent ? .infinity : nil)
+            .lineLimit(prominent ? 2 : nil)
         }
-        .buttonStyle(.bordered)
+        .modifier(FeedLibraryButtonPresentation(prominent: prominent))
         .accessibilityLabel("Add \(feed.displayName) to Saved")
         .accessibilityIdentifier("feed.library.add.\(feed.uri.uriString())")
       } else {
@@ -51,8 +58,9 @@ struct FeedLibraryControls: View {
           }
             .labelStyle(FeedLibraryActionLabelStyle(compact: compactLabels))
             .frame(minWidth: 44, minHeight: 44)
+            .frame(maxWidth: prominent ? .infinity : nil)
         }
-        .buttonStyle(.bordered)
+        .modifier(FeedLibraryButtonPresentation(prominent: prominent))
         .accessibilityLabel("\(feed.displayName), \(membership == .pinned ? "Pinned" : "Saved"). Manage feed")
         .accessibilityIdentifier("feed.library.manage.\(feed.uri.uriString())")
       }
@@ -112,6 +120,21 @@ struct FeedLibraryControls: View {
       } catch {
         // FeedLibraryActions retains the per-feed error and local sync status.
       }
+    }
+  }
+}
+
+private struct FeedLibraryButtonPresentation: ViewModifier {
+  let prominent: Bool
+
+  @ViewBuilder func body(content: Content) -> some View {
+    if prominent {
+      content
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .appFont(AppTextRole.headline)
+    } else {
+      content.buttonStyle(.bordered)
     }
   }
 }

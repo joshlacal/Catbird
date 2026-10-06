@@ -89,6 +89,8 @@ struct PostComposerSubmitValidationState: Equatable {
         case threadPostOverCharacterLimit(postNumber: Int, over: Int)
         case posting
         case videoPreparing
+        case mediaPreparing
+        case mediaUnavailable
         case videoBlocked(String)
         case missingAltText
         case replyLoading
@@ -111,6 +113,10 @@ struct PostComposerSubmitValidationState: Equatable {
             return "Post \(postNumber) is \(over) character\(over == 1 ? "" : "s") over the limit."
         case .posting:
             return "Posting…"
+        case .mediaPreparing:
+            return "Media is still preparing."
+        case .mediaUnavailable:
+            return "An attachment couldn’t be loaded. Retry it or remove it before posting."
         case .videoPreparing:
             return "Video is still preparing."
         case .videoBlocked(let reason):
@@ -132,7 +138,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .threadPostOverCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio:
+        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -188,6 +194,8 @@ struct PostComposerDraft: Codable, Hashable {
 // MARK: - Codable Wrappers for Draft State
 
 struct CodableMediaItem: Codable, Hashable {
+  // Optional for compatibility with drafts saved before attachment IDs were persisted.
+  var attachmentID: UUID? = nil
   let altText: String
   let aspectRatio: CGSize?
   let isLoading: Bool
@@ -199,6 +207,7 @@ struct CodableMediaItem: Codable, Hashable {
   let caption: VideoCaption?
 
   init(from mediaItem: PostComposerViewModel.MediaItem) {
+    self.attachmentID = mediaItem.id
     self.altText = mediaItem.altText
     self.aspectRatio = mediaItem.aspectRatio
     self.isLoading = mediaItem.isLoading
@@ -208,9 +217,9 @@ struct CodableMediaItem: Codable, Hashable {
     self.caption = mediaItem.caption
     // Persist image data to a temp file so it survives draft serialization (e.g. account switch)
     if let rawData = mediaItem.rawData {
-      self.rawImageURLString = CodableMediaItem.persistImageData(rawData)
+      self.rawImageURLString = CodableMediaItem.persistImageData(rawData) ?? mediaItem.rawImageURL?.absoluteString
     } else {
-      self.rawImageURLString = nil
+      self.rawImageURLString = mediaItem.rawImageURL?.absoluteString
     }
   }
 
@@ -237,10 +246,12 @@ struct CodableMediaItem: Codable, Hashable {
   }
   
   func toMediaItem() -> PostComposerViewModel.MediaItem {
-    var item = PostComposerViewModel.MediaItem()
+    var item = PostComposerViewModel.MediaItem(id: attachmentID ?? UUID())
     item.altText = altText
     item.aspectRatio = aspectRatio
-    item.isLoading = isLoading
+    // A serialized flag does not restore the task that owned it.
+    item.isLoading = false
+    item.rawImageURL = rawImageURLString.flatMap(URL.init(string:))
     item.isAudioVisualizerVideo = isAudioVisualizerVideo
     item.isGifConversion = isGifConversion
     if let rawVideoURLString, let url = URL(string: rawVideoURLString) {
@@ -248,8 +259,11 @@ struct CodableMediaItem: Codable, Hashable {
     }
     if let rawImageURLString, let url = URL(string: rawImageURLString),
        let data = try? Data(contentsOf: url) {
-      item.rawData = data
-      if let platformImage = PlatformImage(data: data) {
+      if isGifConversion && rawVideoURLString == nil {
+        // Failed GIF preparation remains a retryable video source, never a still image post.
+        item.rawData = data
+      } else if let platformImage = PlatformImage(data: data) {
+        item.rawData = data
         #if os(iOS)
         item.image = Image(uiImage: platformImage)
         #elseif os(macOS)

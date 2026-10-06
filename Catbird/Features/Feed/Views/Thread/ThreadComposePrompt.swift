@@ -30,8 +30,10 @@ struct ThreadComposePrompt: View {
           size: 28,
           avatarURL: appState.currentUserProfile?.finalAvatarURL()
         )
+        // The UIKit-backed avatar has no intrinsic size, so `.fixedSize()` would
+        // collapse it to zero width.
+        .frame(width: 28, height: 28)
         .clipShape(Circle())
-        .fixedSize()
         .accessibilityHidden(true)
 
         if isReplyDisabled {
@@ -47,7 +49,8 @@ struct ThreadComposePrompt: View {
           .multilineTextAlignment(.leading)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .padding(.horizontal, 14)
+      .padding(.leading, 8)
+      .padding(.trailing, 14)
       .padding(.vertical, 8)
       .frame(minHeight: 44)
       .frame(maxWidth: 400, alignment: .leading)

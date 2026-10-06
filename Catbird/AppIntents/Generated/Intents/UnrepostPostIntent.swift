@@ -28,7 +28,7 @@ struct UnrepostPostIntent: AppIntent {
         }
 
         guard let existingURI = view.viewer?.repost else {
-            return .result(dialog: IntentDialog(stringLiteral: "You haven't reposted that post."))
+            return .result(dialog: IntentDialog("You haven't reposted that post."))
         }
         let rkey = try IntentRecordWriteSupport.recordKey(fromViewerURI: existingURI)
         let userDID = try await client.getDid()
@@ -41,7 +41,7 @@ struct UnrepostPostIntent: AppIntent {
         guard (200..<300).contains(responseCode) else {
             throw IntentError.httpError(responseCode)
         }
-        return .result(dialog: IntentDialog(stringLiteral: "Removed your repost."))
+        return .result(dialog: IntentDialog("Removed your repost."))
 
     }
 }

@@ -19,9 +19,9 @@ struct AccountSecuritySettingsView: View {
             SettingsScopeSection()
             SettingsPersistenceStatusSection(settings: appState.appSettings)
             Section("Account") {
-                SettingsLink(screen: .accountDetails, summary: "Handle, email, automation label, public data export", systemImage: "person.crop.circle", family: .account)
-                SettingsLink(screen: .accountDetails, title: "Email & Sign-In Codes", summary: "Manage email and verification codes for sign-in", systemImage: "envelope.badge.shield.half.filled", family: .account, control: .init(rawValue: "account.email"))
-                SettingsLink(screen: .accountDetails, title: "Delete Account", summary: "Permanently delete this account", systemImage: "person.crop.circle.badge.xmark", family: .account, control: .init(rawValue: "account.delete"))
+                SettingsLink(screen: .accountDetails, summary: "Handle, automation label, public data export", systemImage: "person.crop.circle", family: .account)
+                SettingsLink(screen: .accountDetails, title: "Manage Hosted Account", summary: "Open your provider’s website for account settings", systemImage: "arrow.up.right.square", family: .account, control: .init(rawValue: "account.management"))
+                SettingsLink(screen: .accountDetails, title: "Account Deletion Options", summary: "Find your hosting provider’s deletion instructions", systemImage: "person.crop.circle.badge.minus", family: .account, control: .init(rawValue: "account.delete"))
             }
             if AppStateManager.shared.authentication.biometricType != .none {
                 Section {

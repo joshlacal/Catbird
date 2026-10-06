@@ -12,7 +12,7 @@ struct SearchProfilesIntent: AppIntent {
     @Parameter(title: "Account")
     var account: AccountEntity?
 
-    @Parameter(title: "Search Query")
+    @Parameter(title: "Search Query", requestValueDialog: IntentDialog("Who do you want to find?"))
     var q: String
 
     @Parameter(title: "Result Limit")
@@ -32,9 +32,12 @@ struct SearchProfilesIntent: AppIntent {
         let value = output.actors.map { ProfileEntity(from: $0) }
         let dialog: IntentDialog
         if let first = value.first {
-            dialog = IntentDialog(stringLiteral: "Found \(value.count) \(value.count == 1 ? "profile" : "profiles"). First: \(String(localized: first.displayRepresentation.title)).")
+            let firstTitle = String(localized: first.displayRepresentation.title)
+            dialog = value.count == 1
+                ? IntentDialog("Found 1 profile: \(firstTitle).")
+                : IntentDialog("Found \(value.count) profiles. First: \(firstTitle).")
         } else {
-            dialog = IntentDialog(stringLiteral: "No profiles found.")
+            dialog = IntentDialog("No profiles found.")
         }
         return .result(value: value, dialog: dialog)
     }

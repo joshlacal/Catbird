@@ -173,8 +173,8 @@ struct ConversationRow: View {
       formatter.dateFormat = "EEEE"  // e.g., "Monday"
       return formatter.string(from: date)
     } else {
-      // Show short date for older dates
-      return date.formatted(date: .numeric, time: .omitted)
+      // Short date with a two-digit year, as in Messages ("9/29/26", not "9/29/2026").
+      return date.formatted(.dateTime.month(.defaultDigits).day().year(.twoDigits))
     }
   }
 }

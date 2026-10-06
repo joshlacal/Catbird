@@ -34,7 +34,7 @@ struct ChatTabView: View {
   }
 
   private var shouldUseSplitView: Bool {
-    DeviceInfo.isIPad || horizontalSizeClass == .regular
+    horizontalSizeClass == .regular
   }
 
   // MARK: - Body

@@ -15,19 +15,33 @@ final class ContentLabelDefinitionLookup {
     }
   }
   typealias Definitions = [String: [ComAtprotoLabelDefs.LabelValueDefinition]]
+  typealias Services = [String: AppBskyLabelerDefs.LabelerViewDetailed]
+  struct Catalog {
+    let definitions: Definitions
+    let services: Services
+  }
   static let shared = ContentLabelDefinitionLookup()
-  private var cached: [Key: Definitions] = [:]
+  private var cached: [Key: Catalog] = [:]
   private var cacheOrder: [Key] = []
-  private var inFlight: [Key: (id: UUID, task: Task<Definitions, Error>)] = [:]
+  private var inFlight: [Key: (id: UUID, task: Task<Catalog, Error>)] = [:]
 
   func definitions(
     for key: Key, isCurrent: @escaping @MainActor () -> Bool,
     load: @escaping @MainActor () async throws -> Definitions
   ) async throws -> Definitions {
+    try await catalog(for: key, isCurrent: isCurrent, load: {
+      Catalog(definitions: try await load(), services: [:])
+    }).definitions
+  }
+
+  func catalog(
+    for key: Key, isCurrent: @escaping @MainActor () -> Bool,
+    load: @escaping @MainActor () async throws -> Catalog
+  ) async throws -> Catalog {
     guard isCurrent() else { throw PreferencesManagerError.accountChanged }
     try Task.checkCancellation()
     if let result = cached[key] { return result }
-    let request: (id: UUID, task: Task<Definitions, Error>)
+    let request: (id: UUID, task: Task<Catalog, Error>)
     if let existing = inFlight[key] { request = existing }
     else {
       request = (UUID(), Task { @MainActor in
@@ -91,11 +105,26 @@ extension ContentLabelDefinitionLookup {
   static func subscribedDefinitions(
     appState: AppState, preferences: Preferences, client: ATProtoClient
   ) async throws -> Definitions {
+    try await subscribedCatalog(appState: appState, preferences: preferences, client: client).definitions
+  }
+
+  /// Display metadata shares the same response, account fence, coalescing and bounded cache as policy.
+  @MainActor
+  static func subscribedServices(
+    appState: AppState, preferences: Preferences, client: ATProtoClient
+  ) async throws -> Services {
+    try await subscribedCatalog(appState: appState, preferences: preferences, client: client).services
+  }
+
+  @MainActor
+  private static func subscribedCatalog(
+    appState: AppState, preferences: Preferences, client: ATProtoClient
+  ) async throws -> Catalog {
     let account = appState.userDID
     let manager = appState.preferencesManager
     let dids = try subscribedLabelerDIDs(preferences)
     let key = Key(accountDID: account, clientIdentity: ObjectIdentifier(client), subscriptions: dids.map { $0.didString() })
-    return try await shared.definitions(for: key,
+    return try await shared.catalog(for: key,
       isCurrent: { appState.userDID == account && appState.atProtoClient === client && manager.accountDID == account },
       load: {
         let finishAccountIO = try manager.beginSettingsAccountIO()
@@ -103,12 +132,14 @@ extension ContentLabelDefinitionLookup {
         let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: dids, detailed: true))
         guard (200..<300).contains(code), let output else { throw PreferencesManagerError.invalidData }
         var result: Definitions = [:]
+        var services: Services = [:]
         for value in output.views {
           if case .appBskyLabelerDefsLabelerViewDetailed(let service) = value {
             result[service.creator.did.didString()] = service.policies.labelValueDefinitions ?? []
+            services[service.creator.did.didString()] = service
           }
         }
-        return result
+        return Catalog(definitions: result, services: services)
       })
   }
 }
