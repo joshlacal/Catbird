@@ -38,6 +38,8 @@ final class TrendingTopicMediaStore {
   private(set) var labelDefinitionsGeneration = 0
   @ObservationIgnored private let gate = TopicPreviewRequestGate()
   @ObservationIgnored private var requests: [UUID: Task<Void, Never>] = [:]
+  /// Requests admitted past the gate. Their fetch outlives the requesting card.
+  @ObservationIgnored private var startedRequests: Set<UUID> = []
   @ObservationIgnored let prefetchCoordinator = TopicPreviewPrefetchCoordinator()
   /// Trend art is above-the-fold discovery content; warm it ahead of ordinary low-priority prefetch.
   @ObservationIgnored private let imagePrefetcher: ImagePrefetcher = {
@@ -138,15 +140,26 @@ final class TrendingTopicMediaStore {
     // Own direct row requests as well as metadata batches, so account suspension cancels both.
     let request = Task { [weak self] in
       guard let self else { return }
-      await self.performLoad(key: key, hydrate: hydrate, fetch: fetch)
+      await self.performLoad(id: id, key: key, hydrate: hydrate, fetch: fetch)
     }
     requests[id] = request
-    defer { requests.removeValue(forKey: id) }
+    defer {
+      requests.removeValue(forKey: id)
+      startedRequests.remove(id)
+    }
+    // A lazy card scrolling away or redrawing cancels its task. A request still queued at the
+    // gate is dropped, but a started fetch completes and caches, so the card that reappears
+    // finds the result instead of losing it and refetching. Invalidation still cancels both.
     await withTaskCancellationHandler {
       await request.value
     } onCancel: {
-      request.cancel()
+      Task { @MainActor [weak self] in self?.dropIfQueued(id) }
     }
+  }
+
+  private func dropIfQueued(_ id: UUID) {
+    guard !startedRequests.contains(id) else { return }
+    requests[id]?.cancel()
   }
 
   private func cancelRequests() {
@@ -154,6 +167,7 @@ final class TrendingTopicMediaStore {
   }
 
   private func performLoad(
+    id: UUID,
     key: String,
     hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])?,
     fetch: () async throws -> [AppBskyFeedDefs.FeedViewPost]
@@ -167,6 +181,7 @@ final class TrendingTopicMediaStore {
       try Task.checkCancellation()
       guard isActive, revision == requestRevision else { return }
       guard entries[key]?.expiresAt ?? .distantPast <= Date() else { return }
+      startedRequests.insert(id)
       let posts = try await fetch()
       try Task.checkCancellation()
       guard isActive, revision == requestRevision else { return }
