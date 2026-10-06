@@ -124,7 +124,7 @@ struct TrendingFeedPresentation: View {
         }
         Button("Cancel", role: .cancel) {}
       } message: { target in
-        Text("This hides \(target.name) for this account in Feeds and Search. You can show \(target.name) again in Settings → Content & Media.")
+        Text("This hides \(target.name) for this account in Feeds and Search. You can turn them back on in Settings › Feeds & Discovery › Discovery.")
       }
     }
   }
@@ -190,22 +190,35 @@ private struct TrendingTimelinePreviewPrefetch: ViewModifier {
   }
 }
 
-/// Every timeline trend card has one size: a fixed heading box (titles truncate at two lines),
-/// the fixed-size artwork and a single caption line, so media arrival or title length never
-/// changes a card's width or height.
+/// Every timeline trend card has one size. The category mark and name lead the top edge, the
+/// title spans the full card width below them (up to three lines, shrinking slightly before
+/// truncating) and the media stack leads the bottom edge above a single caption line, so media
+/// arrival or title length never changes a card's width or height.
 private struct TrendingTimelineTopicCard: View {
   let trend: AppBskyUnspeccedDefs.TrendView
   let onSelect: () -> Void
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-  /// Category caption plus two title lines at the default text size; scales with the title font.
-  @ScaledMetric(relativeTo: .title3) private var headingHeight: CGFloat = 72
+  /// Category row plus three title lines at the default text size; scales with the title font.
+  @ScaledMetric(relativeTo: .title3) private var headingHeight: CGFloat = 122
 
   var body: some View {
     Button(action: onSelect) {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-        TrendingTopicHeading(title: trend.displayName, category: trend.category, size: 20, titleLineLimit: 2)
-          .frame(height: headingHeight, alignment: .topLeading)
-          .clipped()
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
+          HStack(spacing: DesignTokens.Spacing.base) {
+            TrendingTopicCategoryMark(category: trend.category, diameter: 40)
+            if let category = trend.category {
+              Text(TrendingTopicCategoryStyle.name(for: category))
+                .appFont(AppTextRole.caption.weight(.medium))
+                .foregroundStyle(TrendingTopicCategoryStyle.color(for: category))
+                .lineLimit(1)
+            }
+          }
+          TrendingTopicTitle(title: trend.displayName, size: 18, lineLimit: 3)
+            .minimumScaleFactor(0.8)
+        }
+        .frame(height: headingHeight, alignment: .topLeading)
+        .clipped()
         TrendingTopicArtwork(link: trend.link, actors: trend.actors)
         Text(postCountText)
           .appFont(AppTextRole.caption)

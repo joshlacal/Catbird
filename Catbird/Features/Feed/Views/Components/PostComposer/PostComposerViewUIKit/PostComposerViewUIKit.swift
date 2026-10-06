@@ -452,6 +452,8 @@ struct PostComposerViewUIKit: View {
                       .fill(Color.systemGray4)
                       .frame(width: 2)
                       .padding(.top, avatarSize + 4)
+                      // Match the gap below the source avatar so the line stops short of the reply avatar.
+                      .padding(.bottom, 4)
                       .padding(.leading, 16 + (avatarSize - 2) / 2)
                       .allowsHitTesting(false)
                       .accessibilityHidden(true)

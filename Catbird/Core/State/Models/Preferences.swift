@@ -36,6 +36,7 @@ private final class PreferenceDecodeCache<Value: Sendable>: Sendable {
 private let feedViewPrefCache = PreferenceDecodeCache<FeedViewPreference?>()
 private let mutedWordsCache = PreferenceDecodeCache<[MutedWord]>()
 private let labelersCache = PreferenceDecodeCache<[LabelerPreference]>()
+private let contentLabelPrefsCache = PreferenceDecodeCache<[ContentLabelPreference]>()
 
 @Model
 final class Preferences {
@@ -94,9 +95,9 @@ final class Preferences {
   // New computed properties
   var contentLabelPrefs: [ContentLabelPreference] {
     get {
-      return
-        (try? JSONDecoder().decode(
-          [ContentLabelPreference].self, from: Data(contentLabelPrefsData.utf8))) ?? []
+      contentLabelPrefsCache.value(for: contentLabelPrefsData) { raw in
+        (try? JSONDecoder().decode([ContentLabelPreference].self, from: Data(raw.utf8))) ?? []
+      }
     }
     set {
       if let data = try? JSONEncoder().encode(newValue) {

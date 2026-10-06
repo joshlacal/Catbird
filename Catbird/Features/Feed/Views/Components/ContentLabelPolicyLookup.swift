@@ -77,3 +77,38 @@ enum CustomContentLabelPolicy {
     return ContentVisibility(fromPreference: value)
   }
 }
+
+extension ContentLabelDefinitionLookup {
+  /// The default moderation service plus the account's subscribed labelers, capped like the accept-labelers header.
+  static func subscribedLabelerDIDs(_ preferences: Preferences) throws -> [DID] {
+    var dids = [try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")]
+    for item in preferences.labelers where !dids.contains(item.did) { dids.append(item.did) }
+    return Array(dids.prefix(20))
+  }
+
+  /// Label value definitions for every subscribed labeler, shared through the account-scoped cache.
+  @MainActor
+  static func subscribedDefinitions(
+    appState: AppState, preferences: Preferences, client: ATProtoClient
+  ) async throws -> Definitions {
+    let account = appState.userDID
+    let manager = appState.preferencesManager
+    let dids = try subscribedLabelerDIDs(preferences)
+    let key = Key(accountDID: account, clientIdentity: ObjectIdentifier(client), subscriptions: dids.map { $0.didString() })
+    return try await shared.definitions(for: key,
+      isCurrent: { appState.userDID == account && appState.atProtoClient === client && manager.accountDID == account },
+      load: {
+        let finishAccountIO = try manager.beginSettingsAccountIO()
+        defer { finishAccountIO?() }
+        let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: dids, detailed: true))
+        guard (200..<300).contains(code), let output else { throw PreferencesManagerError.invalidData }
+        var result: Definitions = [:]
+        for value in output.views {
+          if case .appBskyLabelerDefsLabelerViewDetailed(let service) = value {
+            result[service.creator.did.didString()] = service.policies.labelValueDefinitions ?? []
+          }
+        }
+        return result
+      })
+  }
+}

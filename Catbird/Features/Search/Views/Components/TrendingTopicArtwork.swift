@@ -10,16 +10,13 @@ struct TrendingTopicArtwork: View {
   /// The trend's own "who is chatting" actors from getTrends; preview authors fill any gap.
   var actors: [AppBskyActorDefs.ProfileViewBasic] = []
   var showParticipants = true
-  /// When set, a text-only (or still-loading) topic shows its category mark instead of empty space.
-  var fallbackCategory: String??
 
   var body: some View {
     let artwork = appState.topicArtwork(for: link, actors: showParticipants ? actors : nil)
     TrendingTopicArtworkPresentation(
       preview: artwork.preview,
       showParticipants: showParticipants,
-      participants: artwork.participants,
-      fallbackCategory: fallbackCategory
+      participants: artwork.participants
     )
     .task(id: appState.topicPreviewLabelers + "|" + appState.topicPreviewAppliedLabelers + "|\(appState.trendingTopicMediaStore.revision)|" + link) {
       await appState.loadTopicPreview(for: link)
@@ -74,7 +71,6 @@ struct TrendingTopicArtworkPresentation: View {
   var showParticipants = true
   /// Overrides `preview.participants` (e.g. trend actors merged with preview authors).
   var participants: [TrendingTopicPreview.Participant]?
-  var fallbackCategory: String??
   @Environment(\.layoutDirection) private var layoutDirection
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorScheme) private var colorScheme
@@ -99,8 +95,6 @@ struct TrendingTopicArtworkPresentation: View {
             .rotationEffect(.degrees(reduceMotion ? 0 : rotation(index)))
             .offset(x: offset(index), y: index == 1 ? -2 : 2)
           }
-        } else if let fallbackCategory {
-          TrendingTopicCategoryMark(category: fallbackCategory)
         }
       }
       .frame(width: 108, height: 86)

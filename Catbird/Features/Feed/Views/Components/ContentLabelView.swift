@@ -616,33 +616,13 @@ struct ContentLabelManager<Content: View>: View {
             guard appState.userDID == account, appState.atProtoClient === client else { return .show }
             let explicitPreferences = preferences.contentLabelPrefs
             var definition: ComAtprotoLabelDefs.LabelValueDefinition?
-            if let client {
-                var dids = [try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")]
-                for item in preferences.labelers where !dids.contains(item.did) { dids.append(item.did) }
-                dids = Array(dids.prefix(20))
-                if dids.contains(label.src) {
-                    let key = ContentLabelDefinitionLookup.Key(accountDID: account,
-                      clientIdentity: ObjectIdentifier(client), subscriptions: dids.map { $0.didString() })
-                    do {
-                        let definitions = try await ContentLabelDefinitionLookup.shared.definitions(for: key,
-                          isCurrent: { appState.userDID == account && appState.atProtoClient === client && manager.accountDID == account },
-                          load: {
-                            let finishAccountIO = try manager.beginSettingsAccountIO()
-                            defer { finishAccountIO?() }
-                            let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: dids, detailed: true))
-                            guard (200..<300).contains(code), let output else { throw PreferencesManagerError.invalidData }
-                            var result: ContentLabelDefinitionLookup.Definitions = [:]
-                            for value in output.views {
-                                if case .appBskyLabelerDefsLabelerViewDetailed(let service) = value {
-                                    result[service.creator.did.didString()] = service.policies.labelValueDefinitions ?? []
-                                }
-                            }
-                            return result
-                          })
-                        definition = definitions[label.src.didString()]?.first { $0.identifier == label.val }
-                    } catch {
-                        // Exact stored overrides remain usable; failed metadata invents no inherited policy.
-                    }
+            if let client, (try? ContentLabelDefinitionLookup.subscribedLabelerDIDs(preferences))?.contains(label.src) == true {
+                do {
+                    let definitions = try await ContentLabelDefinitionLookup.subscribedDefinitions(
+                      appState: appState, preferences: preferences, client: client)
+                    definition = definitions[label.src.didString()]?.first { $0.identifier == label.val }
+                } catch {
+                    // Exact stored overrides remain usable; failed metadata invents no inherited policy.
                 }
             }
             guard !Task.isCancelled, appState.userDID == account, appState.atProtoClient === client else { return .show }

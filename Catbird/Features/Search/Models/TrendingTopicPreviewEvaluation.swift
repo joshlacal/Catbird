@@ -14,6 +14,9 @@ struct TopicPreviewContextToken: Equatable {
   var contentLanguages: [String] = []
   var hidesNonPreferredLanguages = false
   var externalMediaConsents: [ExternalMediaConsent] = []
+  var contentLabelPreferences: [ContentLabelPreference] = []
+  /// Bumps when subscribed labeler definitions arrive; the definitions themselves stay unobserved.
+  var labelDefinitionsGeneration = 0
 }
 
 extension AppState {
@@ -27,13 +30,13 @@ extension AppState {
     guard let inputs = topicPreviewInputs() else { return (TrendingTopicPreview(), actors.map { _ in [] }) }
     var context: TrendingTopicPreviewPolicy.Context?
     let preview = trendingTopicMediaStore.preview(key: inputs.labelers + "|" + link, token: inputs.token) {
-      let built = topicPreviewContext(inputs.token)
+      let built = topicPreviewContext(inputs.token, labelers: inputs.labelers)
       context = built
       return built
     }
     guard let actors else { return (preview, nil) }
     let participants = TrendingTopicPreviewPolicy.participants(actors: actors, fallback: preview.participants,
-      context: context ?? topicPreviewContext(inputs.token))
+      context: context ?? topicPreviewContext(inputs.token, labelers: inputs.labelers))
     return (preview, participants)
   }
 
@@ -55,13 +58,15 @@ extension AppState {
       filters: feedFilterSettings.activeFilterSignature,
       contentLanguages: appSettings.contentLanguages,
       hidesNonPreferredLanguages: appSettings.hideNonPreferredLanguages,
-      externalMediaConsents: ExternalMediaProvider.allCases.map { appSettings.externalMediaConsent(for: $0) }
+      externalMediaConsents: ExternalMediaProvider.allCases.map { appSettings.externalMediaConsent(for: $0) },
+      contentLabelPreferences: preferences.contentLabelPrefs,
+      labelDefinitionsGeneration: trendingTopicMediaStore.labelDefinitionsGeneration
     )
     return (labelers.sorted().joined(separator: ","), token)
   }
 
   @MainActor
-  private func topicPreviewContext(_ token: TopicPreviewContextToken) -> TrendingTopicPreviewPolicy.Context {
+  private func topicPreviewContext(_ token: TopicPreviewContextToken, labelers: String) -> TrendingTopicPreviewPolicy.Context {
     let filters = feedFilterSettings.activeFilters
     let languageFilter = LanguageFilterProcessor(contentLanguages: token.contentLanguages)
     let consents = Dictionary(uniqueKeysWithValues: zip(ExternalMediaProvider.allCases, token.externalMediaConsents))
@@ -79,7 +84,9 @@ extension AppState {
       allowsPost: { item in
         filters.allSatisfy { $0.filterBlock(item) }
           && (!token.hidesNonPreferredLanguages || languageFilter.process(post: item))
-      }
+      },
+      contentLabelPreferences: token.contentLabelPreferences,
+      labelDefinitions: trendingTopicMediaStore.labelDefinitions(for: labelers)
     )
   }
 }

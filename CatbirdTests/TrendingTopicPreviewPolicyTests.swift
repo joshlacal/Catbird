@@ -332,6 +332,27 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(TrendingTopicPreviewPolicy.select([warned], context: .init()) == .init())
   }
 
+  @Test("Custom labels block previews until their labeler's definition shows them without a blur")
+  func customLabelDefinitions() throws {
+    func definition(_ value: String, blurs: String, defaultSetting: String? = nil) -> ComAtprotoLabelDefs.LabelValueDefinition {
+      .init(identifier: value, severity: "inform", blurs: blurs, defaultSetting: defaultSetting, locales: [])
+    }
+    let informational = try fixture("custom-informational", postLabels: [label("custom-info")])
+    let mediaBlur = try fixture("custom-media-blur", postLabels: [label("custom-media")])
+    let canonical = try fixture("canonical-with-definitions", postLabels: [label("porn")])
+    let definitions: ContentLabelDefinitionLookup.Definitions = ["did:plc:previewlabeler": [
+      definition("custom-info", blurs: "none"),
+      definition("custom-media", blurs: "media", defaultSetting: "warn"),
+      definition("porn", blurs: "none"),
+    ]]
+    let loaded = TrendingTopicPreviewPolicy.Context(labelDefinitions: definitions)
+
+    #expect(TrendingTopicPreviewPolicy.select([informational], context: .init()) == .init(), "Unknown definitions fail closed")
+    #expect(TrendingTopicPreviewPolicy.select([informational], context: loaded).media.count == 1)
+    #expect(TrendingTopicPreviewPolicy.select([mediaBlur], context: loaded) == .init())
+    #expect(TrendingTopicPreviewPolicy.select([canonical], context: loaded) == .init(), "Canonical warnings ignore labeler definitions")
+  }
+
   @Test("Trend actors lead participants, pass the author gate, and preview authors fill gaps")
   func trendActorParticipants() throws {
     let ordinary = try fixture("actor-one", author: 1).post.author

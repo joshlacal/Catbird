@@ -373,7 +373,7 @@ private struct InlineTopicSummaryLine: View {
     
     /// Yellow, mint and cyan fills are too light for white text.
     private static func usesDarkChipText(_ category: String?) -> Bool {
-        ["business", "science", "tech", "technology"].contains(category?.lowercased() ?? "")
+        ["business", "economy", "finance", "science", "tech", "technology", "weather"].contains(category?.lowercased() ?? "")
     }
     
     private func categoryFilterButton(_ category: String?) -> some View {
@@ -626,21 +626,6 @@ private struct InlineTopicSummaryLine: View {
         } else {
             return "\(count)"
         }
-    }
-    
-    private func formatCategory(_ category: String) -> String {
-        let specialCases: [String: String] = [
-            "pop-culture": "Entertainment",
-            "video-games": "Video Games"
-        ]
-        
-        if let specialCase = specialCases[category.lowercased()] {
-            return specialCase
-        }
-        
-        let words = category.components(separatedBy: "-")
-        let capitalizedWords = words.map { $0.capitalized }
-        return capitalizedWords.joined(separator: " ")
     }
     
     private func formatTimeSince(_ date: Date) -> String {

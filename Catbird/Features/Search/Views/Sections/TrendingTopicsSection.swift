@@ -173,8 +173,8 @@ struct TrendingTopicsSection: View {
         }
     }
     
-    /// Media leads the row; title, description, metadata and "who is chatting" avatars
-    /// share one leading text edge beside it.
+    /// The leading column holds the category mark (top) and media stack (bottom); title,
+    /// description, metadata and "who is chatting" avatars share one leading text edge beside it.
     @ViewBuilder
     private func topicLabel(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Group {
@@ -202,8 +202,10 @@ struct TrendingTopicsSection: View {
     }
 
     private func topicMedia(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-        TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false,
-                             fallbackCategory: topic.category)
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
+            TrendingTopicCategoryMark(category: topic.category, diameter: 40)
+            TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false)
+        }
     }
 
     private func topicText(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
