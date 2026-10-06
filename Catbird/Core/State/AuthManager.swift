@@ -136,6 +136,9 @@ public enum AuthLogEvent: Sendable, Equatable {
   case initialized
   case stateUpdated
   case autoLogoutDuplicateTrigger
+  case autoLogoutDeferredDuringSwitch
+  case autoLogoutIgnoredInactiveAccount
+  case accountProfilesRefreshFailed
   case autoLogoutTriggered
   case autoLogoutExpiredAccountStored
   case autoLogoutSkipAlertReauth
@@ -261,6 +264,9 @@ public enum AuthLogEvent: Sendable, Equatable {
     case .initialized: "AUTH_INITIALIZED"
     case .stateUpdated: "AUTH_STATE_UPDATED"
     case .autoLogoutDuplicateTrigger: "AUTH_AUTO_LOGOUT_DUPLICATE_TRIGGER"
+    case .autoLogoutDeferredDuringSwitch: "AUTH_AUTO_LOGOUT_DEFERRED_DURING_SWITCH"
+    case .autoLogoutIgnoredInactiveAccount: "AUTH_AUTO_LOGOUT_IGNORED_INACTIVE_ACCOUNT"
+    case .accountProfilesRefreshFailed: "AUTH_ACCOUNT_PROFILES_REFRESH_FAILED"
     case .autoLogoutTriggered: "AUTH_AUTO_LOGOUT_TRIGGERED"
     case .autoLogoutExpiredAccountStored: "AUTH_AUTO_LOGOUT_EXPIRED_ACCOUNT_STORED"
     case .autoLogoutSkipAlertReauth: "AUTH_AUTO_LOGOUT_SKIP_ALERT_REAUTH"
@@ -718,6 +724,23 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   /// Called when Petrel detects a terminal auth failure (e.g., invalid_grant) and performs a logout.
   @MainActor
   func handleAutoLogoutFromPetrel(did: String?, reason: String?) async {
+    let reportedDID = did?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let knownDID = (reportedDID?.isEmpty == false) ? reportedDID : nil
+
+    // An explicit account switch owns its outcome: its own session check reports the
+    // expiry, and the switch rolls back. Tearing down the shared client here would break
+    // the rollback to the previous account.
+    if autoLogoutDeferralDepth > 0 {
+      deferredAutoLogout = DeferredAutoLogout(did: knownDID, reason: reason)
+      logger.warning(.autoLogoutDeferredDuringSwitch)
+      return
+    }
+    // A rejected session for an account that isn't active must not sign out the active one.
+    if let knownDID, case .authenticated(let activeDID) = state, activeDID != knownDID {
+      logger.warning(.autoLogoutIgnoredInactiveAccount)
+      return
+    }
+
     // FAST PATH: Set invalid flag IMMEDIATELY to short-circuit pending requests
     // This prevents "401 storms" where hundreds of requests fail before transitioning to login
     isAuthInvalid = true
@@ -786,6 +809,103 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   @MainActor
   func clearPendingAuthAlert() {
     pendingAuthAlert = nil
+  }
+
+  // MARK: - Account Switch Re-authentication
+
+  struct DeferredAutoLogout: Equatable {
+    let did: String?
+    let reason: String?
+  }
+
+  @ObservationIgnored private var autoLogoutDeferralDepth = 0
+  @ObservationIgnored private var deferredAutoLogout: DeferredAutoLogout?
+
+  /// Holds Petrel sign-outs while an explicit account switch is in flight.
+  @MainActor
+  func beginDeferringAutoLogout() {
+    autoLogoutDeferralDepth += 1
+  }
+
+  @MainActor
+  func endDeferringAutoLogout() {
+    autoLogoutDeferralDepth = max(0, autoLogoutDeferralDepth - 1)
+  }
+
+  /// The most recent sign-out held during a switch, handed over once.
+  @MainActor
+  func takeDeferredAutoLogout() -> DeferredAutoLogout? {
+    guard autoLogoutDeferralDepth == 0 else { return nil }
+    defer { deferredAutoLogout = nil }
+    return deferredAutoLogout
+  }
+
+  /// Remembers `did` as the account to sign in to again.
+  @MainActor
+  func markAccountNeedsReauthentication(did: String) {
+    let isActive = state.userDID == did
+    expiredAccountInfo = makeExpiredAccountInfo(for: did, isActive: isActive)
+    logger.info(.expiredAccountInfoPrepared)
+  }
+
+  /// Forgets the expired account only when it is `did`.
+  @MainActor
+  func discardExpiredAccountInfo(for did: String) {
+    guard expiredAccountInfo?.did == did else { return }
+    expiredAccountInfo = nil
+  }
+
+  /// A handle usable to sign in to `did` (never a DID), from any saved source.
+  @MainActor
+  func loginHandle(forAccount did: String) -> String? {
+    if let expired = expiredAccountInfo, expired.did == did, let handle = expired.loginHandle {
+      return handle
+    }
+    if let account = availableAccounts.first(where: { $0.did == did }), let handle = account.loginHandle {
+      return handle
+    }
+    return makeExpiredAccountInfo(for: did).loginHandle
+  }
+
+  /// Refreshes the cached name, handle and avatar of every saved account.
+  /// - Returns: The fetched profiles keyed by DID.
+  @MainActor
+  @discardableResult
+  func refreshCachedAccountProfiles(
+    using client: ATProtoClient
+  ) async -> [String: AppBskyActorDefs.ProfileViewDetailed] {
+    let accounts = availableAccounts
+    guard !accounts.isEmpty else { return [:] }
+    do {
+      let actors = try accounts.map { try ATIdentifier(string: $0.did) }
+      let (responseCode, output) = try await client.app.bsky.actor.getProfiles(
+        input: .init(actors: actors)
+      )
+      guard responseCode == 200, let output else { return [:] }
+      var profiles: [String: AppBskyActorDefs.ProfileViewDetailed] = [:]
+      for profile in output.profiles {
+        let did = profile.did.description
+        profiles[did] = profile
+        cacheProfileData(
+          for: did,
+          handle: profile.handle.description,
+          displayName: profile.displayName,
+          avatarURL: profile.finalAvatarURL()
+        )
+      }
+      availableAccounts = availableAccounts.map { account in
+        guard let profile = profiles[account.did] else { return account }
+        var updated = account
+        updated.cachedHandle = AccountInfo.loginHandleCandidate(profile.handle.description)
+        updated.cachedDisplayName = profile.displayName
+        updated.cachedAvatarURL = profile.finalAvatarURL()
+        return updated
+      }
+      return profiles
+    } catch {
+      logger.warning(.accountProfilesRefreshFailed)
+      return [:]
+    }
   }
 
   /// Clear expired account info

@@ -1,52 +1,60 @@
 import SwiftUI
 
 enum TrendingTopicCategoryStyle {
-  static func symbol(for category: String?) -> String {
+  private struct Style {
+    let symbol: String
+    let color: Color
+    let name: String?
+  }
+
+  /// One distinct symbol and color per getTrends category, including legacy and alias values.
+  private static func style(for category: String?) -> Style {
     switch category?.lowercased() {
-    case "pop-culture": return "music.note.tv"
-    case "politics": return "building.columns"
-    case "sports": return "figure.basketball"
-    case "video-games": return "gamecontroller"
-    case "tech", "technology": return "laptopcomputer"
-    case "business": return "chart.bar"
-    case "science": return "atom"
-    case "news": return "newspaper"
-    default: return "number"
+    case "culture": return Style(symbol: "theatermasks", color: .pink, name: nil)
+    case "entertainment", "pop-culture": return Style(symbol: "popcorn", color: .purple, name: "Entertainment")
+    case "politics": return Style(symbol: "building.columns", color: .blue, name: nil)
+    case "news", "world": return Style(symbol: "newspaper", color: .red, name: nil)
+    case "sports": return Style(symbol: "figure.basketball", color: .orange, name: nil)
+    case "video-games", "gaming": return Style(symbol: "gamecontroller", color: .green, name: "Video Games")
+    case "science-tech": return Style(symbol: "atom", color: .teal, name: "Science & Tech")
+    case "science": return Style(symbol: "atom", color: .mint, name: nil)
+    case "tech", "technology": return Style(symbol: "cpu", color: .cyan, name: "Tech")
+    case "business", "economy", "finance": return Style(symbol: "chart.line.uptrend.xyaxis", color: .yellow, name: nil)
+    case "health": return Style(symbol: "cross.case", color: .red, name: nil)
+    case "music": return Style(symbol: "music.note", color: .indigo, name: nil)
+    case "weather": return Style(symbol: "cloud.sun", color: .cyan, name: nil)
+    case "other": return Style(symbol: "sparkles", color: .brown, name: "Trending")
+    default: return Style(symbol: "number", color: .gray, name: nil)
     }
   }
 
-  static func color(for category: String?) -> Color {
-    switch category?.lowercased() {
-    case "pop-culture": return .purple
-    case "politics": return .blue
-    case "sports": return .orange
-    case "video-games": return .green
-    case "tech", "technology": return .cyan
-    case "business": return .yellow
-    case "science": return .mint
-    case "news": return .red
-    default: return .gray
-    }
-  }
+  static func symbol(for category: String?) -> String { style(for: category).symbol }
+
+  static func color(for category: String?) -> Color { style(for: category).color }
 
   static func name(for category: String) -> String {
-    switch category.lowercased() {
-    case "pop-culture": return "Entertainment"
-    case "video-games": return "Video Games"
-    default: return category.replacingOccurrences(of: "-", with: " ").capitalized
-    }
+    style(for: category).name ?? category.replacingOccurrences(of: "-", with: " ").capitalized
   }
 }
 
 /// A decorative category mark occupies the same leading position as a post avatar.
 struct TrendingTopicCategoryMark: View {
   let category: String?
-  @ScaledMetric(relativeTo: .title3) private var iconSize: CGFloat = 25
-  @ScaledMetric(relativeTo: .title3) private var diameter: CGFloat = 44
+  private let scaledIconSize: ScaledMetric<CGFloat>
+  private let scaledDiameter: ScaledMetric<CGFloat>
+  private var iconSize: CGFloat { scaledIconSize.wrappedValue }
+  private var diameter: CGFloat { scaledDiameter.wrappedValue }
+
+  /// `diameter` is the default-text-size width; the symbol fills half of it, leaving a generous ring.
+  init(category: String?, diameter: CGFloat = 44) {
+    self.category = category
+    scaledDiameter = ScaledMetric(wrappedValue: diameter, relativeTo: .title3)
+    scaledIconSize = ScaledMetric(wrappedValue: diameter * 0.5, relativeTo: .title3)
+  }
 
   var body: some View {
     Image(systemName: TrendingTopicCategoryStyle.symbol(for: category))
-      .font(.system(size: min(iconSize, 36), weight: .semibold))
+      .font(.system(size: min(iconSize, min(diameter, 60) * 0.5), weight: .semibold))
       .symbolRenderingMode(.hierarchical)
       .foregroundStyle(TrendingTopicCategoryStyle.color(for: category))
       .frame(width: min(diameter, 60), height: min(diameter, 60))

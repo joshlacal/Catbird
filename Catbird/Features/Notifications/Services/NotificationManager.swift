@@ -2348,7 +2348,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     notificationLogger.info("Switching active account to \(did) for notification navigation")
 
     // Use AppStateManager to switch accounts - it manages multiple AppState instances
-    _ = await appStateManager.switchAccount(to: did)
+    let outcome = await appStateManager.switchAccount(to: did)
+    appStateManager.presentAccountSwitchOutcome(outcome)
     guard appStateManager.lifecycle.userDID == did else {
       notificationLogger.warning("Notification account switch did not reach the requested account")
       return

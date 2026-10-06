@@ -31,8 +31,15 @@ final class TrendingTopicMediaStore {
   @ObservationIgnored private var selections: [String: Selection] = [:]
   @ObservationIgnored private var entryGeneration = 0
   private(set) var revision = 0
+  /// Subscribed labelers' definitions, keyed by the labeler set they were loaded for.
+  @ObservationIgnored private var labelDefinitions: (labelers: String, definitions: ContentLabelDefinitionLookup.Definitions)?
+  /// The only observed signal for definitions: it changes once per labeler set, so cards
+  /// re-select their previews once instead of observing the definitions themselves.
+  private(set) var labelDefinitionsGeneration = 0
   @ObservationIgnored private let gate = TopicPreviewRequestGate()
   @ObservationIgnored private var requests: [UUID: Task<Void, Never>] = [:]
+  /// Requests admitted past the gate. Their fetch outlives the requesting card.
+  @ObservationIgnored private var startedRequests: Set<UUID> = []
   @ObservationIgnored let prefetchCoordinator = TopicPreviewPrefetchCoordinator()
   /// Trend art is above-the-fold discovery content; warm it ahead of ordinary low-priority prefetch.
   @ObservationIgnored private let imagePrefetcher: ImagePrefetcher = {
@@ -48,6 +55,15 @@ final class TrendingTopicMediaStore {
   private(set) var canReusePrefetchedFeed = true
   private(set) var isActive = true
   @ObservationIgnored private var prefetchedLinksUsed: Set<String> = []
+
+  func labelDefinitions(for labelers: String) -> ContentLabelDefinitionLookup.Definitions? {
+    labelDefinitions?.labelers == labelers ? labelDefinitions?.definitions : nil
+  }
+
+  func setLabelDefinitions(_ definitions: ContentLabelDefinitionLookup.Definitions, for labelers: String) {
+    labelDefinitions = (labelers, definitions)
+    labelDefinitionsGeneration += 1
+  }
 
   func consumePrefetchedFeedReuse(for link: String) -> Bool {
     guard canReusePrefetchedFeed, prefetchedLinksUsed.count < 20 else { return false }
@@ -107,6 +123,7 @@ final class TrendingTopicMediaStore {
   func invalidate(labelers: String) {
     guard lastLabelers != labelers else { return }
     lastLabelers = labelers
+    labelDefinitions = nil
     cancelRequests()
     cancelPrefetches()
     removeAllEntries()
@@ -123,15 +140,26 @@ final class TrendingTopicMediaStore {
     // Own direct row requests as well as metadata batches, so account suspension cancels both.
     let request = Task { [weak self] in
       guard let self else { return }
-      await self.performLoad(key: key, hydrate: hydrate, fetch: fetch)
+      await self.performLoad(id: id, key: key, hydrate: hydrate, fetch: fetch)
     }
     requests[id] = request
-    defer { requests.removeValue(forKey: id) }
+    defer {
+      requests.removeValue(forKey: id)
+      startedRequests.remove(id)
+    }
+    // A lazy card scrolling away or redrawing cancels its task. A request still queued at the
+    // gate is dropped, but a started fetch completes and caches, so the card that reappears
+    // finds the result instead of losing it and refetching. Invalidation still cancels both.
     await withTaskCancellationHandler {
       await request.value
     } onCancel: {
-      request.cancel()
+      Task { @MainActor [weak self] in self?.dropIfQueued(id) }
     }
+  }
+
+  private func dropIfQueued(_ id: UUID) {
+    guard !startedRequests.contains(id) else { return }
+    requests[id]?.cancel()
   }
 
   private func cancelRequests() {
@@ -139,6 +167,7 @@ final class TrendingTopicMediaStore {
   }
 
   private func performLoad(
+    id: UUID,
     key: String,
     hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])?,
     fetch: () async throws -> [AppBskyFeedDefs.FeedViewPost]
@@ -152,6 +181,7 @@ final class TrendingTopicMediaStore {
       try Task.checkCancellation()
       guard isActive, revision == requestRevision else { return }
       guard entries[key]?.expiresAt ?? .distantPast <= Date() else { return }
+      startedRequests.insert(id)
       let posts = try await fetch()
       try Task.checkCancellation()
       guard isActive, revision == requestRevision else { return }
@@ -339,6 +369,7 @@ extension AppState {
           let client = atProtoClient, let uri = TrendingTopicPreviewPolicy.feedURI(for: link) else { return }
     let labelers = topicPreviewLabelers
     let viewerDID = userDID
+    await loadTopicPreviewLabelDefinitions(client: client)
     await withTopicPreviewAccountOperation {
       await trendingTopicMediaStore.load(key: labelers + "|" + link, hydrate: { posts in
         let uris = TrendingTopicPreviewPolicy.quotedPostURIs(in: posts)
@@ -368,6 +399,33 @@ extension AppState {
         return response.feed
       }
     }
+  }
+
+  /// Custom labels block previews until their labeler definitions are known; one shared,
+  /// account-scoped request (the feed's own cache) resolves them for every trend.
+  @MainActor
+  private func loadTopicPreviewLabelDefinitions(client: ATProtoClient) async {
+    let labelers = topicPreviewLabelers
+    guard trendingTopicMediaStore.labelDefinitions(for: labelers) == nil,
+          let preferences = try? preferencesManager.getLocalPreferences() else { return }
+    let viewerDID = userDID
+    guard let definitions = try? await withTopicPreviewLabelerIO({
+      try await ContentLabelDefinitionLookup.subscribedDefinitions(appState: self, preferences: preferences, client: client)
+    }), userDID == viewerDID, topicPreviewLabelers == labelers else { return }
+    trendingTopicMediaStore.setLabelDefinitions(definitions, for: labelers)
+  }
+
+  @MainActor
+  private func withTopicPreviewLabelerIO(
+    _ operation: @MainActor () async throws -> ContentLabelDefinitionLookup.Definitions
+  ) async throws -> ContentLabelDefinitionLookup.Definitions? {
+    var result: ContentLabelDefinitionLookup.Definitions?
+    var failure: Error?
+    await withTopicPreviewAccountOperation {
+      do { result = try await operation() } catch { failure = error }
+    }
+    if let failure { throw failure }
+    return result
   }
 
   @MainActor

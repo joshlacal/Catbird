@@ -493,35 +493,11 @@ struct AccountSwitcherView: View {
         return
       }
 
-      do {
-        let actors = try accountInfos.map { try ATIdentifier(string: $0.did) }
-
-        let (responseCode, profilesData) = try await client.app.bsky.actor.getProfiles(
-          input: .init(actors: actors)
-        )
-
-        if responseCode == 200, let profilesData = profilesData {
-          accounts = accountInfos.map { accountInfo in
-            let matchingProfile = profilesData.profiles.first {
-              $0.did.description == accountInfo.did
-            }
-
-            if let profile = matchingProfile {
-              appStateManager.authentication.cacheProfileData(
-                for: accountInfo.did,
-                handle: profile.handle.description,
-                displayName: profile.displayName,
-                avatarURL: profile.finalAvatarURL()
-              )
-            }
-
-            return AccountViewModel(from: accountInfo, profile: matchingProfile)
-          }
-        } else {
-          logger.warning("Failed to fetch profiles with code \(responseCode)")
+      let profiles = await appStateManager.authentication.refreshCachedAccountProfiles(using: client)
+      if !profiles.isEmpty {
+        accounts = appStateManager.authentication.availableAccounts.map { accountInfo in
+          AccountViewModel(from: accountInfo, profile: profiles[accountInfo.did])
         }
-      } catch {
-        logger.warning("Error fetching profiles: \(error.localizedDescription)")
       }
 
       isLoading = false
@@ -569,28 +545,26 @@ struct AccountSwitcherView: View {
         error = message
       case .failed(let message):
         error = message
-        if composerTransfer == nil,
-           appStateManager.authentication.expiredAccountInfo?.did == account.did {
-          await requestReauthentication(for: account)
+      case .needsReauthentication(let expiredDID):
+        guard composerTransfer == nil else {
+          // A draft can't wait on a browser sign-in; the person signs in from Settings first.
+          appStateManager.discardExpiredAccountIfInactive(expiredDID)
+          error = "Sign in to that account again before moving this draft to it."
+          return
         }
+        await requestReauthentication(forAccount: expiredDID)
       }
     }
 
-    private func requestReauthentication(for account: AccountViewModel) async {
-      guard let accountInfo = appStateManager.authentication.availableAccounts.first(where: {
-        $0.did == account.did
-      }) else { return }
-      let handle = accountInfo.handle ?? accountInfo.did
-      do {
-        let authURL = try await appStateManager.authentication.login(handle: handle)
-        let request = AppState.ReauthenticationRequest(
-          handle: handle, did: account.did, authURL: authURL
-        )
-        await handleReauthentication(request)
-      } catch {
-        logger.error("Reauthentication could not start: \(error.localizedDescription)")
-        self.error = AuthenticationManager.userFacingMessage(for: error)
-      }
+    private func requestReauthentication(forAccount did: String) async {
+      isLoading = true
+      error = nil
+      let result = await AccountReauthentication.signIn(
+        toAccount: did,
+        appStateManager: appStateManager,
+        webAuthenticationSession: webAuthenticationSession
+      )
+      await applyReauthenticationResult(result)
     }
 
     private func removeAccount(_ account: AccountViewModel) async {
@@ -762,128 +736,34 @@ struct AccountSwitcherView: View {
   }
 
   private func handleReauthentication(_ request: AppState.ReauthenticationRequest) async {
-    logger.info("🔐 [REAUTH] Starting reauthentication for handle: \(request.handle)")
-    logger.info("🔐 [REAUTH] DID: \(request.did)")
-    logger.info("🔐 [REAUTH] Auth URL is ready")
-    logger.debug("🔐 [REAUTH] Auth URL scheme: \(request.authURL.scheme ?? "no scheme")")
-    logger.debug("🔐 [REAUTH] Auth URL host: \(request.authURL.host ?? "no host")")
-
     // Clear the pending request to prevent repeated attempts
-    logger.debug("🔐 [REAUTH] Clearing pendingReauthenticationRequest")
-    if let appState = appStateManager.lifecycle.appState {
-      appState.pendingReauthenticationRequest = nil
-    }
-
-    // Update loading state
-    logger.debug("🔐 [REAUTH] Setting isLoading = true, error = nil")
+    appStateManager.lifecycle.appState?.pendingReauthenticationRequest = nil
     isLoading = true
     error = nil
+    let result = await AccountReauthentication.complete(
+      request,
+      appStateManager: appStateManager,
+      webAuthenticationSession: webAuthenticationSession
+    )
+    await applyReauthenticationResult(result)
+  }
 
-    // Open web authentication session with the provided auth URL with timeout
-    do {
-      let callbackURL: URL
-      logger.info("🌐 [REAUTH] About to open ASWebAuthenticationSession...")
-      logger.debug("🌐 [REAUTH] webAuthenticationSession environment value: \(String(describing: webAuthenticationSession))")
-      
-      // Add timeout to prevent indefinite hanging
-      callbackURL = try await withThrowingTaskGroup(of: URL.self) { group in
-        // Main authentication task
-        group.addTask {
-          self.logger.info("🌐 [REAUTH] Starting authentication task in TaskGroup")
-          if #available(iOS 17.4, *) {
-            self.logger.info("🌐 [REAUTH] Using iOS 17.4+ authenticate API with callback .https")
-            self.logger.debug("🌐 [REAUTH] Callback: .https(host: catbird.blue, path: /oauth/callback)")
-            self.logger.debug("🌐 [REAUTH] preferredBrowserSession: .shared")
-            let result = try await self.webAuthenticationSession.authenticate(
-              using: request.authURL,
-              callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-              preferredBrowserSession: .shared,
-              additionalHeaderFields: [:]
-            )
-            self.logger.info("✅ [REAUTH] authenticate() returned an OAuth callback")
-            return result
-          } else {
-            self.logger.info("🌐 [REAUTH] Using legacy authenticate API with callbackURLScheme")
-            self.logger.debug("🌐 [REAUTH] callbackURLScheme: catbird")
-            self.logger.debug("🌐 [REAUTH] preferredBrowserSession: .shared")
-            let result = try await self.webAuthenticationSession.authenticate(
-              using: request.authURL,
-              callbackURLScheme: "catbird",
-              preferredBrowserSession: .shared
-            )
-            self.logger.info("✅ [REAUTH] authenticate() returned an OAuth callback")
-            return result
-          }
-        }
-        
-        // Timeout task (2 minutes)
-        group.addTask {
-          self.logger.debug("⏱️ [REAUTH] Starting 120-second timeout task")
-          try await Task.sleep(nanoseconds: 120_000_000_000) // 120 seconds
-          self.logger.warning("⏱️ [REAUTH] Timeout reached after 120 seconds!")
-          throw AuthError.timeout
-        }
-        
-        // Return the first result (either callback or timeout)
-        self.logger.debug("🔄 [REAUTH] Waiting for first TaskGroup result...")
-        guard let result = try await group.next() else {
-          self.logger.error("❌ [REAUTH] TaskGroup.next() returned nil - no result available")
-          throw AuthError.unknown(NSError(domain: "Authentication", code: -1, userInfo: [NSLocalizedDescriptionKey: "Authentication failed"]))
-        }
-        
-        self.logger.info("✅ [REAUTH] TaskGroup returned result, cancelling remaining tasks")
-        group.cancelAll()
-        return result
-      }
-
-      logger.info("✅ [REAUTH] Reauthentication session completed successfully")
-      logger.info("🔗 [REAUTH] OAuth callback received")
-      logger.debug("🔗 [REAUTH] Callback scheme: \(callbackURL.scheme ?? "none")")
-      logger.debug("🔗 [REAUTH] Callback host: \(callbackURL.host ?? "none")")
-
-      // Process callback
-      logger.info("🔄 [REAUTH] Processing callback with authManager.handleCallback()")
-      try await appStateManager.authentication.handleGatewayCallback(callbackURL)
-      logger.info("✅ [REAUTH] Callback processed successfully")
-      
-      // Clear any previous cancelled/error state since we succeeded
+  private func applyReauthenticationResult(_ result: AccountReauthentication.Result) async {
+    defer { isLoading = false }
+    switch result {
+    case .signedIn(let did):
       authenticationCancelled = false
       error = nil
-
-      // Refresh account list
-      logger.debug("🔄 [REAUTH] Refreshing account list")
       await loadAccounts()
-
-      // The auth observer owns readiness. A precise lifecycle observation replaces delayed retry.
-      guard appStateManager.authentication.state.userDID == request.did else {
-        error = "Sign-in finished for a different account. Try again."
-        isLoading = false
-        return
-      }
-      reauthenticatedTargetDID = request.did
+      // The auth observer owns readiness; dismiss once the lifecycle shows this account.
+      reauthenticatedTargetDID = did
       finishReauthenticationIfReady()
-
-      logger.debug("🔄 [REAUTH] Setting isLoading = false")
-      isLoading = false
-    } catch let error as ASWebAuthenticationSessionError {
-      await appStateManager.authentication.cancelGatewayOAuthFlow()
-      // User cancelled reauthentication
-      logger.notice("🚫 [REAUTH] Reauthentication was cancelled by user")
-      logger.debug("🚫 [REAUTH] ASWebAuthenticationSessionError code: \(error.code.rawValue)")
+    case .signedInToDifferentAccount:
+      error = "Sign-in finished for a different account. Try again."
+    case .cancelled:
       authenticationCancelled = true
-      isLoading = false
-    } catch {
-      // Other authentication errors (including timeout)
-      logger.error("❌ [REAUTH] Reauthentication error: \(error.localizedDescription)")
-      logger.error("❌ [REAUTH] Error type: \(String(describing: type(of: error)))")
-      
-      if case AuthError.timeout = error {
-        logger.error("⏱️ [REAUTH] Error was timeout")
-        self.error = "Signing in took too long. Try again."
-      } else {
-        self.error = AuthenticationManager.userFacingMessage(for: error)
-      }
-      isLoading = false
+    case .failed(let message):
+      error = message
     }
   }
 

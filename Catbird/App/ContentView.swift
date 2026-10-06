@@ -484,6 +484,8 @@ struct MainContentView: View {
                 currentFeedName: $currentFeedName,
                 isDrawerOpen: $isDrawerOpen
               )
+              // A new identity per account rebuilds the drawer's view model and profile header.
+              .id(appState.userDID)
               .containerBackground(.clear, for: .navigation)
               .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(

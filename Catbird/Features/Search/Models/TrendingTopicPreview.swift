@@ -28,6 +28,9 @@ enum TrendingTopicPreviewPolicy {
     var quotedPosts: [String: AppBskyFeedDefs.PostView] = [:]
     var allowsExternal: (URL) -> Bool = { _ in true }
     var allowsPost: (AppBskyFeedDefs.FeedViewPost) -> Bool = { _ in true }
+    var contentLabelPreferences: [ContentLabelPreference] = []
+    /// Subscribed labelers' value definitions. nil until loaded, so every custom label blocks.
+    var labelDefinitions: ContentLabelDefinitionLookup.Definitions?
   }
 
   static func select(_ posts: [AppBskyFeedDefs.FeedViewPost], context: Context) -> TrendingTopicPreview {
@@ -107,7 +110,7 @@ enum TrendingTopicPreviewPolicy {
     guard !context.hiddenPosts.contains(post.uri.uriString()),
           post.viewer?.threadMuted != true,
           permitsAuthor(post.author, context: context),
-          safeLabels(post.labels),
+          safeLabels(post.labels, context: context),
           case .knownType(let record) = post.record, let value = record as? AppBskyFeedPost,
           context.allowsPost(item) else { return false }
     if let labels = value.labels {
@@ -134,7 +137,7 @@ enum TrendingTopicPreviewPolicy {
 
   private static func safeContextPost(_ post: AppBskyFeedDefs.PostView, context: Context) -> Bool {
     guard !context.hiddenPosts.contains(post.uri.uriString()), post.viewer?.threadMuted != true, permitsAuthor(post.author, context: context),
-          safeLabels(post.labels), case .knownType(let record) = post.record,
+          safeLabels(post.labels, context: context), case .knownType(let record) = post.record,
           let value = record as? AppBskyFeedPost else { return false }
     if let labels = value.labels {
       guard case .comAtprotoLabelDefsSelfLabels(let labels) = labels, labels.values.isEmpty else { return false }
@@ -149,16 +152,30 @@ enum TrendingTopicPreviewPolicy {
       && !context.blockedUsers.contains(author.did.didString())
       && viewer?.muted != true && viewer?.mutedByList == nil
       && viewer?.blocking == nil && viewer?.blockingByList == nil && viewer?.blockedBy != true
-      && safeLabels(author.labels)
+      && safeLabels(author.labels, context: context)
   }
 
   /// Labels that only change logged-out visibility. Trending previews require a session,
   /// so these never imply a warning for the viewer.
   private static let signedInNeutralLabels: Set<String> = ["!no-unauthenticated"]
 
-  private static func safeLabels(_ labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
-    // Covers canonical warnings, reserved hide/warn/redaction labels and custom labelers.
-    !(labels ?? []).contains { !signedInNeutralLabels.contains($0.val) && ReportingService.isLabelActive($0) }
+  private static func safeLabels(_ labels: [ComAtprotoLabelDefs.Label]?, context: Context) -> Bool {
+    !(labels ?? []).contains { blocksPreview($0, context: context) }
+  }
+
+  /// Preview art never reveals a warning. Reserved and canonical warning labels always block;
+  /// a custom label blocks unless its labeler's definition (or the viewer's setting) shows it
+  /// without a blur, matching `CustomContentLabelPolicy` in the feed. Informational labels pass.
+  static func blocksPreview(_ label: ComAtprotoLabelDefs.Label, context: Context) -> Bool {
+    guard ReportingService.isLabelActive(label) else { return false }
+    if label.val.hasPrefix("!") { return !signedInNeutralLabels.contains(label.val) }
+    if ContentLabels.contentWarningLabels.contains(label.val.lowercased()) { return true }
+    guard let definitions = context.labelDefinitions else { return true }
+    let definition = definitions[label.src.didString()]?.first { $0.identifier == label.val }
+    // Previews are media; "media" is the strictest wrapper, so content and media blurs both block.
+    return CustomContentLabelPolicy.visibility(labelValue: label.val, labelerDID: label.src,
+      preferences: context.contentLabelPreferences, definition: definition, contentType: "media",
+      isActive: true) != .show
   }
 
   /// "Who is chatting" avatars: the trend's own actors first, then preview post authors.
@@ -230,7 +247,7 @@ enum TrendingTopicPreviewPolicy {
           post.uri == record.uri, post.cid == record.cid, post.author.did == record.author.did,
           !context.hiddenPosts.contains(record.uri.uriString()), post.viewer?.threadMuted != true,
           permitsAuthor(record.author, context: context), permitsAuthor(post.author, context: context),
-          safeLabels(record.labels), safeLabels(post.labels),
+          safeLabels(record.labels, context: context), safeLabels(post.labels, context: context),
           case .knownType(let value) = record.value, let provided = value as? AppBskyFeedPost,
           case .knownType(let hydratedValue) = post.record, let hydrated = hydratedValue as? AppBskyFeedPost,
           provided == hydrated, provided.reply == nil, context.allowsPost(.init(post: post)) else { return false }

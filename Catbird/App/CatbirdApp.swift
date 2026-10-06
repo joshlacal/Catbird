@@ -1235,6 +1235,7 @@ private extension CatbirdApp {
         if case .failed = outcome {
           logger.error("Widget deep link could not switch to the requested account")
         }
+        appStateManager.presentAccountSwitchOutcome(outcome)
       }
     }
   }
@@ -1315,6 +1316,9 @@ private extension CatbirdApp {
     }
     // Sign-out explanations are usually raised while moving to the sign-in screen,
     // so they're presented here, above every lifecycle state.
+    // Asks to sign in again when a switch reached an account whose session expired.
+    // It waits while the sign-out alert below is up, so the two never stack.
+    .modifier(AccountReauthenticationPromptModifier(appStateManager: appStateManager))
     .alert(item: pendingAuthAlertBinding) { alert in
       Alert(
         title: Text(alert.title),

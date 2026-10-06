@@ -16,33 +16,15 @@ struct SettingsAvatarToolbarButton: View {
           ForEach(accounts) { account in
             Button {
               guard !account.isActive else { return }
-              Task {
-                await appStateManager.switchAccount(to: account.did)
+              let manager = appStateManager
+              Task { @MainActor in
+                let outcome = await manager.switchAccount(to: account.did)
+                manager.presentAccountSwitchOutcome(outcome)
               }
             } label: {
-              let displayName = account.cachedDisplayName ?? account.cachedHandle ?? account.handle ?? account.did
-              let handle = account.cachedHandle ?? account.handle
-//            Label {
-//              Text(displayName)
-//              if let handle, handle != displayName {
-//                Text("@\(handle)")
-//              }
-//            } icon: {
-//              if let image = avatarImages[account.did] {
-//                #if os(iOS)
-//                  Image(uiImage: image)
-//                    .resizable()
-//                #elseif os(macOS)
-//                  Image(nsImage: image)
-//                    .resizable()
-//                #endif
-//              } else if account.isActive {
-//                Image(systemName: "checkmark.circle.fill")
-//              } else {
-//                Image(systemName: "person.circle")
-//              }
-//            }
-              
+              let labels = AccountMenuLabels(account: account)
+              let displayName = labels.title
+              let handle = labels.subtitle
               Label {
                 Text(displayName)
                   .appBody()
@@ -63,8 +45,8 @@ struct SettingsAvatarToolbarButton: View {
                   Image(systemName: "person.circle")
                 }
               }
-              if let handle, handle != displayName {
-                Text("@\(handle)")
+              if let handle {
+                Text(handle)
                   .appCaption()
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
@@ -81,8 +63,9 @@ struct SettingsAvatarToolbarButton: View {
       }
       .accessibilityLabel("Settings")
       .accessibilityHint("Opens Settings. Touch and hold to switch accounts.")
-      .task(id: accounts.map(\.did)) {
-        await loadAvatars(for: accounts)
+      .task(id: accountsTaskID(accounts)) {
+        await refreshAccountProfiles()
+        await loadAvatars(for: appStateManager.authentication.availableAccounts)
       }
     } else {
       Button(action: action) {
@@ -96,7 +79,13 @@ struct SettingsAvatarToolbarButton: View {
   }
 
   private var avatarLabel: some View {
-    let avatarURL = appState.currentUserProfile?.finalAvatarURL()
+    // Only trust a loaded profile that belongs to the account being shown.
+    let profile = appState.currentUserProfile.flatMap {
+      $0.did.description == appState.userDID ? $0 : nil
+    }
+    let avatarURL = profile?.finalAvatarURL()
+      ?? appStateManager.authentication.availableAccounts
+        .first(where: { $0.did == appState.userDID })?.cachedAvatarURL
 
     return AvatarView(
       did: appState.userDID,
@@ -107,7 +96,18 @@ struct SettingsAvatarToolbarButton: View {
     .scaledToFit()
     .frame(width: 30, height: 30)
     .clipShape(Circle())
-    .id("\(appState.userDID)-\(appState.currentUserProfile?.avatar?.description ?? "noavatar")")
+    .id("\(appState.userDID)-\(avatarURL?.absoluteString ?? "noavatar")")
+  }
+
+  /// Re-runs when the saved accounts or the active account change.
+  private func accountsTaskID(_ accounts: [AuthenticationManager.AccountInfo]) -> [String] {
+    accounts.map(\.did) + [appState.userDID]
+  }
+
+  /// Refreshes saved accounts' names and avatars so the menu never falls back to an identifier.
+  private func refreshAccountProfiles() async {
+    guard let client = appState.atProtoClient else { return }
+    await appStateManager.authentication.refreshCachedAccountProfiles(using: client)
   }
 
   private func loadAvatars(for accounts: [AuthenticationManager.AccountInfo]) async {
@@ -122,6 +122,39 @@ struct SettingsAvatarToolbarButton: View {
       if let image {
         avatarImages[account.did] = image
       }
+    }
+  }
+}
+
+// MARK: - Account Menu Labels
+
+/// Text for an account in the quick-switch menu. Never shows a DID: display name,
+/// then handle, then "Loading…" until the account's profile arrives.
+struct AccountMenuLabels: Equatable {
+  let title: String
+  let subtitle: String?
+
+  init(account: AuthenticationManager.AccountInfo) {
+    self.init(
+      displayName: account.cachedDisplayName,
+      handle: AuthenticationManager.AccountInfo.loginHandleCandidate(account.cachedHandle)
+        ?? AuthenticationManager.AccountInfo.loginHandleCandidate(account.handle)
+    )
+  }
+
+  init(displayName: String?, handle: String?) {
+    let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let validHandle = AuthenticationManager.AccountInfo.loginHandleCandidate(handle)
+    let validName = (name?.isEmpty == false && name?.lowercased().hasPrefix("did:") == false) ? name : nil
+    if let validName {
+      title = validName
+      subtitle = validHandle.map { "@\($0)" }
+    } else if let validHandle {
+      title = "@\(validHandle)"
+      subtitle = nil
+    } else {
+      title = "Loading…"
+      subtitle = nil
     }
   }
 }

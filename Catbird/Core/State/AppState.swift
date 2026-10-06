@@ -183,8 +183,9 @@ final class AppState {
     var isAdultContentEnabled: Bool = false
 
 
-    /// Current user's profile data for optimistic updates
-    @ObservationIgnored var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
+    /// Current user's profile data for optimistic updates.
+    /// Observed so the toolbar avatar and other account chrome update when it loads.
+    var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
 
     // Account switching transition state for smooth UX
     // NOTE: Do NOT use @ObservationIgnored here - SwiftUI must observe this to dismiss the loading overlay
@@ -214,7 +215,10 @@ final class AppState {
     @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
+    /// Scoped to this account: suspension for a switch or sign-out discards what it queued.
     @MainActor @ObservationIgnored lazy var feedFeedbackManager = FeedFeedbackManager(
+        accountDID: userDID,
+        accountServiceWork: accountServiceWork,
         clientProvider: { [weak self] in self?.atProtoClient }
     )
 
@@ -477,6 +481,7 @@ final class AppState {
             throw AccountServiceWork.BarrierError.accountChanged
         }
         accountServiceWork.suspend()
+        feedFeedbackManager.discardPending()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
@@ -601,6 +606,7 @@ final class AppState {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
         _ = appSettings.suspendLocalChanges(for: userDID)
         accountServiceWork.suspend()
+        feedFeedbackManager.discardPending()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil

@@ -117,8 +117,10 @@ struct FeedPostRow: View, Identifiable {
             if let feedInteractionTarget {
                 VStack {
                         Button {
-                            guard let postURI = try? viewModel.post.feedViewPost.post.uri else { return }
-                            appState.feedFeedbackManager.sendShowMore(postURI: postURI, target: feedInteractionTarget)
+                            guard let item = try? viewModel.post.feedViewPost else { return }
+                            let postURI = item.post.uri
+                            appState.feedFeedbackManager.sendShowMore(postURI: postURI, target: feedInteractionTarget,
+                                feedContext: item.feedContext, reqId: item.reqId)
                             logger.debug("Sent 'show more' feedback for post: \(postURI)")
                             
                             // Show confirmation toast
@@ -138,8 +140,10 @@ struct FeedPostRow: View, Identifiable {
                     
                     
                     Button {
-                        guard let postURI = try? viewModel.post.feedViewPost.post.uri else { return }
-                        appState.feedFeedbackManager.sendShowLess(postURI: postURI, target: feedInteractionTarget)
+                        guard let item = try? viewModel.post.feedViewPost else { return }
+                        let postURI = item.post.uri
+                        appState.feedFeedbackManager.sendShowLess(postURI: postURI, target: feedInteractionTarget,
+                            feedContext: item.feedContext, reqId: item.reqId)
                         logger.debug("Sent 'show less' feedback for post: \(postURI)")
                         
                         // Show confirmation toast
@@ -166,8 +170,9 @@ struct FeedPostRow: View, Identifiable {
         // Track post visibility for feed feedback (iOS 18.0+/macOS 15.0+)
         .onScrollVisibilityChange(threshold: 0.5) { isVisible in
             if tracksVisibilityForFeedback, isVisible {
-                if let postURI = try? ATProtocolURI(uriString: viewModel.post.feedViewPost.post.uri.uriString()) {
-                    appState.feedFeedbackManager.trackPostSeen(postURI: postURI, target: feedInteractionTarget)
+                if let item = try? viewModel.post.feedViewPost {
+                    appState.feedFeedbackManager.trackPostSeen(postURI: item.post.uri, target: feedInteractionTarget,
+                        feedContext: item.feedContext, reqId: item.reqId)
                 }
             }
         }

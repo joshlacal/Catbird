@@ -332,6 +332,27 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(TrendingTopicPreviewPolicy.select([warned], context: .init()) == .init())
   }
 
+  @Test("Custom labels block previews until their labeler's definition shows them without a blur")
+  func customLabelDefinitions() throws {
+    func definition(_ value: String, blurs: String, defaultSetting: String? = nil) -> ComAtprotoLabelDefs.LabelValueDefinition {
+      .init(identifier: value, severity: "inform", blurs: blurs, defaultSetting: defaultSetting, locales: [])
+    }
+    let informational = try fixture("custom-informational", postLabels: [label("custom-info")])
+    let mediaBlur = try fixture("custom-media-blur", postLabels: [label("custom-media")])
+    let canonical = try fixture("canonical-with-definitions", postLabels: [label("porn")])
+    let definitions: ContentLabelDefinitionLookup.Definitions = ["did:plc:previewlabeler": [
+      definition("custom-info", blurs: "none"),
+      definition("custom-media", blurs: "media", defaultSetting: "warn"),
+      definition("porn", blurs: "none"),
+    ]]
+    let loaded = TrendingTopicPreviewPolicy.Context(labelDefinitions: definitions)
+
+    #expect(TrendingTopicPreviewPolicy.select([informational], context: .init()) == .init(), "Unknown definitions fail closed")
+    #expect(TrendingTopicPreviewPolicy.select([informational], context: loaded).media.count == 1)
+    #expect(TrendingTopicPreviewPolicy.select([mediaBlur], context: loaded) == .init())
+    #expect(TrendingTopicPreviewPolicy.select([canonical], context: loaded) == .init(), "Canonical warnings ignore labeler definitions")
+  }
+
   @Test("Trend actors lead participants, pass the author gate, and preview authors fill gaps")
   func trendActorParticipants() throws {
     let ordinary = try fixture("actor-one", author: 1).post.author
@@ -594,7 +615,7 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(store.preview(key: "canceled", context: .init()).media.count == 1)
   }
 
-  @Test("Canceling an active request rejects its delayed result without poisoning the cache")
+  @Test("Canceling the requester of a started fetch lets it complete and cache its result")
   func activeCancellation() async throws {
     let store = TrendingTopicMediaStore()
     let source = PreviewControlledSource()
@@ -602,25 +623,44 @@ struct TrendingTopicPreviewPolicyTests {
     let canceled = Task { await store.load(key: "topic") { try await source.fetch("topic") } }
     await source.waitForRequests(1)
     canceled.cancel()
+    await settle()
     source.succeed(0, posts: [post])
     await canceled.value
-    #expect(store.preview(key: "topic", context: .init()) == .init())
+    #expect(store.preview(key: "topic", context: .init()).media.count == 1)
     var retryFetches = 0
     await store.load(key: "topic") { retryFetches += 1; return [post] }
-    #expect(retryFetches == 1)
+    #expect(retryFetches == 0, "The reappearing card reads the completed fetch")
+  }
+
+  @Test("A card that reappears while its canceled fetch is in flight reuses that fetch")
+  func reappearingCardReusesCanceledFetch() async throws {
+    let store = TrendingTopicMediaStore()
+    let source = PreviewControlledSource()
+    let post = try fixture("reappearing-card")
+    let scrolledAway = Task { await store.load(key: "topic") { try await source.fetch("topic") } }
+    await source.waitForRequests(1)
+    scrolledAway.cancel()
+    await settle()
+    let reappeared = Task { await store.load(key: "topic") { try await source.fetch("topic") } }
+    await settle()
+    source.succeed(0, posts: [post])
+    await scrolledAway.value
+    await reappeared.value
+    #expect(source.keys == ["topic"], "The reappearing card waits for the started fetch instead of starting another")
     #expect(store.preview(key: "topic", context: .init()).media.count == 1)
   }
 
-  @Test("A canceled request reporting a transport error cannot install a negative cache")
+  @Test("A request abandoned by the inactive store reporting a transport error cannot install a negative cache")
   func canceledFailureDoesNotPoisonCache() async throws {
     let store = TrendingTopicMediaStore()
     let source = PreviewControlledSource()
     let post = try fixture("after-canceled-error")
     let canceled = Task { await store.load(key: "topic") { try await source.fetch("topic") } }
     await source.waitForRequests(1)
-    canceled.cancel()
+    store.setActive(false)
     source.fail(0)
     await canceled.value
+    store.setActive(true)
     var fetches = 0
     await store.load(key: "topic") { fetches += 1; return [post] }
 

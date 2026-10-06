@@ -13,6 +13,8 @@ enum AccountSwitchOutcome: Equatable, Sendable {
   case unchanged
   case busy
   case failed(String)
+  /// The target's saved session expired; the previous account stays active.
+  case needsReauthentication(accountDID: String)
   case blockedBySettings(String)
   case cancelled
 }
