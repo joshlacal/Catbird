@@ -183,8 +183,9 @@ final class AppState {
     var isAdultContentEnabled: Bool = false
 
 
-    /// Current user's profile data for optimistic updates
-    @ObservationIgnored var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
+    /// Current user's profile data for optimistic updates.
+    /// Observed so the toolbar avatar and other account chrome update when it loads.
+    var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
 
     // Account switching transition state for smooth UX
     // NOTE: Do NOT use @ObservationIgnored here - SwiftUI must observe this to dismiss the loading overlay

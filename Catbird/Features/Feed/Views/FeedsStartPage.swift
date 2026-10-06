@@ -231,7 +231,9 @@ struct FeedsStartPage: View {
         input: .init(actor: ATIdentifier(string: did))
       )
 
-      if responseCode == 200, let profileData = profileData {
+      // Drop a response that arrives after the account changed.
+      if responseCode == 200, let profileData = profileData,
+         profileData.did.description == appState.userDID {
         profile = profileData
       }
     } catch {
@@ -1062,6 +1064,12 @@ struct FeedsStartPage: View {
       onAccountSwitch: handleAccountSwitch,
       currentUserDID: currentUserDID
     )
+    // The profile header always belongs to the account being shown.
+    .task(id: appState.userDID) {
+      profile = nil
+      guard appState.isAuthenticated else { return }
+      await loadUserProfile()
+    }
     
   }
   
@@ -1131,10 +1139,6 @@ struct FeedsStartPage: View {
         isLoaded = true
       }
 
-      if appState.isAuthenticated {
-        await loadUserProfile()
-      }
-
       if stateInvalidationSubscriber == nil {
         stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
           viewModel: viewModel,
@@ -1160,10 +1164,6 @@ struct FeedsStartPage: View {
 
       withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
         isLoaded = true
-      }
-
-      if appState.isAuthenticated {
-        await loadUserProfile()
       }
     }
   }

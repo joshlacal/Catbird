@@ -37,6 +37,8 @@ enum AccountSwitchError: LocalizedError, Equatable {
   case authenticatedAccountMismatch
   case accountRestricted
   case recoveryFailed
+  /// The target account's saved session was rejected; the previous account stays active.
+  case reauthenticationRequired(did: String)
 
   var errorDescription: String? {
     switch self {
@@ -55,6 +57,8 @@ enum AccountSwitchError: LocalizedError, Equatable {
       return "This account is deactivated or suspended, so it can’t post right now."
     case .recoveryFailed:
       return "Restart Catbird to finish switching accounts."
+    case .reauthenticationRequired:
+      return "Your session for this account has expired. Sign in again to switch to it."
     }
   }
 }
@@ -471,6 +475,10 @@ final class AppStateManager {
       logger.info("✅ AuthManager switched successfully")
     } catch {
       logger.error("❌ Failed to switch AuthManager: \(error.localizedDescription)")
+      if Self.isReauthenticationFailure(error) {
+        authManager.markAccountNeedsReauthentication(did: userDID)
+        throw AccountSwitchError.reauthenticationRequired(did: userDID)
+      }
       throw AccountSwitchError.authSwitchFailed(error.localizedDescription)
     }
 
@@ -489,10 +497,18 @@ final class AppStateManager {
     let targetStatus = await readAccountStatus(client: client, userDID: userDID)
     try validateSwitchAttempt(composerSwitchAttemptID)
     try checkSwitchTaskCancellation(composerSwitchAttemptID)
+    if targetStatus == .reauthRequired,
+       let previousDID = effectivePreviousDID, previousDID != userDID {
+      // The saved session was rejected. Fail before the previous account is retired so the
+      // switch rolls back to it, and remember the target so the sign-in prompt can name it.
+      logger.warning("Target account needs to sign in again; rolling back the switch")
+      authManager.markAccountNeedsReauthentication(did: userDID)
+      throw AccountSwitchError.reauthenticationRequired(did: userDID)
+    }
     guard case .authenticated(let checkedDID) = authManager.state, checkedDID == userDID else {
       throw AccountSwitchError.authenticatedAccountMismatch
     }
-    if targetStatus != .active {
+    if targetStatus == .deactivated || targetStatus == .takendown {
       // A composer switch rolls back without ever publishing a restricted destination.
       if let previousDID = effectivePreviousDID, previousDID != userDID {
         throw AccountSwitchError.accountRestricted
@@ -703,10 +719,12 @@ final class AppStateManager {
 
   // MARK: - Account Restriction & Reactivation
 
-  private enum AccountStatus: Equatable {
+  enum AccountStatus: Equatable {
     case active
     case deactivated
     case takendown
+    /// The server rejected the saved session; the account must sign in again.
+    case reauthRequired
   }
 
   /// This preflight performs no target AppState construction or service initialization.
@@ -714,19 +732,69 @@ final class AppStateManager {
     guard let client else { return .active }
     do {
       let (code, session) = try await client.com.atproto.server.getSession()
-      if code >= 200 && code < 300, let session {
-        if session.active == false || session.status == "deactivated" {
-          logger.warning("Account is deactivated for DID: \(userDID)")
-          return .deactivated
-        } else if session.status == "takendown" || session.status == "suspended" {
-          logger.warning("Account is taken down for DID: \(userDID)")
-          return .takendown
-        }
+      let status = Self.accountStatus(
+        responseCode: code, isActive: session?.active, status: session?.status
+      )
+      switch status {
+      case .deactivated: logger.warning("Account is deactivated for DID: \(userDID)")
+      case .takendown: logger.warning("Account is taken down for DID: \(userDID)")
+      case .reauthRequired: logger.warning("Session check was rejected for DID: \(userDID)")
+      case .active: break
       }
+      return status
     } catch {
-      logger.debug("Session check failed: \(error.localizedDescription)")
+      let status = Self.accountStatus(forSessionCheckError: error)
+      logger.debug("Session check failed (\(String(describing: status))): \(error.localizedDescription)")
+      return status
     }
+  }
+
+  /// Maps a completed `getSession` response to an account status.
+  nonisolated static func accountStatus(responseCode: Int, isActive: Bool?, status: String?) -> AccountStatus {
+    if responseCode == 401 { return .reauthRequired }
+    guard (200..<300).contains(responseCode) else { return .active }
+    if isActive == false || status == "deactivated" { return .deactivated }
+    if status == "takendown" || status == "suspended" { return .takendown }
     return .active
+  }
+
+  /// A failed session check only blocks a switch when the server rejected the session.
+  /// Offline and server errors keep the old behavior so switching still works without a network.
+  nonisolated static func accountStatus(forSessionCheckError error: Error) -> AccountStatus {
+    isReauthenticationFailure(error) ? .reauthRequired : .active
+  }
+
+  /// True when `error` means the account's saved session is no longer accepted.
+  nonisolated static func isReauthenticationFailure(_ error: Error) -> Bool {
+    if let networkError = error as? Petrel.NetworkError {
+      switch networkError {
+      case .authenticationRequired, .expiredToken, .unauthorized, .authenticationFailed:
+        return true
+      case .responseError(let statusCode):
+        return statusCode == 401
+      default:
+        return false
+      }
+    }
+    if let xrpcError = error as? ATProtoXRPCError {
+      return ["ExpiredToken", "InvalidToken", "AuthenticationRequired", "AuthMissing"]
+        .contains(xrpcError.error)
+    }
+    if let authError = error as? AuthError {
+      if case .invalidSession = authError { return true }
+      return false
+    }
+    if let accountSwitchError = error as? AccountSwitchError {
+      if case .reauthenticationRequired = accountSwitchError { return true }
+      return false
+    }
+    // Petrel keeps its gateway error type internal; match the cases that mean the nest
+    // session itself is gone, not the upstream-service 401s it reports as `authenticationRequired`.
+    if String(describing: type(of: error)).contains("GatewayError") {
+      let description = String(describing: error)
+      return ["sessionExpired", "invalidSession", "missingSession"].contains { description.contains($0) }
+    }
+    return false
   }
 
   func checkAccountStatus(for appState: AppState) async -> AppLifecycle {
@@ -734,6 +802,7 @@ final class AppStateManager {
     case .active: return .authenticated(appState)
     case .deactivated: return .deactivated(appState)
     case .takendown: return .takendown(appState)
+    case .reauthRequired: return .authenticated(appState)
     }
   }
 
@@ -842,6 +911,15 @@ final class AppStateManager {
     to userDID: String,
     composerTransfer: ComposerEditingSnapshot? = nil
   ) async -> AccountSwitchOutcome {
+    let outcome = await performAccountSwitch(to: userDID, composerTransfer: composerTransfer)
+    await reconcileAuthenticationAfterSwitch()
+    return outcome
+  }
+
+  private func performAccountSwitch(
+    to userDID: String,
+    composerTransfer: ComposerEditingSnapshot?
+  ) async -> AccountSwitchOutcome {
     guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching else { return .busy }
     guard !Task.isCancelled else { return .cancelled }
     guard !accountSwitchRequiresRestart else {
@@ -863,6 +941,10 @@ final class AppStateManager {
       if case .rejected(let outcome) = admission { return outcome }
       return .busy
     }
+    // A 401 seen while probing the target belongs to this switch's outcome, not to the
+    // account that ends up active; it is replayed or dropped once the switch settles.
+    authManager.beginDeferringAutoLogout()
+    defer { authManager.endDeferringAutoLogout() }
     defer { retiredComposerSwitchAttempts.remove(attempt.id) }
     let previousLifecycle = lifecycle
     if let source = previousLifecycle.appState {
@@ -909,10 +991,128 @@ final class AppStateManager {
       if accountSwitchRequiresRestart {
         return .failed("Catbird could not restore the previous account safely. Restart the app; your draft has been preserved.")
       }
+      if case .reauthenticationRequired(let expiredDID) = error as? AccountSwitchError {
+        // The rollback kept the previous account; the target is remembered for the sign-in prompt.
+        authManager.markAccountNeedsReauthentication(did: expiredDID)
+        return .needsReauthentication(accountDID: expiredDID)
+      }
+      // Any other failure is not a sign-in problem, so a later sign-out must not start
+      // signing in to the account this switch was aiming at.
+      authManager.discardExpiredAccountInfo(for: userDID)
       if error is SettingsAccountSwitchError {
         return .blockedBySettings(error.localizedDescription)
       }
       return error is CancellationError ? .cancelled : .failed(error.localizedDescription)
+    }
+  }
+
+  /// Runs once an explicit switch has settled. Auth changes raised during the switch were
+  /// ignored by the auth observer, so they are applied here against the account now active.
+  private func reconcileAuthenticationAfterSwitch() async {
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart else { return }
+    if let deferred = authManager.takeDeferredAutoLogout() {
+      if let deferredDID = deferred.did, deferredDID == authManager.state.userDID {
+        logger.warning("Applying a sign-out that arrived during the account switch")
+        await authManager.handleAutoLogoutFromPetrel(did: deferredDID, reason: deferred.reason)
+      } else {
+        logger.info("Dropping a sign-out from the account switch that isn’t for the active account")
+      }
+    }
+    // Lifecycle still shows an account but authentication was lost: hand off to the
+    // sign-in screen, which signs in to the expired account again automatically.
+    if lifecycle.appState != nil, case .unauthenticated = authManager.state {
+      logger.warning("Authentication was lost during the account switch; showing sign-in")
+      composerSwitchQueue.invalidate()
+      setLifecycle(.unauthenticated)
+    }
+  }
+
+  // MARK: - Re-authentication Prompt
+
+  /// Asks to sign in again to an account whose saved session expired.
+  struct ReauthenticationPrompt: Identifiable, Equatable {
+    let id = UUID()
+    let did: String
+    /// "@handle", or nil when no handle is known yet.
+    let accountLabel: String?
+
+    var message: String {
+      let account = accountLabel ?? "this account"
+      return "Your session for \(account) has expired. Sign in again to switch to this account."
+    }
+  }
+
+  /// What a switch started outside the account picker should show the person.
+  enum AccountSwitchFeedback: Equatable {
+    case promptReauthentication(did: String)
+    case toast(String)
+  }
+
+  /// Presented at the scene root while an account is still shown.
+  var pendingReauthenticationPrompt: ReauthenticationPrompt?
+
+  nonisolated static func feedback(for outcome: AccountSwitchOutcome) -> AccountSwitchFeedback? {
+    switch outcome {
+    case .needsReauthentication(let did):
+      return .promptReauthentication(did: did)
+    case .failed(let message), .blockedBySettings(let message):
+      return .toast(message)
+    case .busy:
+      return .toast("Another account is still switching. Try again in a moment.")
+    case .switched, .unchanged, .cancelled:
+      return nil
+    }
+  }
+
+  /// Shows the outcome of a switch started from the toolbar, a notification or a widget.
+  func presentAccountSwitchOutcome(_ outcome: AccountSwitchOutcome) {
+    switch Self.feedback(for: outcome) {
+    case .promptReauthentication(let did):
+      requestReauthenticationPrompt(for: did)
+    case .toast(let message):
+      lifecycle.appState?.toastManager.show(
+        ToastItem(message: message, icon: "exclamationmark.triangle.fill")
+      )
+    case nil:
+      break
+    }
+  }
+
+  func requestReauthenticationPrompt(for did: String) {
+    authManager.markAccountNeedsReauthentication(did: did)
+    let handle = authManager.loginHandle(forAccount: did)
+    pendingReauthenticationPrompt = ReauthenticationPrompt(
+      did: did, accountLabel: handle.map { "@\($0)" }
+    )
+  }
+
+  /// The person declined to sign in again; forget the expired target so nothing
+  /// starts signing in to it later.
+  func cancelReauthenticationPrompt() {
+    guard let prompt = pendingReauthenticationPrompt else { return }
+    pendingReauthenticationPrompt = nil
+    discardExpiredAccountIfInactive(prompt.did)
+  }
+
+  /// Forgets an expired target only while a different account is active, so the sign-in
+  /// screen's automatic re-sign-in for the active account is never disturbed.
+  func discardExpiredAccountIfInactive(_ did: String) {
+    guard lifecycle.appState != nil, lifecycle.userDID != did else { return }
+    authManager.discardExpiredAccountInfo(for: did)
+  }
+
+  /// Puts authentication back on the active account after a sign-in attempt was abandoned.
+  /// Starting OAuth leaves the auth state "authenticating"; without this the next switch
+  /// would find no ready account.
+  func restoreActiveAccountAfterAbandonedSignIn() async {
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          let activeDID = lifecycle.appState?.userDID,
+          authManager.state.userDID != activeDID else { return }
+    do {
+      try await authManager.switchToAccount(did: activeDID)
+    } catch {
+      logger.error("Could not restore the active account after sign-in was abandoned: \(error.localizedDescription)")
     }
   }
 
