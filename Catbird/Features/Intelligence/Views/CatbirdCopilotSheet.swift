@@ -27,7 +27,7 @@ struct CatbirdCopilotSheet: View {
     @State private var navigationPath = NavigationPath()
     @State private var selectedTab: Int = 0
     @State private var successMessage: String? = nil
-    private let unavailableMessage: String? = CopilotAvailability.unavailableMessage
+    private var unavailableMessage: String? { CopilotAvailability.unavailableMessage }
 
     init(
         context: CopilotContext,
@@ -77,11 +77,13 @@ struct CatbirdCopilotSheet: View {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             if turns.isEmpty && !isResponding, let unavailableMessage {
-                                ContentUnavailableView(
-                                    "Ask Catbird Unavailable",
-                                    systemImage: "sparkles",
-                                    description: Text(unavailableMessage)
-                                )
+                                ContentUnavailableView {
+                                    Label("Ask Catbird Unavailable", systemImage: "sparkles")
+                                } description: {
+                                    Text(unavailableMessage)
+                                } actions: {
+                                    Button("Try Again") { CopilotAvailability.refresh() }
+                                }
                                 .padding(.top, 40)
                             } else if turns.isEmpty && !isResponding {
                                 ContentUnavailableView(
@@ -205,6 +207,7 @@ struct CatbirdCopilotSheet: View {
                 }
             }
             .task(id: appState.userDID) {
+                CopilotAvailability.refresh()
                 stopGeneration()
                 let did = appState.userDID
                 conversationID = UUID()
@@ -425,6 +428,12 @@ struct CatbirdCopilotSheet: View {
             return
         }
 
+        CopilotAvailability.refresh()
+        if let unavailableMessage {
+            errorMessage = unavailableMessage
+            return
+        }
+
         let priorHistory = turns
         let userTurn = CopilotStoredTurn(id: UUID(), role: .user, text: trimmed, createdAt: Date())
         let assistantTurnID = UUID()
@@ -460,6 +469,10 @@ struct CatbirdCopilotSheet: View {
                     for try await event in stream {
                         guard !Task.isCancelled else { break }
                         guard streamingAssistantTurnID == assistantTurnID else { break }
+                        guard accountDID == appState.userDID else {
+                            stopGeneration()
+                            break
+                        }
                         guard let turnIndex = turns.firstIndex(where: { $0.id == assistantTurnID }) else { break }
 
                         switch event {
@@ -470,6 +483,8 @@ struct CatbirdCopilotSheet: View {
                             turns[turnIndex].text = ""
                             turns[turnIndex].sources = nil
                             turns[turnIndex].proposal = nil
+                            turns[turnIndex].evidence = nil
+                            turns[turnIndex].proposalOutcome = nil
 
                         case .source(let source):
                             var currentSources = turns[turnIndex].sources ?? []
@@ -478,8 +493,14 @@ struct CatbirdCopilotSheet: View {
                             }
                             turns[turnIndex].sources = currentSources
 
+                        case .evidence(let evidence):
+                            var retained = turns[turnIndex].evidence ?? []
+                            if !retained.contains(evidence) { retained.append(evidence) }
+                            turns[turnIndex].evidence = retained
+
                         case .proposal(let proposal):
                             turns[turnIndex].proposal = proposal
+                            turns[turnIndex].proposalOutcome = "Proposed for confirmation; not executed."
 
                         case .route(let modelRoute):
                             turns[turnIndex].route = modelRoute
@@ -560,6 +581,7 @@ struct CatbirdCopilotSheet: View {
             successMessage = "Action completed: \(CopilotProposalCoordinator.confirmationText(for: proposal, context: context))"
             if let idx = turns.firstIndex(where: { $0.id == turnID }) {
                 turns[idx].proposal = nil
+                turns[idx].proposalOutcome = "Confirmed action completed: \(CopilotProposalCoordinator.confirmationText(for: proposal, context: context))"
                 await persistCurrentConversation()
             }
         } catch {
@@ -584,11 +606,12 @@ struct CatbirdCopilotSheet: View {
                 expectedAccountDID: conversationAccountDID,
                 currentAccountDID: appState.userDID
             )
-            if let idx = turns.firstIndex(where: { $0.id == turnID }) {
-                turns[idx].proposal = nil
-                Task { await persistCurrentConversation() }
-            }
             if let onDedicatedAction {
+                if let idx = turns.firstIndex(where: { $0.id == turnID }) {
+                    turns[idx].proposal = nil
+                    turns[idx].proposalOutcome = "Opened dedicated review flow; completion is unknown."
+                    Task { await persistCurrentConversation() }
+                }
                 onDedicatedAction(proposal)
                 dismiss()
             }
@@ -603,6 +626,7 @@ struct CatbirdCopilotSheet: View {
         guard !isExecutingProposal else { return }
         if let idx = turns.firstIndex(where: { $0.id == turnID }) {
             turns[idx].proposal = nil
+            turns[idx].proposalOutcome = "Proposal cancelled; not executed."
             Task { await persistCurrentConversation() }
         }
     }
@@ -841,7 +865,7 @@ enum CopilotReferencePresentation {
         let description: String
         switch context {
         case .topic(let name, _, _): description = "Topic: \(name)"
-        case .post(_, _, _, let text):
+        case .post(_, _, _, let text, _):
             let excerpt = text.trimmingCharacters(in: .whitespacesAndNewlines)
             description = excerpt.isEmpty ? "Post" : "Post: \(excerpt.prefix(100))"
         case .thread: description = "Thread"

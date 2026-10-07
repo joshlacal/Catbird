@@ -50,7 +50,14 @@ struct ExternalEmbedView: View {
     private struct ValidationIdentity: Hashable {
         let url: URL?
         let isAllowed: Bool
+        let isStandardSite: Bool
         let attempt: Int
+    }
+
+    private struct ExternalModerationIdentity: Hashable {
+        let uri: URI
+        let labels: [ComAtprotoLabelDefs.Label]
+        let account: String?
     }
     
     private let logger = Logger(subsystem: "blue.catbird", category: "ExternalEmbedView")
@@ -161,11 +168,10 @@ struct ExternalEmbedView: View {
     }
 
     var body: some View {
-        Group {
+        ExternalEmbedLabelGate(labels: external.labels) {
             if shouldShowExternalEmbed(for: external.uri) {
                 VStack(alignment: .leading, spacing: 0) {
-                    content
-                        .frame(maxWidth: .infinity)
+                    content.frame(maxWidth: .infinity)
                 }
                 .environment(
                     \.openURL,
@@ -173,8 +179,9 @@ struct ExternalEmbedView: View {
                          let result = sceneContext.urlHandler.handle(url)
                          return result
                      })
-                .task(id: ValidationIdentity(url: destinationURL, isAllowed: isGifProviderAllowed, attempt: retryAttempt)) {
-                    await setupVideo()
+                .task(id: ValidationIdentity(url: destinationURL, isAllowed: isGifProviderAllowed,
+                                            isStandardSite: StandardSiteCard(external) != nil, attempt: retryAttempt)) {
+                    if StandardSiteCard(external) == nil { await setupVideo() }
                 }
                 // Fixed sizing to prevent layout jumps
                 .fixedSize(horizontal: false, vertical: true)
@@ -182,6 +189,7 @@ struct ExternalEmbedView: View {
                 blockedExternalMediaView
             }
         }
+        .id(ExternalModerationIdentity(uri: external.uri, labels: external.labels ?? [], account: appState.userDID))
         .background(viewportReader)
         .confirmationDialog(
             "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
@@ -212,7 +220,9 @@ struct ExternalEmbedView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let videoModel = videoModel {
+        if let card = StandardSiteCard(external) {
+            StandardSiteEmbedView(card: card)
+        } else if let videoModel = videoModel {
             videoPlayerContent(videoModel: videoModel)
         } else if let gifError = gifError {
             gifErrorContent(error: gifError)
@@ -251,7 +261,7 @@ struct ExternalEmbedView: View {
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .frame(maxHeight: mediaMaximumHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Placeholder shown while a GIF is being validated, using the thumbnail to prevent a flash to the link card
@@ -279,7 +289,7 @@ struct ExternalEmbedView: View {
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .frame(maxHeight: mediaMaximumHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
     @ViewBuilder
@@ -293,7 +303,7 @@ struct ExternalEmbedView: View {
         .frame(maxWidth: .infinity)
         .frame(maxHeight: mediaMaximumHeight)
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
     @ViewBuilder
@@ -301,7 +311,7 @@ struct ExternalEmbedView: View {
         VStack(spacing: 6) {
             EmbeddedMediaWebView(url: url, embedType: embedType, shouldBlur: shouldBlur)
                 .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
             // Hide embed button
             HStack {
                 Spacer()
@@ -339,12 +349,7 @@ struct ExternalEmbedView: View {
             linkDetails
         }
         .padding(6)
-        .background(Color.gray.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-        )
+        .feedEmbedCardStyle()
         .contentShape(Rectangle())
         .onTapGesture {
             handleCardTap(embedType: detectedEmbedType)
@@ -398,8 +403,8 @@ struct ExternalEmbedView: View {
                     .foregroundColor(.gray)
                     .frame(width: 20, height: 20)
                 Text(external.uri.authority)
-                    .appFont(AppTextRole.headline)
-                    .textScale(.secondary)
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(6)
@@ -876,7 +881,8 @@ struct ExternalEmbedView: View {
             if !external.description.isEmpty {
                 Text(external.description)
                     .appFont(AppTextRole.subheadline)
-                    .lineLimit(3)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
                     .truncationMode(.tail)
             }
 

@@ -32,9 +32,12 @@ struct FollowingIntent: AppIntent {
         let value = output.follows.map { ProfileEntity(from: $0) }
         let dialog: IntentDialog
         if let first = value.first {
-            dialog = IntentDialog(stringLiteral: "Found \(value.count) \(value.count == 1 ? "profile" : "profiles"). First: \(String(localized: first.displayRepresentation.title)).")
+            let firstTitle = String(localized: first.displayRepresentation.title)
+            dialog = value.count == 1
+                ? IntentDialog("Found 1 profile: \(firstTitle).")
+                : IntentDialog("Found \(value.count) profiles. First: \(firstTitle).")
         } else {
-            dialog = IntentDialog(stringLiteral: "No profiles found.")
+            dialog = IntentDialog("No profiles found.")
         }
         return .result(value: value, dialog: dialog)
     }

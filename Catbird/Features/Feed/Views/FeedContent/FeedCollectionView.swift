@@ -66,6 +66,9 @@ struct FeedCollectionView: View {
             "\(stateManager.currentFeedType.identifier)"
         )
         .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
+        .task(id: stateManager.reconnectRetryKey) {
+            await stateManager.retryAfterConnectionRestored()
+        }
     }
 }
 

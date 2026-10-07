@@ -64,7 +64,7 @@ public struct ExploreInterestsCard: View {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 6) {
             ForEach(userInterests, id: \.self) { interest in
-              Text(interest)
+              Text(BlueskyInterest.displayName(for: interest))
                 .appFont(AppTextRole.caption)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -86,10 +86,11 @@ public struct ExploreInterestsCard: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .frame(minHeight: 44)
         .background(Color.accentColor)
         .foregroundColor(.white)
         .clipShape(Capsule())
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .padding(.top, 4)

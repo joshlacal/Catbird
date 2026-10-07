@@ -28,12 +28,6 @@ struct OutlineTagsView: View {
       }
     }
     .padding(compact ? 12 : 16)
-    .background(Color.systemBackground)
-    .overlay(
-      RoundedRectangle(cornerRadius: compact ? 10 : 12)
-        .stroke(Color.systemGray5, lineWidth: 1)
-    )
-    .cornerRadius(compact ? 10 : 12)
     .animation(.easeInOut(duration: 0.3), value: tags.count)
     .animation(.easeInOut(duration: 0.2), value: isAddingTag)
   }
@@ -72,21 +66,10 @@ struct OutlineTagsView: View {
           .opacity(tags.count >= maxTags && !isAddingTag ? 0.5 : 1.0)
         }
       } else {
-        // Default header: title + description + optional count stacked
+        // Default header: description + optional count stacked
         HStack(alignment: .center, spacing: 8) {
           VStack (alignment: .leading, spacing: 8){
-            HStack (alignment:.top, spacing: 8){
-              Image(systemName: "number")
-                .appFont(size: 16)
-                .foregroundColor(.accentColor)
-              
-              Text("Outline Hashtags")
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.semibold)
-                .foregroundColor(.primary)
-            }
-            
-            Text("These won't be visible on the Bluesky app but will be indexed by feeds.")
+            Text("These won’t be visible on the Bluesky app but will be indexed by feeds.")
               .appFont(AppTextRole.caption)
               .fontWeight(.regular)
               .foregroundColor(.secondary)

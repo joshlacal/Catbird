@@ -10,6 +10,108 @@ import Petrel
 import NukeUI
 import Observation
 
+/// Disable media navigation while leaving its enclosing moderation gate usable.
+struct ReadOnlyPostMediaModifier: ViewModifier {
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnly
+
+  func body(content: Content) -> some View {
+    content
+      .allowsHitTesting(!isReadOnly)
+      .disabled(isReadOnly)
+  }
+}
+
+/// A discovery preview never instantiates a player or starts autoplay.
+struct PostVideoEmbedContent: View {
+  let video: AppBskyEmbedVideo.View
+  let postID: String
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnly
+
+  private var aspectRatio: CGFloat {
+    guard let ratio = video.aspectRatio, ratio.width > 0, ratio.height > 0 else { return 16.0 / 9.0 }
+    return min(max(CGFloat(ratio.width) / CGFloat(ratio.height), 0.75), 2)
+  }
+
+  var body: some View {
+    if isReadOnly {
+      Group {
+        if let thumbnail = video.thumbnail?.url {
+          VideoThumbnailView(thumbnailURL: thumbnail, aspectRatio: aspectRatio)
+        } else {
+          Rectangle().fill(Color.secondary.opacity(0.12))
+            .aspectRatio(aspectRatio, contentMode: .fit)
+        }
+      }
+      .overlay(alignment: .bottomLeading) {
+        Label("Video preview", systemImage: "video")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.white)
+          .padding(8)
+          .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
+          .padding(8)
+      }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(video.alt.flatMap { $0.isEmpty ? nil : $0 } ?? "Video preview")
+    } else if let player = ModernVideoPlayerView(bskyVideo: video, postID: postID) {
+      player.frame(maxWidth: .infinity)
+    } else {
+      Text("Unable to load video")
+        .appFont(AppTextRole.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+}
+
+/// Uses supplied link metadata in discovery; never loads a third-party player.
+struct PostExternalEmbedContent: View {
+  let external: AppBskyEmbedExternal.ViewExternal
+  let postID: String
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnly
+
+  var body: some View {
+    if isReadOnly {
+      ExternalEmbedLabelGate(labels: external.labels) {
+        VStack(alignment: .leading, spacing: 8) {
+          if let thumbnail = external.thumb?.url {
+            LazyImage(url: thumbnail) { state in
+              if let image = state.image {
+                image.resizable().scaledToFill()
+              } else {
+                Color.secondary.opacity(0.12)
+              }
+            }
+            .pipeline(ImageLoadingManager.shared.pipeline)
+            .frame(maxWidth: .infinity)
+            .frame(height: 150)
+            .clipped()
+            .accessibilityHidden(true)
+          }
+          VStack(alignment: .leading, spacing: 6) {
+            if !external.title.isEmpty {
+              Text(external.title).appFont(AppTextRole.headline)
+            }
+            if !external.description.isEmpty {
+              Text(external.description)
+                .appFont(AppTextRole.subheadline)
+                .foregroundStyle(.secondary)
+            }
+            if let host = external.uri.url?.host {
+              Label(host, systemImage: "link")
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
+          .padding(12)
+        }
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+      }
+    } else {
+      ExternalEmbedView(external: external, shouldBlur: false, postID: postID)
+    }
+  }
+}
+
 /// A unified component for displaying different types of post embeds.
 struct PostEmbed: View {
     // MARK: - Properties
@@ -85,6 +187,7 @@ struct PostEmbed: View {
                 viewImages: imagesView.images,
                 shouldBlur: false // We're handling blur at the ContentLabelManager level now
             )
+            .modifier(ReadOnlyPostMediaModifier())
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
@@ -101,6 +204,7 @@ struct PostEmbed: View {
                 visibilityContext: visibilityContext,
                 authorDID: authorDID
             )
+            .modifier(ReadOnlyPostMediaModifier())
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
@@ -111,9 +215,8 @@ struct PostEmbed: View {
             labels: labels,
             contentType: "link"
         ) {
-            ExternalEmbedView(
+            PostExternalEmbedContent(
                 external: externalView.external,
-                shouldBlur: false, // We're handling blur at the ContentLabelManager level now
                 postID: postID
             )
         }
@@ -152,6 +255,7 @@ struct PostEmbed: View {
                         viewImages: imagesView.images,
                         shouldBlur: false // We're handling blur at the ContentLabelManager level now
                     )
+                    .modifier(ReadOnlyPostMediaModifier())
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
 
@@ -166,6 +270,7 @@ struct PostEmbed: View {
                         visibilityContext: visibilityContext,
                         authorDID: authorDID
                     )
+                    .modifier(ReadOnlyPostMediaModifier())
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
             case .appBskyEmbedExternalView(let externalView):
@@ -173,9 +278,8 @@ struct PostEmbed: View {
                     labels: labels,
                     contentType: "link"
                 ) {
-                    ExternalEmbedView(
+                    PostExternalEmbedContent(
                         external: externalView.external,
-                        shouldBlur: false, // We're handling blur at the ContentLabelManager level now
                         postID: postID
                     )
                 }
@@ -186,24 +290,7 @@ struct PostEmbed: View {
                     labels: labels,
                     contentType: "video"
                 ) {
-                    if let playerView = ModernVideoPlayerView(
-                        bskyVideo: videoView,
-                        postID: postID
-                    ) {
-                        playerView
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Unable to load video")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(
-                                Color.adaptiveText(
-                                    appSettings: appSettings,
-                                    themeManager: themeManager ?? appState.themeManager,
-                                    style: .secondary,
-                                    currentScheme: colorScheme
-                                )
-                            )
-                    }
+                    PostVideoEmbedContent(video: videoView, postID: postID)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
 
@@ -237,24 +324,7 @@ struct PostEmbed: View {
             labels: labels,
             contentType: "video"
         ) {
-            if let playerView = ModernVideoPlayerView(
-                bskyVideo: videoView,
-                postID: postID
-            ) {
-                playerView
-                    .frame(maxWidth: .infinity)
-            } else {
-                Text("Unable to load video")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(
-                        Color.adaptiveText(
-                            appSettings: appSettings,
-                            themeManager: themeManager ?? appState.themeManager,
-                            style: .secondary,
-                            currentScheme: colorScheme
-                        )
-                    )
-            }
+            PostVideoEmbedContent(video: videoView, postID: postID)
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }

@@ -90,7 +90,7 @@ struct LabelsOnMeView: View {
       if let description = info.description, !description.isEmpty {
         Text(description).font(.subheadline).fixedSize(horizontal: false, vertical: true)
       }
-      Text("Issued by \(info.issuer)").font(.caption).foregroundStyle(.secondary)
+      Text(info.attribution).font(.caption).foregroundStyle(.secondary)
         .textSelection(.enabled)
       if info.severity == .information {
         Text("Informational label").font(.caption).foregroundStyle(.secondary)

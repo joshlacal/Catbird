@@ -27,7 +27,7 @@ public enum AppIconChoice: String, CaseIterable, Identifiable {
     /// An image set that shows what the icon looks like; app icon sets can't be loaded as images.
     var previewImageName: String {
         switch self {
-        case .default: return "CatbirdIcon"
+        case .default: return "AppIconPreviewDefault"
         case .classic: return "AppIconPreviewClassic"
         }
     }

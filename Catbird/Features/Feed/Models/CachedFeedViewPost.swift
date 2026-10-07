@@ -57,8 +57,9 @@ final class CachedFeedViewPost: Identifiable {
     @Transient var intentHiddenRuleText: String?
     @Transient var isIntentDemoted: Bool = false
 
-    /// Cached decoded FeedViewPost to avoid repeated JSON decoding
-    @Transient private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
+    /// Cached decoded FeedViewPost to avoid repeated JSON decoding. Boxed so feed
+    /// rows that hold it keep one stable, pointer-sized reference.
+    @Transient private var _cachedFeedViewPost: EquatableBox<AppBskyFeedDefs.FeedViewPost>?
     // SwiftData replaces persisted-property setters, so didSet is not a cache
     // invalidation boundary. Validate against the bytes that produced each cache.
     // Data's copy-on-write storage lets primed values retain those bytes cheaply.
@@ -136,7 +137,7 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
-        self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPost = EquatableBox(feedViewPost)
         self._cachedFeedViewPostData = self.serializedPost
     }
     
@@ -178,7 +179,7 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
-        self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPost = EquatableBox(feedViewPost)
         self._cachedFeedViewPostData = self.serializedPost
     }
     
@@ -240,7 +241,7 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
-        self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPost = EquatableBox(feedViewPost)
         self._cachedFeedViewPostData = self.serializedPost
     }
 
@@ -301,7 +302,7 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
-        self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPost = EquatableBox(feedViewPost)
         self._cachedFeedViewPostData = prepared.serializedPost
         self._cachedSliceItems = slice.items
         self._cachedSliceItemsData = prepared.serializedSliceItems
@@ -310,6 +311,15 @@ final class CachedFeedViewPost: Identifiable {
 
     /// Reconstructs the original FeedViewPost, caching the result to avoid repeated JSON decoding
     var feedViewPost: AppBskyFeedDefs.FeedViewPost {
+        get throws {
+            try feedViewPostBox.value
+        }
+    }
+
+    /// The decoded FeedViewPost in its cached box. Views store this instead of the
+    /// 7.5 KB value, and repeated reads return the same box, so SwiftUI's diffing
+    /// of unchanged rows is a pointer comparison.
+    var feedViewPostBox: EquatableBox<AppBskyFeedDefs.FeedViewPost> {
         get throws {
             let data = serializedPost
             if let cached = _cachedFeedViewPost, _cachedFeedViewPostData == data {
@@ -320,7 +330,7 @@ final class CachedFeedViewPost: Identifiable {
             
             // First, try standard decoding
             do {
-                let result = try decoder.decode(AppBskyFeedDefs.FeedViewPost.self, from: data)
+                let result = try EquatableBox(decoder.decode(AppBskyFeedDefs.FeedViewPost.self, from: data))
                 _cachedFeedViewPost = result
                 _cachedFeedViewPostData = data
                 return result

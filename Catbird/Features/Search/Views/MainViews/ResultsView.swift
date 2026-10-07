@@ -18,6 +18,7 @@ struct ResultsView: View {
   /// Clears the search field and returns to Discovery.
   let onReset: () -> Void
   @Environment(AppState.self) private var appState
+  @Environment(\.displayScale) private var displayScale
   private let baseUnit: CGFloat = 3
 
   init(
@@ -63,7 +64,7 @@ struct ResultsView: View {
     .task(id: appState.userDID) { await appState.feedLibraryActions.refresh() }
     .refreshable {
       if let client = appState.atProtoClient {
-        await viewModel.refreshSearch(client: client)
+        await viewModel.refreshSearch(client: client, displayScale: displayScale)
       }
     }
   }
@@ -477,6 +478,6 @@ struct ResultsView: View {
     guard let client = appState.atProtoClient else { return }
     viewModel.searchError = nil
     viewModel.loadMoreError = nil
-    await viewModel.refreshSearch(client: client)
+    await viewModel.refreshSearch(client: client, displayScale: displayScale)
   }
 }

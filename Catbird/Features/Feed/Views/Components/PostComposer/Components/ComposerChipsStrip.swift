@@ -124,7 +124,7 @@ struct ComposerChipsStrip: View {
             let summary = interactionSettings.summary
             tappableChip(
               text: summary,
-              systemImage: "bubble.left.and.exclamationmark.bubble.right",
+              systemImage: "bubble.left.and.bubble.right",
               accessibilityLabel: "Interaction settings: \(summary)",
               action: onEditInteractionSettings
             )
@@ -152,6 +152,7 @@ struct ComposerChipsStrip: View {
               .padding(.horizontal, 10)
               .padding(.vertical, 5)
               .background(Color.accentColor.opacity(0.15))
+              .background(.regularMaterial, in: Capsule())
               .foregroundStyle(Color.accentColor)
               .clipShape(Capsule())
             }
@@ -178,14 +179,13 @@ struct ComposerChipsStrip: View {
         Image(systemName: "xmark.circle.fill")
           .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
-          .padding(4)
-          .contentShape(Rectangle())
+          .contentShape(Rectangle().inset(by: -6))
       }
       .accessibilityLabel("Remove \(accessibilityLabel)")
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 5)
-    .background(Color.secondary.opacity(0.1))
+    .background(.regularMaterial, in: Capsule())
     .foregroundStyle(.secondary)
     .clipShape(Capsule())
     .accessibilityElement(children: .contain)
@@ -208,7 +208,7 @@ struct ComposerChipsStrip: View {
       }
       .padding(.horizontal, 10)
       .padding(.vertical, 5)
-      .background(Color.secondary.opacity(0.1))
+      .background(.regularMaterial, in: Capsule())
       .foregroundStyle(.secondary)
       .clipShape(Capsule())
     }

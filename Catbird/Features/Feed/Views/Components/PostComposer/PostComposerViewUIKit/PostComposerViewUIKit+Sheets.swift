@@ -153,10 +153,13 @@ extension PostComposerViewUIKit {
       }
       .sheet(isPresented: $showingOutlineTagsEditor) {
         NavigationStack {
-          OutlineTagsView(tags: Binding(
-            get: { vm.outlineTags },
-            set: { vm.outlineTags = $0 }
-          ))
+          ScrollView {
+            OutlineTagsView(tags: Binding(
+              get: { vm.outlineTags },
+              set: { vm.outlineTags = $0 }
+            ))
+            .padding(.horizontal, 16)
+          }
           .navigationTitle("Hashtags")
           #if os(iOS)
           .navigationBarTitleDisplayMode(.inline)
@@ -166,8 +169,8 @@ extension PostComposerViewUIKit {
               Button("Done") { showingOutlineTagsEditor = false }
             }
           }
-          .padding(.horizontal, 16)
         }
+        .presentationDetents([.medium, .large])
       }
 
     

@@ -38,7 +38,7 @@ final class FeedDiscoveryJourneyTests: XCTestCase {
     discoveryScreenshot.lifetime = .keepAlways
     add(discoveryScreenshot)
 
-    discovery.buttons["Close"].tap()
+    app.buttons["feed.discovery.close"].tap()
     let dismissed = NSPredicate(format: "exists == false")
     expectation(for: dismissed, evaluatedWith: discovery)
     waitForExpectations(timeout: 5)

@@ -17,6 +17,43 @@ import Vision
 @Suite("Feeds and Search presentation", .serialized)
 @MainActor
 struct FeedsSearchPresentationTests {
+  @Test("Search shows a long trending description through its final words and grows the row")
+  func trendingSearchDescriptionWrapsFully() async throws {
+    let appState = try await makeAppState()
+    let description = String(repeating: "People are sharing photographs of community gardens and discussing the plants they grow together. ", count: 5)
+      + "EVERGREEN FINISH"
+    for (name, width, scheme, typeSize, direction) in [
+      ("narrow-light", CGFloat(320), ColorScheme.light, DynamicTypeSize.large, LayoutDirection.leftToRight),
+      ("wide-dark", CGFloat(680), ColorScheme.dark, DynamicTypeSize.large, LayoutDirection.leftToRight),
+      ("narrow-large", CGFloat(320), ColorScheme.light, DynamicTypeSize.accessibility1, LayoutDirection.leftToRight),
+      ("rtl-large", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1, LayoutDirection.rightToLeft),
+    ] {
+      var shortRowBottom: CGFloat?
+      for (stage, text) in [("short", "A brief garden summary."), ("long", description)] {
+        try await withHost(
+          VStack(alignment: .leading, spacing: 0) {
+            TrendingTopicsSection(topics: [makeTopic(description: text)], onSelect: { _ in }, onSeeAll: {})
+            Text("NEXT TOPIC").padding(16)
+          }.environment(\.layoutDirection, direction),
+          appState: appState, size: CGSize(width: width, height: 1800), scheme: scheme, typeSize: typeSize
+        ) { host in
+          let required = stage == "long" ? ["EVERGREEN", "FINISH", "NEXT TOPIC"] : ["NEXT TOPIC"]
+          let receipt = try await host.capture("trending-description-\(name)-\(stage)", requiring: required)
+          let next = try #require(receipt.lines.first { $0.text.contains("NEXT TOPIC") })
+          if stage == "short" {
+            shortRowBottom = next.rect.minY
+          } else {
+            let tail = try #require(receipt.lines.last { $0.text.contains("FINISH") })
+            let metadata = try #require(receipt.lines.first { $0.text.contains("posts") })
+            #expect(tail.rect.maxY < metadata.rect.minY, "Metadata must follow the complete rendered description")
+            #expect(metadata.rect.maxY < next.rect.minY, "The next item must follow the expanded row")
+            #expect(next.rect.minY > (try #require(shortRowBottom)) + 40, "Long descriptions must increase intrinsic row height")
+          }
+        }
+      }
+    }
+  }
+
   @Test("Account identity stays readable below busy artwork across constrained containers")
   func accountHeaderAcrossSizes() async throws {
     let appState = try await makeAppState()
@@ -36,13 +73,13 @@ struct FeedsSearchPresentationTests {
           "feeds-header-\(name)", requiring: ["Alexandra", "Chen"]
         )
         let identity = try #require(receipt.lines.first { $0.text.contains("Alexandra") })
-        if let defaultLabel = receipt.lines.first(where: { $0.text.contains("Default feed") }) {
+        if let defaultLabel = receipt.lines.first(where: { $0.text.contains("Default Feed") }) {
           #expect(identity.rect.maxY < defaultLabel.rect.minY, "The default control must not overlap account identity")
         }
         if let scroll = host.verticalScrollView {
           scroll.setContentOffset(CGPoint(x: 0, y: max(0, scroll.contentSize.height - scroll.bounds.height)), animated: false)
         }
-        _ = try await host.capture("feeds-header-\(name)-controls", requiring: ["Default feed", "Following"])
+        _ = try await host.capture("feeds-header-\(name)-controls", requiring: ["Default Feed", "Following"])
       }
     }
   }
@@ -264,7 +301,7 @@ struct FeedsSearchPresentationTests {
         model.trendingVideos = [video]
         model.suggestedProfiles = [profile]
       }
-      await model.fetchTrendingTopics(client: appState.client)
+      await model.fetchTrendingTopics(client: appState.client, displayScale: 3)
       await model.fetchSuggestedUsers(category: nil, client: appState.client)
       await model.fetchTrendingVideos(client: appState.client)
 
@@ -634,8 +671,8 @@ extension FeedsSearchPresentationTests {
     }
   }
 
-  private func makeTopic() -> AppBskyUnspeccedDefs.TrendView {
-    .init(topic: "moon-garden", displayName: "Moon Garden", description: "A community conversation about plants and astronomy.",
+  private func makeTopic(description: String = "A community conversation about plants and astronomy.") -> AppBskyUnspeccedDefs.TrendView {
+    .init(topic: "moon-garden", displayName: "Moon Garden", description: description,
       link: "/profile/trending.example.invalid/feed/moon-garden", startedAt: ATProtocolDate(date: Date()),
       postCount: 1200, status: "hot", category: "science", actors: [])
   }

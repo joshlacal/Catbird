@@ -42,7 +42,7 @@ struct RecentProfilesSection: View {
                                     size: 56,
                                     labels: profile.labels
                                 )
-                                .shadow(color: colorScheme == .dark ? .white.opacity(0.2) : .black.opacity(0.2), radius: 3)
+                                .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.2), radius: 3)
                                 .padding(6)
 
                                 // Display name or handle
@@ -60,7 +60,7 @@ struct RecentProfilesSection: View {
                 }
                 .scrollContentBackground(.hidden)
             }
-            .contentMargins(.horizontal, 0, for: .scrollContent)
+            .contentMargins(.horizontal, 9, for: .scrollContent)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -115,6 +115,7 @@ struct FeedControllerConfiguration {
 @available(iOS 16.0, *)
 struct FeedCollectionViewWrapper: View {
     @Environment(SceneNavigationContext.self) private var sceneContext
+    @Environment(\.displayScale) private var displayScale
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -140,7 +141,7 @@ struct FeedCollectionViewWrapper: View {
                 stateManager.appState.cancelTopicPreviewPrefetch(owner: .timeline)
                 return
             }
-            await stateManager.loadTrendingIfNeeded(requestID: trendingRequestID)
+            await stateManager.loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale)
         }
         .onDisappear { stateManager.appState.cancelTopicPreviewPrefetch(owner: .timeline) }
     }
@@ -152,6 +153,7 @@ struct FeedCollectionViewWrapper: View {
 @available(macOS 13.0, *)
 struct FeedCollectionViewWrapper: View {
     @Environment(SceneNavigationContext.self) private var sceneContext
+    @Environment(\.displayScale) private var displayScale
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -159,13 +161,24 @@ struct FeedCollectionViewWrapper: View {
 
     var body: some View {
         VStack {
-            if stateManager.posts.isEmpty && stateManager.isLoading {
-                // Initial loading state
+            if stateManager.contentState == .error {
+                ContentUnavailableStateView(
+                    title: "Couldn’t Load Feed",
+                    description: stateManager.feedLoadError.flatMap {
+                        UserFacingError.message(for: $0, action: "load this feed")
+                    } ?? "Couldn’t load this feed. Try again.",
+                    systemImage: "wifi.exclamationmark",
+                    actionTitle: "Try Again"
+                ) {
+                    Task { await stateManager.retry() }
+                }
+            } else if stateManager.contentState == .loading {
+                // Includes the interval before the initial task starts.
                 LoadingStateView(
                     message: "Loading feed…"
                 )
-            } else if stateManager.posts.isEmpty && !stateManager.isLoading {
-                // Empty state
+            } else if stateManager.contentState == .empty {
+                // A successful request established an empty feed.
                 if stateManager.currentFeedType == .timeline {
                     ContentUnavailableStateView.emptyFollowingFeed {
                         // Switch to the Search tab to discover people
@@ -176,7 +189,7 @@ struct FeedCollectionViewWrapper: View {
                         feedName: stateManager.currentFeedType.displayName
                     ) {
                         // Refresh action for non-timeline feeds
-                        Task { await stateManager.refreshUserInitiated() }
+                        Task { await stateManager.refreshUserInitiated(displayScale: displayScale) }
                     }
                 }
             } else {
@@ -222,7 +235,7 @@ struct FeedCollectionViewWrapper: View {
                 .listStyle(.plain)
                 .contentMargins(.top, 8, for: .scrollContent)
                 .refreshable {
-                    await stateManager.refreshUserInitiated()
+                    await stateManager.refreshUserInitiated(displayScale: displayScale)
                 }
             }
         }
@@ -230,7 +243,7 @@ struct FeedCollectionViewWrapper: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
-                    Task { await stateManager.refreshUserInitiated() }
+                    Task { await stateManager.refreshUserInitiated(displayScale: displayScale) }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }

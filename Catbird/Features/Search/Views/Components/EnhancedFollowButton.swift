@@ -24,15 +24,17 @@ struct EnhancedFollowButton: View {
             }
         } label: {
             Text(isFollowing ? "Following" : "Follow")
-                .appFont(AppTextRole.caption)
-                .fontWeight(.medium)
-                .foregroundColor(isFollowing ? .secondary : .white)
-                .padding(.vertical, 5)
-                .padding(.horizontal, 12)
+                .appFont(AppTextRole.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(isFollowing ? .primary : .white)
+                .padding(.horizontal, DesignTokens.Spacing.base)
+                .padding(.vertical, 7)
+                .frame(minWidth: 88)
                 .background(
                     Capsule()
-                        .fill(isFollowing ? Color.gray.opacity(0.2) : Color.accentColor)
+                        .fill(isFollowing ? Color.secondary.opacity(0.15) : Color.accentColor)
                 )
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(isLoading)

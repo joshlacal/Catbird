@@ -315,8 +315,8 @@ final class AppState {
     /// Heartbeat manager for chat push notification liveness
     @ObservationIgnored let chatHeartbeatManager = ChatHeartbeatManager()
 
-    /// Network monitor for tracking connectivity status
-    @ObservationIgnored let networkMonitor = NetworkMonitor()
+    /// Connectivity belongs to the app, including retained account states.
+    @MainActor @ObservationIgnored let networkMonitor = NetworkMonitor.shared
 
     /// Onboarding manager for tracking user onboarding progress
     @ObservationIgnored let onboardingManager = OnboardingManager()
@@ -570,10 +570,11 @@ final class AppState {
 
     /// Start a task only while this account admits work; suspension cancels and drains it.
     @MainActor
+    @discardableResult
     func startAccountTask(
         priority: TaskPriority? = nil,
         operation: @escaping @MainActor () async -> Void
-    ) {
+    ) -> Task<Void, Never>? {
         accountServiceWork.start(priority: priority, operation: operation)
     }
 

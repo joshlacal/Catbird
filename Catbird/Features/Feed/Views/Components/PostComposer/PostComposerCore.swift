@@ -136,6 +136,17 @@ extension PostComposerViewModel {
                 .map { (number: $0.offset + 1, entry: $0.element) }
             : []
 
+        let allImages = mediaItems + otherEntries.flatMap { $0.entry.mediaItems }
+        let allVideos = [videoItem].compactMap { $0 } + otherEntries.compactMap { $0.entry.videoItem }
+        if allImages.contains(where: { $0.isLoading }) || allVideos.contains(where: { $0.isLoading }) {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: .mediaPreparing)
+        }
+        if allImages.contains(where: { $0.rawData == nil || $0.image == nil || $0.isGifConversion }) || allVideos.contains(where: {
+            $0.rawVideoURL == nil && $0.rawVideoAsset == nil && $0.videoData == nil
+        }) {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: .mediaUnavailable)
+        }
+
         let otherEntriesHaveContent = otherEntries.contains { item in
             !item.entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !item.entry.mediaItems.isEmpty ||
@@ -345,7 +356,8 @@ extension PostComposerViewModel {
         }
 
         // Reset to single post mode
-        threadEntries = [ThreadEntry()]
+        // Keep the retained entry's identity so saving/collapsing a thread can resume its upload.
+        threadEntries = [threadEntries.first ?? ThreadEntry()]
         isThreadMode = false
         isThread = false
         currentThreadIndex = 0
@@ -604,10 +616,8 @@ extension PostComposerViewModel {
     }
 
     func createVideoEmbedForEntry(_ entry: ThreadEntry) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        let originalVideo = videoItem
-        videoItem = entry.videoItem
-        defer { videoItem = originalVideo }
-        return try await createVideoEmbed()
+        guard let item = entry.videoItem else { return nil }
+        return try await createVideoEmbed(for: item, entryID: entry.id)
     }
 
     /// Maps the embed produced by createImagesEmbed (images for <=4 photos,
@@ -889,20 +899,7 @@ extension PostComposerViewModel {
 
         // Then load the entry state
         postText = entry.text
-        mediaItems = entry.mediaItems.map { item in
-            // Create new instances to avoid reference issues
-            var newItem = MediaItem()
-            newItem.image = item.image
-            newItem.rawData = item.rawData
-            newItem.altText = item.altText
-            newItem.isLoading = item.isLoading
-            newItem.pickerItem = item.pickerItem
-            newItem.aspectRatio = item.aspectRatio
-            newItem.videoData = item.videoData
-            newItem.rawVideoURL = item.rawVideoURL
-            newItem.rawVideoAsset = item.rawVideoAsset
-            return newItem
-        }
+        mediaItems = entry.mediaItems
         videoItem = entry.videoItem
         selectedGif = entry.selectedGif
         detectedURLs = entry.detectedURLs
@@ -922,6 +919,14 @@ extension PostComposerViewModel {
         #else
         richAttributedText = NSAttributedString(string: postText)
         #endif
+
+        // Restoring a value does not resume its former task.
+        for index in mediaItems.indices where mediaItems[index].image == nil {
+            mediaItems[index].isLoading = false
+        }
+        if videoItem?.image == nil {
+            videoItem?.isLoading = false
+        }
 
         // Update content after loading
         updatePostContent()
@@ -1084,7 +1089,7 @@ extension PostComposerViewModel {
             title: urlCard.title,
             description: urlCard.description,
             thumb: thumbBlob,
-            associatedRefs: nil
+            associatedRefs: urlCard.associatedRefs
         )
 
         // Start async thumbnail upload if image is available and not cached
@@ -1115,7 +1120,7 @@ extension PostComposerViewModel {
             title: urlCard.title,
             description: urlCard.description,
             thumb: thumbBlob,
-            associatedRefs: nil
+            associatedRefs: urlCard.associatedRefs
         )
 
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))

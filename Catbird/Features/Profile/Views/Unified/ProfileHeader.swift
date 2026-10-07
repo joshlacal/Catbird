@@ -32,8 +32,11 @@ struct ProfileHeader: View {
     @State private var suggestedFollows: [AppBskyActorDefs.ProfileView] = []
     @State private var showingAccountLabels = false
     @State private var selectedAccountLabelID: String?
-    @State private var pendingGermAction: GermProfileAction?
-    @State private var germLaunchError = false
+    @State private var chatOpeningTask: Task<Void, Never>?
+    @State private var isOpeningChat = false
+    @State private var chatOpenError: String?
+    @State private var chatOperationID: UUID?
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Namespace private var imageTransition
     private let verticalSpacing: CGFloat = 12
     private let avatarSize: CGFloat = 80
@@ -51,7 +54,6 @@ struct ProfileHeader: View {
                         liveStatusBadgeOverlay
                     }
                     .offset(y: -avatarSize / 2)
-                    .padding(.leading, 16)
             }
         }
 #if os(iOS)
@@ -86,19 +88,13 @@ struct ProfileHeader: View {
                 )
             }
         }
-        .alert("Open Germ DM?", isPresented: Binding(
-            get: { pendingGermAction != nil },
-            set: { if !$0 { pendingGermAction = nil } }
-        ), presenting: pendingGermAction) { action in
-            Button("Cancel", role: .cancel) { pendingGermAction = nil }
-            Button("Open Germ DM") { openGerm(action) }
-        } message: { action in
-            Text("Continue to \(action.url.host() ?? "Germ") to message @\(profile.handle) using your current account. No message is sent by Catbird.")
-        }
-        .alert("Could Not Open Germ", isPresented: $germLaunchError) {
-            Button("OK", role: .cancel) { }
+        .alert("Bluesky Chat", isPresented: Binding(
+            get: { chatOpenError != nil },
+            set: { if !$0 { chatOpenError = nil } }
+        )) {
+            Button("OK", role: .cancel) { chatOpenError = nil }
         } message: {
-            Text("Please try again. The Germ link opens the app when installed, or its website otherwise.")
+            Text(chatOpenError ?? "")
         }
         .onReceive(NotificationCenter.default.publisher(for: ProfileLabelRefresh.notificationName).receive(on: DispatchQueue.main)) { notification in
             guard ProfileLabelRefresh.matches(
@@ -112,7 +108,7 @@ struct ProfileHeader: View {
         }
         .onChange(of: isActiveProfileViewer) { _, isActive in
             if !isActive {
-                pendingGermAction = nil
+                cancelChatOpening()
                 showingAccountLabels = false
                 selectedAccountLabelID = nil
             }
@@ -128,6 +124,12 @@ struct ProfileHeader: View {
         .onChange(of: activitySubscriptionSnapshot) { _, _ in
             updateLocalActivitySubscription()
         }
+        .onChange(of: canOfferChat) { _, canOpen in
+            if !canOpen { cancelChatOpening() }
+        }
+        .onChange(of: profile.did) { _, _ in cancelChatOpening() }
+        .onChange(of: AppStateManager.shared.settingsAccountContextRevision) { _, _ in cancelChatOpening() }
+        .onDisappear { cancelChatOpening() }
         .alert("Unfollow", isPresented: $showUnfollowConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Unfollow", role: .destructive) { performUnfollow() }
@@ -269,7 +271,7 @@ struct ProfileHeader: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(subscriptionButtonTint)
                         .frame(width: 18, height: 18)
-                        .padding(10)
+                        .padding(9)
                         .background(
                             Circle()
                                 .fill(currentActivitySubscriptionState == .none ? Color.clear : subscriptionButtonTint.opacity(0.15))
@@ -428,9 +430,9 @@ struct ProfileHeader: View {
                 .frame(width: avatarSize, height: avatarSize)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
-                        .scaleEffect((avatarSize + 8) / avatarSize)
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+                        .padding(-4)
                 )
                 .zIndex(10)
             } else {
@@ -504,6 +506,9 @@ struct ProfileHeader: View {
                     }
                 } else {
                     HStack(spacing: 8) {
+                        if canOfferChat {
+                            messageButton
+                        }
                         followButton
                             .allowsHitTesting(true)
                         if canSubscribeToActivity {
@@ -524,7 +529,9 @@ struct ProfileHeader: View {
             // Display name and handle
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Text(profile.displayName ?? profile.handle.description)
+                    Text(profile.displayName.flatMap {
+                        $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+                    } ?? profile.handle.description)
                         .enhancedAppHeadline()
                         .fontWeight(.bold)
                         .lineLimit(nil)
@@ -535,6 +542,10 @@ struct ProfileHeader: View {
                             verificationInfoKind = badgeKind
                         }
                         .enhancedAppHeadline()
+                    }
+                    if AutomationBadge.isSelfDeclared(labels: profile.labels, authorDID: profile.did) {
+                        AutomationBadgeView(size: 18, relativeTo: .headline)
+                            .layoutPriority(1)
                     }
                     
                     if let pronouns = profile.pronouns, !pronouns.isEmpty {
@@ -610,20 +621,6 @@ struct ProfileHeader: View {
                     )
                     .environment(appState)
                 }
-            }
-
-            if let action = germAction {
-                Button { pendingGermAction = action } label: {
-                    HStack(spacing: 6) {
-                        Image("GermLogo").resizable().scaledToFit().frame(width: 24, height: 24).clipShape(.circle)
-                        Text("Germ DM")
-                        Image(systemName: "arrow.up.right").accessibilityHidden(true)
-                    }
-                    .font(.subheadline)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Open Germ DM")
-                .accessibilityHint("Opens an external app or website to compose a message")
             }
 
             // Bio
@@ -744,33 +741,98 @@ struct ProfileHeader: View {
         return ((preferences?.labelers.map { $0.did.didString() } ?? []) + [ReportingService.officialBlueskyDID]).sorted()
     }
 
-    private var germAction: GermProfileAction? {
-        guard isActiveProfileViewer else { return nil }
-        #if os(iOS)
-        let platform = "iOS"
-        #else
-        let platform = "web"
-        #endif
-        return GermProfileAction.make(
-            metadata: profile.associated?.germ,
-            profileDID: profile.did.didString(), viewerDID: appState.userDID,
-            loadedForViewerDID: viewModel.currentUserDID,
-            profileFollowsViewer: profile.viewer?.followedBy != nil,
-            isBlocked: profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true || profile.viewer?.blockingByList != nil,
-            platform: platform
-        )
+    private var canOfferChat: Bool {
+        guard isActiveProfileViewer, !sceneContext.isInvalidated,
+              sceneContext.accountDID == appState.userDID,
+              profile.did.didString() != appState.userDID,
+              profile.viewer?.blocking == nil,
+              profile.viewer?.blockedBy != true,
+              profile.viewer?.blockingByList == nil else { return false }
+        switch profile.associated?.chat?.allowIncoming {
+        case "none":
+            return false
+        case "following":
+            // The recipient must follow the viewer. Missing viewer metadata remains unknown.
+            return profile.viewer == nil || profile.viewer?.followedBy != nil
+        default:
+            return true
+        }
     }
 
-    private func openGerm(_ action: GermProfileAction) {
-        pendingGermAction = nil
-        guard action == germAction, appState.userDID == action.viewerDID else { return }
-        #if os(iOS)
-        UIApplication.shared.open(action.url, options: [:]) { success in
-            if !success { Task { @MainActor in germLaunchError = true } }
+    private func cancelChatOpening() {
+        chatOpeningTask?.cancel()
+        chatOpeningTask = nil
+        chatOperationID = nil
+        isOpeningChat = false
+        chatOpenError = nil
+    }
+
+    private func openBlueskyChat() {
+        guard canOfferChat, !isOpeningChat else { return }
+        let sourceAppState = appState
+        let chatManager = appState.chatManager
+        let context = sceneContext
+        let viewerDID = appState.userDID
+        let targetDID = profile.did.didString()
+        let revision = AppStateManager.shared.settingsAccountContextRevision
+        let operationID = UUID()
+        chatOperationID = operationID
+        isOpeningChat = true
+        chatOpenError = nil
+        chatOpeningTask = Task { @MainActor in
+            defer {
+                if chatOperationID == operationID {
+                    chatOpeningTask = nil
+                    chatOperationID = nil
+                    isOpeningChat = false
+                }
+            }
+            guard !Task.isCancelled, chatOperationID == operationID,
+                  AppStateManager.shared.lifecycle.appState === sourceAppState,
+                  appState === sourceAppState, appState.chatManager === chatManager,
+                  appState.userDID == viewerDID,
+                  SettingsAccountBoundary.isCurrent(viewerDID, revision: revision),
+                  profile.did.didString() == targetDID, canOfferChat,
+                  sceneContext === context, !context.isInvalidated,
+                  context.accountDID == viewerDID else { return }
+            let result = await chatManager.openProfileConversation(
+                with: targetDID, expectedViewerDID: viewerDID
+            )
+            guard !Task.isCancelled, chatOperationID == operationID,
+                  AppStateManager.shared.lifecycle.appState === sourceAppState,
+                  appState === sourceAppState, appState.chatManager === chatManager,
+                  appState.userDID == viewerDID,
+                  SettingsAccountBoundary.isCurrent(viewerDID, revision: revision),
+                  profile.did.didString() == targetDID, canOfferChat,
+                  sceneContext === context, !context.isInvalidated,
+                  context.accountDID == viewerDID else { return }
+            guard let convoID = result.convoId, result.canChat == true else {
+                chatOpenError = result.canChat == false
+                    ? "This account isn’t accepting messages from you."
+                    : "Couldn’t open this conversation. Try again."
+                return
+            }
+            // The operation is complete before tab selection makes this profile disappear.
+            chatOpeningTask = nil
+            chatOperationID = nil
+            isOpeningChat = false
+            let navigation = context.navigationManager
+            navigation.updateCurrentTab(AppNavigationManager.chatTabIndex)
+            navigation.tabSelection?(AppNavigationManager.chatTabIndex)
+            // Tab selection can synchronously retire the source account or scene.
+            guard !Task.isCancelled,
+                  AppStateManager.shared.lifecycle.appState === sourceAppState,
+                  SettingsAccountBoundary.isCurrent(viewerDID, revision: revision),
+                  profile.did.didString() == targetDID,
+                  appState.userDID == viewerDID, canOfferChat,
+                  !context.isInvalidated, context.accountDID == viewerDID,
+                  sceneContext === context else { return }
+            #if os(iOS)
+            navigation.navigate(to: .conversation(convoID), in: AppNavigationManager.chatTabIndex)
+            #elseif os(macOS)
+            navigation.targetConversationId = convoID
+            #endif
         }
-        #elseif os(macOS)
-        if !NSWorkspace.shared.open(action.url) { germLaunchError = true }
-        #endif
     }
 
     // MARK: - Bio Helpers
@@ -785,7 +847,10 @@ struct ProfileHeader: View {
         applyDetectedLinks(in: description, to: attributedBio)
         applyDetectedHandles(in: description, to: attributedBio)
 
-        return AttributedString(attributedBio)
+        return AttributedString(attributedBio).applyingPostBodyLinkAccent(
+            highlightLinks: appState.appSettings.highlightLinks,
+            linkStyle: appState.appSettings.linkStyle
+        )
     }
 
     private func applyDetectedLinks(in text: String, to attributedText: NSMutableAttributedString) {
@@ -854,26 +919,16 @@ struct ProfileHeader: View {
 
             let encodedHandle = handle.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? handle
             guard let url = URL(string: "mention://\(encodedHandle)") else { return }
-            applyLinkAttributes(url: url, range: match.range, on: attributedText, underline: false)
+            applyLinkAttributes(url: url, range: match.range, on: attributedText)
         }
     }
 
     private func applyLinkAttributes(
         url: URL,
         range: NSRange,
-        on attributedText: NSMutableAttributedString,
-        underline: Bool = true
+        on attributedText: NSMutableAttributedString
     ) {
-        var attributes: [NSAttributedString.Key: Any] = [
-            .link: url,
-            .foregroundColor: PlatformColor.platformLink
-        ]
-
-        if underline {
-            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
-        }
-
-        attributedText.addAttributes(attributes, range: range)
+        attributedText.addAttribute(.link, value: url, range: range)
     }
 
     private func hasLinkAttribute(in attributedText: NSMutableAttributedString, range: NSRange) -> Bool {
@@ -895,7 +950,7 @@ struct ProfileHeader: View {
                 .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.vertical, 9)
                 .foregroundColor(Color("AccentTextColor"))
         }
         .background(
@@ -904,6 +959,34 @@ struct ProfileHeader: View {
         )
     }
     
+    /// Circular chat button that sits to the left of Follow. It, the bell and the
+    /// Follow / Following / Edit Profile pills all render 36pt tall.
+    private var messageButton: some View {
+        Button(action: openBlueskyChat) {
+            Group {
+                if isOpeningChat {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "message")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color("AccentTextColor"))
+                }
+            }
+            .frame(width: 18, height: 18)
+            .padding(9)
+            .overlay(
+                Circle()
+                    .stroke(Color.accentColor, lineWidth: 1.5)
+            )
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isOpeningChat)
+        .accessibilityLabel(isOpeningChat ? "Opening chat with @\(profile.handle)" : "Message @\(profile.handle) on Bluesky")
+        .accessibilityHint("Opens a conversation without sending a message")
+    }
+
     @ViewBuilder
     private var followButton: some View {
         if isFollowButtonLoading {
@@ -923,7 +1006,7 @@ struct ProfileHeader: View {
             .appFont(AppTextRole.subheadline)
             .fontWeight(.medium)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 9)
             .foregroundColor(.secondary)
             .background(
                 Capsule()
@@ -949,7 +1032,7 @@ struct ProfileHeader: View {
                 .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.vertical, 9)
                 .foregroundColor(Color("AccentTextColor"))
                 .cornerRadius(16)
             }
@@ -995,10 +1078,9 @@ struct ProfileHeader: View {
                 .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Color.accentColor)
+                .padding(.vertical, 9)
                 .foregroundColor(.white)
-                .cornerRadius(16)
+                .background(Capsule().fill(Color.accentColor))
             }
         }
     }
@@ -1039,7 +1121,7 @@ struct ProfileHeader: View {
                     .appFont(AppTextRole.subheadline)
                     .fontWeight(.medium)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 9)
                     .foregroundColor(Color("AccentTextColor"))
                     .cornerRadius(16)
                 }
@@ -1070,10 +1152,9 @@ struct ProfileHeader: View {
                     .appFont(AppTextRole.subheadline)
                     .fontWeight(.medium)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.accentColor)
+                    .padding(.vertical, 9)
                     .foregroundColor(.white)
-                    .cornerRadius(16)
+                    .background(Capsule().fill(Color.accentColor))
                 }
             }
         }
@@ -1099,20 +1180,23 @@ struct ProfileHeader: View {
                     isLikeButtonLoading = false
                 }
             }) {
-                HStack(spacing: 6) {
+                Group {
                     if isLikeButtonLoading {
                         ProgressView()
-                            .frame(width: 16, height: 16)
+                            .controlSize(.small)
                     } else {
                         Image(systemName: viewModel.isLabelerLiked ? "heart.fill" : "heart")
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(viewModel.isLabelerLiked ? .red : .primary)
                     }
                 }
-                .padding(8)
-                .background(
+                .frame(width: 18, height: 18)
+                .padding(9)
+                .overlay(
                     Circle()
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                        .stroke(Color.accentColor, lineWidth: 1.5)
                 )
+                .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .disabled(isLikeButtonLoading)

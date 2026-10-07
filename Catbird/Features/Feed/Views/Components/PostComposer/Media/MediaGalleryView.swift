@@ -16,6 +16,7 @@ struct MediaGalleryView: View {
     @Binding var isAltTextEditorPresented: Bool
     let maxImagesAllowed: Int
     let onAddMore: () -> Void
+    var onRetry: ((UUID) -> Void)? = nil
     var onMoveLeft: ((UUID) -> Void)? = nil
     var onMoveRight: ((UUID) -> Void)? = nil
     var onCropSquare: ((UUID) -> Void)? = nil
@@ -56,7 +57,8 @@ struct MediaGalleryView: View {
                             MediaItemView(
                                 item: item,
                                 onRemove: { removeMediaItem(withId: item.id) },
-                                onEditAlt: { beginEditingAltText(for: item.id) }
+                                onEditAlt: { beginEditingAltText(for: item.id) },
+                                onRetry: onRetry.map { retry in { retry(item.id) } }
                             )
                             .draggable(item.id.uuidString)
                             .dropDestination(for: String.self) { items, _ in

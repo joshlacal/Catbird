@@ -121,6 +121,8 @@ struct FAB: View {
                         composeMenuItems
                     } label: {
                         composeButtonLabel
+                            .background(Circle().fill(Color.accentColor))
+                            .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
                     } primaryAction: {
                         composeAction()
                     }
@@ -129,18 +131,20 @@ struct FAB: View {
                         .accessibilityIdentifier("compose.fab")
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-#if os(iOS)
-            .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: 0)
-            }
-#elseif os(macOS)
-            .padding(.bottom, 16)
-#endif
+            .padding(buttonInsets)
         }
     }
     
+    /// Shared with Messages: spacing inside the native tab-content boundary.
+    /// Native bars and keyboards supply their own safe area; no extra inset is reserved.
+    private var buttonInsets: EdgeInsets {
+        #if os(iOS)
+        EdgeInsets(top: 0, leading: 20, bottom: 20, trailing: 20)
+        #else
+        EdgeInsets(top: 0, leading: 16, bottom: 32, trailing: 16)
+        #endif
+    }
+
     @ViewBuilder
     private var feedsButton: some View {
 #if compiler(>=6.2)

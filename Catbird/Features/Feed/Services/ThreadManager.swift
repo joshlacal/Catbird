@@ -178,6 +178,14 @@ final class ThreadManager: StateInvalidationSubscriber {
 
         // Save thread posts to cache for instant display on future visits
         await cacheThreadPosts(output.thread)
+
+        // Opening a thread is deliberate engagement: make its anchor post
+        // findable in Spotlight. Non-public contexts stay out of the index.
+        if visibilityContext == .public,
+           let anchor = output.thread.first(where: { $0.depth == 0 }),
+           case .appBskyUnspeccedDefsThreadItemPost(let anchorItem) = anchor.value {
+          await SpotlightEntityDonator.shared.donate(posts: [anchorItem.post])
+        }
       } else {
         // Handle specific errors
         if responseCode == 404 {

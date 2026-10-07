@@ -125,6 +125,9 @@ struct ConversationView: View {
           }
     }
     .frame(maxWidth: contentMaxWidth)
+    // Applied outside the 600pt width cap so the Dim/Black theme fills the
+    // whole detail column on iPad, not just the transcript strip.
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle(conversationTitle)
     .toolbarTitleDisplayMode(.inline)
     .toolbar(.hidden, for: .tabBar)

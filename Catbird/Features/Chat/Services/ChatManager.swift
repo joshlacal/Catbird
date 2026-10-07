@@ -1123,6 +1123,109 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 
+  /// Opens a profile's direct conversation after a fresh permission check.
+  /// The source-account ticket remains held until all SDK work and acknowledgement finish.
+  /// `nil` means unknown or interrupted; only confirmed refusal returns `false`.
+  @MainActor
+  func openProfileConversation(
+    with userDID: String,
+    expectedViewerDID: String
+  ) async -> (canChat: Bool?, convoId: String?) {
+    guard !Task.isCancelled, pollingAccountDID == expectedViewerDID,
+      let client, let ticket = pollingBarrier.begin(accountDID: expectedViewerDID)
+    else { return (nil, nil) }
+    defer { pollingBarrier.finish(ticket) }
+
+    do {
+      let viewerDID = try DID(didString: expectedViewerDID)
+      let recipientDID = try DID(didString: userDID)
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      guard viewerDID != recipientDID else { return (false, nil) }
+
+      let authenticatedDID = await client.getCurrentAccount()?.did
+      guard isCurrentPollingOperation(ticket, client: client),
+        authenticatedDID == expectedViewerDID
+      else { return (nil, nil) }
+      errorState = nil
+
+      let availability = await checkConversationAvailability(
+        members: [expectedViewerDID, userDID], ticket: ticket, client: client
+      )
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      guard let canChat = availability.canChat else {
+        errorState = .operationFailed(operation: "check messaging availability")
+        return (nil, nil)
+      }
+      guard canChat else {
+        errorState = .recipientNotAccepting
+        return (false, nil)
+      }
+
+      let convo: ChatBskyConvoDefs.ConvoView
+      if let existing = availability.existingConvo {
+        convo = existing
+      } else {
+        let params = ChatBskyConvoGetConvoForMembers.Parameters(members: [viewerDID, recipientDID])
+        let (responseCode, response) = try await client.chat.bsky.convo.getConvoForMembers(input: params)
+        guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+        guard responseCode >= 200 && responseCode < 300 else {
+          setInteractiveNetworkError(
+            code: responseCode, context: "openProfileConversation", operation: "open this conversation"
+          )
+          return (nil, nil)
+        }
+        guard let response else {
+          errorState = .emptyResponse
+          return (nil, nil)
+        }
+        convo = response.convo
+      }
+
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      if let index = conversations.firstIndex(where: { $0.id == convo.id }) {
+        conversations[index] = convo
+      } else {
+        conversations.insert(convo, at: 0)
+      }
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      updateConversationsByStatus()
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      onUnreadCountChanged?()
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      return (true, convo.id)
+    } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      setInteractiveThrownError(error, context: "openProfileConversation", operation: "open this conversation")
+      return (nil, nil)
+    }
+  }
+
+  /// Fresh profile-action availability check using the caller's captured source-account lease.
+  @MainActor
+  private func checkConversationAvailability(
+    members: [String],
+    ticket: AccountPollingBarrier.Ticket,
+    client: ATProtoClient
+  ) async -> (canChat: Bool?, existingConvo: ChatBskyConvoDefs.ConvoView?) {
+    guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+    do {
+      let memberDIDs = try members.map { try DID(didString: $0) }
+      let params = ChatBskyConvoGetConvoAvailability.Parameters(members: memberDIDs)
+      let (responseCode, response) = try await client.chat.bsky.convo.getConvoAvailability(input: params)
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      guard responseCode >= 200 && responseCode < 300, let availability = response else {
+        logger.warning("Profile conversation availability could not be confirmed (HTTP \(responseCode))")
+        return (nil, nil)
+      }
+      availabilityCache[Self.availabilityKey(for: members)] = availability.canChat
+      return (availability.canChat, availability.convo)
+    } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return (nil, nil) }
+      logger.error("Profile conversation availability check failed: \(error.localizedDescription)")
+      return (nil, nil)
+    }
+  }
+
   /// Cached-first messageability check for list rows; `nil` means unknown.
   @MainActor
   func canMessage(members: [String]) async -> Bool? {

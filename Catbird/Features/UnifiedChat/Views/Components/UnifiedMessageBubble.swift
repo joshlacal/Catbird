@@ -98,17 +98,30 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   private let cornerRadius: CGFloat = 18
   private let maxBubbleWidth: CGFloat = 280
 
-  /// True when the message is just a media embed (GIF) with no text.
-  /// Media-only bubbles drop the bubble chrome — the media surface IS the bubble.
+  /// True when the message is just a GIF or shared post with no text or reply.
+  /// Media-only bubbles drop the bubble chrome — the embed surface IS the bubble.
   private var isMediaOnly: Bool {
     guard !message.isTombstone else { return false }
     guard message.text.isEmpty else { return false }
+    guard message.replyContext == nil else { return false }
     guard let embed = message.embed else { return false }
     switch embed {
-    case .gif:
+    case .gif, .blueskyRecord, .post:
       return true
     default:
       return false
+    }
+  }
+
+  /// A media-only shared post shows its own 12pt card chrome (`feedEmbedCardStyle()`),
+  /// so the surface clips to that radius instead of trimming the card's hairline.
+  private var surfaceCornerRadius: CGFloat {
+    guard isMediaOnly, let embed = message.embed else { return cornerRadius }
+    switch embed {
+    case .blueskyRecord, .post:
+      return 12
+    default:
+      return cornerRadius
     }
   }
 
@@ -222,9 +235,10 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           isCurrentUser: message.isFromCurrentUser,
           cornerRadius: cornerRadius,
           colorScheme: colorScheme,
+          themeManager: appState.themeManager,
           showFill: !isMediaOnly
         )
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: surfaceCornerRadius, style: .continuous))
         .offset(x: dragOffset)
 
       let gesturedSurface: some View = {
@@ -382,7 +396,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
   @ViewBuilder
   private var bubbleContent: some View {
-    // GIF bubbles drop padding entirely so the media fills the bubble.
+    // Media-only bubbles drop padding entirely so the embed fills the bubble.
     let horizontalPadding: CGFloat = isMediaOnly ? 0 : 14
     let verticalPadding: CGFloat = isMediaOnly ? 0 : 10
 
@@ -733,6 +747,7 @@ private extension View {
     isCurrentUser: Bool,
     cornerRadius: CGFloat,
     colorScheme: ColorScheme,
+    themeManager: ThemeManager,
     showFill: Bool = true
   ) -> some View {
     if showFill {
@@ -741,11 +756,24 @@ private extension View {
           .fill(
             isCurrentUser
               ? Color.accentColor
-              : (colorScheme == .dark ? Color(white: 0.22) : Color(white: 0.93))
+              : Color.incomingBubbleFill(themeManager, colorScheme: colorScheme)
           )
       )
     } else {
       self
+    }
+  }
+}
+
+private extension Color {
+  /// Incoming bubbles step up from the Dim and Black transcript backgrounds.
+  static func incomingBubbleFill(_ themeManager: ThemeManager, colorScheme: ColorScheme) -> Color {
+    guard themeManager.isDarkMode(for: colorScheme) else { return Color(white: 0.93) }
+    switch themeManager.darkThemeMode {
+    case .dim:
+      return .dynamicTertiaryBackground(themeManager, currentScheme: colorScheme)
+    case .black:
+      return Color(white: 0.17)
     }
   }
 }

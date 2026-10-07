@@ -36,6 +36,8 @@ struct AccountSettingsView: View {
     @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
     private let logger = Logger(subsystem: "blue.catbird", category: "AccountSettings")
     
+    // Native management entry points are withheld for launch until permission escalation works.
+    // Deferred handlers below remain unmounted; loading this view reads only profile/repository data.
     // Email management & verification
     @State private var isEmailVerified = false
     @State private var email = ""
@@ -133,7 +135,7 @@ struct AccountSettingsView: View {
     var body: some View {
         Group {
             SettingsFocusedForm(initialFocus: initialFocus, isReady: hasLoadedOnce || !isLoading) {
-                SettingsScopeSection()
+                SettingsScopeSection(scope: "This account")
                 if isLoading && !hasLoadedOnce {
                     Section {
                         ProgressView()
@@ -141,22 +143,7 @@ struct AccountSettingsView: View {
                             .listRowBackground(Color.clear)
                     }
                 } else {
-                    Section {
-                        if let profile = profile {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(profile.displayName ?? profile.handle.description)
-                                    .fontWeight(.bold)
-                                    .appFont(AppTextRole.headline)
-                                
-                                Text("@\(profile.handle.description)")
-                                    .appFont(AppTextRole.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.vertical, 8)
-                        }
-                    }
-                    
-                    Section("Handle Management") {
+                    Section("Handle") {
                         if let profile = profile {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -171,19 +158,14 @@ struct AccountSettingsView: View {
                                 Spacer()
                                 
                                 Image(systemName: "at")
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(.tint)
                             }
                             .padding(.vertical, 4)
                         }
                         
-                        Button("Change Handle") {
-                            isShowingHandleSheet = true
-                        }
-                        .disabled(isLoading || isDeactivating || isReactivating)
                     }
                     
                     .settingsControl(.init(rawValue: "account.handle"))
-                    emailSection.settingsControl(.init(rawValue: "account.email"))
                     
                     Section("Account Type") {
                         SettingsLink(screen: .automationLabel, summary: hasConfirmedAccountType ? (isBotAccount ? "Bot" : "None") : "Unknown", systemImage: "person.crop.rectangle.badge.plus", family: .account)
@@ -207,7 +189,6 @@ struct AccountSettingsView: View {
                                     Text("Export Public Account Data")
                                     Spacer()
                                     Image(systemName: "arrow.down.doc")
-                                        .foregroundStyle(.blue)
                                 }
                             }
                         }
@@ -220,71 +201,24 @@ struct AccountSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .settingsControl(.init(rawValue: "account.export"))
-                    Section("Account Status") {
-                        if isAccountActive == true {
-                            Button("Deactivate Account") {
-                                deactivateConfirmText = ""
-                                isShowingDeactivateAlert = true
-                            }
-                            .foregroundStyle(.orange)
-                            .disabled(isDeactivating || isReactivating || isLoading)
-                            
-                            if let status = accountStatus, !status.isEmpty && status.lowercased() != "active" {
-                                Text("Account status: \(status.capitalized)")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else if isAccountActive == false {
-                            if let status = accountStatus?.lowercased(), status == "deactivated" {
-                                Button {
-                                    reactivateAccount()
-                                } label: {
-                                    if isReactivating {
-                                        HStack {
-                                            Text("Reactivating Account…")
-                                            Spacer()
-                                            ProgressView()
-                                                .scaleEffect(0.8)
-                                        }
-                                    } else {
-                                        Text("Reactivate Account")
-                                    }
-                                }
-                                .disabled(isReactivating || isDeactivating || isLoading)
-                                .foregroundStyle(.blue)
-                            } else if let status = accountStatus, !status.isEmpty {
-                                accountUnavailableView(for: status)
-                            } else {
-                                accountUnavailableView(for: "inactive")
-                            }
-                        } else if sessionLoadFailed {
-                            Text("Account status couldn’t be loaded.")
-                                .foregroundStyle(.secondary)
-                            Button("Try Again") {
-                                reloadAccountDetails()
-                            }
-                            .disabled(isLoading)
-                        } else {
-                            if let status = accountStatus, !status.isEmpty {
-                                accountUnavailableView(for: status)
-                            } else {
-                                accountUnavailableView(for: "unavailable")
-                            }
-                        }
-                    }
-                    .settingsControl(.init(rawValue: "account.deactivate"))
                 }
                 Section {
-                    Button("Delete Account", role: .destructive) {
-                        let did = appState.userDID
-                        let handle = profile.flatMap { $0.did.description == did ? $0.handle.description : nil }
-                            ?? AppStateManager.shared.authentication.getCachedProfileData(for: did)?.handle
-                        accountDeletionTarget = AccountDeletionTarget(did: did, handle: handle)
+                    Button("Manage Hosted Account") {
+                        showProviderPage(for: .manageAccount)
                     }
-                    .disabled(appState.userDID.isEmpty || isDeactivating || isReactivating || isExportingData)
+                    .disabled(appState.userDID.isEmpty || isExportingData)
+                } footer: {
+                    Text("Manage your handle, email, and sign-in options on your hosting provider’s website.")
+                }
+                .settingsControl(.init(rawValue: "account.management"))
+                Section {
+                    Button("Account Deletion Options") {
+                        showProviderPage(for: .deletionOptions)
+                    }
+                    .disabled(appState.userDID.isEmpty || isExportingData)
                     .accessibilityIdentifier("AccountDeletion.Options")
                 } footer: {
-                    Text("Permanently delete your account. You’ll finish on your account provider’s website.")
+                    Text("Find deletion instructions from your hosting provider. Opening its website does not delete anything.")
                 }
                 .settingsControl(.init(rawValue: "account.delete"))
             }
@@ -307,66 +241,9 @@ struct AccountSettingsView: View {
             } message: {
                 Text(formError ?? "Something went wrong. Try again.")
             }
-            .sheet(isPresented: $isShowingEmailSheet) {
-                EmailUpdateSheet(
-                    currentEmail: hasEmailScope ? email : "",
-                    emailAuthFactor: hasEmailScope ? emailAuthFactor : nil,
-                    ensurePermission: { permission in
-                        let targetDID = appState.userDID
-                        let targetRevision = AppStateManager.shared.settingsAccountContextRevision
-                        try await ensurePermission(permission)
-                        guard appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
-                            throw GatewayPermissionError.stateChanged
-                        }
-                    },
-                    onEmailUpdated: { _ in
-                        reloadAccountDetails()
-                    }
-                )
-            }
-            .sheet(isPresented: $isShowingHandleSheet) {
-                HandleUpdateSheet(
-                    currentHandle: profile?.handle.description ?? "",
-                    ensurePermission: { permission in
-                        let targetDID = appState.userDID
-                        let targetRevision = AppStateManager.shared.settingsAccountContextRevision
-                        try await ensurePermission(permission)
-                        guard appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
-                            throw GatewayPermissionError.stateChanged
-                        }
-                    },
-                    onHandleUpdated: { newHandle in
-                        let targetDID = appState.userDID
-                        let targetRevision = AppStateManager.shared.settingsAccountContextRevision
-                        guard appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else { return }
-                        do {
-                            try appStateManager.authentication.recordCurrentHandleChange(newHandle, for: targetDID)
-                        } catch {
-                            handleAPIError(error, operation: "save your new handle")
-                        }
-                        reloadAccountDetails()
-                    }
-                )
-            }
             .sheet(item: $accountDeletionTarget) { target in
                 AccountDeletionSheet(target: target)
                     .environment(\.openURL, OpenURLAction { url in .systemAction(url) })
-            }
-            .alert("Deactivate Account", isPresented: $isShowingDeactivateAlert) {
-                TextField("Type DEACTIVATE to confirm", text: $deactivateConfirmText)
-                    .textInputAutocapitalization(.characters)
-                    .autocorrectionDisabled()
-                Button("Cancel", role: .cancel) {
-                    deactivateConfirmText = ""
-                }
-                Button("Deactivate", role: .destructive) {
-                    if deactivateConfirmed {
-                        deactivateAccount()
-                    }
-                }
-                .disabled(!deactivateConfirmed)
-            } message: {
-                Text("Your account will be hidden until you reactivate it by signing in again.")
             }
             .fileExporter(
                 isPresented: $isShowingFileExporter,
@@ -411,6 +288,20 @@ struct AccountSettingsView: View {
         deactivateConfirmText.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare("DEACTIVATE") == .orderedSame
     }
     
+    private func showProviderPage(for purpose: AccountDeletionTarget.Purpose) {
+        let did = appState.userDID
+        guard !did.isEmpty else { return }
+        let revision = AppStateManager.shared.settingsAccountContextRevision
+        let handle = profile.flatMap { $0.did.description == did ? $0.handle.description : nil }
+            ?? appStateManager.authentication.getCachedProfileData(for: did)?.handle
+        accountDeletionTarget = AccountDeletionTarget(
+            did: did,
+            handle: handle,
+            accountRevision: revision,
+            purpose: purpose
+        )
+    }
+
     // MARK: - Data Export
     
     @MainActor
@@ -490,62 +381,7 @@ struct AccountSettingsView: View {
         let userDID = appState.userDID
         let operationRevision = AppStateManager.shared.settingsAccountContextRevision
         
-        // 1. Load session status & email info in independent do/catch
-        do {
-            let originatingAppState = appState
-            try await originatingAppState.performSettingsAccountOperation {
-                try Task.checkCancellation()
-                let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
-                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
-            
-                let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
-                self.hasEmailScope = emailScopeGranted
-            
-                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
-                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
-            
-                if sessionCode == 200, let session = sessionData {
-                    if emailScopeGranted {
-                        if let sessionEmail = session.email, !sessionEmail.isEmpty {
-                            self.email = sessionEmail
-                        } else {
-                            self.email = ""
-                        }
-                        self.isEmailVerified = session.emailConfirmed ?? false
-                        self.emailAuthFactor = session.emailAuthFactor
-                    } else {
-                        self.email = ""
-                        self.isEmailVerified = false
-                        self.emailAuthFactor = nil
-                    }
-                    self.isAccountActive = session.active
-                    self.accountStatus = session.status
-                    self.sessionLoadFailed = false
-                } else {
-                    self.email = ""
-                    self.isEmailVerified = false
-                    self.emailAuthFactor = nil
-                    self.isAccountActive = nil
-                    self.accountStatus = nil
-                    self.sessionLoadFailed = true
-                }
-            }
-        } catch {
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
-            self.hasEmailScope = false
-            self.email = ""
-            self.isEmailVerified = false
-            self.emailAuthFactor = nil
-            self.isAccountActive = nil
-            self.accountStatus = nil
-            // The Account Status section shows an inline retry for this failure.
-            self.sessionLoadFailed = !(error is CancellationError)
-            logger.error("Failed to load account session: \(error.localizedDescription)")
-        }
-        
-        guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
-        
-        // 2. Load profile and self-labels in independent do/catch so profile failure cannot erase status or reactivation
+        // Profile and public repository reads do not require account-management escalation.
         do {
             let originatingAppState = appState
             try await originatingAppState.performSettingsAccountOperation {

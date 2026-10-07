@@ -106,10 +106,11 @@ struct ModernVideoPlayerView: View {
       return nil
     }
 
-    // Compute aspect ratio defensively (avoid divide by zero)
+    // Clamp to 3:4...2:1 (as PostVideoEmbedContent does) so tall videos letterbox
+    // instead of filling the screen.
     let ar: CGFloat
-    if let arIn = bskyVideo.aspectRatio, arIn.height != 0 {
-      ar = CGFloat(arIn.width) / CGFloat(arIn.height)
+    if let arIn = bskyVideo.aspectRatio, arIn.width > 0, arIn.height > 0 {
+      ar = min(max(CGFloat(arIn.width) / CGFloat(arIn.height), 0.75), 2)
     } else {
       ar = 16.0 / 9.0
     }

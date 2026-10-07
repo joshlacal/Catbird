@@ -131,3 +131,74 @@ struct VerificationBadgeView: View {
   }
   .padding()
 }
+
+/// Automation is an actor's own disclosure, independent of verification or moderation labels.
+enum AutomationBadge {
+  static let accessibilityLabel = String(localized: "Automated account")
+
+  static func isSelfDeclared(
+    labels: [ComAtprotoLabelDefs.Label]?,
+    authorDID: DID
+  ) -> Bool {
+    labels?.contains { $0.val == "bot" && $0.src == authorDID } ?? false
+  }
+}
+
+/// Original monochrome vector; cutouts remain transparent in every theme.
+private struct RobotHeadShape: Shape {
+  func path(in rect: CGRect) -> Path {
+    let side = min(rect.width, rect.height)
+    let origin = CGPoint(x: rect.midX - side / 2, y: rect.midY - side / 2)
+    func box(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) -> CGRect {
+      CGRect(x: origin.x + x * side, y: origin.y + y * side, width: width * side, height: height * side)
+    }
+    var path = Path()
+    path.addRoundedRect(in: box(0.17, 0.30, 0.66, 0.58), cornerSize: CGSize(width: side * 0.12, height: side * 0.12))
+    path.addRect(box(0.46, 0.17, 0.08, 0.13))
+    path.addEllipse(in: box(0.43, 0.03, 0.14, 0.14))
+    path.addRoundedRect(in: box(0.04, 0.46, 0.13, 0.24), cornerSize: CGSize(width: side * 0.04, height: side * 0.04))
+    path.addRoundedRect(in: box(0.83, 0.46, 0.13, 0.24), cornerSize: CGSize(width: side * 0.04, height: side * 0.04))
+    path.addEllipse(in: box(0.31, 0.47, 0.11, 0.11))
+    path.addEllipse(in: box(0.58, 0.47, 0.11, 0.11))
+    path.addRoundedRect(in: box(0.35, 0.71, 0.30, 0.06), cornerSize: CGSize(width: side * 0.02, height: side * 0.02))
+    return path
+  }
+}
+
+struct AutomationBadgeView: View {
+  @ScaledMetric private var side: CGFloat
+
+  init(size: CGFloat = 13, relativeTo textStyle: Font.TextStyle = .body) {
+    _side = ScaledMetric(wrappedValue: size, relativeTo: textStyle)
+  }
+
+  var body: some View {
+    RobotHeadShape()
+      .fill(style: FillStyle(eoFill: true))
+      .foregroundStyle(.secondary)
+      .frame(width: side, height: side)
+      .fixedSize()
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(AutomationBadge.accessibilityLabel)
+  }
+}
+
+#Preview("Automation beside names") {
+  VStack(alignment: .leading, spacing: 12) {
+    HStack(spacing: 4) {
+      Text("Weather updates")
+      AutomationBadgeView()
+    }
+    HStack(spacing: 4) {
+      Text("Verified automated account")
+      VerificationBadgeView(kind: .regular)
+      AutomationBadgeView()
+    }
+    HStack(spacing: 4) {
+      Text("@automated.example")
+      AutomationBadgeView(size: 18, relativeTo: .headline)
+    }
+    .font(.headline)
+  }
+  .padding()
+}

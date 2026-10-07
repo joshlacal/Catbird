@@ -84,6 +84,10 @@ struct ProfileRowView: View {
                 VerificationBadgeView(kind: badgeKind)
                     .font(.subheadline)
             }
+            if AutomationBadge.isSelfDeclared(labels: extractLabels(from: profile), authorDID: profile.did) {
+                AutomationBadgeView()
+                    .layoutPriority(1)
+            }
 
             if let pronouns = profile.pronouns, !pronouns.isEmpty {
                 Text(pronouns)

@@ -44,7 +44,7 @@ struct AskCatbirdToolPolicyTests {
             )
         }
         // Without read-result headroom, both pairs fit (1000 + 2500 < 4096),
-        // but the subsequent 1024-token tool response would overflow.
+        // but the subsequent reserved tool response would overflow.
         let selection = try await CopilotContextBudget.selectHistory(
             turns: turns,
             modelContextSize: 4096,
@@ -112,7 +112,8 @@ struct AskCatbirdThreadFormatterTests {
         #expect(rows.count == 6)
         #expect(rows.first?["id"] as? String == uri(7))
         #expect(rows.first?["role"] as? String == "focus")
-        #expect(rows.first?["textTruncated"] as? Bool == true)
+        #expect(rows.first?["textTruncated"] as? Bool == false)
+        #expect(rows.first?["text"] as? String == String(repeating: "x", count: 250))
         #expect(payload["omittedReturnedItems"] as? Int == 3)
         #expect(payload["serverReportsAdditionalContext"] as? Bool == true)
     }

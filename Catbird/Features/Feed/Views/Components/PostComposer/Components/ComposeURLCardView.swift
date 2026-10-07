@@ -13,19 +13,23 @@ extension URLCardResponse {
   func toViewExternal() -> AppBskyEmbedExternal.ViewExternal {
     // Create a URI from the URL string
     let uri = URI(self.resolvedURL)
+    let enhanced = self.externalView?.external
+    let enhancedTitle = enhanced?.title ?? ""
+    let enhancedDescription = enhanced?.description ?? ""
+    let fallbackTitle = self.title.isEmpty ? self.resolvedURL : self.title
 
     return AppBskyEmbedExternal.ViewExternal(
       uri: uri ?? URI(""),
-      title: self.title,
-      description: self.description,
-      thumb: URI(self.image),
-      createdAt: nil,
-      updatedAt: nil,
-      readingTime: nil,
-      labels: nil,
-      source: nil,
-      associatedRefs: nil,
-      associatedProfiles: nil
+      title: enhancedTitle.isEmpty ? fallbackTitle : enhancedTitle,
+      description: enhancedDescription.isEmpty ? self.description : enhancedDescription,
+      thumb: self.image.isEmpty ? enhanced?.thumb : (URI(self.image) ?? enhanced?.thumb),
+      createdAt: enhanced?.createdAt,
+      updatedAt: enhanced?.updatedAt,
+      readingTime: enhanced?.readingTime,
+      labels: enhanced?.labels,
+      source: enhanced?.source,
+      associatedRefs: enhanced?.associatedRefs ?? self.associatedRefs,
+      associatedProfiles: enhanced?.associatedProfiles
     )
   }
 }
@@ -38,31 +42,32 @@ struct ComposeURLCardView: View {
   var onRemoveURLFromText: (() -> Void)?
 
   var body: some View {
-    ZStack(alignment: .topTrailing) {
+    VStack(alignment: .leading, spacing: 6) {
+      cardPreview
+
+      if !willBeUsedAsEmbed {
+        Text("Link previews aren’t posted with photos, videos or GIFs.")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private var cardPreview: some View {
+    let external = card.toViewExternal()
+
+    return ZStack(alignment: .topTrailing) {
       ExternalEmbedView(
-        external: card.toViewExternal(),
+        external: external,
         shouldBlur: false,
         postID: card.id
       )
-      .overlay(
-        RoundedRectangle(cornerRadius: 10)
-          .stroke(
-            willBeUsedAsEmbed ? Color.accentColor.opacity(0.5) : Color.gray.opacity(0.3),
-            lineWidth: willBeUsedAsEmbed ? 2 : 1)
-      )
+      .allowsHitTesting(false)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("Link preview")
+      .opacity(willBeUsedAsEmbed ? 1 : 0.5)
 
       VStack(alignment: .trailing, spacing: 4) {
-        // Add featured badge if this will be used as embed
-        if willBeUsedAsEmbed {
-          Text("Featured")
-            .appFont(AppTextRole.caption2)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.accentColor.opacity(0.2))
-            .foregroundColor(.accentColor)
-            .cornerRadius(4)
-        }
-
         // Button to remove URL from text but keep card
 //        if let removeURLAction = onRemoveURLFromText, willBeUsedAsEmbed {
 //          Button(action: removeURLAction) {

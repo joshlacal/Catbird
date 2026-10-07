@@ -19,14 +19,14 @@ enum NotificationType: String, CaseIterable {
     case .followBack: return "person.2.fill"
     case .mention: return "at"
     case .reply: return "arrowshape.turn.up.left.fill"
-    case .quote: return "quote.bubble"
+    case .quote: return "quote.bubble.fill"
     case .likeViaRepost: return "heart.fill"
     case .repostViaRepost: return "arrow.2.squarepath"
     case .activitySubscription: return "bell.badge.fill"
-    case .starterpackJoined: return "person.2.badge.plus"
+    case .starterpackJoined: return "person.2.badge.plus.fill"
     case .verified: return "checkmark.seal.fill"
     case .unverified: return "xmark.seal.fill"
-    case .contactMatch: return "person.crop.circle.badge.checkmark"
+    case .contactMatch: return "person.crop.circle.fill.badge.checkmark"
     case .feedgenLike: return "heart.fill"
     }
   }
@@ -47,7 +47,7 @@ enum NotificationType: String, CaseIterable {
     case .verified: return .blue
     case .unverified: return .secondary
     case .contactMatch: return .green
-    case .feedgenLike: return .pink
+    case .feedgenLike: return .red
     }
   }
 

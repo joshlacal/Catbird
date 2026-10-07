@@ -3,6 +3,11 @@ import Foundation
 import OSLog
 import Petrel
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
@@ -19,6 +24,13 @@ struct UnifiedProfileView: View {
   @Binding var lastTappedTab: Int?
   @Binding private var navigationPath: NavigationPath
   @State private var isShowingReportSheet = false
+  private struct PendingGermHandoff {
+    let action: GermProfileAction
+    let revision: UInt64
+  }
+  @State private var pendingGermAction: PendingGermHandoff?
+  @State private var germLaunchError = false
+  @State private var germLaunchAttemptID: UUID?
   @State private var isEditingProfile = false
   @State private var isShowingAccountSwitcher = false
   @State private var isShowingUnblockConfirmation = false
@@ -37,6 +49,7 @@ struct UnifiedProfileView: View {
   @State private var hasAttemptedLoadPosts = false
   @State private var hasAttemptedLoadReplies = false
   @State private var hasAttemptedLoadMedia = false
+  @State private var isHeaderScrolledPast = false
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
   #if DEBUG
   private let layoutLogger = Logger(subsystem: "blue.catbird", category: "LayoutDebug")
@@ -492,7 +505,8 @@ struct UnifiedProfileView: View {
           navigationPath: $navigationPath,
           refreshAllContent: refreshAllContent,
           onTabChange: handleTabChange,
-          requestUnblock: { isShowingUnblockConfirmation = true }
+          requestUnblock: { isShowingUnblockConfirmation = true },
+          onHeaderScrolledPastChange: { isHeaderScrolledPast = $0 }
         )
       } else {
         errorView
@@ -510,15 +524,15 @@ struct UnifiedProfileView: View {
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
       switch destination {
       case .section(let tab, let did):
-        // SwiftUI resolves this destination with whichever profile on the stack declared it
-        // first, so only reuse this view model when it belongs to the requested profile.
-        if did == viewModel.userDID || did == viewModel.profile?.did.didString() {
-          ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
-            .id("\(did)_\(tab.rawValue)")
-        } else {
-          ProfileSectionHostView(did: did, tab: tab, appState: appState, path: $navigationPath)
-            .id("\(did)_\(tab.rawValue)")
-        }
+        // SwiftUI can build this destination from a copy of the profile view whose @State
+        // never attached, handing it a fresh view model with no profile. Reuse this view
+        // model only when it has loaded the requested profile; otherwise the host loads it,
+        // so a More section never comes up empty until pull-to-refresh.
+        ProfileSectionHostView(
+          did: did, tab: tab, appState: appState, path: $navigationPath,
+          loadedViewModel: viewModel.profile?.did.didString() == did ? viewModel : nil
+        )
+        .id("\(did)_\(tab.rawValue)")
       case .followers(let did):
         FollowersView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
           .id(did)
@@ -647,8 +661,13 @@ struct UnifiedProfileView: View {
       .toolbar {
         if let profile = viewModel.profile {
           ToolbarItem(placement: .principal) {
-            Text(profile.displayName ?? profile.handle.description)
+            Text(profile.displayName.flatMap {
+              $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+            } ?? profile.handle.description)
               .appFont(AppTextRole.headline)
+              .opacity(isHeaderScrolledPast ? 1 : 0)
+              .animation(.easeInOut(duration: 0.2), value: isHeaderScrolledPast)
+              .accessibilityHidden(!isHeaderScrolledPast)
           }
           
           if viewModel.isCurrentUser {
@@ -662,6 +681,24 @@ struct UnifiedProfileView: View {
           }
         }
       }
+      .alert("Open Germ DM?", isPresented: Binding(
+        get: { pendingGermAction != nil },
+        set: { if !$0 { pendingGermAction = nil } }
+      ), presenting: pendingGermAction) { handoff in
+        Button("Cancel", role: .cancel) { clearGermAction() }
+        Button("Open Germ DM") { openGerm(handoff) }
+      } message: { handoff in
+        Text("Continue to \(handoff.action.url.host() ?? "Germ") to message @\(viewModel.profile?.handle.description ?? ""). No message is sent by Catbird.")
+      }
+      .alert("Could Not Open Germ", isPresented: $germLaunchError) {
+        Button("OK", role: .cancel) { }
+      } message: {
+        Text("Please try again. The Germ link opens the app when installed, or its website otherwise.")
+      }
+      .onChange(of: appState.userDID) { _, _ in clearGermAction() }
+      .onChange(of: viewModel.profile?.did) { _, _ in clearGermAction() }
+      .onChange(of: AppStateManager.shared.settingsAccountContextRevision) { _, _ in clearGermAction() }
+      .onDisappear { clearGermAction() }
       .alert("Unblock User", isPresented: $isShowingUnblockConfirmation) {
         unblockAlertButtons
       } message: {
@@ -733,7 +770,7 @@ struct UnifiedProfileView: View {
         Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
       }
     } label: {
-      Image(systemName: "ellipsis.circle")
+      Image(systemName: "ellipsis")
         .accessibilityLabel("More Options")
     }
   }
@@ -750,6 +787,17 @@ struct UnifiedProfileView: View {
     Menu {
       if let profile = viewModel.profile {
         profileShareLink
+        if let action = germAction {
+          Button {
+            clearGermAction()
+            pendingGermAction = PendingGermHandoff(
+              action: action, revision: AppStateManager.shared.settingsAccountContextRevision
+            )
+          } label: {
+            Label("Germ DM", image: "GermLogo")
+          }
+          .accessibilityHint("Opens an external app or website to compose a message")
+        }
 
         Divider()
 
@@ -827,11 +875,65 @@ struct UnifiedProfileView: View {
         }
       }
     } label: {
-      Image(systemName: "ellipsis.circle")
+      Image(systemName: "ellipsis")
         .accessibilityLabel("More Options")
     }
   }
   
+  private var germAction: GermProfileAction? {
+    guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID,
+          AppStateManager.shared.lifecycle.appState === appState,
+          !AppStateManager.shared.authentication.isSwitchingAccount,
+          viewModel.currentUserDID == appState.userDID,
+          let profile = viewModel.profile else { return nil }
+    #if os(iOS)
+    let platform = "iOS"
+    #else
+    let platform = "web"
+    #endif
+    return GermProfileAction.make(
+      metadata: profile.associated?.germ,
+      profileDID: profile.did.didString(), viewerDID: appState.userDID,
+      loadedForViewerDID: viewModel.currentUserDID,
+      profileFollowsViewer: profile.viewer?.followedBy != nil,
+      isBlocked: profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true || profile.viewer?.blockingByList != nil,
+      platform: platform
+    )
+  }
+
+  private func clearGermAction() {
+    pendingGermAction = nil
+    germLaunchError = false
+    germLaunchAttemptID = nil
+  }
+
+  private func openGerm(_ handoff: PendingGermHandoff) {
+    let action = handoff.action
+    let revision = handoff.revision
+    clearGermAction()
+    guard SettingsAccountBoundary.isCurrent(action.viewerDID, revision: revision),
+          action == germAction, appState.userDID == action.viewerDID else { return }
+    let attemptID = UUID()
+    germLaunchAttemptID = attemptID
+    #if os(iOS)
+    UIApplication.shared.open(action.url, options: [:]) { success in
+      Task { @MainActor in
+        guard germLaunchAttemptID == attemptID,
+              SettingsAccountBoundary.isCurrent(action.viewerDID, revision: revision),
+              action == germAction else { return }
+        germLaunchAttemptID = nil
+        if !success { germLaunchError = true }
+      }
+    }
+    #elseif os(macOS)
+    let opened = NSWorkspace.shared.open(action.url)
+    if germLaunchAttemptID == attemptID {
+      germLaunchAttemptID = nil
+      if !opened { germLaunchError = true }
+    }
+    #endif
+  }
+
   // MARK: - Helper Methods
   
   @ViewBuilder

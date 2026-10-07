@@ -32,7 +32,8 @@ struct PostQuoteRowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     EmbeddedAuthorNameView(
                         name: post.author.displayName ?? post.author.handle.description,
-                        verification: post.author.verification
+                        verification: post.author.verification,
+                        isAutomated: AutomationBadge.isSelfDeclared(labels: post.author.labels, authorDID: post.author.did)
                     )
                     .appFont(AppTextRole.headline)
 

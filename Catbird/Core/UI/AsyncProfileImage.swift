@@ -13,32 +13,21 @@ struct AsyncProfileImage: View {
     let url: URL?
     let size: CGFloat
     let labels: [ComAtprotoLabelDefs.Label]?
-    private let imageRequest: ImageRequest?
-    private let cachedImage: PlatformImage?
 
     @Environment(AppState.self) private var appState
+    @Environment(\.displayScale) private var displayScale
 
     init(url: URL?, size: CGFloat, labels: [ComAtprotoLabelDefs.Label]? = nil) {
         self.url = url
         self.size = size
         self.labels = labels
-        let request = Self.resizedRequest(for: url, sizeInPoints: size)
-        self.imageRequest = request
-        // Synchronous memory-cache probe: if the resized avatar is already in
-        // the in-memory cache, paint it in init so the first frame is the
-        // final image — no placeholder → fade transition for cache hits.
-        if let request {
-            self.cachedImage = ImageLoadingManager.shared.pipeline.cache[request]?.image
-        } else {
-            self.cachedImage = nil
-        }
     }
 
-    // Resize the supplied avatar to the target pixel dimensions.
-    static func resizedRequest(for url: URL?, sizeInPoints: CGFloat) -> ImageRequest? {
+    // Resize the supplied avatar to the target pixel dimensions for the display
+    // the view is rendering on.
+    static func resizedRequest(for url: URL?, sizeInPoints: CGFloat, displayScale: CGFloat) -> ImageRequest? {
         guard let url = url else { return nil }
-        let scale = PlatformScreenInfo.scale
-        let pixelDimension = max(1, (sizeInPoints * scale).rounded(.toNearestOrAwayFromZero))
+        let pixelDimension = max(1, (sizeInPoints * displayScale).rounded(.toNearestOrAwayFromZero))
         let pixelSize = CGSize(width: pixelDimension, height: pixelDimension)
         let processors: [any ImageProcessing] = [
             ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
@@ -117,6 +106,11 @@ struct AsyncProfileImage: View {
     
     var body: some View {
         let moderationState = getAvatarModerationState(labels)
+        let imageRequest = Self.resizedRequest(for: url, sizeInPoints: size, displayScale: displayScale)
+        // Synchronous memory-cache probe: if the resized avatar is already in
+        // the in-memory cache, paint it directly so the first frame is the
+        // final image — no placeholder → fade transition for cache hits.
+        let cachedImage = imageRequest.flatMap { ImageLoadingManager.shared.pipeline.cache[$0]?.image }
 
         Group {
             if moderationState == .hide {

@@ -52,7 +52,7 @@ struct AccountEntityQuery: EntityQuery {
     return accounts.first
   }
 
-  fileprivate static func allAccounts() -> [AccountEntity] {
+  static func allAccounts() -> [AccountEntity] {
     let defaults = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
     guard let data = defaults?.data(forKey: "widgetAccounts") else { return [] }
 

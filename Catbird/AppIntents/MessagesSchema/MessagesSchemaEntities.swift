@@ -393,18 +393,18 @@ struct CatbirdMessagesPersonEntity: Identifiable, Hashable, Sendable {
 
   var id: String
   var displayName: String
+  /// Bluesky handle without the leading `@`, when known.
+  var handle: String?
   var person: IntentPerson
 
-  init(id: String, displayName: String, isMe: Bool = false) {
+  init(id: String, displayName: String, handle: String? = nil, isMe: Bool = false) {
     self.id = id
     self.displayName = displayName
-
-    var nameComponents = PersonNameComponents()
-    nameComponents.givenName = displayName
+    self.handle = handle
     self.person = IntentPerson(
-      identifier: .unknown,
-      name: .components(nameComponents),
-      handle: nil,
+      identifier: .applicationDefined(id),
+      name: .displayName(displayName),
+      handle: handle.map { IntentPerson.Handle(applicationDefined: $0, label: nil) },
       isMe: isMe
     )
   }
@@ -418,7 +418,8 @@ struct CatbirdMessagesPersonEntity: Identifiable, Hashable, Sendable {
   }
 
   var displayRepresentation: DisplayRepresentation {
-    DisplayRepresentation(title: "\(displayName)", subtitle: "\(id)")
+    // Siri shows this in disambiguation lists — a handle, never a raw DID.
+    DisplayRepresentation(title: "\(displayName)", subtitle: handle.map { "@\($0)" })
   }
 }
 

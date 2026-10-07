@@ -22,22 +22,16 @@ enum SettingsIconFamily {
     }
 }
 
-/// A solid category tile whose glyph is cut out in the app background color (white in light mode, black or dim in dark mode).
+/// A solid category tile with a white glyph in every theme.
 struct SettingsCategoryIcon: View {
     let systemImage: String
     let family: SettingsIconFamily
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.themeManager) private var themeManager
     @ScaledMetric(relativeTo: .body) private var side = DesignTokens.Size.iconXL
-    private var glyphColor: Color {
-        guard let themeManager else { return colorScheme == .dark ? .black : .white }
-        return Color.dynamicBackground(themeManager, currentScheme: colorScheme)
-    }
     var body: some View {
         Image(systemName: systemImage)
             .symbolVariant(.fill)
             .font(.system(size: side * 0.56, weight: .semibold))
-            .foregroundStyle(glyphColor)
+            .foregroundStyle(.white)
             .frame(width: side, height: side)
             .background(family.tint, in: RoundedRectangle(cornerRadius: side * 0.24, style: .continuous))
             .accessibilityHidden(true)
@@ -54,7 +48,7 @@ struct SettingsNavigationRow: View {
             SettingsCategoryIcon(systemImage: systemImage, family: family)
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 // Concrete colors: inside a Button label, hierarchical styles pick up the button tint.
-                Text(title).appFont(AppTextRole.body).foregroundStyle(Color.primary)
+                Text(title).appFont(AppTextRole.body).foregroundStyle(Color.primary).fixedSize(horizontal: false, vertical: true)
                 if let summary, !summary.isEmpty { Text(summary).appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
@@ -119,13 +113,15 @@ struct SettingsScopeSection: View {
     var scope: String = "Current account"
     var body: some View {
         Section {
-            LabeledContent("Applies to", value: scope)
-            if scope == "Current account" {
-                if let handle = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle {
-                    Text("@" + handle).appFont(AppTextRole.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-            }
+            LabeledContent("Applies to", value: appliesTo)
         }
+    }
+
+    /// The current account's handle when known, otherwise the scope label.
+    private var appliesTo: String {
+        guard scope == "Current account",
+              let handle = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle else { return scope }
+        return "@" + handle
     }
 }
 

@@ -143,10 +143,19 @@ struct SettingsRuntimeWiringTests {
     #expect(PreferencesManager.applyingFeedViewChanges(to: nil).hideRepliesByLikeCount == nil)
   }
 
-  @Test("Settings refresh rejects a missing client instead of accepting cached defaults")
+  @Test("Settings refresh requires account binding and a client before accepting cached defaults")
   @MainActor
   func settingsRefreshRequiresClient() async {
     let manager = PreferencesManager()
+    do {
+      _ = try await manager.refreshSettingsPreferences()
+      Issue.record("A settings refresh must require an account")
+    } catch PreferencesManagerError.accountChanged {
+      // An unbound manager cannot refresh another account's cached preferences.
+    } catch {
+      Issue.record("Unexpected unbound refresh failure: \(error)")
+    }
+    manager.configure(accountDID: "did:plc:settings-refresh-fixture")
     do {
       _ = try await manager.refreshSettingsPreferences()
       Issue.record("A settings refresh must require a client")
@@ -161,6 +170,10 @@ struct SettingsRuntimeWiringTests {
   @MainActor
   func removeLastInterest(replaceAll: Bool) async throws {
     let transport = SettingsInterestsTransportFixture(tags: ["Art"])
+    let unrelatedBefore = transport.serverPreferences.filter {
+      if case .interestsPref = $0 { return false }
+      return true
+    }
     let (manager, context, local) = try makeInterestsManager(transport: transport, localTags: ["Art"])
     if replaceAll {
       try await manager.updateInterests([])
@@ -174,9 +187,13 @@ struct SettingsRuntimeWiringTests {
     if case .adultContentPref(let pref) = transport.serverPreferences[0] {
       #expect(pref.enabled)
     } else { Issue.record("Unrelated adult-content preference was replaced") }
-    if case .threadViewPref(let pref) = transport.serverPreferences[2] {
-      #expect(pref.sort == "top")
-    } else { Issue.record("Unrelated thread preference was replaced") }
+    let unrelatedAfter = transport.serverPreferences.filter {
+      if case .interestsPref = $0 { return false }
+      return true
+    }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    #expect(try encoder.encode(unrelatedAfter) == encoder.encode(unrelatedBefore))
     #expect(local.interests.isEmpty)
     let fetched = try context.fetch(FetchDescriptor<Preferences>())
     #expect(fetched.first?.interests.isEmpty == true)
@@ -339,17 +356,26 @@ struct SettingsRuntimeWiringTests {
     #expect(alertCount == 1)
 
     let source = try settingsSource(named: "PrivacySecuritySettingsView.swift")
-    let taskBody = try sourceSlice(
+    let formBody = try sourceSlice(source, from: "var body: some View {", through: "private func loadData()")
+    #expect(formBody.contains(".task(id: appState.userDID)"))
+    #expect(formBody.contains("await loadData()"))
+    #expect(formBody.contains("updateLoggedOutVisibility(value, previousValue: previous)"))
+    #expect(!formBody.contains(".onChange(of: loggedOutVisibility"))
+    let loadBody = try sourceSlice(
       source,
-      from: ".task {",
-      through: ".alert(\"Biometric Authentication\""
+      from: "private func loadLoggedOutVisibility() async {",
+      through: "private func updateLoggedOutVisibility("
     )
-    #expect(
-      taskBody.contains(
-        "setLoggedOutVisibilityProgrammatically(appState.appSettings.loggedOutVisibility)"
-      )
+    #expect(loadBody.contains("setLoggedOutVisibilityProgrammatically(isVisible)"))
+    #expect(loadBody.contains("setLoggedOutVisibilityProgrammatically(true)"))
+    #expect(!loadBody.contains("updateLoggedOutVisibility("))
+    let rollbackBody = try sourceSlice(
+      source,
+      from: "private func revertLoggedOutVisibility(",
+      through: "private func setLoggedOutVisibilityProgrammatically("
     )
-    #expect(!taskBody.contains("loggedOutVisibility = appState.appSettings.loggedOutVisibility"))
+    #expect(rollbackBody.contains("setLoggedOutVisibilityProgrammatically(previousValue)"))
+    #expect(!rollbackBody.contains("updateLoggedOutVisibility("))
   }
 
   @Test("Display-only settings expose deterministic predicates")
@@ -382,7 +408,7 @@ struct SettingsRuntimeWiringTests {
     )
   }
 
-  @Test("Change handle wires to progressive JIT identity:handle and supports service and custom domains")
+  @Test("The deferred handle editor is withheld from the launch Settings form")
   func changeHandleWiring() throws {
     let helpersSource = try settingsSource(named: "AccountSettingsHelpers.swift")
     let accountSettingsSource = try settingsSource(named: "AccountSettingsView.swift")
@@ -404,25 +430,24 @@ struct SettingsRuntimeWiringTests {
     #expect(helpersSource.contains("ensurePermission(.identityHandle)"))
     #expect(helpersSource.contains("updateHandle(input:"))
     
-    // Verify AccountSettingsView has active Change Handle presentation
-    #expect(accountSettingsSource.contains("isShowingHandleSheet = true"))
-    #expect(accountSettingsSource.contains("recordCurrentHandleChange"))
+    // The native editor remains deferred until its permission flow is supported.
+    #expect(!accountSettingsSource.contains("isShowingHandleSheet = true"))
+    #expect(accountSettingsSource.contains("showProviderPage(for: .manageAccount)"))
   }
 
-  @Test("Account deactivation wires to progressive JIT account:status?action=manage and requires DEACTIVATE confirmation")
+  @Test("Launch account Settings offers web options without native status actions")
   func accountDeactivationWiring() throws {
     let source = try settingsSource(named: "AccountSettingsView.swift")
-    
-    #expect(source.contains("caseInsensitiveCompare(\"DEACTIVATE\")"))
-    #expect(source.contains("ensurePermission(.accountStatusManage)"))
-    #expect(source.contains("client.com.atproto.server.deactivateAccount("))
-    #expect(source.contains("input: .init(deleteAfter: nil)"))
-    #expect(source.contains("(200...299).contains(responseCode)"))
-    #expect(source.contains("handleLogout()"))
-    // OAuth sessions can't delete accounts: "Delete Account" hands off to the provider's account page
-    #expect(!source.contains("deleteAccount("))
-    #expect(source.contains("Button(\"Delete Account\", role: .destructive)"))
+    let visibleForm = try #require(source.components(separatedBy: "// MARK: - Data Export").first)
+
+    #expect(!visibleForm.contains("Button(\"Deactivate Account\""))
+    #expect(!visibleForm.contains("Text(\"Reactivate Account\""))
+    #expect(!visibleForm.contains("emailSection.settingsControl"))
+    #expect(!visibleForm.contains(".sheet(isPresented: $isShowingEmailSheet)"))
+    #expect(source.contains("Button(\"Account Deletion Options\")"))
+    #expect(source.contains("rawValue: \"account.management\""))
     #expect(source.contains("rawValue: \"account.delete\""))
+    #expect(!source.contains("deleteAccount("))
   }
 
   @Test("Two-Factor Authentication wires to emailAuthFactor and JIT account:email?action=manage")
@@ -438,11 +463,13 @@ struct SettingsRuntimeWiringTests {
 
   @Test("Your Interests settings wires to PreferencesManager.updateInterests and SmartFeedDiscoveryView picker")
   func interestsSettingsWiring() throws {
-    let contentMediaSource = try settingsSource(named: "ContentMediaSettingsView.swift")
+    let discoverySource = try settingsSource(named: "FeedReadingSettingsViews.swift")
+    let navigationSource = try settingsSource(named: "SettingsNavigation.swift")
     let interestsSource = try settingsSource(named: "InterestsSettingsView.swift")
-    
-    #expect(contentMediaSource.contains("InterestsSettingsView()"))
-    #expect(contentMediaSource.contains("userInterestsCount"))
+
+    #expect(discoverySource.contains("NavigationLink { InterestsSettingsView() }"))
+    #expect(discoverySource.contains("settingsControl(.init(rawValue: \"feed.interests\"))"))
+    #expect(navigationSource.contains("case .interests: InterestsSettingsView()"))
     
     #expect(interestsSource.contains("preferencesManager.getPreferences()"))
     #expect(interestsSource.contains("preferencesManager.updateInterests("))
@@ -525,10 +552,13 @@ struct SettingsRuntimeWiringTests {
 
   @Test("Activity privacy wires to app.bsky.notification.declaration")
   func activityPrivacyWiring() throws {
-    let privacySource = try settingsSource(named: "PrivacySecuritySettingsView.swift")
+    let privacySource = try settingsSource(named: "PrivacyInteractionsSettingsView.swift")
+    let navigationSource = try settingsSource(named: "SettingsNavigation.swift")
     let activitySource = try settingsSource(named: "ActivityPrivacySettingsView.swift")
-    
-    #expect(privacySource.contains("ActivityPrivacySettingsView()"))
+
+    #expect(privacySource.contains("SettingsLink(screen: .activityPrivacy"))
+    #expect(privacySource.contains("settingsControl(.init(rawValue: \"privacy.activitySubscriptions\"))"))
+    #expect(navigationSource.contains("case .activityPrivacy: ActivityPrivacySettingsView(initialFocus: target.control)"))
     #expect(activitySource.contains("app.bsky.notification.declaration"))
     #expect(activitySource.contains("AppBskyNotificationDeclaration"))
     #expect(activitySource.contains("followers"))
@@ -622,4 +652,3 @@ private final class SettingsInterestsTransportFixture {
 private enum SettingsRuntimeSourceError: Error {
   case missingBoundary
 }
-

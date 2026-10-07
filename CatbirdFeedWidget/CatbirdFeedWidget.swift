@@ -226,7 +226,7 @@ private func feedDisplayName(for configuration: ConfigurationAppIntent) -> Strin
   let accountDID = configuration.resolvedAccountDID
   switch configuration.effectiveFeedType {
   case .timeline:
-    return "Following"
+    return "Timeline"
   case .pinnedFeed:
     return FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI, accountDID: accountDID) ?? "Pinned Feed"
   case .savedFeed:

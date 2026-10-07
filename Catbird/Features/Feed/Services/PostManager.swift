@@ -434,7 +434,7 @@ final class PostManager {
           readingTime: nil,
           labels: nil,
           source: nil,
-          associatedRefs: nil,
+          associatedRefs: external.external.associatedRefs,
           associatedProfiles: nil
         )
         postViewEmbed = .appBskyEmbedExternalView(AppBskyEmbedExternal.View(external: externalView))

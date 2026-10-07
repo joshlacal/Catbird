@@ -27,6 +27,6 @@ struct GetProfileIntent: AppIntent {
 
         let output = try unwrapIntentResponse(await client.app.bsky.actor.getProfile(input: params))
         let value = ProfileEntity(from: output)
-        return .result(value: value, dialog: IntentDialog(stringLiteral: "Profile: \(String(localized: value.displayRepresentation.title))"))
+        return .result(value: value, dialog: IntentDialog("Profile: \(String(localized: value.displayRepresentation.title))"))
     }
 }

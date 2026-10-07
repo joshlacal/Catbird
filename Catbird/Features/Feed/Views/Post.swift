@@ -363,15 +363,15 @@ struct Post: View, Equatable {
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 8)
+            .padding(.vertical, 5)
             .padding(.horizontal, 8)
-            .frame(minWidth: 44, minHeight: 44)
             .background(
                 Capsule()
                     .fill(Color.accentColor.opacity(0.12))
             )
             .foregroundColor(.accentColor)
-            .contentShape(Capsule())
+            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isTranslating)

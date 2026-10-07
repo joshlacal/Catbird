@@ -1,113 +1,100 @@
-//
-//  FeedPreviewService.swift
-//  Catbird
-//
-//  Created on 6/2/25.
-//
-
 import Foundation
 import OSLog
 import Petrel
 
-/// Service for fetching and caching feed previews
-actor FeedPreviewService {
-    // MARK: - Properties
-    private let appState: AppState
-    private var previewCache: [String: CachedPreview] = [:]
-    private let cacheExpiration: TimeInterval = 300 // 5 minutes
-    private let logger = Logger(subsystem: "blue.catbird", category: "FeedPreviewService")
-    
-    // MARK: - Types
-    private struct CachedPreview {
-        let posts: [AppBskyFeedDefs.FeedViewPost]
-        let fetchedAt: Date
-        
-        var isExpired: Bool {
-            Date().timeIntervalSince(fetchedAt) > 300
-        }
-    }
-    
-    // MARK: - Initialization
-    init(appState: AppState) {
-        self.appState = appState
-    }
-    
-    // MARK: - Public Methods
-    
-    /// Fetch preview posts for a feed
-    func fetchPreview(for feedURI: ATProtocolURI) async throws -> [AppBskyFeedDefs.FeedViewPost] {
-        let cacheKey = feedURI.uriString()
-        
-        // Check cache first
-        if let cached = previewCache[cacheKey], !cached.isExpired {
-            logger.debug("Returning cached preview for feed: \(cacheKey)")
-            return cached.posts
-        }
-        
-        // Fetch from server
-        logger.info("Fetching preview for feed: \(cacheKey)")
-        
-        guard let client = appState.atProtoClient else {
-            throw FeedPreviewError.clientNotAvailable
-        }
-        
-        let params = AppBskyFeedGetFeed.Parameters(
-            feed: feedURI,
-            limit: 5 // Reduced for faster initial load
-        )
-        
-        let (responseCode, response) = try await client.app.bsky.feed.getFeed(input: params)
-        
-        guard responseCode == 200, let feedResponse = response else {
-            logger.error("Failed to fetch feed preview. Response code: \(responseCode)")
-            throw FeedPreviewError.fetchFailed(responseCode)
-        }
-        
-        // Cache the results
-        let posts = feedResponse.feed
-        previewCache[cacheKey] = CachedPreview(posts: posts, fetchedAt: Date())
-        
-        // Clean old cache entries
-        await cleanExpiredCache()
-        
-        return posts
-    }
-    
-    /// Invalidate cache for a specific feed
-    func invalidateCache(for feedURI: ATProtocolURI) {
-        previewCache.removeValue(forKey: feedURI.uriString())
-    }
-    
-    /// Clear all cached previews
-    func clearAllCache() {
-        previewCache.removeAll()
-    }
-    
-    // MARK: - Private Methods
-    
-    private func cleanExpiredCache() {
-        let now = Date()
-        previewCache = previewCache.filter { _, cached in
-            now.timeIntervalSince(cached.fetchedAt) <= cacheExpiration
-        }
-    }
+protocol FeedDiscoveryPreviewProviding: Sendable {
+  func fetchPreview(for feedURI: ATProtocolURI) async throws -> [AppBskyFeedDefs.FeedViewPost]
+  func invalidateCache(for feedURI: ATProtocolURI) async
 }
 
-// MARK: - Errors
+/// Fetches only requested feeds and retains a small, account-scoped preview cache.
+actor FeedPreviewService: FeedDiscoveryPreviewProviding {
+  private let appState: AppState
+  private var previewCache: [String: CachedPreview] = [:]
+  private var cacheSession: FeedDiscoveryPreviewSession?
+  private var cacheGeneration = 0
+  private let cacheExpiration: TimeInterval = 300
+  private let cacheLimit = 8
+  private let logger = Logger(subsystem: "blue.catbird", category: "FeedPreviewService")
+
+  private struct CachedPreview {
+    let posts: [AppBskyFeedDefs.FeedViewPost]
+    let fetchedAt: Date
+    var lastAccessedAt: Date
+  }
+
+  init(appState: AppState) {
+    self.appState = appState
+  }
+
+  func fetchPreview(for feedURI: ATProtocolURI) async throws -> [AppBskyFeedDefs.FeedViewPost] {
+    try Task.checkCancellation()
+    guard let client = appState.atProtoClient else {
+      throw FeedPreviewError.clientNotAvailable
+    }
+    let session = FeedDiscoveryPreviewSession(accountDID: appState.userDID,
+                                              clientIdentity: ObjectIdentifier(client))
+    if cacheSession != session {
+      clearAllCache()
+      cacheSession = session
+    }
+    let generation = cacheGeneration
+    let cacheKey = feedURI.uriString()
+    let now = Date()
+    previewCache = previewCache.filter { now.timeIntervalSince($0.value.fetchedAt) < cacheExpiration }
+    if var cached = previewCache[cacheKey] {
+      cached.lastAccessedAt = now
+      previewCache[cacheKey] = cached
+      return cached.posts
+    }
+
+    let parameters = AppBskyFeedGetFeed.Parameters(feed: feedURI, limit: 5)
+    let (status, output) = try await client.app.bsky.feed.getFeed(input: parameters)
+    try Task.checkCancellation()
+    // A replaced client or cleared session must never refill the current cache.
+    guard generation == cacheGeneration, cacheSession == session,
+          appState.userDID == session.accountDID,
+          appState.atProtoClient.map({ ObjectIdentifier($0) }) == session.clientIdentity else {
+      throw CancellationError()
+    }
+    guard status == 200, let output else {
+      logger.error("Feed preview request failed with status \(status)")
+      throw FeedPreviewError.fetchFailed(status)
+    }
+
+    let posts = Array(output.feed.prefix(5))
+    let fetchedAt = Date()
+    previewCache[cacheKey] = CachedPreview(posts: posts, fetchedAt: fetchedAt, lastAccessedAt: fetchedAt)
+    while previewCache.count > cacheLimit {
+      guard let oldest = previewCache.min(by: { $0.value.lastAccessedAt < $1.value.lastAccessedAt })?.key else { break }
+      previewCache.removeValue(forKey: oldest)
+    }
+    return posts
+  }
+
+  func invalidateCache(for feedURI: ATProtocolURI) {
+    previewCache.removeValue(forKey: feedURI.uriString())
+  }
+
+  func clearAllCache() {
+    cacheGeneration += 1
+    previewCache.removeAll()
+  }
+}
 
 enum FeedPreviewError: LocalizedError {
-    case clientNotAvailable
-    case fetchFailed(Int)
-    case invalidFeedURI
-    
-    var errorDescription: String? {
-        switch self {
-        case .clientNotAvailable:
-            return "Network client not available"
-        case .fetchFailed(let code):
-            return "Failed to fetch feed preview (code: \(code))"
-        case .invalidFeedURI:
-            return "Invalid feed URI"
-        }
+  case clientNotAvailable
+  case fetchFailed(Int)
+  case invalidFeedURI
+
+  var errorDescription: String? {
+    switch self {
+    case .clientNotAvailable:
+      return "Sign in to preview this feed."
+    case .fetchFailed:
+      return "This feed’s recent posts couldn’t be loaded. Try again."
+    case .invalidFeedURI:
+      return "This feed couldn’t be opened."
     }
+  }
 }

@@ -37,7 +37,7 @@ struct FollowedByView: View {
                                 .clipShape(Circle())
                                 .background(
                                     Circle()
-                                        .stroke(Color.systemBackground, lineWidth: 2)
+                                        .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: currentColorScheme), lineWidth: 2)
                                         .scaleEffect((avatarSize + 2) / avatarSize)
                                 )
                                 .zIndex(Double(maxAvatarsToShow - index))

@@ -32,9 +32,12 @@ struct DiscoverFeedsIntent: AppIntent {
         let value = output.feeds.map { FeedGeneratorEntity(from: $0) }
         let dialog: IntentDialog
         if let first = value.first {
-            dialog = IntentDialog(stringLiteral: "Found \(value.count) \(value.count == 1 ? "feed generator" : "feed generators"). First: \(String(localized: first.displayRepresentation.title)).")
+            let firstTitle = String(localized: first.displayRepresentation.title)
+            dialog = value.count == 1
+                ? IntentDialog("Found 1 feed: \(firstTitle).")
+                : IntentDialog("Found \(value.count) feeds. First: \(firstTitle).")
         } else {
-            dialog = IntentDialog(stringLiteral: "No feed generators found.")
+            dialog = IntentDialog("No feeds found.")
         }
         return .result(value: value, dialog: dialog)
     }

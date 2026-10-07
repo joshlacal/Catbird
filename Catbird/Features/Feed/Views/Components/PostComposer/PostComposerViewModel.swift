@@ -69,6 +69,7 @@ final class PostComposerViewModel {
   
   // MARK: - Media Properties
   
+  @ObservationIgnored let mediaPreviewLoads = MediaPreviewLoadRegistry()
   var mediaItems: [MediaItem] = []
   var videoItem: MediaItem?
   private(set) var pendingAudioURL: URL?
@@ -523,6 +524,7 @@ final class PostComposerViewModel {
       let data: Data?
       let videoData: Data?
       let videoURL: URL?
+      let imageURL: URL?
       let altText: String
       let aspectRatio: CGSize?
       let isLoading: Bool
@@ -535,6 +537,7 @@ final class PostComposerViewModel {
         data = item.rawData
         videoData = item.videoData
         videoURL = item.rawVideoURL
+        imageURL = item.rawImageURL
         altText = item.altText
         aspectRatio = item.aspectRatio
         isLoading = item.isLoading
@@ -598,24 +601,79 @@ final class PostComposerViewModel {
     ])
   }
 
+  struct MediaLoadContext: Sendable {
+    let generation: UUID
+    let claim: ComposerDraftClaim?
+    let accountDID: String?
+    let entryID: UUID?
+  }
+
+  func mediaLoadContext() -> MediaLoadContext {
+    MediaLoadContext(
+      generation: draftRestorationGeneration, claim: editingClaim, accountDID: appState.userDID,
+      entryID: threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex].id : nil
+    )
+  }
+
+  private func ownsMediaLoadDraft(_ context: MediaLoadContext) -> Bool {
+    context.generation == draftRestorationGeneration && context.claim == editingClaim
+      && context.accountDID == appState.userDID
+      && (editingSession == nil || ownsEditingDraft)
+  }
+
+  func ownsMediaLoad(_ context: MediaLoadContext) -> Bool {
+    ownsMediaLoadDraft(context)
+      && context.entryID == (threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex].id : nil)
+  }
+
+  /// A task that finishes offscreen must not leave a stored thread attachment spinning.
+  func finishMediaLoad(withId id: UUID, context: MediaLoadContext) {
+    guard ownsMediaLoadDraft(context) else { return }
+    if ownsMediaLoad(context) {
+      if videoItem?.id == id { videoItem?.isLoading = false }
+      if let index = mediaItems.firstIndex(where: { $0.id == id }) {
+        mediaItems[index].isLoading = false
+      }
+      syncMediaStateToCurrentThread()
+    }
+    if let index = threadEntries.firstIndex(where: { $0.id == context.entryID }) {
+      if threadEntries[index].videoItem?.id == id { threadEntries[index].videoItem?.isLoading = false }
+      if let mediaIndex = threadEntries[index].mediaItems.firstIndex(where: { $0.id == id }) {
+        threadEntries[index].mediaItems[mediaIndex].isLoading = false
+      }
+    }
+  }
+
   // MARK: - Video Upload Eligibility
   func checkVideoUploadEligibility(force: Bool = false) async {
-    guard videoItem != nil, let manager = mediaUploadManager else { 
+    guard let videoID = videoItem?.id, let manager = mediaUploadManager else { 
       logger.trace("PostComposerViewModel: checkVideoUploadEligibility - no video or manager")
       return 
     }
     logger.info("PostComposerViewModel: Checking video upload eligibility - force: \(force)")
+    let context = mediaLoadContext()
+    if let owner = videoUploadOwner(for: videoID),
+       let store = try? VideoUploadCheckpointStore.shared.get(),
+       let saved = try? await store.load(owner: owner),
+       [.uploading, .finishing, .processing, .complete].contains(saved.phase)
+         || (saved.phase == .abandoned && saved.uploadJobID != nil) {
+      guard !Task.isCancelled, videoItem?.id == videoID, ownsMediaLoad(context) else { return }
+      // An existing reservation/job can be resumed even when no new upload allowance remains.
+      // Submission still verifies the exact owner/file and asks the server for authoritative state.
+      videoUploadBlockedReason = nil
+      videoUploadBlockedCode = nil
+      return
+    }
     let result = await manager.preflightUploadPermission(force: force)
-    await MainActor.run {
-      if result.allowed {
-        logger.info("PostComposerViewModel: Video upload allowed")
-        self.videoUploadBlockedReason = nil
-        self.videoUploadBlockedCode = nil
-      } else {
-        logger.warning("PostComposerViewModel: Video upload blocked - code: \(result.code ?? "none"), message: \(result.message ?? "none")")
-        self.videoUploadBlockedReason = result.message ?? "Video uploads are currently unavailable"
-        self.videoUploadBlockedCode = result.code
-      }
+    guard !Task.isCancelled, videoItem?.id == videoID, ownsMediaLoad(context) else { return }
+    if result.allowed {
+      logger.info("PostComposerViewModel: Video upload allowed")
+      self.videoUploadBlockedReason = nil
+      self.videoUploadBlockedCode = nil
+    } else {
+      logger.warning("PostComposerViewModel: Video upload blocked - code: \(result.code ?? "none"), message: \(result.message ?? "none")")
+      self.videoUploadBlockedReason = result.message ?? "Video uploads are currently unavailable"
+      self.videoUploadBlockedCode = result.code
     }
   }
 
@@ -1126,29 +1184,37 @@ final class PostComposerViewModel {
   // MARK: - Media Item Model
   
   struct MediaItem: Identifiable {
-    let id = UUID()
+    let id: UUID
     var pickerItem: PhotosPickerItem?
     var image: Image?
     var isLoading: Bool = true
     var altText: String = ""
     var aspectRatio: CGSize?
     var rawData: Data?
+    var rawImageURL: URL?
     var videoData: Data?
     var rawVideoURL: URL?
     var rawVideoAsset: AVAsset?
     var isAudioVisualizerVideo: Bool = false
     var isGifConversion: Bool = false
     var caption: VideoCaption? = nil
+
+    var canRetryLoading: Bool {
+      rawData != nil || pickerItem != nil || rawImageURL != nil || rawVideoURL != nil
+    }
     
     init(pickerItem: PhotosPickerItem) {
+      self.id = UUID()
       self.pickerItem = pickerItem
     }
     
-    init() {
+    init(id: UUID = UUID()) {
+      self.id = id
       self.pickerItem = nil
     }
     
     init(url: URL, isAudioVisualizerVideo: Bool = false) {
+      self.id = UUID()
       self.pickerItem = nil
       self.rawVideoURL = url
       self.isAudioVisualizerVideo = isAudioVisualizerVideo

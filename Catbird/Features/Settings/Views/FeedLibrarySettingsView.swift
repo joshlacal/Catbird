@@ -32,7 +32,7 @@ struct FeedLibrarySettingsView: View {
             Task { try? await actions.reorderPinned(reordered) }
           }
       } header: { Text("Pinned Feeds") } footer: {
-        Text("The first pinned feed is your default. Use Edit to reorder, or choose Make Default in a feed’s menu. Following stays pinned.")
+        Text("The first pinned feed is your default. Use Edit to reorder, or choose Make Default in a feed’s menu. Timeline stays pinned.")
       }.settingsControl(.init(rawValue: "feed.feedLibrary"))
         .disabled(isOrdering)
       Section {
@@ -52,7 +52,7 @@ struct FeedLibrarySettingsView: View {
 
   private var isOrdering: Bool { actions.orderState == .saving }
   private func title(_ uri: String) -> String {
-    if SystemFeedTypes.isTimelineFeed(uri) { return "Following" }
+    if SystemFeedTypes.isTimelineFeed(uri) { return "Timeline" }
     if let name = names[uri] { return name }
     if isLoading { return "Loading…" }
     return isList(uri) ? "List" : "Custom Feed"

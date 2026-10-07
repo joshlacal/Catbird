@@ -42,21 +42,19 @@ struct TrendingTopicParticipants: View {
 
 struct TrendingTopicParticipantStack: View {
   let participants: [TrendingTopicPreview.Participant]
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
     if !participants.isEmpty {
       HStack(spacing: -6) {
         ForEach(participants) { participant in
-          LazyImage(request: TrendingTopicImageRequests.request(participant.avatar,
-            size: TrendingTopicImageRequests.avatarSize, priority: .normal)) { state in
-            if let image = state.image {
-              image.resizable().scaledToFill()
-                .frame(width: 26, height: 26)
-                .clipShape(Circle())
-                .overlay { Circle().strokeBorder(.background, lineWidth: 2) }
-            }
+          TrendingTopicImage(request: TrendingTopicImageRequests.request(participant.avatar,
+            size: TrendingTopicImageRequests.avatarSize, displayScale: displayScale, priority: .normal)) { image in
+            image.resizable().scaledToFill()
+              .frame(width: 26, height: 26)
+              .clipShape(Circle())
+              .overlay { Circle().strokeBorder(.background, lineWidth: 2) }
           }
-          .pipeline(ImageLoadingManager.shared.pipeline)
           .frame(width: 26, height: 26)
         }
       }
@@ -74,23 +72,21 @@ struct TrendingTopicArtworkPresentation: View {
   @Environment(\.layoutDirection) private var layoutDirection
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       ZStack {
         if !preview.media.isEmpty {
           ForEach(Array(preview.media.enumerated()), id: \.element.id) { index, card in
-            LazyImage(request: TrendingTopicImageRequests.request(card.url,
-              size: TrendingTopicImageRequests.cardSize, priority: .normal)) { state in
-              if let image = state.image {
-                image.resizable().scaledToFill()
-                  .frame(width: 62, height: 72)
-                  .clipShape(.rect(cornerRadius: 7))
-                  .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(.background, lineWidth: 2) }
-                  .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.15), radius: 3, y: 2)
-              }
+            TrendingTopicImage(request: TrendingTopicImageRequests.request(card.url,
+              size: TrendingTopicImageRequests.cardSize, displayScale: displayScale, priority: .normal)) { image in
+              image.resizable().scaledToFill()
+                .frame(width: 62, height: 72)
+                .clipShape(.rect(cornerRadius: 7))
+                .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(.background, lineWidth: 2) }
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.15), radius: 3, y: 2)
             }
-            .pipeline(ImageLoadingManager.shared.pipeline)
             .frame(width: 62, height: 72)
             .rotationEffect(.degrees(reduceMotion ? 0 : rotation(index)))
             .offset(x: offset(index), y: index == 1 ? -2 : 2)
@@ -123,6 +119,43 @@ struct TrendingTopicArtworkPresentation: View {
   private func rotation(_ index: Int) -> Double {
     let angle = [-9.0, 4.0, 11.0][index % 3]
     return angle * (layoutDirection == .rightToLeft ? -1 : 1)
+  }
+}
+
+/// Resolves only the current moderated request. Resolved stills survive row recreation;
+/// a cache miss uses the same shared Nuke pipeline and ordinary disappearance cancellation.
+private struct TrendingTopicImage<Content: View>: View {
+  @Environment(AppState.self) private var appState
+  let request: ImageRequest
+  @ViewBuilder let content: (Image) -> Content
+
+  var body: some View {
+    let store = appState.trendingTopicMediaStore
+    let revision = store.revision
+    let viewerDID = appState.userDID
+    if store.isActive, !appState.isAccountSwitchSuspended {
+      if let image = store.image(for: request) {
+        content(Image(platformImage: image))
+          .onAppear { retain(image, store: store, revision: revision, viewerDID: viewerDID) }
+      } else {
+        LazyImage(request: request) { state in
+          if let image = state.image { content(image) }
+        }
+        .pipeline(ImageLoadingManager.shared.pipeline)
+        .onCompletion { result in
+          guard case .success(let response) = result, !response.container.isPreview,
+                TrendingTopicImageRequests.identity(response.request) == TrendingTopicImageRequests.identity(request) else { return }
+          retain(response.container.image, store: store, revision: revision, viewerDID: viewerDID)
+        }
+        .id(TrendingTopicImageRequests.identity(request))
+      }
+    }
+  }
+
+  private func retain(_ image: Nuke.PlatformImage, store: TrendingTopicMediaStore, revision: Int, viewerDID: String) {
+    guard !appState.isAccountSwitchSuspended, appState.userDID == viewerDID,
+          appState.appSettings.showTrendingTopics, appState.topicPreviewLabelerScopeIsCurrent else { return }
+    store.retainImage(image, for: request, revision: revision)
   }
 }
 

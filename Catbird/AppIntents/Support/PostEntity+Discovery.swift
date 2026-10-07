@@ -21,10 +21,15 @@ extension PostEntity {
 
   var attributeSet: CSSearchableItemAttributeSet {
     let set = defaultAttributeSet
+    let authorName = authorDisplayName ?? "@\(authorHandle)"
+    set.title = authorName
     set.textContent = text
     set.contentDescription = text
-    set.authorNames = [authorDisplayName ?? authorHandle]
+    set.authorNames = [authorName]
+    set.keywords = [authorHandle, authorDisplayName].compactMap { $0 }
+    set.url = webURL
     set.addedDate = indexedAt
+    set.contentCreationDate = indexedAt
     return set
   }
 }

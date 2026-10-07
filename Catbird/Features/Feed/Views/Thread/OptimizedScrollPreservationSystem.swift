@@ -70,18 +70,17 @@ final class OptimizedScrollPreservationSystem {
     // A/B Testing integration for scroll preservation strategies
     private weak var abTestingFramework: ABTestingFramework?
     
-    // ProMotion display detection
-    private let isProMotionDisplay: Bool
-    
     // MARK: - Initialization
     
     init(abTestingFramework: ABTestingFramework? = nil) {
         self.abTestingFramework = abTestingFramework
-        
-        // Detect ProMotion display capability
-        self.isProMotionDisplay = PlatformScreenInfo.isProMotionDisplay
-        
-        logger.info("📱 Initialized with ProMotion: \(self.isProMotionDisplay), max FPS: \(PlatformScreenInfo.maximumFramesPerSecond)")
+    }
+
+    /// Whether the display showing `view` refreshes above 60 Hz. Read per use from
+    /// the view's own scene, because a scene can move between displays.
+    private static func isProMotionDisplay(showing view: UIView) -> Bool {
+        guard let screen = view.window?.windowScene?.screen else { return false }
+        return PlatformScreenInfo.supportsProMotion(screen)
     }
     
     // MARK: - UIUpdateLink Management
@@ -124,7 +123,7 @@ final class OptimizedScrollPreservationSystem {
         // iOS 18: Adaptive frame rate based on display capabilities and scroll context
         let adaptiveFrameRate = frameRateManager.getOptimalFrameRate(
             for: .scrollRestoration,
-            isProMotionDisplay: isProMotionDisplay,
+            isProMotionDisplay: Self.isProMotionDisplay(showing: collectionView),
             batteryLevel: PlatformDeviceInfo.batteryLevel
         )
         updateLink.preferredFrameRateRange = adaptiveFrameRate
@@ -240,7 +239,7 @@ final class OptimizedScrollPreservationSystem {
         // Enhanced frame synchronization for ProMotion displays
         return await withCheckedContinuation { continuation in
             // Use CADisplayLink for frame-perfect timing on ProMotion displays
-            if isProMotionDisplay {
+            if Self.isProMotionDisplay(showing: collectionView) {
                 performProMotionOptimizedScroll(
                     collectionView: collectionView,
                     targetOffset: targetOffset,

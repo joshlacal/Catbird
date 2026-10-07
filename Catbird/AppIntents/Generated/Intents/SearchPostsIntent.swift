@@ -12,7 +12,7 @@ struct SearchPostsIntent: AppIntent {
     @Parameter(title: "Account")
     var account: AccountEntity?
 
-    @Parameter(title: "Search Query")
+    @Parameter(title: "Search Query", requestValueDialog: IntentDialog("What do you want to search for?"))
     var q: String
 
     @Parameter(title: "Result Limit")
@@ -32,9 +32,12 @@ struct SearchPostsIntent: AppIntent {
         let value = output.posts.map { PostEntity(from: $0) }
         let dialog: IntentDialog
         if let first = value.first {
-            dialog = IntentDialog(stringLiteral: "Found \(value.count) \(value.count == 1 ? "post" : "posts"). First: \(String(localized: first.displayRepresentation.title)).")
+            let firstTitle = String(localized: first.displayRepresentation.title)
+            dialog = value.count == 1
+                ? IntentDialog("Found 1 post: \(firstTitle).")
+                : IntentDialog("Found \(value.count) posts. First: \(firstTitle).")
         } else {
-            dialog = IntentDialog(stringLiteral: "No posts found.")
+            dialog = IntentDialog("No posts found.")
         }
         return .result(value: value, dialog: dialog)
     }

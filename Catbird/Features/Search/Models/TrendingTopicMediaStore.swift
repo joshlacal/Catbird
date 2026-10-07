@@ -4,6 +4,8 @@ import Observation
 import Petrel
 #if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
 #endif
 
 /// Per-topic observation: one topic's preview arriving re-renders only the views showing that topic.
@@ -29,6 +31,7 @@ final class TrendingTopicMediaStore {
   @ObservationIgnored private var entries: [String: Entry] = [:]
   @ObservationIgnored private var slots: [String: TopicPreviewSlot] = [:]
   @ObservationIgnored private var selections: [String: Selection] = [:]
+  @ObservationIgnored private var retainedImages = TopicPreviewImageRetention<TrendingTopicImageRequests.Identity, Nuke.PlatformImage>()
   @ObservationIgnored private var entryGeneration = 0
   private(set) var revision = 0
   /// Subscribed labelers' definitions, keyed by the labeler set they were loaded for.
@@ -52,6 +55,7 @@ final class TrendingTopicMediaStore {
   @ObservationIgnored private var graphObserver: NSObjectProtocol?
   @ObservationIgnored private var activityObserver: NSObjectProtocol?
   @ObservationIgnored private var inactivityObserver: NSObjectProtocol?
+  @ObservationIgnored private var memoryObserver: NSObjectProtocol?
   private(set) var canReusePrefetchedFeed = true
   private(set) var isActive = true
   @ObservationIgnored private var prefetchedLinksUsed: Set<String> = []
@@ -87,6 +91,10 @@ final class TrendingTopicMediaStore {
       object: nil, queue: .main) { [weak self] _ in
         MainActor.assumeIsolated { self?.setActive(false) }
       }
+    memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+      object: nil, queue: .main) { [weak self] _ in
+        MainActor.assumeIsolated { self?.retainedImages.removeAll() }
+      }
     #endif
   }
 
@@ -99,6 +107,7 @@ final class TrendingTopicMediaStore {
       invalidateForGraphChange()
       prefetchCoordinator.setActive(true)
     } else {
+      retainedImages.removeAll()
       prefetchCoordinator.setActive(false)
       cancelRequests()
       cancelPrefetches()
@@ -110,6 +119,7 @@ final class TrendingTopicMediaStore {
     if let graphObserver { NotificationCenter.default.removeObserver(graphObserver) }
     if let activityObserver { NotificationCenter.default.removeObserver(activityObserver) }
     if let inactivityObserver { NotificationCenter.default.removeObserver(inactivityObserver) }
+    if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
   }
 
   func invalidateForGraphChange() {
@@ -220,6 +230,7 @@ final class TrendingTopicMediaStore {
   }
 
   private func removeAllEntries() {
+    retainedImages.removeAll()
     entries.removeAll()
     selections.removeAll()
     for slot in slots.values { slot.generation += 1 }
@@ -262,14 +273,46 @@ final class TrendingTopicMediaStore {
   func warmImages(
     _ preview: TrendingTopicPreview,
     participants: [TrendingTopicPreview.Participant]? = nil,
+    displayScale: CGFloat,
     owner: TopicPreviewPrefetchOwner
   ) {
     guard isActive else { return }
     // Six topics, three static cards and three avatars each; never expand with scroll renders.
-    let requests = TrendingTopicImageRequests.requests(for: preview, participants: participants ?? preview.participants)
+    let requests = TrendingTopicImageRequests.requests(for: preview, participants: participants ?? preview.participants,
+      displayScale: displayScale)
     let additions = imageOwnership.append(requests, owner: owner,
       identity: TrendingTopicImageRequests.identity)
     imagePrefetcher.startPrefetching(with: additions)
+  }
+
+  /// Called only for requests selected by the current moderated artwork, never to select media.
+  /// Memory-only lookup avoids disk decode and an empty LazyImage state on the first frame.
+  func image(for request: ImageRequest) -> Nuke.PlatformImage? {
+    guard isActive, !request.options.contains(.disableMemoryCacheReads) else { return nil }
+    if let image = retainedImages.value(for: TrendingTopicImageRequests.identity(request)) { return image }
+    guard let container = ImageLoadingManager.shared.pipeline.cache[request], !container.isPreview else { return nil }
+    return staticImage(container.image)?.image
+  }
+
+  /// No tasks are retained. Late image completion cannot repopulate an invalidated account.
+  func retainImage(_ image: Nuke.PlatformImage, for request: ImageRequest, revision expectedRevision: Int) {
+    guard isActive, revision == expectedRevision, !request.options.contains(.disableMemoryCacheWrites),
+          let still = staticImage(image) else { return }
+    retainedImages.insert(still.image, for: TrendingTopicImageRequests.identity(request), cost: still.cost)
+  }
+
+  private func staticImage(_ image: Nuke.PlatformImage) -> (image: Nuke.PlatformImage, cost: Int)? {
+    #if os(macOS)
+    guard let bitmap = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+    let still = Nuke.PlatformImage(cgImage: bitmap, size: image.size)
+    #else
+    guard let bitmap = image.cgImage else { return nil }
+    let still = Nuke.PlatformImage(cgImage: bitmap, scale: image.scale, orientation: image.imageOrientation)
+    #endif
+    // Retain one bitmap only, without original GIF data, frames or container metadata.
+    let (cost, overflow) = bitmap.bytesPerRow.multipliedReportingOverflow(by: bitmap.height)
+    guard !overflow else { return nil }
+    return (still, cost)
   }
 
   func cancelPrefetch(owner: TopicPreviewPrefetchOwner) {
@@ -317,8 +360,8 @@ enum TrendingTopicImageRequests {
   static let avatarSize = CGSize(width: 26, height: 26)
 
   /// Priority is not part of the load identity, so visible rows raise a coalesced prefetch.
-  static func request(_ url: URL, size: CGSize, priority: ImageRequest.Priority = .low) -> ImageRequest {
-    let pixels = CGSize(width: size.width * PlatformScreenInfo.scale, height: size.height * PlatformScreenInfo.scale)
+  static func request(_ url: URL, size: CGSize, displayScale: CGFloat, priority: ImageRequest.Priority = .low) -> ImageRequest {
+    let pixels = CGSize(width: size.width * displayScale, height: size.height * displayScale)
     return ImageRequest(url: url, processors: [
       ImageProcessors.Resize(size: pixels, unit: .pixels, contentMode: .aspectFill)
     ], priority: priority)
@@ -326,10 +369,11 @@ enum TrendingTopicImageRequests {
 
   static func requests(
     for preview: TrendingTopicPreview,
-    participants: [TrendingTopicPreview.Participant]? = nil
+    participants: [TrendingTopicPreview.Participant]? = nil,
+    displayScale: CGFloat
   ) -> [ImageRequest] {
-    preview.media.prefix(3).map { request($0.url, size: cardSize) }
-      + (participants ?? preview.participants).prefix(3).map { request($0.avatar, size: avatarSize) }
+    preview.media.prefix(3).map { request($0.url, size: cardSize, displayScale: displayScale) }
+      + (participants ?? preview.participants).prefix(3).map { request($0.avatar, size: avatarSize, displayScale: displayScale) }
   }
 }
 
@@ -436,15 +480,16 @@ extension AppState {
 
   /// Preferred entry point: trend actors let avatars warm before any preview feed responds.
   @MainActor
-  func prefetchTopicPreviews(trends: [AppBskyUnspeccedDefs.TrendView], owner: TopicPreviewPrefetchOwner) {
+  func prefetchTopicPreviews(trends: [AppBskyUnspeccedDefs.TrendView], displayScale: CGFloat, owner: TopicPreviewPrefetchOwner) {
     let actors = Dictionary(trends.map { ($0.link, $0.actors) }, uniquingKeysWith: { first, _ in first })
-    prefetchTopicPreviews(links: trends.map(\.link), actors: actors, owner: owner)
+    prefetchTopicPreviews(links: trends.map(\.link), actors: actors, displayScale: displayScale, owner: owner)
   }
 
   @MainActor
   func prefetchTopicPreviews(
     links: [String],
     actors: [String: [AppBskyActorDefs.ProfileViewBasic]] = [:],
+    displayScale: CGFloat,
     owner: TopicPreviewPrefetchOwner
   ) {
     guard trendingTopicMediaStore.isActive, !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent else { return }
@@ -461,7 +506,8 @@ extension AppState {
             self.trendingTopicMediaStore.revision == revision else { return }
       // Re-evaluate current local decisions after awaits and before issuing any image request.
       let artwork = self.topicArtwork(for: link, actors: actors[link] ?? [])
-      self.trendingTopicMediaStore.warmImages(artwork.preview, participants: artwork.participants, owner: owner)
+      self.trendingTopicMediaStore.warmImages(artwork.preview, participants: artwork.participants,
+        displayScale: displayScale, owner: owner)
     }
     // A running or completed batch with this identity already warmed these avatars.
     guard started else { return }
@@ -470,7 +516,8 @@ extension AppState {
     for link in links {
       let participants = topicParticipants(for: link, actors: actors[link] ?? [])
       guard !participants.isEmpty else { continue }
-      trendingTopicMediaStore.warmImages(TrendingTopicPreview(), participants: participants, owner: owner)
+      trendingTopicMediaStore.warmImages(TrendingTopicPreview(), participants: participants,
+        displayScale: displayScale, owner: owner)
     }
   }
 

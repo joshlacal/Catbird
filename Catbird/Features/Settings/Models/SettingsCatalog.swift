@@ -113,12 +113,11 @@ enum SettingsCatalog {
             }
         }
         add("Handle", .accountDetails, "account.handle", "Account & Security › Account Details", "Current account", ["username"])
-        add("Email & Email Two-Factor Authentication", .accountDetails, "account.email", "Account & Security › Account Details", "Current account", ["2FA", "verification", "security code"])
+        add("Manage Hosted Account", .accountDetails, "account.management", "Account & Security › Account Details", "Provider website", ["email", "sign-in codes", "2FA", "verification", "change handle"])
         add("App Lock", .accountSecurity, "account.appLock", "Account & Security", "This device", ["Face ID", "Touch ID", "biometrics"])
         add("Automation Label", .automationLabel, nil, "Account & Security › Account Details", "Current account", ["bot"])
         add("Export Public Account Data", .accountDetails, "account.export", "Account & Security › Account Details", "Current account", ["CAR", "backup"])
-        add("Deactivate Account", .accountDetails, "account.deactivate", "Account & Security › Account Details")
-        add("Delete Account", .accountDetails, "account.delete", "Account & Security › Account Details", "Current account", ["delete", "remove account", "close account", "erase"])
+        add("Account Deletion Options", .accountDetails, "account.delete", "Account & Security › Account Details", "Current account", ["delete", "remove account", "close account", "erase"])
         add("Sign Out", .accountSecurity, "account.signOut", "Account & Security", "Current account", ["log out", "logout", "sign off"])
         add("Default Replies & Quotes", .defaultPostInteractions, nil, "Privacy & Interactions", "New posts", ["reply permissions", "quote permissions"])
         add("Direct Messages & Group Invitations", .messages, "privacy.messages", "Privacy & Interactions", "Current account", ["DM", "chat", "invites"])

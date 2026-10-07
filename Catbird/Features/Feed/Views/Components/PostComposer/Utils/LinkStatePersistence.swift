@@ -194,6 +194,13 @@ struct LinkStatePersistence {
         let description: String
         let image: String
         let thumbnailBlobData: Data?
+        let associatedRefs: [ComAtprotoRepoStrongRef]?
+        let externalView: AppBskyEmbedExternal.View?
+
+        private enum CodingKeys: String, CodingKey {
+            case url, sourceURL, title, description, image, thumbnailBlobData
+            case associatedRefs, externalView
+        }
         
         init(from urlCard: URLCardResponse) {
             self.url = urlCard.url
@@ -201,6 +208,8 @@ struct LinkStatePersistence {
             self.title = urlCard.title
             self.description = urlCard.description
             self.image = urlCard.image
+            self.associatedRefs = urlCard.associatedRefs
+            self.externalView = urlCard.externalView
             
             // Serialize thumbnail blob if available
             if let blob = urlCard.thumbnailBlob {
@@ -208,6 +217,18 @@ struct LinkStatePersistence {
             } else {
                 self.thumbnailBlobData = nil
             }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            url = try container.decode(String.self, forKey: .url)
+            sourceURL = try container.decodeIfPresent(String.self, forKey: .sourceURL)
+            title = try container.decode(String.self, forKey: .title)
+            description = try container.decode(String.self, forKey: .description)
+            image = try container.decode(String.self, forKey: .image)
+            thumbnailBlobData = try container.decodeIfPresent(Data.self, forKey: .thumbnailBlobData)
+            associatedRefs = try? container.decodeIfPresent([ComAtprotoRepoStrongRef].self, forKey: .associatedRefs)
+            externalView = try? container.decodeIfPresent(AppBskyEmbedExternal.View.self, forKey: .externalView)
         }
         
         func toURLCard() -> URLCardResponse {
@@ -217,7 +238,9 @@ struct LinkStatePersistence {
                 url: url,
                 title: title,
                 description: description,
-                image: image
+                image: image,
+                associatedRefs: associatedRefs,
+                externalView: externalView
             )
             urlCard.sourceURL = sourceURL
             

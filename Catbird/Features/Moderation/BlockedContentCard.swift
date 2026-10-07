@@ -5,65 +5,203 @@ import OSLog
 
 /// Unified tombstone for blocked content. Calm, informational, direction-aware.
 /// Neutral styling only — red is reserved for the destructive confirm button.
+///
+/// The card owns the state and the actions, and each surface it shows is a
+/// small child view. It never holds a hydrated profile or a revealed post
+/// inline: this card sits inside feed rows, quote embeds and thread rows, and
+/// Debug builds give every `some View` temporary in a body its own stack slot,
+/// so kilobyte-sized fields here multiply through every container's frame.
 struct BlockedContentCard: View {
   enum Variant { case thread, feed, embedCompact, anchor }
 
   let relationship: BlockRelationship
   let authorDid: String
   /// URI of the blocked post, when the surface has one (nil for profile use).
-  let postUri: ATProtocolURI?
+  private let postUri: EquatableBox<ATProtocolURI>?
   let variant: Variant
   @Binding var path: NavigationPath
 
   @Environment(AppState.self) private var appState
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
 
-  @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
-  @State private var hydrationSettled = false
-  @State private var revealedPost: AppBskyFeedDefs.PostView?
-  @State private var isRevealing = false
-  @State private var revealFailed = false
-  @State private var isConfirmingUnblock = false
-  @State private var isUnblocking = false
-  @State private var unblockSucceeded = false
-  @State private var showIdentifier = false
+  @State private var cardState = BlockedContentCardState()
 
   private let logger = Logger(subsystem: "blue.catbird", category: "BlockedContentCard")
 
+  init(
+    relationship: BlockRelationship,
+    authorDid: String,
+    postUri: ATProtocolURI?,
+    variant: Variant,
+    path: Binding<NavigationPath>
+  ) {
+    self.relationship = relationship
+    self.authorDid = authorDid
+    self.postUri = postUri.map { EquatableBox($0) }
+    self.variant = variant
+    self._path = path
+  }
+
   var body: some View {
     Group {
-      if let revealedPost {
-        revealedView(revealedPost)
+      if let revealedPost = cardState.revealedPost {
+        BlockedContentRevealedPost(
+          post: revealedPost,
+          unblockSucceeded: cardState.unblockSucceeded,
+          revealedPost: $cardState.revealedPost,
+          path: $path
+        )
       } else if variant == .embedCompact {
-        compactBody
+        BlockedContentCompactRow(
+          text: compactText,
+          tapTarget: isCompactTapActionable ? postUri : nil,
+          path: $path
+        )
       } else {
-        cardBody
+        BlockedContentFullCard(
+          relationship: relationship,
+          authorDid: authorDid,
+          variant: variant,
+          identity: cardState.identity,
+          hydrationSettled: cardState.hydrationSettled,
+          hasPostUri: postUri != nil,
+          revealFailed: cardState.revealFailed,
+          isRevealing: cardState.isRevealing,
+          isUnblocking: cardState.isUnblocking,
+          unblockSucceeded: cardState.unblockSucceeded,
+          showIdentifier: $cardState.showIdentifier,
+          path: $path,
+          onReveal: { revealPost() },
+          onUnblock: { prepareUnblock() }
+        )
       }
     }
     .task(id: authorDid) {
-      profile = await appState.blockedAuthorHydrator?.profile(for: authorDid)
-      hydrationSettled = true
+      let profile = await appState.blockedAuthorHydrator?.profile(for: authorDid)
+      cardState.identity = profile.map { BlockedAuthorIdentity(profile: $0) }
+      cardState.hydrationSettled = true
     }
-    .alert("Unblock", isPresented: $isConfirmingUnblock) {
+    .alert("Unblock", isPresented: $cardState.isConfirmingUnblock) {
       Button("Cancel", role: .cancel) {}
       Button("Unblock", role: .destructive) { performUnblock() }
     } message: {
-      Text(BlockConfirmation.unblockMessage(handle: profile?.handle.description ?? "this account"))
+      Text(BlockConfirmation.unblockMessage(handle: cardState.identity?.handle ?? "this account"))
     }
   }
 
-  // MARK: Compact (quote embeds) — no avatar, no buttons, no navigation
+  // MARK: Compact (quote embeds)
 
   /// Only a your-block quote promises a loadable thread (anchor card + reveal live there).
   private var isCompactTapActionable: Bool {
-    relationship.canReveal && relationship.direction == .youBlocked && postUri != nil
+    !isReadOnlyPreview && relationship.canReveal && relationship.direction == .youBlocked && postUri != nil
   }
 
-  @ViewBuilder
-  private var compactBody: some View {
+  private var compactText: String {
+    if let handle = cardState.identity?.handle {
+      return "\(relationship.statusText) — @\(handle)"
+    }
+    return relationship.statusText
+  }
+
+  // MARK: Actions
+
+  private func prepareUnblock() {
+    guard !isReadOnlyPreview else { return }
+    // Synchronous: no async gap between tap and the alert becoming modal,
+    // so there's no window for a second tap to re-fire the mutation. The
+    // shared-conversation caveat is static copy in `BlockConfirmation`, not
+    // a live count, so no coordinator query is needed here.
+    cardState.isConfirmingUnblock = true
+  }
+
+  private func performUnblock() {
+    guard !isReadOnlyPreview else { return }
+    cardState.isUnblocking = true
+    Task {
+      defer { cardState.isUnblocking = false }
+      do {
+        // Tombstone stays until the mutation succeeds — no optimistic reveal.
+        try await appState.unblock(did: authorDid)
+        cardState.unblockSucceeded = true
+      } catch {
+        logger.error("unblock failed: \(error.localizedDescription)")
+        appState.toastManager.show(ToastItem(
+          message: "Couldn’t unblock this account. Try again.", icon: "exclamationmark.triangle.fill"))
+      }
+    }
+  }
+
+  private func revealPost() {
+    guard let postUri, !cardState.isRevealing, let client = appState.atProtoClient else { return }
+    cardState.isRevealing = true
+    cardState.revealFailed = false
+    Task {
+      defer { cardState.isRevealing = false }
+      do {
+        let (_, output) = try await client.app.bsky.feed.getPosts(
+          input: AppBskyFeedGetPosts.Parameters(uris: [postUri.value])
+        )
+        if let post = output?.posts.first {
+          cardState.revealedPost = EquatableBox(post)
+        } else {
+          cardState.revealFailed = true
+        }
+      } catch {
+        logger.error("reveal fetch failed: \(error.localizedDescription)")
+        cardState.revealFailed = true
+      }
+    }
+  }
+}
+
+// MARK: - Card State
+
+/// The card's transient state in one `@State`. Each `@State` property with an
+/// initial value costs the card 32 bytes or more of inline storage, and the
+/// card is stored inline in the body type of every view that shows one.
+private struct BlockedContentCardState: Equatable {
+  var identity: BlockedAuthorIdentity?
+  var hydrationSettled = false
+  var revealedPost: EquatableBox<AppBskyFeedDefs.PostView>?
+  var isRevealing = false
+  var revealFailed = false
+  var isConfirmingUnblock = false
+  var isUnblocking = false
+  var unblockSucceeded = false
+  var showIdentifier = false
+}
+
+// MARK: - Hydrated Identity
+
+/// The profile fields the card shows. The card keeps these rather than the
+/// hydrated `ProfileViewDetailed`, which is about 5 KB stored inline.
+private struct BlockedAuthorIdentity: Equatable {
+  let handle: String
+  let displayName: String?
+  let avatarURL: URL?
+
+  init(profile: AppBskyActorDefs.ProfileViewDetailed) {
+    handle = profile.handle.description
+    displayName = profile.displayName
+    avatarURL = profile.finalAvatarURL()
+  }
+}
+
+// MARK: - Compact Row
+
+/// Quote-embed variant: no avatar, no buttons, no navigation beyond the
+/// optional tap into the blocked post's thread.
+private struct BlockedContentCompactRow: View {
+  let text: String
+  /// The post whose thread a tap opens; nil when this direction offers no action.
+  let tapTarget: EquatableBox<ATProtocolURI>?
+  @Binding var path: NavigationPath
+
+  var body: some View {
     let content = HStack(spacing: 6) {
       Image(systemName: "hand.raised")
         .foregroundStyle(.secondary)
-      Text(compactText)
+      Text(text)
         .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
         .lineLimit(2)
@@ -73,14 +211,14 @@ struct BlockedContentCard: View {
     .background(Color.systemGroupedBackground)
     .clipShape(RoundedRectangle(cornerRadius: 10))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(compactText)
-    .accessibilityHint(isCompactTapActionable ? "Opens the blocked post's thread" : "")
+    .accessibilityLabel(text)
+    .accessibilityHint(tapTarget != nil ? "Opens the blocked post's thread" : "")
 
-    if isCompactTapActionable, let postUri {
+    if let tapTarget {
       content
         .contentShape(Rectangle())
         .onTapGesture {
-          path.append(NavigationDestination.post(postUri))
+          path.append(NavigationDestination.post(tapTarget.value))
         }
     } else {
       // No action for this direction — let the tap fall through to the
@@ -88,19 +226,38 @@ struct BlockedContentCard: View {
       content
     }
   }
+}
 
-  private var compactText: String {
-    if let handle = profile?.handle.description {
-      return "\(relationship.statusText) — @\(handle)"
-    }
-    return relationship.statusText
-  }
+// MARK: - Full Card (thread / feed / anchor)
 
-  // MARK: Full card (thread / feed / anchor)
+private struct BlockedContentFullCard: View {
+  let relationship: BlockRelationship
+  let authorDid: String
+  let variant: BlockedContentCard.Variant
+  let identity: BlockedAuthorIdentity?
+  let hydrationSettled: Bool
+  let hasPostUri: Bool
+  let revealFailed: Bool
+  let isRevealing: Bool
+  let isUnblocking: Bool
+  let unblockSucceeded: Bool
+  @Binding var showIdentifier: Bool
+  @Binding var path: NavigationPath
+  let onReveal: () -> Void
+  let onUnblock: () -> Void
 
-  private var cardBody: some View {
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
+
+  var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      identityRow
+      BlockedContentIdentityRow(
+        relationship: relationship,
+        authorDid: authorDid,
+        identity: identity,
+        hydrationSettled: hydrationSettled,
+        showIdentifier: $showIdentifier,
+        path: $path
+      )
       Text(relationship.statusText)
         .appFont(variant == .anchor ? AppTextRole.headline : AppTextRole.subheadline)
         .foregroundStyle(.primary)
@@ -119,7 +276,18 @@ struct BlockedContentCard: View {
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
-      actionRow
+      if !isReadOnlyPreview {
+        BlockedContentActionRow(
+          relationship: relationship,
+          hasPostUri: hasPostUri,
+          isRevealing: isRevealing,
+          isUnblocking: isUnblocking,
+          unblockSucceeded: unblockSucceeded,
+          path: $path,
+          onReveal: onReveal,
+          onUnblock: onUnblock
+        )
+      }
     }
     .padding(variant == .anchor ? 16 : 12)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -127,19 +295,32 @@ struct BlockedContentCard: View {
     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
     .clipShape(RoundedRectangle(cornerRadius: 12))
   }
+}
 
-  private var identityRow: some View {
+// MARK: - Identity Row
+
+private struct BlockedContentIdentityRow: View {
+  let relationship: BlockRelationship
+  let authorDid: String
+  let identity: BlockedAuthorIdentity?
+  let hydrationSettled: Bool
+  @Binding var showIdentifier: Bool
+  @Binding var path: NavigationPath
+
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
+
+  var body: some View {
     HStack(spacing: 8) {
       avatarView
       VStack(alignment: .leading, spacing: 1) {
-        if let profile {
-          if let displayName = profile.displayName, !displayName.isEmpty {
+        if let identity {
+          if let displayName = identity.displayName, !displayName.isEmpty {
             Text(displayName)
               .appFont(AppTextRole.subheadline)
               .fontWeight(.medium)
               .lineLimit(1)
           }
-          Text("@\(profile.handle.description)")
+          Text("@\(identity.handle)")
             .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -167,16 +348,16 @@ struct BlockedContentCard: View {
     .contentShape(Rectangle())
     .onTapGesture {
       // Navigation only when the block is yours; blocked-you identity is informational.
-      guard relationship.direction == .youBlocked else { return }
+      guard !isReadOnlyPreview, relationship.direction == .youBlocked else { return }
       path.append(NavigationDestination.profile(authorDid))
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(accessibilityIdentityLabel)
-    .accessibilityHint(relationship.direction == .youBlocked ? "Opens profile" : "")
+    .accessibilityHint(!isReadOnlyPreview && relationship.direction == .youBlocked ? "Opens profile" : "")
     .accessibilityActions {
       // The disclosure button is swallowed by `.combine` above — expose its
       // toggle as a discoverable, actuatable VoiceOver custom action instead.
-      if profile == nil, hydrationSettled {
+      if identity == nil, hydrationSettled {
         Button(showIdentifier ? "Hide identifier" : "Show identifier") {
           showIdentifier.toggle()
         }
@@ -185,9 +366,9 @@ struct BlockedContentCard: View {
   }
 
   private var accessibilityIdentityLabel: String {
-    if let profile {
-      let name = profile.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? ""
-      return "\(name) @\(profile.handle.description). \(relationship.statusText)"
+    if let identity {
+      let name = identity.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? ""
+      return "\(name) @\(identity.handle). \(relationship.statusText)"
     }
     if showIdentifier {
       return "Blocked account. Identifier \(authorDid). \(relationship.statusText)"
@@ -197,7 +378,7 @@ struct BlockedContentCard: View {
 
   private var avatarView: some View {
     Group {
-      if let avatarURL = profile?.finalAvatarURL() {
+      if let avatarURL = identity?.avatarURL {
         LazyImage(request: ImageLoadingManager.imageRequest(
           for: avatarURL, targetSize: CGSize(width: 28, height: 28)
         )) { state in
@@ -222,11 +403,24 @@ struct BlockedContentCard: View {
       .resizable()
       .foregroundStyle(.secondary)
   }
+}
 
-  private var actionRow: some View {
+// MARK: - Action Row
+
+private struct BlockedContentActionRow: View {
+  let relationship: BlockRelationship
+  let hasPostUri: Bool
+  let isRevealing: Bool
+  let isUnblocking: Bool
+  let unblockSucceeded: Bool
+  @Binding var path: NavigationPath
+  let onReveal: () -> Void
+  let onUnblock: () -> Void
+
+  var body: some View {
     HStack(spacing: 12) {
-      if unblockSucceeded, relationship.canReveal, postUri != nil {
-        Button("Load post") { revealPost() }
+      if unblockSucceeded, relationship.canReveal, hasPostUri {
+        Button("Load post") { onReveal() }
           .appFont(AppTextRole.callout)
           .disabled(isRevealing)
       } else if unblockSucceeded {
@@ -237,7 +431,7 @@ struct BlockedContentCard: View {
           .foregroundStyle(.secondary)
       } else if relationship.canUnblockDirectly {
         Button {
-          prepareUnblock()
+          onUnblock()
         } label: {
           Text("Unblock").appFont(AppTextRole.callout).fontWeight(.medium)
         }
@@ -253,9 +447,9 @@ struct BlockedContentCard: View {
         .accessibilityHint("Opens the list this block comes from")
       }
       Spacer(minLength: 0)
-      if relationship.canReveal, postUri != nil, !unblockSucceeded {
+      if relationship.canReveal, hasPostUri, !unblockSucceeded {
         Menu {
-          Button("View this post") { revealPost() }
+          Button("View this post") { onReveal() }
         } label: {
           Image(systemName: "ellipsis.circle")
             .foregroundStyle(.secondary)
@@ -266,11 +460,21 @@ struct BlockedContentCard: View {
       if isRevealing || isUnblocking { ProgressView().scaleEffect(0.8) }
     }
   }
+}
 
-  // MARK: Revealed state — temporary, in-memory, no engagement actions
+// MARK: - Revealed Post
 
-  @ViewBuilder
-  private func revealedView(_ post: AppBskyFeedDefs.PostView) -> some View {
+/// Temporary, in-memory reveal of the blocked post — no engagement actions
+/// until an unblock succeeds.
+private struct BlockedContentRevealedPost: View {
+  let post: EquatableBox<AppBskyFeedDefs.PostView>
+  let unblockSucceeded: Bool
+  @Binding var revealedPost: EquatableBox<AppBskyFeedDefs.PostView>?
+  @Binding var path: NavigationPath
+
+  @Environment(AppState.self) private var appState
+
+  var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
         if !unblockSucceeded {
@@ -285,64 +489,22 @@ struct BlockedContentCard: View {
             .accessibilityHint("Returns to the blocked-post placeholder")
         }
       }
-      PostView(
-        post: post,
-        grandparentAuthor: nil,
-        isParentPost: false,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .allowsHitTesting(unblockSucceeded)  // no engagement while temporarily revealed
+      makePostView()
+        .allowsHitTesting(unblockSucceeded)  // no engagement while temporarily revealed
     }
   }
 
-  // MARK: Actions
-
-  private func prepareUnblock() {
-    // Synchronous: no async gap between tap and the alert becoming modal,
-    // so there's no window for a second tap to re-fire the mutation. The
-    // shared-conversation caveat is static copy in `BlockConfirmation`, not
-    // a live count, so no coordinator query is needed here.
-    isConfirmingUnblock = true
-  }
-
-  private func performUnblock() {
-    isUnblocking = true
-    Task {
-      defer { isUnblocking = false }
-      do {
-        // Tombstone stays until the mutation succeeds — no optimistic reveal.
-        try await appState.unblock(did: authorDid)
-        unblockSucceeded = true
-      } catch {
-        logger.error("unblock failed: \(error.localizedDescription)")
-        appState.toastManager.show(ToastItem(
-          message: "Couldn’t unblock this account. Try again.", icon: "exclamationmark.triangle.fill"))
-      }
-    }
-  }
-
-  private func revealPost() {
-    guard let postUri, !isRevealing, let client = appState.atProtoClient else { return }
-    isRevealing = true
-    revealFailed = false
-    Task {
-      defer { isRevealing = false }
-      do {
-        let (_, output) = try await client.app.bsky.feed.getPosts(
-          input: AppBskyFeedGetPosts.Parameters(uris: [postUri])
-        )
-        if let post = output?.posts.first {
-          revealedPost = post
-        } else {
-          revealFailed = true
-        }
-      } catch {
-        logger.error("reveal fetch failed: \(error.localizedDescription)")
-        revealFailed = true
-      }
-    }
+  /// Builds the post view in its own short-lived frame, so the copy of the
+  /// boxed post that `PostView.init` takes never gets a slot in `body`'s frame.
+  private func makePostView() -> PostView {
+    PostView(
+      post: post.value,
+      grandparentAuthor: nil,
+      isParentPost: false,
+      isSelectable: false,
+      path: $path,
+      appState: appState
+    )
   }
 }
 

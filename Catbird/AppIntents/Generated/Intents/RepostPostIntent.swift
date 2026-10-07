@@ -28,7 +28,7 @@ struct RepostPostIntent: AppIntent {
         }
 
         if view.viewer?.repost != nil {
-            return .result(dialog: IntentDialog(stringLiteral: "You already reposted that post."))
+            return .result(dialog: IntentDialog("You already reposted that post."))
         }
         let record = AppBskyFeedRepost(subject: ComAtprotoRepoStrongRef(uri: view.uri, cid: view.cid), createdAt: ATProtocolDate(date: Date()), via: nil)
         let userDID = try await client.getDid()
@@ -38,7 +38,7 @@ struct RepostPostIntent: AppIntent {
             record: .knownType(record)
         )
         _ = try unwrapIntentResponse(await client.com.atproto.repo.createRecord(input: input))
-        return .result(dialog: IntentDialog(stringLiteral: "Reposted."))
+        return .result(dialog: IntentDialog("Reposted."))
 
     }
 }

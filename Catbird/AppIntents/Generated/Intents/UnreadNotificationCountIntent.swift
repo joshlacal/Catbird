@@ -24,6 +24,9 @@ struct UnreadNotificationCountIntent: AppIntent {
 
         let output = try unwrapIntentResponse(await client.app.bsky.notification.getUnreadCount(input: params))
         let value = output.count
-        return .result(value: value, dialog: IntentDialog(stringLiteral: value == 1 ? "You have 1 unread notification." : "You have \(value) unread notifications."))
+        let dialog = value == 1
+            ? IntentDialog("You have 1 unread notification.")
+            : IntentDialog("You have \(value) unread notifications.")
+        return .result(value: value, dialog: dialog)
     }
 }

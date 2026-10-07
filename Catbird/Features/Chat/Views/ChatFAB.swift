@@ -27,6 +27,8 @@ struct ChatFAB: View {
         .accessibilityHint("Starts a new conversation")
     } else {
       newMessageButton
+        .background(Circle().fill(Color.accentColor))
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
         .accessibilityLabel("New message")
         .accessibilityHint("Starts a new conversation")
     }

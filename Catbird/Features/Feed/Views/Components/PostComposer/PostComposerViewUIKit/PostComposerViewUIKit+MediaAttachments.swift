@@ -14,7 +14,7 @@ extension PostComposerViewUIKit {
   
   @ViewBuilder
   func mediaAttachmentsSection(vm: PostComposerViewModel) -> some View {
-    VStack(spacing: 12) {
+    VStack(alignment: .leading, spacing: 12) {
       pendingAudioAttachmentSection(vm: vm)
       if let gif = vm.selectedGif {
         selectedGifView(gif, vm: vm)
@@ -28,6 +28,7 @@ extension PostComposerViewUIKit {
         videoAttachmentView(videoItem: videoItem, vm: vm)
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 16)
     .onAppear {
         pcMediaLogger.debug("PostComposerMedia: Rendering media attachments - images: \(vm.mediaItems.count), video: \(vm.videoItem != nil), gif: \(vm.selectedGif != nil)")
@@ -61,48 +62,50 @@ extension PostComposerViewUIKit {
   
   @ViewBuilder
   private func imageAttachmentsView(vm: PostComposerViewModel) -> some View {
-    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 8) {
-      ForEach(vm.mediaItems) { item in
-        MediaItemView(
-          item: item,
-          onRemove: {
-            pcMediaLogger.info("PostComposerMedia: Removing image \(item.id)")
-            vm.removeMediaItem(withId: item.id)
-          },
-          onEditAlt: {
-            pcMediaLogger.info("PostComposerMedia: Opening alt text editor for image \(item.id)")
-            vm.beginEditingAltText(for: item.id)
-          },
-          onEditImage: {
-            guard let index = vm.mediaItems.firstIndex(where: { $0.id == item.id }) else { return }
-            pcMediaLogger.info("PostComposerMedia: Opening photo editor for image \(item.id) at index \(index)")
-            vm.beginEditingImage(for: item.id, at: index)
-          }
-        )
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 8) {
+        ForEach(vm.mediaItems) { item in
+          MediaItemView(
+            item: item,
+            onRemove: {
+              pcMediaLogger.info("PostComposerMedia: Removing image \(item.id)")
+              vm.removeMediaItem(withId: item.id)
+            },
+            onEditAlt: {
+              pcMediaLogger.info("PostComposerMedia: Opening alt text editor for image \(item.id)")
+              vm.beginEditingAltText(for: item.id)
+            },
+            onEditImage: {
+              guard let index = vm.mediaItems.firstIndex(where: { $0.id == item.id }) else { return }
+              pcMediaLogger.info("PostComposerMedia: Opening photo editor for image \(item.id) at index \(index)")
+              vm.beginEditingImage(for: item.id, at: index)
+            },
+            onRetry: { Task { await vm.retryMediaLoading(withId: item.id) } }
+          )
+        }
       }
     }
+    .scrollClipDisabled()
   }
   
   @ViewBuilder
-  private func videoAttachmentView(videoItem: PostComposerViewModel.MediaItem, vm: PostComposerViewModel) -> some View {
+  func videoAttachmentView(videoItem: PostComposerViewModel.MediaItem, vm: PostComposerViewModel) -> some View {
     PostComposerUIKitVideoAttachmentView(videoItem: videoItem, vm: vm)
   }
   
   @ViewBuilder
   func selectedGifView(_ gif: TenorGif, vm: PostComposerViewModel) -> some View {
-    VStack(alignment: .trailing, spacing: 8) {
+    VStack(alignment: .leading, spacing: 8) {
       ZStack(alignment: .topTrailing) {
         GifVideoView(gif: gif, onTap: {})
           .frame(maxHeight: 200)
           .clipShape(RoundedRectangle(cornerRadius: 12))
-        
-        Button(action: { 
+
+        Button(action: {
           pcMediaLogger.info("PostComposerMedia: Removing GIF attachment")
           vm.removeSelectedGif()
         }) {
-          Image(systemName: "xmark.circle.fill")
-            .foregroundColor(.white)
-            .background(Circle().fill(Color.black.opacity(0.5)))
+          ComposerAttachmentRemoveLabel()
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -110,8 +113,6 @@ extension PostComposerViewUIKit {
         .accessibilityLabel("Remove GIF")
       }
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
   }
 }
 
@@ -132,7 +133,8 @@ private struct PostComposerUIKitVideoAttachmentView: View {
           pcMediaLogger.info("PostComposerMedia: Opening alt text editor for video \(videoItem.id)")
           vm.beginEditingAltText(for: videoItem.id)
         },
-        isVideo: true
+        isVideo: true,
+        onRetry: { Task { await vm.retryMediaLoading(withId: videoItem.id) } }
       )
 
       // Captions control button
@@ -147,15 +149,14 @@ private struct PostComposerUIKitVideoAttachmentView: View {
             HStack(spacing: 4) {
               Image(systemName: "captions.bubble.fill")
                 .foregroundStyle(.tint)
-              Text("\(langName) (\(caption.filename))")
+              Text(langName)
                 .fontWeight(.medium)
                 .lineLimit(1)
             }
             .appFont(AppTextRole.caption2)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(platformColor: .platformSystemGray6))
-            .cornerRadius(6)
+            .background(Color(platformColor: .platformSystemGray6), in: Capsule())
           }
           .buttonStyle(.plain)
 
@@ -177,14 +178,13 @@ private struct PostComposerUIKitVideoAttachmentView: View {
             HStack(spacing: 4) {
               Image(systemName: "captions.bubble")
                 .foregroundStyle(.secondary)
-              Text("Captions (.vtt)")
+              Text("Add Captions")
                 .foregroundColor(.secondary)
             }
             .appFont(AppTextRole.caption2)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(platformColor: .platformSystemGray6))
-            .cornerRadius(6)
+            .background(Color(platformColor: .platformSystemGray6), in: Capsule())
           }
           .buttonStyle(.plain)
         }

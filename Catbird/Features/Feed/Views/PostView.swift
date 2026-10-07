@@ -13,18 +13,82 @@ import Petrel
 import PetrelCatbird
 import SwiftUI
 
-// Define the consolidated state model
-@Observable class PostState {
+// MARK: - PostState
+
+/// Observable state shared by `PostView` and its content layout. Everything the
+/// view mutates lives in this one heap object, so the view struct stays a few
+/// hundred bytes (see `EquatableBox` for why that matters).
+@Observable final class PostState {
   var currentUserDid: String?
-  var currentPost: AppBskyFeedDefs.PostView
+  /// The shadow-merged post being displayed. Boxed so render code can read one
+  /// field without copying the whole model; use `currentPost` to replace it.
+  var currentPostBox: EquatableBox<AppBskyFeedDefs.PostView>
   var isAvatarLoaded = false
   var showingReportView = false
   var showingAddToListSheet = false
+  var initialLoadComplete = false  // For transaction animation control
+  var postError: PostViewError?  // Error state tracking
+  var isShowingThreadSummary = false
+  var isThreadSummaryLoading = false
+  var threadSummaryText: String?
+  var threadSummaryError: String?
+  var canRetryThreadSummary = false
+  @ObservationIgnored var threadSummaryTask: Task<Void, Never>?
+  var showDeleteConfirmation = false
+  var showBlockConfirmation = false
+  var showMuteUserConfirmation = false
+  var showMuteThreadConfirmation = false
+  var isShowingCopilot = false
+  var copilotContextToPresent: CopilotContext?
+  var pendingDedicatedProposal: CopilotProposal?
+  var showingInteractionSettings = false
+  var showingLabelsOnPost = false
+  var revealedMutedPreview: [String]?
 
-  init(post: AppBskyFeedDefs.PostView) {
-    self.currentPost = post
+  /// Shares the view's box, so creating the state copies no post data.
+  init(postBox: EquatableBox<AppBskyFeedDefs.PostView>) {
+    self.currentPostBox = postBox
+  }
+
+  var currentPost: AppBskyFeedDefs.PostView {
+    get { currentPostBox.value }
+    set { currentPostBox = EquatableBox(newValue) }
+  }
+
+  var allPostLabels: [ComAtprotoLabelDefs.Label] {
+    var combined: [ComAtprotoLabelDefs.Label] = []
+    if let postLabels = currentPostBox.value.labels {
+      combined.append(contentsOf: postLabels)
+    }
+    if let authorLabels = currentPostBox.value.author.labels {
+      combined.append(contentsOf: authorLabels)
+    }
+    return combined
+  }
+
+  /// Whether the post was authored by the signed-in user.
+  var isOwnPost: Bool {
+    currentPostBox.value.author.did.didString() == currentUserDid
+  }
+
+  var copilotContext: CopilotContext {
+    let text: String
+    if case .knownType(let record) = currentPostBox.value.record,
+       let feedPost = record as? AppBskyFeedPost {
+      text = feedPost.text
+    } else {
+      text = ""
+    }
+    return .post(
+      uri: currentPostBox.value.uri.uriString(),
+      cid: currentPostBox.value.cid.string,
+      authorDID: currentPostBox.value.author.did.didString(),
+      text: text,
+      evidence: CopilotPostEvidenceBuilder.build(currentPostBox.value)
+    )
   }
 }
+
 
 /// Avatar sizing for `PostView`. `.tree` is the constant compact avatar of
 /// nested thread replies; every other surface uses `.regular`.
@@ -44,52 +108,39 @@ enum PostAvatarScale: Equatable, Sendable {
   }
 }
 
-/// A view that displays a single post with its content, avatar, and actions
+/// A view that displays a single post with its content, avatar, and actions.
+///
+/// `PostView` owns the post's state, lifecycle work and presentation (sheets,
+/// alerts, Copilot); `PostContentLayout` renders it. The split, and holding the
+/// post through `EquatableBox` and `PostState`, keep this struct and its body
+/// type small: a Debug build reserves a stack slot for every modifier step of
+/// `body`, and with inline Petrel models one feed row overflowed the device's
+/// 1 MB main-thread stack.
 struct PostView: View, Identifiable {
   @Environment(SceneNavigationContext.self) private var sceneContext
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
-  let post: AppBskyFeedDefs.PostView
-  let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
+  /// The post as supplied by the parent. `postState.currentPostBox` holds the
+  /// shadow-merged copy that is displayed.
+  private let postBox: EquatableBox<AppBskyFeedDefs.PostView>
+  private let replyTarget: PostReplyTarget?
   let isParentPost: Bool
   let isSelectable: Bool
   let isToYou: Bool
-  let hasVisibleThreadContext: Bool
   let avatarScale: PostAvatarScale
   let visibilityContext: PostVisibilityContext
-  let rootPostURI: ATProtocolURI?
-  let rootAuthorDID: String?
-  let isReplyHiddenByThreadgate: Bool
   let opThreadPostIndex: Int?
   let opThreadPostCount: Int?
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
-  @Environment(\.feedInteractionTarget) private var feedInteractionTarget
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
   // MARK: - State
-  @State private var postState: PostState  // Consolidated state
+  @State private var postState: PostState  // Consolidated state, including presentation flags
   @State private var contextMenuViewModel: PostContextMenuViewModel
   @State private var viewModel: PostViewModel
-  @State private var initialLoadComplete = false  // For transaction animation control
-  @State private var postError: PostViewError?  // Error state tracking
-  @State private var isShowingThreadSummary = false
-  @State private var isThreadSummaryLoading = false
-  @State private var threadSummaryText: String?
-  @State private var threadSummaryError: String?
-  @State private var canRetryThreadSummary = false
-  @State private var threadSummaryTask: Task<Void, Never>?
-  @State private var showDeleteConfirmation = false
-  @State private var showBlockConfirmation = false
-  @State private var showMuteUserConfirmation = false
-  @State private var showMuteThreadConfirmation = false
-  @State private var isShowingCopilot = false
-  @State private var copilotContextToPresent: CopilotContext? = nil
-  @State private var pendingDedicatedProposal: CopilotProposal?
-  @State private var showingInteractionSettings = false
-  @State private var showingLabelsOnPost = false
-var id: String {
+  var id: String {
     // Base ID from post URI and CID
-    let postID = post.uri.uriString() + post.cid.string
+    let postID = postBox.value.uri.uriString() + postBox.value.cid.string
 
     // If we have a feed post ID from the environment, use it to ensure uniqueness
     // This handles cases where the same post appears multiple times in a feed (e.g., multiple reposts)
@@ -101,7 +152,7 @@ var id: String {
   }
 
   // Using design tokens for consistent spacing
-  private static let baseUnit: CGFloat = 3
+  fileprivate static let baseUnit: CGFloat = 3
   private static let avatarSize: CGFloat = DesignTokens.Size.avatarLG  // 48pt (16 * 3)
   private static let avatarContainerWidth: CGFloat = DesignTokens.Spacing.custom(18)  // 54pt (18 * 3)
 
@@ -123,22 +174,20 @@ var id: String {
     opThreadPostIndex: Int? = nil,
     opThreadPostCount: Int? = nil
   ) {
-    self.post = post
-    self.grandparentAuthor = grandparentAuthor
+    self.postBox = EquatableBox(post)
+    self.replyTarget = grandparentAuthor.map { PostReplyTarget($0) }
     self.isParentPost = isParentPost
     self.isSelectable = isSelectable
     self._path = path
     self.isToYou = isToYou
-    self.hasVisibleThreadContext = hasVisibleThreadContext
     self.avatarScale = avatarScale
     self.visibilityContext = visibilityContext
-    self.rootPostURI = rootPostURI
-    self.rootAuthorDID = rootAuthorDID
-    self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
     self.opThreadPostIndex = opThreadPostIndex
     self.opThreadPostCount = opThreadPostCount
-    _postState = State(initialValue: PostState(post: post))  // Initialize consolidated state
+    _postState = State(initialValue: PostState(postBox: postBox))  // Initialize consolidated state
     _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
+    // The thread context, root and threadgate inputs only seed the menu model,
+    // which SwiftUI keeps from the first init, so the view does not store them.
     _contextMenuViewModel = State(
       initialValue: PostContextMenuViewModel(
         appState: appState,
@@ -152,43 +201,43 @@ var id: String {
   }
   // MARK: - Body
   var body: some View {
-    HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
-      // Always show avatar column with thread line
-      AuthorAvatarColumn(
-        author: getAuthorForDisplay(),
-        isParentPost: isParentPost,
-        isAvatarLoaded: $postState.isAvatarLoaded,
-        path: $path,
-        avatarScale: avatarScale
-      )
-
-      // Content column - show error view or normal post content
-      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-        if let error = postError {
-          // Show error content
-          errorContentView(for: error)
-        } else {
-          // Show normal post content with moderation
-          moderatedPostContent
-        }
-      }
-      .padding(.top, PostView.baseUnit)
-    }
+    PostContentLayout(
+      postBox: postBox,
+      replyTarget: replyTarget,
+      isParentPost: isParentPost,
+      isSelectable: isSelectable,
+      isToYou: isToYou,
+      avatarScale: avatarScale,
+      visibilityContext: visibilityContext,
+      opThreadPostIndex: opThreadPostIndex,
+      opThreadPostCount: opThreadPostCount,
+      postID: id,
+      postState: postState,
+      contextMenuViewModel: contextMenuViewModel,
+      viewModel: viewModel,
+      path: $path
+    )
     .accessibilityElement(children: .contain)
-    .accessibilityIdentifier("post.\(post.uri.uriString())")
+    .accessibilityIdentifier("post.\(postBox.value.uri.uriString())")
     .appDisplayScale(appState: appState)
     .contrastAwareBackground(appState: appState, defaultColor: .clear)
     .transaction { t in  // Disable initial animations
-      if !initialLoadComplete {
+      if !postState.initialLoadComplete {
         t.animation = nil
       }
     }
     .fixedSize(horizontal: false, vertical: true)
-    .entityContext(EntityIdentifier(for: PostEntity.self, identifier: post.uri.uriString()))
-    .task(id: post) {
+    .modifier(PostEntityContextModifier(uri: postBox.value.uri.uriString(), isReadOnly: isReadOnlyPreview))
+    .task(id: postBox) {
       await setupPost()
     }
-    .onChange(of: post) { _, newPost in
+    .onChange(of: postBox) { _, newBox in
+      let newPost = newBox.value
+      if isReadOnlyPreview {
+        postState.currentPost = newPost
+        postState.postError = Self.detectPostError(in: newPost, isReadOnlyPreview: true)
+        return
+      }
       // Route through the shadow instead of assigning the raw payload: a page
       // fetched before the AppView indexed a like/repost would otherwise revert
       // the optimistic state when the feed re-supplies the cell on reappear.
@@ -200,8 +249,8 @@ var id: String {
       }
     }
     .onDisappear {
-      threadSummaryTask?.cancel()
-      threadSummaryTask = nil
+      postState.threadSummaryTask?.cancel()
+      postState.threadSummaryTask = nil
     }
     .sheet(isPresented: $postState.showingReportView) {
       if let client = appState.atProtoClient {
@@ -218,59 +267,52 @@ var id: String {
     }
     .sheet(isPresented: $postState.showingAddToListSheet) {
       AddToListSheet(
-        userDID: postState.currentPost.author.did.didString(),
-        userHandle: postState.currentPost.author.handle.description,
-        userDisplayName: postState.currentPost.author.displayName
+        userDID: postState.currentPostBox.value.author.did.didString(),
+        userHandle: postState.currentPostBox.value.author.handle.description,
+        userDisplayName: postState.currentPostBox.value.author.displayName
       )
     }
-    .sheet(isPresented: $isShowingThreadSummary) {
-      ThreadSummarySheet(
-        isLoading: isThreadSummaryLoading,
-        summaryText: threadSummaryText,
-        errorText: threadSummaryError,
-        canRetry: canRetryThreadSummary && !isThreadSummaryLoading,
-        onRetry: canRetryThreadSummary ? { summarizeCurrentThread() } : nil,
-        post: postState.currentPost
-      )
+    .sheet(isPresented: $postState.isShowingThreadSummary) {
+      ThreadSummarySheet(state: postState) { summarizeCurrentThread() }
     }
-    .sheet(isPresented: $showingInteractionSettings) {
+    .sheet(isPresented: $postState.showingInteractionSettings) {
       PostInteractionSettingsView(
         post: postState.currentPost,
-        rootPostURI: contextMenuViewModel.resolvedRootPostURI ?? postState.currentPost.uri,
+        rootPostURI: contextMenuViewModel.resolvedRootPostURI ?? postState.currentPostBox.value.uri,
         isRootAuthor: contextMenuViewModel.isRootAuthor
       )
     }
-    .sheet(isPresented: $showingLabelsOnPost) {
+    .sheet(isPresented: $postState.showingLabelsOnPost) {
       if let client = appState.atProtoClient {
         let reportingService = ReportingService(client: client)
-        let handle = postState.currentPost.author.handle.description
+        let handle = postState.currentPostBox.value.author.handle.description
         LabelsOnMeView(
-          labels: allPostLabels,
+          labels: postState.allPostLabels,
           targetDescription: "Post by @\(handle)",
           viewerDID: appState.userDID,
           reportingService: reportingService
         )
       }
     }
-    .sheet(isPresented: $isShowingCopilot) {
-      let activeContext = copilotContextToPresent ?? copilotContext
+    .sheet(isPresented: $postState.isShowingCopilot) {
+      let activeContext = postState.copilotContextToPresent ?? postState.copilotContext
       CatbirdCopilotSheet(
         context: activeContext,
         onConfirmedAction: { proposal in
           try await handleConfirmedCopilotAction(proposal, context: activeContext)
         },
         onDedicatedAction: { proposal in
-          pendingDedicatedProposal = proposal
+          postState.pendingDedicatedProposal = proposal
         }
       )
     }
-    .onChange(of: isShowingCopilot) { wasShowing, isShowing in
-      if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
-        pendingDedicatedProposal = nil
+    .onChange(of: postState.isShowingCopilot) { wasShowing, isShowing in
+      if wasShowing && !isShowing, let proposal = postState.pendingDedicatedProposal {
+        postState.pendingDedicatedProposal = nil
         handleDedicatedProposal(proposal)
       }
     }
-    .alert("Delete Post", isPresented: $showDeleteConfirmation) {
+    .alert("Delete Post", isPresented: $postState.showDeleteConfirmation) {
       Button("Cancel", role: .cancel) { }
       Button("Delete", role: .destructive) {
         Task { await contextMenuViewModel.deletePost(visibilityContext: visibilityContext) }
@@ -278,23 +320,23 @@ var id: String {
     } message: {
       Text("Are you sure you want to delete this post? This action cannot be undone.")
     }
-    .alert("Block User", isPresented: $showBlockConfirmation) {
+    .alert("Block User", isPresented: $postState.showBlockConfirmation) {
       Button("Cancel", role: .cancel) { }
       Button("Block", role: .destructive) {
         Task { await contextMenuViewModel.blockUser() }
       }
     } message: {
-      Text("Block @\(postState.currentPost.author.handle)? You won't see each other's posts, and they won't be able to follow you.")
+      Text("Block @\(postState.currentPostBox.value.author.handle)? You won't see each other's posts, and they won't be able to follow you.")
     }
-    .alert("Mute User", isPresented: $showMuteUserConfirmation) {
+    .alert("Mute User", isPresented: $postState.showMuteUserConfirmation) {
       Button("Cancel", role: .cancel) { }
       Button("Mute", role: .destructive) {
         Task { await contextMenuViewModel.muteUser() }
       }
     } message: {
-      Text("Mute @\(postState.currentPost.author.handle)? You won't see their posts and replies in your feeds.")
+      Text("Mute @\(postState.currentPostBox.value.author.handle)? You won't see their posts and replies in your feeds.")
     }
-    .alert("Mute Thread", isPresented: $showMuteThreadConfirmation) {
+    .alert("Mute Thread", isPresented: $postState.showMuteThreadConfirmation) {
       Button("Cancel", role: .cancel) { }
       Button("Mute", role: .destructive) {
         Task { await contextMenuViewModel.muteThread() }
@@ -304,379 +346,10 @@ var id: String {
     }
   }
 
-  // MARK: - Content Views
-
-  @ViewBuilder
-  private var moderatedPostContent: some View {
-    let labels = postState.currentPost.labels
-    let selfLabelValues = extractSelfLabelValues(from: postState.currentPost)
-    let hasEmbed = postState.currentPost.embed != nil
-    
-    // Only wrap in ContentLabelManager if:
-    // 1. There's no embed (post handles its own labels), OR
-    // 2. There are text-specific labels that don't apply to the embed
-    if !hasEmbed && (labels?.isEmpty == false || !selfLabelValues.isEmpty) {
-      ContentLabelManager(labels: labels, selfLabelValues: selfLabelValues, contentType: "post") {
-        normalPostContent
-      }
-    } else {
-      // Embeds handle their own labels exclusively
-      normalPostContent
-    }
-  }
-
-  @ViewBuilder
-  private var normalPostContent: some View {
-    // ContentLabelManager handles label display, so don't show them here
-    postContentView
-      .padding(.bottom, PostView.baseUnit)
-
-    // Embed content (images, links, videos, etc.)
-    if let embed = postState.currentPost.embed {
-      embedContent(embed, labels: postState.currentPost.labels)
-        .environment(\.postID, id)
-        .padding(.bottom, PostView.baseUnit)
-    }
-
-    // Action buttons
-    ActionButtonsView(
-      post: postState.currentPost,
-      postViewModel: viewModel,
-      path: $path
-    )
-    .padding(.bottom, PostView.baseUnit)
-  }
-
-  @ViewBuilder
-  private func errorContentView(for error: PostViewError) -> some View {
-    switch error {
-    case .blocked(let blockedPost):
-      BlockedContentCard(
-        relationship: BlockRelationship(blockedPost: blockedPost),
-        authorDid: blockedPost.author.did.didString(),
-        postUri: blockedPost.uri,
-        variant: .feed,
-        path: $path
-      )
-
-    case .notFound(let reason):
-      PostNotFoundView(uri: post.uri, reason: reason, path: $path)
-
-    case .parseError:
-      PostNotFoundView(uri: post.uri, reason: .parseError, path: $path)
-
-    case .permissionDenied:
-      PostNotFoundView(uri: post.uri, reason: .permissionDenied, path: $path)
-    }
-  }
-
-  // MARK: - Component Views (AuthorAvatarColumn extracted)
-
-  // Post content area
-  private var postContentView: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      // Use postState.currentPost
-      if case .knownType(let postObj) = postState.currentPost.record,
-        let feedPost = postObj as? AppBskyFeedPost {
-
-        HStack(alignment: .top, spacing: 0) {
-          PostHeaderView(
-            displayName: postState.currentPost.author.displayName
-              ?? postState.currentPost.author.handle.description,
-            handle: postState.currentPost.author.handle.description,
-            timeAgo: feedPost.createdAt.date,
-            pronouns: postState.currentPost.author.pronouns,
-            verificationKind: VerificationBadge.kind(
-              for: postState.currentPost.author.verification,
-              did: postState.currentPost.author.did
-            )
-          )
-
-          Spacer()
-
-          if let opThreadPostIndex, let opThreadPostCount {
-            ThreadPostNumberView(index: opThreadPostIndex, count: opThreadPostCount)
-              .padding(.trailing, 6)
-          }
-          if appState.appSettings.showReadingTimeEstimates,
-             let minutes = PostReadingTime.minutes(for: feedPost.text) {
-            Text("\(minutes) min read")
-              .appCaption2()
-              .foregroundStyle(.secondary)
-          }
-
-          postEllipsisMenuView
-        }
-        .padding(.horizontal, PostView.baseUnit)
-
-        if let grandparentAuthor = grandparentAuthor {
-          replyIndicatorView(grandparentAuthor: grandparentAuthor)
-            .textScale(.secondary)
-            .padding(.top, PostView.baseUnit)
-        } else if isToYou {
-            replyIndicatorView(grandparentAuthor: nil)
-                .textScale(.secondary)
-                .padding(.top, PostView.baseUnit)
-            }
-
-        Post(post: feedPost, isSelectable: isSelectable, path: $path)
-          .padding(.top, PostView.baseUnit)
-      }
-    }
-  }
-
-  // MARK: - Helper Views
-
-  // Default avatar placeholder (moved to AuthorAvatarColumn)
-
-  // Line connecting parent and child posts (moved to AuthorAvatarColumn)
-
-  // Post menu (three dots)
-  private var postEllipsisMenuView: some View {
-    Menu {
-      if CopilotAvailability.isAvailable {
-        Button {
-          copilotContextToPresent = copilotContext
-          isShowingCopilot = true
-        } label: {
-          Label("Ask Catbird", systemImage: "sparkles")
-        }
-
-        Divider()
-      }
-
-      // Only show "Add to List" for other users' posts
-      if !isOwnPost {
-        Button(action: {
-          contextMenuViewModel.addAuthorToList()
-        }) {
-          Label("Add Author to List", systemImage: "list.bullet.rectangle")
-        }
-        
-        Divider()
-      }
-      
-#if canImport(FoundationModels)
-      if #available(iOS 26.0, macOS 26.0, *), contextMenuViewModel.allowsThreadSummary, CopilotAvailability.isAvailable {
-        Button(action: {
-          let rootURI: String
-          if case .knownType(let record) = postState.currentPost.record,
-             let feedPost = record as? AppBskyFeedPost,
-             let replyRootUri = feedPost.reply?.root.uri.uriString() {
-            rootURI = replyRootUri
-          } else {
-            rootURI = postState.currentPost.uri.uriString()
-          }
-          copilotContextToPresent = .thread(anchorURI: rootURI)
-          isShowingCopilot = true
-        }) {
-          Label("Ask Catbird About Thread", systemImage: "sparkles")
-        }
-
-        Divider()
-      }
-#endif
-
-      // Bookmark button - available for all posts
-      Button(action: {
-        contextMenuViewModel.toggleBookmark()
-      }) {
-        Label(
-          viewModel.isBookmarked ? "Remove Bookmark" : "Bookmark",
-          systemImage: viewModel.isBookmarked ? "bookmark.fill" : "bookmark"
-        )
-      }
-      
-      // Show More / Show Less options, only inside a feed that accepts feedback
-      if let feedInteractionTarget {
-        Divider()
-        
-        Button(action: {
-          contextMenuViewModel.sendShowMore(target: feedInteractionTarget)
-        }) {
-          Label("Show More Like This", systemImage: "hand.thumbsup")
-        }
-        
-        Button(action: {
-          contextMenuViewModel.sendShowLess(target: feedInteractionTarget)
-        }) {
-          Label("Show Less Like This", systemImage: "hand.thumbsdown")
-        }
-      }
-      
-      Divider()
-      
-      // Only show mute/block for other users' posts
-      if !isOwnPost {
-        Button(action: {
-          if DestructiveActionConfirmation.shouldConfirm(
-            isEnabled: appState.appSettings.confirmBeforeActions
-          ) {
-            showMuteUserConfirmation = true
-          } else {
-            Task { await contextMenuViewModel.muteUser() }
-          }
-        }) {
-          Label("Mute User", systemImage: "speaker.slash")
-        }
-
-        Button(role: .destructive, action: {
-          showBlockConfirmation = true
-        }) {
-          Label("Block User", systemImage: "exclamationmark.octagon")
-        }
-      }
-
-      if case .public = visibilityContext {
-        Button(action: {
-          if DestructiveActionConfirmation.shouldConfirm(
-            isEnabled: appState.appSettings.confirmBeforeActions
-          ) {
-            showMuteThreadConfirmation = true
-          } else {
-            Task { await contextMenuViewModel.muteThread() }
-          }
-        }) {
-          Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
-        }
-      }
-      
-      // Only show hide/report for other users' posts
-      if !isOwnPost {
-        // Hide/Unhide post option
-        Button(action: {
-          Task {
-            if contextMenuViewModel.isPostHidden {
-              await contextMenuViewModel.unhidePost()
-            } else {
-              await contextMenuViewModel.hidePost()
-            }
-          }
-        }) {
-          Label(
-            contextMenuViewModel.isPostHidden ? "Unhide Post" : "Hide Post",
-            systemImage: contextMenuViewModel.isPostHidden ? "eye" : "eye.slash"
-          )
-        }
-
-        Button(action: {
-          postState.showingReportView = true  // Use consolidated state
-        }) {
-          Label("Report Post", systemImage: "flag")
-        }
-
-        // Threadgate OP Moderation (G13): Root author can hide/show replies for everyone
-        if contextMenuViewModel.isRootAuthor {
-          Button(action: {
-            Task {
-              if contextMenuViewModel.isReplyHiddenByThreadgate {
-                await contextMenuViewModel.unhideReplyForEveryone()
-              } else {
-                await contextMenuViewModel.hideReplyForEveryone()
-              }
-            }
-          }) {
-            Label(
-              contextMenuViewModel.isReplyHiddenByThreadgate ? "Show Reply for Everyone" : "Hide Reply for Everyone",
-              systemImage: contextMenuViewModel.isReplyHiddenByThreadgate ? "eye" : "eye.slash"
-            )
-          }
-        }
-
-        // Postgate Quote Detachment (G14): Author of quoted post can detach/re-attach quote
-        if contextMenuViewModel.quotedPostURI != nil {
-          Button(action: {
-            Task {
-              if contextMenuViewModel.isQuoteDetached {
-                await contextMenuViewModel.reattachQuote()
-              } else {
-                await contextMenuViewModel.detachQuote()
-              }
-            }
-          }) {
-            Label(
-              contextMenuViewModel.isQuoteDetached ? "Re-attach Quote" : "Detach Quote",
-              systemImage: contextMenuViewModel.isQuoteDetached ? "link" : "arrow.branch"
-            )
-          }
-        }
-      }
-
-      if isOwnPost {
-        Button(action: {
-          Task { await contextMenuViewModel.togglePin() }
-        }) {
-          if contextMenuViewModel.isPinned {
-            Label("Unpin from Profile", systemImage: "pin.slash")
-          } else {
-            Label("Pin to Profile", systemImage: "pin")
-          }
-        }
-
-        Button(action: {
-          showingInteractionSettings = true
-        }) {
-          Label("Edit Interaction Settings", systemImage: "slider.horizontal.3")
-        }
-
-        Button(action: {
-          showingLabelsOnPost = true
-        }) {
-          Label("View Labels", systemImage: "tag")
-        }
-        Button(role: .destructive, action: {
-          showDeleteConfirmation = true
-        }) {
-          Label("Delete Post", systemImage: "trash")
-        }
-      }
-    } label: {
-      Image(systemName: "ellipsis")
-        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
-        .padding(PostView.baseUnit * 3)
-        .contentShape(Rectangle())
-        .accessibilityLabel("Post Options")
-        .accessibilityAddTraits(.isButton)
-        
-    }
-  }
-  private var allPostLabels: [ComAtprotoLabelDefs.Label] {
-    var combined: [ComAtprotoLabelDefs.Label] = []
-    if let postLabels = postState.currentPost.labels {
-      combined.append(contentsOf: postLabels)
-    }
-    if let authorLabels = postState.currentPost.author.labels {
-      combined.append(contentsOf: authorLabels)
-    }
-    return combined
-  }
-
-  /// Whether the post was authored by the signed-in user.
-  private var isOwnPost: Bool {
-    postState.currentPost.author.did.didString() == postState.currentUserDid
-  }
-
-
-  private var copilotContext: CopilotContext {
-    let text: String
-    if case .knownType(let record) = postState.currentPost.record,
-       let feedPost = record as? AppBskyFeedPost {
-      text = feedPost.text
-    } else {
-      text = ""
-    }
-    return .post(
-      uri: postState.currentPost.uri.uriString(),
-      cid: postState.currentPost.cid.string,
-      authorDID: postState.currentPost.author.did.didString(),
-      text: text
-    )
-  }
-
   @MainActor
   private func handleConfirmedCopilotAction(_ proposal: CopilotProposal, context: CopilotContext) async throws {
-    let currentURI = postState.currentPost.uri.uriString()
-    let currentCID = postState.currentPost.cid.string
+    let currentURI = postState.currentPostBox.value.uri.uriString()
+    let currentCID = postState.currentPostBox.value.cid.string
     switch proposal {
     case .likePost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
@@ -754,9 +427,9 @@ var id: String {
 
   @MainActor
   private func handleDedicatedProposal(_ proposal: CopilotProposal) {
-    let currentURI = postState.currentPost.uri.uriString()
-    let currentCID = postState.currentPost.cid.string
-    let authorDID = postState.currentPost.author.did.didString()
+    let currentURI = postState.currentPostBox.value.uri.uriString()
+    let currentCID = postState.currentPostBox.value.cid.string
+    let authorDID = postState.currentPostBox.value.author.did.didString()
 
     switch proposal {
     case .reportPost(let uri, let cid):
@@ -766,7 +439,7 @@ var id: String {
     case .deletePost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else { return }
       guard authorDID == appState.userDID else { return }
-      showDeleteConfirmation = true
+      postState.showDeleteConfirmation = true
 
     case .addActorToList(let actorDID):
       guard actorDID == authorDID else { return }
@@ -788,105 +461,31 @@ var id: String {
     }
   }
 
-  // Reply indicator text
-  @ViewBuilder
-  private func replyIndicatorView(grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil) -> some View {
-    HStack(alignment: .center, spacing: PostView.baseUnit) {
-      Image(systemName: "arrow.up.forward.circle")
-        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
-        .appBody()
-
-      HStack(spacing: 0) {
-        Text("in reply to ")
-          .appBody()
-          .offset(y: -1)
-          .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
-
-        if isToYou {
-          Text("you")
-            .appBody()
-            .offset(y: -1)
-            .foregroundStyle(Color("AccentTextColor"))
-        } else if let grandparentAuthor = grandparentAuthor {
-          Text(verbatim: "@\(grandparentAuthor.handle)")
-            .appBody()
-            .offset(y: -1)
-            .foregroundStyle(Color("AccentTextColor"))
-            .onTapGesture {
-              path.append(NavigationDestination.profile(grandparentAuthor.did.didString()))
-            }
-            .accessibilityAddTraits(.isButton)
-        }
-      }
-    }
-    .padding(.leading, PostView.baseUnit)
-  }
-
-  // Media content (images, links, videos, etc.)
-  @ViewBuilder
-  private func embedContent(
-    _ embed: AppBskyFeedDefs.PostViewEmbedUnion, labels: [ComAtprotoLabelDefs.Label]?
-  ) -> some View {
-    PostEmbed(
-      embed: embed,
-      labels: labels,
-      path: $path,
-      visibilityContext: visibilityContext,
-      authorDID: post.author.did
-    )
-      .environment(\.postID, id)
-      .padding(.trailing, PostView.baseUnit * 2)
-  }
-
-  // MARK: - Setup & Helpers
-
-  /// Get the author to display in the avatar column
-  private func getAuthorForDisplay() -> AppBskyActorDefs.ProfileViewBasic {
-    // If there's an error, try to extract author info from the error
-    if let error = postError {
-      switch error {
-      case .blocked(let blockedPost):
-        // Create placeholder from blocked author. The literal handle is always
-        // valid today; never trap the feed if validation ever tightens.
-        return AppBskyActorDefs.ProfileViewBasic(
-          did: blockedPost.author.did,
-          handle: PlaceholderAuthors.blockedHandle ?? postState.currentPost.author.handle,
-          displayName: nil,
-          pronouns: nil, avatar: nil,
-          associated: nil,
-          viewer: blockedPost.author.viewer,
-          labels: nil,
-          createdAt: nil,
-          verification: nil,
-          status: nil,
-          debug: nil
-
-        )
-      case .notFound, .parseError, .permissionDenied:
-        // Generic placeholder for deleted/not found posts
-        return PlaceholderAuthors.deleted ?? postState.currentPost.author
-      }
-    }
-
-    // Normal case - return actual post author
-    return postState.currentPost.author
-  }
-
   /// Set up the post and its observers
   private func setupPost() async {
     guard !Task.isCancelled else { return }
+    let post = postBox.value
 
-    if postState.currentPost != post {
+    // Discovery previews use the fetched payload without donating entities or
+    // starting interaction/shadow work. Label decisions still run in the views.
+    if isReadOnlyPreview {
       postState.currentPost = post
+      postState.postError = Self.detectPostError(in: post, isReadOnlyPreview: true)
+      postState.initialLoadComplete = true
+      return
+    }
+
+    if postState.currentPostBox != postBox {
+      postState.currentPostBox = postBox
     }
     if viewModel.postId != post.uri.uriString() || viewModel.postCid != post.cid {
       viewModel = PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext)
     }
 
     // Check for error conditions first
-    if let error = detectPostError() {
-      postError = error
-      initialLoadComplete = true
+    if let error = Self.detectPostError(in: post, isReadOnlyPreview: isReadOnlyPreview) {
+      postState.postError = error
+      postState.initialLoadComplete = true
       return
     }
     // Seed before any lifecycle wait or image prefetch. The responder may be
@@ -943,7 +542,7 @@ var id: String {
     guard !Task.isCancelled else { return }
 
     // Mark initial load as complete for transaction animation control
-    initialLoadComplete = true
+    postState.initialLoadComplete = true
 
     // Structured shadow observation loop for real-time updates
     for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
@@ -959,19 +558,19 @@ var id: String {
 #if canImport(FoundationModels)
   @MainActor
   private func summarizeCurrentThread() {
-    threadSummaryTask?.cancel()
-    threadSummaryTask = nil
+    postState.threadSummaryTask?.cancel()
+    postState.threadSummaryTask = nil
 
-    isShowingThreadSummary = true
-    isThreadSummaryLoading = true
-    threadSummaryText = nil
-    threadSummaryError = nil
-    canRetryThreadSummary = false
+    postState.isShowingThreadSummary = true
+    postState.isThreadSummaryLoading = true
+    postState.threadSummaryText = nil
+    postState.threadSummaryError = nil
+    postState.canRetryThreadSummary = false
 
     guard appState.atProtoClient != nil else {
-      threadSummaryError = "Sign in to summarize threads."
-      isThreadSummaryLoading = false
-      canRetryThreadSummary = false
+      postState.threadSummaryError = "Sign in to summarize threads."
+      postState.isThreadSummaryLoading = false
+      postState.canRetryThreadSummary = false
       return
     }
 
@@ -979,7 +578,7 @@ var id: String {
       let agent = appState.blueskyAgent
       let targetURI = postState.currentPost.uri
 
-      threadSummaryTask = Task {
+      postState.threadSummaryTask = Task {
         do {
           var accumulatedText = ""
           let stream = await agent.streamThreadSummary(at: targetURI)
@@ -990,7 +589,7 @@ var id: String {
             accumulatedText += chunk
             
             await MainActor.run {
-              self.threadSummaryText = accumulatedText
+              self.postState.threadSummaryText = accumulatedText
             }
           }
           
@@ -1003,29 +602,29 @@ var id: String {
               .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
 
             if cleaned.isEmpty || squashed.range(of: #"^(null)+$"#, options: .regularExpression) != nil {
-              self.threadSummaryError = "The model couldn’t generate a summary for this thread."
-              self.isThreadSummaryLoading = false
-              self.canRetryThreadSummary = true
+              self.postState.threadSummaryError = "The model couldn’t generate a summary for this thread."
+              self.postState.isThreadSummaryLoading = false
+              self.postState.canRetryThreadSummary = true
             } else {
-              self.threadSummaryText = cleaned
-              self.isThreadSummaryLoading = false
-              self.canRetryThreadSummary = false
+              self.postState.threadSummaryText = cleaned
+              self.postState.isThreadSummaryLoading = false
+              self.postState.canRetryThreadSummary = false
             }
           }
         } catch {
           guard !Task.isCancelled else { return }
           let (message, retryable) = summarizeThreadErrorMessage(for: error)
           await MainActor.run {
-            self.threadSummaryError = message
-            self.isThreadSummaryLoading = false
-            self.canRetryThreadSummary = retryable
+            self.postState.threadSummaryError = message
+            self.postState.isThreadSummaryLoading = false
+            self.postState.canRetryThreadSummary = retryable
           }
         }
       }
     } else {
-      threadSummaryError = "Thread summarization requires iOS 26 or later."
-      isThreadSummaryLoading = false
-      canRetryThreadSummary = false
+      postState.threadSummaryError = "Thread summarization requires iOS 26 or later."
+      postState.isThreadSummaryLoading = false
+      postState.canRetryThreadSummary = false
     }
   }
 
@@ -1070,7 +669,10 @@ var id: String {
 #endif
 
   /// Detect if the post has any error conditions
-  private func detectPostError() -> PostViewError? {
+  fileprivate static func detectPostError(
+    in post: AppBskyFeedDefs.PostView,
+    isReadOnlyPreview: Bool
+  ) -> PostViewError? {
     // Check if the post record can be decoded
     guard case .knownType(let record) = post.record,
           record is AppBskyFeedPost else {
@@ -1080,12 +682,12 @@ var id: String {
     // Check if the author is blocked/blocking
     if let viewer = post.author.viewer {
       // Check if this should be shown as blocked
-      let iBlockedThem = viewer.blocking != nil
+      let iBlockedThem = viewer.blocking != nil || viewer.blockingByList != nil
       let theyBlockedMe = viewer.blockedBy == true
       
       // Only show the blocked-content card in specific cases (e.g., thread continuity)
       // Most blocked content should be filtered out by FeedTuner
-      if theyBlockedMe || (iBlockedThem && shouldShowBlockedContent()) {
+      if theyBlockedMe || (iBlockedThem && (isReadOnlyPreview || Self.shouldShowBlockedContent())) {
         // Create a BlockedPost from the available data
         let blockedAuthor = AppBskyFeedDefs.BlockedAuthor(
           did: post.author.did,
@@ -1107,7 +709,7 @@ var id: String {
   }
   
   /// Determine if blocked content should be shown (e.g., for thread continuity)
-  private func shouldShowBlockedContent() -> Bool {
+  private static func shouldShowBlockedContent() -> Bool {
     // Show blocked content if:
     // 1. We're in a thread view and this maintains continuity
     // 2. User specifically requested to see it
@@ -1126,7 +728,7 @@ var id: String {
   /// Get the final avatar URL with fallback handling
   private func getFinalAvatarURL() -> URL? {
     // Use postState.currentPost
-    return postState.currentPost.author.finalAvatarURL()
+    return postState.currentPostBox.value.author.finalAvatarURL()
   }
 
   /// Prefetch the avatar image for better performance
@@ -1144,6 +746,539 @@ var id: String {
       return lowercasedValue == "porn" || lowercasedValue == "nsfw" || lowercasedValue == "nudity"
     } ?? false
   }
+}
+
+// MARK: - PostContentLayout
+
+/// Renders a post's avatar column and content column for `PostView`.
+///
+/// It is a separate view so `PostView.body`, which carries two dozen lifecycle
+/// and presentation modifiers, wraps this struct's few hundred bytes instead of
+/// the whole rendered layout. SwiftUI also skips re-rendering it when only
+/// presentation state changes.
+private struct PostContentLayout: View {
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.feedInteractionTarget) private var feedInteractionTarget
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
+
+  /// The post as supplied to `PostView`, used for error detection and identity.
+  let postBox: EquatableBox<AppBskyFeedDefs.PostView>
+  let replyTarget: PostReplyTarget?
+  let isParentPost: Bool
+  let isSelectable: Bool
+  let isToYou: Bool
+  let avatarScale: PostAvatarScale
+  let visibilityContext: PostVisibilityContext
+  let opThreadPostIndex: Int?
+  let opThreadPostCount: Int?
+  let postID: String
+  @Bindable var postState: PostState
+  let contextMenuViewModel: PostContextMenuViewModel
+  let viewModel: PostViewModel
+  @Binding var path: NavigationPath
+
+  /// The shadow-merged post being displayed.
+  private var displayed: EquatableBox<AppBskyFeedDefs.PostView> {
+    postState.currentPostBox
+  }
+
+  var body: some View {
+    HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+      postAvatar
+      postContentColumn
+    }
+  }
+
+  private var postAvatar: some View {
+    AuthorAvatarColumn(
+      author: PostAvatarAuthor(getAuthorForDisplay()),
+      isParentPost: isParentPost,
+      isAvatarLoaded: $postState.isAvatarLoaded,
+      path: $path,
+      avatarScale: avatarScale
+    )
+  }
+
+  private var postContentColumn: some View {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+      if let error = postState.postError
+        ?? (isReadOnlyPreview ? PostView.detectPostError(in: postBox.value, isReadOnlyPreview: true) : nil) {
+        // Show error content
+        errorContentView(for: error)
+      } else if isReadOnlyPreview && postBox.value.author.viewer?.muted == true && !showsMutedPreview {
+        HStack {
+          Label("Post from an account you muted", systemImage: "speaker.slash")
+            .appFont(AppTextRole.subheadline)
+            .foregroundStyle(.secondary)
+          Spacer(minLength: 0)
+          Button("Show") { postState.revealedMutedPreview = mutedPreviewIdentity }
+            .frame(minWidth: 44, minHeight: 44)
+            .buttonStyle(.borderless)
+        }
+      } else {
+        // Show normal post content with moderation
+        moderatedPostContent
+          .postRevealFade(isEnabled: showsMutedPreview)
+      }
+    }
+    .padding(.top, PostView.baseUnit)
+  }
+
+  private var mutedPreviewIdentity: [String] {
+    [appState.userDID, postBox.value.uri.uriString(), postBox.value.cid.description]
+  }
+
+  private var showsMutedPreview: Bool {
+    postState.revealedMutedPreview == mutedPreviewIdentity
+  }
+
+  private func postHeader(for feedPost: AppBskyFeedPost) -> AnyView {
+    // Keep header metadata separate from the post and embed builder. Sharing
+    // this header in previews otherwise duplicates its full generic type.
+    AnyView(HStack(alignment: .top, spacing: 0) {
+      PostHeaderView(
+        displayName: displayed.value.author.displayName
+          ?? displayed.value.author.handle.description,
+        handle: displayed.value.author.handle.description,
+        timeAgo: feedPost.createdAt.date,
+        pronouns: displayed.value.author.pronouns,
+        verificationKind: VerificationBadge.kind(
+          for: displayed.value.author.verification,
+          did: displayed.value.author.did
+        ),
+        isAutomated: AutomationBadge.isSelfDeclared(
+          labels: displayed.value.author.labels,
+          authorDID: displayed.value.author.did
+        )
+      )
+
+      Spacer()
+
+      if let opThreadPostIndex, let opThreadPostCount {
+        ThreadPostNumberView(index: opThreadPostIndex, count: opThreadPostCount)
+          .padding(.trailing, 6)
+      }
+      if appState.appSettings.showReadingTimeEstimates,
+         let minutes = PostReadingTime.minutes(for: feedPost.text) {
+        Text("\(minutes) min read")
+          .appCaption2()
+          .foregroundStyle(.secondary)
+      }
+
+      if !isReadOnlyPreview {
+        postEllipsisMenuView
+      }
+    }
+    .padding(.horizontal, PostView.baseUnit))
+  }
+
+  // MARK: - Content Views
+
+  @ViewBuilder
+  private var moderatedPostContent: some View {
+    let labels = displayed.value.labels
+    let selfLabelValues = extractSelfLabelValues(from: displayed.value)
+    let hasEmbed = displayed.value.embed != nil
+    let labelSubject = PostLabelSubject(
+      uri: displayed.value.uri.uriString(), cid: displayed.value.cid,
+      authorDID: displayed.value.author.did.didString(),
+      authorHandle: displayed.value.author.handle.description
+    )
+    if labels?.isEmpty == false || !selfLabelValues.isEmpty {
+      ContentLabelView(labels: labels, selfLabelValues: selfLabelValues, subject: labelSubject)
+    }
+    
+    // Only wrap in ContentLabelManager if:
+    // 1. There's no embed (post handles its own labels), OR
+    // 2. There are text-specific labels that don't apply to the embed
+    if !hasEmbed && (labels?.isEmpty == false || !selfLabelValues.isEmpty) {
+      ContentLabelManager(labels: labels, selfLabelValues: selfLabelValues, contentType: "post", selfLabelsAlreadyShown: true) {
+        normalPostContent
+      }
+      .environment(\.postLabelSummaryIDs, labelSubject.labelIDs(in: labels))
+    } else {
+      // Embeds handle their own visibility policy. The post owns its label summary.
+      normalPostContent
+        .environment(\.postLabelSummaryIDs, labelSubject.labelIDs(in: labels))
+    }
+  }
+
+  @ViewBuilder
+  private var normalPostContent: some View {
+    // The post-level summary remains outside concealed text and media.
+    postContentView
+      .padding(.bottom, PostView.baseUnit)
+
+    // Embed content (images, links, videos, etc.)
+    if let embed = displayed.value.embed {
+      embedContent(embed, labels: displayed.value.labels)
+        .environment(\.postID, postID)
+        .padding(.bottom, PostView.baseUnit)
+    }
+
+    if !isReadOnlyPreview {
+      ActionButtonsView(
+        post: displayed,
+        postViewModel: viewModel,
+        path: $path
+      )
+      .padding(.bottom, PostView.baseUnit)
+    }
+  }
+
+  @ViewBuilder
+  private func errorContentView(for error: PostViewError) -> some View {
+    switch error {
+    case .blocked(let blockedPost):
+      BlockedContentCard(
+        relationship: BlockRelationship(blockedPost: blockedPost),
+        authorDid: blockedPost.author.did.didString(),
+        postUri: blockedPost.uri,
+        variant: .feed,
+        path: $path
+      )
+
+    case .notFound(let reason):
+      PostNotFoundView(uri: postBox.value.uri, reason: reason, path: $path)
+
+    case .parseError:
+      PostNotFoundView(uri: postBox.value.uri, reason: .parseError, path: $path)
+
+    case .permissionDenied:
+      PostNotFoundView(uri: postBox.value.uri, reason: .permissionDenied, path: $path)
+    }
+  }
+
+  // MARK: - Component Views (AuthorAvatarColumn extracted)
+
+  // Post content area
+  private var postContentView: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      // Render the shadow-merged post
+      if case .knownType(let postObj) = displayed.value.record,
+        let feedPost = postObj as? AppBskyFeedPost {
+
+        postHeader(for: feedPost)
+
+        if let replyTarget {
+          replyIndicatorView(replyTarget: replyTarget)
+            .textScale(.secondary)
+            .padding(.top, PostView.baseUnit)
+        } else if isToYou {
+            replyIndicatorView(replyTarget: nil)
+                .textScale(.secondary)
+                .padding(.top, PostView.baseUnit)
+            }
+
+        PostRecordText(record: EquatableBox(feedPost), isSelectable: isSelectable, path: $path)
+          .allowsHitTesting(!isReadOnlyPreview)
+          .disabled(isReadOnlyPreview)
+          .padding(.top, PostView.baseUnit)
+      }
+    }
+  }
+
+  // MARK: - Helper Views
+
+  // Default avatar placeholder (moved to AuthorAvatarColumn)
+
+  // Line connecting parent and child posts (moved to AuthorAvatarColumn)
+
+  // Post menu (three dots)
+  private var postEllipsisMenuView: some View {
+    Menu {
+      if CopilotAvailability.isAvailable {
+        Button {
+          postState.copilotContextToPresent = postState.copilotContext
+          postState.isShowingCopilot = true
+        } label: {
+          Label("Ask Catbird", systemImage: "sparkles")
+        }
+
+        Divider()
+      }
+
+      // Only show "Add to List" for other users' posts
+      if !postState.isOwnPost {
+        Button(action: {
+          contextMenuViewModel.addAuthorToList()
+        }) {
+          Label("Add Author to List", systemImage: "list.bullet.rectangle")
+        }
+        
+        Divider()
+      }
+      
+#if canImport(FoundationModels)
+      if #available(iOS 26.0, macOS 26.0, *), contextMenuViewModel.allowsThreadSummary, CopilotAvailability.isAvailable {
+        Button(action: {
+          let rootURI: String
+          if case .knownType(let record) = displayed.value.record,
+             let feedPost = record as? AppBskyFeedPost,
+             let replyRootUri = feedPost.reply?.root.uri.uriString() {
+            rootURI = replyRootUri
+          } else {
+            rootURI = displayed.value.uri.uriString()
+          }
+          postState.copilotContextToPresent = .thread(anchorURI: rootURI)
+          postState.isShowingCopilot = true
+        }) {
+          Label("Ask Catbird About Thread", systemImage: "sparkles")
+        }
+
+        Divider()
+      }
+#endif
+
+      // Bookmark button - available for all posts
+      Button(action: {
+        contextMenuViewModel.toggleBookmark()
+      }) {
+        Label(
+          viewModel.isBookmarked ? "Remove Bookmark" : "Bookmark",
+          systemImage: viewModel.isBookmarked ? "bookmark.fill" : "bookmark"
+        )
+      }
+      
+      // Show More / Show Less options, only inside a feed that accepts feedback
+      if let feedInteractionTarget {
+        Divider()
+        
+        Button(action: {
+          contextMenuViewModel.sendShowMore(target: feedInteractionTarget)
+        }) {
+          Label("Show More Like This", systemImage: "hand.thumbsup")
+        }
+        
+        Button(action: {
+          contextMenuViewModel.sendShowLess(target: feedInteractionTarget)
+        }) {
+          Label("Show Less Like This", systemImage: "hand.thumbsdown")
+        }
+      }
+      
+      Divider()
+      
+      // Only show mute/block for other users' posts
+      if !postState.isOwnPost {
+        Button(action: {
+          if DestructiveActionConfirmation.shouldConfirm(
+            isEnabled: appState.appSettings.confirmBeforeActions
+          ) {
+            postState.showMuteUserConfirmation = true
+          } else {
+            Task { await contextMenuViewModel.muteUser() }
+          }
+        }) {
+          Label("Mute User", systemImage: "speaker.slash")
+        }
+
+        Button(role: .destructive, action: {
+          postState.showBlockConfirmation = true
+        }) {
+          Label("Block User", systemImage: "exclamationmark.octagon")
+        }
+      }
+
+      if case .public = visibilityContext {
+        Button(action: {
+          if DestructiveActionConfirmation.shouldConfirm(
+            isEnabled: appState.appSettings.confirmBeforeActions
+          ) {
+            postState.showMuteThreadConfirmation = true
+          } else {
+            Task { await contextMenuViewModel.muteThread() }
+          }
+        }) {
+          Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
+        }
+      }
+      
+      // Only show hide/report for other users' posts
+      if !postState.isOwnPost {
+        // Hide/Unhide post option
+        Button(action: {
+          Task {
+            if contextMenuViewModel.isPostHidden {
+              await contextMenuViewModel.unhidePost()
+            } else {
+              await contextMenuViewModel.hidePost()
+            }
+          }
+        }) {
+          Label(
+            contextMenuViewModel.isPostHidden ? "Unhide Post" : "Hide Post",
+            systemImage: contextMenuViewModel.isPostHidden ? "eye" : "eye.slash"
+          )
+        }
+
+        Button(action: {
+          postState.showingReportView = true  // Use consolidated state
+        }) {
+          Label("Report Post", systemImage: "flag")
+        }
+
+        // Threadgate OP Moderation (G13): Root author can hide/show replies for everyone
+        if contextMenuViewModel.isRootAuthor {
+          Button(action: {
+            Task {
+              if contextMenuViewModel.isReplyHiddenByThreadgate {
+                await contextMenuViewModel.unhideReplyForEveryone()
+              } else {
+                await contextMenuViewModel.hideReplyForEveryone()
+              }
+            }
+          }) {
+            Label(
+              contextMenuViewModel.isReplyHiddenByThreadgate ? "Show Reply for Everyone" : "Hide Reply for Everyone",
+              systemImage: contextMenuViewModel.isReplyHiddenByThreadgate ? "eye" : "eye.slash"
+            )
+          }
+        }
+
+        // Postgate Quote Detachment (G14): Author of quoted post can detach/re-attach quote
+        if contextMenuViewModel.quotedPostURI != nil {
+          Button(action: {
+            Task {
+              if contextMenuViewModel.isQuoteDetached {
+                await contextMenuViewModel.reattachQuote()
+              } else {
+                await contextMenuViewModel.detachQuote()
+              }
+            }
+          }) {
+            Label(
+              contextMenuViewModel.isQuoteDetached ? "Re-attach Quote" : "Detach Quote",
+              systemImage: contextMenuViewModel.isQuoteDetached ? "link" : "arrow.branch"
+            )
+          }
+        }
+      }
+
+      if postState.isOwnPost {
+        Button(action: {
+          Task { await contextMenuViewModel.togglePin() }
+        }) {
+          if contextMenuViewModel.isPinned {
+            Label("Unpin from Profile", systemImage: "pin.slash")
+          } else {
+            Label("Pin to Profile", systemImage: "pin")
+          }
+        }
+
+        Button(action: {
+          postState.showingInteractionSettings = true
+        }) {
+          Label("Edit Interaction Settings", systemImage: "slider.horizontal.3")
+        }
+
+        Button(action: {
+          postState.showingLabelsOnPost = true
+        }) {
+          Label("View Labels", systemImage: "tag")
+        }
+        Button(role: .destructive, action: {
+          postState.showDeleteConfirmation = true
+        }) {
+          Label("Delete Post", systemImage: "trash")
+        }
+      }
+    } label: {
+      Image(systemName: "ellipsis")
+        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
+        .padding(PostView.baseUnit * 3)
+        .contentShape(Rectangle())
+        .accessibilityLabel("Post Options")
+        .accessibilityAddTraits(.isButton)
+        
+    }
+  }
+
+  // Reply indicator text
+  @ViewBuilder
+  private func replyIndicatorView(replyTarget: PostReplyTarget? = nil) -> some View {
+    HStack(alignment: .center, spacing: PostView.baseUnit) {
+      Image(systemName: "arrow.up.forward.circle")
+        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
+        .appBody()
+
+      HStack(spacing: 0) {
+        Text("In reply to ")
+          .appBody()
+          .offset(y: -1)
+          .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
+
+        if isToYou {
+          Text("you")
+            .appBody()
+            .offset(y: -1)
+            .foregroundStyle(Color("AccentTextColor"))
+        } else if let replyTarget {
+          Text(verbatim: "@\(replyTarget.handle)")
+            .appBody()
+            .offset(y: -1)
+            .foregroundStyle(Color("AccentTextColor"))
+            .onTapGesture {
+              guard !isReadOnlyPreview else { return }
+              path.append(NavigationDestination.profile(replyTarget.did))
+            }
+            .accessibilityAddTraits(.isButton)
+        }
+      }
+    }
+    .padding(.leading, PostView.baseUnit)
+  }
+
+  // Media content (images, links, videos, etc.)
+  @ViewBuilder
+  private func embedContent(
+    _ embed: AppBskyFeedDefs.PostViewEmbedUnion, labels: [ComAtprotoLabelDefs.Label]?
+  ) -> some View {
+    PostEmbed(
+      embed: embed,
+      labels: labels,
+      path: $path,
+      visibilityContext: visibilityContext,
+      authorDID: postBox.value.author.did
+    )
+      .environment(\.postID, postID)
+      .padding(.trailing, PostView.baseUnit * 2)
+  }
+
+  // MARK: - Setup & Helpers
+
+  /// Get the author to display in the avatar column
+  private func getAuthorForDisplay() -> AppBskyActorDefs.ProfileViewBasic {
+    // If there's an error, try to extract author info from the error
+    if let error = postState.postError {
+      switch error {
+      case .blocked(let blockedPost):
+        // Create placeholder from blocked author. The literal handle is always
+        // valid today; never trap the feed if validation ever tightens.
+        return AppBskyActorDefs.ProfileViewBasic(
+          did: blockedPost.author.did,
+          handle: PlaceholderAuthors.blockedHandle ?? displayed.value.author.handle,
+          displayName: nil,
+          pronouns: nil, avatar: nil,
+          associated: nil,
+          viewer: blockedPost.author.viewer,
+          labels: nil,
+          createdAt: nil,
+          verification: nil,
+          status: nil,
+          debug: nil
+
+        )
+      case .notFound, .parseError, .permissionDenied:
+        // Generic placeholder for deleted/not found posts
+        return PlaceholderAuthors.deleted ?? displayed.value.author
+      }
+    }
+
+    // Normal case - return actual post author
+    return displayed.value.author
+  }
 
   // Extract self-applied label values from the record (if present)
   private func extractSelfLabelValues(from postView: AppBskyFeedDefs.PostView) -> [String] {
@@ -1159,6 +1294,53 @@ var id: String {
     }
   }
 }
+
+// MARK: - Small view inputs
+
+/// The author a reply line points at. Only the handle and DID are rendered, so
+/// `PostView` stores these instead of a full profile (about 2 KB inline).
+struct PostReplyTarget: Equatable {
+  let handle: String
+  let did: String
+
+  init(_ author: AppBskyActorDefs.ProfileViewBasic) {
+    handle = author.handle.description
+    did = author.did.didString()
+  }
+}
+
+/// The author fields `AuthorAvatarColumn` renders, so it does not store a full
+/// profile (about 2 KB inline).
+struct PostAvatarAuthor: Equatable {
+  let did: String
+  let handle: String
+  let displayName: String?
+  let avatarURL: URL?
+  /// Kept whole because the live check compares `expiresAt` with the current
+  /// time when the column renders.
+  let status: EquatableBox<AppBskyActorDefs.StatusView>?
+
+  init(_ author: AppBskyActorDefs.ProfileViewBasic) {
+    did = author.did.didString()
+    handle = author.handle.description
+    displayName = author.displayName
+    avatarURL = author.finalAvatarURL()
+    status = author.status.map { EquatableBox($0) }
+  }
+}
+
+/// Builds `Post` in its own update, so the record and the text view's state stay
+/// out of `PostContentLayout`'s body type.
+private struct PostRecordText: View {
+  let record: EquatableBox<AppBskyFeedPost>
+  let isSelectable: Bool
+  @Binding var path: NavigationPath
+
+  var body: some View {
+    Post(post: record.value, isSelectable: isSelectable, path: $path)
+  }
+}
+
 
 enum PostReadingTime {
   private static let wordsPerMinute = 200
@@ -1179,17 +1361,14 @@ enum DestructiveActionConfirmation {
 }
 
 private struct ThreadSummarySheet: View {
-  let isLoading: Bool
-  let summaryText: String?
-  let errorText: String?
-  let canRetry: Bool
-  let onRetry: (() -> Void)?
-  let post: AppBskyFeedDefs.PostView
+  /// Read directly so the summary streams into the open sheet.
+  let state: PostState
+  let onRetry: () -> Void
 
   @Environment(\.dismiss) private var dismiss
 
   private var authorDisplayName: String {
-    post.author.displayName ?? post.author.handle.description
+    state.currentPostBox.value.author.displayName ?? state.currentPostBox.value.author.handle.description
   }
 
   var body: some View {
@@ -1201,7 +1380,7 @@ private struct ThreadSummarySheet: View {
 
         Spacer()
 
-        if let onRetry, canRetry {
+        if state.canRetryThreadSummary && !state.isThreadSummaryLoading {
           Button("Try Again", action: onRetry)
             .buttonStyle(.borderedProminent)
         }
@@ -1229,7 +1408,7 @@ private struct ThreadSummarySheet: View {
       Text(authorDisplayName)
         .font(.headline)
 
-      Text("@\(post.author.handle.description)")
+      Text("@\(state.currentPostBox.value.author.handle.description)")
         .font(.subheadline)
         .foregroundStyle(.secondary)
     }
@@ -1237,21 +1416,21 @@ private struct ThreadSummarySheet: View {
 
   @ViewBuilder
   private var content: some View {
-    if let summaryText {
+    if let summaryText = state.threadSummaryText {
       ScrollView {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
           Text(summaryText)
             .font(.body)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-          if isLoading {
+          if state.isThreadSummaryLoading {
             ProgressView()
               .padding(.top, DesignTokens.Spacing.xs)
           }
         }
         .padding(.vertical, DesignTokens.Spacing.sm)
       }
-    } else if isLoading {
+    } else if state.isThreadSummaryLoading {
       VStack(alignment: .center, spacing: DesignTokens.Spacing.md) {
         ProgressView()
         Text("Summarizing thread…")
@@ -1260,7 +1439,7 @@ private struct ThreadSummarySheet: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, DesignTokens.Spacing.lg)
-    } else if let errorText {
+    } else if let errorText = state.threadSummaryError {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
         Image(systemName: "exclamationmark.triangle")
           .foregroundStyle(.orange)
@@ -1281,11 +1460,12 @@ private struct ThreadSummarySheet: View {
 
 // MARK: - Extracted AuthorAvatarColumn View
 struct AuthorAvatarColumn: View {
-  let author: AppBskyActorDefs.ProfileViewBasic
+  let author: PostAvatarAuthor
   let isParentPost: Bool
   @Binding var isAvatarLoaded: Bool
   @Binding var path: NavigationPath
   var avatarScale: PostAvatarScale = .regular
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
@@ -1304,7 +1484,7 @@ struct AuthorAvatarColumn: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      if let finalURL = author.finalAvatarURL() {
+      if let finalURL = author.avatarURL {
         LazyImage(request: avatarRequest(finalURL)) { state in
           if let image = state.image {
             image
@@ -1338,8 +1518,8 @@ struct AuthorAvatarColumn: View {
     .padding(.top, Self.baseUnit)
     .background(parentPostIndicator)
     .modifier(AuthorAvatarAccessibility(
-      label: "\(authorName), view profile",
-      isEnabled: !isPlaceholderAuthor,
+      label: isReadOnlyPreview ? authorName : "\(authorName), view profile",
+      isEnabled: !isPlaceholderAuthor && !isReadOnlyPreview,
       action: openProfile))
     // Do not add a ProfileEntity context inside a PostEntity-annotated post.
     // iOS 27 can flatten nested entity contexts during view annotation
@@ -1349,19 +1529,19 @@ struct AuthorAvatarColumn: View {
 
   /// Deleted and unavailable posts carry a stand-in author with no real profile.
   private var isPlaceholderAuthor: Bool {
-    author.did.didString() == "did:plc:unknown"
+    author.did == "did:plc:unknown"
   }
 
   private var authorName: String {
     if let displayName = author.displayName, !displayName.isEmpty {
       return displayName
     }
-    return "@\(author.handle.description)"
+    return "@\(author.handle)"
   }
 
   private func openProfile() {
-    guard !isPlaceholderAuthor else { return }
-    path.append(NavigationDestination.profile(author.did.didString()))
+    guard !isPlaceholderAuthor, !isReadOnlyPreview else { return }
+    path.append(NavigationDestination.profile(author.did))
   }
 
   // Default avatar placeholder
@@ -1389,7 +1569,7 @@ struct AuthorAvatarColumn: View {
   // Red ring shown while the author has an active live status
   @ViewBuilder
   private var liveStatusRing: some View {
-    if author.status?.isLiveNow == true {
+    if author.status?.value.isLiveNow == true {
       Circle()
         .strokeBorder(Color.red, lineWidth: 2)
     }
@@ -1410,6 +1590,32 @@ struct AuthorAvatarColumn: View {
 }
 
 // MARK: - PostID Environment
+private struct ReadOnlyPostPreviewKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
+extension EnvironmentValues {
+  /// Rendering policy for discovery previews, including nested quote/media views.
+  var isReadOnlyPostPreview: Bool {
+    get { self[ReadOnlyPostPreviewKey.self] }
+    set { self[ReadOnlyPostPreviewKey.self] = newValue }
+  }
+}
+
+private struct PostEntityContextModifier: ViewModifier {
+  let uri: String
+  let isReadOnly: Bool
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if isReadOnly {
+      content
+    } else {
+      content.entityContext(EntityIdentifier(for: PostEntity.self, identifier: uri))
+    }
+  }
+}
+
 struct PostIDKey: EnvironmentKey {
   static let defaultValue: String = ""
 }
@@ -1422,7 +1628,9 @@ extension EnvironmentValues {
 }
 
 // MARK: - PostViewError
-enum PostViewError {
+/// Indirect so a blocked post's 1.6 KB payload is not stored inline in `PostState`
+/// or copied into view temporaries.
+indirect enum PostViewError {
     case blocked(AppBskyFeedDefs.BlockedPost)
     case notFound(PostNotFoundReason)
     case parseError

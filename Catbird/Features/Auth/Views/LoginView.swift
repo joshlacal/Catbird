@@ -38,6 +38,7 @@ struct LoginView: View {
     @State private var loginProgress: LoginProgress = .idle
     @State private var showDebugInfo = false
     @State private var biometricAuthAvailable = false
+    @State private var showSavedAccounts = false
     
     // Advanced AppView configuration
     @State private var customAppViewDID = "did:web:api.bsky.app#bsky_appview"
@@ -81,18 +82,12 @@ struct LoginView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                /// Hyperrealistic clouds based on "Clouds" by drift
-                /// https://www.shadertoy.com/view/4tdSWr
-                /// Shader now renders the complete sky+clouds scene opaquely
-                CloudView(
-                    opacity: 1.0,          // Full opacity - shader handles complete scene
-                    cloudScale: 1.1,       // Match original Shadertoy scale
-                    animationSpeed: reduceMotion ? 0 : 1.0,   // Match original speed; still sky with Reduce Motion
-                    shaderMode: .basic     // Use basic shader that matches original closest
-                )
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
-                
+                SkyView(animated: !reduceMotion)
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea()
+
+                legalFooterScrim
+
                 // Main content scroll view
                 ScrollView {
                     VStack(spacing: adaptiveSpacing(geometry)) {
@@ -169,7 +164,8 @@ struct LoginView: View {
                                 
                                 Text("for Bluesky")
                                     .font(catbirdSubtitleFont(geometry: geometry))
-                                    .foregroundStyle(.secondary)
+                                    // Vibrant .secondary turns muddy over the sky.
+                                    .foregroundStyle(.primary.opacity(0.7))
                             }
                         }
                         .frame(maxWidth: .infinity) // Center the VStack
@@ -357,16 +353,8 @@ struct LoginView: View {
                     }
                     
                     Spacer(minLength: adaptiveSize(geometry, base: 40, min: 20))
+                    legalFooter
                     
-                    // Subtle credit for shader artist
-                    HStack {
-                        Spacer()
-                        Text("Sky by drift")
-                            .appFont(AppTextRole.caption2)
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .padding(.trailing, 8)
-                            .padding(.bottom, 4)
-                    }
                 }
                 .frame(minHeight: geometry.size.height)
                 .padding(.horizontal)
@@ -376,6 +364,10 @@ struct LoginView: View {
     .toolbarTitleDisplayMode(.inline)
     #endif
             }
+        }
+        .sheet(isPresented: $showSavedAccounts) {
+            AccountSwitcherView()
+                .environment(appStateManager)
         }
         .onChange(of: appStateManager.authentication.state) { _, newValue in
             // Update local error state based on auth manager errors
@@ -599,6 +591,19 @@ struct LoginView: View {
             }
             .modifier(PrimaryButtonModifier(authMode: authMode))
             
+            if !isAddingNewAccount {
+                Button { showSavedAccounts = true } label: {
+                    Text("Saved Accounts")
+                        .appFont(AppTextRole.subheadline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .modifier(SecondaryAuthButtonModifier())
+                .disabled(isLoggingIn || appStateManager.authentication.state.isAuthenticating)
+                .accessibilityIdentifier("login.savedAccounts")
+            }
+
+            // Agreement to the terms and zero-tolerance policy before signing in or
+            // creating an account (App Review Guideline 1.2).
             Text(CommunityStandards.signInFootnote)
                 .appFont(AppTextRole.footnote)
                 .foregroundStyle(Color.secondary)
@@ -606,7 +611,56 @@ struct LoginView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .accessibilityIdentifier("login.agreementNotice")
         }
+    }
+
+    private var legalFooter: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) { legalLinks }
+            VStack(spacing: 0) { legalLinks }
+        }
+        .appFont(AppTextRole.footnote)
+        .multilineTextAlignment(.center)
+        // The links sit on the animated sky, which can drift a white cloud behind
+        // them; white text over `legalFooterScrim` reads on clouds and deep blue.
+        .tint(.white)
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+        .padding(.bottom, 8)
+    }
+
+    /// Darkens the bottom of the sky, behind the legal links.
+    private var legalFooterScrim: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black.opacity(0), location: 0),
+                .init(color: .black.opacity(0.16), location: 0.45),
+                .init(color: .black.opacity(0.42), location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: 200)
+        .frame(maxHeight: .infinity, alignment: .bottom)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var legalLinks: some View {
+        Link("Terms of Service", destination: CommunityStandards.termsOfServiceURL)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("login.terms")
+        if let privacyURL = LegalConfig.privacyPolicyURL {
+            Link("Privacy Policy", destination: privacyURL)
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("login.privacy")
+        }
+        Link("Community Guidelines", destination: CommunityStandards.communityGuidelinesURL)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("login.communityGuidelines")
     }
     
     private var deepBlueSkyBackground: some View {
@@ -1574,6 +1628,24 @@ struct IconShadowModifier: ViewModifier {
         content
             .shadow(color: colorScheme == .dark ? .black.opacity(0.6) : .black.opacity(0.2), radius: 1, x: 0, y: 1)
             .shadow(color: colorScheme == .dark ? .white.opacity(0.1) : .white.opacity(0.8), radius: 1, x: 0, y: -1)
+    }
+}
+
+/// Secondary action on the sign-in screen. Glass keeps the label legible over
+/// both the sky's clouds and its deep blue, where a tinted bordered style
+/// renders blue-on-blue and reads as disabled.
+struct SecondaryAuthButtonModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content
+                .buttonStyle(.glass)
+                .buttonBorderShape(.roundedRectangle(radius: 16))
+        } else {
+            content
+                .buttonStyle(.bordered)
+                .tint(.white)
+                .buttonBorderShape(.roundedRectangle(radius: 16))
+        }
     }
 }
 

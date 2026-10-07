@@ -471,6 +471,32 @@ final class CopilotProposalCoordinatorTests: XCTestCase {
         let filterID = UUID()
         let matchingContext = CopilotContext.smartFilter(id: filterID, name: "Spam Guard")
         let filterToggleProposal = CopilotProposal.setSmartFilterEnabled(id: filterID, enabled: true)
+        guard IntelligenceFeatureFlags.smartFilterStructuralRulesEnabled else {
+            let gatedTargets: [(CopilotProposal, CopilotContext)] = [
+                (filterToggleProposal, matchingContext),
+                (.setSmartFilterEnabled(id: UUID(), enabled: true), matchingContext),
+                (filterToggleProposal, feedContext)
+            ]
+            for (proposal, context) in gatedTargets {
+                XCTAssertThrowsError(
+                    try CopilotProposalCoordinator.validate(
+                        proposal, context: context,
+                        expectedAccountDID: accountDID, currentAccountDID: accountDID
+                    )
+                ) { error in
+                    XCTAssertEqual(error as? CopilotProposalError, .unsupported)
+                }
+            }
+            XCTAssertThrowsError(
+                try CopilotProposalCoordinator.validate(
+                    filterToggleProposal, context: matchingContext,
+                    expectedAccountDID: accountDID, currentAccountDID: "did:plc:other"
+                )
+            ) { error in
+                XCTAssertEqual(error as? CopilotProposalError, .accountChanged)
+            }
+            return
+        }
         XCTAssertNoThrow(
             try CopilotProposalCoordinator.validate(
                 filterToggleProposal,

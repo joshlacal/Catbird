@@ -216,17 +216,13 @@ private struct ComposeSourceModifier: ViewModifier {
 struct MainContentView: View {
   @Environment(AppState.self) private var appState
   @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
   // Side drawer state for home tab
   @State private var isDrawerOpen = false
   @State private var isRootView = true
-  /// Trailing edge (global) of the usable tab content and of the tab container.
-  /// When the system docks the tab bar on the trailing side (e.g. iPhone Duo),
-  /// the difference is the bar's width, which the compose FAB must clear.
-  @State private var tabContentTrailingEdge: CGFloat = 0
-  @State private var tabContainerTrailingEdge: CGFloat = 0
   @State private var selectedFeed: FetchType = .timeline
   @State private var currentFeedName: String = ""
 
@@ -268,18 +264,16 @@ struct MainContentView: View {
   }
 
    #if os(iOS)
-   /// Whether the Profile tab should appear in the top (iPad) tab bar.
+   /// Whether the Profile tab should appear in the tab bar.
    ///
-   /// The five iPad tabs — Home / Search / Notifications / Profile / Messages —
-   /// overflow into the system ">" chevron on narrow layouts, most visibly on
-   /// iPad mini in portrait. When there isn't room we drop Profile from the bar;
-   /// it stays reachable from the avatar button and the drawer's Profile
-   /// shortcut. Profile is never shown on iPhone.
+   /// Five tabs — Home / Search / Notifications / Profile / Messages — only fit
+   /// in a regular-width scene (iPad, an unfolded iPhone Duo). In a compact
+   /// scene (iPhone, a folded iPhone Duo, a narrow iPad Split View) Profile is
+   /// dropped from the bar; it stays reachable from the avatar button and the
+   /// drawer's Profile shortcut. Because the size class changes as the scene
+   /// resizes, the tab can disappear while selected — see `body`.
    private var shouldShowProfileTab: Bool {
-     guard !PlatformDeviceInfo.isPhone else { return false }
-     // NOTE: future — measure available tab-bar width and drop Profile when the
-     // five iPad tabs would overflow into the system ">" chevron.
-     return true
+     horizontalSizeClass == .regular
    }
    #endif
 
@@ -323,7 +317,7 @@ struct MainContentView: View {
       let uriString = String(savedFeedIdentifier.dropFirst("feed:".count))
       if let uri = try? ATProtocolURI(uriString: uriString) {
         selectedFeed = .feed(uri)
-        currentFeedName = "Feed" // Will be updated by task(id: selectedFeed)
+        currentFeedName = FetchType.feed(uri).displayName // Will be updated by task(id: selectedFeed)
       } else {
         await loadDefaultFeed()
       }
@@ -338,7 +332,7 @@ struct MainContentView: View {
       }
       if let uri = try? ATProtocolURI(uriString: candidate) {
         selectedFeed = .list(uri)
-        currentFeedName = "List" // Will be updated elsewhere if needed
+        currentFeedName = FetchType.list(uri).displayName // Will be updated elsewhere if needed
       } else {
         await loadDefaultFeed()
       }
@@ -356,10 +350,10 @@ struct MainContentView: View {
        let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
       if firstPinnedFeed.contains("/app.bsky.graph.list/") {
         selectedFeed = .list(uri)
-        currentFeedName = "List"
+        currentFeedName = FetchType.list(uri).displayName
       } else {
         selectedFeed = .feed(uri)
-        currentFeedName = "Feed" // Will be updated by .task(id: selectedFeed)
+        currentFeedName = FetchType.feed(uri).displayName // Will be updated by .task(id: selectedFeed)
       }
     } else {
       // Fallback to timeline
@@ -399,11 +393,11 @@ struct MainContentView: View {
                 isRootView: $isRootView
               )
               .id(appState.userDID)
-              // The content frame already stops at a trailing tab bar (which it
-              // also reports as a safe-area inset), so only the frame edge counts.
-              .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.frame(in: .global).maxX
-              } action: { tabContentTrailingEdge = $0 }
+              .overlay(alignment: .bottomTrailing) {
+                if selectedTab == 0 && isRootView {
+                  composeOverlay
+                }
+              }
             }
             .accessibilityIdentifier("tab_home")
 
@@ -430,8 +424,8 @@ struct MainContentView: View {
             .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
             .accessibilityIdentifier("tab_notifications")
 
-            // Profile Tab - Hidden on iPhone to save space
-            if !PlatformDeviceInfo.isPhone {
+            // Profile Tab - Hidden in compact width to save space
+            if shouldShowProfileTab {
               Tab("Profile", systemImage: "person", value: 3) {
                 NavigationStack(path: sceneContext.navigationManager.pathBinding(for: 3)) {
                   UnifiedProfileView(
@@ -448,6 +442,11 @@ struct MainContentView: View {
                       appState: appState,
                       selectedTab: $selectedTab
                     )
+                  }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                  if selectedTab == 3 {
+                    composeOverlay
                   }
                 }
               }
@@ -472,23 +471,12 @@ struct MainContentView: View {
           #endif
           #if os(iOS)
           .tabViewStyle(.sidebarAdaptable)
-          #endif
-          .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.frame(in: .global).maxX - proxy.safeAreaInsets.trailing
-          } action: { tabContainerTrailingEdge = $0 }
-
-          #if !targetEnvironment(macCatalyst)
-          if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
-            Group {
-              if #available(iOS 26.0, *) {
-                GlassEffectContainer(spacing: 20) {
-                  fabView
-                }
-              } else {
-                fabView
-              }
-            }
-            .padding(.trailing, trailingTabBarWidth)
+          .onChange(of: shouldShowProfileTab) { _, isShown in
+            // Folding an iPhone Duo or narrowing a split view removes the Profile
+            // tab; if it was selected, land on Home rather than an absent tab.
+            guard !isShown, selectedTab == 3 else { return }
+            selectedTab = 0
+            navigationManager.updateCurrentTab(0)
           }
           #endif
         }
@@ -639,7 +627,7 @@ struct MainContentView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
-          enabled: (selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone)),
+          enabled: (selectedTab == 0 || (selectedTab == 3 && shouldShowProfileTab)),
           sourceID: "compose",
           namespace: composeTransitionNamespace
         )
@@ -824,13 +812,13 @@ struct MainContentView: View {
                 }
               } else {
                 await MainActor.run {
-                  currentFeedName = "Feed"
+                  currentFeedName = FetchType.feed(uri).displayName
                 }
               }
             } catch {
               logger.error("Failed to fetch feed name: \(error.localizedDescription)")
               await MainActor.run {
-                currentFeedName = "Feed"
+                currentFeedName = FetchType.feed(uri).displayName
               }
             }
           }
@@ -847,7 +835,7 @@ struct MainContentView: View {
           } catch {
             logger.error("Failed to fetch list name: \(error.localizedDescription)")
             await MainActor.run {
-              currentFeedName = uri.recordKey ?? "List"
+              currentFeedName = FetchType.list(uri).displayName
             }
           }
         }
@@ -1066,10 +1054,18 @@ extension MainContentView {
   }
   #endif
 
-  /// Width of a tab bar docked on the trailing edge; zero for bottom and leading bars.
-  private var trailingTabBarWidth: CGFloat {
-    guard tabContentTrailingEdge > 0, tabContainerTrailingEdge > 0 else { return 0 }
-    return max(0, tabContainerTrailingEdge - tabContentTrailingEdge)
+  /// Inherit tab content geometry instead of estimating system bar clearance.
+  @ViewBuilder
+  private var composeOverlay: some View {
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    if #available(iOS 26.0, *) {
+      GlassEffectContainer(spacing: 20) {
+        fabView
+      }
+    } else {
+      fabView
+    }
+    #endif
   }
 
   @ViewBuilder
@@ -1106,8 +1102,6 @@ extension MainContentView {
         }
       }
     )
-    .padding(.bottom, 79) // Tab bar (49) + spacing (30)
-    .padding(.trailing, 5)
   }
 }
 

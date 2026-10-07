@@ -45,32 +45,35 @@ struct LabelSelectorView: View {
 
   var body: some View {
     NavigationStack {
-      List(effectiveAllowedLabels, id: \.self) { label in
-        Button(action: { toggleLabel(label) }) {
-          HStack {
-            Text(displayName(for: label))
-            Spacer()
-            if selectedLabels.contains(label) {
-              Image(systemName: "checkmark")
+      List {
+        Section {
+          ForEach(effectiveAllowedLabels, id: \.self) { label in
+            Button(action: { toggleLabel(label) }) {
+              HStack {
+                Text(displayName(for: label))
+                  .foregroundStyle(.primary)
+                Spacer()
+                if selectedLabels.contains(label) {
+                  Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                }
+              }
             }
+            .accessibilityAddTraits(selectedLabels.contains(label) ? .isSelected : [])
+          }
+        } footer: {
+          if !appState.isAdultContentEnabled {
+            Text("Adult labels can be added after enabling adult content in the Bluesky app.")
           }
         }
-        .accessibilityAddTraits(selectedLabels.contains(label) ? .isSelected : [])
       }
       .navigationTitle("Content Labels")
+      .platformInlineNavigationTitle()
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") {
             dismiss()
           }
-        }
-      }
-      .overlay(alignment: .bottomLeading) {
-        if !appState.isAdultContentEnabled {
-          Text("Adult labels can be added after enabling adult content in the Bluesky app.")
-            .appFont(AppTextRole.caption)
-            .foregroundStyle(.secondary)
-            .padding([.horizontal, .bottom])
         }
       }
     }

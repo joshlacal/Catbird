@@ -45,32 +45,30 @@ struct SettingsView: View {
     }
 
     private var home: some View {
-        ResponsiveContentView {
-            Form {
-                SettingsPersistenceStatusSection(settings: appState.appSettings)
-                Section { accountHeader }
-                if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ForEach(SettingsCatalog.homeGroups, id: \.0) { group in
-                        Section(group.0) {
-                            ForEach(group.1, id: \.self) { screen in
-                                SettingsLink(screen: screen, summary: summary(for: screen), systemImage: symbol(for: screen), family: family(for: screen))
-                                    .accessibilityIdentifier("settings.category." + screen.rawValue)
-                            }
+        Form {
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
+            Section { accountHeader }
+            if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ForEach(SettingsCatalog.homeGroups, id: \.0) { group in
+                    Section(group.0) {
+                        ForEach(group.1, id: \.self) { screen in
+                            SettingsLink(screen: screen, summary: summary(for: screen), systemImage: symbol(for: screen), family: family(for: screen))
+                                .accessibilityIdentifier("settings.category." + screen.rawValue)
                         }
                     }
-                } else {
-                    Section("Search Results") {
-                        let results = SettingsCatalog.search(searchQuery).filter { $0.target.control?.rawValue != "account.appLock" || AppStateManager.shared.authentication.biometricType != .none }
-                        if results.isEmpty {
-                            Text("No settings found. Try a setting name, such as autoplay, muted words, or text size.")
-                                .foregroundStyle(.secondary)
+                }
+            } else {
+                Section("Search Results") {
+                    let results = SettingsCatalog.search(searchQuery).filter { $0.target.control?.rawValue != "account.appLock" || AppStateManager.shared.authentication.biometricType != .none }
+                    if results.isEmpty {
+                        Text("No settings found. Try a setting name, such as autoplay, muted words, or text size.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(results) { entry in
+                        NavigationLink(value: entry.target) {
+                            SettingsNavigationRow(title: entry.title, summary: resultSummary(entry), systemImage: symbol(for: entry.target.screen), family: family(for: entry.target.screen))
                         }
-                        ForEach(results) { entry in
-                            NavigationLink(value: entry.target) {
-                                SettingsNavigationRow(title: entry.title, summary: resultSummary(entry), systemImage: symbol(for: entry.target.screen), family: family(for: entry.target.screen))
-                            }
-                            .accessibilityIdentifier("settings.result." + (entry.target.control?.rawValue ?? entry.target.screen.rawValue))
-                        }
+                        .accessibilityIdentifier("settings.result." + (entry.target.control?.rawValue ?? entry.target.screen.rawValue))
                     }
                 }
             }
@@ -131,7 +129,7 @@ struct SettingsView: View {
                     if let profileError { Text(profileError).appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").foregroundStyle(Color(platformColor: PlatformColor.platformTertiaryLabel)).accessibilityHidden(true)
+                Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(Color(platformColor: PlatformColor.platformTertiaryLabel)).accessibilityHidden(true)
             }
         }
         .accessibilityIdentifier("settings.accountSwitcher")

@@ -6,6 +6,7 @@ struct AddFeedSheet: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var model: FeedDiscoveryViewModel?
+  @State private var previewModel: FeedDiscoveryPreviewModel?
   @State private var path = NavigationPath()
   @State private var selectedTab = 0
 
@@ -20,18 +21,36 @@ struct AddFeedSheet: View {
   var body: some View {
     NavigationStack(path: $path) {
       Group {
-        if let model {
-          discovery(model)
+        if let model, let previewModel,
+           model.accountDID == appState.userDID,
+           previewModel.matchesSession(appState: appState) {
+          FeedDiscoveryBrowser(model: model, preview: previewModel, path: $path,
+                               onDetails: { path.append(FeedDetailsRoute(feed: $0)) },
+                               onOpen: open)
+            .id(sessionIdentity)
         } else {
-          ContentUnavailableView("Feeds unavailable", systemImage: "network",
-                                 description: Text("Sign in to discover feeds."))
+          Group {
+            if appState.atProtoClient == nil {
+              ContentUnavailableView("Feeds unavailable", systemImage: "network",
+                                     description: Text("Sign in to discover feeds."))
+            } else {
+              ProgressView("Loading feeds…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+          }
         }
       }
       .navigationTitle("Discover Feeds")
+      .modifier(DiscoveryNavigationBar())
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Close") { dismiss() }
+          Button("Close", systemImage: "xmark") { dismiss() }
+            .accessibilityIdentifier("feed.discovery.close")
+            .keyboardShortcut(.cancelAction)
         }
+      }
+      .navigationDestination(for: FeedDetailsRoute.self) { route in
+        FeedDiscoveryDetailsView(feed: route.feed, path: $path,
+                                 onPreview: { path.append(FeedPreviewRoute(feed: route.feed)) })
       }
       .navigationDestination(for: FeedPreviewRoute.self) { route in
         FeedScreen(path: $path, uri: route.feed.uri, initialGenerator: route.feed)
@@ -47,14 +66,19 @@ struct AddFeedSheet: View {
                                              appState: appState, selectedTab: $selectedTab)
       }
     }
-    .task(id: DiscoverySessionIdentity(accountDID: appState.userDID,
-                                       client: appState.atProtoClient.map { ObjectIdentifier($0) })) {
+    .task(id: sessionIdentity) {
       let accountDID = appState.userDID
       guard let client = appState.atProtoClient else {
         model?.cancel()
+        previewModel?.cancel()
+        previewModel = nil
         model = nil
         path = NavigationPath()
         return
+      }
+      if previewModel?.matchesSession(appState: appState) != true {
+        previewModel?.cancel()
+        previewModel = FeedDiscoveryPreviewModel(appState: appState)
       }
       if let model {
         if model.accountDID != accountDID { path = NavigationPath() }
@@ -67,98 +91,30 @@ struct AddFeedSheet: View {
       }
       await appState.feedLibraryActions.refresh()
     }
-  }
-
-  private func discovery(_ model: FeedDiscoveryViewModel) -> some View {
-    @Bindable var model = model
-    return ScrollView {
-      LazyVStack(alignment: .leading, spacing: 16) {
-        if let error = appState.feedLibraryActions.refreshError {
-          errorView(error) {
-            Task { await appState.feedLibraryActions.refresh() }
-          }
-        }
-        if model.isInitialLoading {
-          ProgressView("Loading feeds…")
-            .frame(maxWidth: .infinity)
-        } else if let error = model.initialError {
-          errorView(error) { model.retry() }
-        } else if model.items.isEmpty {
-          ContentUnavailableView {
-            Label {
-              if model.resultQuery.isEmpty { Text("No popular feeds") } else { Text("No matching feeds") }
-            } icon: { Image(systemName: "magnifyingglass") }
-          } description: {
-            if model.resultQuery.isEmpty { Text("Try searching for a feed.") }
-            else { Text("No feeds found for “\(model.resultQuery)”.") }
-          } actions: {
-            if !model.query.isEmpty {
-              Button("Show Popular") { model.query = "" }
-            }
-          }
-        }
-
-        if !model.items.isEmpty {
-          Group {
-            if model.resultQuery.isEmpty { Text("Popular") }
-            else { Text("Results for “\(model.resultQuery)”") }
-          }
-          .appFont(AppTextRole.headline)
-          if model.isRefreshing {
-            ProgressView("Updating feeds…")
-          }
-          if let error = model.refreshError {
-            errorView(error) { model.retry() }
-          }
-          ForEach(model.items) { feed in
-            FeedDiscoveryHeaderView(
-              feed: feed,
-              libraryControlsTrailing: true,
-              onTap: { path.append(FeedPreviewRoute(feed: feed)) },
-              onLikedByTap: { path.append(NavigationDestination.postLikes(feed.uri.uriString())) },
-              onOpenFeed: { open(feed) }
-            )
-          }
-          if let error = model.pagingError {
-            errorView(error) { model.loadMore() }
-          } else if model.isLoadingMore {
-            ProgressView("Loading more feeds…")
-              .frame(maxWidth: .infinity)
-          } else if model.cursor != nil {
-            Button("Load More") { model.loadMore() }
-              .buttonStyle(.bordered)
-              .frame(maxWidth: .infinity)
-              .disabled(model.isRefreshing || model.normalizedQuery != model.resultQuery)
-          }
-        }
-      }
-      .padding()
-    }
-    .searchable(text: $model.query, prompt: "Search feeds")
-    .onSubmit(of: .search) { model.submit() }
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button("Refresh", systemImage: "arrow.clockwise") { model.refresh() }
-          .disabled(model.isInitialLoading || model.isRefreshing)
-      }
+    .onDisappear {
+      model?.cancel()
+      previewModel?.cancel()
     }
   }
 
-  private func errorView(_ message: String, retry: @escaping () -> Void) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Label(message, systemImage: "exclamationmark.triangle")
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-      Button("Try Again", action: retry)
-        .buttonStyle(.bordered)
-    }
-    .accessibilityElement(children: .contain)
+  private var sessionIdentity: DiscoverySessionIdentity {
+    DiscoverySessionIdentity(accountDID: appState.userDID,
+                             client: appState.atProtoClient.map { ObjectIdentifier($0) })
   }
 
   private func open(_ feed: AppBskyFeedDefs.GeneratorView) {
-    if let onOpen { onOpen(feed) }
-    else { sceneContext.navigationManager.navigate(to: .feed(feed.uri)) }
+    if let onOpen { onOpen(feed) } else { sceneContext.navigationManager.navigate(to: .feed(feed.uri)) }
     dismiss()
+  }
+}
+
+private struct DiscoveryNavigationBar: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.navigationBarTitleDisplayMode(.inline)
+    #else
+    content
+    #endif
   }
 }
 
@@ -168,6 +124,16 @@ private struct DiscoverySessionIdentity: Hashable {
 }
 
 private struct FeedPreviewRoute: Hashable {
+  let feed: AppBskyFeedDefs.GeneratorView
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.feed.uri.uriString() == rhs.feed.uri.uriString()
+  }
+
+  func hash(into hasher: inout Hasher) { hasher.combine(feed.uri.uriString()) }
+}
+
+private struct FeedDetailsRoute: Hashable {
   let feed: AppBskyFeedDefs.GeneratorView
 
   static func == (lhs: Self, rhs: Self) -> Bool {

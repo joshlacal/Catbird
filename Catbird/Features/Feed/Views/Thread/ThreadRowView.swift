@@ -11,20 +11,62 @@ import SwiftUI
 /// Renders one `ThreadRow` (everything except the anchor post) together with
 /// the connector pieces that row owns. Shared by the iOS collection view cells
 /// and the macOS SwiftUI thread.
+///
+/// Thread items and profiles are several KB inline, and Debug builds reserve a
+/// stack slot for every view temporary a body builds. So the row keeps them in
+/// `EquatableBox`es and renders posts and tombstones through small child views,
+/// which keeps every value this body handles to a few hundred bytes.
 struct ThreadRowView: View {
   let row: ThreadRow
-  /// The thread item behind post and tombstone rows.
-  let threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem?
+  /// The thread item behind tombstone rows. Post items never become tombstones
+  /// (`ThreadRowBuilder`), so for them only `itemPost` is kept.
+  private let threadItem: EquatableBox<AppBskyUnspeccedGetPostThreadV2.ThreadItem>?
+  /// The item's post, extracted once so the post row borrows it instead of
+  /// copying it out of the item's union on every render.
+  private let itemPost: EquatableBox<AppBskyUnspeccedDefs.ThreadItemPost>?
   /// Author of the row's parent, shown as "in reply to" when the parent is not
   /// the row directly above.
-  let parentAuthor: AppBskyActorDefs.ProfileViewBasic?
+  private let parentAuthor: EquatableBox<AppBskyActorDefs.ProfileViewBasic>?
   @Binding var path: NavigationPath
   let appState: AppState
-  var visibilityContext: PostVisibilityContext = .public
-  var maxContentWidth: CGFloat = .infinity
+  let visibilityContext: PostVisibilityContext
+  let maxContentWidth: CGFloat
   /// Loading state of the action behind `.readMoreUp` / `.showOtherReplies`.
-  var isActionLoading: Bool = false
-  var onAction: (() -> Void)?
+  let isActionLoading: Bool
+  let onAction: (() -> Void)?
+
+  init(
+    row: ThreadRow,
+    threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem?,
+    parentAuthor: AppBskyActorDefs.ProfileViewBasic?,
+    path: Binding<NavigationPath>,
+    appState: AppState,
+    visibilityContext: PostVisibilityContext = .public,
+    maxContentWidth: CGFloat = .infinity,
+    isActionLoading: Bool = false,
+    onAction: (() -> Void)? = nil
+  ) {
+    self.row = row
+    if let threadItem {
+      if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = threadItem.value {
+        self.itemPost = EquatableBox(itemPost)
+        self.threadItem = nil
+      } else {
+        self.itemPost = nil
+        self.threadItem = EquatableBox(threadItem)
+      }
+    } else {
+      self.threadItem = nil
+      self.itemPost = nil
+    }
+    self.parentAuthor = parentAuthor.map { EquatableBox($0) }
+    self._path = path
+    self.appState = appState
+    self.visibilityContext = visibilityContext
+    self.maxContentWidth = maxContentWidth
+    self.isActionLoading = isActionLoading
+    self.onAction = onAction
+  }
 
   private var metrics: ThreadRowMetrics { ThreadRowMetrics(row: row) }
 
@@ -61,8 +103,19 @@ struct ThreadRowView: View {
   private var content: some View {
     switch row.kind {
     case .ancestor, .reply:
-      if let threadItem, case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = threadItem.value {
-        postContent(itemPost)
+      if let itemPost {
+        ThreadReplyPostRow(
+          itemPost: itemPost,
+          parentAuthor: parentAuthor,
+          // A connected parent is visible right above; otherwise name it.
+          showsReplyTarget: !(row.lineIn || row.depth <= 1),
+          isReply: row.kind == .reply,
+          usesTreeGeometry: row.usesTreeGeometry,
+          indentLevel: row.indentLevel,
+          path: $path,
+          appState: appState,
+          visibilityContext: visibilityContext
+        )
       } else {
         tombstoneContent
       }
@@ -75,12 +128,12 @@ struct ThreadRowView: View {
         path.append(NavigationDestination.post(target))
       } label: {
         HStack(spacing: 6) {
-          Text(count == 1 ? "Show 1 more reply" : "Show \(count) more replies")
+          Text(count == 1 ? "Show 1 More Reply" : "Show \(count) More Replies")
             .appFont(AppTextRole.subheadline)
           Image(systemName: "chevron.right")
             .appFont(AppTextRole.caption)
         }
-        .foregroundStyle(Color.accentColor)
+        .foregroundStyle(Color("AccentTextColor"))
         .frame(minHeight: ThreadReplyGeometry.readMoreHeight, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Extend the hit area into the row's padding to reach 44pt without
@@ -102,66 +155,8 @@ struct ThreadRowView: View {
     }
   }
 
-  private func postContent(_ itemPost: AppBskyUnspeccedDefs.ThreadItemPost) -> some View {
-    let rootURI = threadRootURI(for: itemPost.post)
-    // A connected parent is visible right above; otherwise name it.
-    let replyTarget = row.lineIn || row.depth <= 1 ? nil : parentAuthor
-    // Nesting is only drawn with rails, so describe it for VoiceOver.
-    let replyingTo = row.kind == .reply ? parentAuthor.map { Text(verbatim: "@\($0.handle.description)") } : nil
-    let replyLevel = row.usesTreeGeometry ? Text("\(row.indentLevel + 1)") : nil
-    return PostView(
-      post: itemPost.post,
-      grandparentAuthor: replyTarget,
-      isParentPost: false,
-      isSelectable: false,
-      path: $path,
-      appState: appState,
-      hasVisibleThreadContext: true,
-      avatarScale: row.usesTreeGeometry ? .tree : .regular,
-      visibilityContext: visibilityContext,
-      rootPostURI: rootURI,
-      rootAuthorDID: rootURI?.authority,
-      isReplyHiddenByThreadgate: itemPost.hiddenByThreadgate,
-      opThreadPostIndex: itemPost.opThreadPostIndex,
-      opThreadPostCount: itemPost.opThreadPostCount
-    )
-    .contentShape(Rectangle())
-    .onTapGesture {
-      path.append(NavigationDestination.post(itemPost.post.uri))
-    }
-    .accessibilityCustomContent(AccessibilityCustomContentKey("Replying to"), replyingTo, importance: .high)
-    .accessibilityCustomContent(AccessibilityCustomContentKey("Reply level"), replyLevel)
-  }
-
-  @ViewBuilder
-  private var tombstoneContent: some View {
-    if let threadItem {
-      switch threadItem.value {
-      case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
-        BlockedContentCard(
-          relationship: BlockRelationship(threadItemBlocked: blocked),
-          authorDid: blocked.author.did.didString(),
-          postUri: threadItem.uri,
-          variant: .thread,
-          path: $path
-        )
-        .applyAppStateEnvironment(appState)
-
-      case .appBskyUnspeccedDefsThreadItemNotFound, .appBskyUnspeccedDefsThreadItemPost:
-        PostNotFoundView(uri: threadItem.uri, reason: .notFound, path: $path)
-          .applyAppStateEnvironment(appState)
-
-      case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-        Text("Only visible to signed-in users")
-          .appFont(AppTextRole.subheadline)
-          .foregroundStyle(.secondary)
-
-      case .unexpected:
-        Text("This post can’t be displayed")
-          .appFont(AppTextRole.subheadline)
-          .foregroundStyle(.secondary)
-      }
-    }
+  private var tombstoneContent: ThreadTombstoneRow {
+    ThreadTombstoneRow(threadItem: threadItem, path: $path, appState: appState)
   }
 
   /// Extra hit area around compact text controls so they reach the 44pt minimum.
@@ -180,7 +175,7 @@ struct ThreadRowView: View {
             .controlSize(.small)
         }
       }
-      .foregroundStyle(Color.accentColor)
+      .foregroundStyle(Color("AccentTextColor"))
       .frame(minHeight: ThreadReplyGeometry.readMoreHeight)
       .frame(maxWidth: .infinity, alignment: alignment)
       .contentShape(Rectangle().inset(by: -Self.hitAreaOutset))
@@ -200,6 +195,149 @@ private func threadRootURI(for post: AppBskyFeedDefs.PostView) -> ATProtocolURI?
   return post.uri
 }
 
+// MARK: - Row content
+
+/// A post row's `PostView`. Its own view, so the row's body only holds these
+/// few fields; the post view and its modifiers are built in this body alone.
+private struct ThreadReplyPostRow: View {
+  let itemPost: EquatableBox<AppBskyUnspeccedDefs.ThreadItemPost>
+  let parentAuthor: EquatableBox<AppBskyActorDefs.ProfileViewBasic>?
+  /// Names the parent as "in reply to" because it is not the row directly above.
+  let showsReplyTarget: Bool
+  let isReply: Bool
+  let usesTreeGeometry: Bool
+  let indentLevel: Int
+  @Binding var path: NavigationPath
+  let appState: AppState
+  let visibilityContext: PostVisibilityContext
+
+  var body: some View {
+    let rootURI = threadRootURI(for: itemPost.value.post)
+    return PostView(
+      post: itemPost.value.post,
+      grandparentAuthor: showsReplyTarget ? parentAuthor?.value : nil,
+      isParentPost: false,
+      isSelectable: false,
+      path: $path,
+      appState: appState,
+      hasVisibleThreadContext: true,
+      avatarScale: usesTreeGeometry ? .tree : .regular,
+      visibilityContext: visibilityContext,
+      rootPostURI: rootURI,
+      rootAuthorDID: rootURI?.authority,
+      isReplyHiddenByThreadgate: itemPost.value.hiddenByThreadgate,
+      opThreadPostIndex: itemPost.value.opThreadPostIndex,
+      opThreadPostCount: itemPost.value.opThreadPostCount
+    )
+    .contentShape(Rectangle())
+    .onTapGesture {
+      path.append(NavigationDestination.post(itemPost.value.post.uri))
+    }
+    .accessibilityCustomContent(AccessibilityCustomContentKey("Replying to"), replyingTo, importance: .high)
+    .accessibilityCustomContent(AccessibilityCustomContentKey("Reply level"), replyLevel)
+  }
+
+  /// Nesting is only drawn with rails, so describe it for VoiceOver.
+  private var replyingTo: Text? {
+    isReply ? parentAuthor.map { Text(verbatim: "@\($0.value.handle.description)") } : nil
+  }
+
+  private var replyLevel: Text? {
+    usesTreeGeometry ? Text("\(indentLevel + 1)") : nil
+  }
+}
+
+/// A blocked, missing or unreadable thread item in place of a post.
+private struct ThreadTombstoneRow: View {
+  let threadItem: EquatableBox<AppBskyUnspeccedGetPostThreadV2.ThreadItem>?
+  @Binding var path: NavigationPath
+  let appState: AppState
+
+  var body: some View {
+    if let threadItem {
+      switch Self.tombstone(for: threadItem) {
+      case .blocked(let relationship, let authorDID):
+        ThreadBlockedTombstone(
+          relationship: relationship,
+          authorDID: authorDID,
+          threadItem: threadItem,
+          path: $path,
+          appState: appState
+        )
+
+      case .notFound:
+        ThreadNotFoundTombstone(threadItem: threadItem, path: $path, appState: appState)
+
+      case .noUnauthenticated:
+        Text("Only visible to signed-in users")
+          .appFont(AppTextRole.subheadline)
+          .foregroundStyle(.secondary)
+
+      case .unexpected:
+        Text("This post can’t be displayed")
+          .appFont(AppTextRole.subheadline)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private enum Tombstone {
+    case blocked(BlockRelationship, authorDID: String)
+    case notFound
+    case noUnauthenticated
+    case unexpected
+  }
+
+  /// Reads the item's union in a plain function, so the builder above only
+  /// switches over these small values.
+  private static func tombstone(
+    for threadItem: EquatableBox<AppBskyUnspeccedGetPostThreadV2.ThreadItem>
+  ) -> Tombstone {
+    switch threadItem.value.value {
+    case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
+      return .blocked(BlockRelationship(threadItemBlocked: blocked), authorDID: blocked.author.did.didString())
+    case .appBskyUnspeccedDefsThreadItemNotFound, .appBskyUnspeccedDefsThreadItemPost:
+      return .notFound
+    case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+      return .noUnauthenticated
+    case .unexpected:
+      return .unexpected
+    }
+  }
+}
+
+/// The blocked-post card, in its own view so the tombstone's branches stay small.
+private struct ThreadBlockedTombstone: View {
+  let relationship: BlockRelationship
+  let authorDID: String
+  let threadItem: EquatableBox<AppBskyUnspeccedGetPostThreadV2.ThreadItem>
+  @Binding var path: NavigationPath
+  let appState: AppState
+
+  var body: some View {
+    BlockedContentCard(
+      relationship: relationship,
+      authorDid: authorDID,
+      postUri: threadItem.value.uri,
+      variant: .thread,
+      path: $path
+    )
+    .applyAppStateEnvironment(appState)
+  }
+}
+
+/// The not-found tombstone, in its own view so the tombstone's branches stay small.
+private struct ThreadNotFoundTombstone: View {
+  let threadItem: EquatableBox<AppBskyUnspeccedGetPostThreadV2.ThreadItem>
+  @Binding var path: NavigationPath
+  let appState: AppState
+
+  var body: some View {
+    PostNotFoundView(uri: threadItem.value.uri, reason: .notFound, path: $path)
+      .applyAppStateEnvironment(appState)
+  }
+}
+
 // MARK: - Connectors
 
 /// The connector pieces one row owns: rails of ancestors that continue past
@@ -212,7 +350,7 @@ struct ThreadRowConnectors: View {
     GeometryReader { geometry in
       connectorPath(height: geometry.size.height)
         .stroke(
-          Color.systemGray4,
+          Color.secondary.opacity(0.4),
           style: StrokeStyle(lineWidth: ThreadReplyGeometry.lineWidth, lineCap: .butt, lineJoin: .round)
         )
     }
@@ -269,13 +407,33 @@ struct ThreadRowConnectors: View {
 /// `ThreadReplyGeometry.anchorAvatarTop`. Replies below draw their own branch
 /// divider, so the anchor has none.
 struct ThreadAnchorPostView: View {
-  let post: AppBskyFeedDefs.PostView
+  /// Boxed: the post is about 3 KB inline, and this view and its body would
+  /// otherwise carry a copy of it.
+  private let post: EquatableBox<AppBskyFeedDefs.PostView>
   let showsLineFromParent: Bool
   @Binding var path: NavigationPath
   let appState: AppState
-  var visibilityContext: PostVisibilityContext = .public
-  var opThreadPostIndex: Int?
-  var opThreadPostCount: Int?
+  let visibilityContext: PostVisibilityContext
+  let opThreadPostIndex: Int?
+  let opThreadPostCount: Int?
+
+  init(
+    post: AppBskyFeedDefs.PostView,
+    showsLineFromParent: Bool,
+    path: Binding<NavigationPath>,
+    appState: AppState,
+    visibilityContext: PostVisibilityContext = .public,
+    opThreadPostIndex: Int? = nil,
+    opThreadPostCount: Int? = nil
+  ) {
+    self.post = EquatableBox(post)
+    self.showsLineFromParent = showsLineFromParent
+    self._path = path
+    self.appState = appState
+    self.visibilityContext = visibilityContext
+    self.opThreadPostIndex = opThreadPostIndex
+    self.opThreadPostCount = opThreadPostCount
+  }
 
   var body: some View {
     ThreadViewMainPostView(
@@ -308,7 +466,7 @@ struct ThreadAnchorLineIn: View {
         path.addLine(
           to: CGPoint(x: lineX, y: ThreadReplyGeometry.anchorAvatarTop - ThreadReplyGeometry.lineGap))
       }
-      .stroke(Color.systemGray4, lineWidth: ThreadReplyGeometry.lineWidth)
+      .stroke(Color.secondary.opacity(0.4), lineWidth: ThreadReplyGeometry.lineWidth)
       .frame(height: ThreadReplyGeometry.anchorAvatarTop, alignment: .top)
       .flipsForRightToLeftLayoutDirection(true)
       .allowsHitTesting(false)

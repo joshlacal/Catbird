@@ -31,6 +31,6 @@ struct MuteActorIntent: AppIntent {
         guard (200..<300).contains(responseCode) else {
             throw IntentError.httpError(responseCode)
         }
-        return .result(dialog: IntentDialog(stringLiteral: "Muted."))
+        return .result(dialog: IntentDialog("Muted."))
     }
 }

@@ -102,95 +102,241 @@ private func friendlyLabelName(_ labelKey: String) -> String {
     }
 }
 
-/// A compact visual indicator for content labels
-struct ContentLabelBadge: View {
-    let label: ComAtprotoLabelDefs.Label
-    let backgroundColor: Color
-    let displayName: String
-    
-    init(label: ComAtprotoLabelDefs.Label) {
-        self.label = label
-        self.displayName = friendlyLabelName(label.val)
-        
-        // Determine background color based on label type
-        switch label.val.lowercased() {
-        case "nsfw", "porn", "nudity", "sexual":
-            backgroundColor = .red.opacity(0.7)
-        case "spam", "scam", "impersonation", "misleading":
-            backgroundColor = .orange.opacity(0.7)
-        case "gore", "violence", "corpse", "self-harm":
-            backgroundColor = .purple.opacity(0.7)
-        case "hate", "hate-symbol", "terrorism":
-            backgroundColor = .red.opacity(0.7)
-        default:
-            backgroundColor = .gray.opacity(0.5)
-        }
-    }
-    
-    var body: some View {
-        Text(displayName)
-            .appFont(AppTextRole.caption2)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(backgroundColor)
-            )
+/// The rendered record, kept separate from labels on its author's profile.
+struct PostLabelSubject {
+    let uri: String
+    let cid: CID
+    let authorDID: String
+    let authorHandle: String
+
+    func labelIDs(in labels: [ComAtprotoLabelDefs.Label]?) -> Set<String> {
+        Set((labels ?? []).filter {
+            ReportingService.isLabelActive($0) && !$0.val.hasPrefix("!")
+                && $0.uri.uriString() == uri && ($0.cid == nil || $0.cid == cid)
+        }.map(\.id))
     }
 }
 
-/// A view that displays content labels directly with clear visual styling
+private struct PostLabelSummaryIDsKey: EnvironmentKey {
+    static let defaultValue: Set<String> = []
+}
+
+extension EnvironmentValues {
+    var postLabelSummaryIDs: Set<String> {
+        get { self[PostLabelSummaryIDsKey.self] }
+        set { self[PostLabelSummaryIDsKey.self] = newValue }
+    }
+}
+
+private struct PostLabelDisplayItem: Identifiable {
+    let id: String
+    let name: String
+    let description: String?
+    let issuer: String
+    let isSelfApplied: Bool
+}
+
+/// A neutral, wrapping summary. Visibility policy stays in ContentLabelManager.
 struct ContentLabelView: View {
     let labels: [ComAtprotoLabelDefs.Label]?
-    
-    /// Determines if a label should be displayed as a badge
-    /// Only show moderation labels, not informational ones
-    private func shouldDisplayLabel(_ label: ComAtprotoLabelDefs.Label) -> Bool {
-        let value = label.val.lowercased()
-        
-        // Skip informational labels
-        let informationalLabels = [
-            "bot-account",
-            "!hide",
-            "!warn",
-            "!no-promote",
-            "!no-unauthenticated"
-        ]
-        
-        if informationalLabels.contains(value) {
-            return false
-        }
-        
-        // Only show moderation/content warning labels
-        let moderationLabels = [
-            "nsfw", "porn", "sexual", "nudity", "suggestive",
-            "gore", "violence", "graphic", "graphic-media", "corpse", "self-harm",
-            "hate", "hate-symbol", "terrorism",
-            "spam", "scam", "impersonation", "misleading"
-        ]
-        
-        return moderationLabels.contains(value)
+    var selfLabelValues: [String] = []
+    var subject: PostLabelSubject? = nil
+
+    @Environment(AppState.self) private var appState
+    @State private var labelers: ContentLabelDefinitionLookup.Services = [:]
+    @State private var subscribedIssuers: Set<String> = []
+    @State private var metadataAccount = ""
+    @State private var metadataClient: ObjectIdentifier?
+    @State private var refresh = UUID()
+    @State private var selectedDetails: DetailsSelection?
+
+    private struct DetailsSelection: Identifiable {
+        let id = UUID()
+        let accountDID: String
     }
-    
+
+    private var metadataRequest: [String] {
+        [appState.userDID, appState.atProtoClient.map { String(describing: ObjectIdentifier($0)) } ?? "",
+         subject?.uri ?? "", subject?.cid.description ?? "", refresh.uuidString]
+        + (labels ?? []).map(\.id).sorted() + selfLabelValues.sorted()
+    }
+
+    private var hasCurrentMetadata: Bool {
+        metadataAccount == appState.userDID
+            && metadataClient == appState.atProtoClient.map { ObjectIdentifier($0) }
+    }
+
+    private func isDisplayValue(_ value: String) -> Bool {
+        !value.isEmpty && !value.hasPrefix("!")
+    }
+
+    private var displayItems: [PostLabelDisplayItem] {
+        // Until preferences load, only the default moderation service and the author are known issuers.
+        let issuers = hasCurrentMetadata ? subscribedIssuers : Set([ReportingService.officialBlueskyDID])
+        let services = hasCurrentMetadata ? labelers : [:]
+        var seen = Set<String>()
+        var selfValues = Set<String>()
+        var result: [PostLabelDisplayItem] = []
+        for label in labels ?? [] {
+            guard ReportingService.isLabelActive(label), isDisplayValue(label.val) else { continue }
+            if let subject {
+                guard label.uri.uriString() == subject.uri,
+                      label.cid == nil || label.cid == subject.cid else { continue }
+            }
+            let isSelf = subject.map { label.src.didString() == $0.authorDID } ?? false
+            guard isSelf || issuers.contains(label.src.didString()) else { continue }
+            let identity = label.id
+            guard seen.insert(identity).inserted else { continue }
+            let info = AccountLabelPresentation(label: label, labeler: services[label.src.didString()])
+            let publishedName = services[label.src.didString()]?.policies.labelValueDefinitions?
+                .first { $0.identifier == label.val }
+                .flatMap { AccountLabelPresentation.localizedStrings($0.locales, preferredLanguages: Locale.preferredLanguages)?.name }
+            let name = publishedName.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                ?? Self.fallbackName(label.val)
+            result.append(PostLabelDisplayItem(id: identity, name: name, description: info.description,
+                issuer: isSelf ? Self.authorAttribution(subject) : info.issuer, isSelfApplied: isSelf))
+            if isSelf { selfValues.insert(label.val) }
+        }
+        for value in selfLabelValues where isDisplayValue(value) && selfValues.insert(value).inserted {
+            result.append(PostLabelDisplayItem(id: "self|\(subject?.uri ?? "")|\(value)",
+                name: Self.fallbackName(value), description: nil,
+                issuer: Self.authorAttribution(subject), isSelfApplied: true))
+        }
+        return result
+    }
+
+    private static func authorAttribution(_ subject: PostLabelSubject?) -> String {
+        guard let subject else { return String(localized: "Post author") }
+        return subject.authorHandle.isEmpty ? subject.authorDID : "@\(subject.authorHandle)"
+    }
+
+    private static func fallbackName(_ value: String) -> String {
+        switch value {
+        case "porn", "nsfw": return String(localized: "Adult Content")
+        case "sexual": return String(localized: "Sexually Suggestive")
+        case "nudity": return String(localized: "Non-Sexual Nudity")
+        case "graphic-media", "graphic", "gore": return String(localized: "Graphic Media")
+        default: return value
+        }
+    }
+
     var body: some View {
-        if let labels = labels, !labels.isEmpty {
-            // Filter labels to only show moderation-related ones
-            let displayLabels = labels.filter { shouldDisplayLabel($0) }
-            
-            if !displayLabels.isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 6) {
-                        ForEach(displayLabels, id: \.val) { label in
-                            ContentLabelBadge(label: label)
+        let items = displayItems
+        let request = metadataRequest
+        var seenNames = Set<String>()
+        let names = items.map(\.name).filter { seenNames.insert($0).inserted }
+        Group {
+            if !items.isEmpty {
+                Button {
+                    selectedDetails = DetailsSelection(accountDID: appState.userDID)
+                } label: {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "tag")
+                            .accessibilityHidden(true)
+                        Text(names.joined(separator: " · "))
+                            .lineLimit(nil)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(Color.secondary)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(subject == nil
+                    ? Text("Content labels: \(names.joined(separator: ", "))")
+                    : Text("Post labels: \(names.joined(separator: ", "))"))
+                .accessibilityHint("Shows label descriptions and who applied them")
+                .accessibilityIdentifier("postLabelSummary")
+            }
+        }
+        .task(id: request) { await loadMetadata(for: request) }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FeedPreferencesChanged"))) { notification in
+            if let account = notification.userInfo?["accountDID"] as? String, account != appState.userDID { return }
+            refresh = UUID()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PreferencesManager.acceptLabelersHeaderDidChange)) { notification in
+            guard notification.userInfo?["accountDID"] as? String == appState.userDID else { return }
+            refresh = UUID()
+        }
+        .onChange(of: metadataRequest) { _, _ in selectedDetails = nil }
+        .sheet(item: $selectedDetails) { selection in
+            PostLabelDetailsView(items: displayItems, accountDID: selection.accountDID, isPost: subject != nil)
+        }
+    }
+
+    @MainActor
+    private func loadMetadata(for request: [String]) async {
+        guard !Task.isCancelled, request == metadataRequest else { return }
+        guard (labels ?? []).contains(where: { ReportingService.isLabelActive($0) && isDisplayValue($0.val) }) else { return }
+        let account = appState.userDID
+        let client = appState.atProtoClient
+        let manager = appState.preferencesManager
+        labelers = [:]
+        subscribedIssuers = []
+        metadataAccount = ""
+        metadataClient = nil
+        do {
+            guard let preferences = try manager.confirmedFeedFilterPreferences() ?? manager.retainedLocalFeedFilterPreferences(),
+                  preferences.accountDID == account else { return }
+            guard !Task.isCancelled, request == metadataRequest, appState.userDID == account,
+                  appState.atProtoClient === client, manager.accountDID == account else { return }
+            subscribedIssuers = Set(try ContentLabelDefinitionLookup.subscribedLabelerDIDs(preferences).map { $0.didString() })
+            metadataAccount = account
+            metadataClient = client.map { ObjectIdentifier($0) }
+            guard let client else { return }
+            let services = try await ContentLabelDefinitionLookup.subscribedServices(
+                appState: appState, preferences: preferences, client: client)
+            guard !Task.isCancelled, request == metadataRequest, appState.userDID == account,
+                  appState.atProtoClient === client, manager.accountDID == account else { return }
+            labelers = services
+        } catch {
+            // Keep exact identifiers and issuer DIDs when published display metadata is unavailable.
+        }
+    }
+}
+
+private struct PostLabelDetailsView: View {
+    let items: [PostLabelDisplayItem]
+    let accountDID: String
+    let isPost: Bool
+    @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        NavigationStack {
+            List(items) { item in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(item.name).appFont(AppTextRole.headline)
+                    if let description = item.description, !description.isEmpty {
+                        Text(description).appFont(AppTextRole.body)
+                    }
+                    Group {
+                        if item.isSelfApplied {
+                            Text("Self-applied by \(item.issuer)")
+                        } else {
+                            Text("Issued by \(item.issuer)")
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(6)
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+            }
+            .navigationTitle(isPost ? String(localized: "Post Labels") : String(localized: "Content Labels"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+            }
+            .onChange(of: appState.userDID) { _, value in
+                if value != accountDID { dismiss() }
             }
         }
     }
@@ -208,21 +354,24 @@ struct ContentLabelManager<Content: View>: View {
 
     let labels: [ComAtprotoLabelDefs.Label]?
     // Optional: additional self-applied label values (e.g., from record selfLabels)
-    // Used only for visibility decisions; not displayed as badges.
+    // Also presented as self-applied labels in the read-only summary.
     let selfLabelValues: [String]?
     let contentType: String
+    let selfLabelsAlreadyShown: Bool
     let onReveal: (() -> Void)?
     let visibilityResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
     @State private var isBlurred: Bool
     @State private var contentVisibility: ContentVisibility
     @State private var visibilityRequest = UUID()
     @Environment(AppState.self) private var appState
+    @Environment(\.postLabelSummaryIDs) private var postLabelSummaryIDs
     let content: Content
     
-    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", onReveal: (() -> Void)? = nil, visibilityResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)? = nil, @ViewBuilder content: () -> Content) {
+    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", selfLabelsAlreadyShown: Bool = false, onReveal: (() -> Void)? = nil, visibilityResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)? = nil, @ViewBuilder content: () -> Content) {
         self.labels = labels
         self.selfLabelValues = selfLabelValues
         self.contentType = contentType
+        self.selfLabelsAlreadyShown = selfLabelsAlreadyShown
         self.onReveal = onReveal
         self.visibilityResolver = visibilityResolver
         self.content = content()
@@ -234,6 +383,14 @@ struct ContentLabelManager<Content: View>: View {
         self._isBlurred = State(initialValue: initialVisibility == .warn)
     }
     
+    private var summaryLabels: [ComAtprotoLabelDefs.Label]? {
+        labels?.filter { !postLabelSummaryIDs.contains($0.id) }
+    }
+
+    private var summarySelfLabels: [String] {
+        selfLabelsAlreadyShown ? [] : (selfLabelValues ?? [])
+    }
+
     /// Conservative initial visibility determination without user preferences
     /// This is used before async preference loading completes
     static func getInitialContentVisibility(
@@ -381,8 +538,8 @@ struct ContentLabelManager<Content: View>: View {
             case .warn:
                 VStack(alignment: .leading, spacing: 6) {
                     // Always show labels at the top - direct visibility
-                    if let labels = labels, !labels.isEmpty {
-                        ContentLabelView(labels: labels)
+                    if summaryLabels?.isEmpty == false || !summarySelfLabels.isEmpty {
+                        ContentLabelView(labels: summaryLabels, selfLabelValues: summarySelfLabels)
                             .padding(.bottom, 6)
                     }
                     
@@ -401,35 +558,33 @@ struct ContentLabelManager<Content: View>: View {
                         // When revealed under warn, allow collapsing again to a compact placeholder
                         VStack(alignment: .leading, spacing: 6) {
                             content
+                                .postRevealFade(isEnabled: true)
                                 .overlay(alignment: .topTrailing) {
                                     HStack(spacing: 8) {
                                         if labels != nil && !labels!.isEmpty {
                                             // Reblur button
                                             Button {
-                                                withAnimation {
-                                                    isBlurred = true
-                                                }
+                                                isBlurred = true
                                             } label: {
                                                 Image(systemName: "eye.slash")
                                                     .appFont(AppTextRole.caption)
-                                                    .padding(6)
-                                                    .background(Circle().fill(Color.black.opacity(0.6)))
+                                                    .frame(minWidth: 28, minHeight: 28)
+                                                    .background(Color.black.opacity(0.6), in: Capsule())
                                                     .foregroundStyle(.white)
                                             }
                                         }
                                         // Collapse button
                                         Button {
-                                            withAnimation {
-                                                contentVisibility = .hide
-                                            }
+                                            contentVisibility = .hide
                                         } label: {
                                             HStack(spacing: 6) {
                                                 Image(systemName: "chevron.up.square")
                                                 Text("Collapse")
                                             }
                                             .appFont(AppTextRole.caption)
-                                            .padding(6)
-                                            .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.6)))
+                                            .padding(.horizontal, 10)
+                                            .frame(minHeight: 28)
+                                            .background(Color.black.opacity(0.6), in: Capsule())
                                             .foregroundStyle(.white)
                                         }
                                     }
@@ -442,8 +597,8 @@ struct ContentLabelManager<Content: View>: View {
             case .show:
                 // Show content normally with labels always visible at top
                 VStack(alignment: .leading, spacing: 6) {
-                    if let labels = labels, !labels.isEmpty {
-                        ContentLabelView(labels: labels)
+                    if summaryLabels?.isEmpty == false || !summarySelfLabels.isEmpty {
+                        ContentLabelView(labels: summaryLabels, selfLabelValues: summarySelfLabels)
                             .padding(.bottom, 6)
                     }
                     content
@@ -462,15 +617,15 @@ struct ContentLabelManager<Content: View>: View {
 
     private func revealContent() {
         guard isBlurred else { return }
-        withAnimation { isBlurred = false }
+        isBlurred = false
         onReveal?()
     }
     
     private var hiddenContentPlaceholder: some View {
         VStack(spacing: 8) {
             // Show labels at the top so users know why content was hidden
-            if let labels = labels, !labels.isEmpty {
-                ContentLabelView(labels: labels)
+            if summaryLabels?.isEmpty == false || !summarySelfLabels.isEmpty {
+                ContentLabelView(labels: summaryLabels, selfLabelValues: summarySelfLabels)
                     .padding(.bottom, 8)
             }
             
@@ -487,7 +642,7 @@ struct ContentLabelManager<Content: View>: View {
             SettingsHiddenText(contentType: contentType)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 140)
+        .frame(minHeight: 140)
         .background(Color(platformColor: .platformSystemGray6))
         .cornerRadius(12)
     }
@@ -681,5 +836,33 @@ struct SettingsHiddenText: View {
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal)
+    }
+}
+
+/// Fades only a newly revealed branch. Concealment removes content immediately.
+/// Child media keeps its identity and receives no layout animation transaction.
+private struct PostRevealFadeModifier: ViewModifier {
+    let isEnabled: Bool
+    @Environment(AppState.self) private var appState
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @State private var hasAppeared = false
+
+    private var shouldFade: Bool {
+        isEnabled && !voiceOverEnabled
+            && (!appState.appSettings.effectiveReduceMotion || appState.appSettings.effectivePrefersCrossfade)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .animation(nil, value: hasAppeared)
+            .opacity(shouldFade && !hasAppeared ? 0 : 1)
+            .animation(shouldFade ? .easeInOut(duration: 0.18) : nil, value: hasAppeared)
+            .onAppear { hasAppeared = true }
+    }
+}
+
+extension View {
+    func postRevealFade(isEnabled: Bool) -> some View {
+        modifier(PostRevealFadeModifier(isEnabled: isEnabled))
     }
 }

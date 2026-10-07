@@ -54,6 +54,12 @@ final class FeedModel: StateInvalidationSubscriber {
   @MainActor private(set) var loadMoreError: Error?
   @MainActor private(set) var lastRefreshTime = Date.distantPast
 
+  /// A cache miss or a canceled load is not a successful empty response.
+  @MainActor private var successfulResponseFeedKey: String?
+  @MainActor var hasLoadedInitialResponse: Bool {
+    successfulResponseFeedKey == cacheKey(for: lastFeedType.identifier)
+  }
+
   // Pagination
   @MainActor private var cursor: String?
   
@@ -287,11 +293,18 @@ final class FeedModel: StateInvalidationSubscriber {
   ) async {
     let filterSettings = await getFilterSettings()
     let tunedPosts = await feedTuner.tune(prewarmData, filterSettings: filterSettings)
-    guard let cachedPosts = try? await prepareCachedPosts(tunedPosts, publication: publication) else { return }
+    let cachedPosts: [CachedFeedViewPost]
+    do {
+      cachedPosts = try await prepareCachedPosts(tunedPosts, publication: publication)
+    } catch {
+      guard (try? checkPublication(publication)) != nil, !error.isCancellation else { return }
+      if posts.isEmpty || error.shouldShowToUser { self.error = error }
+      return
+    }
 
     self.posts = cachedPosts
+    self.successfulResponseFeedKey = publication.feedKey
     self.cursor = nil  // Will be set on next loadMore
-    self.isLoading = false
     self.isLoadingMore = false
     self.hasMore = true
     self.lastRefreshTime = Date()
@@ -307,8 +320,7 @@ final class FeedModel: StateInvalidationSubscriber {
     if cachedPosts.count < minPostsThreshold {
       logger.warning("Only \(cachedPosts.count) posts after filtering prewarmed data - fetching more")
       
-      // Clear prewarmed posts and do a normal fetch
-      self.posts = []
+      // Keep the accepted page visible while supplementing it.
       self.isLoading = true
       
       do {
@@ -322,6 +334,7 @@ final class FeedModel: StateInvalidationSubscriber {
         let newPosts = try await prepareCachedPosts(slices, publication: publication)
         
         self.posts = newPosts
+        self.successfulResponseFeedKey = publication.feedKey
         self.cursor = newCursor
         self.isLoading = false
         self.hasMore = newCursor != nil
@@ -331,10 +344,13 @@ final class FeedModel: StateInvalidationSubscriber {
         
         logger.info("Fetched \(newPosts.count) additional posts after insufficient prewarmed data")
       } catch {
-        guard (try? checkPublication(publication)) != nil else { return }
+        guard (try? checkPublication(publication)) != nil, !error.isCancellation else { return }
         logger.error("Failed to fetch additional posts after prewarming: \(error)")
         self.isLoading = false
-        // Keep the prewarmed posts we had rather than showing nothing
+        if posts.isEmpty || error.shouldShowToUser {
+          self.error = error
+        }
+        // The accepted prewarmed page remains visible on failure.
         self.posts = cachedPosts
       }
     }
@@ -349,26 +365,42 @@ final class FeedModel: StateInvalidationSubscriber {
     strategy: FeedLoadStrategy = .fullRefresh
   ) async {
     guard !Task.isCancelled else { return }
-    if lastFeedType != fetch { beginFeedGeneration() }
+    if lastFeedType != fetch {
+      beginFeedGeneration()
+      successfulResponseFeedKey = nil
+    }
     self.lastFeedType = fetch
     feedManager.updateFetchType(fetch)
-    let requestedFeedKey = cacheKey(for: fetch.identifier)
-    let requestedGeneration = publicationGeneration
-    
+    if isLoading || (strategy == .loadIfNeeded && !posts.isEmpty) {
+      return
+    }
+
+    beginFeedGeneration()
+    let publication = publicationIdentity(for: fetch)
+    defer {
+      if publication.generation == publicationGeneration {
+        isLoading = false
+        isBackgroundRefreshing = false
+      }
+    }
+
+    // Loading includes generator metadata and prewarmed-page preparation.
+    if strategy == .backgroundRefresh {
+      isBackgroundRefreshing = true
+    } else {
+      isLoading = true
+    }
+    error = nil
+
     // Check for pre-warmed data from account switch
     if case .timeline = fetch, let prewarmData = appState.prewarmingFeedData, forceRefresh {
       logger.info("Using pre-warmed feed data for smooth account transition")
-      beginFeedGeneration()
-      let publication = publicationIdentity(for: fetch)
-      defer {
-        if publication.generation == publicationGeneration { isLoading = false }
-      }
       await applyPrewarmedData(prewarmData, publication: publication)
       guard (try? checkPublication(publication)) != nil else { return }
       appState.prewarmingFeedData = nil  // Clear after use
       return
     }
-    
+
     // Resolve whether a custom feed's generator accepts feedback. A fresh cached
     // answer applies immediately; otherwise it stays unknown until the network answers.
     if case .feed(let generatorUri) = fetch {
@@ -379,9 +411,7 @@ final class FeedModel: StateInvalidationSubscriber {
         }
       } else {
         let generatorInfo = await fetchFeedGeneratorInfo(for: generatorUri)
-        guard !Task.isCancelled, requestedGeneration == publicationGeneration,
-              requestedFeedKey == cacheKey(for: fetch.identifier),
-              lastFeedType == fetch, feedManager.fetchType == fetch else { return }
+        guard (try? checkPublication(publication)) != nil else { return }
         if let generatorInfo {
           generatorInteractionInfo = appState.feedGeneratorInfoCache.store(generatorInfo, forFeedURI: feedURI)
         } else if generatorInteractionInfo?.feedURI != feedURI {
@@ -393,35 +423,9 @@ final class FeedModel: StateInvalidationSubscriber {
       generatorInteractionInfo = nil
     }
 
-    if isLoading || (strategy == .loadIfNeeded && !posts.isEmpty) {
-      return
-    }
-
-    guard requestedGeneration == publicationGeneration,
-          requestedFeedKey == cacheKey(for: fetch.identifier),
-          lastFeedType == fetch, feedManager.fetchType == fetch else { return }
-    beginFeedGeneration()
-    let publication = publicationIdentity(for: fetch)
-    defer {
-      if publication.generation == publicationGeneration {
-        if strategy == .backgroundRefresh {
-          isBackgroundRefreshing = false
-        } else {
-          isLoading = false
-        }
-      }
-    }
-
-    if strategy == .backgroundRefresh {
-      isBackgroundRefreshing = true
-    } else {
-      isLoading = true
-    }
-
-    error = nil
-
     guard appState.atProtoClient != nil else {
       logger.warning("🔥 FEED MODEL: No AT Proto client available - cannot load feed data for \(fetch.identifier)")
+      error = FeedError.clientNotAvailable
       if strategy == .backgroundRefresh {
         isBackgroundRefreshing = false
       } else {
@@ -446,6 +450,7 @@ final class FeedModel: StateInvalidationSubscriber {
       self.cursor = newCursor
       self.hasMore = newCursor != nil
       self.lastRefreshTime = Date()
+      self.successfulResponseFeedKey = publication.feedKey
 
       if strategy == .backgroundRefresh && !posts.isEmpty {
         let existingIds = Set(posts.map { $0.id })
@@ -483,8 +488,9 @@ final class FeedModel: StateInvalidationSubscriber {
       // Use standardized error handling
       error.logError(context: "Feed load for \(fetch.identifier)", operation: "loadFeed")
       
-      // Only show errors to user if they're not cancellations
-      if publication.generation == publicationGeneration && error.shouldShowToUser {
+      // An empty feed must expose a failed first page, including transient errors.
+      if (try? checkPublication(publication)) != nil, !error.isCancellation,
+         posts.isEmpty || error.shouldShowToUser {
         self.error = error
       }
     }
@@ -594,7 +600,7 @@ final class FeedModel: StateInvalidationSubscriber {
   ///   network. Restored or prewarmed pages may predate an interaction the shadow
   ///   already holds, so they must not be allowed to clear it.
   private func refreshPostShadows(_ posts: [AppBskyFeedDefs.FeedViewPost], authoritative: Bool = true) async {
-    await SpotlightEntityDonator.shared.donate(posts: posts.map(\.post))
+    await SpotlightEntityDonator.shared.donateFeed(posts: posts.map(\.post), viewerDID: appState.userDID)
 
     // Use task group for parallel shadow updates
     await withTaskGroup(of: Void.self) { group in
@@ -850,7 +856,10 @@ final class FeedModel: StateInvalidationSubscriber {
   ) async {
     guard !Task.isCancelled else { return }
     // Update feed type
-    if lastFeedType != fetch { beginFeedGeneration() }
+    if lastFeedType != fetch {
+      beginFeedGeneration()
+      successfulResponseFeedKey = nil
+    }
     lastFeedType = fetch
     feedManager.updateFetchType(fetch)
 
@@ -884,6 +893,7 @@ final class FeedModel: StateInvalidationSubscriber {
     // Check for client availability
     guard appState.atProtoClient != nil else {
       logger.warning("🔥 FEED MODEL: No AT Proto client available - cannot load feed data for \(fetch.identifier)")
+      error = FeedError.clientNotAvailable
       if strategy == .backgroundRefresh {
         isBackgroundRefreshing = false
       } else {
@@ -911,6 +921,7 @@ final class FeedModel: StateInvalidationSubscriber {
 
       // Update posts list
       updatePosts(filteredPosts, strategy: strategy, forceRefresh: forceRefresh)
+      successfulResponseFeedKey = publication.feedKey
 
       // Update pagination state
       cursor = newCursor
@@ -920,7 +931,7 @@ final class FeedModel: StateInvalidationSubscriber {
       // Update shadows
       await refreshPostShadows(fetchedPosts)
     } catch {
-      if publication.generation == publicationGeneration, !Task.isCancelled, !error.isCancellation {
+      if (try? checkPublication(publication)) != nil, !error.isCancellation {
         self.error = error
       }
     }
@@ -1085,6 +1096,7 @@ final class FeedModel: StateInvalidationSubscriber {
   @MainActor
   private func clearAndReloadFeed() async {
     beginFeedGeneration()
+    successfulResponseFeedKey = nil
     // Clear current posts
     posts.removeAll()
     cursor = nil

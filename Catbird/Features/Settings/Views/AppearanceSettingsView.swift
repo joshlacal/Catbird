@@ -166,9 +166,10 @@ struct AccentColorPicker: View {
               .appFont(AppTextRole.caption2)
               .foregroundStyle(selection == option.rawValue ? (colorScheme == .dark ? option.textDarkColor : option.textColor) : .secondary)
           }
+          .frame(minWidth: 44, minHeight: 44)
+          .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(minWidth: 44, minHeight: 44)
         .accessibilityLabel(option.displayName)
         .accessibilityAddTraits(selection == option.rawValue ? .isSelected : [])
       }

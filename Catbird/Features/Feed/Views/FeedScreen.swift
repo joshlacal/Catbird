@@ -37,6 +37,9 @@ struct FeedScreen: View {
     ))
     .navigationTitle(metadata.generator?.displayName ?? "Feed")
     .toolbarTitleDisplayMode(.inline)
+    // The header's own menu also offers Report, but the header only appears once
+    // the feed has posts; this keeps reporting reachable while it is loading,
+    // empty or failed.
     .toolbar {
       if metadata.generator != nil {
         ToolbarItem(placement: .primaryAction) {

@@ -29,7 +29,8 @@ struct LabelerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     EmbeddedAuthorNameView(
                         name: labeler.creator.displayName ?? labeler.creator.handle.description,
-                        verification: labeler.creator.verification
+                        verification: labeler.creator.verification,
+                        isAutomated: AutomationBadge.isSelfDeclared(labels: labeler.creator.labels, authorDID: labeler.creator.did)
                     )
                         .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)
@@ -160,7 +161,8 @@ struct LabelerDetailedView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     EmbeddedAuthorNameView(
                         name: labeler.creator.displayName ?? labeler.creator.handle.description,
-                        verification: labeler.creator.verification
+                        verification: labeler.creator.verification,
+                        isAutomated: AutomationBadge.isSelfDeclared(labels: labeler.creator.labels, authorDID: labeler.creator.did)
                     )
                         .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)

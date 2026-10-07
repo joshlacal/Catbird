@@ -57,15 +57,35 @@ struct BskyConversationEntity: AppEntity {
 struct BskyConversationQuery: EntityQuery, EntityStringQuery {
   init() {}
 
+  /// A conversation ID belongs to exactly one account, but saved shortcuts hand
+  /// back only the ID — including conversations picked under a non-active
+  /// account. Resolve against the active account first, then the other
+  /// signed-in accounts for anything it can't see.
   func entities(for identifiers: [String]) async throws -> [BskyConversationEntity] {
-    let client = try await IntentClientProvider.shared.client(for: IntentAccountResolver.activeDID())
-    let currentDID = try await client.getDid()
+    let activeDID = IntentAccountResolver.activeDID()
+    let otherDIDs = AccountEntityQuery.allAccounts().map(\.id).filter { $0 != activeDID }
+    let candidateDIDs = [activeDID].compactMap { $0 } + otherDIDs
+    guard !candidateDIDs.isEmpty else { throw IntentError.notSignedIn }
+
     var results: [BskyConversationEntity] = []
-    for identifier in identifiers {
-      let output = try unwrapIntentResponse(
-        await client.chat.bsky.convo.getConvo(
-          input: ChatBskyConvoGetConvo.Parameters(convoId: identifier)))
-      results.append(BskyConversationEntity(from: output.convo, currentUserDID: currentDID))
+    var unresolved = identifiers
+    for did in candidateDIDs where !unresolved.isEmpty {
+      guard let client = try? await IntentClientProvider.shared.client(for: did),
+        let currentDID = try? await client.getDid()
+      else { continue }
+      var stillUnresolved: [String] = []
+      for identifier in unresolved {
+        let response = try? await client.chat.bsky.convo.getConvo(
+          input: ChatBskyConvoGetConvo.Parameters(convoId: identifier))
+        if let response, (200..<300).contains(response.responseCode),
+          let convo = response.data?.convo
+        {
+          results.append(BskyConversationEntity(from: convo, currentUserDID: currentDID))
+        } else {
+          stillUnresolved.append(identifier)
+        }
+      }
+      unresolved = stillUnresolved
     }
     return results
   }

@@ -54,6 +54,14 @@ final class ListsManagerViewModel {
     }
   }
   
+  /// People lists first, then moderation lists, then anything else.
+  var sortedCategories: [String] {
+    let order = ["People Lists", "Moderation Lists", "Other Lists"]
+    return groupedLists.keys.sorted {
+      (order.firstIndex(of: $0) ?? order.count) < (order.firstIndex(of: $1) ?? order.count)
+    }
+  }
+
   var groupedLists: [String: [AppBskyGraphDefs.ListView]] {
     Dictionary(grouping: filteredLists) { list in
       switch list.purpose {
@@ -147,11 +155,8 @@ final class ListsManagerViewModel {
 }
 
 struct ListsManagerView: View {
-  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
-  @Environment(\.dismiss) private var dismiss
   @State private var viewModel: ListsManagerViewModel?
-  @State private var localDestination: ListLocalDestination?
 
   /// True when shown inside Settings › Moderation. The Settings sheet has its own navigation
   /// stack, so rows push there instead of onto the tab behind the sheet, and only moderation
@@ -164,17 +169,41 @@ struct ListsManagerView: View {
   
   var body: some View {
     Group {
-      if let viewModel = viewModel {
-        contentView(viewModel: viewModel)
+      if let viewModel {
+        ListsManagerContent(viewModel: viewModel, isHostedInSettings: isHostedInSettings)
       } else {
         ProgressView()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle(isHostedInSettings ? "Moderation Lists" : "My Lists")
     .modifier(ListsManagerTitleDisplayModifier(isInline: isHostedInSettings))
-    .toolbar {
-      if let viewModel = viewModel {
+    .environment(\.listsUseLocalNavigation, isHostedInSettings)
+    .task {
+      guard viewModel == nil else { return }
+      let model = ListsManagerViewModel(
+        appState: appState,
+        purposeFilter: isHostedInSettings ? .appbskygraphdefsmodlist : nil
+      )
+      viewModel = model
+      await model.loadData()
+    }
+  }
+}
+
+// MARK: - Content
+
+/// The loaded screen. Takes a non-optional view model so its bindings and modifiers stay simple.
+private struct ListsManagerContent: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Bindable var viewModel: ListsManagerViewModel
+  let isHostedInSettings: Bool
+  @State private var localDestination: ListLocalDestination?
+
+  var body: some View {
+    content
+      .toolbar {
         ToolbarItem(placement: .primaryAction) {
           Button {
             viewModel.showingCreateList = true
@@ -184,65 +213,63 @@ struct ListsManagerView: View {
           .accessibilityLabel("New List")
         }
       }
-    }
-    .listLocalNavigationDestination($localDestination)
-    .environment(\.listsUseLocalNavigation, isHostedInSettings)
-    .task {
-      if viewModel == nil {
-        viewModel = ListsManagerViewModel(
-          appState: appState,
-          purposeFilter: isHostedInSettings ? .appbskygraphdefsmodlist : nil
-        )
-        await viewModel?.loadData()
+      .listLocalNavigationDestination($localDestination)
+      .refreshable {
+        await viewModel.refreshData()
       }
+      .searchable(text: $viewModel.searchText, prompt: "Search your lists")
+      .modifier(ListsManagerPresentations(viewModel: viewModel, isHostedInSettings: isHostedInSettings))
+  }
+
+  @ViewBuilder
+  private var content: some View {
+    if viewModel.isLoading && viewModel.userLists.isEmpty {
+      ProgressView()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if !viewModel.hasLists {
+      emptyStateView
+    } else if viewModel.filteredLists.isEmpty {
+      ContentUnavailableView.search(text: viewModel.searchText)
+    } else {
+      listsView
     }
-    .refreshable {
-      await viewModel?.refreshData() ?? ()
+  }
+
+  private var emptyStateView: some View {
+    ContentUnavailableView {
+      Label(
+        isHostedInSettings ? "No Moderation Lists Yet" : "No Lists Yet",
+        systemImage: "list.bullet.rectangle"
+      )
+    } description: {
+      Text(isHostedInSettings
+        ? "Create a moderation list to mute or block a group of accounts at once."
+        : "Create your first list to organize and curate accounts.")
+    } actions: {
+      Button("Create List") {
+        viewModel.showingCreateList = true
+      }
+      .buttonStyle(.borderedProminent)
     }
-    .searchable(text: Binding(
-      get: { viewModel?.searchText ?? "" },
-      set: { viewModel?.searchText = $0 }
-    ), prompt: "Search your lists")
-    .alert("Something Went Wrong", isPresented: Binding(
-      get: { viewModel?.showingError ?? false },
-      set: { if !$0 { viewModel?.showingError = false } }
-    )) {
-      Button("OK") {
-        viewModel?.showingError = false
-      }
-    } message: {
-      if let errorMessage = viewModel?.errorMessage {
-        Text(errorMessage)
-      }
-    }
-    .alert("Delete List", isPresented: Binding(
-      get: { viewModel?.showingDeleteConfirmation ?? false },
-      set: { if !$0 { viewModel?.showingDeleteConfirmation = false } }
-    )) {
-      Button("Cancel", role: .cancel) {
-        viewModel?.listToDelete = nil
-      }
-      Button("Delete", role: .destructive) {
-        if let list = viewModel?.listToDelete {
-          Task {
-            await viewModel?.deleteList(list)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var listsView: some View {
+    let groupedLists = viewModel.groupedLists
+    return List {
+      ForEach(viewModel.sortedCategories, id: \.self) { category in
+        Section(category) {
+          ForEach(groupedLists[category] ?? [], id: \.uri) { list in
+            ListManagerRow(
+              list: list,
+              onNavigate: { navigate(to: $0) },
+              onDelete: { viewModel.confirmDelete(list) }
+            )
           }
         }
-        viewModel?.listToDelete = nil
-      }
-    } message: {
-      if let list = viewModel?.listToDelete {
-        Text("Delete “\(list.name)”? This can’t be undone.")
       }
     }
-    .sheet(isPresented: Binding(
-      get: { viewModel?.showingCreateList ?? false },
-      set: { if !$0 { viewModel?.showingCreateList = false } }
-    ), onDismiss: {
-      viewModel?.syncFromCache()
-    }) {
-      CreateListView(initialPurpose: isHostedInSettings ? .appbskygraphdefsmodlist : .appbskygraphdefscuratelist)
-    }
+    .modifier(ListsManagerListStyleModifier())
   }
 
   private func navigate(to destination: ListLocalDestination) {
@@ -259,84 +286,55 @@ struct ListsManagerView: View {
       sceneContext.navigationManager.navigate(to: .listMembers(uri))
     }
   }
-  
-  @ViewBuilder
-  private func contentView(viewModel: ListsManagerViewModel) -> some View {
-    if viewModel.isLoading && viewModel.userLists.isEmpty {
-      loadingView
-    } else if !viewModel.hasLists {
-      emptyStateView
-    } else {
-      listsView
-    }
-  }
-  
-  private var loadingView: some View {
-    VStack(spacing: 16) {
-      ProgressView()
-        .scaleEffect(1.5)
-      Text("Loading your lists…")
-        .font(.headline)
-        .foregroundStyle(.secondary)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-  
-  private var emptyStateView: some View {
-    VStack(spacing: 24) {
-      Image(systemName: "list.bullet.rectangle")
-        .font(.system(size: 64))
-        .foregroundStyle(.secondary)
-      
-      VStack(spacing: 8) {
-        Text(isHostedInSettings ? "No Moderation Lists Yet" : "No Lists Yet")
-          .font(.title2)
-          .fontWeight(.semibold)
-        
-        Text(isHostedInSettings
-          ? "Create a moderation list to mute or block a group of accounts at once."
-          : "Create your first list to organize and curate accounts.")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-      }
-      
-      Button("Create Your First List") {
-        viewModel?.showingCreateList = true
-      }
-      .buttonStyle(.borderedProminent)
-    }
-    .padding(40)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-  
-  @ViewBuilder
-  private var listsView: some View {
-    if let viewModel = viewModel {
-      let sortedCategories = Array(viewModel.groupedLists.keys.sorted())
-      List {
-        ForEach(sortedCategories, id: \.self) { category in
-          let categoryLists = viewModel.groupedLists[category] ?? []
-          Section(category) {
-            ForEach(categoryLists, id: \.uri) { list in
-              ListManagerRow(
-                list: list,
-                onNavigate: { navigate(to: $0) },
-                onDelete: {
-                  viewModel.confirmDelete(list)
-                }
-              )
-            }
-          }
+}
+
+// MARK: - Presentations
+
+/// Error and delete alerts plus the create-list sheet.
+private struct ListsManagerPresentations: ViewModifier {
+  @Bindable var viewModel: ListsManagerViewModel
+  let isHostedInSettings: Bool
+
+  func body(content: Content) -> some View {
+    content
+      .alert("Something Went Wrong", isPresented: $viewModel.showingError) {
+        Button("OK") {
+          viewModel.showingError = false
+        }
+      } message: {
+        if let errorMessage = viewModel.errorMessage {
+          Text(errorMessage)
         }
       }
-      #if os(iOS)
+      .alert("Delete List", isPresented: $viewModel.showingDeleteConfirmation, presenting: viewModel.listToDelete) { list in
+        Button("Cancel", role: .cancel) {
+          viewModel.listToDelete = nil
+        }
+        Button("Delete", role: .destructive) {
+          viewModel.listToDelete = nil
+          Task { await viewModel.deleteList(list) }
+        }
+      } message: { list in
+        Text("Delete “\(list.name)”? This can’t be undone.")
+      }
+      .sheet(isPresented: $viewModel.showingCreateList, onDismiss: {
+        viewModel.syncFromCache()
+      }) {
+        CreateListView(initialPurpose: isHostedInSettings ? .appbskygraphdefsmodlist : .appbskygraphdefscuratelist)
+      }
+  }
+}
+
+private struct ListsManagerListStyleModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content
       .listStyle(.insetGrouped)
       .scrollContentBackground(.hidden)
-      #elseif os(macOS)
+    #else
+    content
       .listStyle(.inset)
-      #endif
-    }
+    #endif
   }
 }
 
@@ -352,76 +350,31 @@ struct ListManagerRow: View {
     Button {
       onNavigate(.detail(list.uri))
     } label: {
-      HStack(spacing: 12) {
-        // List Avatar
-        LazyImage(url: list.finalAvatarURL()) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .scaledToFill()
-          } else {
-            listPlaceholderIcon
-          }
-        }
-        .frame(width: 48, height: 48)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        
-        // List Info
-        VStack(alignment: .leading, spacing: 4) {
-          HStack {
-            Text(list.name)
-              .font(.subheadline)
-              .fontWeight(.medium)
-              .foregroundStyle(.primary)
-              .lineLimit(1)
-            
-            Spacer()
-            
-            purposeIcon
-          }
-          
-          if let description = list.description, !description.isEmpty {
-            Text(description)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .lineLimit(2)
-          }
-          
-          HStack {
-            Text("^[\(list.listItemCount ?? 0) member](inflect: true)")
-              .font(.caption2)
-              .foregroundStyle(.tertiary)
-            
-            Spacer()
-            
-            // Manage Members button
-            Button(action: {
-              onNavigate(.members(list.uri))
-            }) {
-              Image(systemName: "person.2.badge.gearshape")
-                .font(.caption)
-                .foregroundStyle(.blue)
-                .padding(4)
-                .background(Circle().fill(.blue.opacity(0.1)))
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Manage Members")
-            
-            Text(purposeText)
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(.quaternary)
-              .clipShape(Capsule())
-          }
-        }
-      }
-      .contentShape(Rectangle())
+      ListSummaryRow(list: list)
     }
     .buttonStyle(.plain)
+    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+      Button(role: .destructive) {
+        onDelete()
+      } label: {
+        Label("Delete List", systemImage: "trash")
+      }
+
+      Button {
+        onNavigate(.edit(list.uri))
+      } label: {
+        Label("Edit List", systemImage: "pencil")
+      }
+      .tint(.accentColor)
+    }
+    .swipeActions(edge: .leading) {
+      Button {
+        onNavigate(.members(list.uri))
+      } label: {
+        Label("Manage Members", systemImage: "person.2.badge.gearshape")
+      }
+      .tint(.indigo)
+    }
     .contextMenu {
       Button {
         onNavigate(.edit(list.uri))
@@ -442,61 +395,6 @@ struct ListManagerRow: View {
       } label: {
         Label("Delete List", systemImage: "trash")
       }
-    }
-  }
-  
-  private var listPlaceholderIcon: some View {
-    RoundedRectangle(cornerRadius: 8)
-      .fill(.secondary.opacity(0.3))
-      .overlay {
-        Image(systemName: "list.bullet")
-          .font(.title2)
-          .foregroundStyle(.secondary)
-      }
-  }
-  
-  private var purposeIcon: some View {
-    Image(systemName: iconForPurpose)
-      .font(.caption)
-      .foregroundStyle(colorForPurpose)
-  }
-  
-  private var iconForPurpose: String {
-    switch list.purpose {
-    case .appbskygraphdefscuratelist:
-      return "star.fill"
-    case .appbskygraphdefsmodlist:
-      return "shield.lefthalf.filled"
-    case .appbskygraphdefsreferencelist:
-      return "bookmark.fill"
-    default:
-      return "questionmark.circle"
-    }
-  }
-  
-  private var colorForPurpose: Color {
-    switch list.purpose {
-    case .appbskygraphdefscuratelist:
-      return .yellow
-    case .appbskygraphdefsmodlist:
-      return .red
-    case .appbskygraphdefsreferencelist:
-      return .blue
-    default:
-      return .gray
-    }
-  }
-  
-  private var purposeText: String {
-    switch list.purpose {
-    case .appbskygraphdefscuratelist:
-      return "People"
-    case .appbskygraphdefsmodlist:
-      return "Moderation"
-    case .appbskygraphdefsreferencelist:
-      return "Reference"
-    default:
-      return "Unknown"
     }
   }
 }

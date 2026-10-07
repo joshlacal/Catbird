@@ -39,13 +39,16 @@ enum TrendingTopicPreviewPolicy {
     var authorIDs = Set<String>()
     var mediaSourceIDs = Set<String>()
     var mediaURLs = Set<URL>()
+    var mediaAssets = Set<AssetIdentity>()
     for post in posts.prefix(30) where permits(post, context: context) {
       let id = post.post.uri.uriString()
       guard postIDs.insert(id).inserted else { continue }
-      if result.media.count < 3, let thumbnail = thumbnail(post.post.embed, sourceID: id),
-         !mediaSourceIDs.contains(thumbnail.sourceID), !mediaURLs.contains(thumbnail.url) {
+      if result.media.count < 3, let thumbnail = thumbnail(post.post.embed, record: recordEmbed(post.post.record), sourceID: id),
+         !mediaSourceIDs.contains(thumbnail.sourceID), !mediaURLs.contains(thumbnail.url),
+         !mediaAssets.contains(thumbnail.asset) {
         mediaSourceIDs.insert(thumbnail.sourceID)
         mediaURLs.insert(thumbnail.url)
+        mediaAssets.insert(thumbnail.asset)
         result.media.append(.init(id: id, url: thumbnail.url))
       }
       let author = post.post.author
@@ -286,36 +289,121 @@ enum TrendingTopicPreviewPolicy {
   private struct Thumbnail {
     let sourceID: String
     let url: URL
+    let asset: AssetIdentity
   }
 
-  private static func thumbnail(_ embed: AppBskyFeedDefs.PostViewEmbedUnion?, sourceID: String, depth: Int = 0) -> Thumbnail? {
+  private enum AssetIdentity: Hashable {
+    case blob(CID)
+    case url(URL)
+  }
+
+  private static func recordEmbed(_ value: ATProtocolValueContainer) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+    guard case .knownType(let record) = value, let post = record as? AppBskyFeedPost else { return nil }
+    return post.embed
+  }
+
+  private static func blobCID(_ blob: Blob?) -> CID? {
+    if let cid = blob?.ref?.cid { return cid }
+    return blob?.cid.flatMap { try? CID.parse($0) }
+  }
+
+  /// Selection metadata only: never rewrite the supplied URL or the image pipeline's cache key.
+  private static func imageAsset(_ url: URL, blob: Blob? = nil, thumbnail: URI? = nil, fullsize: URI? = nil) -> AssetIdentity {
+    if let cid = blobCID(blob) { return .blob(cid) }
+    // URI reconstruction omits credentials and ports; classify the original metadata.
+    for value in [thumbnail, fullsize].compactMap({ $0 }) {
+      guard let metadataURL = URL(string: value.originalString ?? value.uriString()),
+            let cid = cdnBlobCID(metadataURL) else { continue }
+      return .blob(cid)
+    }
+    return .url(url)
+  }
+
+  /// Only the known Bluesky image route names the original blob, across presets/formats.
+  /// Arbitrary hosts, query parameters and video poster filenames cannot establish that identity.
+  private static func cdnBlobCID(_ url: URL) -> CID? {
+    guard ["cdn.bsky.app", "cdn.bsky.social"].contains(url.host?.lowercased() ?? ""),
+          url.scheme == "https", url.user == nil, url.password == nil,
+          url.port == nil || url.port == 443,
+          let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return nil }
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.count == 6, parts[0].isEmpty, parts[1] == "img",
+          ["feed_thumbnail", "feed_fullsize"].contains(String(parts[2])), parts[3] == "plain",
+          let owner = String(parts[4]).removingPercentEncoding, DID.isValidDID(owner),
+          let file = String(parts[5]).removingPercentEncoding else { return nil }
+    let asset = file.split(separator: "@", omittingEmptySubsequences: false)
+    guard asset.count == 2, ["jpeg", "png", "webp", "avif", "jxl"].contains(String(asset[1])) else { return nil }
+    return try? CID.parse(String(asset[0]))
+  }
+
+  private static func thumbnail(_ embed: AppBskyFeedDefs.PostViewEmbedUnion?,
+    record: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?, sourceID: String, depth: Int = 0) -> Thumbnail? {
     guard depth <= 3 else { return nil }
-    let url: URL?
     switch embed {
     case .appBskyEmbedImagesView(let images):
-      url = images.images.lazy.compactMap { imageURL($0.thumb.uriString()) }.first
-    case .appBskyEmbedVideoView(let video): url = video.thumbnail.flatMap { imageURL($0.uriString()) }
+      let blobs: [AppBskyEmbedImages.Image]
+      if case .appBskyEmbedImages(let original) = record, original.images.count == images.images.count {
+        blobs = original.images
+      } else { blobs = [] }
+      for (index, image) in images.images.enumerated() {
+        guard let url = imageURL(image.thumb.uriString()) else { continue }
+        return Thumbnail(sourceID: sourceID, url: url,
+          asset: imageAsset(url, blob: blobs.indices.contains(index) ? blobs[index].image : nil, thumbnail: image.thumb, fullsize: image.fullsize))
+      }
+    case .appBskyEmbedVideoView(let video):
+      guard let url = video.thumbnail.flatMap({ imageURL($0.uriString()) }) else { return nil }
+      let cid: CID
+      if case .appBskyEmbedVideo(let original) = record {
+        cid = blobCID(original.video) ?? video.cid
+      } else { cid = video.cid }
+      // View.cid names the video blob, not the enclosing post record or generated poster JPEG.
+      return Thumbnail(sourceID: sourceID, url: url, asset: .blob(cid))
     case .appBskyEmbedGalleryView(let gallery):
-      url = gallery.items.lazy.compactMap { item -> URL? in
-        if case .appBskyEmbedGalleryViewImage(let image) = item { return imageURL(image.thumbnail.uriString()) }
-        return nil
-      }.first
-    case .appBskyEmbedExternalView(let external): url = external.external.thumb.flatMap { imageURL($0.uriString()) }
+      let blobs: [AppBskyEmbedGallery.AppBskyEmbedGalleryItemsUnion]
+      if case .appBskyEmbedGallery(let original) = record, original.items.count == gallery.items.count {
+        blobs = original.items
+      } else { blobs = [] }
+      for (index, item) in gallery.items.enumerated() {
+        guard case .appBskyEmbedGalleryViewImage(let image) = item,
+              let url = imageURL(image.thumbnail.uriString()) else { continue }
+        let blob: Blob?
+        if blobs.indices.contains(index), case .appBskyEmbedGalleryImage(let original) = blobs[index] {
+          blob = original.image
+        } else { blob = nil }
+        return Thumbnail(sourceID: sourceID, url: url, asset: imageAsset(url, blob: blob, thumbnail: image.thumbnail, fullsize: image.fullsize))
+      }
+    case .appBskyEmbedExternalView(let external):
+      guard let url = external.external.thumb.flatMap({ imageURL($0.uriString()) }) else { return nil }
+      let blob: Blob?
+      if case .appBskyEmbedExternal(let original) = record { blob = original.external.thumb } else { blob = nil }
+      return Thumbnail(sourceID: sourceID, url: url, asset: imageAsset(url, blob: blob, thumbnail: external.external.thumb))
     case .appBskyEmbedRecordView(let quote): return quoteThumbnail(quote, depth: depth + 1)
     case .appBskyEmbedRecordWithMediaView(let quote):
-      return thumbnail(postEmbed(quote.media), sourceID: sourceID, depth: depth)
+      let media: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
+      if case .appBskyEmbedRecordWithMedia(let original) = record { media = recordMedia(original.media) } else { media = nil }
+      return thumbnail(postEmbed(quote.media), record: media, sourceID: sourceID, depth: depth)
         ?? quoteThumbnail(quote.record, depth: depth + 1)
     default: return nil
     }
-    return url.map { Thumbnail(sourceID: sourceID, url: $0) }
+    return nil
   }
 
   private static func quoteThumbnail(_ quote: AppBskyEmbedRecord.View, depth: Int) -> Thumbnail? {
     guard depth <= 3, case .appBskyEmbedRecordViewRecord(let record) = quote.record else { return nil }
     for embed in (record.embeds ?? []).prefix(4) {
-      if let result = thumbnail(postEmbed(embed), sourceID: record.uri.uriString(), depth: depth) { return result }
+      if let result = thumbnail(postEmbed(embed), record: recordEmbed(record.value), sourceID: record.uri.uriString(), depth: depth) { return result }
     }
     return nil
+  }
+
+  private static func recordMedia(_ embed: AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+    switch embed {
+    case .appBskyEmbedImages(let value): return .appBskyEmbedImages(value)
+    case .appBskyEmbedVideo(let value): return .appBskyEmbedVideo(value)
+    case .appBskyEmbedGallery(let value): return .appBskyEmbedGallery(value)
+    case .appBskyEmbedExternal(let value): return .appBskyEmbedExternal(value)
+    default: return nil
+    }
   }
 
   private static func postEmbed(_ embed: AppBskyEmbedRecord.ViewRecordEmbedsUnion) -> AppBskyFeedDefs.PostViewEmbedUnion {

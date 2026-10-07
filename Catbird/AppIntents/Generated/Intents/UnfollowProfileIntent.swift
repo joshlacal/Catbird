@@ -28,7 +28,7 @@ struct UnfollowProfileIntent: AppIntent {
         }
 
         guard let existingURI = view.viewer?.following else {
-            return .result(dialog: IntentDialog(stringLiteral: "You don't follow them."))
+            return .result(dialog: IntentDialog("You don't follow them."))
         }
         let rkey = try IntentRecordWriteSupport.recordKey(fromViewerURI: existingURI)
         let userDID = try await client.getDid()
@@ -41,7 +41,7 @@ struct UnfollowProfileIntent: AppIntent {
         guard (200..<300).contains(responseCode) else {
             throw IntentError.httpError(responseCode)
         }
-        return .result(dialog: IntentDialog(stringLiteral: "Unfollowed."))
+        return .result(dialog: IntentDialog("Unfollowed."))
 
     }
 }

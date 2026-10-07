@@ -14,6 +14,7 @@ struct TrendingTopicsSection: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
     
     let topics: [AppBskyUnspeccedDefs.TrendView]
     let isLoading: Bool
@@ -45,6 +46,7 @@ struct TrendingTopicsSection: View {
                     if topics.count > maxItems {
                         Button(action: onSeeAll) {
                             Label("All Topics", systemImage: "chevron.right")
+                                .labelStyle(DisclosureLinkLabelStyle())
                                 .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
                                 .frame(minHeight: 44)
                         }
@@ -73,7 +75,7 @@ struct TrendingTopicsSection: View {
             }
         }
         .task(id: appState.topicPreviewPrefetchIdentity(links: topics.map(\.link))) {
-            appState.prefetchTopicPreviews(trends: topics, owner: .search)
+            appState.prefetchTopicPreviews(trends: topics, displayScale: displayScale, owner: .search)
         }
         .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
         .sheet(isPresented: $isShowingCopilot) {
@@ -227,7 +229,7 @@ struct TrendingTopicsSection: View {
                 Text(description)
                     .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ViewThatFits(in: .horizontal) {
@@ -258,19 +260,22 @@ struct TrendingTopicsSection: View {
     }
     
     private func formatTimeSince(_ date: Date) -> String {
-        let now = Date()
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date, to: now)
-        
-        if let hours = components.hour, hours > 0 {
-            return hours == 1 ? "1 hour ago" : "\(hours) hours ago"
-        } else if let minutes = components.minute, minutes > 0 {
-            return minutes == 1 ? "1 min ago" : "\(minutes) mins ago"
-        } else {
-            return "just now"
-        }
+        TrendStartedLabel.text(since: date)
     }
     
 
+}
+
+/// "See all" links in discovery headings: title first, disclosure chevron trailing.
+struct DisclosureLinkLabelStyle: LabelStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    HStack(spacing: 4) {
+      configuration.title
+      configuration.icon
+        .imageScale(.small)
+        .accessibilityHidden(true)
+    }
+  }
 }
 
 /// A common discovery heading with a second row when the title and actions need more room.
