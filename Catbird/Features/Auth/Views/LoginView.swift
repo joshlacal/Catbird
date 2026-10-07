@@ -81,17 +81,9 @@ struct LoginView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                /// Hyperrealistic clouds based on "Clouds" by drift
-                /// https://www.shadertoy.com/view/4tdSWr
-                /// Shader now renders the complete sky+clouds scene opaquely
-                CloudView(
-                    opacity: 1.0,          // Full opacity - shader handles complete scene
-                    cloudScale: 1.1,       // Match original Shadertoy scale
-                    animationSpeed: reduceMotion ? 0 : 1.0,   // Match original speed; still sky with Reduce Motion
-                    shaderMode: .basic     // Use basic shader that matches original closest
-                )
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
+                SkyView(animated: !reduceMotion)
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea()
                 
                 // Main content scroll view
                 ScrollView {
@@ -358,15 +350,6 @@ struct LoginView: View {
                     
                     Spacer(minLength: adaptiveSize(geometry, base: 40, min: 20))
                     
-                    // Subtle credit for shader artist
-                    HStack {
-                        Spacer()
-                        Text("Sky by drift")
-                            .appFont(AppTextRole.caption2)
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .padding(.trailing, 8)
-                            .padding(.bottom, 4)
-                    }
                 }
                 .frame(minHeight: geometry.size.height)
                 .padding(.horizontal)
