@@ -429,6 +429,11 @@ struct LoginView: View {
             // Check biometric authentication availability
             biometricAuthAvailable = (appStateManager.authentication.biometricType != .none)
 
+            // Load saved accounts so the Saved Accounts button reflects what the switcher can show.
+            if !isAddingNewAccount {
+                await appStateManager.authentication.refreshAvailableAccounts()
+            }
+
             // If there's an expired account, automatically start re-authentication
             // BUT: Skip this if we're explicitly adding a new account (not re-authenticating)
             // ALSO: Skip if already authenticating to prevent loops
@@ -591,7 +596,8 @@ struct LoginView: View {
             }
             .modifier(PrimaryButtonModifier(authMode: authMode))
             
-            if !isAddingNewAccount {
+            // Only offer Saved Accounts when the switcher has accounts to show.
+            if !isAddingNewAccount && !appStateManager.authentication.availableAccounts.isEmpty {
                 Button { showSavedAccounts = true } label: {
                     Text("Saved Accounts")
                         .appFont(AppTextRole.subheadline)
@@ -601,17 +607,6 @@ struct LoginView: View {
                 .disabled(isLoggingIn || appStateManager.authentication.state.isAuthenticating)
                 .accessibilityIdentifier("login.savedAccounts")
             }
-
-            // Agreement to the terms and zero-tolerance policy before signing in or
-            // creating an account (App Review Guideline 1.2).
-            Text(CommunityStandards.signInFootnote)
-                .appFont(AppTextRole.footnote)
-                .foregroundStyle(Color.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-                .accessibilityIdentifier("login.agreementNotice")
         }
     }
 
