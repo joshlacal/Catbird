@@ -74,9 +74,33 @@ private var isMessagesViewportUIFixture: Bool {
   #endif
 }
 
+private var isSearchTabReselectionUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(SearchTabReselectionFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
+private var isMessagesNavigationUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(MessagesNavigationFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture
+  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture
+}
+
+private var isModerationUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains("--moderation-ui-fixture")
+  #else
+  false
+  #endif
 }
 
 private var isSettingsUIFixture: Bool {
@@ -1036,6 +1060,18 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             #else
             EmptyView()
             #endif
+          } else if isSearchTabReselectionUIFixture {
+            #if os(iOS)
+            SearchTabReselectionFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isMessagesNavigationUIFixture {
+            #if os(iOS)
+            MessagesNavigationFixture()
+            #else
+            EmptyView()
+            #endif
           } else if isSceneRuntimeUIFixture {
             #if os(iOS)
             SceneRuntimeFixture(scene: scene)
@@ -1044,6 +1080,12 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             #endif
           } else if isSettingsUIFixture {
             SettingsUIFixture()
+          } else if isModerationUIFixture {
+            #if os(iOS)
+            ModerationUIFixture()
+            #else
+            EmptyView()
+            #endif
           } else {
             applicationContent(in: scene)
           }

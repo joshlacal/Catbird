@@ -2,11 +2,13 @@ import SwiftUI
 import NukeUI
 import Petrel
 
-/// System labels are unconditional; other labels retain the existing preference policy.
+/// Labels on the link itself. System labels are unconditional; other labels are
+/// evaluated by the moderation policy and gate the card as media.
 struct ExternalEmbedLabelGate<Content: View>: View {
   let labels: [ComAtprotoLabelDefs.Label]?
   @ViewBuilder var content: () -> Content
   @State private var revealed = false
+  @Environment(\.moderationPolicy) private var moderationPolicy
 
   var body: some View {
     switch ExternalEmbedSystemLabelVisibility.resolve(labels) {
@@ -25,7 +27,9 @@ struct ExternalEmbedLabelGate<Content: View>: View {
       .padding(16)
       .frame(maxWidth: .infinity, alignment: .leading)
     default:
-      ContentLabelManager(labels: labels, contentType: "media") { content() }
+      ModerationMediaGate(ui: ExternalLinkModeration.mediaUI(labels: labels, policy: moderationPolicy)) {
+        content()
+      }
     }
   }
 }

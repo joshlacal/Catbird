@@ -581,6 +581,8 @@ import os
         let accountID = appState.userDID ?? "unknown-account"
         let feedID = self.stateManager.currentFeedType.identifier
         let hostingIdentity = "\(accountID)-\(feedID)-\(post.id)"
+        // The configuration closure runs once, here: the policy it injects is
+        // a snapshot, so the row tracks the live policy itself.
         cell.contentConfiguration = UIHostingConfiguration {
           FeedPostRow(
             viewModel: viewModel,
@@ -588,6 +590,7 @@ import os
             feedTypeIdentifier: self.stateManager.currentFeedType.identifier,
             tracksVisibilityForFeedback: false
           )
+          .trackingModerationPolicy(of: appState)
           .applyAppStateEnvironment(appState)
           .environment(self.sceneContext)
           .environment(\.fontManager, appState.fontManager)
@@ -630,6 +633,7 @@ import os
 
         cell.contentConfiguration = UIHostingConfiguration {
           header
+            .trackingModerationPolicy(of: self.stateManager.appState)
             .applyAppStateEnvironment(self.stateManager.appState)
             .environment(\.fontManager, self.stateManager.appState.fontManager)
             .environment(self.sceneContext)
@@ -652,6 +656,7 @@ import os
 
         cell.contentConfiguration = UIHostingConfiguration {
           TrendingFeedInterstitialView(content: self.trendingContent)
+            .trackingModerationPolicy(of: appState)
             .applyAppStateEnvironment(appState)
             .environment(\.fontManager, appState.fontManager)
           .environment(self.sceneContext)

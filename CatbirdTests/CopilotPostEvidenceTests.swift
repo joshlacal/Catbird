@@ -41,6 +41,36 @@ struct CopilotPostEvidenceTests {
   }
 
   @Test
+  func boundedSearchMetadataKeepsTextAttachmentsAndAvailableQuotesTogether() throws {
+    let quote = try quoted("quoted", text: "Quoted claim")
+    let snapshot = CopilotPostEvidenceBuilder.build(try post(text: String(repeating: "A", count: 300),
+      embed: .appBskyEmbedRecordWithMediaView(.init(record: quote, media: .appBskyEmbedImagesView(images(alt: "Blue cat"))))))
+    let search = AskCatbirdPostFormatter.compact(snapshot)
+    #expect(search.selectedPost.text?.count == 200)
+    #expect(search.selectedPost.textTruncated)
+    #expect(search.selectedPost.media.first?.altText == "Blue cat")
+    #expect(search.quotedPosts.first?.text == "Quoted claim")
+    #expect(search.selectedPost.quotedPostURI == uriString("quoted"))
+    #expect(search.selectedPost.media.first?.thumbnailURL == nil)
+    #expect(search.selectedPost.media.first?.imageURL == nil)
+    let text = CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(posts: [search], coverage: "Supplied metadata"))
+    #expect(text.contains("Blue cat") && text.contains("Quoted claim"))
+    #expect(AskCatbirdPostFormatter.hasContent(search))
+  }
+
+  @Test
+  func chosenImageUsesHydratedOriginalAndPreviewURLsWithStableIdentity() throws {
+    let snapshot = CopilotPostEvidenceBuilder.build(try post(embed: .appBskyEmbedImagesView(images(alt: "Blue cat", count: 2))))
+    let context = CopilotContext.post(uri: snapshot.selectedPost.uri, cid: snapshot.selectedPost.cid,
+      authorDID: "did:plc:example", text: "Selected", evidence: snapshot)
+    #expect(context.imageCandidates.count == 2)
+    #expect(context.imageCandidates.first?.thumbnailURL?.absoluteString == "https://example.test/thumb0")
+    #expect(context.imageCandidates.first?.sourceURL?.absoluteString == "https://example.test/image0")
+    let decoded = try JSONDecoder().decode(CopilotContext.self, from: JSONEncoder().encode(context))
+    #expect(decoded.imageCandidates == context.imageCandidates)
+  }
+
+  @Test
   func marksMissingBlockedAndDetachedQuotedContents() throws {
     let states: [(AppBskyEmbedRecord.ViewRecordUnion, CopilotPostEvidence.ContentStatus)] = [
       (.appBskyEmbedRecordViewNotFound(try .init(uri: uri("missing"), notFound: true)), .notFound),

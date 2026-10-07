@@ -26,7 +26,9 @@ struct StarterPackCardView: View {
                             .fill(Color.systemGray5)
                             .frame(width: 44, height: 44)
                         
-                        AsyncProfileImage(url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 44)
+                        AsyncProfileImage(
+                            url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 44,
+                            did: starterPack.creator.did.didString(), labels: starterPack.creator.labels)
                     }
                     
                     VStack(alignment: .leading, spacing: 2) {

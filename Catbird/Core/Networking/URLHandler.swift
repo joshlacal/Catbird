@@ -265,6 +265,8 @@ final class URLHandler {
         #if os(iOS)
         if segments.first == "messages", segments.count == 2 {
             navigationManager.navigate(to: .conversation(segments[1]), in: tab)
+        } else if segments.first == "messages", segments.count == 1 {
+            navigationManager.requestChatRoot()
         }
         #endif
         return true

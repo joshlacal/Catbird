@@ -117,7 +117,9 @@ public struct ContextualSuggestedFollowsSheet: View {
                 path.append(NavigationDestination.profile(profile.did.didString()))
             } label: {
                 HStack(spacing: 12) {
-                    AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 44)
+                    AsyncProfileImage(
+                        url: URL(string: profile.avatar?.uriString() ?? ""), size: 44,
+                        did: profile.did.didString(), labels: profile.labels)
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text(profile.displayName ?? "@\(profile.handle)")

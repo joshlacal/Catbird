@@ -1,0 +1,324 @@
+import SwiftUI
+
+// The three ways a moderation decision shows on a post: a hidden row (a list
+// filter the surface did not apply), a body gate (`ContentHider` upstream) and
+// a media gate. Each holds its reveal in view state only, keyed by the causes
+// it was given (`ModerationRevealState`), so a different set of causes is
+// concealed again even when the hosting view is reused for another post.
+
+// MARK: - Hidden row
+
+/// Replaces a post that `contentList` filters on a surface that does not drop
+/// rows (profile tabs, likes, bookmarks, thread replies, notifications). The
+/// headline names who hides it: the account's adult-content setting, the
+/// moderators, or the user's own label setting.
+struct ModerationHiddenPostRow: View {
+  let presentation: PostModerationPresentation
+  let onReveal: () -> Void
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 10) {
+      Image(systemName: "eye.slash")
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(ModerationGateText.hiddenRowHeadline(for: presentation))
+          .appFont(AppTextRole.subheadline)
+          .foregroundStyle(.secondary)
+        Text(ModerationGateText.hiddenRowDetail(for: presentation))
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer(minLength: 0)
+      if presentation.hiddenRowAllowsReveal {
+        Button("Show", action: onReveal)
+          .appFont(AppTextRole.subheadline)
+          .buttonStyle(.borderless)
+          .frame(minWidth: 44, minHeight: 44)
+          .accessibilityHint("Shows the hidden post")
+      }
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+    .accessibilityIdentifier("moderation.hiddenRow")
+  }
+}
+
+/// The bar above a hidden row's post once the viewer showed it. It keeps the
+/// cause in view and offers Hide, so the reveal is reversible like the body
+/// and media gates (upstream `PostHider` keeps its header after override).
+struct ModerationRevealedPostBar: View {
+  let presentation: PostModerationPresentation
+  let onHide: () -> Void
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 8) {
+      Image(systemName: "eye")
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+      Text(ModerationGateText.hiddenRowDetail(for: presentation))
+        .appFont(AppTextRole.subheadline)
+        .fontWeight(.medium)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      Spacer(minLength: 0)
+      Button("Hide", action: onHide)
+        .appFont(AppTextRole.subheadline)
+        .buttonStyle(.borderless)
+        .frame(minWidth: 44, minHeight: 44)
+        .accessibilityHint("Hides the post again")
+    }
+    .padding(.horizontal, 12)
+    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+    .background(Color(platformColor: .platformSystemGray6), in: RoundedRectangle(cornerRadius: 10))
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("moderation.revealedRow")
+  }
+}
+
+// MARK: - Body gate
+
+/// One compact warning bar that conceals its content (post text and embed
+/// together) until shown. Nothing inside is built while concealed.
+struct ModerationContentGate<Content: View>: View {
+  let ui: ModerationUI
+  @ViewBuilder let content: () -> Content
+  @State private var reveal = ModerationRevealState()
+
+  private var revealed: Bool { reveal.isRevealed(ui) }
+
+  var body: some View {
+    if ui.blur {
+      VStack(alignment: .leading, spacing: 6) {
+        gateBar
+        if revealed {
+          content()
+            .postRevealFade(isEnabled: true)
+        }
+      }
+    } else {
+      content()
+    }
+  }
+
+  private var gateBar: some View {
+    HStack(alignment: .center, spacing: 8) {
+      Image(systemName: revealed ? "eye" : "eye.slash")
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+      Text(ModerationPresentation.title(for: ui))
+        .appFont(AppTextRole.subheadline)
+        .fontWeight(.medium)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+      Spacer(minLength: 0)
+      if ui.noOverride {
+        Text(ModerationGateText.lockedLabel(for: ui))
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityHint(ModerationGateText.explanation(for: ui))
+      } else {
+        Button(revealed ? "Hide" : "Show") {
+          if revealed { reveal.hide() } else { reveal.show(ui) }
+        }
+        .appFont(AppTextRole.subheadline)
+        .buttonStyle(.borderless)
+        .frame(minWidth: 44, minHeight: 44)
+        .accessibilityHint(revealed ? "Hides the content" : "Shows the content")
+      }
+    }
+    .padding(.horizontal, 12)
+    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+    .background(Color(platformColor: .platformSystemGray6), in: RoundedRectangle(cornerRadius: 10))
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("moderation.contentGate")
+  }
+}
+
+// MARK: - Media gate
+
+/// Conceals images, galleries, video and link cards behind one cover. The
+/// media view is not built while concealed, so nothing loads or plays. Once
+/// shown, a small Hide control conceals it again.
+struct ModerationMediaGate<Content: View>: View {
+  enum Style {
+    /// A cover the size of a media block.
+    case card
+    /// A single-line bar, for thumbnails in dense lists.
+    case compact
+  }
+
+  let ui: ModerationUI
+  var style: Style = .card
+  @ViewBuilder let content: () -> Content
+  @State private var reveal = ModerationRevealState()
+
+  private var revealed: Bool { reveal.isRevealed(ui) }
+
+  var body: some View {
+    if !ui.blur {
+      content()
+    } else if revealed {
+      content()
+        .overlay(alignment: .topTrailing) { hideControl }
+    } else {
+      cover
+    }
+  }
+
+  private var title: String { ModerationPresentation.title(for: ui) }
+  private var explanation: String { ModerationGateText.explanation(for: ui) }
+
+  @ViewBuilder
+  private var cover: some View {
+    switch style {
+    case .card:
+      // The text is the sized content, so the cover is at least the height of
+      // a media block and grows with Dynamic Type instead of clipping.
+      VStack(spacing: 6) {
+        Image(systemName: "eye.slash.fill")
+          .appFont(AppTextRole.title2)
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+        Text(title)
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.medium)
+          .multilineTextAlignment(.center)
+        Text(explanation)
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .fixedSize(horizontal: false, vertical: true)
+        if !ui.noOverride {
+          Button("Show") { reveal.show(ui) }
+            .appFont(AppTextRole.footnote)
+            .buttonStyle(.bordered)
+            .frame(minHeight: 44)
+            .padding(.top, 2)
+        }
+      }
+      .padding(16)
+      .frame(maxWidth: .infinity, minHeight: 160)
+      .background(Color(platformColor: .platformSystemGray6))
+      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("moderation.mediaGate")
+    case .compact:
+      HStack(alignment: .center, spacing: 8) {
+        Image(systemName: "eye.slash")
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+        Text(title)
+          .appFont(AppTextRole.subheadline)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+        Spacer(minLength: 0)
+        if ui.noOverride {
+          Text(ModerationGateText.lockedLabel(for: ui))
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityHint(explanation)
+        } else {
+          Button("Show") { reveal.show(ui) }
+            .appFont(AppTextRole.subheadline)
+            .buttonStyle(.borderless)
+            .frame(minWidth: 44, minHeight: 44)
+        }
+      }
+      .padding(.horizontal, 12)
+      .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+      .background(Color(platformColor: .platformSystemGray6), in: RoundedRectangle(cornerRadius: 10))
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("moderation.mediaGate")
+    }
+  }
+
+  private var hideControl: some View {
+    Button {
+      reveal.hide()
+    } label: {
+      Label("Hide", systemImage: "eye.slash")
+        .appFont(AppTextRole.caption)
+        .padding(.horizontal, 10)
+        .frame(minHeight: 28)
+        .background(Color.black.opacity(0.6), in: Capsule())
+        .foregroundStyle(.white)
+    }
+    .buttonStyle(.plain)
+    .padding(8)
+    .accessibilityHint("Hides the media again")
+  }
+}
+
+// MARK: - Shared copy
+
+enum ModerationGateText {
+  static let adultContentOffExplanation =
+    "Adult content is turned off for this account. You can change this at bsky.app."
+  static let moderatorsExplanation = "This content was hidden by the moderators."
+
+  /// The highest-priority blur cause, which a cover or a locked bar names.
+  static func primaryCause(of ui: ModerationUI) -> ModerationCause? {
+    ui.blurs.min { $0.priority < $1.priority }
+  }
+
+  /// Why media is covered and, when it cannot be shown, why not: adult content
+  /// turned off (changeable at bsky.app) or a label from the moderators.
+  static func explanation(for ui: ModerationUI) -> String {
+    guard let cause = primaryCause(of: ui) else { return "" }
+    if ui.noOverride {
+      return cause.isAdultContentDisabled ? adultContentOffExplanation : moderatorsExplanation
+    }
+    return ModerationPresentation.description(for: cause.definition)
+  }
+
+  /// The short label a locked bar shows in place of Show: who locked it.
+  static func lockedLabel(for ui: ModerationUI) -> String {
+    primaryCause(of: ui)?.isAdultContentDisabled == true ? "Adult content off" : "Hidden by moderators"
+  }
+
+  /// The hidden row's headline, naming who hides the post.
+  static func hiddenRowHeadline(for presentation: PostModerationPresentation) -> String {
+    switch presentation.hiddenRowReason {
+    case .adultContentOff: return "Post hidden while adult content is off"
+    case .moderators: return "Post hidden by moderators"
+    case .userSetting: return "Post hidden by your moderation settings"
+    }
+  }
+
+  /// The hidden row's second line: the cause, and where to change an
+  /// adult-content lock.
+  static func hiddenRowDetail(for presentation: PostModerationPresentation) -> String {
+    let title = presentation.hiddenRowCause.map { ModerationPresentation.title(for: $0) }
+      ?? ModerationPresentation.fallbackTitle
+    switch presentation.hiddenRowReason {
+    case .adultContentOff: return "\(title) · Change this at bsky.app"
+    case .moderators, .userSetting: return title
+    }
+  }
+}
+
+// MARK: - Avatar placeholder
+
+/// The neutral avatar shown instead of a moderated avatar. The same artwork
+/// `AsyncProfileImage` uses while an avatar loads, so no image is fetched.
+struct ModeratedAvatarPlaceholder: View {
+  let size: CGFloat
+
+  var body: some View {
+    Circle()
+      .fill(Color.gray.opacity(0.2))
+      .overlay {
+        Image(systemName: "person.crop.circle.fill")
+          .resizable()
+          .scaledToFill()
+          .foregroundColor(.accentColor.opacity(0.5))
+          .padding(size * 0.08)
+      }
+      .frame(width: size, height: size)
+      .clipShape(Circle())
+      .accessibilityHidden(true)
+  }
+}

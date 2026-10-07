@@ -8,6 +8,12 @@ import SwiftUI
 /// sign-in and gateway callback handling as adding an account.
 @MainActor
 enum AccountReauthentication {
+  enum Feedback: Equatable {
+    case alert(title: String, message: String)
+    case toast(message: String)
+    case none
+  }
+
   enum Result: Equatable {
     /// Signed in to the requested account. The auth observer finishes the switch.
     case signedIn(did: String)
@@ -15,6 +21,21 @@ enum AccountReauthentication {
     case signedInToDifferentAccount
     case cancelled
     case failed(String)
+
+    /// Feedback for the scene-root flow, which has no picker error field.
+    var feedback: Feedback {
+      switch self {
+      case .signedInToDifferentAccount:
+        return .alert(
+          title: "Couldn’t Sign In",
+          message: "Sign-in finished for a different account. Try again."
+        )
+      case .failed(let message):
+        return .toast(message: message)
+      case .signedIn, .cancelled:
+        return .none
+      }
+    }
   }
 
   private static let logger = Logger(subsystem: "blue.catbird", category: "AccountReauthentication")
@@ -166,10 +187,18 @@ struct AccountReauthenticationPromptModifier: ViewModifier {
       let result = await AccountReauthentication.signIn(
         toAccount: prompt.did, appStateManager: manager, webAuthenticationSession: session
       )
-      if case .failed(let message) = result {
+      switch result.feedback {
+      case .alert(let title, let message):
+        // The callback may transition to another account, replacing its toast host.
+        manager.authentication.pendingAuthAlert = AuthenticationManager.AuthAlert(
+          title: title, message: message
+        )
+      case .toast(let message):
         manager.lifecycle.appState?.toastManager.show(
           ToastItem(message: message, icon: "exclamationmark.triangle.fill")
         )
+      case .none:
+        break
       }
     }
   }

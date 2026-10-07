@@ -552,7 +552,14 @@ struct AccountSwitcherView: View {
           error = "Sign in to that account again before moving this draft to it."
           return
         }
-        await requestReauthentication(forAccount: expiredDID)
+        if appStateManager.lifecycle.appState != nil {
+          // A failed switch from a working account may have removed this picker.
+          // Keep the request on the manager so the current scene owns sign-in.
+          appStateManager.requestReauthenticationPrompt(for: expiredDID)
+        } else {
+          // Saved Accounts on the sign-in screen keeps its existing browser flow.
+          await requestReauthentication(forAccount: expiredDID)
+        }
       }
     }
 

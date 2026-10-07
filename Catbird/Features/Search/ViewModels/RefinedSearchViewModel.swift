@@ -294,7 +294,9 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       let feedUri = try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI)
       let feedManager = FeedManager(client: client, fetchType: .feed(feedUri))
       let (posts, _) = try await feedManager.fetchFeed(fetchType: .feed(feedUri), cursor: nil)
-      trendingVideos = posts
+      // Previews the account's policy filters from lists are not kept; the
+      // section re-filters with the live policy and covers moderated thumbnails.
+      trendingVideos = TrendingVideoModeration.listed(posts, policy: appState.moderationPolicy)
     } catch {
       logger.error("Error fetching trending videos: \(error.localizedDescription)")
     }

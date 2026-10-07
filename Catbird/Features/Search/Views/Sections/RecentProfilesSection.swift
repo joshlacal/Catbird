@@ -8,62 +8,81 @@
 import SwiftUI
 import Petrel
 
-/// A section displaying recently viewed profiles with horizontal scrolling
+/// Recently viewed profiles as one compact, horizontally scrolling row.
 struct RecentProfilesSection: View {
     let profiles: [RecentProfileSearch]
     let onSelect: (RecentProfileSearch) -> Void
     let onClear: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
-    
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var avatarSize: CGFloat { dynamicTypeSize.isAccessibilitySize ? 64 : 52 }
+    private var itemWidth: CGFloat { dynamicTypeSize.isAccessibilitySize ? 96 : 68 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Recently Viewed")
-                    .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
+        VStack(alignment: .leading, spacing: 8) {
+            SearchHistoryHeader(title: "Recently Viewed", clearLabel: "Clear recently viewed profiles",
+                                onClear: onClear)
 
-                Spacer()
-                
-                Button("Clear", action: onClear)
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.accentColor)
-            }
-            .padding(.horizontal, 16)
-            
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 0) {
+                HStack(alignment: .top, spacing: 8) {
                     ForEach(profiles.prefix(10)) { profile in
-                        Button {
-                            onSelect(profile)
-                        } label: {
-                            VStack(spacing: 4) {
-                                // Profile image
-                                AsyncProfileImage(
-                                    url: URL(string: profile.avatarURL ?? ""),
-                                    size: 56,
-                                    labels: profile.labels
-                                )
-                                .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.2), radius: 3)
-                                .padding(6)
-
-                                // Display name or handle
-                                Text(profile.displayName ?? "@\(profile.handle)")
-                                    .appFont(AppTextRole.caption)
-                                    .multilineTextAlignment(.center)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                    .lineLimit(2)
-                                    .frame(width: 70)
-                            }
-                        }
-                        .buttonStyle(.plain)
+                        profileButton(profile)
                     }
                 }
-                .scrollContentBackground(.hidden)
             }
-            .contentMargins(.horizontal, 9, for: .scrollContent)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentMargins(.horizontal, 16, for: .scrollContent)
+            .accessibilityIdentifier("search.history.profiles")
         }
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func profileButton(_ profile: RecentProfileSearch) -> some View {
+        let name = profile.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(profile.handle)"
+        return Button {
+            onSelect(profile)
+        } label: {
+            VStack(spacing: 6) {
+                AsyncProfileImage(url: URL(string: profile.avatarURL ?? ""), size: avatarSize,
+                                  did: profile.did.didString(), labels: profile.labels)
+                // Two lines, top-aligned, so names keep their meaning without uneven rows.
+                Text(name)
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2, reservesSpace: true)
+            }
+            .frame(width: itemWidth)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(name)
+        .accessibilityHint("Opens profile")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// Shared header for search history sections: a quiet title with a trailing Clear action.
+struct SearchHistoryHeader: View {
+    let title: LocalizedStringKey
+    let clearLabel: LocalizedStringKey
+    let onClear: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .appFont(AppTextRole.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 12)
+            Button("Clear", action: onClear)
+                .appFont(AppTextRole.subheadline)
+                .buttonStyle(.borderless)
+                .accessibilityLabel(clearLabel)
+        }
+        .padding(.horizontal, 16)
     }
 }
 

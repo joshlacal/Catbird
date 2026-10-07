@@ -269,6 +269,14 @@
 				"App/Info-Debug.plist",
 				App/Info.plist,
 				AppIntents/README.md,
+				Core/State/PREFERENCES_BOUNDARY.md,
+				Features/Feed/Views/Components/PostComposer/PostComposer_Architecture.md,
+				Features/Feed/Views/Components/PostComposer/PostComposer_Tasks.md,
+				Features/Feed/Views/Components/PostComposer/PostComposerArchitecture.md,
+				Features/Feed/Views/FeedContent/ScrollPositionFixes.md,
+				"Resources/Preview Content/getTimelineResponse.json",
+				Storage/STORAGE_ARCHITECTURE.md,
+				Storage/Storage_README.md,
 			);
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
 		};

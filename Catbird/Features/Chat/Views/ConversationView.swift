@@ -314,17 +314,39 @@ struct ConversationView: View {
   private func transcriptStateOverlay(dataSource: BlueskyConversationDataSource) -> some View {
     if dataSource.messages.isEmpty {
       Group {
-        if dataSource.isLoading || !dataSource.hasCompletedInitialLoad {
+        switch dataSource.messageLoadState {
+        case .idle, .loading:
           ProgressView()
-        } else {
+            .allowsHitTesting(false)
+        case .loaded:
           ContentUnavailableView(
             "No Messages Yet",
             systemImage: "bubble.left",
             description: Text("Send a message to start the conversation.")
           )
+          .allowsHitTesting(false)
+        case .interrupted:
+          ContentUnavailableView {
+            Label("Messages Not Loaded", systemImage: "bubble.left")
+          } description: {
+            Text("Try again to load this conversation.")
+          } actions: {
+            Button("Try Again") {
+              Task { await dataSource.loadMessages() }
+            }
+          }
+        case .failed(let error):
+          ContentUnavailableView {
+            Label("Couldn’t Load Messages", systemImage: "wifi.exclamationmark")
+          } description: {
+            Text(error.localizedDescription)
+          } actions: {
+            Button("Try Again") {
+              Task { await dataSource.loadMessages() }
+            }
+          }
         }
       }
-      .allowsHitTesting(false)
     }
   }
 

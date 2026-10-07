@@ -113,30 +113,29 @@ struct PostExternalEmbedContent: View {
 }
 
 /// A unified component for displaying different types of post embeds.
+///
+/// Media (images, galleries, video, link cards) sits behind one media gate
+/// driven by the post's `contentMedia` decision. Quoted records decide for
+/// themselves in `RecordEmbedView`.
 struct PostEmbed: View {
     // MARK: - Properties
     let embed: AppBskyFeedDefs.PostViewEmbedUnion
-    let labels: [ComAtprotoLabelDefs.Label]?
+    /// The post's `ui(.contentMedia)`.
+    let mediaModeration: ModerationUI
     @Binding var path: NavigationPath
     var visibilityContext: PostVisibilityContext = .public
     var authorDID: DID? = nil
-    @ObservationIgnored
-    @Environment(AppState.self) private var appState
-    @Environment(\.appSettings) private var appSettings
-    @Environment(\.adultContentEnabled) private var adultContentEnabled
-    @Environment(\.themeManager) private var themeManager
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.postID) private var postID
 
     init(
         embed: AppBskyFeedDefs.PostViewEmbedUnion,
-        labels: [ComAtprotoLabelDefs.Label]?,
+        mediaModeration: ModerationUI = .empty,
         path: Binding<NavigationPath>,
         visibilityContext: PostVisibilityContext = .public,
         authorDID: DID? = nil
     ) {
         self.embed = embed
-        self.labels = labels
+        self.mediaModeration = mediaModeration
         self._path = path
         self.visibilityContext = visibilityContext
         self.authorDID = authorDID
@@ -144,7 +143,7 @@ struct PostEmbed: View {
     // MARK: - Constants
     private static let cornerRadius: CGFloat = 10
     private static let spacing: CGFloat = 8
-    
+
     // MARK: - Body
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -157,16 +156,16 @@ struct PostEmbed: View {
 
             case .appBskyEmbedExternalView(let externalView):
                 externalEmbed(externalView)
-                
+
             case .appBskyEmbedRecordView(let recordView):
-                recordEmbed(recordView)
-                
+                RecordEmbedView(record: recordView.record, path: $path)
+
             case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
                 recordWithMediaEmbed(recordWithMediaView)
-                
+
             case .appBskyEmbedVideoView(let videoView):
                 videoEmbed(videoView)
-                
+
             case .unexpected:
                 EmptyView()
             }
@@ -174,33 +173,24 @@ struct PostEmbed: View {
         // Force calculated height to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
-    
+
     // MARK: - Embed Type Views
 
     @ViewBuilder
     private func imageEmbed(_ imagesView: AppBskyEmbedImages.View) -> some View {
-        ContentLabelManager(
-            labels: labels,
-            contentType: "image"
-        ) {
-            ViewImageGridView(
-                viewImages: imagesView.images,
-                shouldBlur: false // We're handling blur at the ContentLabelManager level now
-            )
-            .modifier(ReadOnlyPostMediaModifier())
+        ModerationMediaGate(ui: mediaModeration) {
+            ViewImageGridView(viewImages: imagesView.images, shouldBlur: false)
+                .modifier(ReadOnlyPostMediaModifier())
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
 
     @ViewBuilder
     private func galleryEmbed(_ galleryView: AppBskyEmbedGallery.View) -> some View {
-        ContentLabelManager(
-            labels: labels,
-            contentType: "image"
-        ) {
+        ModerationMediaGate(ui: mediaModeration) {
             GalleryEmbedView(
                 gallery: galleryView,
-                shouldBlur: false, // We're handling blur at the ContentLabelManager level now
+                shouldBlur: false,
                 visibilityContext: visibilityContext,
                 authorDID: authorDID
             )
@@ -211,134 +201,41 @@ struct PostEmbed: View {
 
     @ViewBuilder
     private func externalEmbed(_ externalView: AppBskyEmbedExternal.View) -> some View {
-        ContentLabelManager(
-            labels: labels,
-            contentType: "link"
-        ) {
-            PostExternalEmbedContent(
-                external: externalView.external,
-                postID: postID
-            )
+        ModerationMediaGate(ui: mediaModeration) {
+            PostExternalEmbedContent(external: externalView.external, postID: postID)
         }
-    }
-
-    @ViewBuilder
-    private func recordEmbed(_ recordView: AppBskyEmbedRecord.View) -> some View {
-        // Extract labels from the embedded record itself, not the parent post
-        let embedLabels: [ComAtprotoLabelDefs.Label]? = {
-            switch recordView.record {
-            case .appBskyEmbedRecordViewRecord(let viewRecord):
-                return viewRecord.labels
-            default:
-                return nil
-            }
-        }()
-
-        RecordEmbedView(
-            record: recordView.record,
-            labels: embedLabels,
-            path: $path
-        )
     }
 
     @ViewBuilder
     private func recordWithMediaEmbed(_ recordWithMediaView: AppBskyEmbedRecordWithMedia.View) -> some View {
         VStack(spacing: Self.spacing) {
-            //  show the media part
             switch recordWithMediaView.media {
             case .appBskyEmbedImagesView(let imagesView):
-                ContentLabelManager(
-                    labels: labels,
-                    contentType: "image"
-                ) {
-                    ViewImageGridView(
-                        viewImages: imagesView.images,
-                        shouldBlur: false // We're handling blur at the ContentLabelManager level now
-                    )
-                    .modifier(ReadOnlyPostMediaModifier())
-                }
-                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+                imageEmbed(imagesView)
 
             case .appBskyEmbedGalleryView(let galleryView):
-                ContentLabelManager(
-                    labels: labels,
-                    contentType: "image"
-                ) {
-                    GalleryEmbedView(
-                        gallery: galleryView,
-                        shouldBlur: false, // We're handling blur at the ContentLabelManager level now
-                        visibilityContext: visibilityContext,
-                        authorDID: authorDID
-                    )
-                    .modifier(ReadOnlyPostMediaModifier())
-                }
-                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+                galleryEmbed(galleryView)
+
             case .appBskyEmbedExternalView(let externalView):
-                ContentLabelManager(
-                    labels: labels,
-                    contentType: "link"
-                ) {
-                    PostExternalEmbedContent(
-                        external: externalView.external,
-                        postID: postID
-                    )
-                }
+                externalEmbed(externalView)
 
             case .appBskyEmbedVideoView(let videoView):
-                // Always use ContentLabelManager for videos - it will handle show/warn/hide based on user preferences
-                ContentLabelManager(
-                    labels: labels,
-                    contentType: "video"
-                ) {
-                    PostVideoEmbedContent(video: videoView, postID: postID)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+                videoEmbed(videoView)
 
             case .unexpected:
                 EmptyView()
             }
 
-            //  show the record
-            // Extract labels from the embedded record itself, not the parent post
-            let embedLabels: [ComAtprotoLabelDefs.Label]? = {
-                switch recordWithMediaView.record.record {
-                case .appBskyEmbedRecordViewRecord(let viewRecord):
-                    return viewRecord.labels
-                default:
-                    return nil
-                }
-            }()
-
-            RecordEmbedView(
-                record: recordWithMediaView.record.record,
-                labels: embedLabels,
-                path: $path
-            )
+            RecordEmbedView(record: recordWithMediaView.record.record, path: $path)
         }
     }
 
     @ViewBuilder
     private func videoEmbed(_ videoView: AppBskyEmbedVideo.View) -> some View {
-        // Always use ContentLabelManager for videos - it will handle show/warn/hide based on user preferences
-        ContentLabelManager(
-            labels: labels,
-            contentType: "video"
-        ) {
+        ModerationMediaGate(ui: mediaModeration) {
             PostVideoEmbedContent(video: videoView, postID: postID)
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-    }
-
-    // MARK: - Helper Methods
-    
-    /// This method is deprecated - ContentLabelManager now handles all visibility logic
-    private func hasAdultContentLabel(_ labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
-        // Kept for backward compatibility, but ContentLabelManager should be used instead
-        guard !adultContentEnabled else { return false }
-        return labels?.contains { label in
-            let lowercasedValue = label.val.lowercased()
-            return lowercasedValue == "porn" || lowercasedValue == "nsfw" || lowercasedValue == "nudity"
-        } ?? false
     }
 }
 
@@ -357,7 +254,7 @@ private struct PostEmbedPreviewLoader: View {
       if let data {
         PostEmbed(
           embed: data.embed,
-          labels: data.post.labels,
+          mediaModeration: appState.moderationPolicy.decide(post: data.post).ui(.contentMedia),
           path: .constant(NavigationPath()),
           authorDID: data.post.author.did
         )

@@ -14,6 +14,9 @@ struct CopilotPostEvidence: Codable, Hashable, Sendable {
     var title: String?
     var description: String?
     var truncatedFields: [String] = []
+    /// Only hydrated still-image thumbnails are eligible for explicit inspection.
+    var thumbnailURL: URL?
+    var imageURL: URL?
   }
 
   struct Post: Codable, Hashable, Sendable {

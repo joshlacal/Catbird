@@ -3,18 +3,34 @@ import Petrel
 import NukeUI
 import Nuke
 
+/// A quoted record. A quoted post decides its own moderation (`decide(quotedPost:)`):
+/// its `contentList` blur covers the quote body, its `contentMedia` blur gates
+/// the quote's media and its author's `avatar` blur hides the avatar. The parent
+/// post never adds a second gate for these causes.
 struct RecordEmbedView: View {
     let record: AppBskyEmbedRecord.ViewRecordUnion
-    let labels: [ComAtprotoLabelDefs.Label]?
     @Binding var path: NavigationPath
     @Environment(\.postID) var postID
     @Environment(AppState.self) private var appState
     @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
+    @Environment(\.moderationPolicy) private var moderationPolicy
     // When true, render full post styling for quoted posts (used in thread main post view)
     var useFullPostStyle: Bool = false
     /// Quotes from muted accounts stay collapsed until the viewer asks to see them.
     @State private var revealedMutedQuote: [String]?
-    
+
+    /// A quoted record carries its own labels, which the policy reads from the
+    /// record; callers pass none.
+    init(
+        record: AppBskyEmbedRecord.ViewRecordUnion,
+        path: Binding<NavigationPath>,
+        useFullPostStyle: Bool = false
+    ) {
+        self.record = record
+        self._path = path
+        self.useFullPostStyle = useFullPostStyle
+    }
+
     var body: some View {
         switch record {
         case .appBskyEmbedRecordViewRecord(let post):
@@ -45,7 +61,7 @@ struct RecordEmbedView: View {
             unsupportedView
         }
     }
-    
+
     @ViewBuilder
     private func postView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
         if isReadOnlyPreview && BlockRelationship(viewer: post.author.viewer).direction != .unknown {
@@ -59,23 +75,12 @@ struct RecordEmbedView: View {
         } else if post.author.viewer?.muted == true && !showsMutedQuote(post) {
             mutedQuoteView(for: post)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                ContentLabelView(labels: post.labels, selfLabelValues: quotedSelfLabelValues(post),
-                    subject: PostLabelSubject(uri: post.uri.uriString(), cid: post.cid,
-                        authorDID: post.author.did.didString(), authorHandle: post.author.handle.description))
-                quotedPostView(post)
+            let moderation = PostModerationPresentation.make(quoted: post, policy: moderationPolicy)
+            ModerationContentGate(ui: moderation.body) {
+                quotedPostView(post, moderation: moderation)
                     .postRevealFade(isEnabled: showsMutedQuote(post))
-                    .environment(\.postLabelSummaryIDs, PostLabelSubject(uri: post.uri.uriString(), cid: post.cid,
-                        authorDID: post.author.did.didString(), authorHandle: post.author.handle.description).labelIDs(in: post.labels))
             }
         }
-    }
-
-    private func quotedSelfLabelValues(_ post: AppBskyEmbedRecord.ViewRecord) -> [String] {
-        guard case .knownType(let record) = post.value, let feedPost = record as? AppBskyFeedPost,
-              let labels = feedPost.labels,
-              case .comAtprotoLabelDefsSelfLabels(let selfLabels) = labels else { return [] }
-        return selfLabels.values.map(\.val)
     }
 
     private func mutedQuoteIdentity(_ post: AppBskyEmbedRecord.ViewRecord) -> [String] {
@@ -107,47 +112,38 @@ struct RecordEmbedView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// Applies the quoted post's own labels to its text, the way a top-level post
-    /// without media is covered. Media embeds apply the same labels themselves.
     @ViewBuilder
-    private func labeledQuoteText<Content: View>(
-        for post: AppBskyEmbedRecord.ViewRecord,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        if (post.embeds ?? []).isEmpty, let labels = post.labels, !labels.isEmpty {
-            ContentLabelManager(labels: labels, contentType: "post") {
-                content()
+    private func quotedAvatar(_ post: AppBskyEmbedRecord.ViewRecord, size: CGFloat, concealed: Bool) -> some View {
+        if concealed {
+            ModeratedAvatarPlaceholder(size: size)
+        } else if let avatarURL = post.author.finalAvatarURL() {
+            LazyImage(request: ImageLoadingManager.imageRequest(
+                for: avatarURL,
+                targetSize: CGSize(width: size, height: size)
+            )) { state in
+                if let image = state.image {
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    avatarPlaceholder(size: size)
+                }
             }
+            .pipeline(ImageLoadingManager.shared.pipeline)
+            .frame(width: size, height: size)
+            .clipShape(Circle())
         } else {
-            content()
+            avatarPlaceholder(size: size)
         }
     }
 
     @ViewBuilder
-    private func quotedPostView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
+    private func quotedPostView(_ post: AppBskyEmbedRecord.ViewRecord, moderation: PostModerationPresentation) -> some View {
         Group {
             if useFullPostStyle || isReadOnlyPreview {
                 // Render a fuller post style with standard card background and let tap navigate
                 VStack(alignment: .leading, spacing: 8) {
                     // Author row
                     HStack(spacing: 10) {
-                        if let avatarURL = post.author.finalAvatarURL() {
-                            LazyImage(request: ImageLoadingManager.imageRequest(
-                                for: avatarURL,
-                                targetSize: CGSize(width: 36, height: 36)
-                            )) { state in
-                                if let image = state.image {
-                                    image.resizable().aspectRatio(contentMode: .fill)
-                                } else {
-                                    avatarPlaceholder(size: 36)
-                                }
-                            }
-                            .pipeline(ImageLoadingManager.shared.pipeline)
-                            .frame(width: 36, height: 36)
-                            .clipShape(Circle())
-                        } else {
-                            avatarPlaceholder(size: 36)
-                        }
+                        quotedAvatar(post, size: 36, concealed: moderation.concealsAvatar)
                         VStack(alignment: .leading, spacing: 2) {
                             EmbeddedAuthorNameView(
                                 name: post.author.displayName ?? post.author.handle.description,
@@ -164,20 +160,19 @@ struct RecordEmbedView: View {
                         }
                         Spacer()
                     }
+                    ContentLabelView(causes: moderation.chips)
                     // Text
                     if case let .knownType(record) = post.value,
                        let feedPost = record as? AppBskyFeedPost,
                        !feedPost.text.isEmpty {
-                        labeledQuoteText(for: post) {
-                            Text(feedPost.text)
-                                .appFont(AppTextRole.body)
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.top, 4)
-                        }
+                        Text(feedPost.text)
+                            .appFont(AppTextRole.body)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 4)
                     }
                     // Embeds
-                    embeddedContent(for: post)
+                    embeddedContent(for: post, media: moderation.media)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -195,26 +190,8 @@ struct RecordEmbedView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         // Author info
                         HStack(spacing: 8) {
-                            if let avatarURL = post.author.finalAvatarURL() {
-                                LazyImage(request: ImageLoadingManager.imageRequest(
-                                    for: avatarURL,
-                                    targetSize: CGSize(width: 20, height: 20)
-                                )) { state in
-                                    if let image = state.image {
-                                        image
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                    } else {
-                                        avatarPlaceholder(size: 20)
-                                    }
-                                }
-                                .pipeline(ImageLoadingManager.shared.pipeline)
-                                .frame(width: 20, height: 20)
-                                .clipShape(Circle())
-                            } else {
-                                avatarPlaceholder(size: 20)
-                            }
-                            
+                            quotedAvatar(post, size: 20, concealed: moderation.concealsAvatar)
+
                             PostHeaderView(
                                 displayName: post.author.displayName ?? post.author.handle.description,
                                 handle: post.author.handle.description,
@@ -224,26 +201,26 @@ struct RecordEmbedView: View {
                             )
                                 .textScale(.secondary)
                                 .foregroundStyle(.primary)
-                            
+
                             Spacer()
                         }
-                        
+
+                        ContentLabelView(causes: moderation.chips)
+
                         // Post content
                         if case let .knownType(record) = post.value,
                            let feedPost = record as? AppBskyFeedPost {
                             if !feedPost.text.isEmpty {
-                                labeledQuoteText(for: post) {
-                                    Text(feedPost.text)
-                                        .appFont(AppTextRole.body)
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(nil)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
+                                Text(feedPost.text)
+                                    .appFont(AppTextRole.body)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             // Add embed content if present
-                            embeddedContent(for: post)
+                            embeddedContent(for: post, media: moderation.media)
                         }
-                        
+
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -255,75 +232,53 @@ struct RecordEmbedView: View {
             }
         }
     }
-    
+
     // MARK: - Embedded Content
-    
-    /// Displays embedded content within a quoted post with proper content warnings
+
+    /// Displays embedded content within a quoted post behind the quote's own
+    /// `contentMedia` gate.
     ///
-    /// This method wraps all embedded media (images, videos, external links) with ContentLabelManager
-    /// to ensure proper content moderation based on user preferences and content labels.
-    ///
-    /// - Parameter post: The record containing embeds to display
-    /// - Returns: A view containing the embedded content with appropriate content warnings
+    /// - Parameters:
+    ///   - post: The record containing embeds to display
+    ///   - media: The quoted post's `ui(.contentMedia)`
     @ViewBuilder
-    private func embeddedContent(for post: AppBskyEmbedRecord.ViewRecord) -> some View {
+    private func embeddedContent(for post: AppBskyEmbedRecord.ViewRecord, media: ModerationUI) -> some View {
         if let embeds = post.embeds, !embeds.isEmpty {
             ForEach(embeds.indices, id: \.self) { index in
                 switch embeds[index] {
                 case .appBskyEmbedImagesView(let imageView):
-                    ContentLabelManager(
-                        labels: post.labels, // Use the embedded post's labels, not parent
-                        contentType: "image"
-                    ) {
-                        ViewImageGridView(
-                            viewImages: imageView.images,
-                            shouldBlur: false // ContentLabelManager handles blurring
-                        )
-                        .modifier(ReadOnlyPostMediaModifier())
+                    ModerationMediaGate(ui: media) {
+                        ViewImageGridView(viewImages: imageView.images, shouldBlur: false)
+                            .modifier(ReadOnlyPostMediaModifier())
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
 
                 case .appBskyEmbedGalleryView(let galleryView):
-                    ContentLabelManager(
-                        labels: post.labels, // Use the embedded post's labels, not parent
-                        contentType: "image"
-                    ) {
-                        GalleryEmbedView(
-                            gallery: galleryView,
-                            shouldBlur: false // ContentLabelManager handles blurring
-                        )
-                        .modifier(ReadOnlyPostMediaModifier())
+                    ModerationMediaGate(ui: media) {
+                        GalleryEmbedView(gallery: galleryView, shouldBlur: false)
+                            .modifier(ReadOnlyPostMediaModifier())
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
 
                 case .appBskyEmbedExternalView(let external):
-                    ContentLabelManager(
-                        labels: post.labels, // Use the embedded post's labels, not parent
-                        contentType: "link"
-                    ) {
-                        PostExternalEmbedContent(
-                            external: external.external,
-                            postID: postID
-                        )
+                    ModerationMediaGate(ui: media) {
+                        PostExternalEmbedContent(external: external.external, postID: postID)
                     }
                     .padding(.top, 6)
-                    
+
                 case .appBskyEmbedVideoView(let video):
-                    ContentLabelManager(
-                        labels: post.labels, // Use the embedded post's labels, not parent
-                        contentType: "video"
-                    ) {
+                    ModerationMediaGate(ui: media) {
                         PostVideoEmbedContent(video: video, postID: postID)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
-                    
+
                 case .appBskyEmbedRecordView(let record):
                     // For a record within a record, we'll just show a minimal reference
                     // without creating another nested embed
-                    
+
                     switch record.record {
                     case .appBskyEmbedRecordViewRecord(let viewRecord):
                         VStack(alignment: .leading, spacing: 4) {
@@ -331,7 +286,7 @@ struct RecordEmbedView: View {
                                 Image(systemName: "chevron.right.circle")
                                     .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
-                                
+
                                 EmbeddedAuthorNameView(
                                     name: "Quoting @\(viewRecord.author.handle)",
                                     verification: viewRecord.author.verification,
@@ -340,20 +295,11 @@ struct RecordEmbedView: View {
                                     .appFont(AppTextRole.caption)
                                     .fontWeight(.medium)
                                     .foregroundStyle(.secondary)
-                                
+
                                 Image(systemName: "quote.bubble")
                                     .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                                     .textScale(.secondary)
-                                
-                                //                            if case let .knownType(postRecord) = viewRecord.value,
-                                //                               let feedPost = postRecord as? AppBskyFeedPost,
-                                //                               !feedPost.text.isEmpty {
-                                //                                Text(feedPost.text)
-                                //                                    .appFont(AppTextRole.caption2)
-                                //                                    .foregroundStyle(.secondary)
-                                //                                    .lineLimit(2)
-                                //                            }
                             }
                         }
                         .padding(.top, 6)
@@ -384,63 +330,44 @@ struct RecordEmbedView: View {
                 case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
                     // For record with media, we prioritize showing the media
                     VStack(spacing: 8) {
-                        // Display the media portion
                         switch recordWithMediaView.media {
                         case .appBskyEmbedImagesView(let imagesView):
-                            ContentLabelManager(
-                                labels: post.labels, // Use the embedded post's labels, not parent
-                                contentType: "image"
-                            ) {
-                                ViewImageGridView(
-                                    viewImages: imagesView.images,
-                                    shouldBlur: false // ContentLabelManager handles blurring
-                                )
-                                .modifier(ReadOnlyPostMediaModifier())
+                            ModerationMediaGate(ui: media) {
+                                ViewImageGridView(viewImages: imagesView.images, shouldBlur: false)
+                                    .modifier(ReadOnlyPostMediaModifier())
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
 
                         case .appBskyEmbedGalleryView(let galleryView):
-                            ContentLabelManager(
-                                labels: post.labels, // Use the embedded post's labels, not parent
-                                contentType: "image"
-                            ) {
-                                GalleryEmbedView(
-                                    gallery: galleryView,
-                                    shouldBlur: false // ContentLabelManager handles blurring
-                                )
-                                .modifier(ReadOnlyPostMediaModifier())
+                            ModerationMediaGate(ui: media) {
+                                GalleryEmbedView(gallery: galleryView, shouldBlur: false)
+                                    .modifier(ReadOnlyPostMediaModifier())
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
 
                         case .appBskyEmbedExternalView(let externalView):
-                            ContentLabelManager(
-                                labels: post.labels, // Use the embedded post's labels, not parent
-                                contentType: "link"
-                            ) {
+                            ModerationMediaGate(ui: media) {
                                 PostExternalEmbedContent(
                                     external: externalView.external,
                                     postID: "\(postID)-embedded"
                                 )
                             }
                             .padding(.top, 6)
-                            
+
                         case .appBskyEmbedVideoView(let videoView):
-                            ContentLabelManager(
-                                labels: post.labels, // Use the embedded post's labels, not parent
-                                contentType: "video"
-                            ) {
+                            ModerationMediaGate(ui: media) {
                                 PostVideoEmbedContent(video: videoView, postID: "\(postID)-embedded-\(videoView.cid)")
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
-                            
+
                         case .unexpected:
                             EmptyView()
                         }
                     }
-                    
+
                 case .unexpected:
                     // Simple fallback for unexpected content
                     Text("This content can’t be shown")
@@ -463,7 +390,7 @@ struct RecordEmbedView: View {
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
-    
+
     @ViewBuilder
     private func blockedView(_ blocked: AppBskyEmbedRecord.ViewBlocked) -> some View {
         BlockedContentCard(
@@ -474,7 +401,7 @@ struct RecordEmbedView: View {
             path: $path
         )
     }
-    
+
     @ViewBuilder
     private func detachedView(_ detached: AppBskyEmbedRecord.ViewDetached) -> some View {
         HStack {
@@ -487,7 +414,7 @@ struct RecordEmbedView: View {
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
-    
+
     @ViewBuilder
     private func generatorView(_ generator: AppBskyFeedDefs.GeneratorView) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -498,7 +425,7 @@ struct RecordEmbedView: View {
                     .appFont(AppTextRole.subheadline.weight(.medium))
                 Spacer()
             }
-            
+
             if let description = generator.description {
                 Text(description)
                     .appFont(AppTextRole.caption)
@@ -516,7 +443,7 @@ struct RecordEmbedView: View {
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
-    
+
     @ViewBuilder
     private func listView(_ list: AppBskyGraphDefs.ListView) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -527,7 +454,7 @@ struct RecordEmbedView: View {
                     .appFont(AppTextRole.subheadline.weight(.medium))
                 Spacer()
             }
-            
+
             if let description = list.description {
                 Text(description)
                     .appFont(AppTextRole.caption)
@@ -545,7 +472,7 @@ struct RecordEmbedView: View {
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
-    
+
     private var unsupportedView: some View {
         HStack {
             Image(systemName: "questionmark.circle")
@@ -557,11 +484,8 @@ struct RecordEmbedView: View {
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
-    
+
     // MARK: - Helper Methods
-    
-    // Note: Content label handling is now managed by ContentLabelManager
-    // which provides proper user preference integration and age-based restrictions
 
     /// Matches the feed cell's no-avatar glyph.
     private func avatarPlaceholder(size: CGFloat) -> some View {

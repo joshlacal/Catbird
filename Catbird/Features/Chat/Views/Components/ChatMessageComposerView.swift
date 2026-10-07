@@ -1,5 +1,8 @@
 import GameController
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Preview of a Bluesky post staged in the DM composer (share-to-chat).
 /// Only used for display; the wire embed is the post's strong ref.
@@ -33,6 +36,20 @@ struct ChatMessageComposerView: View {
   #endif
 
   @FocusState private var isTextFieldFocused: Bool
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+  private let editorTextInset: CGFloat = 8
+
+  private var minimumEditorHeight: CGFloat {
+    #if os(iOS)
+    let traits = UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize))
+    let font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traits)
+    // Keep a complete body-font line inside TextEditor at accessibility sizes.
+    return max(36, ceil(font.lineHeight + 2 * editorTextInset))
+    #else
+    return 36
+    #endif
+  }
 
   private var composerCornerRadius: CGFloat {
     DesignTokens.Size.radiusXXL + DesignTokens.Spacing.sm
@@ -136,8 +153,7 @@ struct ChatMessageComposerView: View {
       }
     }
     .padding(.horizontal, DesignTokens.Spacing.lg)
-    .padding(.vertical, DesignTokens.Spacing.sm)
-    .safeAreaPadding(.bottom, DesignTokens.Spacing.sm)
+    .padding(.vertical, DesignTokens.Spacing.md)
     .background(Color.clear)
   }
 
@@ -147,19 +163,19 @@ struct ChatMessageComposerView: View {
         Text(placeholderText)
           .font(.body)
           .foregroundColor(.secondary)
-          .padding(.top, 6)
+          .padding(.top, 4)
           .padding(.leading, 5)  // Match TextEditor's internal leading inset
-          .padding(.top, 8)  // Match TextEditor's internal top inset
+          .padding(.top, editorTextInset)  // Match TextEditor's internal top inset
           .accessibilityHidden(true)
       }
 
       TextEditor(text: $text)
         .font(.body)
         .lineSpacing(0)
-        .frame(minHeight: 36, maxHeight: 120)
+        .frame(minHeight: minimumEditorHeight, maxHeight: 120)
         .scrollContentBackground(.hidden)
         .background(Color.clear)
-        .padding(.top, 6)
+        .padding(.vertical, 4)
         .focused($isTextFieldFocused)
         .accessibilityLabel(placeholderText)
         .accessibilityIdentifier("chat.composer.textInput.\(accessibilityConvoIdPrefix)")
@@ -217,7 +233,6 @@ struct ChatMessageComposerView: View {
     .disabled(!canSend)
     .accessibilityLabel("Send message")
     .accessibilityIdentifier("chat.composer.sendButton.\(accessibilityConvoIdPrefix)")
-    .padding(.bottom, 3)
   }
 
   // MARK: - Actions

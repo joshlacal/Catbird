@@ -780,6 +780,15 @@ final class AppStateManager {
       return ["ExpiredToken", "InvalidToken", "AuthenticationRequired", "AuthMissing"]
         .contains(xrpcError.error)
     }
+    if let petrelAuthError = error as? Petrel.AuthError {
+      switch petrelAuthError {
+      case .noActiveAccount, .invalidCredentials:
+        return true
+      default:
+        // tokenRefreshFailed also covers circuit-breaker and transient failures.
+        return false
+      }
+    }
     if let authError = error as? AuthError {
       if case .invalidSession = authError { return true }
       return false
@@ -1011,6 +1020,10 @@ final class AppStateManager {
   private func reconcileAuthenticationAfterSwitch() async {
     guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
           !accountSwitchRequiresRestart else { return }
+    await authManager.reconcileDeferredGatewaySessionFailure()
+    // Proof validation crosses actors; a newer switch may have started while awaiting it.
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart else { return }
     if let deferred = authManager.takeDeferredAutoLogout() {
       if let deferredDID = deferred.did, deferredDID == authManager.state.userDID {
         logger.warning("Applying a sign-out that arrived during the account switch")
@@ -1019,6 +1032,8 @@ final class AppStateManager {
         logger.info("Dropping a sign-out from the account switch that isn’t for the active account")
       }
     }
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart else { return }
     // Lifecycle still shows an account but authentication was lost: hand off to the
     // sign-in screen, which signs in to the expired account again automatically.
     if lifecycle.appState != nil, case .unauthenticated = authManager.state {

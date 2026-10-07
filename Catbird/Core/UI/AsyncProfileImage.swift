@@ -1,176 +1,149 @@
-import SwiftUI
-import NukeUI
 import Nuke
+import NukeUI
 import Petrel
+import SwiftUI
 
-enum AvatarModerationState {
-    case show      // Show avatar normally
-    case blur      // Show avatar blurred (tap to reveal)
-    case hide      // Don't show avatar (placeholder only)
-}
-
+/// A circular account avatar, moderated by the signed-in account's policy.
+///
+/// Pass the account's DID and labels (account and profile-record labels) when
+/// the model has them. An avatar the moderation engine blurs renders a neutral
+/// placeholder and is never downloaded.
 struct AsyncProfileImage: View {
-    let url: URL?
-    let size: CGFloat
-    let labels: [ComAtprotoLabelDefs.Label]?
+  let url: URL?
+  let size: CGFloat
+  let did: String?
+  let labels: [ComAtprotoLabelDefs.Label]?
 
-    @Environment(AppState.self) private var appState
-    @Environment(\.displayScale) private var displayScale
+  @Environment(\.moderationPolicy) private var moderationPolicy
+  @Environment(\.displayScale) private var displayScale
 
-    init(url: URL?, size: CGFloat, labels: [ComAtprotoLabelDefs.Label]? = nil) {
-        self.url = url
-        self.size = size
-        self.labels = labels
+  init(url: URL?, size: CGFloat, did: String? = nil, labels: [ComAtprotoLabelDefs.Label]? = nil) {
+    self.url = url
+    self.size = size
+    self.did = did
+    self.labels = labels
+  }
+
+  // MARK: - Source
+
+  /// What the avatar shows.
+  enum Source {
+    /// The moderation policy blurs this avatar: placeholder only, no load.
+    case concealed
+    /// Load (or paint from the memory cache) this resized request.
+    case image(ImageRequest)
+    /// No avatar URL: the plain person placeholder.
+    case placeholder
+  }
+
+  /// Decide what to show before anything is requested, so a concealed avatar
+  /// never builds a request or probes the image cache.
+  static func source(
+    url: URL?,
+    sizeInPoints: CGFloat,
+    displayScale: CGFloat,
+    did: String?,
+    labels: [ComAtprotoLabelDefs.Label]?,
+    policy: ModerationPolicy
+  ) -> Source {
+    if policy.concealsAvatar(did: did, labels: labels) { return .concealed }
+    guard let request = resizedRequest(for: url, sizeInPoints: sizeInPoints, displayScale: displayScale) else {
+      return .placeholder
     }
+    return .image(request)
+  }
 
-    // Resize the supplied avatar to the target pixel dimensions for the display
-    // the view is rendering on.
-    static func resizedRequest(for url: URL?, sizeInPoints: CGFloat, displayScale: CGFloat) -> ImageRequest? {
-        guard let url = url else { return nil }
-        let pixelDimension = max(1, (sizeInPoints * displayScale).rounded(.toNearestOrAwayFromZero))
-        let pixelSize = CGSize(width: pixelDimension, height: pixelDimension)
-        let processors: [any ImageProcessing] = [
-            ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
-        ]
-        return ImageRequest(url: url, processors: processors, priority: .high)
+  // Resize the supplied avatar to the target pixel dimensions for the display
+  // the view is rendering on.
+  static func resizedRequest(for url: URL?, sizeInPoints: CGFloat, displayScale: CGFloat) -> ImageRequest? {
+    guard let url = url else { return nil }
+    let pixelDimension = max(1, (sizeInPoints * displayScale).rounded(.toNearestOrAwayFromZero))
+    let pixelSize = CGSize(width: pixelDimension, height: pixelDimension)
+    let processors: [any ImageProcessing] = [
+      ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
+    ]
+    return ImageRequest(url: url, processors: processors, priority: .high)
+  }
+
+  // MARK: - Body
+
+  var body: some View {
+    let source = Self.source(
+      url: url, sizeInPoints: size, displayScale: displayScale, did: did, labels: labels,
+      policy: moderationPolicy)
+
+    Group {
+      switch source {
+      case .concealed:
+        concealedPlaceholder
+      case .image(let request):
+        avatarImage(request)
+      case .placeholder:
+        placeholder
+      }
     }
-    
-    private func getAvatarModerationState(_ labels: [ComAtprotoLabelDefs.Label]?) -> AvatarModerationState {
-        guard let labels = labels, !labels.isEmpty else { return .show }
-        
-        // Check if any adult content labels present
-        let hasAdultLabels = labels.contains { label in
-            let lowercasedValue = label.val.lowercased()
-            return ["porn", "nsfw", "nudity", "sexual"].contains(lowercasedValue)
+    .frame(width: size, height: size)
+    .clipShape(Circle())
+  }
+
+  @ViewBuilder
+  private func avatarImage(_ request: ImageRequest) -> some View {
+    // Synchronous memory-cache probe: if the resized avatar is already in the
+    // in-memory cache, paint it directly so the first frame is the final image
+    // (no placeholder-to-fade transition for cache hits).
+    if let cached = ImageLoadingManager.shared.pipeline.cache[request]?.image {
+      Image(platformImage: cached)
+        .resizable()
+        .aspectRatio(contentMode: .fill)
+    } else {
+      LazyImage(request: request) { state in
+        if let image = state.image {
+          image
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .transition(.opacity.animation(.easeOut(duration: 0.18)))
+        } else {
+          placeholder
         }
-        
-        guard hasAdultLabels else { return .show }
-        
-        // CRITICAL: If user is a minor (adult content disabled), HIDE the avatar completely
-        if !appState.isAdultContentEnabled {
-            return .hide
-        }
-        
-        // User is an adult - check their granular preferences
-        if let preferences = try? appState.preferencesManager.getLocalPreferences() {
-            // Find the most restrictive setting among adult labels
-            var mostRestrictive: ContentVisibility = .show
-            
-            for label in labels {
-                let labelValue = label.val.lowercased()
-                guard ["porn", "nsfw", "nudity", "sexual"].contains(labelValue) else { continue }
-                
-                // Map label to preference key
-                let preferenceKey: String
-                switch labelValue {
-                case "porn", "nsfw", "sexual":
-                    preferenceKey = "nsfw"
-                case "nudity":
-                    preferenceKey = "nudity"
-                default:
-                    preferenceKey = labelValue
-                }
-                
-                // Get visibility for this label
-                let visibility = ContentFilterManager.getVisibilityForLabel(
-                    label: preferenceKey,
-                    labelerDid: label.src,
-                    preferences: preferences.contentLabelPrefs
-                )
-                
-                // Track most restrictive
-                switch (mostRestrictive, visibility) {
-                case (_, .hide):
-                    mostRestrictive = .hide
-                case (.show, .warn):
-                    mostRestrictive = .warn
-                default:
-                    break
-                }
-            }
-            
-            // Convert ContentVisibility to AvatarModerationState
-            switch mostRestrictive {
-            case .hide:
-                return .hide
-            case .warn:
-                return .blur
-            case .show:
-                return .show
-            }
-        }
-        
-        // Fallback: if preferences unavailable for adult, blur by default (conservative)
-        return .blur
+      }
+      .pipeline(ImageLoadingManager.shared.pipeline)
+      .priority(.high)
     }
-    
-    var body: some View {
-        let moderationState = getAvatarModerationState(labels)
-        let imageRequest = Self.resizedRequest(for: url, sizeInPoints: size, displayScale: displayScale)
-        // Synchronous memory-cache probe: if the resized avatar is already in
-        // the in-memory cache, paint it directly so the first frame is the
-        // final image — no placeholder → fade transition for cache hits.
-        let cachedImage = imageRequest.flatMap { ImageLoadingManager.shared.pipeline.cache[$0]?.image }
+  }
 
-        Group {
-            if moderationState == .hide {
-                Circle()
-                    .fill(Color.gray.opacity(0.2))
-                    .overlay {
-                        Image(systemName: "eye.slash.fill")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .foregroundColor(.secondary.opacity(0.5))
-                            .frame(width: size * 0.5, height: size * 0.5)
-                    }
-            } else if let cached = cachedImage {
-                Image(platformImage: cached)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .blur(radius: moderationState == .blur ? 20 : 0)
-            } else if let request = imageRequest {
-                LazyImage(request: request) { state in
-                    if let image = state.image {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .transition(.opacity.animation(.easeOut(duration: 0.18)))
-                    } else {
-                        placeholder
-                    }
-                }
-                .pipeline(ImageLoadingManager.shared.pipeline)
-                .priority(.high)
-                .blur(radius: moderationState == .blur ? 20 : 0)
-            } else {
-                placeholder
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(Circle())
-    }
+  /// Shown in place of an avatar the moderation policy blurs.
+  private var concealedPlaceholder: some View {
+    Circle()
+      .fill(Color.gray.opacity(0.2))
+      .overlay {
+        Image(systemName: "eye.slash.fill")
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .foregroundColor(.secondary.opacity(0.5))
+          .frame(width: size * 0.5, height: size * 0.5)
+      }
+  }
 
-    @ViewBuilder
-    private var placeholder: some View {
-        Circle()
-            .fill(Color.gray.opacity(0.2))
-            .overlay {
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .foregroundColor(.accentColor.opacity(0.5))
-                    .padding(size * 0.08)
-            }
-    }
+  private var placeholder: some View {
+    Circle()
+      .fill(Color.gray.opacity(0.2))
+      .overlay {
+        Image(systemName: "person.crop.circle.fill")
+          .resizable()
+          .aspectRatio(contentMode: .fill)
+          .foregroundColor(.accentColor.opacity(0.5))
+          .padding(size * 0.08)
+      }
+  }
 }
 
 #Preview {
-  AsyncPreviewContent { appState in
+  AsyncPreviewContent { _ in
     VStack(spacing: 20) {
-            AsyncProfileImage(url: URL(string: "https://example.com/missing.jpg"), size: 40)
-            AsyncProfileImage(url: URL(string: "https://avatars.githubusercontent.com/u/1?v=4"), size: 60)
-            AsyncProfileImage(url: nil, size: 80)
-        }
-        .padding()
+      AsyncProfileImage(url: URL(string: "https://example.com/missing.jpg"), size: 40)
+      AsyncProfileImage(url: URL(string: "https://avatars.githubusercontent.com/u/1?v=4"), size: 60)
+      AsyncProfileImage(url: nil, size: 80)
+    }
+    .padding()
   }
 }

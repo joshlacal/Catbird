@@ -20,6 +20,7 @@ struct ProfileHeader: View {
     let hideAvatar: Bool
     
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.moderationPolicy) private var moderationPolicy
     @State private var isFollowButtonLoading = false
     @State private var localIsFollowing = false
     @State private var localActivitySubscription: AppBskyNotificationDefs.ActivitySubscription?
@@ -58,7 +59,7 @@ struct ProfileHeader: View {
         }
 #if os(iOS)
         .fullScreenCover(isPresented: $isShowingProfileImageViewer) {
-            if let profile = viewModel.profile {
+            if let profile = viewModel.profile, !isAvatarConcealed {
                 ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
                     .navigationTransition(.zoom(sourceID: profile.avatar?.uriString() ?? "", in: imageTransition))
             }
@@ -66,11 +67,14 @@ struct ProfileHeader: View {
         .presentationBackground(.black)
 #elseif os(macOS)
         .sheet(isPresented: $isShowingProfileImageViewer) {
-            if let profile = viewModel.profile {
+            if let profile = viewModel.profile, !isAvatarConcealed {
                 ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
             }
         }
 #endif
+        .onChange(of: isAvatarConcealed) { _, isConcealed in
+            if isConcealed { isShowingProfileImageViewer = false }
+        }
         .sheet(item: $verificationInfoKind) { kind in
             VerificationInfoSheet(
                 kind: kind,
@@ -389,16 +393,21 @@ struct ProfileHeader: View {
         viewModel.isLabeler
     }
     
+    /// Whether the moderation policy blurs this profile's avatar. A blurred
+    /// avatar is never loaded and never opens the full-size viewer.
+    private var isAvatarConcealed: Bool {
+        moderationPolicy.concealsAvatar(did: profile.did.didString(), labels: profile.labels)
+    }
+
     private var avatarView: some View {
-        let moderationState = getAvatarModerationState(profile.labels)
-        let shouldDisableTap = (moderationState == .hide)
-        let canOpenAvatarViewer = !shouldDisableTap && profile.avatar != nil
+        let isConcealed = isAvatarConcealed
+        let canOpenAvatarViewer = !isConcealed && profile.avatar != nil
         
         return Group {
             if isLabeler {
                 // Square avatar for labelers
                 Group {
-                    if moderationState == .hide {
+                    if isConcealed {
                         // Hidden avatar placeholder
                         RoundedRectangle(cornerRadius: 12)
                             .fill(Color.secondary.opacity(0.3))
@@ -418,7 +427,6 @@ struct ProfileHeader: View {
                             }
                         }
                         .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
-                        .blur(radius: moderationState == .blur ? 20 : 0)
                     }
                 }
                 .onTapGesture {
@@ -438,7 +446,7 @@ struct ProfileHeader: View {
             } else {
                 // Circular avatar for regular users
                 Group {
-                    if moderationState == .hide {
+                    if isConcealed {
                         // Hidden avatar placeholder
                         Circle()
                             .fill(Color.secondary.opacity(0.3))
@@ -458,7 +466,6 @@ struct ProfileHeader: View {
                             }
                         }
                         .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
-                        .blur(radius: moderationState == .blur ? 20 : 0)
                     }
                 }
                 .onTapGesture {
@@ -1221,74 +1228,6 @@ struct ProfileHeader: View {
                 .accessibilityHint("Opens list of users who subscribed to or liked this labeler")
             }
         }
-    }
-    private func getAvatarModerationState(_ labels: [ComAtprotoLabelDefs.Label]?) -> AvatarModerationState {
-        guard let labels = labels, !labels.isEmpty else { return .show }
-        
-        // Check if any adult content labels present
-        let hasAdultLabels = labels.contains { label in
-            let lowercasedValue = label.val.lowercased()
-            return ["porn", "nsfw", "nudity", "sexual"].contains(lowercasedValue)
-        }
-        
-        guard hasAdultLabels else { return .show }
-        
-        // CRITICAL: If user is a minor (adult content disabled), HIDE the avatar completely
-        if !appState.isAdultContentEnabled {
-            return .hide
-        }
-        
-        // User is an adult - check their granular preferences
-        if let preferences = try? appState.preferencesManager.getLocalPreferences() {
-            // Find the most restrictive setting among adult labels
-            var mostRestrictive: ContentVisibility = .show
-            
-            for label in labels {
-                let labelValue = label.val.lowercased()
-                guard ["porn", "nsfw", "nudity", "sexual"].contains(labelValue) else { continue }
-                
-                // Map label to preference key
-                let preferenceKey: String
-                switch labelValue {
-                case "porn", "nsfw", "sexual":
-                    preferenceKey = "nsfw"
-                case "nudity":
-                    preferenceKey = "nudity"
-                default:
-                    preferenceKey = labelValue
-                }
-                
-                // Get visibility for this label
-                let visibility = ContentFilterManager.getVisibilityForLabel(
-                    label: preferenceKey,
-                    labelerDid: label.src,
-                    preferences: preferences.contentLabelPrefs
-                )
-                
-                // Track most restrictive
-                switch (mostRestrictive, visibility) {
-                case (_, .hide):
-                    mostRestrictive = .hide
-                case (.show, .warn):
-                    mostRestrictive = .warn
-                default:
-                    break
-                }
-            }
-            
-            // Convert ContentVisibility to AvatarModerationState
-            switch mostRestrictive {
-            case .hide:
-                return .hide
-            case .warn:
-                return .blur
-            case .show:
-                return .show
-            }
-        }
-        
-        // Fallback: if preferences unavailable for adult, blur by default (conservative)
-        return .blur
     }
 }
 

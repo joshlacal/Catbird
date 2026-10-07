@@ -136,7 +136,7 @@ enum CopilotPostEvidenceBuilder {
 
     func appendImages(_ view: AppBskyEmbedImages.View, to post: inout CopilotPostEvidence.Post) {
       for image in view.images.prefix(maximumMediaCount) {
-        append(.init(kind: .image, altText: image.alt), to: &post)
+        append(.init(kind: .image, altText: image.alt, thumbnailURL: URL(string: image.thumb.uriString()), imageURL: URL(string: image.fullsize.uriString())), to: &post)
       }
       if view.images.count > maximumMediaCount { post.coverage.append("Additional images omitted.") }
     }
@@ -144,7 +144,8 @@ enum CopilotPostEvidenceBuilder {
     func appendGallery(_ view: AppBskyEmbedGallery.View, to post: inout CopilotPostEvidence.Post) {
       for item in view.items.prefix(maximumMediaCount) {
         switch item {
-        case .appBskyEmbedGalleryViewImage(let image): append(.init(kind: .image, altText: image.alt), to: &post)
+        case .appBskyEmbedGalleryViewImage(let image):
+          append(.init(kind: .image, altText: image.alt, thumbnailURL: URL(string: image.thumbnail.uriString()), imageURL: URL(string: image.fullsize.uriString())), to: &post)
         case .unexpected: post.coverage.append("Unsupported gallery item is unavailable.")
         }
       }

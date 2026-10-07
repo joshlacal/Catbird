@@ -78,6 +78,10 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   var onAddReaction: ((String) -> Void)?
   var onRequestEmojiPicker: ((String) -> Void)? = nil
   var onLongPress: ((CGRect) -> Void)?
+  var onMoreActions: (() -> Void)? = nil
+  #if os(iOS)
+  var onContextMenuAnchor: ((ChatMessageContextMenuAnchorView) -> Void)? = nil
+  #endif
   var onReactionLongPress: (() -> Void)? = nil
   var onReply: (() -> Void)? = nil
   var onReplyTapped: ((String) -> Void)? = nil
@@ -216,6 +220,25 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       .frame(width: 32, height: 32)
   }
 
+  private var accessibleMoreActions: (() -> Void)? {
+    guard !message.isTombstone else { return nil }
+    if let onMoreActions { return onMoreActions }
+    return onLongPress.map { callback in { callback(bubbleGlobalFrame) } }
+  }
+
+  @ViewBuilder
+  private func menuAnchoredSurface<Content: View>(_ content: Content) -> some View {
+    #if os(iOS)
+    content.background {
+      if let onContextMenuAnchor {
+        ChatMessageContextMenuAnchor(cornerRadius: surfaceCornerRadius, onUpdate: onContextMenuAnchor)
+      }
+    }
+    #else
+    content
+    #endif
+  }
+
   // MARK: - Message Content
 
   @ViewBuilder
@@ -230,16 +253,18 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           .padding(.leading, 4)
       }
 
-      let bubbleSurface = bubbleContent
-        .bubbleBackground(
-          isCurrentUser: message.isFromCurrentUser,
-          cornerRadius: cornerRadius,
-          colorScheme: colorScheme,
-          themeManager: appState.themeManager,
-          showFill: !isMediaOnly
-        )
-        .clipShape(RoundedRectangle(cornerRadius: surfaceCornerRadius, style: .continuous))
-        .offset(x: dragOffset)
+      let bubbleSurface = menuAnchoredSurface(
+        bubbleContent
+          .bubbleBackground(
+            isCurrentUser: message.isFromCurrentUser,
+            cornerRadius: cornerRadius,
+            colorScheme: colorScheme,
+            themeManager: appState.themeManager,
+            showFill: !isMediaOnly
+          )
+          .clipShape(RoundedRectangle(cornerRadius: surfaceCornerRadius, style: .continuous))
+      )
+      .offset(x: dragOffset)
 
       let gesturedSurface: some View = {
         if onReply != nil, !message.isTombstone {
@@ -308,8 +333,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         label: bubbleAccessibilityLabel,
         combinesChildren: message.embed == nil,
         onReply: message.isTombstone ? nil : onReply,
-        onMoreActions: (onLongPress == nil || message.isTombstone) ? nil : { onLongPress?(bubbleGlobalFrame) }
+        onMoreActions: accessibleMoreActions
       ))
+      .accessibilityIdentifier("chat.message.\(message.diffableID)")
 
       // Reactions
       if !message.reactions.isEmpty, !message.isTombstone {
@@ -523,7 +549,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
 // MARK: - Layout Helpers
 
-private struct BubbleWidthLimiter: Layout {
+struct BubbleWidthLimiter: Layout {
   let maxWidth: CGFloat
 
   func sizeThatFits(
@@ -536,45 +562,26 @@ private struct BubbleWidthLimiter: Layout {
     let effectiveMaxWidth = min(maxWidth, proposal.width ?? maxWidth)
     guard effectiveMaxWidth.isFinite, effectiveMaxWidth > 0 else { return .zero }
 
-    // Measure unconstrained to get a natural (hugging) width.
+    // Use the ideal size only to choose a hugging width. Its height is not
+    // reliable for capped embeds until they receive a concrete width.
     let naturalSize = subview.sizeThatFits(.unspecified)
-    if
-      naturalSize.width.isFinite,
-      naturalSize.height.isFinite,
-      naturalSize.width <= effectiveMaxWidth
-    {
-      return CGSize(width: max(naturalSize.width, 0), height: max(naturalSize.height, 0))
-    }
-
-    // Re-measure with a max width to wrap multi-line text/embeds.
-    let constrainedSize = subview.sizeThatFits(
-      ProposedViewSize(width: effectiveMaxWidth, height: nil)
-    )
     let width: CGFloat
-    if constrainedSize.width.isFinite {
-      width = min(max(constrainedSize.width, 0), effectiveMaxWidth)
+    if naturalSize.width.isFinite, naturalSize.width < effectiveMaxWidth {
+      width = max(naturalSize.width, 0)
     } else {
-      width = effectiveMaxWidth
+      let constrainedSize = subview.sizeThatFits(
+        ProposedViewSize(width: effectiveMaxWidth, height: nil)
+      )
+      width = constrainedSize.width.isFinite
+        ? min(max(constrainedSize.width, 0), effectiveMaxWidth)
+        : effectiveMaxWidth
     }
 
-    // Trust the constrained measurement. Only fall back to natural height when the
-    // content is *strictly* narrower than the max width — that means the content
-    // didn't need to wrap and its natural height is its ideal height (e.g. short
-    // text with fixedSize(vertical: true)). When natural width *equals* the max
-    // width, the content is either filling the cap (a wide image) or wrapping —
-    // in both cases natural height is unreliable and constrained height is correct.
-    var height: CGFloat = 0
-    if constrainedSize.height.isFinite {
-      height = max(constrainedSize.height, 0)
-    }
-    if naturalSize.width.isFinite,
-       naturalSize.width < effectiveMaxWidth,
-       naturalSize.height.isFinite
-    {
-      height = max(height, naturalSize.height)
-    }
-
-    return CGSize(width: width, height: height)
+    // Match placeSubviews exactly, including when constrained content reports
+    // a width below the cap. Measuring at the cap but placing more narrowly can
+    // add wrapped lines that extend beyond the bubble's rounded clipping mask.
+    let placedSize = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+    return CGSize(width: width, height: placedSize.height.isFinite ? max(placedSize.height, 0) : 0)
   }
 
   func placeSubviews(

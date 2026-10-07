@@ -182,36 +182,51 @@ actor ContentFilterService {
       }
     }
 
-    // Check content label filtering
-    if !settings.contentLabelPreferences.isEmpty || settings.hideAdultContent {
-      if let labels = post.post.labels, !labels.isEmpty {
-        for label in labels {
-          let labelValue = label.val.lowercased()
-          
-          // Check adult content filter
-          if settings.hideAdultContent && ["nsfw", "porn", "sexual"].contains(labelValue) {
-            logger.debug("Filtered: adult content")
-            return false
-          }
-          
-          // Check user's label preferences
-          let visibility = ContentFilterManager.getVisibilityForLabel(
-            label: labelValue,
-            labelerDid: label.src,
-            preferences: settings.contentLabelPreferences
-          )
-          
-          if visibility == .hide {
-            logger.debug("Filtered: hidden label '\(labelValue)'")
-            return false
-          }
-        }
+    // Label moderation: the slice is dropped when the post, its parent or its
+    // root is filtered from lists (post-feed.ts drops the whole slice).
+    if let subject = Self.listFilterSubject(of: post, policy: settings.moderationPolicy) {
+      switch subject {
+      case .post: logger.debug("Filtered: moderation policy hides post")
+      case .replyParent: logger.debug("Filtered: moderation policy hides reply parent")
+      case .replyRoot: logger.debug("Filtered: moderation policy hides reply root")
       }
+      return false
     }
-    
+
     return true
   }
-  
+
+  /// `contentList` filter of the account's moderation policy for one post.
+  nonisolated func isListFiltered(_ post: AppBskyFeedDefs.PostView, settings: FeedTunerSettings) -> Bool {
+    settings.moderationPolicy.listFilter(post: post)
+  }
+
+  /// The part of a feed slice the policy filters from lists.
+  enum ListFilterSubject: Sendable, Equatable {
+    case post
+    case replyParent
+    case replyRoot
+  }
+
+  /// Why the account's moderation policy keeps a slice out of lists, or `nil`
+  /// when it may be listed: the post itself, then the reply parent, then the
+  /// root (`post-feed.ts` drops the whole slice for any of them). Every list of
+  /// feed slices applies this, feeds through `shouldShowFeedViewPost` and the
+  /// trending video previews directly.
+  nonisolated static func listFilterSubject(
+    of post: AppBskyFeedDefs.FeedViewPost, policy: ModerationPolicy
+  ) -> ListFilterSubject? {
+    if policy.listFilter(post: post.post) { return .post }
+    guard let reply = post.reply else { return nil }
+    if case .appBskyFeedDefsPostView(let parentPost) = reply.parent, policy.listFilter(post: parentPost) {
+      return .replyParent
+    }
+    if case .appBskyFeedDefsPostView(let rootPost) = reply.root, policy.listFilter(post: rootPost) {
+      return .replyRoot
+    }
+    return nil
+  }
+
   /// Check if a PostView should be shown based on filtering rules
   nonisolated func shouldShowPostView(_ post: AppBskyFeedDefs.PostView, settings: FeedTunerSettings) -> Bool {
     // Check if post author is blocked (strongest filter)
@@ -238,33 +253,11 @@ actor ContentFilterService {
       return false
     }
 
-    // Check content label filtering
-    if !settings.contentLabelPreferences.isEmpty || settings.hideAdultContent {
-      if let labels = post.labels, !labels.isEmpty {
-        for label in labels {
-          let labelValue = label.val.lowercased()
-          
-          // Check adult content filter
-          if settings.hideAdultContent && ["nsfw", "porn", "sexual"].contains(labelValue) {
-            logger.debug("Filtered: adult content")
-            return false
-          }
-          
-          // Check user's label preferences
-          let visibility = ContentFilterManager.getVisibilityForLabel(
-            label: labelValue,
-            labelerDid: label.src,
-            preferences: settings.contentLabelPreferences
-          )
-          
-          if visibility == .hide {
-            logger.debug("Filtered: hidden label '\(labelValue)'")
-            return false
-          }
-        }
-      }
+    if isListFiltered(post, settings: settings) {
+      logger.debug("Filtered: moderation policy hides post")
+      return false
     }
-    
+
     return true
   }
   private nonisolated func passesLocalPostType(_ post: AppBskyFeedDefs.PostView, settings: FeedTunerSettings) -> Bool {

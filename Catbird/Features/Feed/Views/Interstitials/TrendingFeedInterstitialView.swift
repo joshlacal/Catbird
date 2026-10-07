@@ -172,7 +172,9 @@ struct TrendingFeedContent: Equatable {
                 cursor: nil
             )
             let (_, response) = try await client.app.bsky.feed.getFeed(input: input)
-            return response?.feed ?? []
+            // Previews the account's policy filters from lists are not kept; the
+            // section re-filters with the live policy and covers moderated thumbnails.
+            return TrendingVideoModeration.listed(response?.feed ?? [], policy: appState.moderationPolicy)
         } catch {
             return []
         }

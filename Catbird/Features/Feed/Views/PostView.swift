@@ -44,6 +44,9 @@ import SwiftUI
   var showingInteractionSettings = false
   var showingLabelsOnPost = false
   var revealedMutedPreview: [String]?
+  /// The hidden row's cause identity the viewer chose to show (see
+  /// `PostModerationPresentation.filterIdentity`).
+  var revealedModerationFilter: String?
 
   /// Shares the view's box, so creating the state copies no post data.
   init(postBox: EquatableBox<AppBskyFeedDefs.PostView>) {
@@ -120,6 +123,7 @@ struct PostView: View, Identifiable {
   @Environment(SceneNavigationContext.self) private var sceneContext
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
+  @Environment(\.moderationListFilterExemptDID) private var copilotListFilterExemptDID
   /// The post as supplied by the parent. `postState.currentPostBox` holds the
   /// shadow-merged copy that is displayed.
   private let postBox: EquatableBox<AppBskyFeedDefs.PostView>
@@ -298,6 +302,7 @@ struct PostView: View, Identifiable {
       let activeContext = postState.copilotContextToPresent ?? postState.copilotContext
       CatbirdCopilotSheet(
         context: activeContext,
+        imageModerationSource: copilotImageModerationSource,
         onConfirmedAction: { proposal in
           try await handleConfirmedCopilotAction(proposal, context: activeContext)
         },
@@ -343,6 +348,25 @@ struct PostView: View, Identifiable {
       }
     } message: {
       Text("Mute this thread? You won't be notified about new replies.")
+    }
+  }
+
+  /// Re-read the actual active account and displayed post at every pixel boundary.
+  /// The global lifecycle fence also invalidates a retained sheet when an account
+  /// leaves and returns; a same-URI post cannot inherit its former authorization.
+  @MainActor
+  private var copilotImageModerationSource: CopilotImageModerationSource {
+    CopilotImageModerationSource { context, accountDID in
+      let manager = AppStateManager.shared
+      guard manager.lifecycle.appState === appState, !appState.isTransitioningAccounts,
+            accountDID == appState.userDID else { return nil }
+      return CopilotImageModerationSnapshot.make(
+        context: context, accountDID: accountDID,
+        accountRevision: manager.settingsAccountContextRevision,
+        clientID: appState.atProtoClient.map(ObjectIdentifier.init),
+        post: postState.currentPost, policy: appState.moderationPolicy,
+        revealedFilter: postState.revealedModerationFilter,
+        listFilterExemptDID: copilotListFilterExemptDID)
     }
   }
 
@@ -489,10 +513,18 @@ struct PostView: View, Identifiable {
       return
     }
     // Seed before any lifecycle wait or image prefetch. The responder may be
-    // visible to AppIntentsTesting as soon as this view renders.
+    // visible to AppIntentsTesting as soon as this view renders. The stores are
+    // persisted to the App Group for Siri and App Intents, so a post the policy
+    // keeps out of lists or gates (body or media) is not donated, nor is an
+    // author whose avatar stays a placeholder.
     if #available(iOS 18.0, *) {
-      await PostEntityStore.shared.store(post)
-      await ProfileEntityStore.shared.store(ProfileEntity(from: post.author))
+      let moderation = PostModerationPresentation.make(post: post, policy: appState.moderationPolicy)
+      if !moderation.isFilteredFromList, !moderation.concealsBody, !moderation.concealsMedia {
+        await PostEntityStore.shared.store(post)
+      }
+      if !moderation.concealsAvatar {
+        await ProfileEntityStore.shared.store(ProfileEntity(from: post.author))
+      }
     }
     
     // Set up report callback
@@ -537,8 +569,10 @@ struct PostView: View, Identifiable {
     await appState.waitForNextRefreshCycle()
     guard !Task.isCancelled else { return }
 
-    // Prefetch the avatar image
-    await prefetchAvatar()
+    // Prefetch the avatar image, unless moderation keeps it as a placeholder.
+    if !appState.moderationPolicy.decide(profile: post.author).ui(.avatar).blur {
+      await prefetchAvatar()
+    }
     guard !Task.isCancelled else { return }
 
     // Mark initial load as complete for transaction animation control
@@ -737,15 +771,6 @@ struct PostView: View, Identifiable {
     guard let finalAvatarURL = getFinalAvatarURL(), !postState.isAvatarLoaded else { return }
     await ImageLoadingManager.shared.startPrefetching(urls: [finalAvatarURL])
   }
-
-  /// Check if a post has adult content labels
-  private func hasAdultContentLabel(_ labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
-    guard !appState.isAdultContentEnabled else { return false }
-    return labels?.contains { label in
-      let lowercasedValue = label.val.lowercased()
-      return lowercasedValue == "porn" || lowercasedValue == "nsfw" || lowercasedValue == "nudity"
-    } ?? false
-  }
 }
 
 // MARK: - PostContentLayout
@@ -778,32 +803,70 @@ private struct PostContentLayout: View {
   let viewModel: PostViewModel
   @Binding var path: NavigationPath
 
+  @Environment(\.moderationPolicy) private var moderationPolicy
+  @Environment(\.moderationListFilterExemptDID) private var listFilterExemptDID
+
   /// The shadow-merged post being displayed.
   private var displayed: EquatableBox<AppBskyFeedDefs.PostView> {
     postState.currentPostBox
   }
 
+  private var displayError: PostViewError? {
+    postState.postError
+      ?? (isReadOnlyPreview ? PostView.detectPostError(in: postBox.value, isReadOnlyPreview: true) : nil)
+  }
+
+  /// The post's decision on the list surface. Error rows carry no moderation.
+  private var moderation: PostModerationPresentation {
+    guard displayError == nil else { return .empty }
+    return PostModerationPresentation.make(
+      post: displayed.value, policy: moderationPolicy, surface: .contentList,
+      listFilterExemptDID: listFilterExemptDID)
+  }
+
   var body: some View {
-    HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
-      postAvatar
-      postContentColumn
+    let moderation = self.moderation
+    if moderation.hidesRow && postState.revealedModerationFilter != moderation.filterIdentity {
+      // The surface did not filter this post (profile tabs, likes, bookmarks,
+      // thread replies, notifications): show it as hidden instead of the post.
+      // A filter inherited from a quote does not hide the row; the quote card
+      // gates itself.
+      ModerationHiddenPostRow(presentation: moderation) {
+        postState.revealedModerationFilter = moderation.filterIdentity
+      }
+      .padding(.top, PostView.baseUnit)
+    } else {
+      VStack(alignment: .leading, spacing: 0) {
+        if moderation.hidesRow {
+          // A shown hidden row keeps its cause in view and can be hidden again.
+          ModerationRevealedPostBar(presentation: moderation) {
+            postState.revealedModerationFilter = nil
+          }
+          .padding(.horizontal, PostView.baseUnit)
+          .padding(.top, PostView.baseUnit)
+        }
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+          postAvatar(concealed: moderation.concealsAvatar)
+          postContentColumn(moderation)
+        }
+      }
     }
   }
 
-  private var postAvatar: some View {
+  private func postAvatar(concealed: Bool) -> some View {
     AuthorAvatarColumn(
       author: PostAvatarAuthor(getAuthorForDisplay()),
       isParentPost: isParentPost,
       isAvatarLoaded: $postState.isAvatarLoaded,
       path: $path,
-      avatarScale: avatarScale
+      avatarScale: avatarScale,
+      concealsAvatar: concealed
     )
   }
 
-  private var postContentColumn: some View {
+  private func postContentColumn(_ moderation: PostModerationPresentation) -> some View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-      if let error = postState.postError
-        ?? (isReadOnlyPreview ? PostView.detectPostError(in: postBox.value, isReadOnlyPreview: true) : nil) {
+      if let error = displayError {
         // Show error content
         errorContentView(for: error)
       } else if isReadOnlyPreview && postBox.value.author.viewer?.muted == true && !showsMutedPreview {
@@ -818,7 +881,7 @@ private struct PostContentLayout: View {
         }
       } else {
         // Show normal post content with moderation
-        moderatedPostContent
+        moderatedPostContent(moderation)
           .postRevealFade(isEnabled: showsMutedPreview)
       }
     }
@@ -875,46 +938,38 @@ private struct PostContentLayout: View {
 
   // MARK: - Content Views
 
+  /// Header and reply line stay visible. Text and embed sit together behind
+  /// the body gate (`ContentHider` upstream); media sits behind the media gate
+  /// inside it. The action bar stays visible below.
   @ViewBuilder
-  private var moderatedPostContent: some View {
-    let labels = displayed.value.labels
-    let selfLabelValues = extractSelfLabelValues(from: displayed.value)
-    let hasEmbed = displayed.value.embed != nil
-    let labelSubject = PostLabelSubject(
-      uri: displayed.value.uri.uriString(), cid: displayed.value.cid,
-      authorDID: displayed.value.author.did.didString(),
-      authorHandle: displayed.value.author.handle.description
-    )
-    if labels?.isEmpty == false || !selfLabelValues.isEmpty {
-      ContentLabelView(labels: labels, selfLabelValues: selfLabelValues, subject: labelSubject)
-    }
-    
-    // Only wrap in ContentLabelManager if:
-    // 1. There's no embed (post handles its own labels), OR
-    // 2. There are text-specific labels that don't apply to the embed
-    if !hasEmbed && (labels?.isEmpty == false || !selfLabelValues.isEmpty) {
-      ContentLabelManager(labels: labels, selfLabelValues: selfLabelValues, contentType: "post", selfLabelsAlreadyShown: true) {
-        normalPostContent
+  private func moderatedPostContent(_ moderation: PostModerationPresentation) -> some View {
+    if case .knownType(let postObj) = displayed.value.record,
+      let feedPost = postObj as? AppBskyFeedPost {
+      VStack(alignment: .leading, spacing: 0) {
+        postHeader(for: feedPost)
+
+        if let replyTarget {
+          replyIndicatorView(replyTarget: replyTarget)
+            .textScale(.secondary)
+            .padding(.top, PostView.baseUnit)
+        } else if isToYou {
+          replyIndicatorView(replyTarget: nil)
+            .textScale(.secondary)
+            .padding(.top, PostView.baseUnit)
+        }
       }
-      .environment(\.postLabelSummaryIDs, labelSubject.labelIDs(in: labels))
-    } else {
-      // Embeds handle their own visibility policy. The post owns its label summary.
-      normalPostContent
-        .environment(\.postLabelSummaryIDs, labelSubject.labelIDs(in: labels))
-    }
-  }
 
-  @ViewBuilder
-  private var normalPostContent: some View {
-    // The post-level summary remains outside concealed text and media.
-    postContentView
-      .padding(.bottom, PostView.baseUnit)
-
-    // Embed content (images, links, videos, etc.)
-    if let embed = displayed.value.embed {
-      embedContent(embed, labels: displayed.value.labels)
-        .environment(\.postID, postID)
-        .padding(.bottom, PostView.baseUnit)
+      ModerationContentGate(ui: moderation.body) {
+        PostModeratedBody(
+          record: EquatableBox(feedPost),
+          displayed: displayed,
+          moderation: moderation,
+          isSelectable: isSelectable,
+          visibilityContext: visibilityContext,
+          postID: postID,
+          path: $path
+        )
+      }
     }
 
     if !isReadOnlyPreview {
@@ -947,35 +1002,6 @@ private struct PostContentLayout: View {
 
     case .permissionDenied:
       PostNotFoundView(uri: postBox.value.uri, reason: .permissionDenied, path: $path)
-    }
-  }
-
-  // MARK: - Component Views (AuthorAvatarColumn extracted)
-
-  // Post content area
-  private var postContentView: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      // Render the shadow-merged post
-      if case .knownType(let postObj) = displayed.value.record,
-        let feedPost = postObj as? AppBskyFeedPost {
-
-        postHeader(for: feedPost)
-
-        if let replyTarget {
-          replyIndicatorView(replyTarget: replyTarget)
-            .textScale(.secondary)
-            .padding(.top, PostView.baseUnit)
-        } else if isToYou {
-            replyIndicatorView(replyTarget: nil)
-                .textScale(.secondary)
-                .padding(.top, PostView.baseUnit)
-            }
-
-        PostRecordText(record: EquatableBox(feedPost), isSelectable: isSelectable, path: $path)
-          .allowsHitTesting(!isReadOnlyPreview)
-          .disabled(isReadOnlyPreview)
-          .padding(.top, PostView.baseUnit)
-      }
     }
   }
 
@@ -1230,22 +1256,6 @@ private struct PostContentLayout: View {
     .padding(.leading, PostView.baseUnit)
   }
 
-  // Media content (images, links, videos, etc.)
-  @ViewBuilder
-  private func embedContent(
-    _ embed: AppBskyFeedDefs.PostViewEmbedUnion, labels: [ComAtprotoLabelDefs.Label]?
-  ) -> some View {
-    PostEmbed(
-      embed: embed,
-      labels: labels,
-      path: $path,
-      visibilityContext: visibilityContext,
-      authorDID: postBox.value.author.did
-    )
-      .environment(\.postID, postID)
-      .padding(.trailing, PostView.baseUnit * 2)
-  }
-
   // MARK: - Setup & Helpers
 
   /// Get the author to display in the avatar column
@@ -1279,18 +1289,40 @@ private struct PostContentLayout: View {
     // Normal case - return actual post author
     return displayed.value.author
   }
+}
 
-  // Extract self-applied label values from the record (if present)
-  private func extractSelfLabelValues(from postView: AppBskyFeedDefs.PostView) -> [String] {
-    guard case .knownType(let record) = postView.record,
-          let feedPost = record as? AppBskyFeedPost,
-          let postLabels = feedPost.labels else { return [] }
+/// The part of a row the body gate conceals: label chips, text and embed.
+/// Its own view so the gate's generic content stays small in the row's body.
+private struct PostModeratedBody: View {
+  let record: EquatableBox<AppBskyFeedPost>
+  let displayed: EquatableBox<AppBskyFeedDefs.PostView>
+  let moderation: PostModerationPresentation
+  let isSelectable: Bool
+  let visibilityContext: PostVisibilityContext
+  let postID: String
+  @Binding var path: NavigationPath
+  @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
 
-    switch postLabels {
-    case .comAtprotoLabelDefsSelfLabels(let selfLabels):
-      return selfLabels.values.map { $0.val.lowercased() }
-    default:
-      return []
+  var body: some View {
+    ContentLabelView(causes: moderation.chips)
+
+    PostRecordText(record: record, isSelectable: isSelectable, path: $path)
+      .allowsHitTesting(!isReadOnlyPreview)
+      .disabled(isReadOnlyPreview)
+      .padding(.top, PostView.baseUnit)
+      .padding(.bottom, PostView.baseUnit)
+
+    if let embed = displayed.value.embed {
+      PostEmbed(
+        embed: embed,
+        mediaModeration: moderation.media,
+        path: $path,
+        visibilityContext: visibilityContext,
+        authorDID: displayed.value.author.did
+      )
+      .environment(\.postID, postID)
+      .padding(.trailing, PostView.baseUnit * 2)
+      .padding(.bottom, PostView.baseUnit)
     }
   }
 }
@@ -1465,6 +1497,9 @@ struct AuthorAvatarColumn: View {
   @Binding var isAvatarLoaded: Bool
   @Binding var path: NavigationPath
   var avatarScale: PostAvatarScale = .regular
+  /// The author's `avatar` decision blurs: show the neutral placeholder and
+  /// never request the image.
+  var concealsAvatar: Bool = false
   @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
 
   // Using multiples of 3 for spacing
@@ -1484,7 +1519,13 @@ struct AuthorAvatarColumn: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      if let finalURL = author.avatarURL {
+      if concealsAvatar {
+        ModeratedAvatarPlaceholder(size: avatarSize)
+          .overlay(liveStatusRing)
+          .onTapGesture {
+            openProfile()
+          }
+      } else if let finalURL = author.avatarURL {
         LazyImage(request: avatarRequest(finalURL)) { state in
           if let image = state.image {
             image

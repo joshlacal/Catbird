@@ -8,6 +8,20 @@ import UIKit
 import AppKit
 #endif
 
+// MARK: - Self-labels
+
+extension PostComposerViewModel {
+    /// The self-labels record published with a post: every label the author chose, in a stable
+    /// order. Self-labels tell other people's apps to warn about this post's media, so the
+    /// author's own adult-content setting never removes one.
+    nonisolated static func selfLabels(
+        from selected: Set<ComAtprotoLabelDefs.LabelValue>
+    ) -> ComAtprotoLabelDefs.SelfLabels {
+        ComAtprotoLabelDefs.SelfLabels(
+            values: selected.map(\.rawValue).sorted().map { ComAtprotoLabelDefs.SelfLabel(val: $0) })
+    }
+}
+
 // MARK: - Core Functionality Extension
 
 extension PostComposerViewModel {
@@ -575,16 +589,7 @@ extension PostComposerViewModel {
             allEmbeds.append(embed)
         }
 
-        // Create self labels
-        // If adult content is disabled, do not allow adult self-labels on posts
-        let adultOnly: Set<String> = ["porn", "sexual", "nudity"]
-        let filteredLabels: Set<ComAtprotoLabelDefs.LabelValue>
-        if !appState.isAdultContentEnabled {
-            filteredLabels = selectedLabels.filter { !adultOnly.contains($0.rawValue) }
-        } else {
-            filteredLabels = selectedLabels
-        }
-        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
+        let selfLabels = Self.selfLabels(from: selectedLabels)
 
         // Set up threadgate and postgate for the first post
         let threadgateRules = postingThreadgateRules()
@@ -711,16 +716,7 @@ extension PostComposerViewModel {
             logger.debug("No embed needed")
         }
 
-        // Create self labels
-        // If adult content is disabled, do not allow adult self-labels on posts
-        let adultOnly: Set<String> = ["porn", "sexual", "nudity"]
-        let filteredLabels: Set<ComAtprotoLabelDefs.LabelValue>
-        if !appState.isAdultContentEnabled {
-            filteredLabels = selectedLabels.filter { !adultOnly.contains($0.rawValue) }
-        } else {
-            filteredLabels = selectedLabels
-        }
-        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
+        let selfLabels = Self.selfLabels(from: selectedLabels)
 
         let threadgateRules = postingThreadgateRules()
         let postgateRules = postingPostgateRules()

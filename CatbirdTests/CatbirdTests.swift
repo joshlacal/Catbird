@@ -18,83 +18,9 @@ struct CatbirdTests {
     // Write your test here and use APIs like `#expect(...)` to check expected conditions.
   }
 
-  // MARK: - Content Warning Tests
-
-  @Test("Content warning system properly handles NSFW labels")
-  func testContentWarningForNSFWLabels() async throws {
-    // Create a test label for NSFW content
-    let nsfwLabel = ComAtprotoLabelDefs.Label(
-      ver: nil,
-      src: try DID(didString: "did:plc:test"),
-      uri: try URI(uriString: "at://test.example/app.bsky.feed.post/1"),
-      cid: nil,
-      val: "nsfw",
-      neg: nil,
-      cts: ATProtocolDate(date: Date()),
-      exp: nil,
-      sig: nil
-    )
-
-    // Test that ContentLabelManager correctly identifies NSFW content for warnings
-    let visibility = ContentLabelManager.getContentVisibility(labels: [nsfwLabel])
-
-    // NSFW content should trigger warning by default
-    #expect(visibility == .warn, "NSFW content should trigger warning visibility")
-  }
-
-  @Test("Content warning system handles empty labels")
-  func testContentWarningForNoLabels() async throws {
-    // Test that content without labels shows normally
-    let visibility = ContentLabelManager.getContentVisibility(labels: nil)
-
-    // Content without labels should show normally
-    #expect(visibility == .show, "Content without labels should show normally")
-  }
-
-  @Test("Content warning system properly blurs initially")
-  func testContentWarningInitialBlurState() async throws {
-    // Create a test label for graphic content
-    let graphicLabel = ComAtprotoLabelDefs.Label(
-      ver: nil,
-      src: try DID(didString: "did:plc:test"),
-      uri: try URI(uriString: "at://test.example/app.bsky.feed.post/1"),
-      cid: nil,
-      val: "graphic",
-      neg: nil,
-      cts: ATProtocolDate(date: Date()),
-      exp: nil,
-      sig: nil
-    )
-
-    // Test that ContentLabelManager correctly determines initial blur state
-    let shouldBlur = ContentLabelManager.shouldInitiallyBlur(labels: [graphicLabel])
-
-    // Graphic content should be initially blurred
-    #expect(shouldBlur == true, "Graphic content should be initially blurred")
-  }
-
-  @Test("Content warning system ignores non-warning labels for censorship")
-  func testContentWarningIgnoresInformationalLabels() async throws {
-    // Create a test label that should not trigger blur/hide
-    let spamLabel = ComAtprotoLabelDefs.Label(
-      ver: nil,
-      src: try DID(didString: "did:plc:test"),
-      uri: try URI(uriString: "at://test.example/app.bsky.feed.post/1"),
-      cid: nil,
-      val: "spam",
-      neg: nil,
-      cts: ATProtocolDate(date: Date()),
-      exp: nil,
-      sig: nil
-    )
-
-    let visibility = ContentLabelManager.getContentVisibility(labels: [spamLabel])
-    let shouldBlur = ContentLabelManager.shouldInitiallyBlur(labels: [spamLabel])
-
-    // Informational/non-warning labels should not censor media
-    #expect(visibility == .show, "Non-warning labels should not change visibility")
-    #expect(shouldBlur == false, "Non-warning labels should not blur content")
-  }
+  // Label rendering contracts live in CatbirdTests/ModerationRendering, which
+  // exercise the moderation engine with an account policy instead of the
+  // former hardcoded label list.
 
 }
 

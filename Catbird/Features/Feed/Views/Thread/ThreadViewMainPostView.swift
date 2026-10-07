@@ -97,22 +97,9 @@ struct ThreadViewMainPostView: View, Equatable {
     return post.uri
   }
 
-  private var labelSubject: PostLabelSubject {
-    PostLabelSubject(uri: post.value.uri.uriString(), cid: post.value.cid,
-      authorDID: post.value.author.did.didString(), authorHandle: post.value.author.handle.description)
-  }
-
+  /// The layout applies the `contentView` moderation: header and actions stay
+  /// visible, text and embed sit behind the body gate, media behind the media gate.
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      ContentLabelView(labels: post.value.labels, selfLabelValues: selfLabelValues,
-        subject: labelSubject)
-      moderatedBody
-        .environment(\.postLabelSummaryIDs, labelSubject.labelIDs(in: post.value.labels))
-    }
-  }
-
-  private var moderatedBody: some View {
-    ContentLabelManager(labels: post.value.labels, selfLabelValues: selfLabelValues, contentType: "post", selfLabelsAlreadyShown: true) {
       ThreadMainPostLayout(
         post: post,
         appState: appState,
@@ -204,20 +191,6 @@ struct ThreadViewMainPostView: View, Equatable {
       .task(id: post) {
         await setupContextMenu()
       }
-    }
-  }
-
-  /// Self-applied labels from the record, for visibility decisions.
-  private var selfLabelValues: [String] {
-    guard case .knownType(let record) = post.value.record,
-          let feedPost = record as? AppBskyFeedPost,
-          let postLabels = feedPost.labels else { return [] }
-    switch postLabels {
-    case .comAtprotoLabelDefsSelfLabels(let selfLabels):
-      return selfLabels.values.map { $0.val.lowercased() }
-    default:
-      return []
-    }
   }
 
   // MARK: - Setup & Helpers
@@ -315,6 +288,7 @@ private struct ThreadMainPostLayout: View {
   let contextMenuViewModel: PostContextMenuViewModel
   let currentUserDid: String?
   @Binding var prompts: ThreadMainPostPrompts
+  @Environment(\.moderationPolicy) private var moderationPolicy
 
   /// The record fields this layout branches on, or `nil` when the record did
   /// not decode as a post. Read in a plain property so the decoded record
@@ -329,7 +303,13 @@ private struct ThreadMainPostLayout: View {
     post.value.embed != nil
   }
 
+  /// The anchor post's decision on the `contentView` surface.
+  private var moderation: PostModerationPresentation {
+    PostModerationPresentation.make(post: post.value, policy: moderationPolicy, surface: .contentView)
+  }
+
   var body: some View {
+    let moderation = self.moderation
     VStack(alignment: .leading, spacing: 0) {
       VStack(alignment: .leading, spacing: 0) {
         if let summary = recordSummary {
@@ -343,26 +323,22 @@ private struct ThreadMainPostLayout: View {
             viewModel: viewModel,
             contextMenuViewModel: contextMenuViewModel,
             currentUserDid: currentUserDid,
+            concealsAvatar: moderation.concealsAvatar,
             prompts: $prompts
           )
 
-          if summary.hasText {
-            ThreadMainPostText(post: post, path: $path)
-          }
+          ModerationContentGate(ui: moderation.body) {
+            ContentLabelView(causes: moderation.chips)
+              .padding(.horizontal, 6)
 
-          //              if feedPost.text != "" {
-          //
-          //                  TappableTextView(
-          //                    attributedString: feedPost.facetsAsAttributedString, textSize: nil, textStyle: .title3
-          //                  )
-          //                  .lineLimit(nil)
-          //                  .fixedSize(horizontal: false, vertical: true)
-          //                  .padding(.vertical, 6)
-          //                  .padding(.leading, 6)
-          //                  .padding(.trailing, 6)
-          //              }
-          if hasEmbed {
-            ThreadMainPostEmbed(post: post, visibilityContext: visibilityContext, path: $path)
+            if summary.hasText {
+              ThreadMainPostText(post: post, path: $path)
+            }
+
+            if hasEmbed {
+              ThreadMainPostEmbed(
+                post: post, mediaModeration: moderation.media, visibilityContext: visibilityContext, path: $path)
+            }
           }
           Text(ThreadViewMainPostView.dateTimeFormatter.string(from: summary.createdAt))
             .appSubheadline()
@@ -396,6 +372,8 @@ private struct ThreadMainPostHeader: View {
   let viewModel: PostViewModel
   let contextMenuViewModel: PostContextMenuViewModel
   let currentUserDid: String?
+  /// The author's `avatar` decision blurs: placeholder only, no image request.
+  let concealsAvatar: Bool
   @Binding var prompts: ThreadMainPostPrompts
 
   /// The author's display name, falling back to the handle when it is missing or blank.
@@ -436,26 +414,28 @@ private struct ThreadMainPostHeader: View {
 
   private var authorAvatarColumn: some View {
     VStack(alignment: .leading, spacing: 0) {
-      LazyImage(url: post.value.author.finalAvatarURL()) { state in
-        if let image = state.image {
-          image
-            .resizable()
-            .aspectRatio(1, contentMode: .fill)
-            .frame(width: ThreadViewMainPostView.avatarSize, height: ThreadViewMainPostView.avatarSize)
-            .clipShape(Circle())
+      Group {
+        if concealsAvatar {
+          ModeratedAvatarPlaceholder(size: ThreadViewMainPostView.avatarSize)
             .contentShape(Circle())
-          //            .overlay(
-          //              Circle()
-          //                .inset(by: -1.5)
-          //                .stroke(colorScheme == .dark ? Color.black : Color.white, lineWidth: 3)
-          //            )
         } else {
-          Image(systemName: "person.circle.fill")
-            .resizable()
-            .scaledToFit()
-            .frame(width: ThreadViewMainPostView.avatarSize, height: ThreadViewMainPostView.avatarSize)
-            .foregroundColor(.gray)
-            .contentShape(Circle())
+          LazyImage(url: post.value.author.finalAvatarURL()) { state in
+            if let image = state.image {
+              image
+                .resizable()
+                .aspectRatio(1, contentMode: .fill)
+                .frame(width: ThreadViewMainPostView.avatarSize, height: ThreadViewMainPostView.avatarSize)
+                .clipShape(Circle())
+                .contentShape(Circle())
+            } else {
+              Image(systemName: "person.circle.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: ThreadViewMainPostView.avatarSize, height: ThreadViewMainPostView.avatarSize)
+                .foregroundColor(.gray)
+                .contentShape(Circle())
+            }
+          }
         }
       }
       .onTapGesture {
@@ -756,6 +736,8 @@ private struct ThreadMainPostText: View {
 /// The post's embed: images, video, link card or quoted record.
 private struct ThreadMainPostEmbed: View {
   let post: EquatableBox<AppBskyFeedDefs.PostView>
+  /// The post's `ui(.contentMedia)`.
+  let mediaModeration: ModerationUI
   let visibilityContext: PostVisibilityContext
   @Binding var path: NavigationPath
 
@@ -763,7 +745,7 @@ private struct ThreadMainPostEmbed: View {
     if let embed = post.value.embed {
       PostEmbed(
         embed: embed,
-        labels: post.value.labels,
+        mediaModeration: mediaModeration,
         path: $path,
         visibilityContext: visibilityContext,
         authorDID: post.value.author.did

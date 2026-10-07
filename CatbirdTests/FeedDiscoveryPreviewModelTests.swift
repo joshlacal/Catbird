@@ -130,8 +130,8 @@ struct FeedDiscoveryPreviewModelTests {
       hideReplies: false, hideRepliesByUnfollowed: false, hideRepliesByLikeCount: nil,
       hideReposts: false, hideQuotePosts: false, hideNonPreferredLanguages: false,
       preferredLanguages: [], mutedUsers: [], blockedUsers: [], hideLinks: false,
-      onlyTextPosts: false, onlyMediaPosts: false, contentLabelPreferences: [],
-      hideAdultContent: true, hiddenPosts: [hidden.post.uri.uriString()], currentUserDid: "one")
+      onlyTextPosts: false, onlyMediaPosts: false,
+      hiddenPosts: [hidden.post.uri.uriString()], currentUserDid: "one")
     let result = await FeedDiscoveryPreviewModel.moderatedPosts([visible, blocked, muted, hidden], settings: settings)
     #expect(result.map { $0.post.uri.uriString() } == [visible.post.uri.uriString()])
   }

@@ -7,6 +7,7 @@ struct ProfileRowView: View {
     let profile: ProfileDisplayable
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
+    @Environment(\.moderationPolicy) private var moderationPolicy
     @State private var currentUserDid: String?
     @State private var viewerStatus: ViewerStatus = .unknown
     @State private var showUnblockConfirmation = false
@@ -27,6 +28,7 @@ struct ProfileRowView: View {
                 AsyncProfileImage(
                     url: profile.finalAvatarURL(),
                     size: DesignTokens.Size.avatarLG,
+                    did: profile.did.didString(),
                     labels: extractLabels(from: profile)
                 )
 
@@ -55,7 +57,12 @@ struct ProfileRowView: View {
         .entityContext(
           EntityIdentifier(for: ProfileEntity.self, identifier: profile.did.didString()))
         .task {
-            await ProfileEntityStore.shared.store(ProfileEntity(displayable: profile))
+            // The persisted resolution store carries the avatar URL, so an
+            // author whose avatar stays a placeholder is not seeded (as the
+            // feed row does for post authors).
+            if !moderationPolicy.concealsAvatar(did: profile.did.didString(), labels: extractLabels(from: profile)) {
+                await ProfileEntityStore.shared.store(ProfileEntity(displayable: profile))
+            }
 
             // Fetch the DID asynchronously
             currentUserDid = try? await appState.atProtoClient?.getDid()
@@ -260,15 +267,8 @@ struct ProfileRowView: View {
             .contentShape(Capsule())
     }
     
-    private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
-        if let profileView = profile as? AppBskyActorDefs.ProfileView {
-            return profileView.labels
-        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
-            return profileViewBasic.labels
-        } else if let profileViewDetailed = profile as? AppBskyActorDefs.ProfileViewDetailed {
-            return profileViewDetailed.labels
-        }
-        return nil
+    private func extractLabels(from profile: any ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
+        (profile as? any ModerationAccountSubject)?.moderationLabels
     }
 }
 

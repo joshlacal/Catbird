@@ -69,8 +69,11 @@ final class ThreadRowCell: UICollectionViewCell {
       onAction: onAction
     )
 
+    // The configuration closure runs once, here: the policy it injects is a
+    // snapshot, so the row tracks the live policy itself.
     contentConfiguration = UIHostingConfiguration {
       content
+        .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
           .environment(sceneContext)
         .transaction { txn in txn.animation = nil }
@@ -168,8 +171,11 @@ final class MainPostCell: UICollectionViewCell {
       configuredIdentity = configurationIdentity
 
       // Supply state at the UIKit hosting boundary for all main-post descendants.
+      // The policy is tracked, not snapshotted, so a settings change re-gates
+      // the anchor in place.
       contentConfiguration = UIHostingConfiguration {
         content
+          .trackingModerationPolicy(of: appState)
           .applyAppStateEnvironment(appState)
           .environment(sceneContext)
           .transaction { txn in txn.animation = nil }
@@ -243,6 +249,7 @@ final class BlockedAnchorCell: UICollectionViewCell {
           variant: .anchor,
           path: path
         )
+        .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
           .environment(sceneContext)
         .padding(.horizontal, ThreadReplyGeometry.rowInset)

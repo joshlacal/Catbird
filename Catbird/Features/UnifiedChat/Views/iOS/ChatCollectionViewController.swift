@@ -4,6 +4,9 @@ import Observation
 import os
 import SwiftUI
 import UIKit
+#if DEBUG
+import Petrel
+#endif
 
 @available(iOS 16.0, *)
 final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIViewController,
@@ -128,8 +131,18 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var pillBottomConstraint: NSLayoutConstraint?
 
   private weak var reactionDetailsController: UIViewController?
-  private var reactionOverlayControl: UIControl?
-  private var reactionOverlayHost: UIViewController?
+  #if DEBUG
+  private let fixtureRecordStore = ChatPresentationFixtureRecordStore()
+  private(set) var fixtureNativeContextMenuRequestCount = 0
+  private(set) var fixtureNativeContextMenuAttemptCount = 0
+  private(set) var fixtureNativeContextMenuLastStatus = "not-requested"
+  #endif
+  private var messageMenuAccountID: String?
+  private var messageMenuGeneration = UUID()
+  private var messageMenuAnchors: [String: ChatMessageContextMenuAnchorReference] = [:]
+  private var activeMessageMenuIdentity: ChatMessageMenuIdentity?
+  private var pendingMessageMenuAction: (action: ChatMessageMenuAction, identity: ChatMessageMenuIdentity)?
+  private weak var messageActionsController: UIAlertController?
 
   // MARK: - Initialization
 
@@ -142,6 +155,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     self.dataSource = dataSource
     self.navigationPath = navigationPath
     self.appState = appState
+    self.messageMenuAccountID = appState.userDID
     self.sceneContext = sceneContext
     super.init(nibName: nil, bundle: nil)
   }
@@ -200,6 +214,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     // Cancelling here caused incoming websocket messages to be silently dropped from the
     // UI because the snapshot was never updated while observation was inactive.
     if isMovingFromParent || isBeingDismissed {
+      dismissMessageMenus()
       observationTask?.cancel()
       observationTask = nil
     }
@@ -274,51 +289,67 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
       cell.contentConfiguration = UIHostingConfiguration {
         ChatTranscriptContent(cell: cell) {
-          UnifiedMessageBubble(
-            message: message,
-            navigationPath: self.navigationPath,
-            onReactionTapped: { emoji in
-              Task { @MainActor in
-                self.dataSource.toggleReaction(messageID: messageID, emoji: emoji)
-                self.onReactionTapped?(messageID, emoji)
-              }
-            },
-            onAddReaction: { emoji in
-              Task { @MainActor in
-                self.dataSource.addReaction(messageID: messageID, emoji: emoji)
-                self.onReactionTapped?(messageID, emoji)
-              }
-            },
-            onRequestEmojiPicker: { requestedMessageID in
-              self.onRequestEmojiPicker?(requestedMessageID)
-            },
-            onLongPress: { bubbleGlobalFrame in
-              self.onMessageLongPress?(message)
-              self.presentReactionOverlay(messageID: messageID, bubbleGlobalFrame: bubbleGlobalFrame)
-            },
-            onReactionLongPress: {
-              Task { @MainActor [weak self] in
-                await self?.presentReactionDetailsSheet(messageID: messageID)
-              }
-            },
-            onReply: { [weak self] in
-              guard let self, let msg = self.dataSource.message(for: messageID) else { return }
-              self.onReply?(msg)
-            },
-            onReplyTapped: { [weak self] referencedID in
-              self?.scrollToMessage(id: referencedID, highlight: true)
-            },
-            onToggleGroup: { [weak self] in
-              (self?.dataSource as? BlueskyConversationDataSource)?.toggleSystemGroup(groupID: messageID)
-            },
-            onRetry: { [weak self] in
-              self?.onRetryMessage?(messageID)
-            },
-            showSenderName: (self.dataSource as? BlueskyConversationDataSource)?.isGroupConversation ?? true,
-            groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
-          )
-          .environment(appState)
-          .environment(self.sceneContext)
+          self.fixtureRecordsContent {
+            UnifiedMessageBubble(
+              message: message,
+              navigationPath: self.navigationPath,
+              onReactionTapped: { emoji in
+                Task { @MainActor in
+                  self.dataSource.toggleReaction(messageID: messageID, emoji: emoji)
+                  self.onReactionTapped?(messageID, emoji)
+                }
+              },
+              onAddReaction: { emoji in
+                Task { @MainActor in
+                  self.dataSource.addReaction(messageID: messageID, emoji: emoji)
+                  self.onReactionTapped?(messageID, emoji)
+                }
+              },
+              onRequestEmojiPicker: { requestedMessageID in
+                self.onRequestEmojiPicker?(requestedMessageID)
+              },
+              onLongPress: nil,
+              onMoreActions: { [weak self] in
+                self?.presentAccessibleMessageActions(messageID: messageID)
+              },
+              onContextMenuAnchor: { [weak self, weak cell] anchor in
+                // Hosting can finish layout in a reused or measurement cell.
+                // Only the currently displayed message may replace its anchor.
+                guard let self, let cell,
+                      anchor.window != nil,
+                      anchor.isDescendant(of: cell.contentView),
+                      let indexPath = self.collectionView.indexPath(for: cell),
+                      self.diffableDataSource.itemIdentifier(for: indexPath) == .message(id: messageID),
+                      self.collectionView.cellForItem(at: indexPath) === cell else { return }
+                self.messageMenuAnchors[messageID] = ChatMessageContextMenuAnchorReference(view: anchor, cell: cell)
+              },
+              onReactionLongPress: {
+                Task { @MainActor [weak self] in
+                  await self?.presentReactionDetailsSheet(messageID: messageID)
+                }
+              },
+              onReply: { [weak self] in
+                guard let self, let msg = self.dataSource.message(for: messageID) else { return }
+                self.onReply?(msg)
+              },
+              onReplyTapped: { [weak self] referencedID in
+                self?.scrollToMessage(id: referencedID, highlight: true)
+              },
+              onToggleGroup: { [weak self] in
+                (self?.dataSource as? BlueskyConversationDataSource)?.toggleSystemGroup(groupID: messageID)
+              },
+              onRetry: { [weak self] in
+                self?.onRetryMessage?(messageID)
+              },
+              showSenderName: (self.dataSource as? BlueskyConversationDataSource)?.isGroupConversation ?? true,
+              groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
+            )
+            // Quoted posts and avatars in a bubble read the moderation policy from
+            // the environment; without it they would use the fail-closed policy.
+            .trackingModerationPolicy(of: appState)
+            .applyAppStateEnvironment(appState)
+            .environment(self.sceneContext)
+          }
         }
       }
       .margins(.all, 0)
@@ -378,6 +409,22 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       }
     }
   }
+
+  @ViewBuilder
+  private func fixtureRecordsContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    #if DEBUG
+    content().modifier(ChatPresentationFixtureRecordsModifier(store: fixtureRecordStore))
+    #else
+    content()
+    #endif
+  }
+
+  #if DEBUG
+  func updateFixtureRecords(_ records: [String: AppBskyEmbedRecord.ViewRecordUnion]) {
+    guard fixtureRecordStore.records != records else { return }
+    fixtureRecordStore.records = records
+  }
+  #endif
 
   private func setupObservation() {
     observationTask?.cancel()
@@ -451,7 +498,15 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     reconfiguringMessageIDs: Set<String>
   ) async {
     guard diffableDataSource != nil else { return }
-    
+    let messageIDs = Set(items.compactMap { item -> String? in
+      if case .message(let id) = item { return id }
+      return nil
+    })
+    messageMenuAnchors = messageMenuAnchors.filter { messageIDs.contains($0.key) && $0.value.view != nil }
+    if let identity = activeMessageMenuIdentity, message(for: identity) == nil {
+      dismissMessageMenus()
+    }
+
     // Capture current state before update for scroll position maintenance
     let previousItemCount = diffableDataSource.snapshot().numberOfItems
     let previousContentHeight = collectionView.contentSize.height
@@ -593,18 +648,19 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   func updateSceneContext(_ context: SceneNavigationContext) {
     guard sceneContext !== context else { return }
     reactionDetailsController?.dismiss(animated: false)
-    dismissReactionOverlay()
+    dismissMessageMenus()
     sceneContext = context
     collectionView?.reloadData()
   }
 
   func updateAppState(_ newAppState: AppState) {
     if appState !== newAppState { cancelEmbedPrefetch() }
-    if appState?.userDID != newAppState.userDID {
+    if appState !== newAppState || messageMenuAccountID != newAppState.userDID {
       reactionDetailsController?.dismiss(animated: false)
-      dismissReactionOverlay()
+      dismissMessageMenus()
     }
     appState = newAppState
+    messageMenuAccountID = newAppState.userDID
   }
 
   // MARK: - Actions
@@ -629,166 +685,367 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     return signatures
   }
   
-  @objc private func reactionOverlayTappedOutside() {
-    dismissReactionOverlay()
+  private func messageMenuIdentity(messageID: String) -> ChatMessageMenuIdentity {
+    ChatMessageMenuIdentity(
+      messageID: messageID,
+      accountID: appState?.userDID,
+      sceneID: ObjectIdentifier(sceneContext),
+      generation: messageMenuGeneration
+    )
   }
 
-  @MainActor
-  private func dismissReactionOverlay() {
-    reactionOverlayHost?.willMove(toParent: nil)
-    reactionOverlayHost?.view.removeFromSuperview()
-    reactionOverlayHost?.removeFromParent()
-    reactionOverlayHost = nil
+  private func message(for identity: ChatMessageMenuIdentity) -> Message? {
+    guard appState != nil,
+          identity == messageMenuIdentity(messageID: identity.messageID),
+          let message = dataSource.message(for: identity.messageID),
+          message.diffableID == identity.messageID,
+          !message.isSystemMessage, !message.isTombstone else { return nil }
+    return message
+  }
 
-    reactionOverlayControl?.removeFromSuperview()
-    reactionOverlayControl = nil
+  private func menuActions(for message: Message) -> [ChatMessageMenuAction] {
+    ChatMessageMenuActions.available(
+      for: message,
+      callbacks: ChatMessageMenuCallbacks(
+        canReply: onReply != nil, canDelete: onDeleteMessage != nil, canReport: onReportMessage != nil
+      ),
+      quickReactions: UnifiedQuickReactionBar.defaultQuickReactions
+    )
+  }
+
+  private func dismissMessageMenus() {
+    messageMenuGeneration = UUID()
+    pendingMessageMenuAction = nil
+    activeMessageMenuIdentity = nil
+    collectionView?.contextMenuInteraction?.dismissMenu()
+    messageActionsController?.dismiss(animated: false)
+    messageActionsController = nil
+  }
+
+  private func menuAnchor(messageID: String) -> (view: ChatMessageContextMenuAnchorView, cell: UICollectionViewCell, rect: CGRect)? {
+    guard let reference = messageMenuAnchors[messageID],
+          let anchor = reference.view,
+          let indexPath = diffableDataSource.indexPath(for: .message(id: messageID)),
+          let cell = collectionView.cellForItem(at: indexPath),
+          reference.cell === cell,
+          anchor.window != nil,
+          anchor.isDescendant(of: cell.contentView) else { return nil }
+    let rect = anchor.convert(anchor.bounds, to: cell.contentView)
+    guard !rect.isEmpty, !rect.isInfinite, !rect.isNull,
+          rect.origin.x.isFinite, rect.origin.y.isFinite else { return nil }
+    return (anchor, cell, rect)
+  }
+
+  #if DEBUG
+  /// A read-only witness for the local fixture; no message content is recorded.
+  func fixtureMessageMenuAnchorStatus(messageID: String) -> String {
+    let reference = messageMenuAnchors[messageID]
+    let anchor = reference?.view
+    let storedCell = reference?.cell
+    let indexPath = diffableDataSource.indexPath(for: .message(id: messageID))
+    let currentCell = indexPath.flatMap { collectionView.cellForItem(at: $0) }
+    let sameCell = storedCell != nil && storedCell === currentCell
+    let hasWindow = anchor?.window != nil
+    let isDescendant: Bool
+    let rect: CGRect?
+    if let anchor, let currentCell {
+      isDescendant = anchor.isDescendant(of: currentCell.contentView)
+      rect = anchor.convert(anchor.bounds, to: currentCell.contentView)
+    } else {
+      isDescendant = false
+      rect = nil
+    }
+    let validRect = rect.map {
+      !$0.isEmpty && !$0.isInfinite && !$0.isNull && $0.origin.x.isFinite && $0.origin.y.isFinite
+    } ?? false
+    let reason: String
+    if reference == nil { reason = "missing-reference" }
+    else if anchor == nil { reason = "released-anchor" }
+    else if indexPath == nil { reason = "missing-index-path" }
+    else if currentCell == nil { reason = "no-visible-cell" }
+    else if !sameCell { reason = "cell-mismatch" }
+    else if !hasWindow { reason = "no-window" }
+    else if !isDescendant { reason = "not-current-content-descendant" }
+    else if !validRect { reason = "invalid-rect" }
+    else { reason = "valid" }
+    let storedCellID = storedCell.map { String(describing: ObjectIdentifier($0)) } ?? "nil"
+    let currentCellID = currentCell.map { String(describing: ObjectIdentifier($0)) } ?? "nil"
+    let location = indexPath.map { "\($0.section):\($0.item)" } ?? "nil"
+    let bounds = anchor.map { String(describing: $0.bounds) } ?? "nil"
+    let convertedRect = rect.map { String(describing: $0) } ?? "nil"
+    return "\(reason) references=\(messageMenuAnchors.count) indexPath=\(location) storedCell=\(storedCellID) currentCell=\(currentCellID) sameCell=\(sameCell) window=\(hasWindow) descendant=\(isDescendant) bounds=\(bounds) rect=\(convertedRect)"
+  }
+
+  private func fixtureMessageMenuConfigurationFailure(indexPaths: [IndexPath], point: CGPoint) -> String {
+    let geometry = "point=\(point) indexPathCount=\(indexPaths.count)"
+    guard indexPaths.count == 1, let indexPath = indexPaths.first else {
+      return "invalid-index-path-count \(geometry)"
+    }
+    guard let item = diffableDataSource.itemIdentifier(for: indexPath) else {
+      return "missing-item indexPath=\(indexPath.section):\(indexPath.item) \(geometry)"
+    }
+    guard case .message(let messageID) = item else {
+      return "non-message-item indexPath=\(indexPath.section):\(indexPath.item) \(geometry)"
+    }
+    return "invalid-anchor \(fixtureMessageMenuAnchorStatus(messageID: messageID)) \(geometry)"
+  }
+  #endif
+
+  func collectionView(
+    _ collectionView: UICollectionView,
+    contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
+    point: CGPoint
+  ) -> UIContextMenuConfiguration? {
+    #if DEBUG
+    fixtureNativeContextMenuAttemptCount += 1
+    fixtureNativeContextMenuLastStatus = "entered point=\(point)"
+    #endif
+    guard indexPaths.count == 1,
+          let indexPath = indexPaths.first,
+          let item = diffableDataSource.itemIdentifier(for: indexPath),
+          case .message(let messageID) = item,
+          let anchor = menuAnchor(messageID: messageID) else {
+      #if DEBUG
+      fixtureNativeContextMenuLastStatus = fixtureMessageMenuConfigurationFailure(indexPaths: indexPaths, point: point)
+      #endif
+      return nil
+    }
+    let localPoint = collectionView.convert(point, to: anchor.cell.contentView)
+    #if DEBUG
+    let fixtureMenuGeometry = "point=\(point) localPoint=\(localPoint) anchorRect=\(anchor.rect)"
+    #endif
+    guard anchor.rect.contains(localPoint) else {
+      #if DEBUG
+      fixtureNativeContextMenuLastStatus = "outside-anchor \(fixtureMenuGeometry)"
+      #endif
+      return nil
+    }
+
+    // Preserve an embedded control's own hold menu. Ordinary card buttons
+    // still allow a message hold menu; their normal tap is unchanged. The
+    // native anchor never participates in hit testing.
+    var hitView = anchor.cell.contentView.hitTest(localPoint, with: nil)
+    while let candidate = hitView, candidate !== anchor.cell.contentView {
+      if candidate.interactions.contains(where: { $0 is UIContextMenuInteraction }) {
+        #if DEBUG
+        fixtureNativeContextMenuLastStatus = "nested-interaction class=\(String(describing: type(of: candidate))) \(fixtureMenuGeometry)"
+        #endif
+        return nil
+      }
+      hitView = candidate.superview
+    }
+
+    messageMenuGeneration = UUID()
+    let identity = messageMenuIdentity(messageID: messageID)
+    guard message(for: identity) != nil else {
+      #if DEBUG
+      fixtureNativeContextMenuLastStatus = "invalid-message \(fixtureMenuGeometry)"
+      #endif
+      return nil
+    }
+    #if DEBUG
+    fixtureNativeContextMenuRequestCount += 1
+    fixtureNativeContextMenuLastStatus = "accepted \(fixtureMenuGeometry)"
+    #endif
+    return UIContextMenuConfiguration(identifier: ChatMessageMenuConfigurationIdentifier(identity: identity), previewProvider: nil) { [weak self] _ in
+      self?.nativeMessageMenu(for: identity)
+    }
+  }
+
+  private func nativeMessageMenu(for identity: ChatMessageMenuIdentity) -> UIMenu? {
+    guard let message = message(for: identity) else { return nil }
+    let actions = menuActions(for: message)
+    func nativeAction(_ action: ChatMessageMenuAction) -> UIAction {
+      let image: UIImage?
+      if case .reaction(let emoji) = action {
+        let size = CGSize(width: 30, height: 30)
+        image = UIGraphicsImageRenderer(size: size).image { _ in
+          (emoji as NSString).draw(at: CGPoint(x: 1, y: 0), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+        }.withRenderingMode(.alwaysOriginal)
+      } else {
+        image = action.symbolName.flatMap { UIImage(systemName: $0) }
+      }
+      return UIAction(
+        title: action.title,
+        image: image,
+        identifier: UIAction.Identifier(action.identifier),
+        attributes: action.isDestructive ? [.destructive] : []
+      ) { [weak self] _ in
+        self?.selectMessageMenuAction(action, identity: identity)
+      }
+    }
+    let reactions = actions.filter { if case .reaction = $0 { return true }; return false }
+    // Keep each native compact group within one row. A six-item group can
+    // overflow into full-size image-and-title rows for its remaining actions.
+    let reactionMenus: [UIMenuElement] = stride(from: 0, to: reactions.count, by: 3).map { startIndex in
+      let groupIdentifier = startIndex == 0
+        ? "chat.message.reactions"
+        : "chat.message.reactions.\(startIndex / 3 + 1)"
+      let menu = UIMenu(
+        title: "", identifier: UIMenu.Identifier(groupIdentifier), options: .displayInline,
+        children: reactions[startIndex..<min(startIndex + 3, reactions.count)].map(nativeAction)
+      )
+      menu.preferredElementSize = .small
+      return menu
+    }
+    let otherActions = actions.filter { if case .reaction = $0 { return false }; return true }
+    return UIMenu(
+      title: "", identifier: UIMenu.Identifier("chat.message.actions"),
+      children: reactionMenus + otherActions.map(nativeAction)
+    )
+  }
+
+  func collectionView(
+    _ collectionView: UICollectionView,
+    contextMenuConfiguration configuration: UIContextMenuConfiguration,
+    highlightPreviewForItemAt indexPath: IndexPath
+  ) -> UITargetedPreview? {
+    messageMenuPreview(configuration: configuration, indexPath: indexPath)
+  }
+
+  func collectionView(
+    _ collectionView: UICollectionView,
+    contextMenuConfiguration configuration: UIContextMenuConfiguration,
+    dismissalPreviewForItemAt indexPath: IndexPath
+  ) -> UITargetedPreview? {
+    messageMenuPreview(configuration: configuration, indexPath: indexPath)
+  }
+
+  private func messageMenuPreview(configuration: UIContextMenuConfiguration, indexPath: IndexPath) -> UITargetedPreview? {
+    guard let identifier = configuration.identifier as? ChatMessageMenuConfigurationIdentifier,
+          message(for: identifier.identity) != nil,
+          case .message(let messageID)? = diffableDataSource.itemIdentifier(for: indexPath),
+          messageID == identifier.identity.messageID,
+          let anchor = menuAnchor(messageID: messageID),
+          let snapshot = anchor.cell.contentView.resizableSnapshotView(
+            from: anchor.rect, afterScreenUpdates: false, withCapInsets: .zero
+          ) else { return nil }
+    let parameters = UIPreviewParameters()
+    parameters.backgroundColor = .clear
+    parameters.visiblePath = UIBezierPath(
+      roundedRect: CGRect(origin: .zero, size: anchor.rect.size), cornerRadius: anchor.view.cornerRadius
+    )
+    let target = UIPreviewTarget(
+      container: anchor.cell.contentView,
+      center: CGPoint(x: anchor.rect.midX, y: anchor.rect.midY)
+    )
+    // A crop of the rendered cell preserves loaded media without a second
+    // SwiftUI tree, record request, or change to transcript sizing.
+    return UITargetedPreview(view: snapshot, parameters: parameters, target: target)
+  }
+
+  func collectionView(
+    _ collectionView: UICollectionView,
+    willDisplayContextMenu configuration: UIContextMenuConfiguration,
+    animator: (any UIContextMenuInteractionAnimating)?
+  ) {
+    guard let identifier = configuration.identifier as? ChatMessageMenuConfigurationIdentifier else { return }
+    let identity = identifier.identity
+    guard let message = message(for: identity) else { return }
+    activeMessageMenuIdentity = identity
+    onMessageLongPress?(message)
+  }
+
+  func collectionView(
+    _ collectionView: UICollectionView,
+    willEndContextMenuInteraction configuration: UIContextMenuConfiguration,
+    animator: (any UIContextMenuInteractionAnimating)?
+  ) {
+    guard let identifier = configuration.identifier as? ChatMessageMenuConfigurationIdentifier else { return }
+    let identity = identifier.identity
+    let complete = { [weak self] in
+      guard let self, self.activeMessageMenuIdentity == identity else { return }
+      self.activeMessageMenuIdentity = nil
+      let pending = self.pendingMessageMenuAction
+      self.pendingMessageMenuAction = nil
+      if let pending { self.performMessageMenuAction(pending.action, identity: pending.identity) }
+    }
+    if let animator { animator.addCompletion(complete) } else { complete() }
+  }
+
+  private func selectMessageMenuAction(_ action: ChatMessageMenuAction, identity: ChatMessageMenuIdentity) {
+    guard message(for: identity) != nil else { return }
+    if activeMessageMenuIdentity == identity {
+      pendingMessageMenuAction = (action, identity)
+      collectionView.contextMenuInteraction?.dismissMenu()
+    } else {
+      performMessageMenuAction(action, identity: identity)
+    }
+  }
+
+  #if DEBUG
+  func fixturePresentAccessibleMessageActions(messageID: String) {
+    presentAccessibleMessageActions(messageID: messageID)
+  }
+  #endif
+
+  /// VoiceOver's named action uses the same descriptors without attempting to
+  /// programmatically present UIContextMenuInteraction through private API.
+  private func presentAccessibleMessageActions(messageID: String) {
+    dismissMessageMenus()
+    let identity = messageMenuIdentity(messageID: messageID)
+    guard let message = message(for: identity), let anchor = menuAnchor(messageID: messageID) else { return }
+    let alert = UIAlertController(title: "Message Actions", message: nil, preferredStyle: .actionSheet)
+    for action in menuActions(for: message) {
+      alert.addAction(UIAlertAction(title: action.title, style: action.isDestructive ? .destructive : .default) { [weak self, weak alert] _ in
+        guard let self else { return }
+        let perform: () -> Void = { [weak self] in self?.performMessageMenuAction(action, identity: identity) }
+        if let alert { alert.dismiss(animated: true, completion: perform) } else { perform() }
+      })
+    }
+    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+    alert.popoverPresentationController?.sourceView = anchor.cell.contentView
+    alert.popoverPresentationController?.sourceRect = anchor.rect
+    messageActionsController = alert
+    onMessageLongPress?(message)
+    present(alert, animated: true)
+  }
+
+  private func performMessageMenuAction(_ action: ChatMessageMenuAction, identity: ChatMessageMenuIdentity) {
+    guard viewIfLoaded?.window != nil,
+          let message = message(for: identity), menuActions(for: message).contains(action) else { return }
+    switch action {
+    case .reaction(let emoji):
+      dataSource.addReaction(messageID: identity.messageID, emoji: emoji)
+      onReactionTapped?(identity.messageID, emoji)
+    case .moreReactions:
+      onRequestEmojiPicker?(identity.messageID)
+    case .reply:
+      onReply?(message)
+    case .copy:
+      UIPasteboard.general.string = message.text
+      PlatformHaptics.light()
+    case .deleteForMe:
+      onDeleteMessage?(message)
+    case .report:
+      onReportMessage?(message)
+    case .edit:
+      onEditMessage?(message)
+    case .unsend:
+      let alert = UIAlertController(
+        title: "Unsend Message", message: "This removes the message for everyone in the conversation.", preferredStyle: .alert
+      )
+      alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+      alert.addAction(UIAlertAction(title: "Unsend", style: .destructive) { [weak self] _ in
+        guard let self, let current = self.message(for: identity), current.canUnsend else { return }
+        self.onUnsendMessage?(current)
+      })
+      messageActionsController = alert
+      present(alert, animated: true)
+    }
   }
 
   @MainActor
   private func presentReactionDetailsSheet(messageID: String) {
-    dismissReactionOverlay()
-
-    guard let message = dataSource.message(for: messageID) else { return }
-    guard !message.isSystemMessage, !message.reactions.isEmpty else { return }
-
-    guard let appState else { return }
-    let accountDID = appState.userDID
+    dismissMessageMenus()
+    guard let message = dataSource.message(for: messageID),
+          !message.isSystemMessage, !message.reactions.isEmpty, let appState else { return }
     let host = UIHostingController(rootView: UnifiedReactionDetailsSheet(
-      dataSource: dataSource,
-      messageID: messageID,
-      appState: appState,
-      accountDID: accountDID
+      dataSource: dataSource, messageID: messageID, appState: appState, accountDID: appState.userDID
     ))
     host.modalPresentationStyle = .pageSheet
     reactionDetailsController = host
     present(host, animated: true)
-  }
-
-  @MainActor
-  private func presentReactionOverlay(messageID: String, bubbleGlobalFrame: CGRect) {
-    dismissReactionOverlay()
-
-    guard let message = dataSource.message(for: messageID) else { return }
-
-    let overlay = MessageLongPressOverlay(
-      quickReactions: UnifiedQuickReactionBar.defaultQuickReactions,
-      onReactionSelected: { [weak self] emoji in
-        guard let self else { return }
-        Task { @MainActor in
-          self.dataSource.addReaction(messageID: messageID, emoji: emoji)
-          self.onReactionTapped?(messageID, emoji)
-          self.dismissReactionOverlay()
-        }
-      },
-      onMoreTapped: { [weak self] in
-        guard let self else { return }
-        Task { @MainActor in
-          self.dismissReactionOverlay()
-          self.onRequestEmojiPicker?(messageID)
-        }
-      },
-      canEdit: message.canEdit,
-      canUnsend: message.canUnsend,
-      onEditTapped: { [weak self] in
-        guard let self else { return }
-        self.dismissReactionOverlay()
-        self.onEditMessage?(message)
-      },
-      onUnsendTapped: { [weak self] in
-        guard let self else { return }
-        self.dismissReactionOverlay()
-        let alert = UIAlertController(
-          title: "Unsend Message",
-          message: "This removes the message for everyone in the conversation.",
-          preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Unsend", style: .destructive) { [weak self] _ in
-          self?.onUnsendMessage?(message)
-        })
-        self.present(alert, animated: true)
-      },
-      showsMessageActions: !message.isSystemMessage && !message.isTombstone,
-      canCopy: !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-      canReply: onReply != nil,
-      canDeleteForMe: onDeleteMessage != nil,
-      canReport: onReportMessage != nil && !message.isFromCurrentUser,
-      onCopyTapped: { [weak self] in
-        UIPasteboard.general.string = message.text
-        PlatformHaptics.light()
-        self?.dismissReactionOverlay()
-      },
-      onReplyTapped: { [weak self] in
-        guard let self else { return }
-        self.dismissReactionOverlay()
-        self.onReply?(message)
-      },
-      onDeleteForMeTapped: { [weak self] in
-        guard let self else { return }
-        self.dismissReactionOverlay()
-        self.onDeleteMessage?(message)
-      },
-      onReportTapped: { [weak self] in
-        guard let self else { return }
-        self.dismissReactionOverlay()
-        self.onReportMessage?(message)
-      }
-    )
-
-    let host = UIHostingController(rootView: overlay)
-    host.view.backgroundColor = .clear
-
-    let control = UIControl(frame: view.bounds)
-    control.backgroundColor = .clear
-    control.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-    control.addTarget(self, action: #selector(reactionOverlayTappedOutside), for: .touchUpInside)
-
-    addChild(host)
-    control.addSubview(host.view)
-    host.didMove(toParent: self)
-
-    let bubbleFrame: CGRect
-    let cellFrame: CGRect?
-    if
-      let indexPath = diffableDataSource.indexPath(for: .message(id: messageID)),
-      let cell = collectionView.cellForItem(at: indexPath)
-    {
-      // SwiftUI's `.global` inside a UIHostingConfiguration is effectively global *to the hosting view*.
-      // Convert from the cell's hosting view into our view so the overlay positions correctly.
-      let referenceView = cell.contentView.subviews.first ?? cell.contentView
-      bubbleFrame = referenceView.convert(bubbleGlobalFrame, to: view)
-      cellFrame = cell.convert(cell.bounds, to: view)
-    } else {
-      bubbleFrame = bubbleGlobalFrame
-      cellFrame = nil
-    }
-
-    let fittingSize = CGSize(width: view.bounds.width, height: UIView.layoutFittingCompressedSize.height)
-    let barSize = host.sizeThatFits(in: fittingSize)
-
-    // Match the bubble's horizontal alignment: incoming messages sit after the avatar column,
-    // outgoing messages align to the trailing edge.
-    let horizontalPadding: CGFloat = 12
-    let avatarColumnWidth: CGFloat = 32
-    let avatarSpacing: CGFloat = 8
-
-    var x: CGFloat
-    if message.isFromCurrentUser {
-      x = (cellFrame?.maxX ?? bubbleFrame.maxX) - horizontalPadding - barSize.width
-    } else {
-      x = (cellFrame?.minX ?? bubbleFrame.minX) + horizontalPadding + avatarColumnWidth + avatarSpacing
-    }
-    x = min(max(x, 8), view.bounds.width - barSize.width - 8)
-
-    var y = bubbleFrame.minY - barSize.height - 8
-    y = max(y, view.safeAreaInsets.top + 8)
-
-    host.view.frame = CGRect(origin: CGPoint(x: x, y: y), size: barSize)
-
-    view.addSubview(control)
-
-    reactionOverlayControl = control
-    reactionOverlayHost = host
   }
 
   private func currentSnapshotItems() -> [Item] {
@@ -1028,6 +1285,9 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 
   private func prefetchEmbed(uri: String) {
+    #if DEBUG
+    guard fixtureRecordStore.records[uri] == nil else { return }
+    #endif
     guard embedPrefetchAdmission.isAllowed,
       embedPrefetchTasks.count < 4, embedPrefetchTasks[uri] == nil,
       let appState, ChatRecordEmbedStore.shared.cachedRecord(uri: uri, appState: appState) == nil else { return }
@@ -1091,6 +1351,11 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 }
 
+#if DEBUG
+@available(iOS 16.0, *)
+extension ChatCollectionViewController: ChatMessageContextMenuFixtureReporting {}
+#endif
+
 // MARK: - Typing Indicator View
 
 @available(iOS 16.0, *)
@@ -1144,109 +1409,4 @@ private struct TypingIndicatorView: View {
   }
 }
 
-@available(iOS 16.0, *)
-struct MessageLongPressOverlay: View {
-  let quickReactions: [String]
-  let onReactionSelected: (String) -> Void
-  let onMoreTapped: () -> Void
-  let canEdit: Bool
-  let canUnsend: Bool
-  let onEditTapped: () -> Void
-  let onUnsendTapped: () -> Void
-  /// Copy, Reply, Delete for Me and Report for regular (non-system) messages.
-  var showsMessageActions: Bool = false
-  var canCopy: Bool = false
-  var canReply: Bool = false
-  var canDeleteForMe: Bool = false
-  var canReport: Bool = false
-  var onCopyTapped: () -> Void = {}
-  var onReplyTapped: () -> Void = {}
-  var onDeleteForMeTapped: () -> Void = {}
-  var onReportTapped: () -> Void = {}
-
-  private var hasMessageActions: Bool {
-    showsMessageActions && (canCopy || canReply || canDeleteForMe || canReport)
-  }
-
-  var body: some View {
-    VStack(alignment: .trailing, spacing: 8) {
-      UnifiedQuickReactionBar(
-        quickReactions: quickReactions,
-        onReactionSelected: onReactionSelected,
-        onMoreTapped: onMoreTapped
-      )
-
-      if hasMessageActions {
-        messageActionsMenu
-      }
-
-      if canEdit || canUnsend {
-        HStack(spacing: 16) {
-          if canEdit {
-            Button(action: onEditTapped) {
-              Label("Edit", systemImage: "square.and.pencil")
-                .font(.subheadline.weight(.medium))
-            }
-            .tint(.primary)
-          }
-
-          if canUnsend {
-            Button(role: .destructive, action: onUnsendTapped) {
-              Label("Unsend", systemImage: "arrow.uturn.backward")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.red)
-            }
-          }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-      }
-    }
-  }
-
-  private var messageActionsMenu: some View {
-    VStack(spacing: 0) {
-      if canReply {
-        actionRow("Reply", systemImage: "arrowshape.turn.up.left", action: onReplyTapped)
-      }
-      if canCopy {
-        actionRow("Copy", systemImage: "doc.on.doc", action: onCopyTapped)
-      }
-      if canDeleteForMe {
-        actionRow("Delete for Me", systemImage: "trash", role: .destructive, action: onDeleteForMeTapped)
-      }
-      if canReport {
-        actionRow("Report", systemImage: "exclamationmark.bubble", role: .destructive, action: onReportTapped)
-      }
-    }
-    .frame(minWidth: 200)
-    .fixedSize()
-    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-  }
-
-  private func actionRow(
-    _ title: String,
-    systemImage: String,
-    role: ButtonRole? = nil,
-    action: @escaping () -> Void
-  ) -> some View {
-    Button(role: role, action: action) {
-      HStack(spacing: 12) {
-        Text(title)
-        Spacer(minLength: 16)
-        Image(systemName: systemImage)
-      }
-      .font(.body)
-      .foregroundStyle(role == .destructive ? Color.red : Color.primary)
-      .padding(.horizontal, 16)
-      .padding(.vertical, 11)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-  }
-}
 #endif

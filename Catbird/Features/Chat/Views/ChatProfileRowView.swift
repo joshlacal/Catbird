@@ -22,6 +22,7 @@ struct ChatProfileRowView: View {
                 AsyncProfileImage(
                     url: profile.finalAvatarURL(),
                     size: 44,
+                    did: profile.did.didString(),
                     labels: extractLabels(from: profile)
                 )
 
@@ -185,15 +186,8 @@ struct ChatProfileRowView: View {
     }
 
     
-    private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
-        if let profileView = profile as? AppBskyActorDefs.ProfileView {
-            return profileView.labels
-        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
-            return profileViewBasic.labels
-        } else if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
-            return chatProfile.labels
-        }
-        return nil
+    private func extractLabels(from profile: any ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
+        (profile as? any ModerationAccountSubject)?.moderationLabels
     }
 }
 

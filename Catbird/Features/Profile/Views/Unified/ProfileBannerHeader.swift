@@ -7,6 +7,7 @@
 //
 
 import NukeUI
+import Petrel
 import SwiftUI
 
 /// The banner at the top of a profile screen.
@@ -14,21 +15,38 @@ import SwiftUI
 /// Owns its full treatment: the image is pinned to the proposed frame and
 /// cropped, and the concentric clip is applied inside the flexible-header
 /// modifier so the mask stretches and stays pinned during pull-to-zoom.
+///
+/// Pass the profile's DID and labels so the moderation policy can decide the
+/// banner. A banner the policy blurs renders a neutral placeholder and is never
+/// downloaded.
 struct ProfileBannerHeader: View {
   let bannerURL: URL?
+  let did: String?
+  let labels: [ComAtprotoLabelDefs.Label]?
+
+  @Environment(\.moderationPolicy) private var moderationPolicy
+
+  init(bannerURL: URL?, did: String? = nil, labels: [ComAtprotoLabelDefs.Label]? = nil) {
+    self.bannerURL = bannerURL
+    self.did = did
+    self.labels = labels
+  }
 
   var body: some View {
-    bannerImage
+    let isConcealed = moderationPolicy.concealsBanner(did: did, labels: labels)
+    bannerImage(isConcealed: isConcealed)
       .contentShape(Rectangle())
-      .accessibilityLabel("Profile banner")
+      .accessibilityLabel(isConcealed ? "Profile banner hidden" : "Profile banner")
       .modifier(ConcentricBannerClip())
       .flexibleHeaderContent()
   }
 
   @ViewBuilder
-  private var bannerImage: some View {
+  private func bannerImage(isConcealed: Bool) -> some View {
     ZStack(alignment: .center) {
-      if let bannerURL {
+      if isConcealed {
+        concealedPlaceholder
+      } else if let bannerURL {
         LazyImage(url: bannerURL) { state in
           if let image = state.image {
             Color.clear
@@ -59,5 +77,16 @@ struct ProfileBannerHeader: View {
   private var fallbackGradient: some View {
     Rectangle()
       .fill(Color.accentColor.opacity(0.25))
+  }
+
+  /// Shown in place of a banner the moderation policy blurs.
+  private var concealedPlaceholder: some View {
+    Rectangle()
+      .fill(Color.gray.opacity(0.2))
+      .overlay {
+        Image(systemName: "eye.slash.fill")
+          .font(.title2)
+          .foregroundStyle(Color.secondary.opacity(0.5))
+      }
   }
 }

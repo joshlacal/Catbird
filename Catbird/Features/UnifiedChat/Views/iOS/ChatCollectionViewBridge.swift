@@ -8,6 +8,9 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   @Environment(AppState.self) private var appState
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.chatTranscriptBottomInset) private var bottomInset
+  #if DEBUG
+  @Environment(\.chatPresentationFixtureRecords) private var fixtureRecords
+  #endif
 
   let dataSource: DataSource
   @Binding var navigationPath: NavigationPath
@@ -27,6 +30,9 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
       appState: appState,
       sceneContext: sceneContext
     )
+    #if DEBUG
+    controller.updateFixtureRecords(fixtureRecords)
+    #endif
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
     controller.onRetryMessage = onRetryMessage
@@ -48,6 +54,9 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.updateAppState(appState)
     controller.updateSceneContext(sceneContext)
     controller.updatePrefetchSceneActivity(isActive: scenePhase == .active)
+    #if DEBUG
+    controller.updateFixtureRecords(fixtureRecords)
+    #endif
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
     controller.onRetryMessage = onRetryMessage

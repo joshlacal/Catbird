@@ -127,7 +127,9 @@ public struct StarterPackShareView: View {
     private var packPreviewCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                AsyncProfileImage(url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 48)
+                AsyncProfileImage(
+                    url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 48,
+                    did: starterPack.creator.did.didString(), labels: starterPack.creator.labels)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(packName)

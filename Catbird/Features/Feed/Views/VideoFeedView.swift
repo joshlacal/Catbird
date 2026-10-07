@@ -36,10 +36,13 @@ public struct VideoFeedView: View {
   @State private var initialLoadRequestID: UUID?
   @State private var hasMore: Bool = true
   @State private var errorMessage: String?
-  @State private var revealedItems: Set<VideoFeedItem.RevealIdentity> = []
+  /// Explicit Show taps, each for the cause set shown at the time. A player
+  /// that appears because nothing covers the item is not a reveal, so a policy
+  /// that starts covering a playing video covers it (`ModerationRevealState`).
+  @State private var revealedItems: [VideoFeedItem.RevealIdentity: [ModerationCauseKey]] = [:]
   private var feedLoader: (@MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?))?
   private var contentVisibilityObserver: ((VideoFeedItem) -> Void)?
-  private var moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
+  @Environment(\.moderationPolicy) private var moderationPolicy
 
   public init(
     feedURI: String = VideoFeedView.thevidsURI,
@@ -57,15 +60,13 @@ public struct VideoFeedView: View {
     playerPool: VideoFeedPlayerPool,
     playbackIntent: VideoFeedPlaybackIntent? = nil,
     feedLoader: @escaping @MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?),
-    contentVisibilityObserver: @escaping (VideoFeedItem) -> Void,
-    moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)? = nil
+    contentVisibilityObserver: @escaping (VideoFeedItem) -> Void
   ) {
     self.init(initialPost: initialPost)
     self._playerPool = State(initialValue: playerPool)
     self._playbackIntent = State(initialValue: playbackIntent ?? VideoFeedPlaybackIntent())
     self.feedLoader = feedLoader
     self.contentVisibilityObserver = contentVisibilityObserver
-    self.moderationResolver = moderationResolver
   }
   public var body: some View {
     ZStack {
@@ -83,15 +84,15 @@ public struct VideoFeedView: View {
               index: index,
               pageSize: size,
               isActive: item.id == activeItemID,
-              isRevealed: revealedItems.contains(item.revealIdentity),
+              isRevealed: isItemEligibleForPlayback(item),
               attachesPlayer: abs(index - activeIndex) <= 1,
               playerPool: playerPool,
-              onContentVisible: { revealItem(item, explicitlyRequested: false) },
-              onRevealRequested: { revealItem(item, explicitlyRequested: true) },
+              onContentVisible: { playerDidAppear(for: item) },
+              onRevealRequested: { revealItem(item) },
               onConceal: { concealItem(item) },
               onPlaybackToggle: { togglePlayback(for: item) },
               onPlaybackRetry: { retryPlayback(for: item) },
-              moderationResolver: moderationResolver,
+              moderation: item.moderation(policy: moderationPolicy),
               onProfileTap: { did in
                 path.append(NavigationDestination.profile(did))
               },
@@ -153,6 +154,10 @@ public struct VideoFeedView: View {
     }
     .onChange(of: playbackIntent.isPlaybackRequested) { _, _ in
       updatePlaybackForActiveIndex(activeIndex)
+    }
+    .onChange(of: moderationPolicy) { _, _ in
+      // A new policy re-filters the loaded items and re-evaluates playback.
+      publishItems(items)
     }
     .onChange(of: scenePhase) { previous, phase in
       if phase == .active {
@@ -253,47 +258,65 @@ public struct VideoFeedView: View {
   }
 
   private func publishItems(_ refreshed: [VideoFeedItem]) {
-    revealedItems.formIntersection(Set(refreshed.map(\.revealIdentity)))
-    items = refreshed
+    // Items the policy filters from lists are skipped (`contentList` filter).
+    let visible = refreshed.filter { !$0.moderation(policy: moderationPolicy).isFilteredFromList }
+    let visibleIdentities = Set(visible.map(\.revealIdentity))
+    revealedItems = revealedItems.filter { visibleIdentities.contains($0.key) }
+    items = visible
     if !items.contains(where: { $0.id == activeItemID }) {
       activeItemID = items.first?.id
     }
-    // Reevaluate/evict before rebuilding the warning view. Temporary holds and
+    // Reevaluate/evict before rebuilding the cover. Temporary holds and
     // stream replacement do not erase the selected video's requested playback.
     updatePlaybackForActiveIndex(activeIndex)
   }
 
+  /// A covered item (`contentView` or `contentMedia` blur) must not autoplay,
+  /// prewarm or play audio until the viewer shows it, and a reveal counts only
+  /// for the causes it was given: a policy that changes them covers the item.
+  /// A cover the viewer may no longer override (adult content turned off after
+  /// the reveal) covers the item again even with the same causes.
   private func isItemEligibleForPlayback(_ item: VideoFeedItem) -> Bool {
-    if revealedItems.contains(item.revealIdentity) {
-      return true
-    }
-    let visibility = ContentLabelManager<AnyView>.getInitialContentVisibility(
-      labels: item.post.labels, selfLabelValues: item.selfLabelValues
-    )
-    return visibility == .show
+    let moderation = item.moderation(policy: moderationPolicy)
+    guard moderation.concealsPlayback else { return true }
+    return !moderation.playback.noOverride
+      && revealedItems[item.revealIdentity] == moderation.playback.blurs.map(\.key)
   }
 
-  private func revealItem(_ item: VideoFeedItem, explicitlyRequested: Bool) {
+  /// The viewer tapped Show on the cover.
+  private func revealItem(_ item: VideoFeedItem) {
     guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
-    revealedItems.insert(item.revealIdentity)
+    revealedItems[item.revealIdentity] = item.moderation(policy: moderationPolicy).playback.blurs.map(\.key)
     if item.id == activeItemID {
       playbackIntent.select(item.id)
-      if explicitlyRequested { playbackIntent.setPlaybackRequested(true, for: item.id) }
-      // A passive Show resumes a pending request, while an explicit pause stays
-      // paused. The snapshot check above rejects old preference callbacks.
+      playbackIntent.setPlaybackRequested(true, for: item.id)
       updatePlaybackForActiveIndex(index)
     } else {
       updatePrewarming(for: activeIndex)
     }
-    if !explicitlyRequested { contentVisibilityObserver?(item) }
   }
 
-  private func concealItem(_ item: VideoFeedItem) {
+  /// A player attached because nothing covers the item or the viewer showed
+  /// it. A pending request resumes, while an explicit pause stays paused; the
+  /// snapshot check rejects old preference callbacks.
+  private func playerDidAppear(for item: VideoFeedItem) {
     guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
-    revealedItems.remove(item.revealIdentity)
-    if index == activeIndex, !isItemEligibleForPlayback(items[index]) {
-      playerPool.pauseAll()
+    if item.id == activeItemID {
+      playbackIntent.select(item.id)
+      updatePlaybackForActiveIndex(index)
+    } else {
+      updatePrewarming(for: activeIndex)
     }
+    contentVisibilityObserver?(item)
+  }
+
+  /// The viewer tapped Hide, or the player detached (scrolled out of the
+  /// attached range, or covered by a new policy).
+  private func concealItem(_ item: VideoFeedItem) {
+    revealedItems[item.revealIdentity] = nil
+    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }),
+          index == activeIndex, !isItemEligibleForPlayback(items[index]) else { return }
+    playerPool.pauseAll()
   }
 
   private func updatePlaybackForActiveIndex(_ index: Int) {
@@ -454,6 +477,7 @@ private struct VideoFeedItemView: View {
   let index: Int
   let pageSize: CGSize
   let isActive: Bool
+  /// The player is shown: nothing covers the item, or the viewer showed it.
   let isRevealed: Bool
   let attachesPlayer: Bool
   let playerPool: VideoFeedPlayerPool
@@ -462,7 +486,7 @@ private struct VideoFeedItemView: View {
   let onConceal: () -> Void
   let onPlaybackToggle: () -> Void
   let onPlaybackRetry: () -> Void
-  let moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
+  let moderation: VideoFeedItemModeration
   let onProfileTap: (String) -> Void
   let onPostTap: (ATProtocolURI) -> Void
   @Environment(AppState.self) private var appState
@@ -479,34 +503,49 @@ private struct VideoFeedItemView: View {
   var body: some View {
     ZStack(alignment: .bottom) {
       Color.black
-      ContentLabelManager(
-        labels: item.post.labels,
-        selfLabelValues: item.selfLabelValues,
-        contentType: "video",
-        onReveal: onRevealRequested,
-        visibilityResolver: moderationResolver
-      ) {
-        ZStack {
-          if attachesPlayer {
-            PlayerLayerView(
-              player: playerPool.player(for: index),
-              gravity: .resizeAspect,
-              shouldLoop: false,
-              pausesOnDismantle: false
-            )
-            .onAppear(perform: onContentVisible)
-            .onDisappear(perform: onConceal)
-          }
+      Group {
+        if !isRevealed {
+          // No player is attached while covered, so nothing prewarms or plays.
+          VideoFeedModerationCover(ui: moderation.playback, onShow: onRevealRequested)
+        } else {
+          ZStack {
+            if attachesPlayer {
+              PlayerLayerView(
+                player: playerPool.player(for: index),
+                gravity: .resizeAspect,
+                shouldLoop: false,
+                pausesOnDismantle: false
+              )
+              .onAppear(perform: onContentVisible)
+              .onDisappear(perform: onConceal)
+            }
 
-          Button(action: onPlaybackToggle) {
-            Color.clear.contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .disabled(!isActive)
-          .accessibilityLabel(playerPool.wantsPlayback ? "Pause video" : "Play video")
+            Button(action: onPlaybackToggle) {
+              Color.clear.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!isActive)
+            .accessibilityLabel(playerPool.wantsPlayback ? "Pause video" : "Play video")
 
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .overlay(alignment: .topTrailing) {
+            if moderation.concealsPlayback {
+              Button(action: onConceal) {
+                Label("Hide", systemImage: "eye.slash")
+                  .font(.caption)
+                  .padding(.horizontal, 10)
+                  .frame(minHeight: 28)
+                  .background(Color.black.opacity(0.6), in: Capsule())
+                  .foregroundStyle(.white)
+              }
+              .buttonStyle(.plain)
+              .padding(.top, 8)
+              .padding(.trailing, 16)
+              .accessibilityHint("Covers the video again")
+            }
+          }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       .id(item.revealIdentity)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -548,10 +587,16 @@ private struct VideoFeedItemView: View {
     }
   }
 
+  /// The caption is part of the post body: a `contentView` cover hides it with
+  /// the player until the viewer shows the item.
+  private var showsCaption: Bool {
+    !postText.isEmpty && (isRevealed || !moderation.concealsCaption)
+  }
+
   private var footer: some View {
     VideoFeedOverlayControls(
       pageSize: pageSize,
-      hasCaption: !postText.isEmpty,
+      hasCaption: showsCaption,
       author: { author(compact: $0) },
       caption: { postCaption(lines: $0) },
       actions: { actionControls(horizontal: $0) },
@@ -571,8 +616,15 @@ private struct VideoFeedItemView: View {
   private func author(compact: Bool) -> some View {
     Button { onProfileTap(item.post.author.did.didString()) } label: {
       HStack(spacing: 8) {
-        AvatarView(did: item.post.author.did.didString(), client: appState.atProtoClient, size: 38)
-          .frame(width: 38, height: 38)
+        // Drawn through the engine's `avatar` context: a moderated author keeps
+        // the neutral placeholder and no image is requested.
+        AsyncProfileImage(
+          url: item.post.author.finalAvatarURL(),
+          size: 38,
+          did: item.post.author.did.didString(),
+          labels: item.post.author.labels
+        )
+        .frame(width: 38, height: 38)
         VStack(alignment: .leading, spacing: 1) {
           Text(item.post.author.displayName ?? item.post.author.handle.description)
             .font(.subheadline.bold())
@@ -618,6 +670,46 @@ private struct VideoFeedItemView: View {
       onLike: { actions?.toggle(.like) },
       onRepost: { actions?.toggle(.repost) }
     )
+  }
+}
+
+/// The full-page cover over a moderated video (`contentView` or `contentMedia`
+/// blur). Show is offered unless the cause forbids override.
+private struct VideoFeedModerationCover: View {
+  let ui: ModerationUI
+  let onShow: () -> Void
+
+  var body: some View {
+    VStack(spacing: 12) {
+      Image(systemName: "eye.slash.fill")
+        .font(.largeTitle)
+        .accessibilityHidden(true)
+      Text(ModerationPresentation.title(for: ui))
+        .font(.headline)
+      Text(ModerationGateText.explanation(for: ui))
+        .font(.subheadline)
+        .multilineTextAlignment(.center)
+        .foregroundStyle(.white.opacity(0.85))
+      if !ui.noOverride {
+        Button(action: onShow) {
+          Text("Show")
+            .fontWeight(.semibold)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(.white.opacity(0.2))
+            .clipShape(Capsule())
+        }
+        .tint(.white)
+        .accessibilityHint("Shows the video")
+      }
+    }
+    .foregroundStyle(.white)
+    .padding(32)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.black)
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("moderation.videoCover")
   }
 }
 

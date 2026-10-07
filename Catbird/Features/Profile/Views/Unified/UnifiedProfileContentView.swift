@@ -25,7 +25,9 @@ struct UnifiedProfileContentView: View {
       ScrollView {
         VStack(spacing: 0) {
           ProfileBannerHeader(
-            bannerURL: profile.banner.flatMap { URL(string: $0.uriString()) }
+            bannerURL: profile.banner.flatMap { URL(string: $0.uriString()) },
+            did: profile.did.didString(),
+            labels: profile.labels
           )
           .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
@@ -137,6 +139,8 @@ private struct UnifiedProfileDetailsView: View {
         hasAttemptedLoadMedia: hasAttemptedLoadMedia,
         navigationPath: $navigationPath
       )
+      // A profile's own posts are not list-filtered on its feed (`ignoreFilterFor` upstream).
+      .environment(\.moderationListFilterExemptDID, profile.did.didString())
 
       Spacer(minLength: 200)
     }

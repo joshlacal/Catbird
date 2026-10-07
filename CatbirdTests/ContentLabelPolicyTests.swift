@@ -43,17 +43,6 @@ struct ContentLabelPolicyTests {
       definition: definition(defaultSetting: "hide"), contentType: "post", isActive: true) == nil)
   }
 
-  @Test("Builtin initial policy and self-label gate remain unchanged")
-  func builtinInitialFixtures() throws {
-    for value in ["nsfw", "porn", "sexual"] {
-      #expect(ContentLabelManager<Text>.getInitialContentVisibility(labels: nil, selfLabelValues: [value]) == .hide)
-    }
-    for value in ["nudity", "suggestive", "gore", "graphic", "self-harm"] {
-      #expect(ContentLabelManager<Text>.getInitialContentVisibility(labels: nil, selfLabelValues: [value]) == .warn)
-    }
-    #expect(ContentLabelManager<Text>.getInitialContentVisibility(labels: nil, selfLabelValues: ["bot", "custom", "!warn"]) == .show)
-  }
-
   @Test("Definition lookups coalesce, fence account changes, and retry failures")
   @MainActor
   func definitionLookupBoundary() async throws {

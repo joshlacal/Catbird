@@ -7,6 +7,7 @@ struct CatbirdCopilotSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let context: CopilotContext
+    let imageModerationSource: CopilotImageModerationSource?
     var onConfirmedAction: ((CopilotProposal) async throws -> Void)?
     var onDedicatedAction: ((CopilotProposal) -> Void)?
 
@@ -27,41 +28,22 @@ struct CatbirdCopilotSheet: View {
     @State private var navigationPath = NavigationPath()
     @State private var selectedTab: Int = 0
     @State private var successMessage: String? = nil
+    @State private var selectedImageID: String?
+    @State private var imageRevealSession = CopilotImageRevealSession()
+    @State private var imageUnavailableReason: String?
+    @State private var historySession = AskCatbirdHistorySession()
     private var unavailableMessage: String? { CopilotAvailability.unavailableMessage }
 
     init(
         context: CopilotContext,
+        imageModerationSource: CopilotImageModerationSource? = nil,
         onConfirmedAction: ((CopilotProposal) async throws -> Void)? = nil,
         onDedicatedAction: ((CopilotProposal) -> Void)? = nil
     ) {
         self.context = context
+        self.imageModerationSource = imageModerationSource
         self.onConfirmedAction = onConfirmedAction
         self.onDedicatedAction = onDedicatedAction
-    }
-
-    private var messageAdapters: [CopilotMessageAdapter] {
-        turns.map { turn in
-            let isActiveStreamingAssistant = (turn.role == .assistant && turn.id == streamingAssistantTurnID)
-            let displayText: String
-            if isActiveStreamingAssistant && turn.text.isEmpty {
-                displayText = "…"
-            } else {
-                displayText = turn.text
-            }
-            let renderedText = turn.role == .assistant
-                ? CopilotReferencePresentation.render(displayText, sources: turn.sources ?? [])
-                : ChatTextRenderer.attributedString(for: displayText)
-            return CopilotMessageAdapter(
-                id: turn.id.uuidString,
-                text: String(renderedText.characters),
-                attributedText: renderedText,
-                senderID: turn.role == .user ? conversationAccountDID : "catbird.copilot",
-                senderDisplayName: turn.role == .user ? nil : "Catbird",
-                sentAt: turn.createdAt,
-                isFromCurrentUser: turn.role == .user,
-                sendState: isActiveStreamingAssistant ? .sending : .sent
-            )
-        }
     }
 
     private var hasUnresolvedProposal: Bool {
@@ -71,69 +53,17 @@ struct CatbirdCopilotSheet: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
-                chromeHeader
-
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 8) {
-                            if turns.isEmpty && !isResponding, let unavailableMessage {
-                                ContentUnavailableView {
-                                    Label("Ask Catbird Unavailable", systemImage: "sparkles")
-                                } description: {
-                                    Text(unavailableMessage)
-                                } actions: {
-                                    Button("Try Again") { CopilotAvailability.refresh() }
-                                }
-                                .padding(.top, 40)
-                            } else if turns.isEmpty && !isResponding {
-                                ContentUnavailableView(
-                                    "Ask About This",
-                                    systemImage: "sparkles",
-                                    description: Text("Catbird can inspect Bluesky, answer questions, and propose actions for you to confirm.")
-                                )
-                                .padding(.top, 40)
-                            } else {
-                                ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
-                                    let adapter = messageAdapters[index]
-                                    VStack(alignment: turn.role == .user ? .trailing : .leading, spacing: 6) {
-                                        UnifiedMessageBubble(
-                                            message: adapter,
-                                            navigationPath: $navigationPath,
-                                            showSenderInfo: false,
-                                            groupPosition: UnifiedMessageGrouping.groupPosition(for: index, in: messageAdapters)
-                                        )
-                                        .id(turn.id.uuidString)
-                                        .accessibilityLabel(
-                                            (turn.role == .assistant && turn.id == streamingAssistantTurnID && turn.text.isEmpty)
-                                                ? "Catbird is responding"
-                                                : (turn.role == .assistant ? "Catbird: \(adapter.text)" : "You: \(adapter.text)")
-                                        )
-                                        if turn.role == .assistant {
-                                            if let sources = turn.sources, !sources.isEmpty {
-                                                sourcesView(sources)
-                                            }
-
-                                            if let proposal = turn.proposal {
-                                                proposalCard(proposal: proposal, forTurnID: turn.id)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.vertical, 12)
-                    }
-                    .onChange(of: turns.count) { _, _ in
-                        if let lastID = turns.last?.id.uuidString {
-                            withAnimation {
-                                proxy.scrollTo(lastID, anchor: .bottom)
-                            }
-                        }
-                    }
-                    .onChange(of: turns.last?.text) { _, _ in
-                        if let lastID = turns.last?.id.uuidString {
-                            proxy.scrollTo(lastID, anchor: .bottom)
-                        }
+                AskCatbirdTranscript(
+                    context: context,
+                    turns: turns,
+                    streamingTurnID: streamingAssistantTurnID,
+                    unavailableMessage: unavailableMessage,
+                    onRetry: refreshAvailability,
+                    onSuggestion: { prompt = $0 },
+                    onSource: routeSource
+                ) { turn in
+                    if let proposal = turn.proposal {
+                        proposalCard(proposal: proposal, forTurnID: turn.id)
                     }
                 }
 
@@ -155,38 +85,24 @@ struct CatbirdCopilotSheet: View {
                     }
                 }
 
-                if isResponding {
-                    HStack {
-                        Spacer()
-                        Button {
-                            stopGeneration()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "stop.fill")
-                                Text("Stop Generating")
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(.quaternary, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
+                if !context.imageCandidates.isEmpty {
+                    CopilotImageModerationNotice(snapshot: imageModerationSnapshot,
+                        reveal: effectiveImageReveal, onReveal: revealImages, onHide: hideImages)
                 }
 
-                UnifiedInputBar(
+                AskCatbirdComposer(
                     text: $prompt,
-                    onSend: { text in
-                        Task { await send(promptText: text) }
-                    },
-                    placeholder: "Ask Catbird…",
-                    isDisabled: isResponding || hasUnresolvedProposal || unavailableMessage != nil,
-                    showsInputBackground: false
+                    selectedImageID: $selectedImageID,
+                    candidates: permittedImageCandidates,
+                    imageUnavailableReason: imageUnavailableReason,
+                    isResponding: isResponding,
+                    isDisabled: hasUnresolvedProposal || unavailableMessage != nil,
+                    hasUnresolvedProposal: hasUnresolvedProposal,
+                    onSend: { Task { await send(promptText: prompt) } },
+                    onStop: stopGeneration
                 )
             }
+            .modifier(AskCatbirdURLRouting(onOpenURL: { sceneContext.urlHandler.handle($0) }))
             .navigationTitle("Ask Catbird")
             .platformInlineNavigationTitle()
             .navigationDestination(for: NavigationDestination.self) { destination in
@@ -206,20 +122,30 @@ struct CatbirdCopilotSheet: View {
                     historyMenu
                 }
             }
-            .task(id: appState.userDID) {
-                CopilotAvailability.refresh()
+            .task(id: ContextIdentity(accountDID: appState.userDID, context: context,
+                clientID: appState.atProtoClient.map(ObjectIdentifier.init))) {
+                refreshAvailability()
                 stopGeneration()
+                prompt = ""
+                selectedImageID = nil
                 let did = appState.userDID
                 conversationID = UUID()
                 conversationAccountDID = did
+                historySession.activate(accountDID: did, context: context, conversationID: conversationID)
                 turns = []
+                isExecutingProposal = false
                 exactContextConversations = []
                 errorMessage = nil
                 successMessage = nil
                 contextTrimmedNotice = nil
                 await loadInitialConversation(for: did)
             }
+            .onChange(of: imageModerationSnapshot) { _, _ in
+                hideImages()
+            }
             .onDisappear {
+                imageRevealSession.hide()
+                historySession.invalidate()
                 stopGeneration()
             }
             .confirmationDialog(
@@ -237,27 +163,43 @@ struct CatbirdCopilotSheet: View {
         }
     }
 
-    // MARK: - Chrome
-
-    private var chromeHeader: some View {
-        contextCard
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+    @MainActor
+    private var imageModerationSnapshot: CopilotImageModerationSnapshot? {
+        imageModerationSource?.read(context, appState.userDID)
     }
 
-    private var contextCard: some View {
-        Label(contextLabel, systemImage: "scope")
-            .appFont(AppTextRole.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+    private var effectiveImageReveal: ModerationRevealState {
+        imageRevealSession.reveal(for: imageModerationSnapshot)
     }
 
-    private var contextLabel: String {
-        CopilotReferencePresentation.contextLabel(context)
+    private var permittedImageCandidates: [CopilotImageCandidate] {
+        guard imageModerationSnapshot?.allows(effectiveImageReveal) == true else { return [] }
+        return context.imageCandidates
+    }
+
+    private func revealImages() {
+        guard let snapshot = imageModerationSnapshot, snapshot.rowVisible,
+              !snapshot.imageUI.noOverride else { return }
+        imageRevealSession.show(snapshot)
+    }
+
+    private func hideImages() {
+        imageRevealSession.hide()
+        selectedImageID = nil
+        if turns.contains(where: { $0.id == streamingUserTurnID && $0.selectedImageID != nil }) {
+            stopGeneration()
+        }
+    }
+
+    private struct ContextIdentity: Hashable {
+        let accountDID: String
+        let context: CopilotContext
+        let clientID: ObjectIdentifier?
+    }
+
+    private func refreshAvailability() {
+        CopilotAvailability.refresh()
+        imageUnavailableReason = CopilotImageSupport.unavailableReason()
     }
 
     // MARK: - Menus
@@ -309,112 +251,24 @@ struct CatbirdCopilotSheet: View {
 
     // MARK: - Sources & Proposals
 
-    @ViewBuilder
-    private func sourcesView(_ sources: [CopilotSource]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(sources, id: \.self) { source in
-                    Button {
-                        routeSource(source)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.caption2)
-                            Text(CopilotReferencePresentation.label(for: source))
-                                .font(.caption2)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.secondary.opacity(0.12), in: Capsule())
-                        .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Source: \(CopilotReferencePresentation.label(for: source))")
-                    .accessibilityHint(source.uri != nil ? "Opens source details" : "")
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    @ViewBuilder
     private func proposalCard(proposal: CopilotProposal, forTurnID turnID: UUID) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(Color.accentColor)
-                Text("Proposed Action")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(CopilotProposalCoordinator.confirmationText(for: proposal, context: context))
-                .font(.subheadline)
-                .foregroundStyle(.primary)
-
-            HStack(spacing: 10) {
-                switch proposal.disposition {
-                case .inlineConfirmation:
-                    Button("Confirm") {
-                        Task { await confirmProposal(proposal, turnID: turnID) }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(isExecutingProposal || isResponding)
-
-                case .dedicatedFlow:
-                    Button("Continue") {
-                        continueDedicatedProposal(proposal, turnID: turnID)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(isExecutingProposal || isResponding)
-
+        AskCatbirdProposalCard(
+            confirmation: CopilotProposalCoordinator.confirmationText(for: proposal, context: context),
+            isDedicatedFlow: proposal.disposition == .dedicatedFlow,
+            isDisabled: isExecutingProposal || isResponding,
+            onConfirm: {
+                if proposal.disposition == .dedicatedFlow {
+                    continueDedicatedProposal(proposal, turnID: turnID)
+                } else {
+                    Task { await confirmProposal(proposal, turnID: turnID) }
                 }
-                Button("Cancel", role: .cancel) {
-                    cancelProposal(turnID: turnID)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isExecutingProposal || isResponding)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1)
+            },
+            onCancel: { cancelProposal(turnID: turnID) }
         )
-        .padding(.horizontal, 16)
     }
 
-    @ViewBuilder
     private func noticeBanner(text: String, icon: String, color: Color, onDismiss: @escaping () -> Void) -> some View {
-        HStack(alignment: .center, spacing: 6) {
-            Image(systemName: icon)
-            Text(text)
-                .lineLimit(3)
-            Spacer()
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption2)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss")
-        }
-        .font(.caption)
-        .foregroundStyle(color)
-        .padding(8)
-        .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 2)
+        AskCatbirdNotice(text: text, icon: icon, color: color, onDismiss: onDismiss)
     }
 
     // MARK: - Actions
@@ -428,14 +282,20 @@ struct CatbirdCopilotSheet: View {
             return
         }
 
-        CopilotAvailability.refresh()
+        refreshAvailability()
         if let unavailableMessage {
             errorMessage = unavailableMessage
             return
         }
 
         let priorHistory = turns
-        let userTurn = CopilotStoredTurn(id: UUID(), role: .user, text: trimmed, createdAt: Date())
+        let chosenImageID = selectedImageID
+        let imageAuthorization = imageModerationSource?.authorization(
+            snapshot: imageModerationSnapshot, revealSession: imageRevealSession) ?? .denied
+        let userTurn = CopilotStoredTurn(id: UUID(), role: .user, text: trimmed,
+            createdAt: Date(), selectedImageID: chosenImageID)
+        prompt = ""
+        selectedImageID = nil
         let assistantTurnID = UUID()
         let emptyAssistantTurn = CopilotStoredTurn(id: assistantTurnID, role: .assistant, text: "", createdAt: Date(), route: route)
 
@@ -452,6 +312,8 @@ struct CatbirdCopilotSheet: View {
         let accountDID = conversationAccountDID
         let chosenRoute = route
         let currentContext = context
+        let currentClient = appState.atProtoClient
+        let clientID = currentClient.map(ObjectIdentifier.init)
 
         activeStreamTask = Task { @MainActor in
             #if canImport(FoundationModels)
@@ -462,14 +324,26 @@ struct CatbirdCopilotSheet: View {
                     prompt: trimmed,
                     context: currentContext,
                     history: priorHistory,
-                    route: chosenRoute
+                    route: chosenRoute,
+                    selectedImageID: chosenImageID,
+                    currentClient: currentClient,
+                    imageAuthorization: imageAuthorization
                 )
 
+                guard !Task.isCancelled, streamingAssistantTurnID == assistantTurnID,
+                    targetConversationID == conversationID, accountDID == appState.userDID,
+                    clientID == appState.atProtoClient.map(ObjectIdentifier.init) else { return }
                 do {
                     for try await event in stream {
                         guard !Task.isCancelled else { break }
-                        guard streamingAssistantTurnID == assistantTurnID else { break }
-                        guard accountDID == appState.userDID else {
+                        if chosenImageID != nil && !imageAuthorization.permits(currentContext, accountDID) {
+                            stopGeneration()
+                            break
+                        }
+                        guard streamingAssistantTurnID == assistantTurnID,
+                            targetConversationID == conversationID, currentContext == context else { break }
+                        guard accountDID == appState.userDID,
+                            clientID == appState.atProtoClient.map(ObjectIdentifier.init) else {
                             stopGeneration()
                             break
                         }
@@ -557,9 +431,12 @@ struct CatbirdCopilotSheet: View {
             errorMessage = CopilotProposalError.accountChanged.localizedDescription
             return
         }
+        guard let identity = activeHistoryIdentity else { return }
         isExecutingProposal = true
         errorMessage = nil
-        defer { isExecutingProposal = false }
+        defer {
+            if historySession.isCurrent(identity, activeAccountDID: appState.userDID) { isExecutingProposal = false }
+        }
 
         do {
             try CopilotProposalCoordinator.validate(
@@ -578,6 +455,7 @@ struct CatbirdCopilotSheet: View {
                     appState: appState
                 )
             }
+            guard historySession.isCurrent(identity, activeAccountDID: appState.userDID) else { return }
             successMessage = "Action completed: \(CopilotProposalCoordinator.confirmationText(for: proposal, context: context))"
             if let idx = turns.firstIndex(where: { $0.id == turnID }) {
                 turns[idx].proposal = nil
@@ -585,6 +463,7 @@ struct CatbirdCopilotSheet: View {
                 await persistCurrentConversation()
             }
         } catch {
+            guard historySession.isCurrent(identity, activeAccountDID: appState.userDID) else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -695,9 +574,13 @@ struct CatbirdCopilotSheet: View {
 
     private func startNewChat() {
         stopGeneration()
+        prompt = ""
+        selectedImageID = nil
         conversationID = UUID()
         conversationAccountDID = appState.userDID
+        historySession.activate(accountDID: conversationAccountDID, context: context, conversationID: conversationID)
         turns = []
+        isExecutingProposal = false
         errorMessage = nil
         successMessage = nil
         contextTrimmedNotice = nil
@@ -705,14 +588,20 @@ struct CatbirdCopilotSheet: View {
 
     @MainActor
     private func loadConversation(_ conversation: CopilotConversation) async {
-        guard conversation.accountDID == appState.userDID, conversation.accountDID == conversationAccountDID else {
+        guard !Task.isCancelled, activeHistoryIdentity != nil else { return }
+        guard conversation.accountDID == appState.userDID, conversation.accountDID == conversationAccountDID,
+            conversation.context.matchesHistoryContext(context) else {
             errorMessage = "Cannot load conversation from a different account."
             return
         }
         stopGeneration()
+        prompt = ""
+        selectedImageID = nil
         conversationID = conversation.id
         conversationAccountDID = conversation.accountDID
+        historySession.activate(accountDID: conversation.accountDID, context: context, conversationID: conversation.id)
         turns = conversation.turns
+        isExecutingProposal = false
         errorMessage = nil
         successMessage = nil
         contextTrimmedNotice = nil
@@ -725,61 +614,63 @@ struct CatbirdCopilotSheet: View {
                 turns: conversation.turns,
                 updatedAt: conversation.updatedAt
             )
-            do {
-                try await CopilotHistoryStore.shared.save(migrated)
-                let all = try await CopilotHistoryStore.shared.conversations(for: conversationAccountDID)
-                exactContextConversations = all.filter { $0.context.matchesHistoryContext(context) }
-            } catch {
-                errorMessage = "Failed to migrate conversation: \(error.localizedDescription)"
-            }
+            guard let identity = activeHistoryIdentity else { return }
+            await performHistory(.save(migrated, isMigration: true), identity: identity)
+        }
+    }
+
+    private var activeHistoryIdentity: AskCatbirdHistorySession.Identity? {
+        guard let identity = historySession.current,
+            identity.context == context, identity.conversationID == conversationID,
+            identity.accountDID == conversationAccountDID,
+            historySession.isCurrent(identity, activeAccountDID: appState.userDID) else { return nil }
+        return identity
+    }
+
+    @MainActor
+    private func performHistory(
+        _ operation: AskCatbirdHistorySession.Operation,
+        identity: AskCatbirdHistorySession.Identity
+    ) async {
+        let outcome = await historySession.perform(operation, identity: identity, store: .live,
+            activeAccountDID: { appState.userDID })
+        guard historySession.isCurrent(identity, activeAccountDID: appState.userDID) else { return }
+        switch outcome {
+        case .loaded(let conversations, let reset):
+            exactContextConversations = conversations
+            if reset { startNewChat() }
+        case .failed(let message): errorMessage = message
+        case nil: break
         }
     }
 
     @MainActor
     private func deleteCurrentConversation() async {
-        guard !conversationAccountDID.isEmpty, conversationAccountDID == appState.userDID else {
-            errorMessage = "The active account changed."
-            return
-        }
+        guard let identity = activeHistoryIdentity else { return }
         stopGeneration()
-        let targetConvID = conversationID
-        let targetDID = conversationAccountDID
-        do {
-            try await CopilotHistoryStore.shared.delete(conversationID: targetConvID, accountDID: targetDID)
-            let all = try await CopilotHistoryStore.shared.conversations(for: targetDID)
-            exactContextConversations = all.filter { $0.context.matchesHistoryContext(context) }
-        } catch {
-            errorMessage = "Failed to delete conversation: \(error.localizedDescription)"
-        }
-        startNewChat()
+        await performHistory(.delete, identity: identity)
     }
 
     @MainActor
     private func clearAllHistory() async {
-        guard !conversationAccountDID.isEmpty, conversationAccountDID == appState.userDID else {
-            errorMessage = "The active account changed."
-            return
-        }
+        guard let identity = activeHistoryIdentity else { return }
         stopGeneration()
-        let targetDID = conversationAccountDID
-        await CopilotHistoryStore.shared.clear(accountDID: targetDID)
-        exactContextConversations = []
-        startNewChat()
+        await performHistory(.clear, identity: identity)
     }
 
     @MainActor
     private func loadInitialConversation(for accountDID: String) async {
-        guard !accountDID.isEmpty else { return }
-        do {
-            let all = try await CopilotHistoryStore.shared.conversations(for: accountDID)
-            guard accountDID == appState.userDID, accountDID == conversationAccountDID else { return }
-            exactContextConversations = all.filter { $0.context.matchesHistoryContext(context) }
-            if turns.isEmpty, let latest = exactContextConversations.first {
-                await loadConversation(latest)
-            }
-        } catch {
-            guard accountDID == appState.userDID, accountDID == conversationAccountDID else { return }
-            errorMessage = "Failed to load history: \(error.localizedDescription)"
+        guard !accountDID.isEmpty, let identity = activeHistoryIdentity,
+            identity.accountDID == accountDID else { return }
+        let outcome = await historySession.perform(.load, identity: identity, store: .live,
+            activeAccountDID: { appState.userDID })
+        guard historySession.isCurrent(identity, activeAccountDID: appState.userDID) else { return }
+        switch outcome {
+        case .loaded(let conversations, _):
+            exactContextConversations = conversations
+            if turns.isEmpty, let latest = conversations.first { await loadConversation(latest) }
+        case .failed(let message): errorMessage = message
+        case nil: break
         }
     }
 
@@ -796,8 +687,7 @@ struct CatbirdCopilotSheet: View {
 
     @MainActor
     private func persistCurrentConversation() async {
-        guard !conversationAccountDID.isEmpty, conversationAccountDID == appState.userDID else { return }
-        guard isValidConversationForPersistence(turns) else { return }
+        guard let identity = activeHistoryIdentity, isValidConversationForPersistence(turns) else { return }
         let conversation = CopilotConversation(
             id: conversationID,
             accountDID: conversationAccountDID,
@@ -805,12 +695,7 @@ struct CatbirdCopilotSheet: View {
             turns: turns,
             updatedAt: Date()
         )
-        do {
-            try await CopilotHistoryStore.shared.save(conversation)
-            exactContextConversations = try await CopilotHistoryStore.shared.conversations(for: conversationAccountDID).filter { $0.context.matchesHistoryContext(context) }
-        } catch {
-            errorMessage = "Failed to save conversation: \(error.localizedDescription)"
-        }
+        await performHistory(.save(conversation, isMigration: false), identity: identity)
     }
 
     private func conversationTitle(for conversation: CopilotConversation) -> String {
@@ -819,22 +704,6 @@ struct CatbirdCopilotSheet: View {
         }
         return conversation.updatedAt.formatted(date: .abbreviated, time: .shortened)
     }
-}
-
-// MARK: - CopilotMessageAdapter
-
-private struct CopilotMessageAdapter: UnifiedChatMessage, Identifiable, Hashable, Sendable {
-    let id: String
-    let text: String
-    let attributedText: AttributedString
-    let senderID: String
-    let senderDisplayName: String?
-    let senderAvatarURL: URL? = nil
-    let sentAt: Date
-    let isFromCurrentUser: Bool
-    let reactions: [UnifiedReaction] = []
-    let embed: UnifiedEmbed? = nil
-    let sendState: MessageSendState
 }
 
 /// Presentation only: stored and streamed model text retains its original identity and offsets.

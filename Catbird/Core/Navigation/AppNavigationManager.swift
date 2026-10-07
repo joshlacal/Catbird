@@ -26,7 +26,31 @@ import SwiftUI
     var tabSelection: ((Int) -> Void)?
     
     // Target conversation for deep-link navigation (Chat tab specific)
-    var targetConversationId: String?
+    var targetConversationId: String? {
+        didSet {
+            if targetConversationId != nil { chatRootRequestID = nil }
+        }
+    }
+    private(set) var chatRootRequestID: UUID?
+
+    /// A Messages root request must reset the split view's selection as well as its detail path.
+    func requestChatRoot() {
+        targetConversationId = nil
+        clearPath(for: Self.chatTabIndex)
+        chatRootRequestID = UUID()
+    }
+
+    func consumeChatRootRequest() -> Bool {
+        guard chatRootRequestID != nil else { return false }
+        chatRootRequestID = nil
+        return true
+    }
+
+    func consumeTargetConversation() -> String? {
+        let target = targetConversationId
+        targetConversationId = nil
+        return target
+    }
     
     // Post staged for share-to-chat; consumed once by ConversationView
     // when the matching conversation opens.

@@ -1242,7 +1242,7 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private var accountAvatar: some View {
     if let avatarURL = profile?.finalAvatarURL() {
-      AsyncProfileImage(url: avatarURL, size: avatarSize)
+      AsyncProfileImage(url: avatarURL, size: avatarSize, did: profile?.did.didString(), labels: profile?.labels)
     } else {
       Circle()
         .fill(Color.accentColor.opacity(0.12))

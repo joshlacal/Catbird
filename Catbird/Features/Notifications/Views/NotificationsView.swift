@@ -26,7 +26,8 @@ struct NotificationsView: View {
     self._lastTappedTab = lastTappedTab
     _viewModel = State(wrappedValue: NotificationsViewModel(
       client: appState.atProtoClient,
-      notificationManager: appState.notificationManager
+      notificationManager: appState.notificationManager,
+      moderationPolicy: appState.moderationPolicy
     ))
   }
 
@@ -54,7 +55,13 @@ struct NotificationsView: View {
       Task {
         await viewModel.setFilter(newFilter)
       }
-    }.task {
+    }
+    .onChange(of: appState.moderationPolicy) { _, policy in
+      // The list the view model paginates is the policy-filtered one.
+      viewModel.moderationPolicy = policy
+    }
+    .task {
+      viewModel.moderationPolicy = appState.moderationPolicy
       if viewModel.groupedNotifications.isEmpty {
         await viewModel.loadNotifications()
       }
@@ -260,6 +267,8 @@ struct NotificationsView: View {
   @ViewBuilder
   private var notificationsList: some View {
     let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
+    // The view model's list already excludes the groups the policy filters
+    // (`NotificationModeration`), so row indexes match its pagination threshold.
     let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
@@ -323,6 +332,10 @@ struct NotificationsView: View {
             .id("loadingIndicator")
             .listRowSeparator(.hidden)
             .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+            .onAppear {
+              // The spinner is the last row; reaching it requests the next page too.
+              triggerLoadMoreNotificationsIfNeeded(currentIndex: indexedGroups.count - 1)
+            }
           }
         }
         .listSectionSeparator(.hidden, edges: .top)
@@ -345,15 +358,9 @@ struct NotificationsView: View {
     }
   }
 
-  private func shouldLoadMoreNotifications(currentIndex: Int) -> Bool {
-    let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
-    return currentIndex >= thresholdIndex && viewModel.hasMoreNotifications && !viewModel.isLoadingMore
-      && viewModel.paginationError == nil
-  }
-  
   @MainActor
   private func triggerLoadMoreNotificationsIfNeeded(currentIndex: Int) {
-    guard shouldLoadMoreNotifications(currentIndex: currentIndex) else { return }
+    guard viewModel.shouldLoadMore(afterShowingIndex: currentIndex) else { return }
     
     let now = Date().timeIntervalSinceReferenceDate
     guard now - lastLoadMoreTriggerTime >= loadMoreTriggerDedupInterval else { return }
@@ -388,6 +395,9 @@ struct NotificationCard: View {
   }
 
   @State private var isFollowExpanded = false
+  @Environment(\.moderationPolicy) private var moderationPolicy
+  /// The hidden preview's cause identity the viewer chose to show.
+  @State private var revealedModerationFilter: String?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -435,20 +445,7 @@ struct NotificationCard: View {
           onTap(NavigationDestination.profile(notification.author.did.didString()))
         } label: {
           HStack(spacing: DesignTokens.Spacing.base) {
-            LazyImage(url: URL(string: notification.author.avatar?.uriString() ?? "")) { state in
-              if let image = state.image {
-                image
-                  .resizable()
-                  .aspectRatio(contentMode: .fill)
-              } else {
-                Image(systemName: "person.crop.circle")
-                  .resizable()
-                  .aspectRatio(contentMode: .fit)
-                  .foregroundStyle(.gray)
-              }
-            }
-            .frame(width: 36, height: 36)
-            .clipShape(Circle())
+            NotificationAuthorAvatar(author: notification.author, size: 36)
 
             VStack(alignment: .leading, spacing: 2) {
               HStack(spacing: 4) {
@@ -687,70 +684,62 @@ struct NotificationCard: View {
     }
   }
 
+  /// The subject post, under the feed-row rules: a hidden row when the policy
+  /// filters it, else the body gate over text and media, with the media
+  /// thumbnails behind a compact media gate.
   @ViewBuilder
   private var postPreview: some View {
     if let post = group.subjectPost {
+      let moderation = PostModerationPresentation.make(post: post, policy: moderationPolicy)
+      if moderation.hidesRow && revealedModerationFilter != moderation.filterIdentity {
+        ModerationHiddenPostRow(presentation: moderation) {
+          revealedModerationFilter = moderation.filterIdentity
+        }
+      } else {
+        VStack(alignment: .leading, spacing: 6) {
+          if moderation.hidesRow {
+            // A shown hidden preview keeps its cause in view and can be hidden again.
+            ModerationRevealedPostBar(presentation: moderation) {
+              revealedModerationFilter = nil
+            }
+          }
+          ModerationContentGate(ui: moderation.body) {
+            postPreviewBody(post, moderation: moderation)
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func postPreviewBody(_ post: AppBskyFeedDefs.PostView, moderation: PostModerationPresentation) -> some View {
       VStack(alignment: .leading, spacing: 8) {
-        // Show post text if available, unless a label says to hide the post
+        ContentLabelView(causes: moderation.chips)
+
         if case .knownType(let postObj) = post.record, let feedPost = postObj as? AppBskyFeedPost,
-          !feedPost.text.isEmpty, !isHiddenByLabel(post) {
+          !feedPost.text.isEmpty {
           Text(feedPost.text)
             .appBody()
             .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             .lineLimit(3)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        
+
         // Show media thumbnails if available
         let thumbnails = extractMediaThumbnails(from: post)
-        let selfLabels = selfLabelValues(of: post)
         if !thumbnails.isEmpty {
-          if !(post.labels ?? []).isEmpty || !selfLabels.isEmpty {
-            // Labelled media (adult, graphic) follows the user's content filter settings
-            ContentLabelManager(labels: post.labels, selfLabelValues: selfLabels, contentType: "media") {
-              NotificationMediaThumbnail(thumbnails: thumbnails)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-          } else {
+          ModerationMediaGate(ui: moderation.media, style: .compact) {
             NotificationMediaThumbnail(thumbnails: thumbnails)
               .frame(maxWidth: .infinity, alignment: .leading)
           }
         }
-        
+
         // Show quoted post text for record embeds (without media)
         if thumbnails.isEmpty, let embed = post.embed {
           switch embed {
-          case .appBskyEmbedRecordView(let record):
-            switch record.record {
-            case .appBskyEmbedRecordViewRecord(let viewRecord):
-              if case let .knownType(recordPost) = viewRecord.value,
-                let post = recordPost as? AppBskyFeedPost {
-                Text("Quoted: \(post.text)")
-                  .appBody()
-                  .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
-                  .lineLimit(2)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
+          case .appBskyEmbedRecordView, .appBskyEmbedRecordWithMediaView:
+            quotedPreview(in: post)
 
-            default:
-              EmptyView()
-            }
-
-          case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-            switch recordWithMedia.record.record {
-            case .appBskyEmbedRecordViewRecord(let viewRecord):
-              if case let .knownType(recordPost) = viewRecord.value,
-                let post = recordPost as? AppBskyFeedPost {
-                Text("Quoted: \(post.text)")
-                  .appBody()
-                  .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
-                  .lineLimit(2)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-
-            default: EmptyView()
-            }
-            
           case .appBskyEmbedExternalView(let external):
             // Show external link info if no thumbnail available
             if thumbnails.isEmpty {
@@ -772,21 +761,25 @@ struct NotificationCard: View {
           }
         }
       }
+  }
+
+  /// The quoted post's text under the quote's own decision: a `!hide`, `!warn`
+  /// or labeler `blurs: content` label on the quoted post or its author gates
+  /// it here as `RecordEmbedView` does in feeds. The parent's decision carries
+  /// these causes downgraded, so its body gate never covers them.
+  @ViewBuilder
+  private func quotedPreview(in post: AppBskyFeedDefs.PostView) -> some View {
+    if let quoted = PostModerationPresentation.quotedRecord(in: post),
+      case .knownType(let record) = quoted.value, let quotedPost = record as? AppBskyFeedPost {
+      let quote = PostModerationPresentation.make(quoted: quoted, policy: moderationPolicy)
+      ModerationContentGate(ui: quote.body) {
+        Text("Quoted: \(quotedPost.text)")
+          .appBody()
+          .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
+          .lineLimit(2)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
     }
-  }
-
-  /// Self-applied label values on the post record (e.g. "porn", "graphic-media").
-  private func selfLabelValues(of post: AppBskyFeedDefs.PostView) -> [String] {
-    guard case .knownType(let record) = post.record,
-          let feedPost = record as? AppBskyFeedPost,
-          let postLabels = feedPost.labels,
-          case .comAtprotoLabelDefsSelfLabels(let labels) = postLabels else { return [] }
-    return labels.values.map { $0.val.lowercased() }
-  }
-
-  /// Whether a moderation label asks clients to hide this post entirely.
-  private func isHiddenByLabel(_ post: AppBskyFeedDefs.PostView) -> Bool {
-    (post.labels ?? []).contains { $0.val == "!hide" }
   }
 
   private func handleTap() {
@@ -1078,6 +1071,36 @@ struct NotificationMediaThumbnail: View {
   }
 }
 
+/// A notification author's avatar. When the policy blurs it (`ui(.avatar)`:
+/// `!warn`, `!hide` or an adult or graphic account label set to warn or hide)
+/// the neutral placeholder is drawn and no image is requested.
+struct NotificationAuthorAvatar: View {
+  let author: AppBskyActorDefs.ProfileView
+  let size: CGFloat
+  @Environment(\.moderationPolicy) private var moderationPolicy
+
+  var body: some View {
+    if NotificationModeration.concealsAvatar(of: author, policy: moderationPolicy) {
+      ModeratedAvatarPlaceholder(size: size)
+    } else {
+      LazyImage(url: author.finalAvatarURL()) { state in
+        if let image = state.image {
+          image
+            .resizable()
+            .scaledToFill()
+        } else {
+          Image(systemName: "person.crop.circle")
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(.gray)
+        }
+      }
+      .frame(width: size, height: size)
+      .clipShape(Circle())
+    }
+  }
+}
+
 struct AvatarStack: View {
   @Environment(SceneNavigationContext.self) private var sceneContext
   let notifications: [AppBskyNotificationListNotifications.Notification]
@@ -1088,18 +1111,7 @@ struct AvatarStack: View {
 
     HStack(spacing: 3) {
       ForEach(0..<min(3, notifications.count), id: \.self) { index in
-        LazyImage(url: notifications[index].author.finalAvatarURL()) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-          } else {
-            Image(systemName: "person.crop.circle")
-              .resizable()
-              .aspectRatio(contentMode: .fit)
-              .foregroundStyle(.gray)
-          }
-        }
+        NotificationAuthorAvatar(author: notifications[index].author, size: 44)
         .onTapGesture {
           navigationPath.wrappedValue.append(
             NavigationDestination.profile(notifications[index].author.did.didString())

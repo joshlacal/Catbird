@@ -109,7 +109,9 @@ struct SuggestedProfilesSheet: View {
                 onSelect(profile)
             } label: {
                 HStack(alignment: .top, spacing: 14) {
-                    AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 56, labels: profile.labels)
+                    AsyncProfileImage(
+                        url: URL(string: profile.avatar?.uriString() ?? ""), size: 56,
+                        did: profile.did.didString(), labels: profile.labels)
                 
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .center, spacing: 6) {

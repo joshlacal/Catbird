@@ -125,12 +125,17 @@ enum SettingsCatalog {
         add("Visible to Signed-Out Visitors", .visibility, "privacy.loggedOutVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["logged out", "public profile"])
         add("Algorithmic Recommendations Request", .visibility, "privacy.algorithmicVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["hide posts", "discovery"])
         add("Credit Repost Discovery", .visibility, "privacy.attribution", "Privacy & Interactions › Visibility & Attribution")
-        for (title, id, aliases) in [
-            ("Adult Content", "adultContent", ["NSFW"]), ("Sexually Explicit Content", "nsfw", ["NSFW", "porn"]),
-            ("Sexually Suggestive Content", "suggestive", ["sexual"]), ("Graphic Media", "graphic", ["gore", "violence"]),
-            ("Non-Sexual Nudity", "nudity", ["nudity"]), ("Muted Words & Tags", "mutedWords", ["mute", "hashtags", "muted words"])] {
-            add(title, .moderation, "moderation.\(id)", "Moderation", "Current account", aliases)
+        add("Enable Adult Content", .moderation, "moderation.adultContent", "Moderation", "Current account", ["NSFW", "adult content"])
+        // Builtin content filters use the names and control ids the Moderation screen shows.
+        let contentFilterAliases: [String: [String]] = [
+            "porn": ["NSFW", "porn", "explicit", "sexual"], "sexual": ["suggestive", "sexual"],
+            "graphic-media": ["gore", "violence", "graphic"], "nudity": ["nudity", "nude", "artistic"]]
+        for identifier in ContentFilterSettings.builtinIdentifiers {
+            guard let definition = ModerationLabelDefinition.builtin(forLabelValue: identifier) else { continue }
+            add(ModerationPresentation.name(for: definition), .moderation, ContentFilterSettings.controlID(for: identifier).rawValue,
+                "Moderation", "Current account", contentFilterAliases[identifier] ?? [])
         }
+        add("Muted Words & Tags", .moderation, "moderation.mutedWords", "Moderation", "Current account", ["mute", "hashtags", "muted words"])
         add("Moderation Services", .labelers, "moderation.labelers", "Moderation", "Current account", ["labelers", "labels"])
         add("Moderation Lists", .moderation, "moderation.lists", "Moderation", "Current account", ["lists", "block list", "mute list"])
         add("Muted Accounts", .mutedAccounts, nil, "Moderation", "Current account", ["mute people"])

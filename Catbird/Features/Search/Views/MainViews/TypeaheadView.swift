@@ -42,31 +42,31 @@ struct TypeaheadView: View {
     }
     
     private var emptyStateView: some View {
-        VStack(spacing: DesignTokens.Spacing.lg) {
-            Spacer()
-            
-            Image(systemName: "magnifyingglass")
-                .appFont(size: 48)
-                .foregroundColor(.secondary)
-                .padding(.bottom, DesignTokens.Spacing.sm)
-            
-            Text("Start typing to search")
-                .appFont(AppTextRole.headline)
-            
-            Text("Search for handles, feeds, hashtags, or keywords")
-                .appFont(AppTextRole.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, DesignTokens.Spacing.section)
-            
-            Spacer()
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
+        SearchHistoryEmptyHint()
+            .mainContentFrame()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
     
     private var suggestionsList: some View {
         List {
+            // Direct search leads, matching the focused suggestions.
+            Button {
+                guard let client = appState.atProtoClient else {
+                    logger.error("Empty client")
+                    return
+                }
+                viewModel.commitSearch(client: client)
+            } label: {
+                SearchSuggestionRow(systemImage: "magnifyingglass", tint: .accentColor) {
+                    Text("Search for “\(searchText.trimmingCharacters(in: .whitespacesAndNewlines))”")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .mainContentFrame()
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("search.typeahead.submit")
+            .modifier(SearchSuggestionRowModifier())
+
             // Profiles Section
             if !viewModel.typeaheadProfiles.isEmpty {
                 Section("Profiles") {
@@ -93,30 +93,6 @@ struct TypeaheadView: View {
                 }
             }
 
-            // Direct search row
-            Section {
-                Button {
-                    guard let client = appState.atProtoClient else {
-                        logger.error("Empty client")
-                        return
-                    }
-                    viewModel.commitSearch(client: client)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 20, height: 20)
-                        Text("Search for \"\(searchText)\"")
-                            .foregroundColor(.accentColor)
-                            .fontWeight(.medium)
-                            .appFont(AppTextRole.body)
-                    }
-                    .mainContentFrame()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets())
-            }
         }
         .listStyle(.plain)
         .padding(0)

@@ -9,6 +9,11 @@ struct FeedLibraryControls: View {
   var compactLabels = false
   var alignsTrailing = false
   var prominent = false
+  /// Label height inside the bordered control; the bezel adds about 14 pt, so a
+  /// value near 30 still yields a 44 pt control.
+  var minimumLabelHeight: CGFloat = 44
+  /// Draws Saved/Pinned as a tinted capsule so library status reads as state, not a link.
+  var statusChip = false
   @State private var showExplanation = false
 
   private var actions: FeedLibraryActions { appState.feedLibraryActions }
@@ -30,7 +35,7 @@ struct FeedLibraryControls: View {
             Image(systemName: "plus")
           }
             .labelStyle(FeedLibraryActionLabelStyle(compact: compactLabels))
-            .frame(minWidth: 44, minHeight: 44)
+            .frame(minWidth: 44, minHeight: minimumLabelHeight)
             .frame(maxWidth: prominent ? .infinity : nil)
             .lineLimit(prominent ? 2 : nil)
         }
@@ -57,10 +62,11 @@ struct FeedLibraryControls: View {
             Image(systemName: membership == .pinned ? "pin.fill" : "checkmark")
           }
             .labelStyle(FeedLibraryActionLabelStyle(compact: compactLabels))
-            .frame(minWidth: 44, minHeight: 44)
+            .frame(minWidth: 44, minHeight: minimumLabelHeight)
             .frame(maxWidth: prominent ? .infinity : nil)
+            .modifier(FeedLibraryStatusChip(enabled: statusChip))
         }
-        .modifier(FeedLibraryButtonPresentation(prominent: prominent))
+        .modifier(FeedLibraryButtonPresentation(prominent: prominent, drawsChrome: !statusChip))
         .accessibilityLabel("\(feed.displayName), \(membership == .pinned ? "Pinned" : "Saved"). Manage feed")
         .accessibilityIdentifier("feed.library.manage.\(feed.uri.uriString())")
       }
@@ -126,15 +132,37 @@ struct FeedLibraryControls: View {
 
 private struct FeedLibraryButtonPresentation: ViewModifier {
   let prominent: Bool
+  var drawsChrome = true
 
   @ViewBuilder func body(content: Content) -> some View {
-    if prominent {
+    if !drawsChrome {
+      content.buttonStyle(.plain)
+    } else if prominent {
       content
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.capsule)
         .appFont(AppTextRole.headline)
     } else {
       content.buttonStyle(.bordered)
+    }
+  }
+}
+
+/// A tinted capsule around the Saved/Pinned menu label. Menus don't adopt bordered
+/// button styles, so the chip is drawn explicitly.
+private struct FeedLibraryStatusChip: ViewModifier {
+  let enabled: Bool
+
+  @ViewBuilder func body(content: Content) -> some View {
+    if enabled {
+      content
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .foregroundStyle(Color.accentColor)
+        .background(Color.accentColor.opacity(0.12), in: Capsule())
+        .contentShape(Capsule())
+    } else {
+      content
     }
   }
 }

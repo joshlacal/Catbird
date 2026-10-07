@@ -11,6 +11,7 @@ struct StarterPackRowView: View {
             AsyncProfileImage(
                 url: URL(string: pack.creator.avatar?.uriString() ?? ""),
                 size: 44,
+                did: pack.creator.did.didString(),
                 labels: pack.creator.labels
             )
             

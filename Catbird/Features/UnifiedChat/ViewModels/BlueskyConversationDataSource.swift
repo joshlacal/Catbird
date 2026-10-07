@@ -14,16 +14,15 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   private let chatManager: ChatManager
   private let convoID: String
   private let currentUserDID: String
-  @ObservationIgnored private nonisolated(unsafe) var chatObservationTask: Task<Void, Never>?
 
   private(set) var messages: [BlueskyMessageAdapter] = []
-  private(set) var isLoading: Bool = false
+  var messageLoadState: ChatManager.MessageLoadState {
+    chatManager.messageLoadStates[convoID] ?? .idle
+  }
+  var isLoading: Bool { messageLoadState == .loading }
   private(set) var hasMoreMessages: Bool = true
   private(set) var error: Error?
   private(set) var expandedSystemGroupIDs: Set<String> = []
-  /// True once the first load has finished, so an empty transcript can be
-  /// told apart from one that is still loading.
-  private(set) var hasCompletedInitialLoad: Bool = false
   private var hasReceivedInitialMessages: Bool = false
 
   /// Whether this is a group chat, which shows sender names above messages.
@@ -42,14 +41,11 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     self.chatManager = chatManager
     self.convoID = convoID
     self.currentUserDID = currentUserDID
+    updateMessagesFromManager()
+    hasReceivedInitialMessages = false
     startObservingChatManager()
   }
   
-  deinit {
-    chatObservationTask?.cancel()
-    chatObservationTask = nil
-  }
-
   // MARK: - UnifiedChatDataSource
 
   func message(for id: String) -> BlueskyMessageAdapter? {
@@ -58,28 +54,18 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
 
   func loadMessages() async {
     guard !isLoading else { return }
-    isLoading = true
     error = nil
 
-    // Only the first load reports failures; later refreshes (after a send)
-    // stay quiet like the background poll.
-    await chatManager.loadMessages(
-      convoId: convoID,
-      refresh: true,
-      userInitiated: !hasCompletedInitialLoad
-    )
+    // The transcript owns load-error presentation; polling and Retry share this state.
+    await chatManager.loadMessages(convoId: convoID, refresh: true)
     updateMessagesFromManager()
-    hasCompletedInitialLoad = true
-    isLoading = false
   }
 
   func loadMoreMessages() async {
     guard !isLoading, hasMoreMessages else { return }
-    isLoading = true
 
     await chatManager.loadMessages(convoId: convoID, refresh: false)
     updateMessagesFromManager()
-    isLoading = false
   }
 
   func sendMessage(text: String) async {
@@ -258,21 +244,17 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   }
   
   private func startObservingChatManager() {
-    chatObservationTask?.cancel()
-    chatObservationTask = Task { @MainActor [weak self] in
-      guard let self else { return }
-      withObservationTracking {
-        _ = chatManager.originalMessagesMap[convoID]
-        _ = chatManager.systemMessagesMap[convoID]
-        _ = chatManager.relatedProfilesMap[convoID]
-        _ = chatManager.conversations
-        _ = chatManager.hasMoreMessages(for: convoID)
-      } onChange: {
-        Task { @MainActor [weak self] in
-          guard let self else { return }
-          self.updateMessagesFromManager()
-          self.startObservingChatManager()
-        }
+    withObservationTracking {
+      _ = chatManager.originalMessagesMap[convoID]
+      _ = chatManager.systemMessagesMap[convoID]
+      _ = chatManager.relatedProfilesMap[convoID]
+      _ = chatManager.conversations
+      _ = chatManager.hasMoreMessages(for: convoID)
+    } onChange: { [weak self] in
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        self.updateMessagesFromManager()
+        self.startObservingChatManager()
       }
     }
   }

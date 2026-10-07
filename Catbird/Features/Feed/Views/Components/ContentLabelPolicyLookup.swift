@@ -20,10 +20,20 @@ final class ContentLabelDefinitionLookup {
     let definitions: Definitions
     let services: Services
   }
+  /// One shared load and the callers awaiting it. The load holds the settings account-I/O lease
+  /// until it finishes, so it is cancelled as soon as its last waiter is cancelled: an account switch
+  /// cancels the account's tasks and then drains the lease, and a slow labeler service must not keep
+  /// that drain waiting. The load's request wait returns on cancellation (`returningOnCancellation`),
+  /// which releases the lease at once.
+  private struct InFlight {
+    let id: UUID
+    let task: Task<Catalog, Error>
+    var waiters: Int
+  }
   static let shared = ContentLabelDefinitionLookup()
   private var cached: [Key: Catalog] = [:]
   private var cacheOrder: [Key] = []
-  private var inFlight: [Key: (id: UUID, task: Task<Catalog, Error>)] = [:]
+  private var inFlight: [Key: InFlight] = [:]
 
   func definitions(
     for key: Key, isCurrent: @escaping @MainActor () -> Bool,
@@ -41,20 +51,29 @@ final class ContentLabelDefinitionLookup {
     guard isCurrent() else { throw PreferencesManagerError.accountChanged }
     try Task.checkCancellation()
     if let result = cached[key] { return result }
-    let request: (id: UUID, task: Task<Catalog, Error>)
-    if let existing = inFlight[key] { request = existing }
-    else {
-      request = (UUID(), Task { @MainActor in
+    let request: InFlight
+    if var existing = inFlight[key], !existing.task.isCancelled {
+      existing.waiters += 1
+      inFlight[key] = existing
+      request = existing
+    } else {
+      request = InFlight(id: UUID(), task: Task { @MainActor in
         guard isCurrent() else { throw PreferencesManagerError.accountChanged }
         return try await load()
-      })
+      }, waiters: 1)
       inFlight[key] = request
     }
+    let id = request.id
     do {
-      let result = try await request.task.value
+      let result = try await withTaskCancellationHandler {
+        try await request.task.value
+      } onCancel: {
+        // The handler runs on the cancelling thread; the bookkeeping is main-actor state.
+        Task { @MainActor in self.waiterWasCancelled(key: key, id: id) }
+      }
       guard isCurrent() else { throw PreferencesManagerError.accountChanged }
       try Task.checkCancellation()
-      if inFlight[key]?.id == request.id {
+      if inFlight[key]?.id == id {
         inFlight.removeValue(forKey: key)
         cached[key] = result
         cacheOrder.removeAll { $0 == key }
@@ -64,13 +83,27 @@ final class ContentLabelDefinitionLookup {
       return result
     } catch {
       // Failures are never recorded as a confirmed empty definition collection.
-      if inFlight[key]?.id == request.id { inFlight.removeValue(forKey: key) }
+      if inFlight[key]?.id == id { inFlight.removeValue(forKey: key) }
       throw error
+    }
+  }
+
+  /// Drops one waiter of a shared load. When it was the last one, the load itself is cancelled, which
+  /// returns its request wait and releases the lease it holds; a later caller starts a fresh load.
+  private func waiterWasCancelled(key: Key, id: UUID) {
+    guard var entry = inFlight[key], entry.id == id else { return }
+    entry.waiters -= 1
+    if entry.waiters > 0 {
+      inFlight[key] = entry
+    } else {
+      inFlight.removeValue(forKey: key)
+      entry.task.cancel()
     }
   }
 }
 
-/// Custom canonical labels only. Builtin and self-label policy remains in ContentLabelManager.
+/// Custom canonical labels only, for the trending topic preview. Post rendering
+/// and feed filtering evaluate every label through `ModerationPolicy`.
 enum CustomContentLabelPolicy {
   static func visibility(
     labelValue: String, labelerDID: DID, preferences: [ContentLabelPreference],
@@ -129,7 +162,9 @@ extension ContentLabelDefinitionLookup {
       load: {
         let finishAccountIO = try manager.beginSettingsAccountIO()
         defer { finishAccountIO?() }
-        let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: dids, detailed: true))
+        let (code, output) = try await returningOnCancellation {
+          try await client.app.bsky.labeler.getServices(input: .init(dids: dids, detailed: true))
+        }
         guard (200..<300).contains(code), let output else { throw PreferencesManagerError.invalidData }
         var result: Definitions = [:]
         var services: Services = [:]
@@ -141,5 +176,62 @@ extension ContentLabelDefinitionLookup {
         }
         return Catalog(definitions: result, services: services)
       })
+  }
+
+  /// Runs `operation` so that cancelling the caller returns at once with `CancellationError`.
+  ///
+  /// Petrel coalesces identical GETs through an unstructured task that a cancelled caller does not
+  /// cancel, so awaiting the request directly would hold the settings account-I/O lease until the
+  /// response arrives and time out an account switch's drain. The request is left to finish on its
+  /// own; a result that arrives after cancellation is dropped.
+  private static func returningOnCancellation<Value: Sendable>(
+    _ operation: @escaping @Sendable () async throws -> Value
+  ) async throws -> Value {
+    let request = Task { try await operation() }
+    let gate = CancellationGate<Value>()
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        gate.install(continuation)
+        Task { gate.resume(with: await request.result) }
+      }
+    } onCancel: {
+      request.cancel()
+      gate.resume(with: .failure(CancellationError()))
+    }
+  }
+}
+
+/// Resumes one continuation exactly once, from whichever of completion and cancellation comes first.
+/// A result that arrives before the continuation is installed is delivered on installation.
+private final class CancellationGate<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Value, Error>?
+  private var early: Result<Value, Error>?
+  private var isResumed = false
+
+  func install(_ continuation: CheckedContinuation<Value, Error>) {
+    lock.lock()
+    if let early {
+      self.early = nil
+      isResumed = true
+      lock.unlock()
+      continuation.resume(with: early)
+    } else {
+      self.continuation = continuation
+      lock.unlock()
+    }
+  }
+
+  func resume(with result: Result<Value, Error>) {
+    lock.lock()
+    if let continuation {
+      self.continuation = nil
+      isResumed = true
+      lock.unlock()
+      continuation.resume(with: result)
+    } else {
+      if !isResumed, early == nil { early = result }
+      lock.unlock()
+    }
   }
 }

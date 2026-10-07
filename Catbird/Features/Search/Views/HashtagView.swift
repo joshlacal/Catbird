@@ -7,6 +7,8 @@ struct HashtagView: View {
     @Environment(AppState.self) private var appState
     @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var posts: [AppBskyFeedDefs.PostView] = []
     @State private var relatedTags: [String] = []
     @State private var isLoading = false
@@ -20,107 +22,117 @@ struct HashtagView: View {
     private static let contentFilterService = ContentFilterService()
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Enhanced hashtag header
-            VStack(spacing: 4) {
-                Text("#\(tag)")
-                    .appFont(AppTextRole.title1.weight(.bold))
-                    .padding(.top)
-                
-                Text("Posts with this hashtag")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.secondary)
-                
-                // Sort toggle
-                Picker("Sort", selection: $sortByRecent) {
-                    Text("Latest").tag(true)
-                    Text("Top").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.top, 8)
-                .onChange(of: sortByRecent) { _, _ in
-                    // Reset and reload posts with new sort order
-                    posts = []
-                    cursor = nil
-                    loadPosts()
-                }
-                
-                // Related tags if available
-                if !relatedTags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(relatedTags, id: \.self) { relatedTag in
-                                Button {
-                                    path.append(NavigationDestination.hashtag(relatedTag))
-                                } label: {
-                                    Text("#\(relatedTag)")
-                                        .appFont(AppTextRole.caption)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.accentColor.opacity(0.15))
-                                        )
-                                        .foregroundColor(.accentColor)
-                                }
-                            }
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 8)
+        postsList
+            .navigationTitle("#\(tag)")
+            .modifier(HashtagNavigationTitleModifier())
+            .safeAreaPadding([.top, .bottom])
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showFilterSheet = true
+                    } label: {
+                        Label("Language", systemImage: languageFilter == nil
+                              ? "line.3.horizontal.decrease.circle"
+                              : "line.3.horizontal.decrease.circle.fill")
                     }
+                    .accessibilityLabel("Filter by language, \(languageFilterName)")
+                    .accessibilityIdentifier("hashtag.languageFilter")
                 }
             }
-            .frame(maxWidth: .infinity)
-            // Add a filter button
-            HStack {
-                Spacer()
+            .sheet(isPresented: $showFilterSheet) {
+                HashtagFilterView(languageFilter: $languageFilter, onApply: reloadPosts)
+            }
+            .onChange(of: sortByRecent) { _, _ in
+                reloadPosts()
+            }
+            .onAppear {
+                if posts.isEmpty {
+                    loadPosts()
+                    fetchRelatedTags()
+                }
+            }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sortPicker
+                .frame(maxWidth: 320)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("hashtag.sort")
+
+            if languageFilter != nil {
                 Button {
                     showFilterSheet = true
                 } label: {
-                    Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                    Label("Language: \(languageFilterName)", systemImage: "line.3.horizontal.decrease")
+                        .appFont(AppTextRole.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
             }
-            .padding(.bottom, 4)
-            .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
-            
-            // Posts list with improved UI
-            if isLoading && posts.isEmpty {
-                Spacer()
-                ProgressView()
-                    .padding()
-                    .scaleEffect(1.5)
-                Spacer()
-            } else if loadFailed && posts.isEmpty {
-                loadFailedState
-            } else if posts.isEmpty {
-                emptyState
+
+            if !relatedTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(relatedTags, id: \.self) { relatedTag in
+                            Button {
+                                path.append(NavigationDestination.hashtag(relatedTag))
+                            } label: {
+                                Text("#\(relatedTag)")
+                                    .appFont(AppTextRole.subheadline)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .accessibilityLabel("Related hashtags")
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var sortPicker: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            sortOptions.pickerStyle(.menu)
+        } else {
+            #if compiler(>=6.4)
+            if #available(anyAppleOS 27.0, *), !reduceTransparency {
+                sortOptions
+                    .buttonBorderShape(.capsule)
+                    .pickerStyle(.tabs)
             } else {
-                postsList
+                sortOptions.pickerStyle(.segmented)
             }
-        }
-        .navigationTitle("#\(tag)")
-#if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-#endif
-        // Ensure content respects device safe areas even if parent ignores them
-        .safeAreaPadding([.top, .bottom])
-        .sheet(isPresented: $showFilterSheet) {
-            HashtagFilterView(languageFilter: $languageFilter, onApply: {
-                posts = []
-                cursor = nil
-                loadPosts()
-            })
-        }
-        .onAppear {
-            if posts.isEmpty {
-                loadPosts()
-                fetchRelatedTags()
-            }
+            #else
+            sortOptions.pickerStyle(.segmented)
+            #endif
         }
     }
-    
+
+    private var sortOptions: some View {
+        Picker("Sort posts", selection: $sortByRecent) {
+            Text("Latest").tag(true)
+            Text("Top").tag(false)
+        }
+    }
+
+    private var languageFilterName: String {
+        guard let languageFilter else { return "Any language" }
+        return Locale.current.localizedString(forLanguageCode: languageFilter) ?? languageFilter
+    }
+
+    private func reloadPosts() {
+        posts = []
+        cursor = nil
+        loadPosts()
+    }
+
     private var loadFailedState: some View {
         ContentUnavailableView {
             Label("Couldn’t Load Posts", systemImage: "wifi.exclamationmark")
@@ -131,49 +143,54 @@ struct HashtagView: View {
                 loadPosts()
             }
         }
-        .frame(maxHeight: .infinity)
+        .padding(.vertical, 24)
     }
     
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            
-            Image(systemName: "number.square.fill")
-                .appFont(size: 60)
-                .foregroundColor(.accentColor.opacity(0.7))
-                .padding()
-                .symbolEffect(.bounce, options: .repeat(.periodic(1, delay: 3)))
-            
-            Text("No posts found with #\(tag)")
-                .appFont(AppTextRole.headline)
-            
-            Text("Be the first to post about this topic!")
-                .appFont(AppTextRole.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            
+        ContentUnavailableView {
+            Label("No matching posts", systemImage: "number")
+        } description: {
+            if cursor != nil {
+                Text("There are no visible matches on this page. Load more to keep looking.")
+            } else if languageFilter != nil {
+                Text("No visible posts matching #\(tag) in \(languageFilterName) are available.")
+            } else {
+                Text("No visible posts matching #\(tag) are available.")
+            }
+        } actions: {
+            if languageFilter != nil {
+                Button("Change Language") {
+                    showFilterSheet = true
+                }
+            }
             Button {
                 sceneContext.presentPostComposer(initialText: "#\(tag) ")
             } label: {
-                Label("Create Post with #\(tag)", systemImage: "square.and.pencil")
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color.accentColor)
-                    )
+                Label("Create Post", systemImage: "square.and.pencil")
             }
-            .padding(.top, 8)
-            
-            Spacer()
         }
-        .padding()
+        .buttonStyle(.borderless)
+        .padding(.vertical, 24)
     }
-    
+
     private var postsList: some View {
         List {
+            header
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+
+            if isLoading && posts.isEmpty {
+                ProgressView("Loading posts")
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                    .listRowSeparator(.hidden)
+            } else if loadFailed && posts.isEmpty {
+                loadFailedState
+                    .listRowSeparator(.hidden)
+            } else if posts.isEmpty {
+                emptyState
+                    .listRowSeparator(.hidden)
+            }
+
             ForEach(posts, id: \.uri) { post in
                 Button {
                     path.append(NavigationDestination.post(post.uri))
@@ -193,12 +210,12 @@ struct HashtagView: View {
                 .listRowSeparator(.hidden)
             }
             
-            if isLoading {
+            if isLoading && !posts.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding()
                     .listRowSeparator(.hidden)
-            } else if let _ = cursor {
+            } else if !isLoading, cursor != nil {
                 Button {
                     loadMorePosts()
                 } label: {
@@ -214,6 +231,7 @@ struct HashtagView: View {
             }
         }
         .listStyle(.plain)
+        .accessibilityIdentifier("hashtag.posts")
     }
     
     private var sortOrder: String {
@@ -237,7 +255,9 @@ struct HashtagView: View {
         loadFailed = false
         
         Task {
+            guard generation == loadGeneration else { return }
             guard let client = appState.atProtoClient else {
+                loadFailed = true
                 isLoading = false
                 return
             }
@@ -444,6 +464,16 @@ struct HashtagView: View {
     }
 }
 
+private struct HashtagNavigationTitleModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.toolbarTitleDisplayMode(.inline)
+        #else
+        content
+        #endif
+    }
+}
+
 // Simple filter view
 struct HashtagFilterView: View {
     @Binding var languageFilter: String?
@@ -484,7 +514,7 @@ struct HashtagFilterView: View {
                     }
                 }
             }
-            .navigationTitle("Filter Posts")
+            .navigationTitle("Post Language")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -494,8 +524,10 @@ struct HashtagFilterView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Apply") {
-                        languageFilter = draftLanguage
-                        onApply()
+                        if languageFilter != draftLanguage {
+                            languageFilter = draftLanguage
+                            onApply()
+                        }
                         dismiss()
                     }
                 }

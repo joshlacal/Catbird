@@ -26,6 +26,33 @@ public struct VideoFeedItem: Identifiable, Hashable, Sendable {
     RevealIdentity(postID: id, labels: post.labels ?? [], selfLabelValues: selfLabelValues)
   }
 
+  /// The moderation this item needs: whether the feed skips it, and the merged
+  /// `contentView` and `contentMedia` UI that covers the player
+  /// (`screens/VideoFeed/index.tsx` upstream).
+  func moderation(policy: ModerationPolicy) -> VideoFeedItemModeration {
+    let presentation = PostModerationPresentation.make(post: post, policy: policy, surface: .contentView)
+    return VideoFeedItemModeration(
+      isFilteredFromList: presentation.isFilteredFromList,
+      playback: presentation.body.merged(with: presentation.media),
+      concealsCaption: presentation.concealsBody)
+  }
+}
+
+struct VideoFeedItemModeration: Equatable, Sendable {
+  /// `contentList` filter: the item is left out of the feed.
+  let isFilteredFromList: Bool
+  /// The cover's causes. While it blurs, the item must not autoplay, prewarm or play audio.
+  let playback: ModerationUI
+  /// A `contentView` blur covers the post body, so the caption stays hidden
+  /// with the player until the viewer shows the item (upstream wraps the whole
+  /// item in `Hider.Outer`). A media-only blur leaves the caption visible.
+  let concealsCaption: Bool
+
+  var concealsPlayback: Bool { playback.blur }
+}
+
+extension VideoFeedItem {
+
   init?(post: AppBskyFeedDefs.PostView) {
     let video: AppBskyEmbedVideo.View
     switch post.embed {

@@ -572,7 +572,7 @@ struct CachedFeedViewPostIdentityTests {
       hideNonPreferredLanguages: false, preferredLanguages: [],
       mutedUsers: [], blockedUsers: [], hideLinks: false,
       onlyTextPosts: false, onlyMediaPosts: false,
-      contentLabelPreferences: [], hideAdultContent: false, hiddenPosts: [],
+      hiddenPosts: [],
       currentUserDid: "did:plc:reader"
     )
     let filtered = await ContentFilterService().filterFeedViewPosts([posts[2]], settings: settings)
@@ -618,25 +618,38 @@ struct CachedFeedViewPostIdentityTests {
         "val": "porn", "cts": "2025-06-04T00:00:00.000Z"
       ]]
     }
-    let allowed = await ContentFilterService().filterFeedViewPosts([reply], settings: contextFilterSettings())
+    // Adult content on with `porn` set to warn: the reply stays (media is only blurred).
+    let allowed = await ContentFilterService().filterFeedViewPosts(
+      [reply], settings: contextFilterSettings(adultContentEnabled: true, pornVisibility: "warn"))
     #expect(allowed.count == 1)
-    let settings = contextFilterSettings(hideAdultContent: true)
+    // Adult content off: the moderation policy filters the reply from lists.
+    let settings = contextFilterSettings(adultContentEnabled: false)
     let filtered = await ContentFilterService().filterFeedViewPosts([reply], settings: settings)
     let slices = await FeedTuner().tune([reply], filterSettings: settings)
     #expect(filtered.isEmpty)
     #expect(slices.isEmpty)
   }
 
-  private func contextFilterSettings(hideAdultContent: Bool = false) -> FeedTunerSettings {
-    FeedTunerSettings(
+  /// Settings whose moderation policy subscribes to the fixture labeler
+  /// (`did:plc:labeler`), so its labels count. Adult content defaults to on.
+  private func contextFilterSettings(adultContentEnabled: Bool = true, pornVisibility: String = "hide") -> FeedTunerSettings {
+    var settings = FeedTunerSettings(
       hideReplies: false, hideRepliesByUnfollowed: true, hideRepliesByLikeCount: nil,
       hideReposts: false, hideQuotePosts: false,
       hideNonPreferredLanguages: false, preferredLanguages: [],
       mutedUsers: [], blockedUsers: [], hideLinks: false,
       onlyTextPosts: false, onlyMediaPosts: false,
-      contentLabelPreferences: [], hideAdultContent: hideAdultContent, hiddenPosts: [],
+      hiddenPosts: [],
       currentUserDid: "did:plc:reader"
     )
+    settings.moderationPolicy = ModerationPolicy(
+      accountDID: "did:plc:reader",
+      serverAdultContentEnabled: adultContentEnabled,
+      contentLabelPrefs: [ContentLabelPreference(labelerDid: nil, label: "porn", visibility: pornVisibility)],
+      labelerDIDs: ["did:plc:labeler"],
+      labelerDefinitions: [:],
+      isConfirmed: true)
+    return settings
   }
 
   private func replacingMainPostJSON(

@@ -2,85 +2,50 @@ import SwiftUI
 import Petrel
 import NukeUI
 
+/// A quote with media: the media part gated by the parent's `contentMedia`
+/// decision, then the quoted record, which moderates itself.
 struct RecordWithMediaView: View {
     let recordWithMedia: AppBskyEmbedRecordWithMedia.View
     let postID: String
-    let labels: [ComAtprotoLabelDefs.Label]?
+    /// The parent post's `ui(.contentMedia)`.
+    let mediaModeration: ModerationUI
     @Binding var path: NavigationPath
-    @Environment(AppState.self) private var appState
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Media content first
             mediaContent
                 .layoutPriority(1)
-            
-            // Then the record embed
-            // Extract labels from the embedded record itself, not the parent post
-            let embedLabels: [ComAtprotoLabelDefs.Label]? = {
-                switch recordWithMedia.record.record {
-                case .appBskyEmbedRecordViewRecord(let viewRecord):
-                    return viewRecord.labels
-                default:
-                    return nil
-                }
-            }()
 
-            RecordEmbedView(record: recordWithMedia.record.record, labels: embedLabels, path: $path)
+            RecordEmbedView(record: recordWithMedia.record.record, path: $path)
                 .layoutPriority(1)
         }
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
     }
-    
+
     @ViewBuilder
     private var mediaContent: some View {
         switch recordWithMedia.media {
         case .appBskyEmbedImagesView(let imageView):
-            ContentLabelManager(
-                labels: labels,
-                contentType: "image"
-            ) {
-                ViewImageGridView(
-                    viewImages: imageView.images,
-                    shouldBlur: false // ContentLabelManager handles blur decisions
-                )
+            ModerationMediaGate(ui: mediaModeration) {
+                ViewImageGridView(viewImages: imageView.images, shouldBlur: false)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
         case .appBskyEmbedGalleryView(let galleryView):
-            ContentLabelManager(
-                labels: labels,
-                contentType: "image"
-            ) {
-                GalleryEmbedView(
-                    gallery: galleryView,
-                    shouldBlur: false // ContentLabelManager handles blur decisions
-                )
+            ModerationMediaGate(ui: mediaModeration) {
+                GalleryEmbedView(gallery: galleryView, shouldBlur: false)
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
         case .appBskyEmbedExternalView(let externalView):
-            ContentLabelManager(
-                labels: labels,
-                contentType: "link"
-            ) {
-                ExternalEmbedView(
-                    external: externalView.external,
-                    shouldBlur: false, // ContentLabelManager handles blur decisions
-                    postID: postID
-                )
+            ModerationMediaGate(ui: mediaModeration) {
+                ExternalEmbedView(external: externalView.external, shouldBlur: false, postID: postID)
             }
-            
+
         case .appBskyEmbedVideoView(let video):
-            ContentLabelManager(
-                labels: labels,
-                contentType: "video"
-            ) {
-                if let playerView = ModernVideoPlayerView(
-                    bskyVideo: video,
-                    postID: postID
-                ) {
+            ModerationMediaGate(ui: mediaModeration) {
+                if let playerView = ModernVideoPlayerView(bskyVideo: video, postID: postID) {
                     playerView
                         .frame(maxWidth: .infinity)
                 } else {
@@ -90,7 +55,7 @@ struct RecordWithMediaView: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
         case .unexpected:
             EmptyView()
         }

@@ -20,10 +20,26 @@ final class FeedWidgetDataProvider {
   /// The DID of the currently active account, used to scope widget data keys
   private var accountDID: String = ""
 
-  private init() {}
+  /// The posts each widget feed was last built from, for the active account, keyed by
+  /// configuration key. A moderation policy change rebuilds the stored widget posts from these
+  /// without a network load.
+  private var widgetSources: [String: WidgetFeedSource] = [:]
+  private var moderationPolicyObserver: NSObjectProtocol?
+
+  private init() {
+    moderationPolicyObserver = NotificationCenter.default.addObserver(
+      forName: .moderationPolicyDidChange, object: nil, queue: .main
+    ) { [weak self] notification in
+      let originDID = notification.userInfo?["accountDID"] as? String
+      MainActor.assumeIsolated { self?.rebuildAfterModerationPolicyChange(originDID: originDID) }
+    }
+  }
 
   /// Configure the provider with the active account DID for key scoping
   func configure(accountDID: String) {
+    if accountDID != self.accountDID {
+      widgetSources.removeAll()
+    }
     self.accountDID = accountDID
     // Write active DID so widget knows which account is current
     sharedDefaults?.set(accountDID, forKey: "activeAccountDID")
@@ -33,84 +49,6 @@ final class FeedWidgetDataProvider {
   func updateWidgetData(from posts: [CachedFeedViewPost], feedType: FetchType) {
     // Use the enhanced version by default for better functionality
     updateWidgetDataEnhanced(from: posts, feedType: feedType)
-  }
-
-  /// Helper method to convert a cached post to widget format
-  private func convertToWidgetPost(_ cachedPost: CachedFeedViewPost) -> WidgetPost? {
-    guard let post = try? cachedPost.feedViewPost else {
-      return nil
-    }
-
-    guard case .knownType(let record) = post.post.record,
-      let feedPost = record as? AppBskyFeedPost
-    else {
-      return nil
-    }
-
-    // Extract text content
-    let text = feedPost.text
-
-    // Extract image URLs from embed
-    let imageURLs = extractImageURLs(from: post.post.embed)
-
-    // Check if it's a repost
-    let isRepost = post.reason != nil
-    let repostAuthorName = extractRepostAuthorName(from: post.reason)
-
-    return WidgetPost(
-      id: post.post.cid.string,
-      authorName: post.post.author.displayName ?? post.post.author.handle.description,
-      authorHandle: "@\(post.post.author.handle)",
-      authorAvatarURL: post.post.author.avatar?.uriString(),
-      text: text,
-      timestamp: post.post.indexedAt.date,
-      likeCount: post.post.likeCount ?? 0,
-      repostCount: post.post.repostCount ?? 0,
-      replyCount: post.post.replyCount ?? 0,
-      imageURLs: imageURLs,
-      isRepost: isRepost,
-      repostAuthorName: repostAuthorName
-    )
-  }
-
-  /// Helper method to extract image URLs from embed
-  private func extractImageURLs(from embed: AppBskyFeedDefs.PostViewEmbedUnion?) -> [String] {
-    guard let embed = embed else { return [] }
-
-    switch embed {
-    case .appBskyEmbedImagesView(let imagesView):
-      return imagesView.images.map { $0.thumb.uriString() }
-    case .appBskyEmbedGalleryView(let galleryView):
-      return galleryView.items.compactMap { item in
-        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-        return image.thumbnail.uriString()
-      }
-    case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
-      if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
-        return imagesView.images.map { $0.thumb.uriString() }
-      }
-      if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
-        return galleryView.items.compactMap { item in
-          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-          return image.thumbnail.uriString()
-        }
-      }
-      return []
-    default:
-      return []
-    }
-  }
-
-  /// Helper method to extract repost author name
-  private func extractRepostAuthorName(from reason: AppBskyFeedDefs.FeedViewPostReasonUnion?)
-    -> String?
-  {
-    guard let reason = reason,
-      case .appBskyFeedDefsReasonRepost(let repostReason) = reason
-    else {
-      return nil
-    }
-    return repostReason.by.displayName ?? repostReason.by.handle.description
   }
 
   /// Maps internal FetchType to the feed type label stored with widget data
@@ -193,26 +131,51 @@ final class FeedWidgetDataProvider {
   func updateWidgetDataEnhanced(from posts: [CachedFeedViewPost], feedType: FetchType) {
     guard let configKey = createConfigurationKey(feedType: feedType) else { return }
     guard !accountDID.isEmpty else { return }
+
+    let source = WidgetFeedSource(
+      posts: posts.prefix(FeedWidgetPosts.sourceLimit).compactMap { try? $0.feedViewPostBox },
+      feedType: mapFeedType(feedType),
+      totalPostCount: posts.count,
+      loadedAt: Date())
+    widgetSources[configKey] = source
+    if writeWidgetData(source, configKey: configKey) {
+      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+    }
+  }
+
+  /// Rewrites every widget feed built this session when the active account's moderation policy
+  /// changes, so a stricter setting takes posts and media off the Home Screen right away.
+  private func rebuildAfterModerationPolicyChange(originDID: String?) {
+    guard !accountDID.isEmpty, originDID == accountDID, !widgetSources.isEmpty else { return }
+    var wroteAny = false
+    for (configKey, source) in widgetSources where writeWidgetData(source, configKey: configKey) {
+      wroteAny = true
+    }
+    if wroteAny {
+      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+    }
+  }
+
+  /// Writes the moderated widget posts for one configuration and reports whether it did.
+  /// Nothing is written until the widget's account has a server-confirmed moderation policy.
+  private func writeWidgetData(_ source: WidgetFeedSource, configKey: String) -> Bool {
+    guard let policy = activeModerationPolicy() else {
+      logger.info("Skipped widget update until the account's moderation policy is confirmed")
+      return false
+    }
     guard let sharedDefaults = sharedDefaults else {
       logger.error("Failed to access shared defaults")
-      return
+      return false
     }
 
-    // Convert posts to widget format with enhanced data
-    let limitedPosts = Array(posts.prefix(15))  // Increase limit for better variety
-    let widgetPosts = limitedPosts.compactMap { cachedPost in
-      convertToWidgetPostEnhanced(cachedPost)
-    }
-
-    // Create enhanced feed widget data
+    let widgetPosts = FeedWidgetPosts.make(from: source.posts.map(\.value), policy: policy)
     let feedWidgetData = FeedWidgetDataEnhanced(
       posts: widgetPosts,
-      feedType: mapFeedType(feedType),
-      lastUpdated: Date(),
-      totalPostCount: posts.count
+      feedType: source.feedType,
+      lastUpdated: source.loadedAt,
+      totalPostCount: source.totalPostCount
     )
 
-    // Save to shared defaults with both general and configuration-specific keys
     do {
       let encoder = JSONEncoder()
       encoder.dateEncodingStrategy = .iso8601
@@ -222,90 +185,24 @@ final class FeedWidgetDataProvider {
       sharedDefaults.set(data, forKey: "\(configKey).\(accountDID)")
 
       logger.info(
-        "Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName) (key: \(configKey))"
+        "Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(source.feedType) (key: \(configKey))"
       )
-
-      // Reload widget timelines
-      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+      return true
     } catch {
       logger.error("Failed to encode enhanced widget data: \(error.localizedDescription)")
+      return false
     }
   }
 
-  /// Enhanced post conversion with better metadata
-  private func convertToWidgetPostEnhanced(_ cachedPost: CachedFeedViewPost) -> WidgetPost? {
-    guard let post = try? cachedPost.feedViewPost else {
-      return nil
-    }
-
-    guard case .knownType(let record) = post.post.record,
-      let feedPost = record as? AppBskyFeedPost
-    else {
-      return nil
-    }
-
-    // Extract text content with better handling
-    let text = feedPost.text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // Extract image URLs from embed with better handling
-    let imageURLs = extractImageURLsEnhanced(from: post.post.embed)
-
-    // Check if it's a repost with better detection
-    let isRepost = post.reason != nil
-    let repostAuthorName = extractRepostAuthorName(from: post.reason)
-
-    return WidgetPost(
-      id: post.post.cid.string,
-      authorName: post.post.author.displayName ?? post.post.author.handle.description,
-      authorHandle: "@\(post.post.author.handle)",
-      authorAvatarURL: post.post.author.avatar?.uriString(),
-      text: text,
-      timestamp: post.post.indexedAt.date,
-      likeCount: post.post.likeCount ?? 0,
-      repostCount: post.post.repostCount ?? 0,
-      replyCount: post.post.replyCount ?? 0,
-      imageURLs: imageURLs,
-      isRepost: isRepost,
-      repostAuthorName: repostAuthorName
-    )
-  }
-
-  /// Enhanced image URL extraction
-  private func extractImageURLsEnhanced(from embed: AppBskyFeedDefs.PostViewEmbedUnion?) -> [String]
-  {
-    guard let embed = embed else { return [] }
-
-    switch embed {
-    case .appBskyEmbedImagesView(let imagesView):
-      // Prefer full size for better quality in widgets
-      return imagesView.images.compactMap { image in
-        // Use fullsize if available, fallback to thumb
-        return image.fullsize.uriString()
-      }
-    case .appBskyEmbedGalleryView(let galleryView):
-      return galleryView.items.compactMap { item in
-        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-        return image.fullsize.uriString()
-      }
-    case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
-      if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
-        return imagesView.images.compactMap { image in
-          return image.fullsize.uriString()
-        }
-      }
-      if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
-        return galleryView.items.compactMap { item in
-          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-          return image.fullsize.uriString()
-        }
-      }
-      return []
-    case .appBskyEmbedVideoView(let videoView):
-      // Handle video thumbnails
-      return [videoView.thumbnail?.uriString()].compactMap { $0 }
-    default:
-      return []
-    }
+  /// The active account's moderation policy, when that account is the widget's account and its
+  /// preferences have been confirmed with the server.
+  private func activeModerationPolicy() -> ModerationPolicy? {
+    guard let appState = AppStateManager.shared.lifecycle.appState,
+      appState.userDID == accountDID
+    else { return nil }
+    let policy = appState.moderationPolicy
+    guard policy.isConfirmed, policy.accountDID == accountDID else { return nil }
+    return policy
   }
 
   /// The storage key the widget reads for this feed (same rule as the widget's
@@ -342,10 +239,108 @@ final class FeedWidgetDataProvider {
 
     if accountDID == did {
       accountDID = ""
+      widgetSources.removeAll()
     }
     WidgetCenter.shared.reloadAllTimelines()
 
     logger.info("Cleared widget data for a signed-out account")
+  }
+}
+
+// MARK: - Widget moderation
+
+/// The posts one widget feed was built from.
+private struct WidgetFeedSource {
+  let posts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]
+  let feedType: String
+  let totalPostCount: Int
+  /// When the feed delivered these posts; a rebuild keeps it, since the posts are no newer.
+  let loadedAt: Date
+}
+
+/// Builds the posts the feed widget stores in the shared App Group under the account's moderation
+/// policy. The widget is a list surface with no warnings or reveal controls, so a post a list would
+/// filter or put behind a warning is left out, and blurred media and avatars are omitted.
+enum FeedWidgetPosts {
+  /// How many of a feed's newest posts are kept to build widget posts from.
+  static let sourceLimit = 30
+  /// How many posts the widget data holds.
+  static let postLimit = 15
+
+  /// The widget posts for `posts`, in order, at most `postLimit`.
+  static func make(from posts: [AppBskyFeedDefs.FeedViewPost], policy: ModerationPolicy) -> [WidgetPost] {
+    var result: [WidgetPost] = []
+    for post in posts {
+      guard let widgetPost = widgetPost(from: post, policy: policy) else { continue }
+      result.append(widgetPost)
+      if result.count == postLimit { break }
+    }
+    return result
+  }
+
+  /// The widget post for `feedPost`, or `nil` when the widget must not show it: the list context
+  /// filters or blurs it. Image and video thumbnails are omitted when the media is blurred, and
+  /// the author avatar when the avatar is blurred.
+  static func widgetPost(from feedPost: AppBskyFeedDefs.FeedViewPost, policy: ModerationPolicy) -> WidgetPost? {
+    let post = feedPost.post
+    guard case .knownType(let record) = post.record, let postRecord = record as? AppBskyFeedPost else {
+      return nil
+    }
+
+    let decision = policy.decide(post: post)
+    let list = decision.ui(.contentList)
+    guard !list.filter, !list.blur else { return nil }
+    let showsMedia = !decision.ui(.contentMedia).blur
+    let showsAvatar = !decision.ui(.avatar).blur
+
+    return WidgetPost(
+      id: post.cid.string,
+      authorName: post.author.displayName ?? post.author.handle.description,
+      authorHandle: "@\(post.author.handle)",
+      authorAvatarURL: showsAvatar ? post.author.avatar?.uriString() : nil,
+      text: postRecord.text.trimmingCharacters(in: .whitespacesAndNewlines),
+      timestamp: post.indexedAt.date,
+      likeCount: post.likeCount ?? 0,
+      repostCount: post.repostCount ?? 0,
+      replyCount: post.replyCount ?? 0,
+      imageURLs: showsMedia ? mediaURLs(in: post.embed) : [],
+      isRepost: feedPost.reason != nil,
+      repostAuthorName: repostAuthorName(from: feedPost.reason)
+    )
+  }
+
+  /// Full-size image URLs, or the video thumbnail, of the post's own media.
+  private static func mediaURLs(in embed: AppBskyFeedDefs.PostViewEmbedUnion?) -> [String] {
+    switch embed {
+    case .appBskyEmbedImagesView(let imagesView):
+      return imagesView.images.map { $0.fullsize.uriString() }
+    case .appBskyEmbedGalleryView(let galleryView):
+      return galleryImageURLs(galleryView)
+    case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
+      if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
+        return imagesView.images.map { $0.fullsize.uriString() }
+      }
+      if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
+        return galleryImageURLs(galleryView)
+      }
+      return []
+    case .appBskyEmbedVideoView(let videoView):
+      return [videoView.thumbnail?.uriString()].compactMap { $0 }
+    default:
+      return []
+    }
+  }
+
+  private static func galleryImageURLs(_ galleryView: AppBskyEmbedGallery.View) -> [String] {
+    galleryView.items.compactMap { item in
+      guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+      return image.fullsize.uriString()
+    }
+  }
+
+  private static func repostAuthorName(from reason: AppBskyFeedDefs.FeedViewPostReasonUnion?) -> String? {
+    guard case .appBskyFeedDefsReasonRepost(let repostReason) = reason else { return nil }
+    return repostReason.by.displayName ?? repostReason.by.handle.description
   }
 }
 

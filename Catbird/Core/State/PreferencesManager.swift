@@ -131,6 +131,11 @@ final class PreferencesManager {
   @MainActor var beginSettingsAccountOperation: (() -> UUID?)?
   @MainActor var endSettingsAccountOperation: ((UUID) -> Void)?
 
+  /// AppState rebuilds its moderation policy from the stored row when this fires. The argument is the
+  /// account whose row changed. It runs after a successful fetch and after every confirmed write, and
+  /// before `FeedPreferencesChanged` is posted so feed observers already see the new policy.
+  @MainActor var storedPreferencesDidChange: ((String) -> Void)?
+
   @MainActor
   func beginSettingsAccountIO() throws -> (() -> Void)? {
     guard let begin = beginSettingsAccountOperation else { return nil }
@@ -195,10 +200,6 @@ final class PreferencesManager {
       guard self.accountDID == accountDID, self.preferenceSessionGeneration == generation else { return }
       self.hideVerificationBadges = prefs?.hideVerificationBadges ?? false
     }
-  }
-
-  private func scopedKey(_ baseKey: String) -> String {
-    AppSettingsModel.scopedKey(baseKey, accountDID: accountDID)
   }
 
   private func scopedPreferencesFetchDescriptor() -> FetchDescriptor<Preferences> {
@@ -335,6 +336,7 @@ final class PreferencesManager {
           try await savePreferences(cachedPrefs)  // Update local store
         }
         state = .ready
+        storedPreferencesDidChange?(operation.accountDID)
         return
       }
 
@@ -352,6 +354,7 @@ final class PreferencesManager {
         // Cache these complete local preferences
         cachedServerPreferences = localPreferences
         state = .ready
+        storedPreferencesDidChange?(operation.accountDID)
         return
       }
 
@@ -529,6 +532,7 @@ final class PreferencesManager {
 
       // Update state
       state = .ready
+      storedPreferencesDidChange?(operation.accountDID)
 
     } catch {
       logger.error("Failed to fetch and process preferences: \(error.localizedDescription)")
@@ -1034,6 +1038,7 @@ final class PreferencesManager {
     do { try await savePreferences(preferences) }
     catch { preferences.restoreValues(from: beforeCommit); cachedServerPreferences = nil; throw error }
     try validatePreferenceOperation(operation)
+    storedPreferencesDidChange?(operation.accountDID)
     logger.info("Successfully synced all preferences to server")
   }
 
@@ -1557,13 +1562,16 @@ final class PreferencesManager {
       try validatePreferenceOperation(operation)
       cachedServerPreferences = localPrefs
       if preferenceType == "verification" { hideVerificationBadges = localPrefs.hideVerificationBadges }
+      // Every write re-reads the server's preferences and overwrites the stored adult flag, label
+      // prefs and labelers from that read (`applyConfirmedFilterPolicy`), whatever kind of preference
+      // the caller edited. So the policy is rebuilt for all of them; only the feed notification below
+      // is limited to the kinds that change what a feed shows.
+      storedPreferencesDidChange?(operation.accountDID)
       if ["adultContent", "contentLabels", "mutedWords", "hiddenPosts", "labelers", "feedView", "threadView"].contains(preferenceType) {
         NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: nil,
                                         userInfo: ["accountDID": operation.accountDID])
       }
-      if preferenceType == "adultContent" {
-        sharedDefaults.set(localPrefs.adultContentEnabled, forKey: scopedKey("isAdultContentEnabled"))
-      } else if preferenceType == "labelers" {
+      if preferenceType == "labelers" {
         await applyAcceptLabelersHeader(from: localPrefs)
         try validatePreferenceOperation(operation)
       }
@@ -1598,10 +1606,10 @@ final class PreferencesManager {
     }
     try validatePreferenceOperation(operation)
     cachedServerPreferences = localPrefs
-    sharedDefaults.set(localPrefs.adultContentEnabled, forKey: scopedKey("isAdultContentEnabled"))
     await applyAcceptLabelersHeader(from: localPrefs)
     try validatePreferenceOperation(operation)
     state = .ready
+    storedPreferencesDidChange?(operation.accountDID)
     NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: nil,
                                     userInfo: ["accountDID": operation.accountDID])
   }
@@ -1833,9 +1841,8 @@ final class PreferencesManager {
 
     // Update app settings from server preferences
 
-    // Adult content setting
-    appState.isAdultContentEnabled = preferences.adultContentEnabled
-    sharedDefaults.set(preferences.adultContentEnabled, forKey: scopedKey("isAdultContentEnabled"))
+    // Adult content and label policy derive from the account's confirmed row, never from a stored flag.
+    appState.refreshModerationPolicy()
 
     // Thread view preferences
     if let threadViewPref = preferences.threadViewPref {
@@ -1874,27 +1881,33 @@ final class PreferencesManager {
   }
 
   // MARK: - Accept-Labelers Header Application
+
+  /// The labelers sent in `atproto-accept-labelers`: the Bluesky moderation service first, then the
+  /// account's subscribed labelers, deduplicated and capped at 20 in total. Only the Bluesky moderation
+  /// service carries `redact`, which makes the AppView apply its takedowns to this client's requests.
+  /// This matches `@atproto/api` (`Agent.appLabelers`), which sends app labelers with `;redact` and
+  /// subscribed labelers without it.
+  nonisolated static func acceptLabelers(subscribedDIDs: [String]) -> [(did: String, redact: Bool)] {
+    var uniqueDIDs = OrderedSet<String>()
+    uniqueDIDs.append(ModerationPrefs.blueskyModerationDID)
+    for did in subscribedDIDs {
+      uniqueDIDs.append(did)
+    }
+    return uniqueDIDs.prefix(20).map { (did: $0, redact: $0 == ModerationPrefs.blueskyModerationDID) }
+  }
+
   /// Updates the network header `atproto-accept-labelers` based on current preferences
   @MainActor
   private func applyAcceptLabelersHeader(from preferences: Preferences) async {
-    // Include the default Bluesky moderation service (always-on) and user-selected labelers
-    let defaultModDID = "did:plc:ar7c4by46qjdydhdevvrndac"
-
-    var uniqueDIDs = OrderedSet<String>()
-    uniqueDIDs.append(defaultModDID)
-    for item in preferences.labelers {
-      uniqueDIDs.append(item.did.didString())
-    }
-
-    // Cap at 20 total (1 default + up to 19 user labelers)
-    let dids = Array(uniqueDIDs.prefix(20))
+    let labelers = Self.acceptLabelers(subscribedDIDs: preferences.labelers.map { $0.did.didString() })
+    let dids = labelers.map(\.did)
 
     if let client = client {
       let appliedAccountDID = accountDID
       labelerHeaderGeneration += 1
       let generation = labelerHeaderGeneration
       appliedAcceptLabelerDIDs = nil
-      await client.setAcceptLabelers(dids: dids)
+      await client.setAcceptLabelers(labelers)
       guard self.client === client else { return }
       guard accountDID == appliedAccountDID, generation == labelerHeaderGeneration else {
         // An overlapping setter may have finished last; omit previews until a fresh application.
@@ -1912,7 +1925,7 @@ final class PreferencesManager {
       logger.debug("Client not available; deferring accept-labelers header update")
     }
   }
-  
+
   /// Retained compatibility entry point. Language choices have no server serializer.
   @MainActor
   func updateLanguagePreferences(appLanguage: String?, primaryLanguage: String, contentLanguages: [String]) async throws {

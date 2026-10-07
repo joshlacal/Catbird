@@ -93,10 +93,45 @@ final class AccountPollingBarrier: @unchecked Sendable {
   }
 }
 
+/// Operational metadata only. No field accepts conversation IDs, message content,
+/// cursor values, headers, URLs, or free-form error descriptions.
+struct ChatHistoryLoadDiagnostic: Encodable {
+  enum Phase: String, Encodable { case started, skipped, finished }
+  enum Outcome: String, Encodable {
+    case decodedEmpty, decodedPopulated, decodeFailed, httpFailure, requestFailure
+    case cancelled, staleAccount, alreadyLoading, noClient, suspended
+  }
+
+  var requestID: UUID
+  var relatedRequestID: UUID?
+  var phase: Phase = .skipped
+  var outcome: Outcome?
+  var httpStatus: Int?
+  var refresh: Bool
+  var inputCursorPresent: Bool
+  var outputCursorPresent: Bool?
+  var receivedCount: Int?
+  var userCount: Int?
+  var systemCount: Int?
+  var deletedCount: Int?
+  var unknownCount: Int?
+  var cachedBefore: Int
+  var cachedAfter: Int
+  var elapsedMilliseconds: Int64 = 0
+
+  var logLine: String? {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    guard let data = try? encoder.encode(self) else { return nil }
+    return String(data: data, encoding: .utf8)
+  }
+}
+
 /// Manages chat operations for the Bluesky chat feature
 @Observable
 final class ChatManager: StateInvalidationSubscriber {
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatManager")
+  private let historyDiagnosticLogger = Logger(subsystem: "blue.catbird", category: "ChatHistoryDiagnostics")
 
   // AT Protocol client reference
   private(set) var client: ATProtoClient?  // Made private(set) for controlled access
@@ -114,6 +149,20 @@ final class ChatManager: StateInvalidationSubscriber {
   /// True when the most recent conversation-list load failed.
   private(set) var lastConversationsLoadFailed: Bool = false
   private(set) var loadingMessages: [String: Bool] = [:]
+  /// Shared by the first load and polling so overlapping callers observe the same request.
+  enum MessageLoadState: Equatable {
+    case idle
+    case loading
+    case loaded
+    case interrupted
+    case failed(ChatError)
+  }
+  private(set) var messageLoadStates: [String: MessageLoadState] = [:]
+
+  typealias MessagePageLoader = @MainActor (
+    ATProtoClient, ChatBskyConvoGetMessages.Parameters
+  ) async throws -> (Int, ChatBskyConvoGetMessages.Output?)
+  @ObservationIgnored private let messagePageLoader: MessagePageLoader
   var errorState: ChatError?
 
   // Search-related state
@@ -224,7 +273,14 @@ final class ChatManager: StateInvalidationSubscriber {
     return true
   }
 
-  init(client: ATProtoClient? = nil, appState: AppState? = nil) {
+  init(
+    client: ATProtoClient? = nil,
+    appState: AppState? = nil,
+    messagePageLoader: @escaping MessagePageLoader = { client, parameters in
+      try await client.chat.bsky.convo.getMessages(input: parameters)
+    }
+  ) {
+    self.messagePageLoader = messagePageLoader
     self.client = client
     self.appState = appState
     logger.debug("ChatManager initialized")
@@ -421,6 +477,7 @@ final class ChatManager: StateInvalidationSubscriber {
     hasAttemptedConversationsLoad = false
     lastConversationsLoadFailed = false
     loadingMessages = [:]
+    messageLoadStates = [:]
     errorState = nil
     profileCache = [:]
     availabilityCache = [:]
@@ -568,31 +625,63 @@ final class ChatManager: StateInvalidationSubscriber {
 
   /// Loads a page of messages. The 5-second conversation poll passes
   /// `userInitiated: false` (the default) so a degraded chat service backs off
-  /// quietly instead of cycling an alert; the first load passes `true`.
+  /// quietly. Conversation views render failures through `messageLoadStates`.
   @MainActor
   func loadMessages(convoId: String, refresh: Bool = false, userInitiated: Bool = false) async {
-    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    let started = ContinuousClock.now
+    let cachedBefore = (originalMessagesMap[convoId]?.count ?? 0) + (systemMessagesMap[convoId]?.count ?? 0)
+    var diagnostic = ChatHistoryLoadDiagnostic(
+      requestID: UUID(), refresh: refresh,
+      inputCursorPresent: !refresh && (messagesCursors[convoId] ?? nil) != nil,
+      cachedBefore: cachedBefore, cachedAfter: cachedBefore
+    )
+    defer {
+      let elapsed = started.duration(to: ContinuousClock.now).components
+      diagnostic.elapsedMilliseconds = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
+      if let line = diagnostic.logLine {
+        historyDiagnosticLogger.notice("\(line, privacy: .public)")
+      }
+    }
+    guard !Task.isCancelled else {
+      diagnostic.outcome = .cancelled
+      return
+    }
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else {
+      diagnostic.outcome = .suspended
+      return
+    }
+    diagnostic.requestID = ticket.id
     defer { pollingBarrier.finish(ticket) }
 
     guard let client = client else {
+      diagnostic.outcome = .noClient
       logger.error("Cannot load messages for \(convoId): client is nil")
+      messageLoadStates[convoId] = .failed(.noClient)
       errorState = .noClient
       return
     }
 
     // Skip if already loading this conversation
     if loadingMessages[convoId] == true {
+      diagnostic.outcome = .alreadyLoading
+      diagnostic.relatedRequestID = messageLoadIDs[convoId]
       logger.debug("Already loading messages for \(convoId), skipping.")
       return
     }
 
+    let previousLoadState = messageLoadStates[convoId] ?? .idle
     do {
       loadingMessages[convoId] = true
+      messageLoadStates[convoId] = .loading
       messageLoadIDs[convoId] = ticket.id
       defer {
         if messageLoadIDs[convoId] == ticket.id {
           loadingMessages[convoId] = false
           messageLoadIDs[convoId] = nil
+          // Cancellation or an invalidated account must not claim an empty success.
+          if messageLoadStates[convoId] == .loading {
+            messageLoadStates[convoId] = previousLoadState == .idle ? .interrupted : previousLoadState
+          }
         }
       }
 
@@ -606,24 +695,39 @@ final class ChatManager: StateInvalidationSubscriber {
       )
 
       logger.debug("Loading messages for \(convoId) with cursor: \(cursorToUse ?? "nil")")
+
+      diagnostic.phase = .started
+      if let line = diagnostic.logLine {
+        historyDiagnosticLogger.notice("\(line, privacy: .public)")
+      }
+      diagnostic.phase = .finished
    
-      let (responseCode, response) = try await client.chat.bsky.convo.getMessages(input: params)
-      guard isCurrentPollingOperation(ticket, client: client) else { return }
+      let (responseCode, response) = try await messagePageLoader(client, params)
+      diagnostic.httpStatus = responseCode
+      guard isCurrentPollingOperation(ticket, client: client) else {
+        diagnostic.outcome = Task.isCancelled ? .cancelled : .staleAccount
+        return
+      }
  
       guard responseCode >= 200 && responseCode < 300 else {
+        diagnostic.outcome = .httpFailure
         // Insurance only: Petrel throws for non-400 client errors, so a 429
         // normally arrives on the thrown path (see the catch below).
         if responseCode == 429 {
           increaseMessagePollBackoff(for: convoId)
         }
+        messageLoadStates[convoId] = .failed(.networkError(code: responseCode))
         setNetworkError(code: responseCode, context: "loadMessages(\(convoId))")
         loadingMessages[convoId] = false
         return
       }
 
       guard let messagesData = response else {
+        // The generated getMessages wrapper returns 2xx + nil only from its decode catch.
+        diagnostic.outcome = .decodeFailed
         logger.error("No data returned from messages request for \(convoId)")
-        setEmptyResponseError(context: "loadMessages((convoId))")
+        messageLoadStates[convoId] = .failed(.emptyResponse)
+        setEmptyResponseError(context: "loadMessages(\(convoId))")
         loadingMessages[convoId] = false
         return
       }
@@ -633,17 +737,27 @@ final class ChatManager: StateInvalidationSubscriber {
       var systemMessages: [String: ChatBskyConvoDefs.SystemMessageView] = [:]
       var deletedMessageIds: Set<String> = []
       var messageCount = 0
+      diagnostic.receivedCount = messagesData.messages.count
+      diagnostic.outputCursorPresent = messagesData.cursor != nil
+      diagnostic.userCount = 0
+      diagnostic.systemCount = 0
+      diagnostic.deletedCount = 0
+      diagnostic.unknownCount = 0
       for messageUnion in messagesData.messages {
         switch messageUnion {
         case .chatBskyConvoDefsMessageView(let messageView):
+          diagnostic.userCount = (diagnostic.userCount ?? 0) + 1
           originalMessages[messageView.id] = messageView
           messageCount += 1
         case .chatBskyConvoDefsDeletedMessageView(let deletedMessageView):
+          diagnostic.deletedCount = (diagnostic.deletedCount ?? 0) + 1
           deletedMessageIds.insert(deletedMessageView.id)
         case .chatBskyConvoDefsSystemMessageView(let systemMessageView):
+          diagnostic.systemCount = (diagnostic.systemCount ?? 0) + 1
           systemMessages[systemMessageView.id] = systemMessageView
           messageCount += 1
         case .unexpected(let data):
+          diagnostic.unknownCount = (diagnostic.unknownCount ?? 0) + 1
           logger.warning(
             "Unexpected message type encountered in \(convoId): \(String(describing: data))")
           continue
@@ -682,6 +796,9 @@ final class ChatManager: StateInvalidationSubscriber {
         messagesCursors[convoId] = messagesData.cursor
       }
       messagePollBackoffs[convoId] = nil
+      messageLoadStates[convoId] = .loaded
+      diagnostic.outcome = messagesData.messages.isEmpty ? .decodedEmpty : .decodedPopulated
+      diagnostic.cachedAfter = existingOriginals.count + existingSystems.count
 
       logger.debug(
         "Loaded \(messageCount) messages for conversation \(convoId). New cursor: \(messagesData.cursor ?? "nil")"
@@ -693,7 +810,30 @@ final class ChatManager: StateInvalidationSubscriber {
       guard isCurrentPollingOperation(ticket, client: client) else { return }
 
     } catch {
-      guard isCurrentPollingOperation(ticket, client: client) else { return }
+      guard isCurrentPollingOperation(ticket, client: client) else {
+        diagnostic.outcome = Task.isCancelled ? .cancelled : .staleAccount
+        return
+      }
+      guard UserFacingError.kind(of: error) != .cancelled else {
+        diagnostic.outcome = .cancelled
+        return
+      }
+      diagnostic.outcome = .requestFailure
+      if let networkError = error as? Petrel.NetworkError {
+        switch networkError {
+        case .responseError(let status), .serverError(let status, _):
+          diagnostic.httpStatus = status
+        default: break
+        }
+      } else if let statusError = error as? any HTTPStatusCarrying {
+        diagnostic.httpStatus = statusError.httpStatusCode
+      }
+      if diagnostic.httpStatus != nil { diagnostic.outcome = .httpFailure }
+      if case let Petrel.NetworkError.responseError(statusCode) = error {
+        messageLoadStates[convoId] = .failed(.networkError(code: statusCode))
+      } else {
+        messageLoadStates[convoId] = .failed(.generalError(error))
+      }
       // Rate limits surface as thrown errors (Petrel throws for non-400 client
       // errors); back off silently — a rate-limited background poll must not
       // alert the user on every tick.
@@ -1078,7 +1218,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
   /// Check if more messages are available for pagination
   func hasMoreMessages(for convoId: String) -> Bool {
-    return messagesCursors[convoId] != nil
+    return (messagesCursors[convoId] ?? nil) != nil
   }
 
   /// Whether the given members can chat. `canChat` is `nil` when the answer

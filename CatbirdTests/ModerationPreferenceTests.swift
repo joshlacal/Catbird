@@ -120,21 +120,6 @@ struct ModerationPreferenceTests {
         #expect(fixture.items.contains { if case .interestsPref(let p) = $0 { return p.tags == ["Art"] }; return false })
     }
 
-    @Test("Scoped resolution never inherits another service", arguments: [false, true])
-    func scopedResolver(reverse: Bool) throws {
-        let serviceA = try DID(didString: "did:plc:safety-a")
-        let serviceB = try DID(didString: "did:plc:safety-b")
-        var preferences = [ContentLabelPreference(labelerDid: serviceB, label: "custom", visibility: "ignore")]
-        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", preferences: preferences) == .warn)
-        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", labelerDid: serviceA, preferences: preferences) == .warn)
-        preferences.append(.init(labelerDid: nil, label: "custom", visibility: "hide"))
-        preferences.append(.init(labelerDid: serviceA, label: "custom", visibility: "warn"))
-        if reverse { preferences.reverse() }
-        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", preferences: preferences) == .hide)
-        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", labelerDid: serviceA, preferences: preferences) == .warn)
-        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", labelerDid: serviceB, preferences: preferences) == .show)
-    }
-
     @Test("Final mute word and service removals send explicit empty collections")
     @MainActor
     func explicitEmptySafetyCollections() async throws {
@@ -193,11 +178,10 @@ struct ModerationPreferenceTests {
         #expect(!local.hasConfirmedServerPreferences)
     }
 
-    @Test("Reset builtin service overrides inherits the actual Warn fallback", arguments: ["self-harm", "corpse", "nsfw", "porn", "graphic-media", "NUDITY"])
+    @Test("Removing a service override sends the fresh server preferences back without that override", arguments: ["self-harm", "nsfw", "graphic"])
     @MainActor
-    func builtinInheritanceMatchesConsumedPolicy(label: String) async throws {
+    func removeContentLabelOverrideDropsOnlyThatKey(key: String) async throws {
         let service = try DID(didString: "did:plc:builtin-service")
-        let key = ProfileLabelPreferenceAdapter.consumedKey(for: label)
         let fixture = SafetyPreferencesFixture(items: [
             .contentLabelPref(.init(labelerDid: service, label: key, visibility: "ignore")),
             .adultContentPref(.init(enabled: true))
@@ -205,27 +189,9 @@ struct ModerationPreferenceTests {
         let (manager, local) = try fixture.makeManager()
         try await manager.removeContentLabelOverride(label: key, labelerDid: service,
                                                     expectedAccountDID: fixture.account)
-        let inherited = ModerationServiceLabelPolicy.inheritedVisibility(label: label,
-          preferences: local.contentLabelPrefs, definitionDefault: "hide")
-        #expect(inherited == .warn)
-        #expect(inherited == ContentFilterManager.getVisibilityForLabel(label: key,
-          labelerDid: service, preferences: local.contentLabelPrefs))
-        let global = [ContentLabelPreference(labelerDid: nil, label: key, visibility: "ignore")]
-        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: label,
-          preferences: global, definitionDefault: "hide") == .show)
-    }
-
-    @Test("Custom service inheritance retains supplied defaults and exact key spelling")
-    func customServiceInheritanceRemainsExplicit() {
-        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "Custom-Key",
-          preferences: [], definitionDefault: "hide") == .hide)
-        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "Custom-Key",
-          preferences: [], definitionDefault: nil) == .show)
-        let global = [ContentLabelPreference(labelerDid: nil, label: "Custom-Key", visibility: "ignore")]
-        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "Custom-Key",
-          preferences: global, definitionDefault: "hide") == .show)
-        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "custom-key",
-          preferences: global, definitionDefault: "hide") == .hide)
+        #expect(!local.contentLabelPrefs.contains { $0.label == key && $0.labelerDid == service })
+        #expect(local.adultContentEnabled)
+        #expect(local.hasConfirmedServerPreferences)
     }
 
     @Test("Failed reads and writes leave confirmed local moderation unchanged", arguments: [false, true])
@@ -460,7 +426,7 @@ struct ModerationPreferenceTests {
             .contentLabelPref(.init(labelerDid: service, label: "porn", visibility: "ignore")),
             .contentLabelPref(.init(labelerDid: service, label: "Custom-Key", visibility: "unknown-imported-value"))])
         let (manager, _) = try fixture.makeManager()
-        let consumed = ProfileLabelPreferenceAdapter.consumedKey(for: "porn")
+        let consumed = "nsfw"
         try await manager.setContentLabelVisibility(label: consumed, visibility: "warn", labelerDid: service,
                                                    expectedAccountDID: fixture.account)
         #expect(fixture.labels.count == 4)

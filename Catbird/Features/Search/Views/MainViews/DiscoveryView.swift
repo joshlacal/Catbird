@@ -234,6 +234,7 @@ struct AllTrendingTopicsView: View {
     @State private var selectedCategory: String?
     @State private var showContributors: Bool = false
     @State private var viewMode: ViewMode = .list
+    @ScaledMetric(relativeTo: .footnote) private var topicSummaryMinimumWidth: CGFloat = 140
     
     enum ViewMode {
         case list, grid
@@ -435,46 +436,14 @@ private struct InlineTopicSummaryLine: View {
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 16) {
-                // Main topic info
-                HStack(alignment: .top, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Topic name
-                        TrendingTopicHeading(title: topic.displayName, category: topic.category)
-                        if topic.status == "hot" {
-                            trendingLabel
-                        }
-                        TrendingTopicArtwork(link: topic.link, actors: topic.actors)
-                        // Topic summary
-                        InlineTopicSummaryLine(topic: topic)
-                        
-                        // Stats row
-                        HStack(spacing: 20) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(formatPostCount(topic.postCount))
-                                    .appFont(AppTextRole.subheadline.weight(.semibold))
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                                Text("Posts")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(formatTimeSince(topic.startedAt.date))
-                                    .appFont(AppTextRole.subheadline.weight(.semibold))
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                                Text("Trending")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            }
-                            
-                            Spacer()
-                            
-                            Image(systemName: "arrow.up.right")
-                                .appFont(AppTextRole.subheadline)
-                                .foregroundColor(.accentColor)
-                        }
+                VStack(alignment: .leading, spacing: 8) {
+                    TrendingTopicHeading(title: topic.displayName, category: topic.category)
+                    if topic.status == "hot" {
+                        trendingLabel
                     }
                 }
+                largeTopicPreview(topic)
+                largeTopicMetadata(topic)
                 
                 // Contributors section (conditionally shown)
                 if showContributors && !appState.topicPreview(for: topic.link).contributorProfiles.isEmpty {
@@ -497,7 +466,7 @@ private struct InlineTopicSummaryLine: View {
         }
         .buttonStyle(.plain)
     }
-    
+
     private func compactTopicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
             if let url = URL(string: topic.link, relativeTo: URL(string: "https://bsky.app"))?.absoluteURL {
@@ -552,7 +521,7 @@ private struct InlineTopicSummaryLine: View {
             sceneContext.navigationManager.navigate(to: .profile(actor.did.didString()))
         } label: {
             HStack(spacing: 8) {
-                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32, labels: actor.labels)
+                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32, did: actor.did.didString(), labels: actor.labels)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(actor.displayName ?? "@\(actor.handle)")
@@ -599,6 +568,76 @@ private struct InlineTopicSummaryLine: View {
     }
 }
 
+private extension AllTrendingTopicsView {
+  @ViewBuilder
+  func largeTopicPreview(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+    if dynamicTypeSize.isAccessibilitySize {
+      VStack(alignment: .leading, spacing: 12) {
+        TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false)
+        InlineTopicSummaryLine(topic: topic)
+      }
+    } else {
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .top, spacing: 16) {
+          TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false)
+          InlineTopicSummaryLine(topic: topic)
+            .frame(minWidth: topicSummaryMinimumWidth, idealWidth: topicSummaryMinimumWidth,
+                   maxWidth: .infinity, alignment: .leading)
+        }
+        VStack(alignment: .leading, spacing: 12) {
+          TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false)
+          InlineTopicSummaryLine(topic: topic)
+        }
+      }
+    }
+  }
+
+  func largeTopicMetadata(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+    HStack(alignment: .center, spacing: 12) {
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 16) {
+          TrendingTopicParticipants(link: topic.link, actors: topic.actors)
+          largeTopicStatistics(topic)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+
+        VStack(alignment: .leading, spacing: 12) {
+          TrendingTopicParticipants(link: topic.link, actors: topic.actors)
+          ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) { largeTopicStatistics(topic) }
+              .fixedSize(horizontal: true, vertical: false)
+            VStack(alignment: .leading, spacing: 12) { largeTopicStatistics(topic) }
+          }
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      Image(systemName: "arrow.up.right")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.accentColor)
+        .accessibilityHidden(true)
+    }
+  }
+
+  @ViewBuilder
+  func largeTopicStatistics(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+    largeTopicStatistic(value: formatPostCount(topic.postCount), title: "Posts")
+    largeTopicStatistic(value: formatTimeSince(topic.startedAt.date), title: "Trending")
+  }
+
+  func largeTopicStatistic(value: String, title: LocalizedStringKey) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(value)
+        .appFont(AppTextRole.subheadline.weight(.semibold))
+        .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+      Text(title)
+        .appFont(AppTextRole.caption)
+        .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+    }
+    .fixedSize(horizontal: false, vertical: true)
+    .accessibilityElement(children: .combine)
+  }
+}
 
 #Preview("DiscoveryView") {
   AsyncPreviewContent { appState in

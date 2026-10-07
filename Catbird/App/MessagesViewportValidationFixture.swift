@@ -14,7 +14,24 @@ struct MessagesViewportValidationFixture: View {
   static let launchArgument = "--messages-viewport-validation-fixture"
   static let composerID = "viewporttest"
   private static let accountDID = "did:plc:messagesviewportfixture"
+  private static var isComposerAlignmentFixture: Bool {
+    ProcessInfo.processInfo.arguments.contains("--messages-composer-alignment")
+  }
+  private static var composerScenario: String {
+    let prefix = "--messages-composer-scenario="
+    return ProcessInfo.processInfo.arguments.first { $0.hasPrefix(prefix) }
+      .map { String($0.dropFirst(prefix.count)) } ?? "empty"
+  }
 
+  private static var presentationScenario: String? {
+    let prefix = "--chat-message-presentation="
+    return ProcessInfo.processInfo.arguments.first { $0.hasPrefix(prefix) }
+      .map { String($0.dropFirst(prefix.count)) }
+  }
+  private static var isPresentationFixture: Bool { presentationScenario != nil }
+
+  @State private var presentationNarrow = false
+  @State private var presentationLargeText = false
   @State private var source: MessagesViewportFixtureSource
   @State private var account: AppState?
   @State private var sceneContext: SceneNavigationContext?
@@ -27,13 +44,40 @@ struct MessagesViewportValidationFixture: View {
 
   init() {
     let short = ProcessInfo.processInfo.arguments.contains("--messages-viewport-short")
-    _source = State(initialValue: MessagesViewportFixtureSource(count: short ? 2 : 32))
+    let fixtureSource = MessagesViewportFixtureSource(count: short ? 2 : 32)
+    if let scenario = Self.presentationScenario {
+      fixtureSource.configurePresentation(scenario: scenario)
+      _presentationLargeText = State(initialValue:
+        ProcessInfo.processInfo.arguments.contains("--chat-message-presentation-large-text"))
+    }
+    if Self.isComposerAlignmentFixture {
+      switch Self.composerScenario {
+      case "hi", "accessibility3": fixtureSource.draftText = "hi"
+      case "multiline": fixtureSource.draftText = "one\nsecond\nthird"
+      case "counter950": fixtureSource.draftText = String(repeating: "x", count: 950)
+      case "attached":
+        fixtureSource.draftText = "hi"
+        _attachedPost = State(initialValue: ChatSharedPostPreview(
+          authorDisplayName: "Local peer", authorHandle: "local.invalid",
+          text: "A supplied local post preview. No resolver or message transport is used."))
+      default: break
+      }
+    }
+    _source = State(initialValue: fixtureSource)
   }
 
   var body: some View {
     NavigationStack {
       if let account, let sceneContext {
-        ChatCollectionViewBridge(dataSource: source, navigationPath: $path)
+        ChatCollectionViewBridge(dataSource: source, navigationPath: $path,
+          onRequestEmojiPicker: Self.isPresentationFixture ? { source.recordAction("more", id: $0) } : nil,
+          onEditMessage: Self.isPresentationFixture ? { source.recordAction("edit", id: $0.id) } : nil,
+          onUnsendMessage: Self.isPresentationFixture ? { source.recordAction("unsend", id: $0.id) } : nil,
+          onReply: Self.isPresentationFixture ? { source.recordAction("reply", id: $0.id) } : nil,
+          onDeleteMessage: Self.isPresentationFixture ? { source.recordAction("delete", id: $0.id) } : nil,
+          onReportMessage: Self.isPresentationFixture ? { source.recordAction("report", id: $0.id) } : nil)
+          .environment(\.chatPresentationFixtureRecords, source.presentationRecords)
+          .modifier(ChatPresentationWidthModifier(enabled: Self.isPresentationFixture, narrow: presentationNarrow))
           .background {
             (coralBackdrop ? Color.pink : Color.cyan).opacity(0.35)
           }
@@ -44,9 +88,9 @@ struct MessagesViewportValidationFixture: View {
               conversationId: Self.composerID,
               onSend: { _, _ in source.sendCallbackCount += 1 },
               clearsDraftOnSend: false,
-              placeholderText: "Local fixture text"
+              placeholderText: "Local fixture text",
+              fixtureSendingDisabled: !Self.isComposerAlignmentFixture
             )
-            .sendingDisabledForLocalFixture()
             .background { MessagesViewportFooterMarker(measurements: measurements) }
           }
           .overlay(alignment: .topLeading) {
@@ -55,6 +99,10 @@ struct MessagesViewportValidationFixture: View {
                 .frame(width: 2, height: 2)
               MessagesViewportGestureReadout(measurements: measurements)
                 .frame(width: 2, height: 2)
+              if Self.isPresentationFixture {
+                ChatPresentationNativeProbe(source: source, navigationDepth: path.count)
+                  .frame(width: 2, height: 2)
+              }
             }
           }
           .environment(account)
@@ -64,6 +112,31 @@ struct MessagesViewportValidationFixture: View {
           .navigationTitle(source.messages.count == 2 ? "Short local chat" : "Long local chat")
           .toolbarTitleDisplayMode(.inline)
           .toolbar {
+            if Self.isPresentationFixture {
+              ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Narrow", systemImage: "arrow.left.and.right") { presentationNarrow.toggle() }
+                  .accessibilityIdentifier("chat.fixture.narrow")
+                Button("Larger Text", systemImage: "textformat.size") { presentationLargeText.toggle() }
+                  .accessibilityIdentifier("chat.fixture.typeSize")
+                if source.presentationScenario?.hasPrefix("menu-") == true {
+                  Menu("Fixture actions", systemImage: "ellipsis.circle") {
+                    Button("Accessible actions") { source.presentationAccessibleRequest += 1 }
+                      .accessibilityIdentifier("chat.fixture.accessibleActions")
+                  }
+                  .accessibilityIdentifier("chat.fixture.controls")
+                } else {
+                  Button("Change record", systemImage: "rectangle.expand.vertical") {
+                    source.changePresentationRecord()
+                  }
+                  .accessibilityIdentifier("chat.fixture.changeRecord")
+                }
+                Button("Keyboard", systemImage: "keyboard.chevron.compact.down") {
+                  UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                    to: nil, from: nil, for: nil)
+                }
+                .accessibilityIdentifier("messages.fixture.dismissKeyboard")
+              }
+            } else {
             ToolbarItemGroup(placement: .topBarTrailing) {
               Button("Backdrop", systemImage: "paintpalette") {
                 coralBackdrop.toggle()
@@ -91,6 +164,7 @@ struct MessagesViewportValidationFixture: View {
               }
               .accessibilityIdentifier("messages.fixture.gesturesMenu")
             }
+            }
           }
       } else if let failure {
         Text("Messages fixture failed: \(failure)")
@@ -100,7 +174,8 @@ struct MessagesViewportValidationFixture: View {
       }
     }
     .preferredColorScheme(.light)
-    .dynamicTypeSize(.large)
+    .dynamicTypeSize((Self.isComposerAlignmentFixture && Self.composerScenario == "accessibility3")
+      || (Self.isPresentationFixture && presentationLargeText) ? .accessibility3 : .large)
     .task { await prepare() }
     .onDisappear { sceneContext?.invalidate() }
   }
@@ -112,6 +187,9 @@ struct MessagesViewportValidationFixture: View {
         configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
       guard let defaults = UserDefaults(suiteName: "messages.viewport.fixture.\(UUID().uuidString)") else {
         throw CocoaError(.fileReadUnknown)
+      }
+      if Self.isPresentationFixture {
+        try source.preparePresentationRecords()
       }
       let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:1")!)
       guard !Task.isCancelled else { return }
@@ -152,8 +230,13 @@ private struct MessagesViewportFixtureMessage: UnifiedChatMessage {
   // One timestamp intentionally yields one date separator in the real snapshot.
   let sentAt = Date(timeIntervalSince1970: 1_780_000_000)
   let isFromCurrentUser: Bool
-  var reactions: [UnifiedReaction] { [] }
+  var reactions: [UnifiedReaction] = []
   var embed: UnifiedEmbed?
+  var canEdit = false
+  var canUnsend = false
+  var isTombstone = false
+  var isSystemMessage = false
+  var replyContext: UnifiedMessageReplyContext?
   var sendState: MessageSendState { .sent }
 }
 
@@ -167,6 +250,14 @@ private final class MessagesViewportFixtureSource: UnifiedChatDataSource {
   var hasMoreMessages: Bool { false }
   var localRevision = 0
   var sendCallbackCount = 0
+  var presentationScenario: String?
+  var presentationRecords: [String: AppBskyEmbedRecord.ViewRecordUnion] = [:]
+  var presentationActions: [String] = []
+  var presentationRecordRevision = 0
+  var presentationAppliedRecordRevision = 0
+  var presentationAccessibleRequest = 0
+  private var shortPresentationRecord: AppBskyEmbedRecord.ViewRecordUnion?
+  private var longPresentationRecord: AppBskyEmbedRecord.ViewRecordUnion?
 
   init(count: Int) {
     messages = (0..<count).map { index in
@@ -187,8 +278,25 @@ private final class MessagesViewportFixtureSource: UnifiedChatDataSource {
   func loadMessages() async {}
   func loadMoreMessages() async {}
   func sendMessage(text: String) async { sendCallbackCount += 1 }
-  func toggleReaction(messageID: String, emoji: String) {}
-  func addReaction(messageID: String, emoji: String) {}
+  func toggleReaction(messageID: String, emoji: String) {
+    guard presentationScenario != nil else { return }
+    recordAction("toggle:" + emoji, id: messageID)
+    guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
+    if messages[index].reactions.contains(where: { $0.emoji == emoji && $0.isFromCurrentUser }) {
+      messages[index].reactions.removeAll { $0.emoji == emoji && $0.isFromCurrentUser }
+    } else {
+      messages[index].reactions.append(.init(messageID: messageID, emoji: emoji,
+        senderDID: "did:plc:messagesviewportfixture", isFromCurrentUser: true, reactedAt: nil))
+    }
+  }
+  func addReaction(messageID: String, emoji: String) {
+    guard presentationScenario != nil else { return }
+    recordAction("add:" + emoji, id: messageID)
+    guard let index = messages.firstIndex(where: { $0.id == messageID }),
+      !messages[index].reactions.contains(where: { $0.emoji == emoji && $0.isFromCurrentUser }) else { return }
+    messages[index].reactions.append(.init(messageID: messageID, emoji: emoji,
+      senderDID: "did:plc:messagesviewportfixture", isFromCurrentUser: true, reactedAt: nil))
+  }
   func deleteMessage(messageID: String) async {}
 
   func growRow(id: String?) {
@@ -197,6 +305,114 @@ private final class MessagesViewportFixtureSource: UnifiedChatDataSource {
       .joined(separator: "\n")
     messages[index].embed = Self.link(title: "Late local metadata with a longer supplied title that wraps")
     localRevision += 1
+  }
+
+  static let presentationID = "presentation-target"
+  static let presentationURI = "at://did:plc:chatfixtureauthor/app.bsky.feed.post/external"
+  static let presentationCID = "bafyreicj3hqoqmwwqfnf7juwf6pm5avc6imdw3lxw7lbcz63gumteobfnq"
+  static let externalTitle = "Local external card: a deliberately long headline that wraps at the message width cap"
+  static let externalDescription = "Local description with enough words to wrap across several lines and expose a clipped final line. End of local description."
+  static let recordText = "Local shared post body with enough text to exercise the production quoted-post layout and its external preview. Final body marker."
+
+  func configurePresentation(scenario: String) {
+    presentationScenario = scenario
+    let menu = scenario.hasPrefix("menu-")
+    if menu { messages = Array(messages.prefix(1)); draftText = "local draft" }
+    var message = MessagesViewportFixtureMessage(id: Self.presentationID,
+      text: menu ? "Local menu message" : "",
+      senderID: scenario == "menu-own" ? "did:plc:messagesviewportfixture" : "did:plc:localfixturepeer",
+      senderDisplayName: scenario == "menu-own" ? "Local viewer" : "Local peer",
+      isFromCurrentUser: scenario == "menu-own",
+      embed: menu ? nil : .blueskyRecord(recordData: .init(uri: Self.presentationURI, cid: Self.presentationCID)))
+    if scenario == "text-reply" {
+      message.text = "Local message above the shared external card."
+      message.replyContext = .init(kind: .message(id: "local-0", senderDID: "did:plc:localfixturepeer",
+        senderDisplayName: "Local peer", text: "Local reply preview"), referencedMessageID: "local-0",
+        senderDisplayName: "Local peer", previewText: "Local reply preview", isTappable: false)
+    }
+    if scenario == "menu-own" { message.canEdit = true; message.canUnsend = true }
+    if scenario == "menu-tombstone" { message.isTombstone = true }
+    if scenario == "menu-system" { message.isSystemMessage = true }
+    if scenario == "menu-incoming" {
+      message.reactions = [.init(messageID: Self.presentationID, emoji: "❤️",
+        senderDID: "did:plc:localfixturepeer", isFromCurrentUser: false, reactedAt: nil)]
+    }
+    messages.append(message)
+  }
+
+  func recordAction(_ action: String, id: String) {
+    presentationActions.append(action + "|" + id)
+  }
+
+  func preparePresentationRecords() throws {
+    guard let scenario = presentationScenario, !scenario.hasPrefix("menu-") else { return }
+    // Supplied decoded records exercise real quote/external views without an
+    // authenticated lifecycle or record network request. This is not a network
+    // placeholder/loading test. The thumbnail is a local file with known pixel
+    // dimensions, loaded by the production image pipeline without transport.
+    let thumbnail = try Self.makePresentationThumbnail()
+    func record(long: Bool) throws -> AppBskyEmbedRecord.ViewRecordUnion {
+      var metadata: [String: Any] = ["uri": "https://fixture.invalid/local-card",
+        "title": long ? Self.externalTitle : "Local short card",
+        "description": long ? Self.externalDescription : "Short local description."]
+      if long { metadata["thumb"] = thumbnail.absoluteString }
+      let external: [String: Any] = ["$type": "app.bsky.embed.external#view", "external": metadata]
+      let object: [String: Any] = ["$type": "app.bsky.embed.record#viewRecord",
+        "uri": Self.presentationURI, "cid": Self.presentationCID,
+        "author": ["did": "did:plc:chatfixtureauthor", "handle": "local-card.invalid", "displayName": "Local card author"],
+        "value": ["$type": "app.bsky.feed.post", "text": long ? Self.recordText : "Short local post.",
+          "createdAt": "2026-01-01T12:00:00Z"],
+        "indexedAt": "2026-01-01T12:00:00Z", "embeds": [external]]
+      return try JSONDecoder().decode(AppBskyEmbedRecord.ViewRecordUnion.self,
+        from: JSONSerialization.data(withJSONObject: object))
+    }
+    shortPresentationRecord = try record(long: false)
+    longPresentationRecord = try record(long: true)
+    if let initial = scenario == "async" ? shortPresentationRecord : longPresentationRecord {
+      presentationRecords = [Self.presentationURI: initial]
+    }
+  }
+
+  func changePresentationRecord() {
+    guard presentationScenario != nil else { return }
+    presentationRecordRevision += 1
+    let revision = presentationRecordRevision
+    // Delay only local fixture data publication, leaving the production hosting
+    // cell to react to the new record and recompute its actual intrinsic height.
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .milliseconds(180))
+      guard let self, !Task.isCancelled, self.presentationRecordRevision == revision,
+        let record = revision.isMultiple(of: 2) ? self.shortPresentationRecord : self.longPresentationRecord else { return }
+      self.presentationRecords = [Self.presentationURI: record]
+      self.presentationAppliedRecordRevision = revision
+    }
+  }
+
+  private static func makePresentationThumbnail() throws -> URL {
+    // A real decoded PNG, not a replacement SwiftUI rectangle. The source image
+    // is 382x200 pixels, matching the production external-card 1.91 aspect ratio.
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = true
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: 382, height: 200), format: format)
+    let png = renderer.pngData { context in
+      UIColor.systemIndigo.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 382, height: 200))
+      UIColor.systemTeal.setFill()
+      context.fill(CGRect(x: 12, y: 12, width: 358, height: 176))
+      UIColor.white.setStroke()
+      context.cgContext.setLineWidth(3)
+      context.cgContext.move(to: CGPoint(x: 12, y: 12))
+      context.cgContext.addLine(to: CGPoint(x: 370, y: 188))
+      context.cgContext.move(to: CGPoint(x: 370, y: 12))
+      context.cgContext.addLine(to: CGPoint(x: 12, y: 188))
+      context.cgContext.strokePath()
+      ("LOCAL 382 × 200" as NSString).draw(at: CGPoint(x: 105, y: 88), withAttributes: [
+        .font: UIFont.systemFont(ofSize: 21, weight: UIFont.Weight.bold), .foregroundColor: UIColor.black])
+    }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("chat-presentation-thumb.png")
+    try png.write(to: url, options: .atomic)
+    return url
   }
 
   private static func link(title: String) -> UnifiedEmbed {
@@ -231,6 +447,19 @@ private struct MessagesViewportFixtureRect: Codable {
     x = Double(rect.minX); y = Double(rect.minY)
     width = Double(rect.width); height = Double(rect.height)
   }
+}
+
+private struct MessagesViewportFixtureInsets: Codable {
+  let top: Double, left: Double, bottom: Double, right: Double
+  init(_ insets: UIEdgeInsets) {
+    top = Double(insets.top); left = Double(insets.left)
+    bottom = Double(insets.bottom); right = Double(insets.right)
+  }
+}
+
+private struct MessagesViewportFixtureSize: Codable {
+  let width: Double, height: Double
+  init(_ size: CGSize) { width = Double(size.width); height = Double(size.height) }
 }
 
 private struct MessagesViewportDragWitness: Codable {
@@ -328,6 +557,13 @@ private struct MessagesViewportFixtureSample: Codable {
   let collectionFrame: MessagesViewportFixtureRect
   let footerFrame: MessagesViewportFixtureRect
   let editorFrame: MessagesViewportFixtureRect
+  let caretFrame: MessagesViewportFixtureRect?
+  let editorFontLineHeight: Double?
+  let editorTextContainerInset: MessagesViewportFixtureInsets?
+  let editorContentInset: MessagesViewportFixtureInsets?
+  let editorContentSize: MessagesViewportFixtureSize?
+  let editorContentOffset: MessagesViewportGesturePoint?
+  let editorTextBounds: MessagesViewportFixtureRect?
   let editorIsFirstResponder: Bool
   let editorTextCount: Int
   let contentHeight: Double
@@ -458,6 +694,21 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       tracedRecognizers = []
     }
 
+    /// Observe laid-out text through UITextInput, without changing selection or
+    /// requesting layoutManager (which can switch a TextKit 2 view to TextKit 1).
+    /// Rectangles are intentionally not clipped to the editor's visible bounds.
+    private func textBounds(of editor: UITextView, in window: UIWindow) -> MessagesViewportFixtureRect? {
+      guard editor.hasText,
+        let range = editor.textRange(from: editor.beginningOfDocument, to: editor.endOfDocument)
+      else { return nil }
+      let bounds = editor.selectionRects(for: range).reduce(CGRect.null) { result, selection in
+        guard !selection.rect.isEmpty, !selection.rect.isInfinite else { return result }
+        return result.union(selection.rect)
+      }
+      guard !bounds.isNull, !bounds.isEmpty else { return nil }
+      return .init(editor.convert(bounds, to: window))
+    }
+
     @objc private func sample(_ link: CADisplayLink) {
       guard let window else { return }
       let views = descendants(of: window)
@@ -468,6 +719,9 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       // SwiftUI may place its AX identifier on a virtual element rather than
       // on that native view, so native identity does not depend on the AX tag.
       let editor = views.compactMap { $0 as? UITextView }.first { $0.isEditable }
+      let caretFrame = editor.map { view in
+        view.convert(view.caretRect(for: view.selectedTextRange?.end ?? view.endOfDocument), to: window)
+      }.flatMap { $0.isEmpty ? nil : MessagesViewportFixtureRect($0) }
       if let footer = views.compactMap({ $0 as? MessagesViewportFooterMarker.MarkerView }).first {
         measurements.footerFrame = footer.convert(footer.bounds, to: window)
       }
@@ -530,6 +784,13 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
         collectionFrame: .init(collection.convert(collection.bounds, to: window)),
         footerFrame: .init(measurements.footerFrame),
         editorFrame: .init(editor.map { $0.convert($0.bounds, to: window) } ?? .zero),
+        caretFrame: caretFrame,
+        editorFontLineHeight: editor.flatMap { $0.font }.map { Double($0.lineHeight) },
+        editorTextContainerInset: editor.map { .init($0.textContainerInset) },
+        editorContentInset: editor.map { .init($0.contentInset) },
+        editorContentSize: editor.map { .init($0.contentSize) },
+        editorContentOffset: editor.map { .init($0.contentOffset) },
+        editorTextBounds: editor.flatMap { textBounds(of: $0, in: window) },
         editorIsFirstResponder: editor?.isFirstResponder == true,
         editorTextCount: editor?.text.count ?? 0,
         contentHeight: Double(collection.contentSize.height), offsetY: Double(y),
@@ -731,4 +992,115 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
 
   }
 }
+
+private struct ChatPresentationWidthModifier: ViewModifier {
+  let enabled: Bool
+  let narrow: Bool
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if enabled { content.frame(maxWidth: narrow ? 260 : 600) } else { content }
+  }
+}
+
+/// Reads visible native cells and public interaction types. An explicit DEBUG
+/// toolbar request can invoke the existing accessible-actions presentation route;
+/// it never scrolls, resizes, reloads or synthesizes a touch context menu.
+private struct ChatPresentationNativeProbe: UIViewRepresentable {
+  let source: MessagesViewportFixtureSource
+  let navigationDepth: Int
+  func makeUIView(context: Context) -> ProbeView { ProbeView(source: source) }
+  func updateUIView(_ uiView: ProbeView, context: Context) {
+    uiView.navigationDepth = navigationDepth
+    uiView.publish()
+  }
+  static func dismantleUIView(_ uiView: ProbeView, coordinator: ()) { uiView.stop() }
+
+  @MainActor
+  final class ProbeView: UIView {
+    let source: MessagesViewportFixtureSource
+    private var timer: Timer?
+    private let initialPasteboardChangeCount = UIPasteboard.general.changeCount
+    private var handledAccessibleRequest = 0
+    var navigationDepth = 0
+    init(source: MessagesViewportFixtureSource) {
+      self.source = source
+      super.init(frame: .zero)
+      isUserInteractionEnabled = false
+      isAccessibilityElement = true
+      accessibilityIdentifier = "chat.fixture.presentation"
+      accessibilityLabel = "Local message presentation state"
+      accessibilityTraits = .staticText
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      stop()
+      guard window != nil else { return }
+      timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        MainActor.assumeIsolated { self?.publish() }
+      }
+      publish()
+    }
+    func stop() { timer?.invalidate(); timer = nil }
+    private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    func publish() {
+      guard let window,
+        let collection = descendants(window).compactMap({ $0 as? ChatTranscriptCollectionView }).first else { return }
+      var rows: [[String: Any]] = []
+      for cell in collection.visibleCells {
+        guard let index = collection.indexPath(for: cell)?.item, index > 0,
+          source.messages.indices.contains(index - 1) else { continue }
+        let id = source.messages[index - 1].id
+        cell.accessibilityIdentifier = "chat.fixture.cell." + id
+        let frame = cell.convert(cell.bounds, to: window)
+        rows.append(["id": id, "cellIdentity": String(describing: ObjectIdentifier(cell)),
+          "x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height])
+      }
+      let interactions = descendants(collection).flatMap(\.interactions)
+        .filter { $0 is UIContextMenuInteraction }.count
+      var responder: UIResponder? = collection
+      var nativeMenuRequests = 0
+      var nativeMenuAttempts = 0
+      var nativeMenuStatus = "reporter-unavailable"
+      var nativeMenuAnchor = "reporter-unavailable"
+      while let current = responder {
+        if let reporter = current as? ChatMessageContextMenuFixtureReporting {
+          nativeMenuRequests = reporter.fixtureNativeContextMenuRequestCount
+          nativeMenuAttempts = reporter.fixtureNativeContextMenuAttemptCount
+          nativeMenuStatus = reporter.fixtureNativeContextMenuLastStatus
+          nativeMenuAnchor = reporter.fixtureMessageMenuAnchorStatus(messageID: MessagesViewportFixtureSource.presentationID)
+          if source.presentationAccessibleRequest > handledAccessibleRequest {
+            handledAccessibleRequest = source.presentationAccessibleRequest
+            Task { @MainActor [weak reporter] in
+              await Task.yield()
+              reporter?.fixturePresentAccessibleMessageActions(messageID: MessagesViewportFixtureSource.presentationID)
+            }
+          }
+          break
+        }
+        responder = current.next
+      }
+      // Only compare after a clipboard change in this disposable local fixture.
+      // Never expose or retain arbitrary clipboard contents in diagnostics.
+      let copiedSyntheticText = source.presentationScenario?.hasPrefix("menu-") == true
+        && UIPasteboard.general.changeCount != initialPasteboardChangeCount
+        && UIPasteboard.general.string == "Local menu message"
+      let value: [String: Any] = ["scenario": source.presentationScenario ?? "",
+        "actions": source.presentationActions, "recordRevision": source.presentationRecordRevision,
+        "appliedRecordRevision": source.presentationAppliedRecordRevision,
+        "nativeMenuRequests": nativeMenuRequests, "copiedSyntheticText": copiedSyntheticText,
+        "nativeMenuAttempts": nativeMenuAttempts, "nativeMenuStatus": nativeMenuStatus,
+        "nativeMenuAnchor": nativeMenuAnchor,
+        "navigationDepth": navigationDepth, "accessibleRequestsHandled": handledAccessibleRequest,
+        "contentSizeCategory": collection.traitCollection.preferredContentSizeCategory.rawValue,
+        "applicationContentSizeCategory": UIApplication.shared.preferredContentSizeCategory.rawValue,
+        "sendCount": source.sendCallbackCount, "nativeMenuInteractions": interactions,
+        "rows": rows, "collectionIdentity": String(describing: ObjectIdentifier(collection))]
+      if let data = try? JSONSerialization.data(withJSONObject: value, options: .sortedKeys) {
+        accessibilityValue = String(decoding: data, as: UTF8.self)
+      }
+    }
+  }
+}
+
 #endif

@@ -482,7 +482,7 @@ struct ListDetailView: View {
             path.append(NavigationDestination.profile(member.did.didString()))
           } label: {
             HStack(alignment: .top, spacing: 12) {
-              AsyncProfileImage(url: member.finalAvatarURL(), size: 44, labels: member.labels)
+              AsyncProfileImage(url: member.finalAvatarURL(), size: 44, did: member.did.didString(), labels: member.labels)
                 .accessibilityHidden(true)
               
               VStack(alignment: .leading, spacing: 2) {

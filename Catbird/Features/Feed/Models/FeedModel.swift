@@ -178,6 +178,15 @@ final class FeedModel: StateInvalidationSubscriber {
       }
       settingsObservers.append(token)
     }
+
+    // A policy change only re-filters the posts already loaded. The policy is local state, so unlike
+    // a preference edit it does not reload the feed.
+    settingsObservers.append(NotificationCenter.default.addObserver(
+      forName: .moderationPolicyDidChange, object: nil, queue: .main
+    ) { [weak self] notification in
+      let originDID = notification.userInfo?["accountDID"] as? String
+      MainActor.assumeIsolated { self?.handleModerationPolicyChange(originDID: originDID) }
+    })
     
     // Subscribe to intent rule changes
     NotificationCenter.default.addObserver(
@@ -1186,6 +1195,13 @@ final class FeedModel: StateInvalidationSubscriber {
   }
 
   // MARK: - Helper Methods
+
+  @MainActor
+  private func handleModerationPolicyChange(originDID: String?) {
+    guard originDID == appState.userDID else { return }
+    let filtered = applyFilters(withSettings: appState.feedFilterSettings)
+    if filtered.count != posts.count { posts = filtered }
+  }
 
   @MainActor
   private func handleSettingsPreferenceChange(originDID: String?, settingsIdentity: ObjectIdentifier?,

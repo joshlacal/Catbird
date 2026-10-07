@@ -247,7 +247,17 @@ final class SceneRouteCoordinator {
     case .navigate(let destination, let tabIndex):
       manager.navigate(to: destination, in: tabIndex)
     case .showTab(let tabIndex, let resetPath):
-      if resetPath { manager.clearPath(for: tabIndex) }
+      if resetPath {
+        #if os(iOS)
+        if tabIndex == AppNavigationManager.chatTabIndex {
+          manager.requestChatRoot()
+        } else {
+          manager.clearPath(for: tabIndex)
+        }
+        #else
+        manager.clearPath(for: tabIndex)
+        #endif
+      }
     }
     return .delivered(sceneID: context.sceneID)
   }

@@ -1,5 +1,5 @@
 {
-  "originHash" : "48b6175da309ac2d97589e32ab41f9b00136fbc7f601bbbe9ebc56e791ecb913",
+  "originHash" : "bd38412b82d1ebcc2c48fe1bfca3a1528d5ee4dc2a5728c84ac25924abc823b0",
   "pins" : [
     {
       "identity" : "adaptiveglyphkit",
@@ -123,8 +123,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1.git",
       "state" : {
-        "revision" : "d9a5b37470adc940d22c3bcd5ca6953a516b727f",
-        "version" : "1.7.2"
+        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
+        "version" : "1.7.3"
       }
     },
     {

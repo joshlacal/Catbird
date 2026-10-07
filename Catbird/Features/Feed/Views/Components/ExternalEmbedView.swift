@@ -294,7 +294,7 @@ struct ExternalEmbedView: View {
     
     @ViewBuilder
     private func videoPlayerContent(videoModel: VideoModel) -> some View {
-        // ContentLabelManager handles all blur logic now
+        // The enclosing media gate conceals this player; nothing blurs here.
         ModernVideoPlayerView(
             model: videoModel,
             postID: postID
@@ -343,7 +343,7 @@ struct ExternalEmbedView: View {
             return nil
         }()
 
-        // ContentLabelManager handles all blur logic now - no need for shouldBlur checks
+        // The enclosing media gate conceals this card; no shouldBlur checks here.
         VStack(alignment: .leading, spacing: 3) {
             thumbnailImageContent
             linkDetails

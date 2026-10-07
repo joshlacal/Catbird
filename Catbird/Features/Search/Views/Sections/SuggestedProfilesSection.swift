@@ -188,7 +188,9 @@ public struct SuggestedProfilesSection: View {
     return layout {
       Button { onSelectProfile(profile) } label: {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
-          AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 48, labels: profile.labels)
+          AsyncProfileImage(
+            url: URL(string: profile.avatar?.uriString() ?? ""), size: 48, did: profile.did.didString(),
+            labels: profile.labels)
           VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
               Text(profile.displayName ?? profile.handle.description)

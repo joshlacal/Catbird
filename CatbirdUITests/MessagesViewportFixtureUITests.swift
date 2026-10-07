@@ -184,14 +184,293 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     capture("Actual bubble and known local link resized, reading origin retained", app: app)
   }
 
+  func testComposerAlignmentWithRealKeyboardAndMultilineDraft() throws {
+    let app = try launchFixture(alignmentScenario: "empty")
+    let empty = try settled(app)
+    capture("Alignment: empty composer, keyboard hidden", app: app)
+    assertSingleLineCenteredInCapsule(app, sample: empty)
+    assertFooterReservation(empty)
+    XCTAssertFalse(productionSendButtons(app).firstMatch.isEnabled)
+
+    productionEditor(app).tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Requires a real software keyboard")
+    let focused = try waitForSample(app) {
+      $0.editorIsFirstResponder && $0.editorTextCount == 0 && $0.isSettled
+    }
+    capture("Alignment: empty composer, software keyboard open", app: app)
+    assertSingleLineCenteredInCapsule(app, sample: focused)
+    assertFooterReservation(focused)
+
+    typeExactLowercaseOnSoftwareKeyboard("g", app: app)
+    let single = try waitForSample(app) {
+      $0.editorTextCount == 1 && $0.editorIsFirstResponder && $0.isSettled
+    }
+    capture("Alignment: exact lowercase g, software keyboard open", app: app)
+    XCTAssertEqual(productionEditor(app).value as? String, "g")
+    XCTAssertTrue(productionSendButtons(app).firstMatch.isEnabled)
+    assertSingleLineCenteredInCapsule(app, sample: single)
+    assertFooterReservation(single)
+    let keyboardOpenBottomInset = sendBottomInset(app, sample: single)
+
+    app.buttons["messages.fixture.dismissKeyboard"].tap()
+    let dismissed = try waitForSample(app) {
+      !$0.editorIsFirstResponder && $0.editorTextCount == 1 && $0.isSettled
+    }
+    capture("Alignment: exact lowercase g, keyboard dismissed", app: app)
+    XCTAssertFalse(app.keyboards.firstMatch.exists)
+    XCTAssertEqual(productionEditor(app).value as? String, "g")
+    assertSingleLineCenteredInCapsule(app, sample: dismissed)
+    assertFooterReservation(dismissed)
+    let keyboardClosedBottomInset = sendBottomInset(app, sample: dismissed)
+
+    // A generic element-center tap can place the insertion point before "g".
+    // Tap just after the measured retained end caret, within the native editor.
+    let endCaret = try XCTUnwrap(dismissed.caretFrame)
+    let endTapX = min(endCaret.maxX + 4, dismissed.editorFrame.maxX - 1)
+    XCTAssertGreaterThan(endTapX, endCaret.x)
+    app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
+      .withOffset(CGVector(dx: CGFloat(endTapX), dy: CGFloat(endCaret.midY))).tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    _ = try waitForSample(app) {
+      $0.editorIsFirstResponder && $0.editorTextCount == 1 && $0.isSettled
+        && abs(($0.caretFrame?.x ?? -.infinity) - endCaret.x) <= $0.epsilon
+    }
+    let suffix = "\nsecond\nthird"
+    typeExactLowercaseOnSoftwareKeyboard(suffix, app: app)
+    let multiline = try waitForSample(app) {
+      $0.editorTextCount == 1 + suffix.count && $0.editorIsFirstResponder
+        && $0.editorFrame.height > single.editorFrame.height + $0.epsilon && $0.isSettled
+    }
+    capture("Alignment: multiline draft, software keyboard open", app: app)
+    XCTAssertEqual(productionEditor(app).value as? String, "g" + suffix)
+    assertSendRemainsInBottomRow(app, sample: multiline, expectedBottomInset: keyboardOpenBottomInset)
+    assertFooterReservation(multiline)
+
+    app.buttons["messages.fixture.dismissKeyboard"].tap()
+    let retained = try waitForSample(app) {
+      !$0.editorIsFirstResponder && $0.editorTextCount == 1 + suffix.count && $0.isSettled
+    }
+    capture("Alignment: multiline draft, keyboard dismissed", app: app)
+    XCTAssertFalse(app.keyboards.firstMatch.exists)
+    XCTAssertEqual(productionEditor(app).value as? String, "g" + suffix)
+    assertSendRemainsInBottomRow(app, sample: retained, expectedBottomInset: keyboardClosedBottomInset)
+    assertFooterReservation(retained)
+  }
+
+  /// Capture the same actual lowercase draft for baseline/revised app binaries.
+  /// This records geometry without applying the revised capsule-centering oracle.
+  func testCaptureComposerGReferenceWithRealKeyboard() throws {
+    let app = try launchFixture(alignmentScenario: "empty")
+    productionEditor(app).tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    _ = try waitForSample(app) { $0.editorIsFirstResponder && $0.editorTextCount == 0 && $0.isSettled }
+    typeExactLowercaseOnSoftwareKeyboard("g", app: app)
+    let opened = try waitForSample(app) {
+      $0.editorIsFirstResponder && $0.editorTextCount == 1 && $0.isSettled
+    }
+    captureComposerReference("Reference: exact lowercase g, software keyboard open", app: app, sample: opened)
+    XCTAssertEqual(productionEditor(app).value as? String, "g")
+    XCTAssertTrue(app.keyboards.firstMatch.exists)
+    XCTAssertEqual(opened.sendCallbackCount, 0)
+
+    app.buttons["messages.fixture.dismissKeyboard"].tap()
+    let closed = try waitForSample(app) {
+      !$0.editorIsFirstResponder && $0.editorTextCount == 1 && $0.isSettled
+    }
+    captureComposerReference("Reference: exact lowercase g, keyboard dismissed", app: app, sample: closed)
+    XCTAssertEqual(productionEditor(app).value as? String, "g")
+    XCTAssertFalse(app.keyboards.firstMatch.exists)
+    XCTAssertEqual(closed.sendCallbackCount, 0)
+  }
+
+  private func captureComposerReference(_ name: String, app: XCUIApplication, sample: Sample) {
+    capture(name, app: app)
+    let send = productionSendButtons(app).firstMatch.frame
+    let attachment = XCTAttachment(string:
+      "Send accessibility frame: \(send)\nFooter: \(sample.footerFrame)\nSend minus footer midpoint: \(Double(send.midY) - sample.footerFrame.midY) points")
+    attachment.name = name + " — Send accessibility geometry"
+    attachment.lifetime = .keepAlways
+    add(attachment)
+  }
+
+  func testComposerLargerTextFitsNativeEditor() throws {
+    let app = try launchFixture(alignmentScenario: "accessibility3")
+    let sample = try waitForSample(app) {
+      $0.editorTextCount == 2 && $0.caretFrame != nil && $0.isSettled
+    }
+    capture("Independent AX3: native editor, caret, text and insets", app: app)
+    XCTAssertEqual(productionEditor(app).value as? String, "hi")
+    assertComposerBounds(app, sample: sample)
+    assertFooterReservation(sample)
+    assertEditorContainsTextAndCaret(sample)
+  }
+
+  func testComposerAlignmentSeededCounterAttachmentAndLargerText() throws {
+    var normalCaretHeight = 0.0
+    var normalFontLineHeight = 0.0
+    var normalBottomInset = 0.0
+    var normalKeyboardOpenBottomInset = 0.0
+    for scenario in ["hi", "multiline", "counter950", "attached", "accessibility3"] {
+      let app = try launchFixture(alignmentScenario: scenario)
+      let expectedCount = scenario == "counter950" ? 950
+        : scenario == "multiline" ? "one\nsecond\nthird".count : 2
+      let sample = try waitForSample(app) {
+        $0.editorTextCount == expectedCount && $0.caretFrame != nil && $0.isSettled
+      }
+      capture("Alignment seeded state: " + scenario, app: app)
+      assertComposerBounds(app, sample: sample)
+      assertFooterReservation(sample)
+      XCTAssertTrue(productionSendButtons(app).firstMatch.isEnabled)
+      if scenario == "hi" {
+        normalCaretHeight = try XCTUnwrap(sample.caretFrame).height
+        normalFontLineHeight = try XCTUnwrap(sample.editorFontLineHeight)
+        normalBottomInset = sendBottomInset(app, sample: sample)
+        assertSingleLineCenteredInCapsule(app, sample: sample)
+      } else {
+        // A preview, counter, or taller text changes the capsule's height.
+        // Check the bottom row and touch target, not centering in the whole capsule.
+        assertSendRemainsInBottomRow(app, sample: sample, expectedBottomInset: normalBottomInset)
+        if scenario == "counter950" {
+          XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "950")).firstMatch.exists)
+        } else if scenario == "attached" {
+          XCTAssertTrue(app.buttons["Remove post"].exists)
+        } else if scenario == "accessibility3" {
+          XCTAssertGreaterThan(try XCTUnwrap(sample.caretFrame).height, normalCaretHeight * 1.2,
+            "The larger-text fixture must actually enlarge the native text, not only pass a launch flag")
+          XCTAssertGreaterThan(try XCTUnwrap(sample.editorFontLineHeight), normalFontLineHeight * 1.2)
+          assertEditorContainsTextAndCaret(sample)
+        }
+      }
+      if scenario == "hi" || scenario == "accessibility3" {
+        XCTAssertEqual(productionEditor(app).value as? String, "hi")
+        productionEditor(app).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let opened = try waitForSample(app) {
+          $0.editorIsFirstResponder && $0.editorTextCount == 2 && $0.isSettled
+        }
+        capture("Alignment seeded state: " + scenario + ", software keyboard open", app: app)
+        XCTAssertEqual(productionEditor(app).value as? String, "hi")
+        assertFooterReservation(opened)
+        if scenario == "hi" {
+          normalKeyboardOpenBottomInset = sendBottomInset(app, sample: opened)
+          assertSingleLineCenteredInCapsule(app, sample: opened)
+        } else {
+          assertSendRemainsInBottomRow(app, sample: opened, expectedBottomInset: normalKeyboardOpenBottomInset)
+          assertEditorContainsTextAndCaret(opened)
+        }
+
+        app.buttons["messages.fixture.dismissKeyboard"].tap()
+        let closed = try waitForSample(app) {
+          !$0.editorIsFirstResponder && $0.editorTextCount == 2 && $0.isSettled
+        }
+        capture("Alignment seeded state: " + scenario + ", keyboard dismissed", app: app)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        XCTAssertEqual(productionEditor(app).value as? String, "hi")
+        assertFooterReservation(closed)
+        if scenario == "hi" {
+          assertSingleLineCenteredInCapsule(app, sample: closed)
+        } else {
+          assertSendRemainsInBottomRow(app, sample: closed, expectedBottomInset: normalBottomInset)
+          assertEditorContainsTextAndCaret(closed)
+        }
+      }
+      app.terminate()
+    }
+  }
+
+  private func assertComposerBounds(_ app: XCUIApplication, sample: Sample,
+    file: StaticString = #filePath, line: UInt = #line) {
+    let send = productionSendButtons(app).firstMatch.frame
+    let epsilon = CGFloat(sample.epsilon)
+    XCTAssertGreaterThanOrEqual(send.width, 44 - epsilon, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(send.height, 44 - epsilon, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(send.minY, CGFloat(sample.footerFrame.y) - epsilon, file: file, line: line)
+    XCTAssertLessThanOrEqual(send.maxY, CGFloat(sample.footerFrame.maxY) + epsilon, file: file, line: line)
+    XCTAssertLessThanOrEqual(CGFloat(sample.editorFrame.maxX), send.minX + epsilon, file: file, line: line)
+    XCTAssertLessThanOrEqual(sample.editorFrame.height, 120 + sample.epsilon, file: file, line: line)
+    XCTAssertTrue(app.windows.firstMatch.frame.contains(send), file: file, line: line)
+    XCTAssertEqual(sample.sendCallbackCount, 0, "Geometry checks must not invoke even the local Send callback",
+      file: file, line: line)
+  }
+
+  private func assertSingleLineCenteredInCapsule(_ app: XCUIApplication, sample: Sample,
+    file: StaticString = #filePath, line: UInt = #line) {
+    assertComposerBounds(app, sample: sample, file: file, line: line)
+    let send = productionSendButtons(app).firstMatch.frame
+    // These calls use only single-line fixtures without a post preview or counter.
+    // The glass has symmetric outer padding, so its center equals the measured footer center.
+    // The 30-point circle is centered inside this 44-point accessibility/touch target.
+    let delta = Double(send.midY) - sample.footerFrame.midY
+    print("Composer capsule alignment: sendFrame=\(send), footer=\(sample.footerFrame), delta=\(delta)")
+    XCTAssertEqual(Double(send.midY), sample.footerFrame.midY, accuracy: 1.5,
+      "Single-line Send must be centered in the composer capsule within 1.5 points", file: file, line: line)
+    XCTAssertEqual(sample.editorFrame.midY, sample.footerFrame.midY, accuracy: 1.5,
+      "Centering Send alone must not leave the native editor above the capsule center", file: file, line: line)
+    guard let caret = sample.caretFrame else {
+      XCTFail("The single-line native caret must be measured", file: file, line: line)
+      return
+    }
+    XCTAssertEqual(caret.midY, sample.footerFrame.midY, accuracy: 1.5,
+      "The native single-line caret must be centered in the capsule within 1.5 points", file: file, line: line)
+    assertEditorContainsTextAndCaret(sample, file: file, line: line)
+  }
+
+  private func assertEditorContainsTextAndCaret(_ sample: Sample,
+    file: StaticString = #filePath, line: UInt = #line) {
+    print("Native editor: frame=\(sample.editorFrame), caret=\(String(describing: sample.caretFrame)), text=\(String(describing: sample.editorTextBounds)), fontLineHeight=\(String(describing: sample.editorFontLineHeight)), textContainerInset=\(String(describing: sample.editorTextContainerInset)), contentInset=\(String(describing: sample.editorContentInset)), contentSize=\(String(describing: sample.editorContentSize)), contentOffset=\(String(describing: sample.editorContentOffset))")
+    guard let caret = sample.caretFrame, let fontLineHeight = sample.editorFontLineHeight else {
+      XCTFail("Actual native caret and font line height must be available", file: file, line: line)
+      return
+    }
+    XCTAssertGreaterThan(fontLineHeight, 0, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(sample.editorFrame.height, fontLineHeight - sample.epsilon,
+      "The native editor must fit one full font line", file: file, line: line)
+    assertContained(sample.editorFrame, in: sample.footerFrame, epsilon: sample.epsilon,
+      label: "Native editor in composer", file: file, line: line)
+    assertContained(caret, in: sample.editorFrame, epsilon: sample.epsilon,
+      label: "Native caret in editor", file: file, line: line)
+    if sample.editorTextCount > 0 {
+      guard let textBounds = sample.editorTextBounds else {
+        XCTFail("Nonempty text must expose actual UITextInput text rectangles", file: file, line: line)
+        return
+      }
+      assertContained(textBounds, in: sample.editorFrame, epsilon: sample.epsilon,
+        label: "Native text in editor", file: file, line: line)
+    }
+  }
+
+  private func assertContained(_ inner: Rect, in outer: Rect, epsilon: Double, label: String,
+    file: StaticString = #filePath, line: UInt = #line) {
+    XCTAssertGreaterThanOrEqual(inner.x, outer.x - epsilon, label + " left edge", file: file, line: line)
+    XCTAssertLessThanOrEqual(inner.maxX, outer.maxX + epsilon, label + " right edge", file: file, line: line)
+    XCTAssertGreaterThanOrEqual(inner.y, outer.y - epsilon, label + " top edge", file: file, line: line)
+    XCTAssertLessThanOrEqual(inner.maxY, outer.maxY + epsilon, label + " bottom edge", file: file, line: line)
+  }
+
+  private func sendBottomInset(_ app: XCUIApplication, sample: Sample) -> Double {
+    sample.footerFrame.maxY - Double(productionSendButtons(app).firstMatch.frame.maxY)
+  }
+
+  private func assertSendRemainsInBottomRow(_ app: XCUIApplication, sample: Sample, expectedBottomInset: Double,
+    file: StaticString = #filePath, line: UInt = #line) {
+    assertComposerBounds(app, sample: sample, file: file, line: line)
+    let actual = sendBottomInset(app, sample: sample)
+    print("Composer bottom row: sendFrame=\(productionSendButtons(app).firstMatch.frame), footer=\(sample.footerFrame), bottomInset=\(actual)")
+    XCTAssertEqual(actual, expectedBottomInset, accuracy: 1.5,
+      "Growing content must retain the Send target's bottom inset", file: file, line: line)
+  }
+
   private enum Edge { case top, bottom }
   private enum DragSurface: String { case center, gutter }
 
-  private func launchFixture(short: Bool = false) throws -> XCUIApplication {
+  private func launchFixture(short: Bool = false, alignmentScenario: String? = nil) throws -> XCUIApplication {
     let app = XCUIApplication()
     // This is the launch-only argument domain, never a persistent defaults edit.
     app.launchArguments = ["--messages-viewport-validation-fixture", "-defaultComposerLanguage", "en"]
       + (short ? ["--messages-viewport-short"] : [])
+    if let alignmentScenario {
+      app.launchArguments += ["--messages-composer-alignment", "--messages-composer-scenario=" + alignmentScenario]
+    }
     app.launch()
     XCTAssertTrue(app.descendants(matching: .any)["messages.fixture.geometry"].firstMatch.waitForExistence(timeout: 8))
     let sample = try waitForSample(app) { $0.ready && $0.isSettled }
@@ -199,7 +478,11 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     let send = sends.firstMatch
     XCTAssertTrue(send.waitForExistence(timeout: 5), "The real production Send button must exist")
     XCTAssertEqual(sends.count, 1, "Exactly one real production Send button must exist")
-    assertSendingBlocked(app, sample: sample)
+    if alignmentScenario == nil {
+      assertSendingBlocked(app, sample: sample)
+    } else {
+      XCTAssertEqual(sample.sendCallbackCount, 0)
+    }
     return app
   }
 
@@ -241,6 +524,33 @@ final class MessagesViewportFixtureUITests: XCTestCase {
         key = lower.exists ? lower : keyboard.keys[String(character).uppercased()]
       }
       XCTAssertTrue(key.waitForExistence(timeout: 2), "Missing software key for \(character.debugDescription)")
+      key.tap()
+    }
+    XCTAssertTrue(keyboard.exists, "The software keyboard must remain presented after typing")
+  }
+
+  /// Unlike the general viewport helper, preserve lowercase even at sentence start.
+  /// This reproduces the reported "g" through actual software keys, without hardware events.
+  private func typeExactLowercaseOnSoftwareKeyboard(_ text: String, app: XCUIApplication) {
+    let keyboard = app.keyboards.firstMatch
+    XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Requires a real software keyboard")
+    for character in text {
+      if character == "\n" || character == " " {
+        typeOnSoftwareKeyboard(String(character), app: app)
+        continue
+      }
+      let letter = String(character)
+      let key = keyboard.keys.matching(NSPredicate(format: "label == %@", letter)).firstMatch
+      let uppercaseKey = keyboard.keys.matching(NSPredicate(format: "label == %@", letter.uppercased())).firstMatch
+      if !key.exists && uppercaseKey.exists {
+        let shiftPredicate = NSPredicate(format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@", "shift", "shift")
+        let shiftButton = keyboard.buttons.matching(shiftPredicate).firstMatch
+        let shift = shiftButton.exists ? shiftButton : keyboard.keys.matching(shiftPredicate).firstMatch
+        XCTAssertTrue(shift.waitForExistence(timeout: 2), "Requires the actual software Shift control")
+        XCTAssertTrue(shift.isHittable)
+        shift.tap()
+      }
+      XCTAssertTrue(key.waitForExistence(timeout: 2), "Missing lowercase software key for \(letter)")
       key.tap()
     }
     XCTAssertTrue(keyboard.exists, "The software keyboard must remain presented after typing")
@@ -512,8 +822,12 @@ final class MessagesViewportFixtureUITests: XCTestCase {
       width = Double(rect.width); height = Double(rect.height)
     }
     var maxY: Double { y + height }
+    var maxX: Double { x + width }
+    var midY: Double { y + height / 2 }
   }
   private struct Point: Decodable { let x: Double, y: Double }
+  private struct Insets: Decodable { let top: Double, left: Double, bottom: Double, right: Double }
+  private struct Size: Decodable { let width: Double, height: Double }
   private struct GestureRecognizer: Decodable { let identity: String; let isCollectionPan: Bool }
   private struct GestureView: Decodable { let identity: String }
   private struct GestureState: Decodable { let identity: String; let state: String }
@@ -544,6 +858,13 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     let scale: Double
     let collectionIdentity: String, editorIdentity: String?
     let collectionFrame: Rect, footerFrame: Rect, editorFrame: Rect
+    let caretFrame: Rect?
+    let editorFontLineHeight: Double?
+    let editorTextContainerInset: Insets?
+    let editorContentInset: Insets?
+    let editorContentSize: Size?
+    let editorContentOffset: Point?
+    let editorTextBounds: Rect?
     let editorIsFirstResponder: Bool
     let editorTextCount: Int
     let contentHeight: Double, offsetY: Double, legalTop: Double, legalBottom: Double

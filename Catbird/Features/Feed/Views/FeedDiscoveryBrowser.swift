@@ -39,6 +39,7 @@ struct FeedDiscoveryBrowser: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(platformColor: .platformSystemBackground))
+    .accessibilityElement(children: .contain)
     .accessibilityIdentifier("feed.discovery.browser")
     .searchable(text: $model.query, prompt: "Search feeds")
     .onSubmit(of: .search) { model.submit() }
@@ -90,6 +91,8 @@ struct FeedDiscoveryBrowser: View {
 extension FeedDiscoveryBrowser {
   @ViewBuilder private var feedPages: some View {
     #if os(iOS)
+    // Pages stay above the bottom search field: a paged TabView hides its scroll
+    // views from the bar, so content under it would get no scroll-edge effect.
     TabView(selection: selection) {
       ForEach(model.items) { feed in
         feedPage(feed).tag(feed.id)
@@ -110,19 +113,28 @@ extension FeedDiscoveryBrowser {
       .accessibilityLabel("Previous feed")
       .accessibilityIdentifier("feed.discovery.previous")
 
-      Picker("Feed", selection: selection) {
-        ForEach(model.items) { feed in
-          Label {
-            Text(feed.displayName)
-          } icon: {
-            Image(systemName: appState.feedLibraryActions.membership(for: feed.uri) == .absent
-                  ? "square.stack" : "checkmark.circle.fill")
+      // The resting label is just the feed name; library status lives in the summary.
+      Menu {
+        Picker("Feed", selection: selection) {
+          ForEach(model.items) { feed in
+            Label(feed.displayName, systemImage: membershipSymbol(for: feed)).tag(feed.id)
           }
-          .tag(feed.id)
         }
+      } label: {
+        HStack(spacing: 4) {
+          Text(selectedFeed?.displayName ?? "")
+            .appFont(AppTextRole.headline)
+            .lineLimit(1)
+          Image(systemName: "chevron.up.chevron.down")
+            .appFont(AppTextRole.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+        }
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .contentShape(Rectangle())
       }
-      .pickerStyle(.menu)
-      .frame(maxWidth: .infinity, minHeight: 44)
+      .accessibilityLabel("Feed")
       .accessibilityIdentifier("feed.discovery.selection")
       .accessibilityValue(selectionAccessibilityValue)
 
@@ -134,22 +146,34 @@ extension FeedDiscoveryBrowser {
       .accessibilityIdentifier("feed.discovery.next")
     }
     .buttonStyle(.borderless)
-    .padding(.horizontal, 8)
+    .padding(.horizontal, 4)
+  }
+
+  private func membershipSymbol(for feed: AppBskyFeedDefs.GeneratorView) -> String {
+    switch appState.feedLibraryActions.membership(for: feed.uri) {
+    case .absent: return "square.stack"
+    case .saved: return "checkmark"
+    case .pinned: return "pin.fill"
+    }
   }
 
   private func feedPage(_ feed: AppBskyFeedDefs.GeneratorView) -> some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 0) {
         selectedIdentity(feed)
-          .padding(12)
+          .padding(.horizontal, 12)
+          .padding(.top, 10)
+          .padding(.bottom, 6)
           .id(headerAnchor(feed))
         Divider()
-        Text("Recent posts")
-          .appFont(AppTextRole.subheadline)
+        Text("Recent Posts")
+          .appFont(AppTextRole.footnote)
+          .fontWeight(.semibold)
           .foregroundStyle(.secondary)
           .accessibilityAddTraits(.isHeader)
           .padding(.horizontal, 12)
-          .padding(.vertical, 8)
+          .padding(.top, 8)
+          .padding(.bottom, 2)
         recentPosts(feed)
         if selectedFeed?.id == feed.id { pagingStatus.padding(12) }
       }
@@ -164,8 +188,23 @@ extension FeedDiscoveryBrowser {
   }
 
   private func selectedIdentity(_ feed: AppBskyFeedDefs.GeneratorView) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      FeedDiscoveryIdentity(feed: feed)
+    VStack(alignment: .leading, spacing: 6) {
+      // The summary itself opens Details, so the action row holds only real actions.
+      Button { onDetails(feed) } label: {
+        HStack(alignment: .center, spacing: 8) {
+          FeedDiscoveryIdentity(feed: feed)
+          Image(systemName: "chevron.forward")
+            .appFont(AppTextRole.footnote)
+            .fontWeight(.semibold)
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("\(feed.displayName), by @\(feed.creator.handle.description)")
+      .accessibilityHint("Shows the full description and creator")
+      .accessibilityIdentifier("feed.discovery.details")
       if let description = feed.description, !description.isEmpty {
         Text(description)
           .appFont(AppTextRole.subheadline)
@@ -173,20 +212,22 @@ extension FeedDiscoveryBrowser {
           .lineLimit(2)
       }
       let layout = dynamicTypeSize.isAccessibilitySize
-        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-        : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
       layout {
+        // Library status (Add, Saved or Pinned) is a stateful control; Open Feed navigates.
         // A neighboring page may be visible mid-swipe, but cannot mutate a feed.
-        FeedLibraryControls(feed: feed, onOpen: { onOpen(feed) })
+        FeedLibraryControls(feed: feed, onOpen: { onOpen(feed) }, minimumLabelHeight: 30,
+                           statusChip: true)
+          .buttonBorderShape(.capsule)
           .id(feed.id)
-        Button { onDetails(feed) } label: {
-          Text("Details").frame(minHeight: 44)
+        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+        Button { onOpen(feed) } label: {
+          Label("Open Feed", systemImage: "arrow.up.forward")
+            .frame(minHeight: 44)
         }
-        .accessibilityLabel("Full description and creator")
-        .accessibilityIdentifier("feed.discovery.details")
-        Button("Open Feed") { onOpen(feed) }
-          .frame(minHeight: 44)
-          .accessibilityIdentifier("feed.discovery.open")
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier("feed.discovery.open")
       }
       .disabled(selectedFeed?.id != feed.id)
     }
@@ -213,7 +254,7 @@ extension FeedDiscoveryBrowser {
         ForEach(preview.posts, id: \.id) { post in
           VStack(spacing: 0) {
             EnhancedFeedPost(feedViewPost: post, path: $path, isReadOnly: true)
-              .padding(.horizontal, 8)
+              .padding(.horizontal, 4)
             Divider()
           }
           .id(postAnchor(post))

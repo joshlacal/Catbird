@@ -64,7 +64,6 @@ final class FeedPostViewModel {
     var showingShareSheet = false
     var showingReportSheet = false
     var showingMuteSheet = false
-    var isBlurred = false
     var showingFullText = false
     
     /// Interaction state
@@ -81,7 +80,6 @@ final class FeedPostViewModel {
     /// Cached computed properties for performance
     private var _displayText: String?
     private var _truncatedText: String?
-    private var _hasContentWarning: Bool?
     private var _authorDisplayName: String?
     private var _timeAgoString: String?
     private var _hasMedia: Bool?
@@ -104,11 +102,6 @@ final class FeedPostViewModel {
 
         // Initialize bookmark state from preferences
         self.isBookmarked = checkBookmarkState()
-
-        // Initialize content warning state
-        if hasContentWarning {
-            self.isBlurred = true
-        }
 
         logger.debug("FeedPostViewModel initialized for post: \(post.id)")
     }
@@ -173,17 +166,6 @@ final class FeedPostViewModel {
             : text
         _truncatedText = truncated
         return truncated
-    }
-    
-    /// Whether the post has content warnings
-    var hasContentWarning: Bool {
-        if let cached = _hasContentWarning {
-            return cached
-        }
-        
-        let hasWarning = detectContentWarning()
-        _hasContentWarning = hasWarning
-        return hasWarning
     }
     
     /// Author display name with caching
@@ -315,13 +297,6 @@ final class FeedPostViewModel {
         showingMuteSheet = true
         trackInteraction()
         logger.debug("Showing mute sheet for post: \(self.post.id)")
-    }
-    
-    /// Toggles content blur state
-    func toggleContentBlur() {
-        isBlurred.toggle()
-        trackInteraction()
-        logger.debug("Content blur toggled for post: \(self.post.id)")
     }
     
     /// Toggles full text display
@@ -574,7 +549,6 @@ final class FeedPostViewModel {
         _cachedFeedViewPost = nil
         _displayText = nil
         _truncatedText = nil
-        _hasContentWarning = nil
         _authorDisplayName = nil
         _timeAgoString = nil
         _hasMedia = nil
@@ -614,20 +588,6 @@ final class FeedPostViewModel {
         return false
     }
 
-    /// Detects if the post has content warnings based on labels
-    private func detectContentWarning() -> Bool {
-        guard let fvp = feedViewPost else { return false }
-
-        // Check post labels - these apply to both the post and embedded content
-        if let labels = fvp.post.labels,
-           !labels.isEmpty {
-            return ContentLabelManager<AnyView>.getContentVisibility(labels: labels) == .warn
-        }
-        
-        return false
-    }
-    
-    
     /// Formats date as time ago string
     private func formatTimeAgo(from iso8601String: String) -> String {
         let formatter = ISO8601DateFormatter()

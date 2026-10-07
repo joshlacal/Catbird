@@ -1,8 +1,36 @@
 import AVFoundation
 import NukeUI
+import Observation
 import OSLog
 import Petrel
 import SwiftUI
+
+#if DEBUG
+private struct ChatPresentationFixtureRecordsKey: EnvironmentKey {
+  static let defaultValue: [String: AppBskyEmbedRecord.ViewRecordUnion] = [:]
+}
+
+extension EnvironmentValues {
+  /// Explicit local presentation fixtures supply resolved records without account services.
+  var chatPresentationFixtureRecords: [String: AppBskyEmbedRecord.ViewRecordUnion] {
+    get { self[ChatPresentationFixtureRecordsKey.self] }
+    set { self[ChatPresentationFixtureRecordsKey.self] = newValue }
+  }
+}
+
+@MainActor @Observable
+final class ChatPresentationFixtureRecordStore {
+  var records: [String: AppBskyEmbedRecord.ViewRecordUnion] = [:]
+}
+
+struct ChatPresentationFixtureRecordsModifier: ViewModifier {
+  let store: ChatPresentationFixtureRecordStore
+
+  func body(content: Content) -> some View {
+    content.environment(\.chatPresentationFixtureRecords, store.records)
+  }
+}
+#endif
 
 /// Renders different embed types in chat messages
 struct UnifiedEmbedView: View {
@@ -464,6 +492,9 @@ private struct RecordEmbedContainer: View {
 
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  #if DEBUG
+  @Environment(\.chatPresentationFixtureRecords) private var fixtureRecords
+  #endif
 
   @State private var record: AppBskyEmbedRecord.ViewRecordUnion?
   @State private var isLoading = false
@@ -478,15 +509,29 @@ private struct RecordEmbedContainer: View {
       && !appState.isTransitioningAccounts
   }
 
+  private var suppliedFixtureRecord: AppBskyEmbedRecord.ViewRecordUnion? {
+    #if DEBUG
+    return fixtureRecords[uriString]
+    #else
+    return nil
+    #endif
+  }
+
+  private var displayedRecord: AppBskyEmbedRecord.ViewRecordUnion? {
+    if let suppliedFixtureRecord { return suppliedFixtureRecord }
+    guard isActiveAccount else { return nil }
+    return record ?? ChatRecordEmbedStore.shared.cachedRecord(uri: uriString, appState: appState)
+  }
+
   var body: some View {
     Group {
       // Render warm data on the first sizing pass, before the task starts.
-      if !isActiveAccount {
-        EmptyView()
-      } else if let record = record ?? ChatRecordEmbedStore.shared.cachedRecord(uri: uriString, appState: appState) {
-        RecordEmbedView(record: record, labels: nil, path: $navigationPath)
+      if let record = displayedRecord {
+        RecordEmbedView(record: record, path: $navigationPath)
           .environment(\.postID, uriString)
           .foregroundStyle(.primary)
+      } else if !isActiveAccount {
+        EmptyView()
       } else if isUnavailable {
         unavailableView
       } else if loadFailed {
@@ -496,7 +541,7 @@ private struct RecordEmbedContainer: View {
       }
     }
     .task {
-      if record == nil {
+      if record == nil, suppliedFixtureRecord == nil {
         await loadRecord()
       }
     }

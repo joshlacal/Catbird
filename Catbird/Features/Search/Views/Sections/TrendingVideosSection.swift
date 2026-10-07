@@ -26,6 +26,7 @@ public struct TrendingVideosSection: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.fontManager) private var fontManager
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.moderationPolicy) private var moderationPolicy
   @ScaledMetric(relativeTo: .caption) private var authorLineHeight: CGFloat = 18
 
   public static let thevidsURI = VideoFeedView.thevidsURI
@@ -56,7 +57,14 @@ public struct TrendingVideosSection: View {
     return min(24, max(16, lineHeight))
   }
 
+  /// The previews the account's policy lets the carousel list. The policy comes
+  /// from the environment, so a policy change re-filters the loaded set in place.
+  private var visibleVideos: [AppBskyFeedDefs.FeedViewPost] {
+    TrendingVideoModeration.listed(videos, policy: moderationPolicy)
+  }
+
   public var body: some View {
+    let videos = visibleVideos
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
       DiscoverySectionHeader(
         "Trending Videos",
@@ -82,12 +90,12 @@ public struct TrendingVideosSection: View {
         .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
         .padding(.horizontal, 16)
       } else {
-        carouselView
+        carouselView(videos)
       }
     }
   }
 
-  private var carouselView: some View {
+  private func carouselView(_ videos: [AppBskyFeedDefs.FeedViewPost]) -> some View {
     ScrollView(.horizontal, showsIndicators: false) {
       LazyHStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
         ForEach(videos, id: \.post.uri) { feedViewPost in
@@ -102,15 +110,21 @@ public struct TrendingVideosSection: View {
   }
 
   private func videoCard(_ post: AppBskyFeedDefs.PostView) -> some View {
-    let thumbnailURL = extractVideoThumbnailURL(from: post)
-    let altText = extractVideoAltText(from: post)
+    // A covered thumbnail is neither requested nor drawn; the card shows the
+    // cause instead and the pager it opens offers Show where allowed.
+    let cover = TrendingVideoModeration.thumbnailUI(for: post, policy: moderationPolicy)
+    let thumbnailURL = cover.blur ? nil : TrendingVideoModeration.videoThumbnailURL(in: post)
+    let altText = cover.blur ? nil : TrendingVideoModeration.videoAltText(in: post)
     let authorName = post.author.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
     let author = authorName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(post.author.handle)"
+    let coverTitle = cover.blur ? ModerationPresentation.title(for: cover) : nil
 
     return Button { onSelectPost(post) } label: {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
         ZStack(alignment: .bottomLeading) {
-          if let url = thumbnailURL {
+          if let coverTitle {
+            coveredThumbnail(title: coverTitle)
+          } else if let url = thumbnailURL {
             LazyImage(request: TrendingTopicImageRequests.request(url,
               size: CGSize(width: cardWidth, height: presentation.thumbnailHeight), displayScale: displayScale, priority: .normal)) { state in
               if let image = state.image {
@@ -129,13 +143,15 @@ public struct TrendingVideosSection: View {
         .frame(width: cardWidth, height: presentation.thumbnailHeight)
         .clipped()
         .overlay(alignment: .bottomLeading) {
-          Image(systemName: "play.fill")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(width: 28, height: 28)
-            .background(.black.opacity(0.65), in: Circle())
-            .padding(8)
-            .accessibilityHidden(true)
+          if coverTitle == nil {
+            Image(systemName: "play.fill")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.white)
+              .frame(width: 28, height: 28)
+              .background(.black.opacity(0.65), in: Circle())
+              .padding(8)
+              .accessibilityHidden(true)
+          }
         }
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
 
@@ -145,8 +161,29 @@ public struct TrendingVideosSection: View {
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel("Video by \(author)\(altText.map { ", \($0)" } ?? "")")
+    .accessibilityLabel("Video by \(author)\((coverTitle ?? altText).map { ", \($0)" } ?? "")")
     .accessibilityHint("Play this video in The Vids")
+  }
+
+  /// The thumbnail area of a moderated preview: the cause's name over the
+  /// neutral fill, with no media and no play badge.
+  private func coveredThumbnail(title: String) -> some View {
+    Rectangle()
+      .fill(Color.secondary.opacity(0.12))
+      .overlay {
+        VStack(spacing: DesignTokens.Spacing.xs) {
+          Image(systemName: "eye.slash.fill")
+            .font(.title2)
+            .foregroundStyle(.secondary)
+          Text(title)
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+      }
+      .accessibilityIdentifier("moderation.trendingVideoCover")
   }
 
   /// Small avatar beside the creator's name; the row keeps the fixed author height.
@@ -155,6 +192,7 @@ public struct TrendingVideosSection: View {
       AsyncProfileImage(
         url: post.author.finalAvatarURL(),
         size: authorAvatarSize,
+        did: post.author.did.didString(),
         labels: post.author.labels
       )
       .accessibilityHidden(true)
@@ -177,47 +215,5 @@ public struct TrendingVideosSection: View {
           .font(.title2)
           .foregroundStyle(.secondary)
       }
-  }
-
-  private func extractVideoThumbnailURL(from post: AppBskyFeedDefs.PostView) -> URL? {
-    if let embed = post.embed {
-      switch embed {
-      case .appBskyEmbedVideoView(let videoView):
-        if let thumb = videoView.thumbnail?.uriString() {
-          return URL(string: thumb)
-        }
-      case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-        switch recordWithMedia.media {
-        case .appBskyEmbedVideoView(let videoView):
-          if let thumb = videoView.thumbnail?.uriString() {
-            return URL(string: thumb)
-          }
-        default:
-          break
-        }
-      default:
-        break
-      }
-    }
-    return nil
-  }
-
-  private func extractVideoAltText(from post: AppBskyFeedDefs.PostView) -> String? {
-    if let embed = post.embed {
-      switch embed {
-      case .appBskyEmbedVideoView(let videoView):
-        return videoView.alt
-      case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-        switch recordWithMedia.media {
-        case .appBskyEmbedVideoView(let videoView):
-          return videoView.alt
-        default:
-          break
-        }
-      default:
-        break
-      }
-    }
-    return nil
   }
 }

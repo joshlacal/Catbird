@@ -384,7 +384,9 @@ struct StarterPackView: View {
     
     private func headerView(_ pack: AppBskyGraphDefs.StarterPackView) -> some View {
         HStack(spacing: 16) {
-            AsyncProfileImage(url: URL(string: pack.creator.avatar?.uriString() ?? ""), size: 54)
+            AsyncProfileImage(
+                url: URL(string: pack.creator.avatar?.uriString() ?? ""), size: 54,
+                did: pack.creator.did.didString(), labels: pack.creator.labels)
                 .padding(.leading)
             
             VStack(alignment: .leading, spacing: 4) {
@@ -656,7 +658,9 @@ struct StarterPackView: View {
                     path.append(NavigationDestination.profile(didString))
                 } label: {
                     HStack(spacing: 12) {
-                        AsyncProfileImage(url: URL(string: subject.avatar?.uriString() ?? ""), size: 44)
+                        AsyncProfileImage(
+                            url: URL(string: subject.avatar?.uriString() ?? ""), size: 44,
+                            did: didString, labels: subject.labels)
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text(subject.displayName ?? "@\(subject.handle)")

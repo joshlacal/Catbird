@@ -48,8 +48,8 @@ struct VideoPlaybackCallerTests {
     let playCountWhenPaused = players[0].playCount
     response.complete(with: [.init(post: refreshed)])
 
-    // Wait for the actual new ContentLabelManager/PlayerLayerView onAppear,
-    // not only the merged array or changed moderation key.
+    // Wait for the actual new PlayerLayerView onAppear, not only the merged
+    // array or changed moderation key.
     try await eventually { visibleIdentity == refreshedIdentity }
     await settle(window)
     #expect(!pool.wantsPlayback)
@@ -57,10 +57,14 @@ struct VideoPlaybackCallerTests {
     #expect(players[0].timeControlStatus == .paused)
   }
 
-  @Test("Delayed Show honors the selected video's request across a moderation hold", arguments: [
+  /// A refreshed item that the policy covers pauses the selected video without
+  /// touching its request; when the policy later stops covering it (as a
+  /// preference refresh republishes `AppState.moderationPolicy`), playback
+  /// follows the request that was in force.
+  @Test("A moderation cover pauses the selected video and a policy change honors its request", arguments: [
     (true, false), (false, false), (false, true)
   ])
-  func delayedShowRespectsIntent(warnedSeed: Bool, explicitlyPaused: Bool) async throws {
+  func moderationCoverRespectsIntent(warnedSeed: Bool, explicitlyPaused: Bool) async throws {
     let seed = try videoPost(label: warnedSeed ? "nudity" : nil)
     let refreshed = try videoPost(label: "nudity")
     let refreshedIdentity = try #require(VideoFeedItem(post: refreshed)).revealIdentity
@@ -70,24 +74,19 @@ struct VideoPlaybackCallerTests {
     }
     let intent = VideoFeedPlaybackIntent()
     let response = DelayedVideoFeedResponse()
-    let preferences = DelayedVideoVisibility()
+    let policy = PolicyBox(Self.policy(nudity: .warn))
     var visibleIdentity: VideoFeedItem.RevealIdentity?
     let view = VideoFeedView(
       initialPost: seed,
       playerPool: pool,
       playbackIntent: intent,
       feedLoader: { _ in await response.wait() },
-      contentVisibilityObserver: { visibleIdentity = $0.revealIdentity },
-      moderationResolver: { labels, _ in
-        if labels.contains(where: { $0.val == "nudity" }) { return await preferences.wait() }
-        return .show
-      }
+      contentVisibilityObserver: { visibleIdentity = $0.revealIdentity }
     )
     let appState = try await fixtureAppState()
-    let window = host(view.environment(appState).environment(\.scenePhase, .active))
+    let window = host(PolicyHost(box: policy, content: view.environment(appState).environment(\.scenePhase, .active)))
     defer {
       response.complete(with: [])
-      preferences.complete(with: .warn)
       window.isHidden = true
       window.rootViewController = nil
       pool.cleanup()
@@ -99,16 +98,21 @@ struct VideoPlaybackCallerTests {
         intent.setPlaybackRequested(false, for: seed.uri.uriString())
         try await eventually { !pool.wantsPlayback }
       }
+    } else {
+      // Covered from the first render: nothing is requested of the pool.
+      #expect(!pool.wantsPlayback)
     }
     let previousPlayCount = players[0].playCount
     response.complete(with: [.init(post: refreshed)])
-    try await eventually { preferences.isWaiting && !pool.wantsPlayback }
+    try await eventually { !pool.wantsPlayback }
+    await settle(window)
     #expect(intent.requestsPlayback(for: seed.uri.uriString()) == !explicitlyPaused)
     #expect(pool.activeFeedIndex == 0)
+    #expect(players[0].playCount == previousPlayCount)
+    #expect(visibleIdentity != refreshedIdentity, "a covered item never attaches its player")
 
-    // Resolve the real warning manager's asynchronous visibility path using the
-    // existing Show preference mapping; no new content policy is introduced.
-    preferences.complete(with: ContentVisibility(fromPreference: "ignore"))
+    // The viewer's settings change so nudity is no longer covered.
+    policy.policy = Self.policy(nudity: .ignore)
     try await eventually { visibleIdentity == refreshedIdentity }
     await settle(window)
     #expect(intent.selectedItemID == seed.uri.uriString())
@@ -121,6 +125,58 @@ struct VideoPlaybackCallerTests {
       #expect(players[0].playCount > previousPlayCount)
       #expect(players[0].timeControlStatus == .playing)
     }
+  }
+
+  /// The mirror case: a video that autoplayed because its label was shown is
+  /// paused and loses its player once the policy covers that label. The
+  /// player's appearance was never a reveal, so the cover wins.
+  @Test("A policy change that covers the playing video pauses it and detaches the player")
+  func policyChangeCoversPlayingVideo() async throws {
+    let seed = try videoPost(label: "nudity")
+    let seedIdentity = try #require(VideoFeedItem(post: seed)).revealIdentity
+    let players = (0..<3).map { _ in CallerFixturePlayer() }
+    let pool = VideoFeedPlayerPool(players: players, audioSession: CallerFixtureAudioSession()) { _ in
+      CallerFixtureItem()
+    }
+    let intent = VideoFeedPlaybackIntent()
+    let response = DelayedVideoFeedResponse()
+    let policy = PolicyBox(Self.policy(nudity: .ignore))
+    var visibleIdentity: VideoFeedItem.RevealIdentity?
+    var appearances = 0
+    let view = VideoFeedView(
+      initialPost: seed,
+      playerPool: pool,
+      playbackIntent: intent,
+      feedLoader: { _ in await response.wait() },
+      contentVisibilityObserver: { visibleIdentity = $0.revealIdentity; appearances += 1 }
+    )
+    let appState = try await fixtureAppState()
+    let window = host(PolicyHost(box: policy, content: view.environment(appState).environment(\.scenePhase, .active)))
+    defer {
+      response.complete(with: [])
+      window.isHidden = true
+      window.rootViewController = nil
+      pool.cleanup()
+    }
+    try await eventually { visibleIdentity == seedIdentity && pool.wantsPlayback }
+    #expect(players[0].timeControlStatus == .playing)
+    let appearancesWhilePlaying = appearances
+
+    // The viewer's settings change so nudity is covered.
+    policy.policy = Self.policy(nudity: .warn)
+    try await eventually { !pool.wantsPlayback }
+    await settle(window)
+    #expect(players[0].timeControlStatus == .paused)
+    #expect(intent.requestsPlayback(for: seed.uri.uriString()), "the cover does not cancel the viewer's request")
+    #expect(appearances == appearancesWhilePlaying, "no player appeared while covered")
+
+    // Showing nudity again attaches a new player, which proves the covered
+    // one had been detached, and the pending request resumes.
+    policy.policy = Self.policy(nudity: .ignore)
+    try await eventually { appearances > appearancesWhilePlaying }
+    try await eventually { pool.wantsPlayback }
+    #expect(visibleIdentity == seedIdentity)
+    #expect(players[0].timeControlStatus == .playing)
   }
 
   @Test("Modern player setup preserves the same model across player recreation", arguments: [false, true])
@@ -182,6 +238,18 @@ struct VideoPlaybackCallerTests {
     return AppState(userDID: "did:plc:videocallerfixture", client: client)
   }
 
+  /// Adult content on, with the viewer's global `nudity` preference.
+  private static func policy(nudity: LabelPreference) -> ModerationPolicy {
+    ModerationPolicy(
+      accountDID: "did:plc:videocallerfixture",
+      serverAdultContentEnabled: true,
+      contentLabelPrefs: [ContentLabelPreference(labelerDid: nil, label: "nudity", visibility: nudity.rawValue)],
+      labelerDIDs: [],
+      labelerDefinitions: [:],
+      isConfirmed: true)
+  }
+
+  /// A post by the viewer. Its label is a self-label, which the policy trusts.
   private func videoPost(label: String?) throws -> AppBskyFeedDefs.PostView {
     let uri = try ATProtocolURI(uriString: "at://did:plc:videocallerfixture/app.bsky.feed.post/selected")
     let base = PublicPostTestFixtures.makePostView(uri: uri, authorDID: try DID(didString: "did:plc:videocallerfixture"))
@@ -222,6 +290,24 @@ struct VideoPlaybackCallerTests {
 
 private enum CallerFixtureError: Error { case timeout }
 
+/// The policy the hosted view reads, changeable from the test like a
+/// preference refresh changes `AppState.moderationPolicy`.
+@MainActor
+@Observable
+private final class PolicyBox {
+  var policy: ModerationPolicy
+  init(_ policy: ModerationPolicy) { self.policy = policy }
+}
+
+private struct PolicyHost<Content: View>: View {
+  let box: PolicyBox
+  let content: Content
+
+  var body: some View {
+    content.environment(\.moderationPolicy, box.policy)
+  }
+}
+
 @MainActor
 private final class DelayedVideoFeedResponse {
   private var continuation: CheckedContinuation<([AppBskyFeedDefs.FeedViewPost], String?), Never>?
@@ -234,25 +320,6 @@ private final class DelayedVideoFeedResponse {
   func complete(with posts: [AppBskyFeedDefs.FeedViewPost]) {
     continuation?.resume(returning: (posts, nil))
     continuation = nil
-  }
-}
-
-@MainActor
-private final class DelayedVideoVisibility {
-  private var continuations: [CheckedContinuation<ContentVisibility, Never>] = []
-  private var resolvedVisibility: ContentVisibility?
-  var isWaiting: Bool { !continuations.isEmpty }
-
-  func wait() async -> ContentVisibility {
-    if let resolvedVisibility { return resolvedVisibility }
-    return await withCheckedContinuation { continuations.append($0) }
-  }
-
-  func complete(with visibility: ContentVisibility) {
-    resolvedVisibility = visibility
-    let pending = continuations
-    continuations.removeAll()
-    for continuation in pending { continuation.resume(returning: visibility) }
   }
 }
 

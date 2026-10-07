@@ -3,6 +3,14 @@ import OSLog
 import Petrel
 import SwiftUI
 
+/// Source-account recovery must not finish a different account's sign-in.
+enum LoginAuthenticationCompletionPolicy {
+    nonisolated static func accepts(_ state: AuthState, reauthenticationDID: String?) -> Bool {
+        guard case .authenticated(let did) = state else { return false }
+        return reauthenticationDID == nil || did == reauthenticationDID
+    }
+}
+
 struct LoginView: View {
     // MARK: - Properties
     /// Indicates if this LoginView is being used to add a new account (vs initial login or re-authentication)
@@ -52,6 +60,8 @@ struct LoginView: View {
     
     // Track if we've already started re-authentication to prevent multiple OAuth prompts
     @State private var hasStartedReAuthentication = false
+    // Capture the intended account independently of mutable global expiry state.
+    @State private var reauthenticationTargetDID: String?
     
     enum LoginProgress {
         case idle
@@ -380,6 +390,9 @@ struct LoginView: View {
                 authenticationTask?.cancel()
                 authenticationTask = nil
             } else if case .authenticated = newValue {
+                guard LoginAuthenticationCompletionPolicy.accepts(
+                    newValue, reauthenticationDID: reauthenticationTargetDID
+                ) else { return }
                 // Centralized auth state observation in AppStateManager handles transitionToAuthenticated and error recovery.
                 isLoggingIn = false
                 loginProgress = .idle
@@ -1178,6 +1191,7 @@ struct LoginView: View {
     
     private func startLogin() async {
         logger.info("Starting login for handle: \(handle)")
+        reauthenticationTargetDID = nil
         
         // Cancel any existing authentication task
         authenticationTask?.cancel()
@@ -1304,6 +1318,7 @@ struct LoginView: View {
     }
     
     private func startReAuthenticationForExpiredAccount(_ expiredAccount: AuthenticationManager.AccountInfo) async {
+        reauthenticationTargetDID = expiredAccount.did
         guard expiredAccount.loginHandle != nil else {
             logger.warning("Cannot automatically re-authenticate expired account without a saved handle")
             focusedField = .username
@@ -1439,6 +1454,7 @@ struct LoginView: View {
 
     private func startSignup(pdsURL: URL) async {
         logger.info("Starting signup with PDS URL: \(pdsURL.absoluteString)")
+        reauthenticationTargetDID = nil
         // New accounts get the welcome flow once they're signed in; existing accounts don't.
         NewAccountOnboardingMarker.markSignupStarted()
         

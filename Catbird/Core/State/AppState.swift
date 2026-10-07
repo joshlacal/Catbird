@@ -146,6 +146,19 @@ final class AppState {
         }
     }
 
+    /// What a successful label-definitions load covered: the subscribed labelers and the client.
+    /// It mirrors the identity `ContentLabelDefinitionLookup` caches by, so an unchanged key needs no load.
+    private struct ModerationDefinitionsKey: Equatable {
+        let labelerDIDs: [String]
+        let client: ObjectIdentifier
+    }
+
+    private struct ModerationDefinitionsLoad {
+        let id: UUID
+        let key: ModerationDefinitionsKey
+        let task: Task<Void, Never>
+    }
+
     // MARK: - Core Properties
 
     /// User DID for this AppState instance (one AppState per account)
@@ -179,8 +192,21 @@ final class AppState {
     /// Shared renderer for inline Bluemoji custom emoji (verify + forge + cache).
     @ObservationIgnored let bluemojiRenderer = BluemojiRenderer()
 
-    /// User preference settings
-    var isAdultContentEnabled: Bool = false
+    /// Moderation policy for this account, rebuilt by `refreshModerationPolicy()` from the account's
+    /// server-confirmed preferences and its subscribed labelers' label definitions. It starts fail-closed.
+    private(set) var moderationPolicy: ModerationPolicy = .failClosed
+
+    /// Whether adult content may be shown for this account. It is derived from `moderationPolicy`, so it
+    /// is never stored, restored or written anywhere else.
+    var isAdultContentEnabled: Bool { moderationPolicy.adultContentEnabled }
+
+    /// Last successfully loaded label value definitions of this account's subscribed labelers.
+    @ObservationIgnored private var moderationDefinitions: ContentLabelDefinitionLookup.Definitions = [:]
+    /// Subscribed labeler DIDs the current policy was built for, in subscription order.
+    @ObservationIgnored private var moderationLabelerDIDs: [String] = []
+    /// The labelers and client the last successful definitions load covered.
+    @ObservationIgnored private var loadedModerationDefinitionsKey: ModerationDefinitionsKey?
+    @ObservationIgnored private var moderationDefinitionsLoad: ModerationDefinitionsLoad?
 
 
     /// Current user's profile data for optimistic updates.
@@ -405,14 +431,6 @@ final class AppState {
 
         onboardingManager.configure(accountDID: userDID)
         nuxPresenter.configure(with: self)
-        // Load user settings
-        if let storedContentSetting = AppSettingsModel.boolValue(
-            for: "isAdultContentEnabled",
-            accountDID: userDID,
-            defaults: sharedDefaults
-        ) {
-            isAdultContentEnabled = storedContentSetting
-        }
 
         // Configure notification manager with app state reference (skip for FaultOrdering)
         notificationManager.configure(with: self)
@@ -442,6 +460,14 @@ final class AppState {
             guard let self else { return false }
             return self.accountServiceWork.start(operation: action) != nil
         }
+
+        // The moderation policy follows this account's stored preferences: every successful fetch and
+        // confirmed write rebuilds it. Until preferences are readable it is this account's fail-closed policy.
+        preferencesManager.storedPreferencesDidChange = { [weak self] accountDID in
+            guard let self, accountDID == self.userDID else { return }
+            self.refreshModerationPolicy()
+        }
+        refreshModerationPolicy()
 
         // Apply initial theme settings immediately from UserDefaults
         // This ensures proper theme is applied even before SwiftData is fully initialized
@@ -487,6 +513,10 @@ final class AppState {
         settingsUpdateDebounceTimer = nil
         backgroundPollingTask?.cancel()
         backgroundPollingTask = nil
+        // The definitions load holds the settings account-I/O lease the drain below waits for. Cancel it
+        // before draining so its request aborts instead of running to the drain deadline.
+        moderationDefinitionsLoad?.task.cancel()
+        moderationDefinitionsLoad = nil
         try await suspendAccountPollers()
         try await accountServiceWork.drain()
         guard appSettings.flushPendingChangesForAccountSwitch(for: userDID) else {
@@ -617,6 +647,8 @@ final class AppState {
         // Cancel long-running tasks
         backgroundPollingTask?.cancel()
         backgroundPollingTask = nil
+        moderationDefinitionsLoad?.task.cancel()
+        moderationDefinitionsLoad = nil
 
         // Stop the list poller AND every per-conversation message poller; a
         // surviving message poll loop retains self and keeps polling with the
@@ -746,6 +778,8 @@ final class AppState {
     @MainActor
     func refreshAfterAccountSwitch() async {
         logger.info("Refreshing data after account switch")
+        // Before any network work, the policy becomes this account's own confirmed state (or fail-closed).
+        refreshModerationPolicy()
         isTransitioningAccounts = true
         platformAgeSignal = .none
 
@@ -899,14 +933,6 @@ final class AppState {
         // This is a safety mechanism, prefer not to use it
     }
 
-    // MARK: - User Settings
-
-    /// Toggles adult content setting
-    func toggleAdultContent() {
-        isAdultContentEnabled.toggle()
-        sharedDefaults.set(isAdultContentEnabled, forKey: scopedSharedDefaultsKey("isAdultContentEnabled"))
-    }
-
     // MARK: - Feed Methods
 
     /// Stores a prefetched feed for faster initial loading
@@ -1030,6 +1056,9 @@ final class AppState {
         preferencesManager.setModelContext(modelContext)
         appSettings.initialize(with: modelContext, accountDID: userDID)
         logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
+
+        // The persisted row is readable now: use this account's own confirmed preferences, if any.
+        refreshModerationPolicy()
 
         // Apply theme settings (now that SwiftData is available, this will use the persisted values)
         _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode, accentColor: appSettings.accentColor)
@@ -1408,6 +1437,8 @@ final class AppState {
         // Update all managers that hold client references
         postManager.updateClient(newClient)
         preferencesManager.updateClient(newClient)
+        // Re-read this account's own stored policy for the new client before any request uses it.
+        refreshModerationPolicy()
         graphManager = GraphManager(atProtoClient: newClient)
         // Token refresh / re-login: fresh hydrator so stale-token failures don't
         // poison the identity cache for the (unchanged) account.
@@ -1555,6 +1586,115 @@ final class AppState {
         stateInvalidationBus.notifyThreadUpdated(rootUri)
     }
 
+    // MARK: - Moderation Policy
+
+    /// Rebuilds `moderationPolicy` for this account from its server-confirmed preferences.
+    ///
+    /// The policy is built from the account's stored `Preferences` row only when that row belongs to
+    /// `userDID` and `hasConfirmedServerPreferences` is true: `adultContentEnabled`, `contentLabelPrefs`
+    /// and `labelers`. Without such a row it is this account's fail-closed policy: adult content off,
+    /// builtin label defaults, and only the Bluesky moderation service. A row that cannot be read leaves
+    /// an existing policy for this account in place and never borrows another account's value.
+    ///
+    /// Subscribed labelers' label definitions load in the background. The policy is built at once with the
+    /// last successful definitions and rebuilt when a load completes for the same labelers. A failed load
+    /// keeps those definitions.
+    @MainActor
+    func refreshModerationPolicy() {
+        guard let subscriptions = rebuildModerationPolicy() else { return }
+        loadModerationDefinitions(for: subscriptions)
+    }
+
+    /// Waits for the label-definitions load in flight, if any. The load never throws; a result that no
+    /// longer applies is dropped. Callers use this to sequence work after the background load.
+    @MainActor
+    func awaitModerationDefinitionsLoad() async {
+        await moderationDefinitionsLoad?.task.value
+    }
+
+    /// Returns the confirmed row's labeler subscriptions, or `nil` when the policy is fail-closed or kept.
+    @MainActor
+    @discardableResult
+    private func rebuildModerationPolicy() -> [LabelerPreference]? {
+        let stored: Preferences?
+        do {
+            stored = try preferencesManager.confirmedFeedFilterPreferences()
+        } catch {
+            logger.debug("Stored preferences are not readable yet: \(error.localizedDescription)")
+            if moderationPolicy.accountDID != userDID { applyModerationPolicy(failClosedModerationPolicy()) }
+            return nil
+        }
+        guard let stored, stored.accountDID == userDID else {
+            moderationLabelerDIDs = []
+            applyModerationPolicy(failClosedModerationPolicy())
+            return nil
+        }
+        let subscriptions = stored.labelers
+        let labelerDIDs = subscriptions.map { $0.did.didString() }
+        moderationLabelerDIDs = labelerDIDs
+        applyModerationPolicy(ModerationPolicy(
+            accountDID: userDID,
+            serverAdultContentEnabled: stored.adultContentEnabled,
+            contentLabelPrefs: stored.contentLabelPrefs,
+            labelerDIDs: labelerDIDs,
+            labelerDefinitions: moderationDefinitions,
+            isConfirmed: stored.hasConfirmedServerPreferences))
+        return subscriptions
+    }
+
+    private func failClosedModerationPolicy() -> ModerationPolicy {
+        ModerationPolicy(
+            accountDID: userDID,
+            serverAdultContentEnabled: false,
+            contentLabelPrefs: [],
+            labelerDIDs: [],
+            labelerDefinitions: [:],
+            isConfirmed: false)
+    }
+
+    @MainActor
+    private func applyModerationPolicy(_ policy: ModerationPolicy) {
+        guard policy != moderationPolicy else { return }
+        moderationPolicy = policy
+        NotificationCenter.default.post(
+            name: .moderationPolicyDidChange, object: nil, userInfo: ["accountDID": userDID])
+    }
+
+    @MainActor
+    private func loadModerationDefinitions(for subscriptions: [LabelerPreference]) {
+        let client = self.client
+        let key = ModerationDefinitionsKey(
+            labelerDIDs: subscriptions.map { $0.did.didString() }, client: ObjectIdentifier(client))
+        guard loadedModerationDefinitionsKey != key else { return }
+        if let load = moderationDefinitionsLoad, load.key == key, !load.task.isCancelled { return }
+        moderationDefinitionsLoad?.task.cancel()
+        moderationDefinitionsLoad = nil
+        // The lookup reads the subscriptions from a value it owns, so the stored row can change meanwhile.
+        let snapshot = Preferences(accountDID: userDID, labelers: subscriptions)
+        let id = UUID()
+        guard let task = startAccountTask(priority: .utility, operation: { [weak self] in
+            await self?.performModerationDefinitionsLoad(id: id, key: key, snapshot: snapshot, client: client)
+        }) else { return }
+        moderationDefinitionsLoad = ModerationDefinitionsLoad(id: id, key: key, task: task)
+    }
+
+    @MainActor
+    private func performModerationDefinitionsLoad(
+        id: UUID, key: ModerationDefinitionsKey, snapshot: Preferences, client: ATProtoClient
+    ) async {
+        defer { if moderationDefinitionsLoad?.id == id { moderationDefinitionsLoad = nil } }
+        do {
+            let definitions = try await ContentLabelDefinitionLookup.subscribedDefinitions(
+                appState: self, preferences: snapshot, client: client)
+            guard !Task.isCancelled, self.client === client, moderationLabelerDIDs == key.labelerDIDs else { return }
+            moderationDefinitions = definitions
+            loadedModerationDefinitionsKey = key
+            rebuildModerationPolicy()
+        } catch {
+            logger.error("Could not load labeler definitions for the moderation policy: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Content Filtering Helper
 
     /// Build FeedTunerSettings from current user preferences
@@ -1593,12 +1733,11 @@ final class AppState {
             hideLinks: filters.hideLinks,
             onlyTextPosts: filters.onlyTextPosts,
             onlyMediaPosts: filters.onlyMediaPosts,
-            contentLabelPreferences: preferences?.contentLabelPrefs ?? [],
-            hideAdultContent: !(preferences?.adultContentEnabled ?? isAdultContentEnabled),
             hiddenPosts: postHidingManager.hiddenPosts,
             currentUserDid: userDID
         )
         settings.mutedWords = preferences?.mutedWords ?? []
+        settings.moderationPolicy = moderationPolicy
         return settings
     }
 
@@ -1619,15 +1758,5 @@ actor PrefetchedFeedCache {
 
     func clear() {
         cache.removeAll()
-    }
-}
-
-private extension AppState {
-    var sharedDefaults: UserDefaults {
-        AppSettingsModel.sharedDefaults()
-    }
-
-    func scopedSharedDefaultsKey(_ baseKey: String) -> String {
-        AppSettingsModel.scopedKey(baseKey, accountDID: userDID)
     }
 }

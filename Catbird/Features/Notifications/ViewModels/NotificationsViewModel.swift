@@ -131,13 +131,33 @@ private actor FollowRecordCreatedAtCacheActor {
 @Observable final class NotificationsViewModel {
   // MARK: - Properties
 
+  /// One page of `listNotifications`, as the client returns it. Injected by
+  /// tests; production reads the client.
+  typealias PageLoader = @Sendable (_ reasons: [String]?, _ cursor: String?) async throws
+    -> (Int, AppBskyNotificationListNotifications.Output?)
+
+  /// How many visible groups a first load or refresh fills the screen with.
+  static let minimumVisibleGroups = 5
+  /// A row within this many of the end of the visible list requests the next page.
+  static let pageLookahead = 5
+  /// How many pages one load-more follows while every group they add is
+  /// filtered, so a run of filtered pages cannot stall the list (the official
+  /// app's notification query keeps paginating the same way, with a failsafe).
+  static let autoPaginationPageLimit = 8
+
+  /// The account's moderation policy. Groups it filters are not part of
+  /// `groupedNotifications`, so pagination, the fill loop and the empty state
+  /// all see the list the viewer sees. The view keeps it current.
+  var moderationPolicy: ModerationPolicy
+
   // Retain every fetched member so preference edits and rollback can restore hidden rows.
   private var unfilteredGroupedNotifications: [GroupedNotification] = []
   var groupedNotifications: [GroupedNotification] {
-    NotificationListVisibilityPolicy.visibleGroups(
+    let policy = moderationPolicy
+    return NotificationListVisibilityPolicy.visibleGroups(
       unfilteredGroupedNotifications,
       preferences: notificationManager?.preferences ?? NotificationPreferences()
-    )
+    ).compactMap { NotificationModeration.visibleGroup($0, policy: policy) }
   }
   private(set) var isLoading = false
   private(set) var isRefreshing = false
@@ -167,6 +187,7 @@ private actor FollowRecordCreatedAtCacheActor {
 
   private let client: ATProtoClient?
   @ObservationIgnored private let notificationManager: NotificationManager?
+  @ObservationIgnored private let pageLoader: PageLoader?
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsViewModel")
 
   // Add a new enum for filter types
@@ -189,9 +210,16 @@ private actor FollowRecordCreatedAtCacheActor {
 
   // MARK: - Initialization
 
-  init(client: ATProtoClient?, notificationManager: NotificationManager? = nil) {
+  init(
+    client: ATProtoClient?,
+    notificationManager: NotificationManager? = nil,
+    moderationPolicy: ModerationPolicy = .failClosed,
+    pageLoader: PageLoader? = nil
+  ) {
     self.client = client
     self.notificationManager = notificationManager
+    self.moderationPolicy = moderationPolicy
+    self.pageLoader = pageLoader
   }
 
   // MARK: - Public Methods
@@ -231,28 +259,49 @@ private actor FollowRecordCreatedAtCacheActor {
     }
   }
 
-  /// Loads more notifications (pagination)
+  /// Loads more notifications (pagination). The next page is followed by
+  /// further pages while the visible list has not grown, up to
+  /// `autoPaginationPageLimit`, so pages whose groups the preferences or the
+  /// moderation policy filter entirely never leave the list waiting.
   func loadMoreNotifications() async {
     guard !isLoadingMore, hasMoreNotifications, cursor != nil, !Task.isCancelled else { return }
 
     isLoadingMore = true
     paginationError = nil
 
-    await fetchNotifications(resetCursor: false)
+    await fetchPages(untilVisibleCount: groupedNotifications.count + 1, pageLimit: Self.autoPaginationPageLimit)
 
     isLoadingMore = false
   }
 
+  /// Whether showing the row at `index` of `groupedNotifications` should
+  /// request the next page: it is within `pageLookahead` of the end of the
+  /// visible list. Filtered groups are not in that list, so they cannot push
+  /// the trigger out of reach.
+  func shouldLoadMore(afterShowingIndex index: Int) -> Bool {
+    let thresholdIndex = max(0, groupedNotifications.count - Self.pageLookahead)
+    return index >= thresholdIndex && hasMoreNotifications && !isLoadingMore && paginationError == nil
+  }
+
   /// Makes sure we have enough notifications to fill the screen
   private func ensureEnoughNotifications() async {
-    let generation = fetchGeneration
+    guard !isLoadingMore else { return }
+    isLoadingMore = true
     // Empty/filtered pages must not keep the loading state alive indefinitely.
-    var remainingPages = 3
-    while groupedNotifications.count < 5, hasMoreNotifications, generation == fetchGeneration,
-      !isLoadingMore, error == nil, paginationError == nil, remainingPages > 0, !Task.isCancelled {
+    await fetchPages(untilVisibleCount: Self.minimumVisibleGroups, pageLimit: 3)
+    isLoadingMore = false
+  }
+
+  /// Fetches next pages until the visible list holds `wanted` groups, the
+  /// pages run out, a page fails, or `pageLimit` pages were fetched.
+  private func fetchPages(untilVisibleCount wanted: Int, pageLimit: Int) async {
+    let generation = fetchGeneration
+    var remainingPages = pageLimit
+    while groupedNotifications.count < wanted, hasMoreNotifications, generation == fetchGeneration,
+      error == nil, paginationError == nil, remainingPages > 0, !Task.isCancelled {
       let previousCursor = cursor
       guard previousCursor != nil else { break }
-      await loadMoreNotifications()
+      await fetchNotifications(resetCursor: false)
       remainingPages -= 1
       guard cursor != previousCursor else { break }
     }
@@ -317,7 +366,7 @@ private actor FollowRecordCreatedAtCacheActor {
   /// Fetches notifications from the API
   private func fetchNotifications(resetCursor: Bool) async {
     guard !Task.isCancelled else { return }
-    guard let client = client else {
+    guard let loadPage = pageLoader ?? client.map(Self.clientPageLoader) else {
       logger.error("Client is nil in fetchNotifications")
       return
     }
@@ -327,17 +376,9 @@ private actor FollowRecordCreatedAtCacheActor {
     let generation = fetchGeneration
 
     do {
-      // Use the filter reasons when creating parameters
-      let params = AppBskyNotificationListNotifications.Parameters(
-        reasons: filter.reasonFilters,
-        limit: 50,  // Increased from 30 to batch more notifications
-        cursor: resetCursor ? nil : storedCursor(for: filter)
-      )
-
       let requestStarted = ContinuousClock.now
-      let (responseCode, output) = try await client.app.bsky.notification.listNotifications(
-        input: params
-      )
+      let (responseCode, output) = try await loadPage(
+        filter.reasonFilters, resetCursor ? nil : storedCursor(for: filter))
       try Task.checkCancellation()
 
       guard responseCode == 200, let output = output else {
@@ -389,6 +430,19 @@ private actor FollowRecordCreatedAtCacheActor {
         guard generation == self.fetchGeneration, filter == self.currentFilter else { return }
         self.recordFailure(failure, resetCursor: resetCursor)
       }
+    }
+  }
+
+  /// The production page loader: one `listNotifications` call on the client.
+  private static func clientPageLoader(_ client: ATProtoClient) -> PageLoader {
+    { reasons, cursor in
+      // Use the filter reasons when creating parameters
+      let params = AppBskyNotificationListNotifications.Parameters(
+        reasons: reasons,
+        limit: 50,  // Increased from 30 to batch more notifications
+        cursor: cursor
+      )
+      return try await client.app.bsky.notification.listNotifications(input: params)
     }
   }
 

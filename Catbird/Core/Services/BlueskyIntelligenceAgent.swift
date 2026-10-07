@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import CoreGraphics
 import Petrel
 
 enum BlueskyAgentError: LocalizedError {
@@ -72,6 +73,45 @@ enum AskCatbirdToolPolicy {
     }
 }
 
+/// Shared bounded metadata representation for search and thread neighbors.
+enum AskCatbirdPostFormatter {
+    struct SearchResult: Encodable {
+        let posts: [CopilotPostEvidence]
+        let coverage: String
+    }
+
+    static func hasContent(_ evidence: CopilotPostEvidence) -> Bool {
+        !(evidence.selectedPost.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !evidence.selectedPost.media.isEmpty || evidence.selectedPost.quotedPostURI != nil
+    }
+
+    static func compact(_ evidence: CopilotPostEvidence, textLimit: Int = 200) -> CopilotPostEvidence {
+        func bounded(_ original: CopilotPostEvidence.Post) -> CopilotPostEvidence.Post {
+            var post = original
+            if let text = post.text, text.count > textLimit {
+                post.text = String(text.prefix(textLimit))
+                post.textTruncated = true
+            }
+            post.media = post.media.map { original in
+                var media = original
+                if let alt = media.altText, alt.count > 200 {
+                    media.altText = String(alt.prefix(200)); media.truncatedFields.append("altText")
+                }
+                if let description = media.description, description.count > 200 {
+                    media.description = String(description.prefix(200)); media.truncatedFields.append("description")
+                }
+                // Read tools expose metadata; explicit image candidates come only from selected context.
+                media.thumbnailURL = nil
+                media.imageURL = nil
+                return media
+            }
+            return post
+        }
+        return .init(selectedPost: bounded(evidence.selectedPost),
+                     quotedPosts: evidence.quotedPosts.map(bounded), coverage: evidence.coverage)
+    }
+}
+
 #if canImport(FoundationModels)
 import FoundationModels
 
@@ -83,18 +123,26 @@ actor BlueskyIntelligenceAgent {
     private var model: SystemLanguageModel?
     private var session: LanguageModelSession?
     private var cachedTools: [any Tool]?
+    private var turnGeneration = CopilotTurnGeneration()
+    private let turnHooks: CopilotTurnHooks?
+    private var activeTurnTask: Task<Void, Never>?
 
-    init(client: ATProtoClient? = nil) {
+    init(client: ATProtoClient? = nil, turnHooks: CopilotTurnHooks? = nil) {
         self.client = client
+        self.turnHooks = turnHooks
     }
 
     func updateClient(_ client: ATProtoClient?) {
+        activeTurnTask?.cancel()
+        _ = turnGeneration.advance()
         self.client = client
         session = nil
         cachedTools = nil
     }
 
     func resetContext() {
+        activeTurnTask?.cancel()
+        _ = turnGeneration.advance()
         session = nil
     }
 
@@ -152,11 +200,20 @@ actor BlueskyIntelligenceAgent {
         prompt: String,
         context: CopilotContext,
         history: [CopilotStoredTurn],
-        route: CopilotModelRoute = .onDevice
+        route: CopilotModelRoute = .onDevice,
+        selectedImageID: String? = nil,
+        currentClient: ATProtoClient?,
+        imageAuthorization: CopilotImageAuthorization = .denied
     ) -> AsyncThrowingStream<CopilotTurnEvent, Error> {
-        AsyncThrowingStream { continuation in
+        // Client replacement and generation invalidation happen atomically on this
+        // actor before any turn work can suspend or reuse the previous client.
+        updateClient(currentClient)
+        let generation = turnGeneration.advance()
+        let turnClient = currentClient
+        return AsyncThrowingStream { continuation in
             let producerTask = Task {
                 do {
+                    try turnGeneration.check(generation)
                     guard !Task.isCancelled else {
                         continuation.finish()
                         return
@@ -165,7 +222,7 @@ actor BlueskyIntelligenceAgent {
                        let reason = CopilotCloudAvailability.unavailableReason {
                         throw CopilotCloudUnavailableError(reason: reason)
                     }
-                    guard let client else {
+                    guard let client = turnClient else {
                         throw BlueskyAgentError.missingClient
                     }
 
@@ -176,6 +233,7 @@ actor BlueskyIntelligenceAgent {
                             if cloudModel.isAvailable, let tokenizerModel = prepareModel() {
                                 let deltaTracker = TurnDeltaTracker()
                                 do {
+                                    try turnGeneration.check(generation)
                                     continuation.yield(.route(.privateCloudCompute))
                                     try await runPrivateCloudComputeTurn(
                                         model: cloudModel,
@@ -186,15 +244,18 @@ actor BlueskyIntelligenceAgent {
                                         context: context,
                                         history: history,
                                         continuation: continuation,
-                                        deltaTracker: deltaTracker
+                                        deltaTracker: deltaTracker,
+                                        generation: generation
                                     )
                                     usedPCC = true
                                 } catch {
+                                    try turnGeneration.check(generation)
                                     guard !Task.isCancelled else {
                                         continuation.finish()
                                         return
                                     }
                                     let hasEmittedDelta = await deltaTracker.hasEmittedDelta
+                                    try turnGeneration.check(generation)
                                     if hasEmittedDelta {
                                         continuation.yield(.responseReset)
                                     }
@@ -210,8 +271,10 @@ actor BlueskyIntelligenceAgent {
                     }
 
                     if !usedPCC {
+                        try turnGeneration.check(generation)
                         continuation.yield(.route(.onDevice))
-                        guard let localModel = prepareModel() else {
+                        let localModel = turnHooks == nil ? prepareModel() : nil
+                        guard localModel != nil || turnHooks != nil else {
                             throw BlueskyAgentError.modelUnavailable
                         }
                         guard !Task.isCancelled else {
@@ -225,13 +288,16 @@ actor BlueskyIntelligenceAgent {
                             prompt: prompt,
                             context: context,
                             history: history,
-                            continuation: continuation
+                            selectedImageID: selectedImageID,
+                            imageAuthorization: imageAuthorization,
+                            continuation: continuation,
+                            generation: generation
                         )
                     }
 
                     continuation.finish()
                 } catch {
-                    if Task.isCancelled {
+                    if Task.isCancelled || error is CancellationError || turnGeneration.value != generation {
                         continuation.finish()
                     } else {
                         continuation.finish(throwing: error)
@@ -239,6 +305,7 @@ actor BlueskyIntelligenceAgent {
                 }
             }
 
+            activeTurnTask = producerTask
             continuation.onTermination = { @Sendable _ in
                 producerTask.cancel()
             }
@@ -255,7 +322,8 @@ actor BlueskyIntelligenceAgent {
         context: CopilotContext,
         history: [CopilotStoredTurn],
         continuation: AsyncThrowingStream<CopilotTurnEvent, Error>.Continuation,
-        deltaTracker: TurnDeltaTracker
+        deltaTracker: TurnDeltaTracker,
+        generation: UInt64
     ) async throws {
         let proposalSink = TurnProposalSink()
         let sourceCollector = TurnSourceCollector()
@@ -331,144 +399,186 @@ actor BlueskyIntelligenceAgent {
         )
 
         try await streamAndEmit(
-            session: session,
-            prompt: fullPrompt,
-            options: options,
+            stream: CopilotTurnRuntime.stream(session: session, input: CopilotTurnInput(text: fullPrompt, image: nil, selectedImageID: nil), options: options),
             removedTurnCount: selection.removedTurnCount,
             sourceCollector: sourceCollector,
             proposalSink: proposalSink,
             continuation: continuation,
-            deltaTracker: deltaTracker
+            deltaTracker: deltaTracker,
+            generation: generation
         )
     }
 
     private func runOnDeviceTurn(
-        model: SystemLanguageModel,
-        client: ATProtoClient,
-        accountDID: String,
-        prompt: String,
-        context: CopilotContext,
-        history: [CopilotStoredTurn],
-        continuation: AsyncThrowingStream<CopilotTurnEvent, Error>.Continuation
+        model: SystemLanguageModel?, client: ATProtoClient, accountDID: String,
+        prompt: String, context: CopilotContext, history: [CopilotStoredTurn],
+        selectedImageID: String?, imageAuthorization: CopilotImageAuthorization,
+        continuation: AsyncThrowingStream<CopilotTurnEvent, Error>.Continuation,
+        generation: UInt64
     ) async throws {
+        try turnGeneration.check(generation)
         let proposalSink = TurnProposalSink()
         let sourceCollector = TurnSourceCollector()
         let plan = CopilotTurnPlan.make(prompt: prompt, context: context)
         let toolContext = ToolContext(
-            client: client, logger: logger, sourceCollector: sourceCollector,
-            readBudget: CopilotReadBudget(),
+            client: client, logger: logger, sourceCollector: sourceCollector, readBudget: CopilotReadBudget(),
             tokenCounter: { text in
-                if #available(iOS 26.4, macOS 26.4, *) {
+                if #available(iOS 26.4, macOS 26.4, *), let model {
                     return try await model.tokenCount(for: Prompt(text))
                 }
                 return text.utf8.count
             }
         )
-        let evidence = try await prepareTurnEvidence(context: context, plan: plan, tools: toolContext)
-        try Task.checkCancellation()
-        let turnTools = makePerTurnTools(
-            toolContext: toolContext, context: context, accountDID: accountDID,
-            plan: plan, proposalSink: proposalSink
-        )
-
-        let maxResponseTokens = 768
-        let instructions = Instructions { Self.instructionsText }
-
-        let fullPrompt: String
-        let removedTurnCount: Int
-
-        if #available(iOS 26.4, macOS 26.4, *) {
-            let instructionsTokens = try await model.tokenCount(for: instructions)
-            let toolsTokens = try await model.tokenCount(for: turnTools)
-            let reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
-                + (turnTools.isEmpty ? 0 : AskCatbirdToolPolicy.onDeviceToolResultTokenReserve)
-
-            let selection = try await CopilotContextBudget.selectHistory(
-                turns: history,
-                modelContextSize: model.contextSize,
-                reservedTokenCount: reservedCost,
-                candidateTokenCount: { candidateHistory in
-                    let promptText = Self.formatContextualPrompt(
-                        context: context,
-                        history: candidateHistory,
-                        prompt: prompt,
-                        evidence: evidence
-                    )
-                    return try await model.tokenCount(for: Prompt(promptText))
+        let retrievedEvidence: [CopilotEvidence]
+        if let turnHooks {
+            let material = try await turnHooks.read(client, context)
+            try turnGeneration.check(generation)
+            retrievedEvidence = material.evidence
+            for evidence in material.evidence {
+                await sourceCollector.recordEvidence(evidence)
+                for source in evidence.sources { await sourceCollector.add(label: source.label, uri: source.uri) }
+            }
+            if let proposal = material.proposal { _ = await proposalSink.record(proposal) }
+        } else {
+            retrievedEvidence = try await prepareTurnEvidence(context: context, plan: plan, tools: toolContext)
+        }
+        try turnGeneration.check(generation)
+        let runtime: CopilotTurnRuntime
+        if let turnHooks {
+            runtime = turnHooks.runtime
+        } else {
+            guard let model else { throw BlueskyAgentError.modelUnavailable }
+            let turnTools = makePerTurnTools(toolContext: toolContext, context: context, accountDID: accountDID,
+                                             plan: plan, proposalSink: proposalSink)
+            let instructions = Instructions { Self.instructionsText }
+            let maxResponseTokens = 768
+            let reservedCost: Int
+            let countsFullPrompt: Bool
+            if #available(iOS 26.4, macOS 26.4, *) {
+                let instructionsTokens = try await model.tokenCount(for: instructions)
+                let toolsTokens = try await model.tokenCount(for: turnTools)
+                reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
+                    + (turnTools.isEmpty ? 0 : AskCatbirdToolPolicy.onDeviceToolResultTokenReserve)
+                countsFullPrompt = true
+            } else {
+                reservedCost = 0
+                countsFullPrompt = false
+            }
+            try turnGeneration.check(generation)
+            let reason: String?
+            if #available(iOS 27.0, macOS 27.0, *) { reason = CopilotImageSupport.unavailableReason(model: model) }
+            else { reason = CopilotImageSupport.unavailableReason() }
+            let session = LanguageModelSession(model: model, tools: turnTools, instructions: instructions)
+            let options = GenerationOptions(temperature: 0.25, maximumResponseTokens: maxResponseTokens)
+            runtime = CopilotTurnRuntime(
+                contextSize: model.contextSize, reservedTokenCount: reservedCost, countsFullPrompt: countsFullPrompt,
+                imageUnavailableReason: reason,
+                tokenCount: { input in
+                    if #available(iOS 26.4, macOS 26.4, *) { return try await model.tokenCount(for: input.prompt) }
+                    return input.text.utf8.count
+                },
+                stream: { input in
+                    CopilotTurnRuntime.stream(session: session, input: input, options: options,
+                        validateImageAccess: {
+                            try await imageAuthorization.require(context: context, accountDID: accountDID)
+                        })
                 }
             )
-
-            guard selection.fits else {
-                let basePrompt = Self.formatContextualPrompt(context: context, history: [], prompt: prompt, evidence: evidence)
-                let basePromptTokens = try await model.tokenCount(for: Prompt(basePrompt))
-                throw BlueskyAgentError.contextLimitExceeded(
-                    limit: selection.tokenLimit,
-                    required: reservedCost + basePromptTokens
-                )
+        }
+        let loadImage: @Sendable (URL) async throws -> CGImage = turnHooks?.loadImage ?? { try await CopilotImageSupport.loadImage($0) }
+        var preparedImage = try await CopilotImageSupport.prepare(
+            selectedImageID: selectedImageID, context: context,
+            unavailableReason: runtime.imageUnavailableReason,
+            authorize: { await imageAuthorization.permits(context, accountDID) }, load: loadImage
+        )
+        try turnGeneration.check(generation)
+        let fullInput: CopilotTurnInput
+        let selection: CopilotHistorySelection
+        if runtime.countsFullPrompt {
+            // Each representation/history candidate is built once. The accepted
+            // object counted below is exactly the object submitted to generation.
+            var countedInputs: [String: CopilotTurnInput] = [:]
+            func key(_ turns: [CopilotStoredTurn], _ image: CopilotPreparedImage) -> String {
+                turns.map { $0.id.uuidString }.joined(separator: ",") + "|"
+                    + (image.image == nil ? "metadata" : "image") + "|" + (image.evidence?.text ?? "")
             }
-            fullPrompt = Self.formatContextualPrompt(
-                context: context,
-                history: selection.retainedTurns,
-                prompt: prompt,
-                evidence: evidence
+            func input(_ turns: [CopilotStoredTurn], _ image: CopilotPreparedImage) -> CopilotTurnInput {
+                let inputKey = key(turns, image)
+                if let existing = countedInputs[inputKey] { return existing }
+                let evidence = retrievedEvidence + (image.evidence.map { [$0] } ?? [])
+                let text = Self.formatContextualPrompt(context: context, history: turns, prompt: prompt, evidence: evidence)
+                let result = CopilotTurnInput(text: text, image: image.image, selectedImageID: image.candidate?.id)
+                countedInputs[inputKey] = result
+                return result
+            }
+            let budget = try await CopilotImageSupport.selectHistory(
+                turns: history, preparedImage: preparedImage, modelContextSize: runtime.contextSize,
+                reservedTokenCount: runtime.reservedTokenCount,
+                candidateTokenCount: { turns, image in
+                    if image.image != nil {
+                        try await imageAuthorization.require(context: context, accountDID: accountDID)
+                    }
+                    try self.turnGeneration.check(generation)
+                    return try await runtime.tokenCount(input(turns, image))
+                }
             )
-            await sourceCollector.addHistorySources(selection.retainedTurns)
-            removedTurnCount = selection.removedTurnCount
+            try turnGeneration.check(generation)
+            preparedImage = budget.image
+            selection = budget.history
+            guard selection.fits else {
+                if preparedImage.image != nil {
+                    try await imageAuthorization.require(context: context, accountDID: accountDID)
+                }
+                let required = try await runtime.tokenCount(input([], preparedImage))
+                try turnGeneration.check(generation)
+                throw BlueskyAgentError.contextLimitExceeded(limit: selection.tokenLimit, required: runtime.reservedTokenCount + required)
+            }
+            fullInput = input(selection.retainedTurns, preparedImage)
         } else {
-            // Older OS versions cannot count the full prompt or tool schemas.
-            // Bound retained history by bytes and let the runtime report overflow.
-            let selection = try await CopilotContextBudget.selectLegacyHistory(
+            selection = try await CopilotContextBudget.selectLegacyHistory(
                 turns: history, modelContextSize: 1536, reservedTokenCount: 0,
                 candidatePrompt: { CopilotContextBudget.formatHistory(turns: $0) }
             )
-            fullPrompt = Self.formatContextualPrompt(context: context, history: selection.retainedTurns,
-                                                    prompt: prompt, evidence: evidence)
-            await sourceCollector.addHistorySources(selection.retainedTurns)
-            removedTurnCount = selection.removedTurnCount
+            let evidence = retrievedEvidence + (preparedImage.evidence.map { [$0] } ?? [])
+            fullInput = CopilotTurnInput(
+                text: Self.formatContextualPrompt(context: context, history: selection.retainedTurns, prompt: prompt, evidence: evidence),
+                image: nil, selectedImageID: nil
+            )
         }
-
-        try Task.checkCancellation()
-        let session = LanguageModelSession(
-            model: model,
-            tools: turnTools,
-            instructions: instructions
-        )
-
-        let options = GenerationOptions(
-            temperature: 0.25,
-            maximumResponseTokens: maxResponseTokens
-        )
-
-        try await streamAndEmit(
-            session: session,
-            prompt: fullPrompt,
-            options: options,
-            removedTurnCount: removedTurnCount,
-            sourceCollector: sourceCollector,
-            proposalSink: proposalSink,
-            continuation: continuation
-        )
+        try turnGeneration.check(generation)
+        await sourceCollector.addHistorySources(selection.retainedTurns)
+        if let evidence = preparedImage.evidence { await sourceCollector.recordEvidence(evidence) }
+        try turnGeneration.check(generation)
+        if fullInput.image != nil {
+            try await imageAuthorization.require(context: context, accountDID: accountDID)
+            try turnGeneration.check(generation)
+        }
+        try await streamAndEmit(stream: runtime.stream(fullInput), removedTurnCount: selection.removedTurnCount,
+                                sourceCollector: sourceCollector, proposalSink: proposalSink,
+                                continuation: continuation, generation: generation,
+                                validateImageAccess: {
+                                    if fullInput.image != nil {
+                                        try await imageAuthorization.require(context: context, accountDID: accountDID)
+                                    }
+                                })
     }
 
     /// Shared streaming + post-processing used by both on-device and PCC turns.
     private func streamAndEmit(
-        session: LanguageModelSession,
-        prompt: String,
-        options: GenerationOptions,
+        stream: AsyncThrowingStream<String, Error>,
         removedTurnCount: Int,
         sourceCollector: TurnSourceCollector,
         proposalSink: TurnProposalSink,
         continuation: AsyncThrowingStream<CopilotTurnEvent, Error>.Continuation,
-        deltaTracker: TurnDeltaTracker? = nil
+        deltaTracker: TurnDeltaTracker? = nil,
+        generation: UInt64,
+        validateImageAccess: @Sendable () async throws -> Void = {}
     ) async throws {
-        guard !Task.isCancelled else { return }
+        try turnGeneration.check(generation)
         var previousContent = ""
-        let stream = session.streamResponse(options: options, prompt: { Prompt(prompt) })
-
-        for try await snapshot in stream {
-            guard !Task.isCancelled else { return }
-            let latestContent = snapshot.content
-
+        for try await latestContent in stream {
+            try await validateImageAccess()
+            try turnGeneration.check(generation)
             if latestContent.count > previousContent.count {
                 let delta = String(latestContent.dropFirst(previousContent.count))
                 if !(previousContent.isEmpty
@@ -482,28 +592,34 @@ actor BlueskyIntelligenceAgent {
             }
         }
 
-        guard !Task.isCancelled else { return }
+        try await validateImageAccess()
+        try turnGeneration.check(generation)
         if removedTurnCount > 0 {
             continuation.yield(.contextTrimmed(removedTurnCount: removedTurnCount))
         }
 
         let sources = await sourceCollector.allSources()
+        try turnGeneration.check(generation)
         for source in sources {
-            try Task.checkCancellation()
+            try await validateImageAccess()
+            try turnGeneration.check(generation)
             continuation.yield(.source(source))
         }
 
         for evidence in await sourceCollector.allEvidence() {
-            try Task.checkCancellation()
+            try await validateImageAccess()
+            try turnGeneration.check(generation)
             continuation.yield(.evidence(evidence))
         }
 
         if let proposal = await proposalSink.proposal {
-            try Task.checkCancellation()
+            try await validateImageAccess()
+            try turnGeneration.check(generation)
             continuation.yield(.proposal(proposal))
         }
 
-        try Task.checkCancellation()
+        try await validateImageAccess()
+        try turnGeneration.check(generation)
         continuation.yield(.completed)
     }
     private func prepareTurnEvidence(
@@ -1275,7 +1391,8 @@ enum AskCatbirdThreadFormatter {
         guard let anchor = ordered.first(where: { $0.depth == 0 }),
               case .appBskyUnspeccedDefsThreadItemPost(let focus) = anchor.value,
               !focus.hiddenByThreadgate, !focus.mutedByViewer,
-              ToolFormatter.summarize(post: focus.post, maxLength: 200) != nil else {
+              CopilotPostEvidenceBuilder.build(focus.post).selectedPost.contentStatus == .available,
+              AskCatbirdPostFormatter.hasContent(CopilotPostEvidenceBuilder.build(focus.post)) else {
             throw BlueskyAgentError.emptyResult("the requested post (unavailable, restricted, or unreadable)")
         }
 
@@ -1306,19 +1423,16 @@ enum AskCatbirdThreadFormatter {
                     row["textTruncated"] = body.text.count > textLimit
                     row["replyTo"] = body.reply.map { $0.parent.uri.uriString() as Any } ?? NSNull()
                     row["root"] = body.reply.map { $0.root.uri.uriString() as Any } ?? NSNull()
-                    if item.depth == 0 {
-                        let evidence = CopilotPostEvidenceBuilder.build(post)
-                        let data = try JSONEncoder().encode(evidence)
-                        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        let selectedPost = object?["selectedPost"] as? [String: Any]
-                        row["media"] = selectedPost?["media"]
-                        row["quotedPostURI"] = selectedPost?["quotedPostURI"]
-                        row["quotedPosts"] = object?["quotedPosts"]
-                        row["coverage"] = object?["coverage"]
-                        for source in evidence.sources where !sources.contains(source) { sources.append(source) }
-                    } else if post.embed != nil {
-                        row["coverage"] = "Neighbor media and quoted contents omitted; do not infer them."
-                    }
+                    let snapshot = CopilotPostEvidenceBuilder.build(post)
+                    let evidence = item.depth == 0 ? snapshot : AskCatbirdPostFormatter.compact(snapshot)
+                    let data = try JSONEncoder().encode(evidence)
+                    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    let selectedPost = object?["selectedPost"] as? [String: Any]
+                    row["media"] = selectedPost?["media"]
+                    row["quotedPostURI"] = selectedPost?["quotedPostURI"]
+                    row["quotedPosts"] = object?["quotedPosts"]
+                    row["coverage"] = evidence.coverage + evidence.selectedPost.coverage
+                    for source in evidence.sources where !sources.contains(source) { sources.append(source) }
                 } else {
                     row["contentStatus"] = "unreadable record; do not infer its contents"
                 }
@@ -1457,15 +1571,11 @@ private struct PostSearchTool: Tool {
             )
         }
 
-        let summaries = posts.prefix(limit).compactMap { post -> String? in
-            guard let summary = ToolFormatter.summarize(post: post, maxLength: 200) else { return nil }
-            return "\(summary)\nNavigation identifier (tool arguments only): \(post.uri.uriString())"
-        }
-        guard !summaries.isEmpty else {
-            throw BlueskyAgentError.emptyResult("post search")
-        }
-
-        return "Results for \(arguments.query):\n" + summaries.joined(separator: "\n")
+        let snapshots = posts.prefix(limit).map { AskCatbirdPostFormatter.compact(CopilotPostEvidenceBuilder.build($0)) }
+        return CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(
+            posts: snapshots,
+            coverage: "Bounded supplied post, attachment descriptions, link previews and quoted records only. Media bytes and linked pages were not inspected."
+        ))
     }
 }
 

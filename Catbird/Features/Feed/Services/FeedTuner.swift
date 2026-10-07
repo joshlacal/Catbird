@@ -25,15 +25,15 @@ struct FeedTunerSettings {
     let onlyTextPosts: Bool
     let onlyMediaPosts: Bool
     
-    // Content label filtering
-    let contentLabelPreferences: [ContentLabelPreference]
-    let hideAdultContent: Bool
-    
     // Post hiding
     let hiddenPosts: Set<String>
-    
+
     // Current user DID for self-reply detection
     let currentUserDid: String?
+
+    /// The account's label moderation policy, as built by `AppState.refreshModerationPolicy()`.
+    /// Label filtering (adult content, hide settings, `!hide`) reads only this.
+    var moderationPolicy: ModerationPolicy = .failClosed
     
     static let `default` = FeedTunerSettings(
         hideReplies: false,
@@ -48,8 +48,6 @@ struct FeedTunerSettings {
         hideLinks: false,
         onlyTextPosts: false,
         onlyMediaPosts: false,
-        contentLabelPreferences: [],
-        hideAdultContent: false,
         hiddenPosts: [],
         currentUserDid: nil
     )

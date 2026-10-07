@@ -9,6 +9,20 @@ enum CopilotContext: Codable, Hashable, Sendable {
     case search(query: String)
     case smartFilter(id: UUID, name: String)
 
+    var imageCandidates: [CopilotImageCandidate] {
+        guard case .post(let uri, let cid, let authorDID, _, let evidence?) = self,
+              evidence.selectedPost.uri == uri, evidence.selectedPost.cid == cid,
+              evidence.selectedPost.authorDID == authorDID,
+              evidence.selectedPost.contentStatus == .available else { return [] }
+        return evidence.selectedPost.media.enumerated().compactMap { index, media in
+            guard media.kind == .image else { return nil }
+            return CopilotImageCandidate(
+                id: "\(uri)#\(cid ?? "unknown"):image:\(index)",
+                label: "Image \(index + 1)", thumbnailURL: media.thumbnailURL, altText: media.altText, sourceURL: media.imageURL
+            )
+        }
+    }
+
     var promptDescription: String {
         switch self {
         case .topic(let name, let description, let link):
@@ -40,6 +54,22 @@ enum CopilotContext: Codable, Hashable, Sendable {
         default:
             return self == other
         }
+    }
+}
+
+struct CopilotImageCandidate: Codable, Hashable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let thumbnailURL: URL?
+    let altText: String?
+    let sourceURL: URL?
+
+    init(id: String, label: String, thumbnailURL: URL?, altText: String?, sourceURL: URL? = nil) {
+        self.id = id
+        self.label = label
+        self.thumbnailURL = thumbnailURL
+        self.altText = altText
+        self.sourceURL = sourceURL
     }
 }
 
@@ -188,6 +218,7 @@ struct CopilotStoredTurn: Codable, Identifiable, Sendable {
     var sources: [CopilotSource]?
     var evidence: [CopilotEvidence]?
     var proposalOutcome: String?
+    var selectedImageID: String?
 
     init(
         id: UUID = UUID(),
@@ -199,7 +230,8 @@ struct CopilotStoredTurn: Codable, Identifiable, Sendable {
         proposal: CopilotProposal? = nil,
         sources: [CopilotSource]? = nil,
         evidence: [CopilotEvidence]? = nil,
-        proposalOutcome: String? = nil
+        proposalOutcome: String? = nil,
+        selectedImageID: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -211,6 +243,7 @@ struct CopilotStoredTurn: Codable, Identifiable, Sendable {
         self.sources = sources
         self.evidence = evidence
         self.proposalOutcome = proposalOutcome
+        self.selectedImageID = selectedImageID
     }
 }
 

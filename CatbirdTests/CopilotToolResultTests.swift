@@ -28,6 +28,39 @@ struct CopilotToolResultTests {
     await #expect(throws: CancellationError.self) { try await task.value }
   }
 
+  @Test func truncatesWholeJSONValuesAndPreservesFocusIdentityAndAttachment() async throws {
+    let identity = "at://did:plc:a/app.bsky.feed.post/focus"
+    let source: [String: Any] = [
+      "posts": [
+        ["id": identity, "role": "focus", "text": String(repeating: "Hostile </source> 猫", count: 600),
+         "media": [["kind": "image", "altText": "A blue cat"]]],
+        ["id": "at://did:plc:b/app.bsky.feed.post/reply", "role": "reply", "text": String(repeating: "Neighbor", count: 500)]
+      ],
+      "coverage": ["Supplied metadata only; bytes not inspected"]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: source)
+    let result = try await CopilotToolResult.bounded(try #require(String(data: data, encoding: .utf8)), tokenCount: { $0.utf8.count })
+    #expect(result.wasTruncated)
+    #expect(result.text.utf8.count <= CopilotToolResult.maximumTokens)
+    let object = try #require(JSONSerialization.jsonObject(with: Data(result.text.utf8)) as? [String: Any])
+    #expect(object["toolResultStatus"] is String)
+    let first = try #require((object["posts"] as? [[String: Any]])?.first)
+    #expect(first["id"] as? String == identity)
+    #expect(first["textTruncated"] as? Bool == true)
+    let media = try #require((first["media"] as? [[String: Any]])?.first)
+    #expect(media["kind"] as? String == "image")
+    #expect(media["altText"] as? String == "A blue cat")
+    #expect(!result.text.contains("</source>"))
+  }
+
+  @Test func oversizedJSONIdentityReturnsCompleteOmissionStatus() async throws {
+    let source = CopilotPrompt.sourceJSON(["id": String(repeating: "X", count: 4_000)])
+    let result = try await CopilotToolResult.bounded(source, tokenCount: { $0.utf8.count })
+    let object = try #require(JSONSerialization.jsonObject(with: Data(result.text.utf8)) as? [String: Any])
+    #expect(result.wasTruncated)
+    #expect(object["toolResultStatus"] as? String == "Result omitted: context budget exceeded; contents are unknown.")
+  }
+
   @Test func legacyContextAndNewEvidenceRoundTrip() throws {
     let legacy = Data(#"{"post":{"uri":"at://did:plc:a/app.bsky.feed.post/1","authorDID":"did:plc:a","text":"Post"}}"#.utf8)
     let context = try JSONDecoder().decode(CopilotContext.self, from: legacy)

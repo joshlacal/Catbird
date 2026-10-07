@@ -56,7 +56,7 @@ struct FeedPreferenceConsumerTests {
     FeedTunerSettings(hideReplies: hideReplies, hideRepliesByUnfollowed: false, hideRepliesByLikeCount: nil,
       hideReposts: false, hideQuotePosts: false, hideNonPreferredLanguages: false, preferredLanguages: [],
       mutedUsers: [], blockedUsers: [], hideLinks: false, onlyTextPosts: textOnly, onlyMediaPosts: mediaOnly,
-      contentLabelPreferences: [], hideAdultContent: false, hiddenPosts: [], currentUserDid: "did:plc:fixture")
+      hiddenPosts: [], currentUserDid: "did:plc:fixture")
   }
 
   private func fixturePost(text: String) throws -> AppBskyFeedDefs.FeedViewPost {

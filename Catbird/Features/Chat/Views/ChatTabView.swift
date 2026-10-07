@@ -23,6 +23,7 @@ struct ChatTabView: View {
   @State private var isShowingErrorAlert = false
   @State private var lastErrorMessage: String?
   @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+  @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
   @State private var showingNewMessageSheet = false
   @State private var showingSettings = false
   @State private var coordinator = UnifiedChatCoordinator()
@@ -40,7 +41,7 @@ struct ChatTabView: View {
   // MARK: - Body
 
   var body: some View {
-    NavigationSplitView(columnVisibility: $columnVisibility) {
+    NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
       unifiedSidebarContent
     } detail: {
       unifiedDetailContent
@@ -53,9 +54,25 @@ struct ChatTabView: View {
     .onAppear(perform: handleOnAppear)
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
+      preferredCompactColumn = newValue != nil ? .detail : .sidebar
       if !shouldUseSplitView {
         columnVisibility = newValue != nil ? .detailOnly : .doubleColumn
       }
+    }
+    .onChange(of: preferredCompactColumn) { _, column in
+      guard !shouldUseSplitView, column == .sidebar, preferredCompactColumn == .sidebar else { return }
+      if sceneContext.navigationManager.targetConversationId != nil ||
+          sceneContext.navigationManager.chatRootRequestID != nil {
+        consumeNavigationRequests()
+      } else {
+        returnToConversationList()
+      }
+    }
+    .onChange(of: lastTappedTab) { _, tab in
+      guard tab == AppNavigationManager.chatTabIndex, selectedTab == tab else { return }
+      lastTappedTab = nil
+      sceneContext.navigationManager.requestChatRoot()
+      consumeNavigationRequests()
     }
     .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in
       resetUnifiedListForCurrentAccountIfNeeded()
@@ -65,11 +82,11 @@ struct ChatTabView: View {
     .onChange(of: appState.userDID) { _, _ in
       handleAccountContextChanged()
     }
-    .onChange(of: sceneContext.navigationManager.targetConversationId) { _, newValue in
-      if let convoId = newValue, convoId != selectedConvoId {
-        selectedConvoId = convoId
-        sceneContext.navigationManager.targetConversationId = nil
-      }
+    .onChange(of: sceneContext.navigationManager.targetConversationId) { _, _ in
+      consumeNavigationRequests()
+    }
+    .onChange(of: sceneContext.navigationManager.chatRootRequestID) { _, _ in
+      consumeNavigationRequests()
     }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
       handleErrorStateChange(oldError: oldError, newError: newError)
@@ -232,15 +249,9 @@ struct ChatTabView: View {
   @ViewBuilder
   private var unifiedDetailContent: some View {
     NavigationStack(path: chatNavigationPath) {
-      if let convoId = selectedConvoId,
-         let item = coordinator.conversations.first(where: { $0.id == convoId }) {
-        switch item {
-        case .bluesky:
-          ConversationView(convoId: convoId)
-            .id(convoId)
-        }
-      } else if let convoId = selectedConvoId {
-        // Conversation selected but not yet in coordinator (e.g. deep-link before data loads)
+      if let convoId = selectedConvoId {
+        // Keep the detail identity stable while a deep-linked conversation's
+        // sidebar row arrives; list membership must not replace its lifecycle.
         ConversationView(convoId: convoId)
           .id(convoId)
       } else {
@@ -343,15 +354,8 @@ struct ChatTabView: View {
   private func handleOnAppear() {
     resetUnifiedListForCurrentAccountIfNeeded()
 
-    // DEEP-LINK FIX: a share/notification can set the target BEFORE this view
-    // mounts, so the .onChange(of: targetConversationId) below never fires
-    // (onChange only observes transitions).
-    if let pending = sceneContext.navigationManager.targetConversationId {
-      if pending != selectedConvoId {
-        selectedConvoId = pending
-      }
-      sceneContext.navigationManager.targetConversationId = nil
-    }
+    // A root request or conversation link can arrive before this tab mounts.
+    consumeNavigationRequests()
 
     // Bluesky DMs
     Task {
@@ -392,6 +396,29 @@ struct ChatTabView: View {
     if oldValue != newValue && newValue != nil {
       chatNavigationPath.wrappedValue = NavigationPath()
     }
+  }
+
+  private func consumeNavigationRequests() {
+    let navigation = sceneContext.navigationManager
+    if navigation.consumeChatRootRequest() {
+      returnToConversationList()
+    }
+    // Consume even an already-selected ID so a later appearance cannot replay it.
+    if let convoId = navigation.consumeTargetConversation() {
+      selectedConvoId = convoId
+      preferredCompactColumn = .detail
+      if !shouldUseSplitView {
+        columnVisibility = .detailOnly
+      }
+    }
+  }
+
+  private func returnToConversationList() {
+    selectedConvoId = nil
+    sceneContext.navigationManager.targetConversationId = nil
+    chatNavigationPath.wrappedValue = NavigationPath()
+    columnVisibility = .doubleColumn
+    preferredCompactColumn = .sidebar
   }
 
   private func handleErrorStateChange(oldError: ChatManager.ChatError?, newError: ChatManager.ChatError?) {
