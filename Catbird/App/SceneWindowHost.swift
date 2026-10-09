@@ -313,14 +313,16 @@ struct SceneNavigationHost<Content: View>: View {
       .environment(appStateManager)
       .environment(context)
       .sheet(item: $context.postComposerRequest) { request in
-        PostComposerViewUIKit(
-          parentPost: request.parentPost,
-          quotedPost: request.quotedPost,
-          initialText: request.initialText,
-          appState: appState,
-          editingSession: context.composerEditingSession,
-          editingClaim: request.editingClaim
-        )
+        PlatformAgeProtectedContent(operation: .generalContent) {
+          PostComposerViewUIKit(
+            parentPost: request.parentPost,
+            quotedPost: request.quotedPost,
+            initialText: request.initialText,
+            appState: appState,
+            editingSession: context.composerEditingSession,
+            editingClaim: request.editingClaim
+          )
+        }
         .applyAppStateEnvironment(appState)
         .environment(appStateManager)
         .environment(context)
@@ -338,6 +340,7 @@ struct SceneNavigationHost<Content: View>: View {
           .environment(appStateManager)
           .environment(context)
       }
+      .platformAgePresentation(appState: appState, manager: appStateManager, context: context)
   }
 }
 

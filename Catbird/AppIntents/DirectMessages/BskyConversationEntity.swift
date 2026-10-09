@@ -70,9 +70,20 @@ struct BskyConversationQuery: EntityQuery, EntityStringQuery {
     var results: [BskyConversationEntity] = []
     var unresolved = identifiers
     for did in candidateDIDs where !unresolved.isEmpty {
-      guard let client = try? await IntentClientProvider.shared.client(for: did),
-        let currentDID = try? await client.getDid()
-      else { continue }
+      let client: ATProtoClient
+      do {
+        client = try await IntentClientProvider.shared.client(for: did)
+      } catch let error as IntentError {
+        // A required age check must surface its Open Catbird retry message.
+        // Other account failures still allow the existing account search.
+        if case .serviceUnavailable = error { throw error }
+        continue
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        continue
+      }
+      guard let currentDID = try? await client.getDid() else { continue }
       var stillUnresolved: [String] = []
       for identifier in unresolved {
         let response = try? await client.chat.bsky.convo.getConvo(

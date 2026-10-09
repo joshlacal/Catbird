@@ -16,6 +16,35 @@ struct NavigationHandler {
     selectedTab: Binding<Int>
   ) -> some View {
     switch destination {
+    case .settings:
+      destinationContent(destination, path: path, appState: appState, selectedTab: selectedTab)
+    #if os(iOS)
+    case .conversation, .chatTab:
+      PlatformAgeProtectedContent(operation: .directMessaging) {
+        destinationContent(destination, path: path, appState: appState, selectedTab: selectedTab)
+      }
+    #endif
+    default:
+      PlatformAgeProtectedContent(operation: .generalContent, safetyTarget: safetyTarget(for: destination)) {
+        destinationContent(destination, path: path, appState: appState, selectedTab: selectedTab)
+      }
+    }
+  }
+
+  private static func safetyTarget(for destination: NavigationDestination) -> String? {
+    switch destination {
+    case .profile(let actor): return actor
+    case .post(let uri): return uri.uriString()
+    default: return nil
+    }
+  }
+
+  @ViewBuilder
+  private static func destinationContent(
+    _ destination: NavigationDestination, path: Binding<NavigationPath>, appState: AppState,
+    selectedTab: Binding<Int>
+  ) -> some View {
+    switch destination {
     case .profile(let did):
       UnifiedProfileView(
         did: did,
@@ -135,6 +164,10 @@ struct NavigationHandler {
     case .videoFeedStartingAt(let post):
       VideoFeedView(initialPost: post, path: path)
         .id("videoFeed-\(post.uri.uriString())")
+    case .videoFeedZoom(let post, let source):
+      VideoFeedView(initialPost: post, path: path)
+        .id("videoFeed-\(post?.uri.uriString() ?? "thevids")")
+        .videoFeedZoomDestination(source)
 
     case .settings(let route):
       settingsView(for: route)
@@ -236,7 +269,7 @@ struct NavigationHandler {
       return "Activity Alerts"
     case .notificationActivity:
       return "Activity"
-    case .videoFeed, .videoFeedStartingAt:
+    case .videoFeed, .videoFeedStartingAt, .videoFeedZoom:
       return "Videos"
     case .settings(let route):
       return route.target.screen.title
@@ -290,7 +323,7 @@ struct NavigationHandler {
       return "bell.badge"
     case .notificationActivity:
       return "bell"
-    case .videoFeed, .videoFeedStartingAt:
+    case .videoFeed, .videoFeedStartingAt, .videoFeedZoom:
       return "play.rectangle"
     case .settings:
       return "gear"

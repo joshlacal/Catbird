@@ -20,7 +20,7 @@ struct UnblockProfileIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
 
         let did = account?.id ?? IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let client = try await IntentClientProvider.shared.client(for: did, purpose: .safety)
 
         let output = try unwrapIntentResponse(await client.app.bsky.actor.getProfiles(input: AppBskyActorGetProfiles.Parameters(actors: [try ATIdentifier(string: profile.id)])))
         guard let view = output.profiles.first else {

@@ -356,10 +356,13 @@ struct PostView: View, Identifiable {
   /// leaves and returns; a same-URI post cannot inherit its former authorization.
   @MainActor
   private var copilotImageModerationSource: CopilotImageModerationSource {
-    CopilotImageModerationSource { context, accountDID in
+    let ageRevision = appState.ageAccess.revision
+    return CopilotImageModerationSource { context, accountDID in
       let manager = AppStateManager.shared
       guard manager.lifecycle.appState === appState, !appState.isTransitioningAccounts,
-            accountDID == appState.userDID else { return nil }
+            accountDID == appState.userDID,
+            appState.ageAccess.revision == ageRevision,
+            appState.ageAccess.allows(.generalContent) else { return nil }
       return CopilotImageModerationSnapshot.make(
         context: context, accountDID: accountDID,
         accountRevision: manager.settingsAccountContextRevision,

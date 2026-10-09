@@ -222,6 +222,7 @@ struct CatbirdSendMessageSchemaIntent {
     let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
     let finalConvoId = try await MessagesSchemaRuntime.resolveDestination(
       recipients: recipients, client: client, directory: directory)
+    try await IntentClientProvider.shared.requireCoveredUse(for: directory.currentUserDID)
     let sent = try unwrapIntentResponse(
       await client.chat.bsky.convo.sendMessage(
         input: ChatBskyConvoSendMessage.Input(

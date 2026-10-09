@@ -65,7 +65,16 @@ struct PostViewModelRepostOutcomeTests {
   @Test("A failed creation clears the optimistic repost placeholder")
   func failedCreationClearsOptimisticState() async throws {
     let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
-    let appState = AppState(userDID: "did:plc:viewer", client: client)
+    let checker = AgeAccessControlledChecker()
+    let appState = AppState(userDID: "did:plc:viewer", client: client, regulatoryChecker: checker)
+    defer { appState.cleanup() }
+    // Reach the existing authentication failure deterministically. An unresolved passive
+    // lookup now closes covered writes and must not become this test's failure reason.
+    let joined = await ageAccessJoinedRefresh(appState.ageAccess)
+    await checker.waitForCalls(1)
+    await checker.resolve(1, with: .none)
+    await joined.value
+    #expect(appState.ageAccess.allows(.generalContent))
     let post = PostViewModelTestFixtures.testPost
     let viewModel = PostViewModel(post: post, appState: appState)
 

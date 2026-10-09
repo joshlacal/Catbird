@@ -384,18 +384,20 @@ struct MainContentView: View {
           ) {
             // Home Tab
             Tab("Home", systemImage: "house", value: 0) {
-              HomeView(
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab,
-                selectedFeed: $selectedFeed,
-                currentFeedName: $currentFeedName,
-                isDrawerOpen: $isDrawerOpen,
-                isRootView: $isRootView
-              )
-              .id(appState.userDID)
-              .overlay(alignment: .bottomTrailing) {
-                if selectedTab == 0 && isRootView {
-                  composeOverlay
+              PlatformAgeProtectedContent(operation: .generalContent) {
+                HomeView(
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab,
+                  selectedFeed: $selectedFeed,
+                  currentFeedName: $currentFeedName,
+                  isDrawerOpen: $isDrawerOpen,
+                  isRootView: $isRootView
+                )
+                .id(appState.userDID)
+                .overlay(alignment: .bottomTrailing) {
+                  if selectedTab == 0 && isRootView {
+                    composeOverlay
+                  }
                 }
               }
             }
@@ -403,23 +405,27 @@ struct MainContentView: View {
 
             // Search Tab
             Tab(value: 1, role: .search) {
-              RefinedSearchView(
-                appState: appState,
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab
-              )
-              .id(appState.userDID)
+              PlatformAgeProtectedContent(operation: .generalContent) {
+                RefinedSearchView(
+                  appState: appState,
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab
+                )
+                .id(appState.userDID)
+              }
             }
             .accessibilityIdentifier("tab_search")
 
             // Notifications Tab
             Tab("Notifications", systemImage: "bell", value: 2) {
-              NotificationsView(
-                appState: appState,
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab
-              )
-              .id(appState.userDID)
+              PlatformAgeProtectedContent(operation: .generalContent) {
+                NotificationsView(
+                  appState: appState,
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab
+                )
+                .id(appState.userDID)
+              }
             }
             .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
             .accessibilityIdentifier("tab_notifications")
@@ -428,13 +434,15 @@ struct MainContentView: View {
             if shouldShowProfileTab {
               Tab("Profile", systemImage: "person", value: 3) {
                 NavigationStack(path: sceneContext.navigationManager.pathBinding(for: 3)) {
-                  UnifiedProfileView(
-                    appState: appState,
-                    selectedTab: $selectedTab,
-                    lastTappedTab: $lastTappedTab,
-                    path: sceneContext.navigationManager.pathBinding(for: 3)
-                  )
-                  .id(appState.userDID)
+                  PlatformAgeProtectedContent(operation: .generalContent) {
+                    UnifiedProfileView(
+                      appState: appState,
+                      selectedTab: $selectedTab,
+                      lastTappedTab: $lastTappedTab,
+                      path: sceneContext.navigationManager.pathBinding(for: 3)
+                    )
+                    .id(appState.userDID)
+                  }
                   .navigationDestination(for: NavigationDestination.self) { destination in
                     NavigationHandler.viewForDestination(
                       destination,
@@ -445,7 +453,7 @@ struct MainContentView: View {
                   }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                  if selectedTab == 3 {
+                  if selectedTab == 3 && appState.ageAccess.allows(.generalContent) {
                     composeOverlay
                   }
                 }
@@ -456,11 +464,13 @@ struct MainContentView: View {
             #if os(iOS)
             // Chat Tab (iOS only)
             Tab("Messages", systemImage: "envelope", value: 4) {
-              ChatTabView(
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab
-              )
-              .id(appState.userDID)
+              PlatformAgeProtectedContent(operation: .directMessaging) {
+                ChatTabView(
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab
+                )
+                .id(appState.userDID)
+              }
             }
             .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
             .accessibilityIdentifier("tab_messages")
@@ -482,6 +492,7 @@ struct MainContentView: View {
         }
       } drawer: {
           NavigationStack(path: $drawerNavigationPath) {
+              PlatformAgeProtectedContent(operation: .generalContent) {
               FeedsStartPage(
                 appState: appState,
                 selectedFeed: $selectedFeed,
@@ -490,6 +501,7 @@ struct MainContentView: View {
               )
               // A new identity per account rebuilds the drawer's view model and profile header.
               .id(appState.userDID)
+              }
               .containerBackground(.clear, for: .navigation)
               .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(
@@ -581,7 +593,7 @@ struct MainContentView: View {
         scheduleNuxEvaluation(delay: 500_000_000)
       }
       .sheet(isPresented: $showingPostComposer) {
-        Group {
+        PlatformAgeProtectedContent(operation: .generalContent) {
           #if os(iOS)
           if let media = composerCapturedMedia {
             PostComposerViewUIKit(
@@ -653,29 +665,33 @@ struct MainContentView: View {
           showingPostComposer = true
         }
       }) { mode in
-        CameraCaptureView(
-          mode: mode,
-          onCapture: { media in
-            composerCapturedMedia = media
-            composerInitialDraft = nil
-            composerEditingClaim = nil
-            pendingCameraCapture = nil
-          },
-          onCancel: {
-            pendingCameraCapture = nil
-          }
-        )
-        .ignoresSafeArea()
+        PlatformAgeProtectedContent(operation: .generalContent) {
+          CameraCaptureView(
+            mode: mode,
+            onCapture: { media in
+              composerCapturedMedia = media
+              composerInitialDraft = nil
+              composerEditingClaim = nil
+              pendingCameraCapture = nil
+            },
+            onCancel: {
+              pendingCameraCapture = nil
+            }
+          )
+          .ignoresSafeArea()
+        }
       }
       #endif
       .sheet(isPresented: $showingNewMessageSheet) {
-        NewConversationView()
-          .applyAppStateEnvironment(appState)
+        PlatformAgeProtectedContent(operation: .directMessaging) {
+          NewConversationView()
+        }
+        .applyAppStateEnvironment(appState)
         .environment(sceneContext)
-          .presentationDetents([.large])
-          .presentationDragIndicator(.visible)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
       }
-      .sheet(isPresented: $showingOnboarding) {
+      .sheet(isPresented: welcomePresentation) {
         WelcomeOnboardingView()
           .applyAppStateEnvironment(appState)
         .environment(sceneContext)
@@ -695,14 +711,16 @@ struct MainContentView: View {
         set: { if !$0 { showingGroupChatCode = nil; sceneContext.urlHandler.externalIntentPresenter.clearActiveIntent() } }
       )) {
         if let code = showingGroupChatCode {
-          GroupChatJoinIntentView(code: code)
-            .applyAppStateEnvironment(appState)
-        .environment(sceneContext)
+          PlatformAgeProtectedContent(operation: .groupMessaging) {
+            GroupChatJoinIntentView(code: code)
+          }
+          .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
         }
       }
       .sheet(isPresented: Binding(
         get: {
-          if showingOnboarding || showingPostComposer { return false }
+          if showingOnboarding || showingPostComposer || !appState.ageAccess.allows(.generalContent) { return false }
           return appState.nuxPresenter.activeAnnouncement != nil
         },
         set: { if !$0 { appState.nuxPresenter.dismissActiveAnnouncement() } }
@@ -842,40 +860,42 @@ struct MainContentView: View {
       }
       
       #elseif os(macOS)
-      MacOSMainView()
-        .id(appState.userDID)
-        .onAppear {
-          Task {
-            if !hasInitializedFeed {
-              hasInitializedFeed = true
-              await restoreLastFeedForAccount()
+      PlatformAgeProtectedContent(operation: .generalContent) {
+        MacOSMainView()
+          .id(appState.userDID)
+          .onAppear {
+            Task {
+              if !hasInitializedFeed {
+                hasInitializedFeed = true
+                await restoreLastFeedForAccount()
+              }
+            }
+
+            navigationManager.registerTabSelectionCallback { newTab in
+              selectedTab = newTab
+            }
+
+            scheduleNuxEvaluation(delay: 500_000_000)
+          }
+          .sheet(isPresented: welcomePresentation) {
+            WelcomeOnboardingView()
+              .applyAppStateEnvironment(appState)
+              .environment(sceneContext)
+          }
+          .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
+            showingOnboarding = newValue
+          }
+          .onChange(of: showingOnboarding) { _, newValue in
+            if !newValue && appState.onboardingManager.showWelcomeSheet {
+              Task { @MainActor in
+                appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
+              }
+            }
+            if !newValue {
+              scheduleNuxEvaluation(delay: 300_000_000)
             }
           }
-
-          navigationManager.registerTabSelectionCallback { newTab in
-            selectedTab = newTab
-          }
-
-          scheduleNuxEvaluation(delay: 500_000_000)
-        }
-        .sheet(isPresented: $showingOnboarding) {
-          WelcomeOnboardingView()
-            .applyAppStateEnvironment(appState)
-        .environment(sceneContext)
-        }
-        .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
-          showingOnboarding = newValue
-        }
-        .onChange(of: showingOnboarding) { _, newValue in
-          if !newValue && appState.onboardingManager.showWelcomeSheet {
-            Task { @MainActor in
-              appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
-            }
-          }
-          if !newValue {
-            scheduleNuxEvaluation(delay: 300_000_000)
-          }
-        }
+      }
       #endif
       
       NetworkStatusIndicator()
@@ -913,6 +933,17 @@ extension ContentView {
 }
 
 extension MainContentView {
+  private var welcomePresentation: Binding<Bool> {
+    Binding(
+      get: { showingOnboarding && appState.ageAccess.allows(.generalContent) },
+      set: { showing in
+        // A temporary platform restriction must not complete an unseen welcome flow.
+        guard showing || appState.ageAccess.allows(.generalContent) else { return }
+        showingOnboarding = showing
+      }
+    )
+  }
+
   @MainActor
   func restoreUIState() async {
     guard !hasRestoredState else { return }
@@ -945,6 +976,7 @@ extension MainContentView {
   private func scheduleNuxEvaluation(delay nanoseconds: UInt64) {
     Task { @MainActor in
       try? await Task.sleep(nanoseconds: nanoseconds)
+      guard !Task.isCancelled, appState.ageAccess.allows(.generalContent) else { return }
       appState.nuxPresenter.evaluateAndPresentIfNeeded(
         isWelcomeShowing: showingOnboarding,
         isComposerShowing: showingPostComposer

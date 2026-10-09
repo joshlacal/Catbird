@@ -16,7 +16,25 @@ import Petrel
 
 @available(iOS 18.0, *)
 actor SpotlightEntityDonator {
-  static let shared = SpotlightEntityDonator()
+  static let shared: SpotlightEntityDonator = {
+    let donator = SpotlightEntityDonator()
+    // Process-lifetime observer. AppState initializes this singleton before its first preflight.
+    // Capture an affirmative restriction before hopping to this actor, so a later clear cannot
+    // lose its revocation. A neutral initial/foreground lookup does not purge existing content.
+    _ = NotificationCenter.default.addObserver(
+      forName: .platformAgeAccessDidChange, object: nil, queue: .main
+    ) { notification in
+      let originDID = notification.userInfo?["accountDID"] as? String
+      MainActor.assumeIsolated {
+        guard let appState = AppStateManager.shared.lifecycle.appState,
+              appState.userDID == originDID,
+              appState.ageAccess.signal.requirement == .ageCheckRequired,
+              !appState.ageAccess.allows(.generalContent) else { return }
+        Task { await donator.removeAll() }
+      }
+    }
+    return donator
+  }()
 
   private let logger = Logger(subsystem: "blue.catbird", category: "SpotlightDonation")
 
@@ -42,6 +60,18 @@ actor SpotlightEntityDonator {
   private static let postIndexScopeKey = "spotlightPostIndexScopeVersion"
   private var postIndexScopeChecked = false
 
+  /// Serialize OS index mutations. A late index completion must be removed before a queued
+  /// revocation finishes; an untracked indexing task could otherwise republish revoked content.
+  private var indexMutationTail: Task<Void, Never>?
+  private var exportGeneration: UInt64 = 0
+
+  private struct ExportContext: Equatable, Sendable {
+    let owner: ObjectIdentifier
+    let ageRevision: UInt64
+    let generation: UInt64
+    let policy: ModerationPolicy
+  }
+
   private init() {}
 
   // MARK: - Posts
@@ -55,17 +85,19 @@ actor SpotlightEntityDonator {
   /// not indexed. Before the account's policy is confirmed nothing is seeded or
   /// indexed here; rendered posts still seed the store from `PostView`.
   func donateFeed(posts: [AppBskyFeedDefs.PostView], viewerDID: String?) async {
-    let activePolicy: ModerationPolicy? = await activeModerationPolicy()
-    guard let policy = activePolicy, policy.accountDID == viewerDID else { return }
+    guard let context = await activeExportContext(), context.policy.accountDID == viewerDID else { return }
+    let policy = context.policy
     let listed: [AppBskyFeedDefs.PostView] = posts.filter { post in
       SpotlightDonationModeration.isListed(post, policy: policy)
     }
     await PostEntityStore.shared.store(views: listed)
+    guard await isCurrent(context) else { return }
     await purgeLegacyPostIndexIfNeeded()
+    guard await isCurrent(context) else { return }
     recordVerdicts(for: posts, policy: policy)
     let indexable: [AppBskyFeedDefs.PostView] = SpotlightDonationModeration.indexableFeedPosts(
       posts, viewerDID: viewerDID, policy: policy)
-    index(indexable.map { PostEntity(from: $0) })
+    await index(indexable.map { PostEntity(from: $0) }, context: context)
   }
 
   /// Indexes posts the account deliberately engaged with, such as the anchor
@@ -74,12 +106,15 @@ actor SpotlightEntityDonator {
   /// avatar URL, is seeded under the same policy, and only once the account's
   /// policy is confirmed.
   func donate(posts: [AppBskyFeedDefs.PostView]) async {
-    guard let policy = await activeModerationPolicy() else { return }
+    guard let context = await activeExportContext() else { return }
+    let policy = context.policy
     let indexable = SpotlightDonationModeration.storablePosts(posts, policy: policy)
     await PostEntityStore.shared.store(views: indexable)
+    guard await isCurrent(context) else { return }
     await purgeLegacyPostIndexIfNeeded()
+    guard await isCurrent(context) else { return }
     recordVerdicts(for: posts, policy: policy)
-    index(indexable.map { PostEntity(from: $0) })
+    await index(indexable.map { PostEntity(from: $0) }, context: context)
   }
 
   /// Indexes a post the account just liked, reposted, or bookmarked. The post
@@ -87,13 +122,14 @@ actor SpotlightEntityDonator {
   /// It is indexed only when this donator saw the post under the current
   /// moderation policy and that policy allows it.
   func donateEngagement(postURI: String) async {
-    guard let policy = await activeModerationPolicy(), policy == verdictPolicy,
+    guard let context = await activeExportContext(), context.policy == verdictPolicy,
       postVerdicts[postURI] == true
     else { return }
     let entities = await PostEntityStore.shared.entities(for: [postURI])
-    guard !entities.isEmpty else { return }
+    guard !entities.isEmpty, await isCurrent(context) else { return }
     await purgeLegacyPostIndexIfNeeded()
-    index(entities)
+    guard await isCurrent(context) else { return }
+    await index(entities, context: context)
   }
 
   /// Records whether each post may be indexed under `policy`, replacing every
@@ -115,20 +151,38 @@ actor SpotlightEntityDonator {
     }
   }
 
-  /// The active account's moderation policy once its preferences are confirmed
-  /// with the server; `nil` means nothing may be indexed yet.
-  private func activeModerationPolicy() async -> ModerationPolicy? {
-    await MainActor.run {
-      guard let appState = AppStateManager.shared.lifecycle.appState else { return nil }
+  /// A transient lease on the current account, platform decision, and confirmed label policy.
+  /// No age band or cross-process verification state is stored or exported.
+  private func activeExportContext() async -> ExportContext? {
+    let generation = exportGeneration
+    let context: ExportContext? = await MainActor.run {
+      guard let appState = AppStateManager.shared.lifecycle.appState,
+            appState.ageAccess.allows(.generalContent) else { return nil }
       let policy = appState.moderationPolicy
-      guard policy.isConfirmed, policy.accountDID == appState.userDID else { return nil }
-      return policy
+      guard policy.isConfirmed, policy.accountDID != nil,
+            policy.accountDID == appState.userDID else { return nil }
+      return ExportContext(owner: ObjectIdentifier(appState), ageRevision: appState.ageAccess.revision,
+                           generation: generation, policy: policy)
     }
+    guard generation == exportGeneration else { return nil }
+    return context
+  }
+
+  private func isCurrent(_ context: ExportContext) async -> Bool {
+    guard !Task.isCancelled else { return false }
+    return await activeExportContext() == context
   }
 
   /// Earlier builds indexed every feed post. Removes those entries once so only
   /// engaged posts remain searchable.
   private func purgeLegacyPostIndexIfNeeded() async {
+    let mutation = enqueueIndexMutation { [weak self] in
+      await self?.performLegacyPostIndexPurge()
+    }
+    await mutation.value
+  }
+
+  private func performLegacyPostIndexPurge() async {
     guard !postIndexScopeChecked else { return }
     postIndexScopeChecked = true
     let defaults = UserDefaults.standard
@@ -138,8 +192,8 @@ actor SpotlightEntityDonator {
     do {
       try await CSSearchableIndex.default().deleteAppEntities(ofType: PostEntity.self)
       defaults.set(Self.postIndexScopeVersion, forKey: Self.postIndexScopeKey)
-      // Anything indexed while the purge was in flight was deleted with it;
-      // forget it so the next donation indexes it again.
+      // Index mutations are serialized; forget old dedup entries so a later donation
+      // can repopulate the index under its current access and moderation policy.
       donatedIDs.removeAll()
       donationOrder.removeAll()
       logger.info("Purged Spotlight posts indexed under the previous scope")
@@ -155,41 +209,89 @@ actor SpotlightEntityDonator {
   /// them in Spotlight, both only for profiles moderation allows (no list
   /// filter, no profile or avatar blur) under the account's confirmed policy.
   func donate(profiles: [AppBskyActorDefs.ProfileViewDetailed]) async {
-    guard let policy = await activeModerationPolicy() else { return }
+    guard let context = await activeExportContext() else { return }
+    let policy = context.policy
     let indexable = SpotlightDonationModeration.storableProfiles(profiles, policy: policy)
     // Also seed the deadline-safe resolution store (see donate(posts:)).
     await ProfileEntityStore.shared.store(entities: indexable.map { ProfileEntity(from: $0) })
-    index(indexable.map { ProfileEntity(from: $0) })
+    guard await isCurrent(context) else { return }
+    await index(indexable.map { ProfileEntity(from: $0) }, context: context)
   }
 
   /// Removes every indexed post and profile so a signed-out or removed account's
   /// content stops appearing in Spotlight. Content is indexed again as it's viewed.
   func removeAll() async {
-    donatedIDs.removeAll()
-    donationOrder.removeAll()
-    do {
-      try await CSSearchableIndex.default().deleteAppEntities(ofType: PostEntity.self)
-      try await CSSearchableIndex.default().deleteAppEntities(ofType: ProfileEntity.self)
-    } catch {
-      logger.warning("Spotlight removal failed: \(error.localizedDescription)")
+    exportGeneration &+= 1
+    resetDonationMemory()
+    let mutation = enqueueIndexMutation { [weak self] in
+      await self?.removeIndexedEntities()
     }
+    await mutation.value
   }
 
-  private func index<Entity: IndexedEntity>(_ entities: [Entity]) where Entity.ID == String {
+  private func resetDonationMemory() {
+    donatedIDs.removeAll()
+    donationOrder.removeAll()
+    postVerdicts.removeAll()
+    verdictOrder.removeAll()
+    verdictPolicy = nil
+  }
+
+  private func removeIndexedEntities() async {
+    do {
+      try await CSSearchableIndex.default().deleteAppEntities(ofType: PostEntity.self)
+    } catch {
+      logger.warning("Spotlight post removal failed: \(error.localizedDescription)")
+    }
+    do {
+      try await CSSearchableIndex.default().deleteAppEntities(ofType: ProfileEntity.self)
+    } catch {
+      logger.warning("Spotlight profile removal failed: \(error.localizedDescription)")
+    }
+    resetDonationMemory()
+  }
+
+  private func enqueueIndexMutation(
+    _ operation: @escaping @Sendable () async -> Void
+  ) -> Task<Void, Never> {
+    let previous = indexMutationTail
+    let mutation = Task {
+      await previous?.value
+      await operation()
+    }
+    indexMutationTail = mutation
+    return mutation
+  }
+
+  private func index<Entity: IndexedEntity>(
+    _ entities: [Entity], context: ExportContext
+  ) async where Entity.ID == String {
+    let mutation = enqueueIndexMutation { [weak self] in
+      await self?.performIndex(entities, context: context)
+    }
+    await mutation.value
+  }
+
+  private func performIndex<Entity: IndexedEntity>(
+    _ entities: [Entity], context: ExportContext
+  ) async where Entity.ID == String {
+    guard await isCurrent(context) else { return }
     let fresh = Array(entities.filter { !donatedIDs.contains($0.id) }.prefix(batchLimit))
     guard !fresh.isEmpty else { return }
-    for entity in fresh {
-      remember(entity.id)
+    var indexed = false
+    do {
+      try await CSSearchableIndex.default().indexAppEntities(fresh)
+      indexed = true
+    } catch {
+      logger.warning("Spotlight donation failed for \(fresh.count) entities: \(error.localizedDescription)")
     }
-
-    Task {
-      do {
-        try await CSSearchableIndex.default().indexAppEntities(fresh)
-      } catch {
-        self.logger.warning(
-          "Spotlight donation failed for \(fresh.count) entities: \(error.localizedDescription)")
-      }
+    guard await isCurrent(context) else {
+      // Still inside the same mutation queue: no later index operation can race this cleanup.
+      await removeIndexedEntities()
+      return
     }
+    guard indexed else { return }
+    for entity in fresh { remember(entity.id) }
   }
 
   private func remember(_ id: String) {

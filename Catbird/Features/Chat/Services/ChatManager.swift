@@ -1382,6 +1382,32 @@ final class ChatManager: StateInvalidationSubscriber {
   // MARK: - Message Actions
 
   @MainActor
+  private func requireMessagingPolicy(source: AppState, convoId: String) throws {
+    if let convo = conversation(withID: convoId) {
+      try source.ageAccess.require(convo.isGroupConversation ? .groupMessaging : .directMessaging)
+    } else {
+      // A missing local conversation must not bypass either possible send boundary.
+      try source.ageAccess.require(.directMessaging)
+      try source.ageAccess.require(.groupMessaging)
+    }
+  }
+
+  @MainActor
+  private func requireMessagingAccess(
+    source: AppState, client: ATProtoClient,
+    ticket: AccountPollingBarrier.Ticket, convoId: String
+  ) async throws {
+    guard isCurrentPollingOperation(ticket, client: client), appState === source,
+          source.atProtoClient === client, !source.isAccountSwitchSuspended else { throw CancellationError() }
+    try requireMessagingPolicy(source: source, convoId: convoId)
+    let did = try await client.getDid()
+    guard isCurrentPollingOperation(ticket, client: client), appState === source,
+          source.atProtoClient === client, !source.isAccountSwitchSuspended,
+          did == source.userDID else { throw CancellationError() }
+    try requireMessagingPolicy(source: source, convoId: convoId)
+  }
+
+  @MainActor
   func sendMessage(convoId: String, text: String) async -> Bool {
     return await sendMessage(convoId: convoId, text: text, embed: nil, replyTo: nil)
   }
@@ -1419,6 +1445,8 @@ final class ChatManager: StateInvalidationSubscriber {
     // This prevents message duplication
 
     do {
+      guard let source = appState else { throw AuthError.clientNotInitialized }
+      try await requireMessagingAccess(source: source, client: client, ticket: ticket, convoId: convoId)
       // Build mention facets for @handles in chat (skip if text is empty)
       let facets = trimmedText.isEmpty ? [] : await buildChatFacets(for: trimmedText)
       guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
@@ -1435,9 +1463,9 @@ final class ChatManager: StateInvalidationSubscriber {
       )
 
       logger.debug("Sending message to conversation \(convoId)\(embed != nil ? " with embed" : "")")
-   
+      try await requireMessagingAccess(source: source, client: client, ticket: ticket, convoId: convoId)
       let (responseCode, response) = try await client.chat.bsky.convo.sendMessage(input: input)
-      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
+      guard isCurrentPollingOperation(ticket, client: client), appState === source else { return false }
 
       guard responseCode >= 200 && responseCode < 300 else {
         // `ConvoLocked` / `ConvoLockedByModeration` are the lexicon 400s for group
@@ -1826,10 +1854,12 @@ final class ChatManager: StateInvalidationSubscriber {
 
     guard let client = client else { return false }
     do {
+      guard let source = appState else { throw AuthError.clientNotInitialized }
       let input = ChatBskyConvoAddReaction.Input(
         convoId: convoId, messageId: messageId, value: emoji)
+         try await requireMessagingAccess(source: source, client: client, ticket: ticket, convoId: convoId)
          let (responseCode, response) = try await client.chat.bsky.convo.addReaction(input: input)
-         guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
+         guard isCurrentPollingOperation(ticket, client: client), appState === source else { return false }
        guard responseCode >= 200 && responseCode < 300 else {
         let typedError = await addReactionTypedError(convoId: convoId, messageId: messageId)
         guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }

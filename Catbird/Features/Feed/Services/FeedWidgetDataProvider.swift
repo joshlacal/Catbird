@@ -25,6 +25,7 @@ final class FeedWidgetDataProvider {
   /// without a network load.
   private var widgetSources: [String: WidgetFeedSource] = [:]
   private var moderationPolicyObserver: NSObjectProtocol?
+  private var ageAccessObserver: NSObjectProtocol?
 
   private init() {
     moderationPolicyObserver = NotificationCenter.default.addObserver(
@@ -32,6 +33,12 @@ final class FeedWidgetDataProvider {
     ) { [weak self] notification in
       let originDID = notification.userInfo?["accountDID"] as? String
       MainActor.assumeIsolated { self?.rebuildAfterModerationPolicyChange(originDID: originDID) }
+    }
+    ageAccessObserver = NotificationCenter.default.addObserver(
+      forName: .platformAgeAccessDidChange, object: nil, queue: .main
+    ) { [weak self] notification in
+      let originDID = notification.userInfo?["accountDID"] as? String
+      MainActor.assumeIsolated { self?.handleAgeAccessChange(originDID: originDID) }
     }
   }
 
@@ -43,6 +50,7 @@ final class FeedWidgetDataProvider {
     self.accountDID = accountDID
     // Write active DID so widget knows which account is current
     sharedDefaults?.set(accountDID, forKey: "activeAccountDID")
+    clearExportedPostsIfRequired()
   }
 
   /// Updates widget data from a feed's posts
@@ -131,6 +139,10 @@ final class FeedWidgetDataProvider {
   func updateWidgetDataEnhanced(from posts: [CachedFeedViewPost], feedType: FetchType) {
     guard let configKey = createConfigurationKey(feedType: feedType) else { return }
     guard !accountDID.isEmpty else { return }
+    guard allowsContentExport() else {
+      clearExportedPostsIfRequired()
+      return
+    }
 
     let source = WidgetFeedSource(
       posts: posts.prefix(FeedWidgetPosts.sourceLimit).compactMap { try? $0.feedViewPostBox },
@@ -139,21 +151,68 @@ final class FeedWidgetDataProvider {
       loadedAt: Date())
     widgetSources[configKey] = source
     if writeWidgetData(source, configKey: configKey) {
-      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+      reloadFeedTimelines()
     }
   }
 
   /// Rewrites every widget feed built this session when the active account's moderation policy
-  /// changes, so a stricter setting takes posts and media off the Home Screen right away.
+  /// changes, then requests that WidgetKit refresh the displayed entries.
   private func rebuildAfterModerationPolicyChange(originDID: String?) {
-    guard !accountDID.isEmpty, originDID == accountDID, !widgetSources.isEmpty else { return }
+    guard !accountDID.isEmpty, originDID == accountDID else { return }
+    guard allowsContentExport() else {
+      clearExportedPostsIfRequired()
+      return
+    }
+    guard !widgetSources.isEmpty else { return }
     var wroteAny = false
     for (configKey, source) in widgetSources where writeWidgetData(source, configKey: configKey) {
       wroteAny = true
     }
     if wroteAny {
-      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+      reloadFeedTimelines()
     }
+  }
+
+  private func handleAgeAccessChange(originDID: String?) {
+    guard originDID == accountDID, !accountDID.isEmpty else { return }
+    guard allowsContentExport() else {
+      clearExportedPostsIfRequired()
+      return
+    }
+    rebuildAfterModerationPolicyChange(originDID: originDID)
+  }
+
+  private func allowsContentExport() -> Bool {
+    guard let appState = AppStateManager.shared.lifecycle.appState,
+          appState.userDID == accountDID else { return false }
+    return appState.ageAccess.allows(.generalContent)
+  }
+
+  private func clearExportedPostsIfRequired() {
+    guard let appState = AppStateManager.shared.lifecycle.appState,
+          appState.userDID == accountDID,
+          appState.ageAccess.signal.requirement == .ageCheckRequired,
+          !appState.ageAccess.allows(.generalContent) else { return }
+    clearExportedPosts()
+  }
+
+  /// An OS restriction also covers widgets explicitly configured for another signed-in account.
+  /// Remove only regenerable post payloads, including feeds not loaded in this process. Keep
+  /// account and feed preferences; no age response or verification state enters the App Group.
+  private func clearExportedPosts() {
+    widgetSources.removeAll()
+    if let sharedDefaults {
+      for key in sharedDefaults.dictionaryRepresentation().keys
+      where key.hasPrefix("widgetData_") || key.hasPrefix(FeedWidgetConstants.feedDataKey) {
+        sharedDefaults.removeObject(forKey: key)
+      }
+    }
+    reloadFeedTimelines()
+  }
+
+  private func reloadFeedTimelines() {
+    WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+    WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedRectangular")
   }
 
   /// Writes the moderated widget posts for one configuration and reports whether it did.
@@ -198,7 +257,8 @@ final class FeedWidgetDataProvider {
   /// preferences have been confirmed with the server.
   private func activeModerationPolicy() -> ModerationPolicy? {
     guard let appState = AppStateManager.shared.lifecycle.appState,
-      appState.userDID == accountDID
+      appState.userDID == accountDID,
+      appState.ageAccess.allows(.generalContent)
     else { return nil }
     let policy = appState.moderationPolicy
     guard policy.isConfirmed, policy.accountDID == accountDID else { return nil }

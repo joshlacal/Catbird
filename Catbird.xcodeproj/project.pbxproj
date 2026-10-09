@@ -518,7 +518,6 @@
 				21196F292DC1115E00662CC3 /* Embed Foundation Extensions */,
 				21AC6E602DD0DDBF00251536 /* Run Script */,
 				21F0719D2E0CF935003BE8C2 /* Embed Frameworks (2 items) */,
-				B053C52A45CB4C7DB58BB024 /* Upload Debug Symbols to Sentry */,
 			);
 			buildRules = (
 			);
@@ -780,21 +779,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "#if command -v swiftlint >/dev/null 2>&1\n#then\n#    swiftlint\n#    swiftlint --fix\n#else\n#    echo \"warning: `swiftlint` command not found - See https://github.com/realm/SwiftLint#installation for installation instructions.\"\n#fi\n\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n      echo \"Generating dSYMs for frameworks without them...\"\n\n      # Find all frameworks in the built products directory\n      find \"$BUILT_PRODUCTS_DIR\" -name \"*.framework\" | while read framework; do\n          framework_name=$(basename \"$framework\" .framework)\n          dsym_path=\"$BUILT_PRODUCTS_DIR/$framework_name.framework.dSYM\"\n\n          # Check if dSYM already exists\n          if [ ! -d \"$dsym_path\" ]; then\n              echo \"Generating dSYM for $framework_name\"\n              dsymutil \"$framework/$framework_name\" -o \"$dsym_path\" 2>/dev/null || true\n          fi\n      done\n\n      # Specifically handle GiphyUISDK if it exists\n      giphy_framework=\"$BUILT_PRODUCTS_DIR/GiphyUISDK.framework\"\n      if [ -d \"$giphy_framework\" ]; then\n          echo \"Ensuring GiphyUISDK dSYM exists\"\n          dsymutil \"$giphy_framework/GiphyUISDK\" -o\n  \"$BUILT_PRODUCTS_DIR/GiphyUISDK.framework.dSYM\" 2>/dev/null || true\n      fi\n  fi\n";
-		};
-		B053C52A45CB4C7DB58BB024 /* Upload Debug Symbols to Sentry */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
-			);
-			name = "Upload Debug Symbols to Sentry";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "# This script is responsible for uploading debug symbols and source context for Sentry.\nif which sentry-cli >/dev/null; then\n  export SENTRY_ORG=josh-lacalamito\n  export SENTRY_PROJECT=catbird\n  ERROR=$(sentry-cli debug-files upload --include-sources \"$DWARF_DSYM_FOLDER_PATH\" 2>&1 >/dev/null)\n  if [ ! $? -eq 0 ]; then\n    echo \"warning: sentry-cli - $ERROR\"\n  fi\nelse\n  echo \"warning: sentry-cli not installed, download from https://github.com/getsentry/sentry-cli/releases\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1070,6 +1054,9 @@
 		212E94252D60132A00D3E1DD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CATBIRD_TELEMETRY_BACKEND = disabled;
+				CATBIRD_GLITCHTIP_ALLOWED_HOST = "";
+				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -1159,6 +1146,9 @@
 		212E94262D60132A00D3E1DD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CATBIRD_TELEMETRY_BACKEND = disabled;
+				CATBIRD_GLITCHTIP_ALLOWED_HOST = "";
+				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

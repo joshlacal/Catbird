@@ -26,12 +26,17 @@ final class PostManager {
   
   /// Reference to app state for triggering invalidation events
   private weak var appState: AppState?
+  private let standalonePostingAuthorization: (@MainActor () async throws -> String)?
 
   // MARK: - Initialization
 
-  init(client: ATProtoClient?, appState: AppState? = nil) {
+  init(
+    client: ATProtoClient?, appState: AppState? = nil,
+    standalonePostingAuthorization: (@MainActor () async throws -> String)? = nil
+  ) {
     self.client = client
     self.appState = appState
+    self.standalonePostingAuthorization = standalonePostingAuthorization
     logger.debug("PostManager initialized")
   }
 
@@ -47,7 +52,40 @@ final class PostManager {
 
   // MARK: - Post Creation
 
+  /// Revalidate the source after preparation awaits, immediately before publishing.
+  @MainActor
+  private func requirePostingAccess(
+    client: ATProtoClient, source: AppState?, expectedDID: String? = nil
+  ) async throws -> String {
+    try Task.checkCancellation()
+    guard self.client === client, appState === source else { throw CancellationError() }
+    if let source {
+      guard source.atProtoClient === client, !source.isAccountSwitchSuspended else { throw CancellationError() }
+      try source.ageAccess.require(.generalContent)
+    } else if standalonePostingAuthorization == nil {
+      throw AuthError.clientNotInitialized
+    }
+    let did = try await client.getDid()
+    try Task.checkCancellation()
+    guard self.client === client, appState === source,
+          expectedDID == nil || did == expectedDID else { throw CancellationError() }
+    if let source {
+      guard source.atProtoClient === client, did == source.userDID,
+            !source.isAccountSwitchSuspended else { throw CancellationError() }
+      try source.ageAccess.require(.generalContent)
+    } else {
+      guard let standalonePostingAuthorization else { throw AuthError.clientNotInitialized }
+      // The headless authorization is the final suspension point: a concurrent passive
+      // check must not become restrictive while a later DID lookup is still pending.
+      let authorizedDID = try await standalonePostingAuthorization()
+      try Task.checkCancellation()
+      guard self.client === client, appState == nil, did == authorizedDID else { throw CancellationError() }
+    }
+    return did
+  }
+
   /// Creates a new post or reply on the Bluesky network
+  @MainActor
   func createPost(
     _ postText: String,
     languages: [LanguageCodeContainer],
@@ -78,7 +116,8 @@ final class PostManager {
       let currentATProtocolDate = ATProtocolDate(date: currentDate)
 
       // Get user DID
-      let did = try await client.getDid()
+      let source = appState
+      let did = try await requirePostingAccess(client: client, source: source)
 
       // Generate TID for the post
       let tid = await TIDGenerator.nextTID()
@@ -211,6 +250,7 @@ final class PostManager {
 
       // Execute the batch operation
       logger.info("Executing batch write operation with \(writes.count) operations")
+      _ = try await requirePostingAccess(client: client, source: source, expectedDID: did)
       let (responseCode, _) = try await client.com.atproto.repo.applyWrites(input: input)
 
       // Handle the response
@@ -225,8 +265,10 @@ final class PostManager {
       logger.info("\(parentPost == nil ? "New post" : "Reply") created successfully")
       
       // Create a temporary post for optimistic updates
-      if let appState = appState {
+      if let appState = source {
         Task { @MainActor in
+          guard self.appState === appState, self.client === client,
+                appState.atProtoClient === client, !appState.isAccountSwitchSuspended else { return }
           // Create a temporary PostView for optimistic updates. It is skipped when the
           // profile isn't loaded yet; the feed refresh brings in the real post.
           let tempPost = try? createTemporaryPost(
@@ -537,6 +579,7 @@ final class PostManager {
   ///   - facets: Optional array of facets arrays for each post
   ///   - embeds: Optional array of embeds for each post
   ///   - threadgateAllowRules: Optional array of threadgate rules for the first post
+  @MainActor
   func createThread(
     posts: [String],
     languages: [LanguageCodeContainer],
@@ -567,7 +610,8 @@ final class PostManager {
     do {
       // Get user DID
       logger.debug("Fetching user DID")
-      let did = try await client.getDid()
+      let source = appState
+      let did = try await requirePostingAccess(client: client, source: source)
       logger.info("Using DID: \(did)")
 
       let currentDate = Date()
@@ -737,6 +781,7 @@ final class PostManager {
 
       // Execute the batch operation
       logger.info("Executing batch write operation")
+      _ = try await requirePostingAccess(client: client, source: source, expectedDID: did)
       let (responseCode, _) = try await client.com.atproto.repo.applyWrites(input: input)
       logger.debug("Batch write response code: \(responseCode)")
 
@@ -753,9 +798,10 @@ final class PostManager {
       logger.info("Thread with \(posts.count) posts created successfully")
       
       // Trigger state invalidation for thread creation
-      if let appState = appState, let rootRef = rootRef, let firstPostRef = firstPostRef {
+      if let appState = source, let rootRef = rootRef, let firstPostRef = firstPostRef {
         Task { @MainActor [weak self] in
-          guard let self = self else { return }
+          guard let self, self.appState === appState, self.client === client,
+                appState.atProtoClient === client, !appState.isAccountSwitchSuspended else { return }
 
           // Optimistic copy of the thread's first post, using its own identity (never the
           // root's when replying, which would duplicate the root's feed entry).

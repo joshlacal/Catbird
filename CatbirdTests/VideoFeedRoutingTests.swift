@@ -1,6 +1,7 @@
 import Foundation
 import Petrel
 import Testing
+import SwiftUI
 @testable import Catbird
 
 @MainActor
@@ -22,6 +23,52 @@ struct VideoFeedRoutingTests {
       return
     }
     #expect(carriedPost == selected)
+  }
+
+  @Test("Zoom routes preserve the selected post and distinguish their source section")
+  func zoomRouteIdentity() throws {
+    let namespace = try transitionNamespace()
+    let sectionID = UUID()
+    let selected = try post("selected")
+    let refreshed = try post("selected", playlist: "replacement")
+    let other = try post("other")
+    func source(_ uri: String?, section: UUID? = nil) -> VideoFeedZoomSource {
+      VideoFeedZoomSource(sectionID: section ?? sectionID, postURI: uri, namespace: namespace)
+    }
+    let launchSource = source(selected.uri.uriString())
+    let route = NavigationDestination.videoFeedZoom(initialPost: selected, source: launchSource)
+    let refreshedRoute = NavigationDestination.videoFeedZoom(
+      initialPost: refreshed, source: source(refreshed.uri.uriString())
+    )
+    #expect(route == refreshedRoute)
+    #expect(Set([route, refreshedRoute]).count == 1)
+    #expect(route != .videoFeedStartingAt(selected))
+    #expect(route != .videoFeedZoom(initialPost: selected,
+      source: source(selected.uri.uriString(), section: UUID())))
+    #expect(route != .videoFeedZoom(initialPost: other, source: source(other.uri.uriString())))
+    #expect(route != .videoFeedZoom(initialPost: nil, source: source(nil)))
+    guard case .videoFeedZoom(let carriedPost, let carriedSource) = route else {
+      Issue.record("Zoom route must carry the selected video and its source")
+      return
+    }
+    #expect(carriedPost == selected)
+    #expect(carriedSource === launchSource)
+    #expect(carriedSource.sourceID == selected.uri.uriString())
+    #expect(carriedSource.namespace == namespace)
+
+    #expect(source(nil).sourceID != carriedSource.sourceID)
+  }
+
+  /// Render a real namespace owner rather than reading an uninstalled property wrapper.
+  private func transitionNamespace() throws -> Namespace.ID {
+    var namespace: Namespace.ID?
+    let renderer = ImageRenderer(content: VideoFeedNamespaceProbe { namespace = $0 })
+    #if os(iOS)
+    _ = renderer.uiImage
+    #elseif os(macOS)
+    _ = renderer.nsImage
+    #endif
+    return try #require(namespace)
   }
 
   @Test("Tapped video is available before any feed response")
@@ -156,5 +203,15 @@ struct VideoFeedRoutingTests {
         val: $0, cts: base.indexedAt
       ) }
     )
+  }
+}
+
+private struct VideoFeedNamespaceProbe: View {
+  @Namespace private var namespace
+  let capture: (Namespace.ID) -> Void
+
+  var body: some View {
+    capture(namespace)
+    return Color.clear.frame(width: 1, height: 1)
   }
 }

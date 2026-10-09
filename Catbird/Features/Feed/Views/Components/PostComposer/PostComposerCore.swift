@@ -502,6 +502,7 @@ extension PostComposerViewModel {
 
     @discardableResult
     func createThread() async throws -> Bool {
+        try appState.ageAccess.require(.generalContent)
         guard !isSubmissionActive else { throw editingOwnershipError() }
         try ensureDraftReferencesReadyForPosting()
         // Update current thread entry before capturing submission ownership.
@@ -537,6 +538,7 @@ extension PostComposerViewModel {
         let currentEntryID = threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex].id : nil
         var allFacets: [[AppBskyRichtextFacet]] = []
         for entry in validEntries {
+            try appState.ageAccess.require(.generalContent)
             let facets = await processFacets(
                 for: entry.text,
                 manualLinkFacets: entry.id == currentEntryID ? manualLinkFacets : []
@@ -547,6 +549,7 @@ extension PostComposerViewModel {
         // Process embeds for each post
         var allEmbeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?] = []
         for (idx, entry) in validEntries.enumerated() {
+            try appState.ageAccess.require(.generalContent)
             var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
 
             // Each entry can have its own quote post
@@ -597,6 +600,7 @@ extension PostComposerViewModel {
 
         // Create the entire thread in one batch operation. Failures propagate so the
         // composer stays open with the draft intact and the user is told what happened.
+        try appState.ageAccess.require(.generalContent)
         try await postManager.createThread(
             posts: postTexts,
             languages: selectedLanguages,
@@ -644,6 +648,7 @@ extension PostComposerViewModel {
 
     @discardableResult
     func createPost() async throws -> Bool {
+        try appState.ageAccess.require(.generalContent)
         guard !isSubmissionActive else { throw editingOwnershipError() }
         let submissionSnapshot = captureEditingSnapshot()
         let submittedContent = editingContent()
@@ -667,6 +672,7 @@ extension PostComposerViewModel {
         // Process facets (mentions, links, etc.)
         logger.debug("Processing facets...")
         let facets = await processFacets()
+        try appState.ageAccess.require(.generalContent)
         logger.debug("Processed \(facets.count) facets")
 
         // Create embed if needed
@@ -726,6 +732,7 @@ extension PostComposerViewModel {
         logger.info("Calling postManager.createPost with text: '\(self.postText)', languages: \(self.selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(self.parentPost != nil)")
 
         do {
+            try appState.ageAccess.require(.generalContent)
             try await postManager.createPost(
                 postText,
                 languages: selectedLanguages,
@@ -970,6 +977,7 @@ extension PostComposerViewModel {
     // MARK: - Embed Creation Helpers
 
     private func createGifEmbed(_ gif: TenorGif) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        try appState.ageAccess.require(.generalContent)
         guard let client = appState.atProtoClient else { return nil }
 
         // Get the proper GIF media URL (not the Tenor page URL)
@@ -1030,6 +1038,9 @@ extension PostComposerViewModel {
             do {
                 let (data, _) = try await URLSession.shared.data(from: URL(string: previewURL)!)
                 let thumbMimeType = ImageMetadataStripper.detectMIMEType(from: data)
+                try appState.ageAccess.require(.generalContent)
+                guard !Task.isCancelled, appState.atProtoClient === client,
+                      !appState.isAccountSwitchSuspended else { throw CancellationError() }
                 let (_, uploadResult) = try await client.com.atproto.repo.uploadBlob(data: data, mimeType: thumbMimeType)
                 thumbBlob = uploadResult?.blob
             } catch {
@@ -1131,6 +1142,7 @@ extension PostComposerViewModel {
         }
 
         do {
+            try appState.ageAccess.require(.generalContent)
             logger.debug("Downloading thumbnail from: \(imageURL)")
 
             // Download the image data
@@ -1162,6 +1174,9 @@ extension PostComposerViewModel {
             logger.debug("Uploading thumbnail (\(processedData.count) bytes) with MIME type: \(mimeType)")
 
             // Upload to AT Protocol
+            try appState.ageAccess.require(.generalContent)
+            guard !Task.isCancelled, appState.atProtoClient === client,
+                  !appState.isAccountSwitchSuspended else { throw CancellationError() }
             let (uploadCode, uploadResult) = try await client.com.atproto.repo.uploadBlob(
                 data: processedData,
                 mimeType: mimeType

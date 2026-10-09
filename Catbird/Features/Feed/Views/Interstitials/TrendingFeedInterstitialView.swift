@@ -28,7 +28,10 @@ public struct TrendingFeedInterstitialView: View {
         sceneContext.navigationManager.navigate(to: .videoFeed)
       },
       onHideTopics: { appState.appSettings.showTrendingTopics = false },
-      onHideVideos: { appState.appSettings.showTrendingVideos = false }
+      onHideVideos: { appState.appSettings.showTrendingVideos = false },
+      onNavigateVideo: { destination in
+        sceneContext.navigationManager.navigate(to: destination)
+      }
     )
     .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
     .onChange(of: appState.appSettings.showTrendingTopics) { _, showTopics in
@@ -47,6 +50,7 @@ struct TrendingFeedPresentation: View {
   let onOpenVideos: () -> Void
   let onHideTopics: () -> Void
   let onHideVideos: () -> Void
+  var onNavigateVideo: ((NavigationDestination) -> Void)? = nil
 
   @State private var hideTarget: HideTarget?
 
@@ -87,14 +91,16 @@ struct TrendingFeedPresentation: View {
 
         if showTopics && !content.trends.isEmpty {
           ScrollView(.horizontal, showsIndicators: false) {
-            // Every card has the same fixed size, so the lazy stack's height does not depend on which cards are built.
-            LazyHStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+            // At most six cards: measure them together so descriptions and larger text
+            // cannot change the carousel height as another card scrolls into view.
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
               ForEach(content.trends.prefix(6), id: \.topic) { trend in
                 TrendingTimelineTopicCard(trend: trend, onSelect: { onSelectTopic(trend) })
               }
             }
             .padding(.horizontal, 16)
           }
+          .fixedSize(horizontal: false, vertical: true)
         }
 
         if showVideos && !content.videos.isEmpty {
@@ -102,7 +108,8 @@ struct TrendingFeedPresentation: View {
             videos: content.videos,
             presentation: .timeline,
             onSelectPost: onSelectPost,
-            onSeeAll: onOpenVideos
+            onSeeAll: onOpenVideos,
+            onNavigateVideo: onNavigateVideo
           )
         }
       }
@@ -193,45 +200,58 @@ private struct TrendingTimelinePreviewPrefetch: ViewModifier {
   }
 }
 
-/// Every timeline trend card has one size. The category mark and name lead the top edge, the
-/// title spans the full card width below them (up to three lines, shrinking slightly before
-/// truncating) and the media stack leads the bottom edge above a single caption line, so media
-/// arrival or title length never changes a card's width or height.
+/// Compact topic summaries use their intrinsic text height; artwork still reserves
+/// its existing geometry so late media cannot shift the following timeline row.
 private struct TrendingTimelineTopicCard: View {
   let trend: AppBskyUnspeccedDefs.TrendView
   let onSelect: () -> Void
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-  /// Category row plus three title lines at the default text size; scales with the title font.
-  @ScaledMetric(relativeTo: .title3) private var headingHeight: CGFloat = 122
 
   var body: some View {
     Button(action: onSelect) {
-      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
-          HStack(spacing: DesignTokens.Spacing.base) {
-            TrendingTopicCategoryMark(category: trend.category, diameter: 40)
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+          TrendingTopicCategoryMark(category: trend.category, diameter: 28)
+          VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             if let category = trend.category {
               Text(TrendingTopicCategoryStyle.name(for: category))
                 .appFont(AppTextRole.caption.weight(.medium))
                 .foregroundStyle(TrendingTopicCategoryStyle.color(for: category))
-                .lineLimit(1)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .fixedSize(horizontal: false, vertical: true)
             }
+            TrendingTopicTitle(
+              title: trend.displayName, size: 18,
+              lineLimit: dynamicTypeSize.isAccessibilitySize ? nil : 2
+            )
           }
-          TrendingTopicTitle(title: trend.displayName, size: 18, lineLimit: 3)
-            .minimumScaleFactor(0.8)
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(height: headingHeight, alignment: .topLeading)
-        .clipped()
-        TrendingTopicArtwork(link: trend.link, actors: trend.actors)
-        Text(postCountText)
-          .appFont(AppTextRole.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .opacity(trend.postCount > 0 ? 1 : 0)
-          .accessibilityHidden(trend.postCount <= 0)
+        if let description = TrendingTopicPresentation.description(for: trend) {
+          Text(description)
+            .appFont(AppTextRole.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        HStack(alignment: .bottom, spacing: DesignTokens.Spacing.sm) {
+          TrendingTopicArtwork(link: trend.link, actors: trend.actors)
+          Spacer(minLength: 0)
+          if trend.postCount > 0 {
+            Text(postCountText)
+              .appFont(AppTextRole.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
       }
       .multilineTextAlignment(.leading)
-      .frame(width: dynamicTypeSize.isAccessibilitySize ? 300 : 240, alignment: .topLeading)
+      .containerRelativeFrame(.horizontal, alignment: .topLeading) { viewportWidth, _ in
+        // Keep the whole card inside the carousel, including both 16pt scroll
+        // insets and the card's own horizontal padding.
+        let preferredWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 300 : 240
+        return min(preferredWidth, max(0, viewportWidth - 32 - 2 * DesignTokens.Spacing.base))
+      }
       .padding(.horizontal, DesignTokens.Spacing.base)
       .padding(.vertical, DesignTokens.Spacing.md)
       .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))

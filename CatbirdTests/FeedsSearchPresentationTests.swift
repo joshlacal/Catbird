@@ -143,25 +143,77 @@ struct FeedsSearchPresentationTests {
     }
   }
 
-  @Test("Trending shows readable topics and shorter video previews in timeline containers")
+  @Test("Trending topics and complete counts fit the receiving timeline width")
   func trendingTimelineAcrossSizes() async throws {
     let appState = try await makeAppState()
     let content = TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()])
-    for (name, width, scheme, typeSize) in [
-      ("narrow-light", CGFloat(320), ColorScheme.light, DynamicTypeSize.large),
-      ("wide-dark", CGFloat(680), ColorScheme.dark, DynamicTypeSize.large),
-      ("narrow-dark", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1),
+    for (name, width, scheme, typeSize, horizontalInset, direction) in [
+      ("narrow-light", CGFloat(320), ColorScheme.light, DynamicTypeSize.large, CGFloat(0), LayoutDirection.leftToRight),
+      ("wide-dark", CGFloat(680), ColorScheme.dark, DynamicTypeSize.large, CGFloat(0), LayoutDirection.leftToRight),
+      ("narrow-dark", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1, CGFloat(0), LayoutDirection.leftToRight),
+      ("inset-narrow-dark", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1, CGFloat(20), LayoutDirection.leftToRight),
+      ("narrow-rtl", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1, CGFloat(0), LayoutDirection.rightToLeft),
     ] {
       try await withHost(
-        trending(content, topics: true, videos: true), appState: appState,
+        trending(content, topics: true, videos: true)
+          .padding(.horizontal, horizontalInset)
+          .environment(\.layoutDirection, direction), appState: appState,
         size: CGSize(width: width, height: 850), scheme: scheme, typeSize: typeSize
       ) { host in
         let receipt = try await host.capture(
-          "trending-timeline-\(name)", requiring: ["Trending on Bluesky", "Moon Garden", "Open The Vids", "River Films"]
+          "trending-timeline-\(name)",
+          requiring: ["Trending on Bluesky", "Moon Garden", "astronomy", "1.2K posts", "Trending Videos", "Open The Vids", "River Films"],
+          measuringWord: "posts", measuringInkForText: "1.2K posts"
         )
-        let topic = try #require(receipt.lines.first { $0.text.contains("Moon Garden") })
+        // The constrained title may wrap; order from its final rendered line.
+        let topic = try #require(receipt.lines.last { $0.text.contains("Garden") })
+        let description = try #require(receipt.lines.first { $0.text.contains("astronomy") })
         let author = try #require(receipt.lines.first { $0.text.contains("River Films") })
-        #expect(author.rect.minY > topic.rect.maxY, "Video byline must remain below the topic content")
+        let countTail = try #require(receipt.measuredWordRect, "The full final word of the count must be rendered")
+        let countInk = try #require(receipt.measuredTextInk, "The complete count needs unambiguous painted glyph bounds")
+        let videoHeading = try #require(receipt.lines.first { $0.text.contains("Trending Videos") })
+        // Vision identifies the complete count, but its inferred boxes can extend
+        // beyond the painted glyphs. Check actual ink against unchanged padding.
+        let contentBounds = host.actualSafeAreaFrame.insetBy(
+          dx: horizontalInset + 16 + DesignTokens.Spacing.base, dy: 0)
+        #expect(countInk.rect.minX >= contentBounds.minX - 1 && countInk.rect.maxX <= contentBounds.maxX + 1,
+          "The full count must fit inside both carousel and card padding, including inset and RTL containers")
+        #expect(countTail.minY > description.rect.maxY && countTail.maxY < videoHeading.rect.minY,
+          "The complete count must follow the description and precede the video section")
+        #expect(description.rect.minY > topic.rect.maxY, "The description must follow the topic heading")
+        #expect(author.rect.minY > description.rect.maxY, "Video byline must remain below the topic description")
+      }
+    }
+  }
+
+  @Test("Timeline descriptions omit missing and markup-only text without a reserved gap")
+  func trendingTimelineDescriptionAvailability() async throws {
+    let appState = try await makeAppState()
+    var emptyBottom: CGFloat?
+    let cases: [(String, String?)] = [
+      ("missing", nil), ("blank", "  "), ("markup", "<p> \n </p>"),
+      ("supplied", "<p>A brief garden summary.</p>")
+    ]
+    for (name, description) in cases {
+      let content = TrendingFeedContent(trends: [makeTopic(description: description)])
+      try await withHost(
+        VStack(alignment: .leading, spacing: 0) {
+          trending(content, topics: true, videos: false)
+          Text("TIMELINE CONTINUES").padding(16)
+        }, appState: appState, size: CGSize(width: 320, height: 900)
+      ) { host in
+        let required = name == "supplied"
+          ? ["brief garden summary", "TIMELINE CONTINUES"] : ["Moon Garden", "TIMELINE CONTINUES"]
+        let receipt = try await host.capture("timeline-description-\(name)", requiring: required)
+        let next = try #require(receipt.lines.first { $0.text.contains("TIMELINE CONTINUES") })
+        if name == "missing" {
+          emptyBottom = next.rect.minY
+        } else if name == "supplied" {
+          #expect(next.rect.minY > (try #require(emptyBottom)), "Supplied text must occupy its own visible row")
+        } else {
+          #expect(abs(next.rect.minY - (try #require(emptyBottom))) <= 1,
+            "Empty or markup-only descriptions must not reserve a phantom row")
+        }
       }
     }
   }
@@ -671,7 +723,7 @@ extension FeedsSearchPresentationTests {
     }
   }
 
-  private func makeTopic(description: String = "A community conversation about plants and astronomy.") -> AppBskyUnspeccedDefs.TrendView {
+  private func makeTopic(description: String? = "A community conversation about plants and astronomy.") -> AppBskyUnspeccedDefs.TrendView {
     .init(topic: "moon-garden", displayName: "Moon Garden", description: description,
       link: "/profile/trending.example.invalid/feed/moon-garden", startedAt: ATProtocolDate(date: Date()),
       postCount: 1200, status: "hot", category: "science", actors: [])
@@ -850,10 +902,114 @@ private final class PresentationHost {
   struct Receipt {
     let lines: [Line]
     var measuredWordRect: CGRect?
+    var measuredTextInk: TextInkMeasurement?
     var transcript: String { lines.map(\.text).joined(separator: "\n") }
     func contains(_ text: String) -> Bool {
       PresentationHost.normalized(transcript).contains(PresentationHost.normalized(text))
     }
+  }
+
+  struct TextInkMeasurement: CustomStringConvertible {
+    let rect: CGRect
+    let evidence: String
+    var description: String { evidence }
+  }
+
+  private struct InkFailure: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
+  }
+
+  /// Count-only oracle for this fixture's neutral caption on a uniform card fill.
+  /// Vision locates the whole count; it does not determine its painted edges.
+  private static func measureNeutralTextInk(image: UIImage, text: String, seed: CGRect) throws -> TextInkMeasurement {
+    guard image.imageOrientation == .up, let cg = image.cgImage,
+          cg.colorSpace?.model == .rgb, cg.bitsPerComponent == 8,
+          image.size.width > 0, image.size.height > 0,
+          let data = cg.dataProvider?.data, let pointer = CFDataGetBytePtr(data) else {
+      throw InkFailure("Ink measurement requires an upright eight-bit RGB renderer image")
+    }
+    let scaleX = CGFloat(cg.width) / image.size.width
+    let scaleY = CGFloat(cg.height) / image.size.height
+    guard abs(scaleX - scaleY) < 0.000001, abs(scaleX - image.scale) < 0.000001 else {
+      throw InkFailure("Inconsistent CGImage pixel-to-point scale")
+    }
+    let stride = cg.bitsPerPixel / 8
+    let order = cg.bitmapInfo.intersection(.byteOrderMask)
+    let channels: (Int, Int, Int)
+    switch (cg.bitsPerPixel, cg.alphaInfo, order) {
+    case (24, .none, _): channels = (0, 1, 2)
+    case (32, .premultipliedFirst, .byteOrder32Little), (32, .first, .byteOrder32Little),
+         (32, .noneSkipFirst, .byteOrder32Little): channels = (2, 1, 0)
+    case (32, .premultipliedLast, .byteOrder32Little), (32, .last, .byteOrder32Little),
+         (32, .noneSkipLast, .byteOrder32Little): channels = (3, 2, 1)
+    case (32, .premultipliedFirst, .byteOrder32Big), (32, .first, .byteOrder32Big),
+         (32, .noneSkipFirst, .byteOrder32Big): channels = (1, 2, 3)
+    case (32, .premultipliedLast, .byteOrder32Big), (32, .last, .byteOrder32Big),
+         (32, .noneSkipLast, .byteOrder32Big): channels = (0, 1, 2)
+    default: throw InkFailure("Unsupported renderer bitmap: \(cg.bitsPerPixel)bpp, info=\(cg.bitmapInfo.rawValue)")
+    }
+    guard cg.bytesPerRow >= cg.width * stride, CFDataGetLength(data) >= cg.bytesPerRow * cg.height else {
+      throw InkFailure("Incomplete renderer pixel storage")
+    }
+    // CGImage scanlines and Vision's converted seed both use top-left coordinates.
+    // Read the provider directly: no CGContext draw/transform can flip these rows.
+    let bytes = Array(UnsafeBufferPointer(start: pointer, count: CFDataGetLength(data)))
+    func rgb(_ x: Int, _ y: Int) -> (Int, Int, Int) {
+      let offset = y * cg.bytesPerRow + x * stride
+      return (Int(bytes[offset + channels.0]), Int(bytes[offset + channels.1]), Int(bytes[offset + channels.2]))
+    }
+    let expanded = seed.insetBy(dx: -6, dy: -6)
+    guard [expanded.minX, expanded.minY, expanded.maxX, expanded.maxY].allSatisfy({ $0.isFinite }) else {
+      throw InkFailure("Nonfinite OCR seed")
+    }
+    let x0 = Int(floor(expanded.minX * scaleX)), x1 = Int(ceil(expanded.maxX * scaleX))
+    let y0 = Int(floor(expanded.minY * scaleY)), y1 = Int(ceil(expanded.maxY * scaleY))
+    // Do not intersect with the expected content bounds: that would hide overflow.
+    guard x0 > 0, y0 > 0, x1 < cg.width, y1 < cg.height, x1 > x0, y1 > y0 else {
+      throw InkFailure("Expanded count ROI touches or crosses the rendered viewport")
+    }
+    var histogram: [Int: Int] = [:]
+    for y in y0..<y1 { for x in x0..<x1 {
+      let (r, g, b) = rgb(x, y)
+      histogram[(r << 16) | (g << 8) | b, default: 0] += 1
+    } }
+    guard let modal = histogram.max(by: { $0.value < $1.value }), modal.value > (x1 - x0) * (y1 - y0) / 2 else {
+      throw InkFailure("Count ROI has no unambiguous uniform backdrop")
+    }
+    let background = ((modal.key >> 16) & 255, (modal.key >> 8) & 255, modal.key & 255)
+    guard max(background.0, background.1, background.2) - min(background.0, background.1, background.2) <= 2 else {
+      throw InkFailure("Count backdrop is not neutral")
+    }
+    // Independent contrast cutoffs must agree on horizontal ink edges. This
+    // rejects threshold-sensitive noise instead of tuning a passing tolerance.
+    let thresholds = [16, 24, 32]
+    var pixelBounds: [CGRect] = []
+    for threshold in thresholds {
+      var minX = x1, minY = y1, maxX = x0 - 1, maxY = y0 - 1
+      for y in y0..<y1 { for x in x0..<x1 {
+        let (r, g, b) = rgb(x, y)
+        guard max(abs(r - background.0), abs(g - background.1), abs(b - background.2)) > threshold else { continue }
+        guard max(r, g, b) - min(r, g, b) <= 20 else { throw InkFailure("Colored foreground makes the count ROI ambiguous") }
+        minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
+      } }
+      guard maxX >= minX, maxY >= minY else { throw InkFailure("No count ink at contrast \(threshold)") }
+      guard minX > x0, minY > y0, maxX < x1 - 1, maxY < y1 - 1 else {
+        throw InkFailure("Count ink reaches the ROI edge at contrast \(threshold)")
+      }
+      pixelBounds.append(CGRect(x: CGFloat(minX), y: CGFloat(minY),
+        width: CGFloat(maxX - minX + 1), height: CGFloat(maxY - minY + 1)))
+    }
+    let ink = pixelBounds[0]
+    guard pixelBounds.allSatisfy({ $0.minX == ink.minX && $0.maxX == ink.maxX }) else {
+      throw InkFailure("Count horizontal ink bounds disagree across contrasts \(thresholds): \(pixelBounds)")
+    }
+    let rect = CGRect(x: ink.minX / scaleX, y: ink.minY / scaleY, width: ink.width / scaleX, height: ink.height / scaleY)
+    return TextInkMeasurement(rect: rect, evidence:
+      "text=\(text); pointSize=\(image.size); pixelSize=\(cg.width)x\(cg.height); scale=\(scaleX),\(scaleY); "
+      + "seed=\(seed); roiPixels=[\(x0),\(y0),\(x1),\(y1)); backgroundRGB=\(background); "
+      + "thresholds=\(thresholds); inkPixelRects=\(pixelBounds); inkPoints=\(rect); edges=max-exclusive; "
+      + "bitmapInfo=\(cg.bitmapInfo.rawValue); bitsPerPixel=\(cg.bitsPerPixel); bytesPerRow=\(cg.bytesPerRow)")
   }
 
   let window: UIWindow
@@ -921,12 +1077,14 @@ private final class PresentationHost {
     if becameKey { previousKeyWindow?.makeKey() }
   }
 
-  func capture(_ name: String, requiring expected: [String] = [], measuringWord: String? = nil) async throws -> Receipt {
+  func capture(_ name: String, requiring expected: [String] = [], measuringWord: String? = nil,
+               measuringInkForText: String? = nil) async throws -> Receipt {
     let deadline = ContinuousClock.now + .seconds(3)
     var png = Data()
     var receipt = Receipt(lines: [])
     var didDraw = false
     var errorText = ""
+    var inkError = ""
     repeat {
       try await Task.sleep(for: .milliseconds(80))
       window.layoutIfNeeded()
@@ -934,6 +1092,7 @@ private final class PresentationHost {
       let format = UIGraphicsImageRendererFormat()
       format.scale = 3
       format.opaque = true
+      if measuringInkForText != nil { format.preferredRange = .standard }
       let image = UIGraphicsImageRenderer(bounds: controller.view.bounds, format: format).image { context in
         (window.overrideUserInterfaceStyle == .dark ? UIColor.black : UIColor.white).setFill()
         context.fill(controller.view.bounds)
@@ -947,9 +1106,17 @@ private final class PresentationHost {
         request.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: try #require(image.cgImage), options: [:]).perform([request])
         var measuredWordRect: CGRect?
+        var inkSeeds: [CGRect] = []
         receipt = Receipt(lines: (request.results ?? []).compactMap { observation in
           guard let candidate = observation.topCandidates(1).first else { return nil }
           let text = candidate.string
+          if let measuringInkForText, Self.normalized(text) == Self.normalized(measuringInkForText) {
+            // This fixture renders the entire count on one otherwise empty line.
+            // Do not accept an observation that also includes unrelated content.
+            let bounds = observation.boundingBox
+            inkSeeds.append(CGRect(x: bounds.minX * image.size.width, y: (1 - bounds.maxY) * image.size.height,
+              width: bounds.width * image.size.width, height: bounds.height * image.size.height))
+          }
           if let measuringWord, let range = text.range(of: measuringWord),
             let word = try? candidate.boundingBox(for: range) {
             let bounds = word.boundingBox
@@ -961,8 +1128,21 @@ private final class PresentationHost {
             y: (1 - bounds.maxY) * image.size.height, width: bounds.width * image.size.width, height: bounds.height * image.size.height))
         })
         receipt.measuredWordRect = measuredWordRect
+        if let measuringInkForText {
+          inkError = ""
+          if inkSeeds.count == 1 {
+            do {
+              receipt.measuredTextInk = try Self.measureNeutralTextInk(
+                image: image, text: measuringInkForText, seed: inkSeeds[0])
+            } catch { inkError = String(describing: error) }
+          } else {
+            inkError = "Expected one complete text observation; found \(inkSeeds.count)"
+          }
+        }
       } catch { errorText = String(describing: error) }
-      if didDraw && expected.allSatisfy({ receipt.contains($0) }) && (measuringWord == nil || receipt.measuredWordRect != nil) { break }
+      if didDraw && expected.allSatisfy({ receipt.contains($0) })
+        && (measuringWord == nil || receipt.measuredWordRect != nil)
+        && (measuringInkForText == nil || receipt.measuredTextInk != nil) { break }
     } while ContinuousClock.now < deadline
 
     Attachment.record(Array(png), named: "\(name).png")
@@ -971,6 +1151,8 @@ private final class PresentationHost {
     let details = "requestedSize=\(requestedSize), actualWindow=\(window.bounds), renderedView=\(controller.view.bounds), scale=3, drawHierarchy=\(didDraw)\n"
       + "syntheticAdditionalInsets=\(String(describing: requestedAdditionalSafeAreaInsets)), baselineInsets=\(baselineSafeAreaInsets), actualInsets=\(controller.view.safeAreaInsets), actualSafeAreaFrame=\(actualSafeAreaFrame)\n"
       + "typography=\(typographyText)\n"
+      + "measuringWord=\(measuringWord ?? "none"), measuredWordRect=\(String(describing: receipt.measuredWordRect))\n"
+      + "measuringInkForText=\(measuringInkForText ?? "none"), measuredTextInk=\(String(describing: receipt.measuredTextInk)), inkError=\(inkError)\n"
       + "error=\(errorText)\n" + receipt.lines.map { "\($0.rect): \($0.text)" }.joined(separator: "\n")
     Attachment.record(Array(details.utf8), named: "\(name)-geometry-ocr.txt")
     #expect(!png.isEmpty && didDraw, "UIKit must produce a real rendered image")

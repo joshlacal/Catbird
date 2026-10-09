@@ -27,6 +27,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
 
   private struct Counters: Codable {
     let updateRequests: Int
+    let snapshotConstructions: Int
     let snapshotApplications: Int
     let skippedSnapshots: Int
     let postConfigurations: Int
@@ -35,6 +36,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
 
     init(_ value: FeedCollectionUpdateDiagnostics) {
       updateRequests = value.updateRequests
+      snapshotConstructions = value.snapshotConstructions
       snapshotApplications = value.snapshotApplications
       skippedSnapshots = value.skippedSnapshots
       postConfigurations = value.postConfigurations
@@ -239,8 +241,9 @@ final class FeedLoadPerformanceTests: XCTestCase {
       window.isHidden = false
       await controller.performUpdate()
       try await settle()
-      XCTAssertEqual(controller.collectionView.numberOfItems(inSection: 0), state.posts.count,
-        "This fixture has only post rows, so its index mapping must be exact")
+      XCTAssertFalse(state.posts.isEmpty)
+      XCTAssertEqual(controller.collectionView.numberOfItems(inSection: 0), state.posts.count + 1,
+        "This fixture has post rows followed by one footer; post indices remain unchanged")
     }
 
     func settle() async throws {
@@ -273,8 +276,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
 
     func recreateController() async throws -> FeedCollectionViewControllerIntegrated {
       let outgoing = controller
-      // Capture while the outgoing window still has its real effective insets.
-      outgoing.viewWillDisappear(false)
+      // UIKit owns the outgoing/incoming appearance callbacks during root replacement.
       let replacement = FeedCollectionViewControllerIntegrated(stateManager: state,
         viewportState: viewportState, sceneContext: sceneContext,
         navigationPath: .constant(NavigationPath()))
@@ -342,6 +344,56 @@ final class FeedLoadPerformanceTests: XCTestCase {
       XCTAssertEqual(fixture.controller.collectionView.numberOfItems(inSection: 0), 75)
       XCTAssertFalse(probe.frames.isEmpty, "The simulator must deliver display callbacks")
     }
+  }
+
+  func testNoOpUpdatesAvoidSnapshotConstructionAndDetectInPlaceMutation() async throws {
+    let fixture = try await Fixture(videoCards: false)
+    defer { fixture.close() }
+    let post = fixture.posts[5]
+    let retained = fixture.state.viewModel(for: post)
+    let postIDs = fixture.state.posts.map(\.id)
+    let itemCount = fixture.controller.collectionView.numberOfItems(inSection: 0)
+    XCTAssertTrue(fixture.state.posts[5] === post)
+    XCTAssertTrue(retained.displayText.contains("Fixture post 5"))
+    let probe = FrameProbe { [weak fixture] in try? fixture?.geometry() }
+    probe.start()
+    defer { probe.stop() }
+
+    let noOpPhase = try await measure("no-op-updates-10", fixture: fixture, probe: probe) {
+      for _ in 0..<10 { await fixture.controller.performUpdate() }
+    }
+    // This receipt also works on the baseline with construction counting added
+    // at its original snapshot creation site; the zero-construction check fails.
+    try attachJSON([noOpPhase], named: "no-op-update-phase.json")
+    let before = noOpPhase.countersBefore
+    let after = noOpPhase.countersAfter
+    XCTAssertGreaterThanOrEqual(after.skippedSnapshots - before.skippedSnapshots, 10)
+    XCTAssertEqual(after.snapshotConstructions - before.snapshotConstructions, 0)
+    XCTAssertEqual(after.snapshotApplications - before.snapshotApplications, 0)
+    XCTAssertEqual(after.postConfigurations - before.postConfigurations, 0)
+    XCTAssertEqual(after.trendingConfigurations - before.trendingConfigurations, 0)
+    XCTAssertEqual(after.reconfiguredItems - before.reconfiguredItems, 0)
+    XCTAssertEqual(noOpPhase.after.offsetY, noOpPhase.before.offsetY, accuracy: 1)
+    XCTAssertEqual(noOpPhase.after.contentHeight, noOpPhase.before.contentHeight, accuracy: 1)
+    XCTAssertEqual(noOpPhase.after.anchorViewportY, noOpPhase.before.anchorViewportY, accuracy: 1)
+    XCTAssertEqual(noOpPhase.after.trendingHeight, noOpPhase.before.trendingHeight, accuracy: 1)
+    XCTAssertEqual(fixture.state.posts.map(\.id), postIDs)
+    XCTAssertEqual(fixture.controller.collectionView.numberOfItems(inSection: 0), itemCount)
+
+    let replacement = try XCTUnwrap(Fixture.makePosts(5..<6, text: "IN PLACE UPDATED FIXTURE TEXT").first)
+    post.serializedPost = replacement.serializedPost
+    await fixture.controller.performUpdate()
+    try await fixture.settle()
+    let afterMutation = try XCTUnwrap(fixture.controller.updateDiagnostics)
+    XCTAssertEqual(afterMutation.snapshotConstructions - after.snapshotConstructions, 1)
+    XCTAssertEqual(afterMutation.snapshotApplications - after.snapshotApplications, 1)
+    XCTAssertEqual(afterMutation.reconfiguredItems - after.reconfiguredItems, 1)
+    XCTAssertEqual(afterMutation.trendingConfigurations - after.trendingConfigurations, 0)
+    XCTAssertTrue(fixture.state.posts[5] === post)
+    XCTAssertEqual(retained.displayText, "IN PLACE UPDATED FIXTURE TEXT")
+    try attachScreenshot(fixture, named: "no-op-then-in-place-update", requireTrending: true,
+      requiredText: "in place updated fixture text")
+    XCTAssertTrue(retained === fixture.state.viewModel(for: post))
   }
 
   func testAppendWithVisibleTrendingPreservesAnchorWithoutReconfiguringSurvivors() async throws {
@@ -488,7 +540,11 @@ final class FeedLoadPerformanceTests: XCTestCase {
     appState.appSettings.showTrendingTopics = false
     appState.appSettings.showTrendingVideos = false
     let model = FeedModel(feedManager: FeedManager(client: nil, fetchType: .timeline), appState: appState)
-    model.posts = try Fixture.makePosts(0..<40)
+    // Use words for the top-row OCR marker: Vision confuses a lone zero with O.
+    // The existing factory preserves post 0's identity, author and position.
+    model.posts = try Fixture.makePosts(0..<1,
+      text: "Fixture summit marker. This stable paragraph exercises the production text row while new posts load.")
+      + Fixture.makePosts(1..<40)
     let state = FeedStateManager(appState: appState, feedModel: model, feedType: .timeline)
     state.hasReachedEnd = true
     defer {
@@ -537,8 +593,9 @@ final class FeedLoadPerformanceTests: XCTestCase {
     await second.controller.performUpdate()
     try await first.settle()
     try await second.settle()
-    XCTAssertEqual(first.controller.collectionView.numberOfItems(inSection: 0), 50)
-    XCTAssertEqual(second.controller.collectionView.numberOfItems(inSection: 0), 50)
+    XCTAssertEqual(state.posts.count, 50)
+    XCTAssertEqual(first.controller.collectionView.numberOfItems(inSection: 0), state.posts.count + 1)
+    XCTAssertEqual(second.controller.collectionView.numberOfItems(inSection: 0), state.posts.count + 1)
     XCTAssertEqual(try first.viewportY(for: firstAnchor.postID), firstY, accuracy: 1)
     XCTAssertEqual(try second.viewportY(for: secondAnchor.postID), secondY, accuracy: 1)
     try record("shared-publication")
@@ -557,7 +614,8 @@ final class FeedLoadPerformanceTests: XCTestCase {
     // Delay the outgoing controller's teardown until its replacement owns the handler.
     // This must not remove the new registration or send the command to another window.
     let oldOffset = oldController.collectionView.contentOffset.y
-    oldController.viewWillDisappear(false)
+    oldController.beginAppearanceTransition(false, animated: false)
+    oldController.endAppearanceTransition()
     firstState.scrollToTop()
     try await first.waitUntilAtTop()
     try await second.settle()
@@ -566,7 +624,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
     XCTAssertEqual(try second.viewportY(for: secondAnchor.postID), secondY, accuracy: 1)
     try record("first-command-after-stale-owner-teardown")
     try attachScreenshot(first.window, named: "first-window-command-at-top", requireTrending: false,
-      requiredText: "fixture post 0")
+      requiredText: "fixture summit marker")
     try attachScreenshot(second.window, named: "second-window-unmoved", requireTrending: false,
       requiredText: "fixture post 20")
     try attachJSON(receipts, named: "shared-feed-window-viewport-receipts.json")
@@ -633,7 +691,8 @@ final class FeedLoadPerformanceTests: XCTestCase {
         XCTAssertTrue(normalized.contains("trending on bluesky"), "Trending must be present in captured pixels")
       }
       if let requiredText {
-        XCTAssertTrue(normalized.contains(requiredText), "Updated content must be present in captured pixels")
+        XCTAssertTrue(normalized.contains(requiredText),
+          "\(name): expected '\(requiredText)' in captured pixels; recognized: \(text)")
       }
     }
   }

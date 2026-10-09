@@ -336,6 +336,13 @@ final class ModerationStateHarness {
     }
     let account = ModerationStateAccount(did: did, server: server, client: client, appState: appState)
     accounts.append(account)
+    // These preference fixtures explicitly use a synthetic no-requirement checker. Await its
+    // committed startup decision before testing provider policy, rather than racing the initial
+    // mature-content ceiling. This joins the coordinator's tracked lookup without any Apple UI.
+    await appState.ageAccess.refreshRequirements()
+    try #require(!appState.ageAccess.isCheckingRequirement)
+    try #require(appState.platformAgeSignal.requirement == .none)
+    try #require(!appState.ageAccess.restrictsMatureContent)
     return account
   }
 

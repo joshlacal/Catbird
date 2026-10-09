@@ -25,6 +25,7 @@ public enum NavigationDestination: Hashable, Sendable {
     case notificationActivity([ATProtocolURI])
     case videoFeed
     case videoFeedStartingAt(AppBskyFeedDefs.PostView)
+    case videoFeedZoom(initialPost: AppBskyFeedDefs.PostView?, source: VideoFeedZoomSource)
     case settings(SettingsRoute)
     #if os(iOS)
     case conversation(String) // convoId
@@ -97,6 +98,10 @@ public enum NavigationDestination: Hashable, Sendable {
         case .videoFeedStartingAt(let post):
             hasher.combine("videoFeedStartingAt")
             hasher.combine(post.uri.uriString())
+        case .videoFeedZoom(let post, let source):
+            hasher.combine("videoFeedZoom")
+            hasher.combine(post?.uri.uriString())
+            hasher.combine(source)
         case .settings(let route):
             hasher.combine("settings")
             hasher.combine(route)
@@ -156,6 +161,8 @@ public enum NavigationDestination: Hashable, Sendable {
             return true
         case (.videoFeedStartingAt(let lhsPost), .videoFeedStartingAt(let rhsPost)):
             return lhsPost.uri == rhsPost.uri
+        case (.videoFeedZoom(let lhsPost, let lhsSource), .videoFeedZoom(let rhsPost, let rhsSource)):
+            return lhsPost?.uri == rhsPost?.uri && lhsSource == rhsSource
         case (.settings(let lhsRoute), .settings(let rhsRoute)):
             return lhsRoute == rhsRoute
         #if os(iOS)

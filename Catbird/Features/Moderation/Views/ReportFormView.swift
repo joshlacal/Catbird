@@ -170,16 +170,19 @@ struct ReportFormView: View {
     private let contentDescription: String
     private let videoTimestamp: Double?
     private let onComplete: ((Bool) -> Void)?
+    private let expectedAccountDID: String?
     
     init(
         reportingService: ReportingService,
         subject: ComAtprotoModerationCreateReport.InputSubjectUnion,
         contentDescription: String,
         videoTimestamp: Double? = nil,
+        expectedAccountDID: String? = nil,
         onComplete: ((Bool) -> Void)? = nil
     ) {
         self.subject = subject
         self.contentDescription = contentDescription
+        self.expectedAccountDID = expectedAccountDID
         if let videoTimestamp = videoTimestamp {
             self.videoTimestamp = videoTimestamp
         } else if case .comAtprotoRepoStrongRef(let strongRef) = subject {
@@ -627,7 +630,8 @@ struct ReportFormView: View {
                 reasonType: selectedReason,
                 reason: customReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : customReason.trimmingCharacters(in: .whitespacesAndNewlines),
                 labelerDid: targetLabelerDid,
-                videoTimestampSeconds: timestampSeconds
+                videoTimestampSeconds: timestampSeconds,
+                expectedAccountDID: expectedAccountDID
             )
             
             if success {

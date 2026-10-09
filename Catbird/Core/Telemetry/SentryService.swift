@@ -7,65 +7,77 @@ import Sentry
 enum SentryService {
     static func start() {
         #if canImport(Sentry)
-        guard let dsn = resolveDSN() else { return }
-
+        let configuration = telemetryConfiguration()
+        guard configuration.backend == .glitchTip, let dsn = configuration.dsn else { return }
+        let bundle = Bundle.main
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         SentrySDK.start { options in
-            options.dsn = dsn
-
-            #if DEBUG
-            options.debug = false  // Even in debug, disable Sentry debug to reduce noise
-            options.environment = "debug"
-            options.tracesSampleRate = 0.1  // Reduced for debug builds
-            options.profilesSampleRate = 0.05
-            #elseif BETA
-            options.debug = false
-            options.environment = "beta"
-            options.tracesSampleRate = 0.15
-            options.profilesSampleRate = 0.1
-            #else
-            options.debug = false
-            options.environment = "production"
-            options.tracesSampleRate = 0.05  // Much lower for production
-            options.profilesSampleRate = 0.02
-            #endif
-
-            options.enableAppHangTracking = true
-
-            // Disable launch profiling - it initializes too early during +load
-            // and can cause crashes in SentryFileManager during dyld initialization
-            options.enableAppLaunchProfiling = false
-
-            let bundle = Bundle.main
-            let version = (bundle.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
-            let build = (bundle.infoDictionary?["CFBundleVersion"] as? String) ?? ""
-            options.releaseName = "Catbird@\(version)+\(build)"
-
-            // Crash and diagnostic data is declared as not linked to the user, so no
-            // user identity is attached and account identifiers are scrubbed everywhere.
-            options.sendDefaultPii = false
-
-            // Filter out noisy/benign errors
-            options.beforeSend = { event in
-                guard let event = filterEvent(event) else { return nil }
-                return redactEvent(event)
-            }
-            options.beforeBreadcrumb = { crumb in
-                redactBreadcrumb(crumb)
-            }
-            options.beforeSendSpan = { span in
-                if let description = span.spanDescription {
-                    span.spanDescription = redactingAccountIdentifiers(description)
-                }
-                for (key, value) in span.data {
-                    if let text = value as? String {
-                        span.setData(value: redactingAccountIdentifiers(text), key: key)
-                    }
-                }
-                return span
-            }
+            configureOptions(options, dsn: dsn, version: version, build: build)
         }
         #endif
     }
+
+    #if canImport(Sentry)
+    /// Configure locally so privacy behavior can be verified without starting SDK transport.
+    static func configureOptions(_ options: Options, dsn: String, version: String, build: String) {
+        options.dsn = dsn
+        options.debug = false
+        #if DEBUG
+        options.environment = "debug"
+        #elseif BETA
+        options.environment = "beta"
+        #else
+        options.environment = "production"
+        #endif
+        options.releaseName = "Catbird@\(version)+\(build)"
+        options.dist = build
+        options.sendDefaultPii = false
+        options.enableCrashHandler = true
+        options.enableAppHangTracking = true
+
+        // GlitchTip receives minimized failure reports, without session/performance envelopes.
+        options.tracesSampleRate = 0
+        options.profilesSampleRate = 0
+        options.enableAutoPerformanceTracing = false
+        options.enablePerformanceV2 = false
+        options.enablePersistingTracesWhenCrashing = false
+        options.enableAppLaunchProfiling = false
+        options.enableAutoSessionTracking = false
+        options.enableWatchdogTerminationTracking = false
+        options.enableAutoBreadcrumbTracking = false
+        options.enableNetworkBreadcrumbs = false
+        options.enableNetworkTracking = false
+        options.enableGraphQLOperationTracking = false
+        options.enableCaptureFailedRequests = false
+        options.enableFileIOTracing = false
+        options.enableCoreDataTracing = false
+        options.enableSwizzling = false
+        options.tracePropagationTargets = []
+        options.maxBreadcrumbs = 0
+        options.beforeBreadcrumb = { _ in nil }
+        options.beforeSendSpan = { _ in nil }
+        options.sendClientReports = false
+        options.enableMetricKit = false
+        options.enableMetricKitRawPayload = false
+        options.enableSpotlight = false
+        #if os(iOS) || os(tvOS)
+        options.enableUIViewControllerTracing = false
+        options.enableUserInteractionTracing = false
+        options.enablePreWarmedAppStartTracing = false
+        options.attachScreenshot = false
+        options.attachViewHierarchy = false
+        options.reportAccessibilityIdentifier = false
+        options.sessionReplay.sessionSampleRate = 0
+        options.sessionReplay.onErrorSampleRate = 0
+        #endif
+
+        options.beforeSend = { event in
+            guard event.type != "transaction", let filtered = filterEvent(event) else { return nil }
+            return GlitchTipEventSanitizer.sanitize(redactEvent(filtered))
+        }
+    }
+    #endif
 
     static func addBreadcrumb(level: String, category: String, message: String) {
         #if canImport(Sentry)
@@ -156,11 +168,17 @@ enum SentryService {
 
     #if canImport(Sentry)
     private static func redactBreadcrumb(_ crumb: Breadcrumb) -> Breadcrumb {
+        // The SDK shares breadcrumb objects between the scope and captured events.
+        // Sanitize a new object so concurrent captures never mutate those shared objects.
+        let redacted = Breadcrumb(level: crumb.level, category: crumb.category)
+        redacted.timestamp = crumb.timestamp
+        redacted.type = crumb.type
+        redacted.origin = crumb.origin
         if let message = crumb.message {
-            crumb.message = redactingAccountIdentifiers(message)
+            redacted.message = redactingAccountIdentifiers(message)
         }
-        crumb.data = redactingAccountIdentifiers(in: crumb.data)
-        return crumb
+        redacted.data = redactingAccountIdentifiers(in: crumb.data)
+        return redacted
     }
 
     private static func redactEvent(_ event: Event) -> Event {
@@ -187,11 +205,11 @@ enum SentryService {
 
     // MARK: - Helpers
 
-    private static func resolveDSN() -> String? {
-        if let env = ProcessInfo.processInfo.environment["SENTRY_DSN"], !env.isEmpty { return env }
-        if let dsn = Bundle.main.object(forInfoDictionaryKey: "SENTRY_DSN") as? String, !dsn.isEmpty { return dsn }
-        // Fallback to hardcoded DSN
-        return "https://8c18bec496916e4617cdfbe0eb76bc6d@o4505190177701888.ingest.us.sentry.io/4510009092341760"
+    private static func telemetryConfiguration() -> TelemetryConfiguration {
+        TelemetryConfiguration.resolve(
+            environment: ProcessInfo.processInfo.environment,
+            info: Bundle.main.infoDictionary ?? [:]
+        )
     }
 
     #if canImport(Sentry)

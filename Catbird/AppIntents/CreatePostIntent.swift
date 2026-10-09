@@ -90,6 +90,7 @@ struct CreatePostIntent: AppIntent {
 
     let did = account?.id ?? IntentAccountResolver.activeDID()
     let client = try await IntentClientProvider.shared.client(for: did)
+    let postingDID = try await client.getDid()
 
     // Hydrate reply/quote targets: the reply path needs the full parent view
     // (PostManager derives the thread root from it) and the quote path needs
@@ -147,7 +148,10 @@ struct CreatePostIntent: AppIntent {
     try await requestConfirmation()
 
     let languages = parsed.detectedLanguage.map { [LanguageCodeContainer(languageCode: $0)] } ?? []
-    let postManager = PostManager(client: client)
+    let postManager = PostManager(client: client, standalonePostingAuthorization: {
+      try await IntentClientProvider.shared.requireCoveredUse(for: postingDID)
+      return postingDID
+    })
     let postURI = try await postManager.createPost(
       parsed.text,
       languages: languages,

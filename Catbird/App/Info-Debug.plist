@@ -63,5 +63,11 @@
 	</dict>
 	<key>UIObservationTrackingEnabled</key>
 	<true/>
+	<key>CATBIRD_TELEMETRY_BACKEND</key>
+	<string>$(CATBIRD_TELEMETRY_BACKEND)</string>
+	<key>CATBIRD_GLITCHTIP_ALLOWED_HOST</key>
+	<string>$(CATBIRD_GLITCHTIP_ALLOWED_HOST)</string>
+	<key>GLITCHTIP_DSN</key>
+	<string>$(CATBIRD_GLITCHTIP_DSN)</string>
 </dict>
 </plist>

@@ -20,7 +20,7 @@ struct UnlikePostIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
 
         let did = account?.id ?? IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let client = try await IntentClientProvider.shared.client(for: did, purpose: .removal)
 
         let output = try unwrapIntentResponse(await client.app.bsky.feed.getPosts(input: AppBskyFeedGetPosts.Parameters(uris: [try ATProtocolURI(uriString: post.id)])))
         guard let view = output.posts.first else {

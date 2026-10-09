@@ -74,6 +74,17 @@ struct ModerationPolicy: Sendable, Equatable {
     ModerationOptions(userDID: accountDID, prefs: prefs, labelDefinitions: labelDefinitions, now: now)
   }
 
+  /// Adds only a platform restriction. Call on the unchanged confirmed base policy,
+  /// so removing the extra ceiling can never invent a preference or lose its value.
+  func restrictingMatureContent(_ restricted: Bool) -> ModerationPolicy {
+    guard restricted, prefs.adultContentEnabled else { return self }
+    var effective = prefs
+    effective.adultContentEnabled = false
+    return ModerationPolicy(
+      accountDID: accountDID, prefs: effective,
+      labelDefinitions: labelDefinitions, isConfirmed: isConfirmed)
+  }
+
   // MARK: - Decisions
 
   func decide(post: AppBskyFeedDefs.PostView) -> ModerationDecision {

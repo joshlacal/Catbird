@@ -16,7 +16,22 @@ struct AgeBand: Sendable, Equatable {
     static let teen = AgeBand(lowerBound: 13, upperBound: 17)
     static let adult = AgeBand(lowerBound: 18, upperBound: nil)
 
+    /// Bounds are evidence only for the thresholds they actually establish.
+    /// Apple may return regional gates different from the requested gates.
+    var isValid: Bool {
+        guard lowerBound != nil || upperBound != nil else { return false }
+        if let lowerBound, lowerBound < 0 { return false }
+        if let upperBound, upperBound < 0 { return false }
+        if let lowerBound, let upperBound, lowerBound > upperBound { return false }
+        return true
+    }
+
+    var isAtLeast13: Bool {
+        isValid && (lowerBound.map { $0 >= 13 } ?? false)
+    }
+
     var isUnder13: Bool {
+        guard isValid else { return false }
         if let upper = upperBound, upper < 13 {
             return true
         }
@@ -24,6 +39,7 @@ struct AgeBand: Sendable, Equatable {
     }
 
     var isAdult: Bool {
+        guard isValid else { return false }
         if let lower = lowerBound, lower >= 18 {
             return true
         }
@@ -51,6 +67,8 @@ struct PlatformAgeSignal: Sendable, Equatable {
     enum Requirement: Sendable, Equatable {
         case none
         case ageCheckRequired
+        /// Applicability could not be determined. This never clears an earlier requirement.
+        case unavailable
     }
 }
 
@@ -178,9 +196,8 @@ struct AgePolicy: Sendable {
             return .allow
 
         case .platform(let platform):
-            if platform.significantChangeConsentRequired {
-                return .unavailableDueToConsent
-            }
+            // Significant-change applicability alone declares neither a change nor its scope.
+            // It cannot create an ordinary-use gate without a separate declared change.
             switch platform.requirement {
             case .none:
                 if let band = platform.ageBand, band.isUnder13 {
@@ -188,14 +205,19 @@ struct AgePolicy: Sendable {
                 }
                 return .allow
 
+            case .unavailable:
+                // An unavailable first lookup creates no obligation by itself. The lifecycle
+                // owner retains an already-established requirement across unavailable refreshes.
+                return .allow
+
             case .ageCheckRequired:
-                guard let band = platform.ageBand else {
+                guard let band = platform.ageBand, band.isValid else {
                     return .unavailableDueToConsent
                 }
                 if band.isUnder13 {
                     return .deny
                 }
-                return .allow
+                return band.isAtLeast13 ? .allow : .unavailableDueToConsent
             }
 
         case .provider(let restriction):
@@ -215,11 +237,9 @@ struct AgePolicy: Sendable {
             return .hideSensitiveContent
 
         case .platform(let platform):
-            if platform.significantChangeConsentRequired {
-                return .unavailableDueToConsent
-            }
-            if platform.requirement == .ageCheckRequired && platform.ageBand == nil {
-                return .unavailableDueToConsent
+            if platform.requirement == .ageCheckRequired {
+                let ordinaryDecision = evaluateStandardOperation(operation: .generalContent, signal: signal)
+                if ordinaryDecision != .allow { return ordinaryDecision }
             }
             if let band = platform.ageBand, band.isUnder13 {
                 return .deny

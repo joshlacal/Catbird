@@ -176,33 +176,37 @@ final class PostViewModel {
     // MARK: - Post Interactions
     
     /// Reverts the like state optimistically
-    private func revertLikeState(wasLiked: Bool) async {
+    @MainActor
+    private func revertLikeState(wasLiked: Bool, source: AppState) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
+                guard self.appState === source else { return }
                 self.isLiked = wasLiked
             }
             
             group.addTask { 
-                await self.appState.postShadowManager.setLiked(postUri: self.postId, isLiked: wasLiked)
+                await source.postShadowManager.setLiked(postUri: self.postId, isLiked: wasLiked)
             }
         }
     }
     
     /// Reverts the repost state optimistically
-    private func revertRepostState(wasReposted: Bool) async {
+    @MainActor
+    private func revertRepostState(wasReposted: Bool, source: AppState) async {
         let previousRepostUri = repostUri
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
+                guard self.appState === source else { return }
                 self.isReposted = wasReposted
             }
             
             group.addTask {
                 if wasReposted, let previousRepostUri {
-                    await self.appState.postShadowManager.updateShadow(forUri: self.postId) { shadow in
+                    await source.postShadowManager.updateShadow(forUri: self.postId) { shadow in
                         shadow.decideRepost(previousRepostUri)
                     }
                 } else {
-                    await self.appState.postShadowManager.setReposted(postUri: self.postId, isReposted: wasReposted)
+                    await source.postShadowManager.setReposted(postUri: self.postId, isReposted: wasReposted)
                 }
             }
         }
@@ -221,12 +225,22 @@ final class PostViewModel {
         }
     }
     
+    @MainActor
+    private func requireInteractionAccess(source: AppState, client: ATProtoClient, did: String? = nil) throws {
+        try Task.checkCancellation()
+        guard appState === source, source.atProtoClient === client,
+              !source.isAccountSwitchSuspended,
+              did == nil || did == source.userDID else { throw CancellationError() }
+        try source.ageAccess.require(.generalContent)
+    }
+
     /// Toggle the like status of the post
     /// - Parameter via: Optional reference to the repost that led to discovering this content.
     ///   When set, creates a "like-via-repost" notification for the author of the referenced repost.
     ///   Only set this when the user discovered this post through someone else's repost.
     ///   Example: Alice posts → Bob reposts → Carol likes via Bob's repost → `via` = Bob's repost record
     ///   Note: Attribution is controlled by the enableViaAttribution setting
+    @MainActor
     @discardableResult
     func toggleLike(
         via: ComAtprotoRepoStrongRef? = nil,
@@ -235,6 +249,8 @@ final class PostViewModel {
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient // Throw error instead of returning false
         }
+        let source = appState
+        if !isLiked { try requireInteractionAccess(source: source, client: client) }
         
         // Local copy for reverting if needed
         let wasLiked = isLiked
@@ -242,11 +258,12 @@ final class PostViewModel {
         // Use task groups for optimistic updates
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
+                guard self.appState === source else { return }
                 self.isLiked.toggle()
             }
             
             group.addTask {
-                await self.appState.postShadowManager.setLiked(postUri: self.postId, isLiked: !wasLiked)
+                await source.postShadowManager.setLiked(postUri: self.postId, isLiked: !wasLiked)
             }
         }
         
@@ -259,7 +276,7 @@ final class PostViewModel {
                         cid: postCid
                     )
                     // Check if via attribution is enabled in settings
-                    let enableAttribution = appState.appSettings.enableViaAttribution
+                    let enableAttribution = source.appSettings.enableViaAttribution
                     let viaReference = enableAttribution ? via : nil
                     
                     let likeRecord = AppBskyFeedLike(
@@ -276,7 +293,10 @@ final class PostViewModel {
                     )
                     
                     // Use try for result handling
+                    try requireInteractionAccess(source: source, client: client, did: did)
                     let (code, data) = try await client.com.atproto.repo.createRecord(input: input)
+                    guard appState === source, source.atProtoClient === client,
+                          !source.isAccountSwitchSuspended else { throw CancellationError() }
                     
                     guard code == 200, let response = data else {
                         throw PostViewModelError.requestFailed
@@ -285,13 +305,13 @@ final class PostViewModel {
                     self.likeUri = response.uri
                     
                     // Update shadow with real URI
-                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                    await source.postShadowManager.updateShadow(forUri: postId) { shadow in
                         shadow.decideLike(response.uri)
                     }
                     
                     // Tell the feed the post was liked from, when it accepts feedback
                     if let postURI = try? ATProtocolURI(uriString: postId) {
-                        await appState.feedFeedbackManager.trackLike(postURI: postURI, target: feedInteractionTarget)
+                        await source.feedFeedbackManager.trackLike(postURI: postURI, target: feedInteractionTarget)
                     }
                 }
             } else { // Deleting an existing like
@@ -315,7 +335,7 @@ final class PostViewModel {
                     }
                     
                     self.likeUri = nil
-                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                    await source.postShadowManager.updateShadow(forUri: postId) { shadow in
                         shadow.decideLike(nil)
                     }
                 }
@@ -323,7 +343,7 @@ final class PostViewModel {
             return true
         } catch {
             // Revert optimistic update on any error
-            await revertLikeState(wasLiked: wasLiked)
+            if appState === source { await revertLikeState(wasLiked: wasLiked, source: source) }
             #if DEBUG
             logger.error("Error toggling like: \(error)")
             #endif
@@ -338,6 +358,7 @@ final class PostViewModel {
     ///   Only set this when the user discovered this post through someone else's repost.
     ///   Example: Alice posts → Bob reposts → Carol reposts via Bob's repost → `via` = Bob's repost record
     ///   Note: Attribution is controlled by the enableViaAttribution setting
+    @MainActor
     @discardableResult
     func toggleRepost(
         via: ComAtprotoRepoStrongRef? = nil,
@@ -346,11 +367,15 @@ final class PostViewModel {
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }
+        let source = appState
+        if !isReposted { try requireInteractionAccess(source: source, client: client) }
         
         // Local copy for reverting if needed
         let wasReposted = isReposted
         // Unreposting clears the shadow URI, so retain it before the optimistic update.
-        let previousShadowRepostUri = await appState.postShadowManager.getShadow(forUri: postId)?.repostUri
+        let previousShadowRepostUri = await source.postShadowManager.getShadow(forUri: postId)?.repostUri
+        guard appState === source, source.atProtoClient === client,
+              !source.isAccountSwitchSuspended else { throw CancellationError() }
         let previousRepostUri: ATProtocolURI?
         if let repostUri = self.repostUri, repostUri.recordKey?.isEmpty == false {
             previousRepostUri = repostUri
@@ -361,11 +386,12 @@ final class PostViewModel {
         // Use task groups for optimistic updates
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
+                guard self.appState === source else { return }
                 self.isReposted.toggle()
             }
             
             group.addTask {
-                await self.appState.postShadowManager.setReposted(postUri: self.postId, isReposted: !wasReposted)
+                await source.postShadowManager.setReposted(postUri: self.postId, isReposted: !wasReposted)
             }
         }
         
@@ -376,7 +402,7 @@ final class PostViewModel {
                     cid: postCid
                 )
                 // Check if via attribution is enabled in settings
-                let enableAttribution = appState.appSettings.enableViaAttribution
+                let enableAttribution = source.appSettings.enableViaAttribution
                 let viaReference = enableAttribution ? via : nil
                 
                 let repostRecord = AppBskyFeedRepost(
@@ -391,7 +417,10 @@ final class PostViewModel {
                     record: .knownType(repostRecord)
                 )
                 
+                try requireInteractionAccess(source: source, client: client, did: did)
                 let (code, data) = try await client.com.atproto.repo.createRecord(input: input)
+                guard appState === source, source.atProtoClient === client,
+                      !source.isAccountSwitchSuspended else { throw CancellationError() }
                 
                 guard code == 200, let response = data else {
                     throw PostViewModelError.requestFailed
@@ -401,13 +430,13 @@ final class PostViewModel {
                 self.repostUri = response.uri
                 
                 // Update shadow with real URI
-                await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                await source.postShadowManager.updateShadow(forUri: postId) { shadow in
                     shadow.decideRepost(response.uri)
                 }
                 
                 // Tell the feed the post was reposted from, when it accepts feedback
                 if let postURI = try? ATProtocolURI(uriString: postId) {
-                    await appState.feedFeedbackManager.trackRepost(postURI: postURI, target: feedInteractionTarget)
+                    await source.feedFeedbackManager.trackRepost(postURI: postURI, target: feedInteractionTarget)
                 }
                 
                 return true
@@ -438,8 +467,10 @@ final class PostViewModel {
             }
         } catch {
             // Revert optimistic update on any error
-            self.repostUri = previousRepostUri
-            await revertRepostState(wasReposted: wasReposted)
+            if appState === source {
+                self.repostUri = previousRepostUri
+                await revertRepostState(wasReposted: wasReposted, source: source)
+            }
             #if DEBUG
             logger.error("Error toggling repost: \(error)")
             #endif
@@ -507,11 +538,14 @@ final class PostViewModel {
     }
     
     /// Create a quote post
+    @MainActor
     @discardableResult
     func createQuotePost(text: String) async throws -> Bool {
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }
+        let source = appState
+        try requireInteractionAccess(source: source, client: client)
         
         do {
             // Create quote post record
@@ -540,6 +574,7 @@ final class PostViewModel {
             )
             
             // Use try for result handling
+            try requireInteractionAccess(source: source, client: client, did: did)
             _ = try await client.com.atproto.repo.createRecord(input: input)
             
             // We don't save this URI as `self.repostUri` because it's the URI of the *new* quote post,

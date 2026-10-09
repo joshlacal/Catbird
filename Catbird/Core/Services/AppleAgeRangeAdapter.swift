@@ -9,6 +9,7 @@ import DeclaredAgeRange
 /// Protocol for platform-level age regulatory checking and coarse age acquisition.
 protocol AgeRegulatoryChecking: Sendable {
     /// Passively queries on-device regulatory requirements without network calls or user prompts.
+    /// An unavailable lookup is distinct from an affirmative absence of requirements.
     func preflight() async -> PlatformAgeSignal
 
     #if canImport(UIKit)
@@ -40,9 +41,9 @@ final class AppleAgeRangeAdapter: AgeRegulatoryChecking, Sendable {
                     significantChangeConsentRequired: consentRequired
                 )
             } catch {
-                // Unsupported or unavailable returns no affirmative requirement
+                // The lifecycle owner must not mistake an error for a cleared requirement.
                 return PlatformAgeSignal(
-                    requirement: .none,
+                    requirement: .unavailable,
                     ageBand: nil,
                     significantChangeConsentRequired: false
                 )
@@ -58,7 +59,7 @@ final class AppleAgeRangeAdapter: AgeRegulatoryChecking, Sendable {
                 )
             } catch {
                 return PlatformAgeSignal(
-                    requirement: .none,
+                    requirement: .unavailable,
                     ageBand: nil,
                     significantChangeConsentRequired: false
                 )

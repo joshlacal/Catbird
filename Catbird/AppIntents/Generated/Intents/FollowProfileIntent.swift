@@ -37,6 +37,7 @@ struct FollowProfileIntent: AppIntent {
             collection: try NSID(nsidString: "app.bsky.graph.follow"),
             record: .knownType(record)
         )
+        try await IntentClientProvider.shared.requireCoveredUse(for: userDID)
         _ = try unwrapIntentResponse(await client.com.atproto.repo.createRecord(input: input))
         return .result(dialog: IntentDialog("Followed."))
 

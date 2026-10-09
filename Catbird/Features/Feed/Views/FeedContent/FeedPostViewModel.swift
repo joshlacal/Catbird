@@ -335,7 +335,7 @@ final class FeedPostViewModel {
         // Perform server operation
         do {
             if newLikedState {
-                try await performLike()
+                try await performLike(source: appState)
                 donateIntent {
                     var intent = LikePostIntent()
                     intent.post = PostEntity(from: fvp.post)
@@ -380,7 +380,7 @@ final class FeedPostViewModel {
         // Perform server operation
         do {
             if newRepostedState {
-                try await performRepost()
+                try await performRepost(source: appState)
                 donateIntent {
                     var intent = RepostPostIntent()
                     intent.post = PostEntity(from: fvp.post)
@@ -618,10 +618,12 @@ final class FeedPostViewModel {
     }
     
     /// Performs the actual like operation on the server
-    private func performLike() async throws {
-        guard let client = appState?.atProtoClient else {
+    @MainActor
+    private func performLike(source: AppState) async throws {
+        guard appState === source, let client = source.atProtoClient else {
             throw PostInteractionError.clientUnavailable
         }
+        try source.ageAccess.require(.generalContent)
 
         guard let fvp = feedViewPost else {
             logger.error("Missing feedViewPost while performing like for: \(self.post.id, privacy: .public)")
@@ -639,9 +641,13 @@ final class FeedPostViewModel {
             via: nil
         )
         
+        let did = try await client.getDid()
+        guard !Task.isCancelled, appState === source, source.atProtoClient === client,
+              !source.isAccountSwitchSuspended, did == source.userDID else { throw CancellationError() }
+        try source.ageAccess.require(.generalContent)
         let (responseCode, _) = try await client.com.atproto.repo.createRecord(
             input: ComAtprotoRepoCreateRecord.Input(
-                repo: ATIdentifier(string: try client.getDid()),
+                repo: ATIdentifier(string: did),
                 collection: try NSID(nsidString: "app.bsky.feed.like"),
                 record: ATProtocolValueContainer.knownType(like)
             )
@@ -691,10 +697,12 @@ final class FeedPostViewModel {
     }
 
     /// Performs the actual repost operation on the server
-    private func performRepost() async throws {
-        guard let client = appState?.atProtoClient else {
+    @MainActor
+    private func performRepost(source: AppState) async throws {
+        guard appState === source, let client = source.atProtoClient else {
             throw PostInteractionError.clientUnavailable
         }
+        try source.ageAccess.require(.generalContent)
 
         guard let fvp = feedViewPost else {
             logger.error("Missing feedViewPost while performing repost for: \(self.post.id, privacy: .public)")
@@ -712,9 +720,13 @@ final class FeedPostViewModel {
             via: nil
         )
         
+        let did = try await client.getDid()
+        guard !Task.isCancelled, appState === source, source.atProtoClient === client,
+              !source.isAccountSwitchSuspended, did == source.userDID else { throw CancellationError() }
+        try source.ageAccess.require(.generalContent)
         let (responseCode, _) = try await client.com.atproto.repo.createRecord(
             input: ComAtprotoRepoCreateRecord.Input(
-                repo: ATIdentifier(string: try client.getDid()),
+                repo: ATIdentifier(string: did),
                 collection: try NSID(nsidString: "app.bsky.feed.repost"),
                 record: ATProtocolValueContainer.knownType(repost)
             )

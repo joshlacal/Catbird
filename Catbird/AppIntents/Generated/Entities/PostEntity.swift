@@ -75,29 +75,58 @@ struct PostEntity: AppEntity {
 
 @available(iOS 18.0, *)
 struct PostEntityQuery: EntityQuery, EntityStringQuery {
+    @IntentParameterDependency<UnlikePostIntent>(\.$account)
+    private var unlikeIntent
+
+    @IntentParameterDependency<UnrepostPostIntent>(\.$account)
+    private var unrepostIntent
+
     init() {}
 
+    /// Resolving a target for removal cannot enable an ordinary post query.
+    private var clientContext: (did: String?, purpose: IntentClientProvider.Purpose) {
+        if let unlikeIntent {
+            return (unlikeIntent.account.id, .removal)
+        }
+        if let unrepostIntent {
+            return (unrepostIntent.account.id, .removal)
+        }
+        return (IntentAccountResolver.activeDID(), .coveredUse)
+    }
+
     func entities(for identifiers: [String]) async throws -> [PostEntity] {
+        let context = clientContext
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         let cached = await PostEntityStore.shared.entities(for: identifiers)
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         if cached.count == identifiers.count { return cached }
         let cachedIDs = Set(cached.map(\.id))
         let missing = identifiers.filter { !cachedIDs.contains($0) }
-        let did = IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let client = try await IntentClientProvider.shared.client(for: context.did, purpose: context.purpose)
         var results: [PostEntity] = cached
         for start in stride(from: 0, to: missing.count, by: 25) {
             let chunk = Array(missing[start..<min(start + 25, missing.count)])
             let output = try unwrapIntentResponse(await client.app.bsky.feed.getPosts(input: AppBskyFeedGetPosts.Parameters(uris: try chunk.map { try ATProtocolURI(uriString: $0) })))
             results.append(contentsOf: output.posts.map { PostEntity(from: $0) })
         }
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         return results
     }
 
 
     func entities(matching string: String) async throws -> [PostEntity] {
-        let did = IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let context = clientContext
+        let client = try await IntentClientProvider.shared.client(for: context.did, purpose: context.purpose)
         let output = try unwrapIntentResponse(await client.app.bsky.feed.searchPosts(input: AppBskyFeedSearchPosts.Parameters(q: string)))
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         return output.posts.map { PostEntity(from: $0) }
     }
 

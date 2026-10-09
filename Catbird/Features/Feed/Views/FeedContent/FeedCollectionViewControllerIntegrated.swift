@@ -20,6 +20,7 @@ import os
   /// Opt-in aggregate counters used by controlled feed update measurements.
   struct FeedCollectionUpdateDiagnostics {
     var updateRequests = 0
+    var snapshotConstructions = 0
     var snapshotApplications = 0
     var skippedSnapshots = 0
     var postConfigurations = 0
@@ -741,15 +742,33 @@ import os
     }
 
     @objc private func handleRefresh() {
+      guard !isRefreshing else { return }
+      isRefreshing = true
+      let generation = feedGeneration
+      let manager = stateManager
+      let accountID = manager.appState.userDID
       Task { @MainActor in
+        // Only the owning refresh may end the indicator, after its final snapshot.
+        // Loading-state publications also call performUpdate while the fetch awaits.
+        defer {
+          if generation == feedGeneration, manager === stateManager {
+            #if !targetEnvironment(macCatalyst)
+              refreshControl.endRefreshing()
+            #endif
+            isRefreshing = false
+          }
+        }
+        guard !Task.isCancelled, generation == feedGeneration, manager === stateManager,
+          manager.appState.userDID == accountID, !manager.appState.isAccountSwitchSuspended else { return }
         controllerLogger.debug("🔄 Fast refresh triggered")
-        isRefreshing = true
 
         // User-initiated refresh should override background flag
         // This ensures pull-to-refresh works even if background flag is stuck
-        await stateManager.refreshUserInitiated(displayScale: self.traitCollection.displayScale)
-        if case .error = stateManager.loadingState, !stateManager.posts.isEmpty {
-          stateManager.appState.toastManager.show(
+        await manager.refreshUserInitiated(displayScale: self.traitCollection.displayScale)
+        guard !Task.isCancelled, generation == feedGeneration, manager === stateManager,
+          manager.appState.userDID == accountID, !manager.appState.isAccountSwitchSuspended else { return }
+        if case .error = manager.loadingState, !manager.posts.isEmpty {
+          manager.appState.toastManager.show(
             ToastItem(
               message: "Couldn’t refresh. Check your connection and try again.",
               icon: "wifi.exclamationmark"
@@ -775,12 +794,6 @@ import os
       let generation = feedGeneration
       let manager = stateManager
 
-      if isRefreshing {
-        #if !targetEnvironment(macCatalyst)
-          refreshControl.endRefreshing()
-        #endif
-        isRefreshing = false
-      }
       if case .error(let error) = manager.loadingState {
         controllerLogger.error("Feed update error: \(error.localizedDescription)")
         // A failed supplemental request can still have accepted cached rows to display.
@@ -799,8 +812,6 @@ import os
       let isEligibleFeed = manager.currentFeedType == .timeline
         || feedID.contains("discover") || feedID == "timeline"
 
-      var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-      snapshot.appendSections([.main])
       var items: [Item] = capturedHeaderPresent ? [.header] : []
       for (index, post) in capturedPosts.enumerated() {
         if !capturedTrendingContent.isEmpty && isEligibleFeed
@@ -812,7 +823,6 @@ import os
       if !capturedPosts.isEmpty {
         items.append(.footer)
       }
-      snapshot.appendItems(items, toSection: .main)
 
       let currentItems = dataSource.snapshot().itemIdentifiers
       let existingItems = Set(currentItems)
@@ -837,6 +847,11 @@ import os
         updateBackgroundState()
         return
       }
+
+      updateDiagnostics?.snapshotConstructions += 1
+      var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+      snapshot.appendSections([.main])
+      snapshot.appendItems(items, toSection: .main)
 
       let offsetBefore = collectionView.contentOffset.y
       let heightBefore = collectionView.contentSize.height
@@ -1185,6 +1200,12 @@ import os
 
       // Cancel ongoing operations and invalidate completions from the old feed.
       feedGeneration += 1
+      if isRefreshing {
+        #if !targetEnvironment(macCatalyst)
+          refreshControl.endRefreshing()
+        #endif
+        isRefreshing = false
+      }
       cancelPendingLoadMoreRequest()
       initialLoadTask?.cancel()
       initialLoadTask = nil

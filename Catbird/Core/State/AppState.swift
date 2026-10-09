@@ -181,8 +181,11 @@ final class AppState {
 
 
 
-    /// Current sanitized platform age signal from on-device regulatory checking
-    var platformAgeSignal: PlatformAgeSignal = .none
+    /// Account-scoped derived access; raw Apple age bands never live on AppState.
+    let ageAccess: PlatformAgeAccess
+
+    @MainActor
+    var platformAgeSignal: PlatformAgeSignal { ageAccess.signal }
 
     /// Regulatory checker for on-device platform regulatory preflight
     @ObservationIgnored let regulatoryChecker: any AgeRegulatoryChecking
@@ -195,6 +198,8 @@ final class AppState {
     /// Moderation policy for this account, rebuilt by `refreshModerationPolicy()` from the account's
     /// server-confirmed preferences and its subscribed labelers' label definitions. It starts fail-closed.
     private(set) var moderationPolicy: ModerationPolicy = .failClosed
+    /// Preserves confirmed preference values while a temporary platform ceiling applies.
+    @ObservationIgnored private var baseModerationPolicy: ModerationPolicy = .failClosed
 
     /// Whether adult content may be shown for this account. It is derived from `moderationPolicy`, so it
     /// is never stored, restored or written anywhere else.
@@ -397,6 +402,7 @@ final class AppState {
         self.userDID = userDID
         self.client = client
         self.regulatoryChecker = regulatoryChecker
+        self.ageAccess = PlatformAgeAccess(checker: regulatoryChecker)
         logger.info("AppState initializing for account: \(userDID)")
         appSettings.configure(accountDID: userDID)
 
@@ -467,6 +473,13 @@ final class AppState {
             guard let self, accountDID == self.userDID else { return }
             self.refreshModerationPolicy()
         }
+        ageAccess.decisionDidChange = { [weak self] in
+            guard let self else { return }
+            self.applyModerationPolicy(self.baseModerationPolicy)
+            NotificationCenter.default.post(
+                name: .platformAgeAccessDidChange, object: nil,
+                userInfo: ["accountDID": self.userDID])
+        }
         refreshModerationPolicy()
 
         // Apply initial theme settings immediately from UserDefaults
@@ -481,12 +494,14 @@ final class AppState {
             setupThemeAndFontObservation()
         }
 
-        // Passive on-device regulatory preflight without network calls or user prompts
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let signal = await self.regulatoryChecker.preflight()
-            self.platformAgeSignal = signal
+        // Export observers must exist before the first derived-access invalidation.
+        _ = FeedWidgetDataProvider.shared
+        if #available(iOS 18.0, macOS 15.0, *) {
+            _ = SpotlightEntityDonator.shared
         }
+        // This passive task is owned and fenced by the account's age-access coordinator.
+        // A visible scene supplies a presenter only after an affirmative requirement.
+        ageAccess.startPreflight()
         // NOTE: Settings observation is set up later in initializePreferencesManager
         // to avoid duplicate observers
 
@@ -507,6 +522,7 @@ final class AppState {
             throw AccountServiceWork.BarrierError.accountChanged
         }
         accountServiceWork.suspend()
+        ageAccess.suspend()
         feedFeedbackManager.discardPending()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
@@ -579,6 +595,7 @@ final class AppState {
         }
         accountPollerSuspension = nil
         accountServiceWork.resume()
+        ageAccess.startPreflight()
         startBackgroundPolling()
     }
 
@@ -592,7 +609,7 @@ final class AppState {
         }
         let retirement = Task { @MainActor [self] in
             try await suspendForAccountSwitch()
-            platformAgeSignal = .none
+            ageAccess.suspend()
         }
         accountRetirementTask = retirement
         try await retirement.value
@@ -637,12 +654,11 @@ final class AppState {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
         _ = appSettings.suspendLocalChanges(for: userDID)
         accountServiceWork.suspend()
+        ageAccess.suspend()
         feedFeedbackManager.discardPending()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
-
-        platformAgeSignal = .none
 
         // Cancel long-running tasks
         backgroundPollingTask?.cancel()
@@ -781,13 +797,7 @@ final class AppState {
         // Before any network work, the policy becomes this account's own confirmed state (or fail-closed).
         refreshModerationPolicy()
         isTransitioningAccounts = true
-        platformAgeSignal = .none
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let signal = await self.regulatoryChecker.preflight()
-            self.platformAgeSignal = signal
-        }
+        ageAccess.startPreflight()
         // Clear old prefetched data and any shadowed interactions
         await prefetchedFeedCache.clear()
         await postShadowManager.clearAll()
@@ -1432,7 +1442,9 @@ final class AppState {
     @MainActor
     func updateClient(_ newClient: ATProtoClient) {
         logger.info("Updating AppState client reference for user: \(self.userDID)")
+        ageAccess.suspend()
         client = newClient
+        ageAccess.startPreflight()
 
         // Update all managers that hold client references
         postManager.updateClient(newClient)
@@ -1586,6 +1598,38 @@ final class AppState {
         stateInvalidationBus.notifyThreadUpdated(rootUri)
     }
 
+    // MARK: - Platform-required age access
+
+    #if os(iOS)
+    /// The scene supplies only its presenter. Apple bands stay inside the coordinator's
+    /// immediate decision; a switched account or replaced client cannot accept a result.
+    @MainActor
+    func requestPlatformAgeBand(
+        from presenter: UIViewController,
+        isCurrent: @escaping @MainActor () -> Bool
+    ) async {
+        let manager = AppStateManager.shared
+        let accountRevision = manager.settingsAccountContextRevision
+        let requestClient = client
+        let ownsRequest: @MainActor () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !Task.isCancelled
+                && manager.lifecycle.appState === self
+                && manager.settingsAccountContextRevision == accountRevision
+                && self.client === requestClient
+                && !self.accountServiceWork.isSuspended
+                && isCurrent()
+        }
+        guard ownsRequest() else { return }
+        await ageAccess.request(
+            using: { [regulatoryChecker] in
+                guard ownsRequest() else { throw CancellationError() }
+                return try await regulatoryChecker.requestAgeBand(from: presenter)
+            },
+            isCurrent: ownsRequest)
+    }
+    #endif
+
     // MARK: - Moderation Policy
 
     /// Rebuilds `moderationPolicy` for this account from its server-confirmed preferences.
@@ -1654,8 +1698,10 @@ final class AppState {
 
     @MainActor
     private func applyModerationPolicy(_ policy: ModerationPolicy) {
-        guard policy != moderationPolicy else { return }
-        moderationPolicy = policy
+        baseModerationPolicy = policy
+        let effective = policy.restrictingMatureContent(ageAccess.restrictsMatureContent)
+        guard effective != moderationPolicy else { return }
+        moderationPolicy = effective
         NotificationCenter.default.post(
             name: .moderationPolicyDidChange, object: nil, userInfo: ["accountDID": userDID])
     }
@@ -1759,4 +1805,9 @@ actor PrefetchedFeedCache {
     func clear() {
         cache.removeAll()
     }
+}
+
+// Derived-access invalidation carries account identity only, never an age result.
+extension Notification.Name {
+    static let platformAgeAccessDidChange = Notification.Name("platformAgeAccessDidChange")
 }

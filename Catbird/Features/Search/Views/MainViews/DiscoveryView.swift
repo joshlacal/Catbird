@@ -89,6 +89,9 @@ struct DiscoveryView: View {
                         },
                         onSeeAll: {
                             path.append(NavigationDestination.videoFeed)
+                        },
+                        onNavigateVideo: { destination in
+                            path.append(destination)
                         }
                     )
                 }

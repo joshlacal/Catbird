@@ -37,6 +37,7 @@ struct SendDirectMessageIntent: AppIntent {
 
     let did = account?.id ?? IntentAccountResolver.activeDID()
     let client = try await IntentClientProvider.shared.client(for: did)
+    let sendingDID = try await client.getDid()
     let recipientName = recipient.displayName ?? "@\(recipient.handle)"
 
     let (convoCode, convoData) = try await client.chat.bsky.convo.getConvoForMembers(
@@ -53,6 +54,7 @@ struct SendDirectMessageIntent: AppIntent {
       actionName: .send,
       dialog: IntentDialog("Send “\(text)” to \(recipientName)?"))
 
+    try await IntentClientProvider.shared.requireCoveredUse(for: sendingDID)
     _ = try unwrapIntentResponse(
       await client.chat.bsky.convo.sendMessage(
         input: ChatBskyConvoSendMessage.Input(

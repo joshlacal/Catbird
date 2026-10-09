@@ -954,6 +954,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
               appState: appState,
               editingSession: context.composerEditingSession
             )
+              .platformAgeProtected(.generalContent)
               .frame(minWidth: 500, minHeight: 400)
           }
           .id(context.activityRegistrationID)

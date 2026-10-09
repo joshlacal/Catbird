@@ -22,6 +22,11 @@ public struct TrendingVideosSection: View {
   public let isLoading: Bool
   public let onSelectPost: (AppBskyFeedDefs.PostView) -> Void
   public let onSeeAll: () -> Void
+  public let onNavigateVideo: ((NavigationDestination) -> Void)?
+
+  @Namespace private var videoTransitionNamespace
+  @State private var videoTransitionSectionID = UUID()
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.fontManager) private var fontManager
@@ -36,13 +41,15 @@ public struct TrendingVideosSection: View {
     presentation: Presentation = .discovery,
     isLoading: Bool = false,
     onSelectPost: @escaping (AppBskyFeedDefs.PostView) -> Void,
-    onSeeAll: @escaping () -> Void
+    onSeeAll: @escaping () -> Void,
+    onNavigateVideo: ((NavigationDestination) -> Void)? = nil
   ) {
     self.videos = videos
     self.presentation = presentation
     self.isLoading = isLoading
     self.onSelectPost = onSelectPost
     self.onSeeAll = onSeeAll
+    self.onNavigateVideo = onNavigateVideo
   }
 
   private var cardWidth: CGFloat { dynamicTypeSize.isAccessibilitySize ? 208 : presentation.width }
@@ -70,12 +77,13 @@ public struct TrendingVideosSection: View {
         "Trending Videos",
         subtitle: presentation == .discovery ? "A preview of The Vids, Bluesky’s video feed." : nil
       ) {
-        Button(action: onSeeAll) {
+        Button { openVideoFeed(startingAt: nil) } label: {
           Label("Open The Vids", systemImage: "chevron.right")
             .labelStyle(DisclosureLinkLabelStyle())
             .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
             .fixedSize(horizontal: false, vertical: true)
             .frame(minHeight: 44)
+            .videoFeedZoomSource(postURI: nil, namespace: videoTransitionNamespace, cornerRadius: 12)
         }
         .accessibilityHint("Open the full-screen Bluesky video feed")
       }
@@ -119,7 +127,7 @@ public struct TrendingVideosSection: View {
     let author = authorName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(post.author.handle)"
     let coverTitle = cover.blur ? ModerationPresentation.title(for: cover) : nil
 
-    return Button { onSelectPost(post) } label: {
+    return Button { openVideoFeed(startingAt: post) } label: {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
         ZStack(alignment: .bottomLeading) {
           if let coverTitle {
@@ -154,6 +162,11 @@ public struct TrendingVideosSection: View {
           }
         }
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
+        .videoFeedZoomSource(
+          postURI: post.uri.uriString(),
+          namespace: videoTransitionNamespace,
+          cornerRadius: DesignTokens.Size.radiusMD
+        )
 
         authorRow(post, name: author)
       }
@@ -161,8 +174,29 @@ public struct TrendingVideosSection: View {
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
+    // The replacement element drops the Button trait on iOS 27; restore it for VoiceOver.
+    .accessibilityAddTraits(.isButton)
     .accessibilityLabel("Video by \(author)\((coverTitle ?? altText).map { ", \($0)" } ?? "")")
     .accessibilityHint("Play this video in The Vids")
+  }
+
+  private func openVideoFeed(startingAt post: AppBskyFeedDefs.PostView?) {
+    #if os(iOS)
+    if #available(iOS 18.0, macOS 15.0, *), !reduceMotion, let onNavigateVideo {
+      let source = VideoFeedZoomSource(
+        sectionID: videoTransitionSectionID,
+        postURI: post?.uri.uriString(),
+        namespace: videoTransitionNamespace
+      )
+      onNavigateVideo(.videoFeedZoom(initialPost: post, source: source))
+      return
+    }
+    #endif
+    if let post {
+      onSelectPost(post)
+    } else {
+      onSeeAll()
+    }
   }
 
   /// The thumbnail area of a moderated preview: the cause's name over the
