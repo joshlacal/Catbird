@@ -1054,7 +1054,7 @@
 		212E94252D60132A00D3E1DD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CATBIRD_TELEMETRY_BACKEND = disabled;
+				CATBIRD_TELEMETRY_BACKEND = glitchtip;
 				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
 				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
@@ -1146,7 +1146,7 @@
 		212E94262D60132A00D3E1DD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CATBIRD_TELEMETRY_BACKEND = disabled;
+				CATBIRD_TELEMETRY_BACKEND = glitchtip;
 				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
 				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
