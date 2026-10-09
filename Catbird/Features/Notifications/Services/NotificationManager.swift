@@ -291,6 +291,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Generation counter for serializing preference mutations
   @ObservationIgnored private var preferenceMutationGeneration: UInt64 = 0
   @ObservationIgnored private var preferenceLoadGeneration: UInt64 = 0
+  /// Launch loads notification preferences from two paths a fraction of a second apart; follow-up
+  /// refreshes reuse a load this recent with no client change or edit since. Retries always fetch.
+  @ObservationIgnored private var lastPreferencesLoad:
+    (accountDID: String, clientGeneration: UInt64, mutationGeneration: UInt64, at: Date)?
+  private static let preferencesLoadReuseWindow: TimeInterval = 5
   @ObservationIgnored private var activePreferenceLoadTask: Task<AppBskyNotificationDefs.Preferences, Error>?
 
   /// Current active mutation task to serialize PUT operations
@@ -674,10 +679,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   @MainActor
-  func refreshNotificationPreferences(expectedAccountDID: String? = nil) async {
+  func refreshNotificationPreferences(expectedAccountDID: String? = nil, reusingRecentLoad: Bool = false) async {
     guard expectedAccountDID == nil || expectedAccountDID == currentAccountDID,
       let client else { return }
-    _ = await fetchNotificationPreferences(using: client)
+    _ = await fetchNotificationPreferences(using: client, reusingRecentLoad: reusingRecentLoad)
   }
 
   @MainActor
@@ -697,7 +702,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   @discardableResult
   @MainActor
-  func fetchNotificationPreferences(using client: ATProtoClient) async
+  func fetchNotificationPreferences(using client: ATProtoClient, reusingRecentLoad: Bool = false) async
     -> AppBskyNotificationDefs.Preferences? {
     guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return nil }
     defer { pollingBarrier.finish(pollingTicket) }
@@ -705,6 +710,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       activePreferenceMutationTask == nil, failedPreferencesMutation == nil else { return nil }
     let generation = clientGeneration
     let mutationGeneration = preferenceMutationGeneration
+    if reusingRecentLoad, activePreferenceLoadTask == nil, let snapshot = serverPreferencesSnapshot,
+      let last = lastPreferencesLoad,
+      last.accountDID == did, last.clientGeneration == generation, last.mutationGeneration == mutationGeneration,
+      Date().timeIntervalSince(last.at) < Self.preferencesLoadReuseWindow {
+      return snapshot
+    }
     activePreferenceLoadTask?.cancel()
     preferenceLoadGeneration &+= 1
     let loadGeneration = preferenceLoadGeneration
@@ -742,6 +753,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         loadGeneration == preferenceLoadGeneration, activePreferenceMutationTask == nil
       else { return nil }
       applyNotificationPreferencesSnapshot(snapshot)
+      lastPreferencesLoad = (did, generation, mutationGeneration, Date())
       return snapshot
     } catch {
       guard !Task.isCancelled, !(error is CancellationError),
@@ -1443,7 +1455,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
-    await refreshNotificationPreferences()
+    await refreshNotificationPreferences(reusingRecentLoad: true)
     guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     await syncRelationships()
     if let appState {
@@ -1843,7 +1855,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         notificationLogger.info("✅ Successfully registered device token via notification XRPC")
         status = .registered
         lastRegisteredDeviceToken = token
-        await refreshNotificationPreferences()
+        await refreshNotificationPreferences(reusingRecentLoad: true)
         guard !Task.isCancelled,
           isCurrentNotificationClient(client, generation: generation, accountDID: did)
         else { return }

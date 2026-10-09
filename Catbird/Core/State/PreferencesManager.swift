@@ -64,6 +64,10 @@ final class PreferencesManager {
   }
   private let specificPreferencesTransport: SpecificPreferencesTransport?
   @MainActor private var preferenceSessionGeneration: UInt64 = 0
+  /// Launch fires several forced refreshes back to back (initialize, the refresh loop, feed loading);
+  /// they queue on the edit gate, so a server read this recent answers the ones behind it.
+  @MainActor private var lastServerRead: (generation: UInt64, accountDID: String, at: Date)?
+  private static let forcedRefreshReuseWindow: TimeInterval = 5
   @MainActor private var specificEditInProgress = false
   @MainActor private var specificEditWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -322,6 +326,14 @@ final class PreferencesManager {
       let localPreferences = try await loadPreferences()
       try validatePreferenceOperation(operation)
 
+      var forceRefresh = forceRefresh
+      if forceRefresh, cachedServerPreferences != nil, let lastServerRead,
+         lastServerRead.generation == operation.generation, lastServerRead.accountDID == operation.accountDID,
+         Date().timeIntervalSince(lastServerRead.at) < Self.forcedRefreshReuseWindow {
+        logger.info("Reusing preferences read from server \(Date().timeIntervalSince(lastServerRead.at), format: .fixed(precision: 2))s ago")
+        forceRefresh = false
+      }
+
       // Use cached server preferences if available and not forcing refresh
       if !forceRefresh, let cachedPrefs = cachedServerPreferences {
         logger.info(
@@ -524,6 +536,7 @@ final class PreferencesManager {
 
       // IMPORTANT: Update the cache with the processed preferences
       cachedServerPreferences = currentPrefs
+      lastServerRead = (operation.generation, operation.accountDID, Date())
       logger.debug("Updated cachedServerPreferences after processing server data.")
 
       // Apply accept-labelers header based on preferences

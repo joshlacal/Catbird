@@ -45,6 +45,12 @@ final class FeedsStartPageViewModel {
   private var hasAttemptedPreferencesRepair = false
 
   private let maxGeneratorRetryAttempts = 4
+  /// Launch asks for the same generator views from several paths within a second or two;
+  /// identical requests share one in-flight read, and a just-completed read answers repeats.
+  private typealias GeneratorResponse = (responseCode: Int, data: AppBskyFeedGetFeedGenerators.Output?)
+  @ObservationIgnored private var inFlightGeneratorFetch: (uris: Set<String>, task: Task<GeneratorResponse, Error>)?
+  @ObservationIgnored private var lastGeneratorFetch: (uris: Set<String>, at: Date)?
+  private let generatorFetchReuseWindow: TimeInterval = 5
   private let generatorRetryDelayBase: UInt64 = 500_000_000 // 0.5 seconds base delay
 
   // logger
@@ -67,6 +73,7 @@ final class FeedsStartPageViewModel {
           // Clear local feed data immediately on logout
           self.feedGenerators = [:]
           self.lastFetchTime = nil
+          self.lastGeneratorFetch = nil
           self._cachedPinnedFeeds = []
           self._cachedSavedFeeds = []
           self._cachedPinnedFeedsSet = Set()
@@ -274,12 +281,28 @@ final class FeedsStartPageViewModel {
         return
       }
       
-      logger.info("Attempting to fetch \(feedURIs.count) feed generators (attempt \(attempt + 1))")
-      let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
-      let (responseCode, output) = try await client.app.bsky.feed.getFeedGenerators(input: input)
+      let requestedURIs = Set(feedURIs.map { $0.uriString() })
+      if attempt == 0, let last = lastGeneratorFetch, last.uris == requestedURIs,
+         Date().timeIntervalSince(last.at) < generatorFetchReuseWindow {
+        logger.info("Feed generators for these \(feedURIs.count) feeds were just fetched; skipping")
+        return
+      }
+      let responseTask: Task<GeneratorResponse, Error>
+      if attempt == 0, let inFlight = inFlightGeneratorFetch, inFlight.uris == requestedURIs {
+        logger.info("Joining in-flight fetch of \(feedURIs.count) feed generators")
+        responseTask = inFlight.task
+      } else {
+        logger.info("Attempting to fetch \(feedURIs.count) feed generators (attempt \(attempt + 1))")
+        let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
+        responseTask = Task { try await client.app.bsky.feed.getFeedGenerators(input: input) }
+        inFlightGeneratorFetch = (requestedURIs, responseTask)
+      }
+      defer { if inFlightGeneratorFetch?.task == responseTask { inFlightGeneratorFetch = nil } }
+      let (responseCode, output) = try await responseTask.value
       try Task.checkCancellation()
       
       if responseCode == 200, let generators = output?.feeds {
+        lastGeneratorFetch = (requestedURIs, Date())
         logger.info("✅ Successfully fetched \(generators.count) feed generators")
         // IMPORTANT: Don't completely replace feedGenerators - update it
         for generator in generators {

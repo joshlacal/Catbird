@@ -57,10 +57,10 @@ struct FeedCollectionView: View {
             onScrollOffsetChanged: onScrollOffsetChanged,
             headerView: headerView ?? injectedHeaderView
         )
-        // Recreate controller on theme or font change to ensure UIKit reflects updates
+        // Recreate the controller on font changes so cells re-measure. Theme changes are applied in
+        // place by the controller's ThemeManager observer; rebuilding for them reloaded every module.
         .id(
             "\(ObjectIdentifier(stateManager))-" +
-            "\(stateManager.appState.themeDidChange)-" +
             "\(stateManager.appState.fontDidChange)-" +
             "\(stateManager.appState.userDID ?? "unknown-account-")" +
             "\(stateManager.currentFeedType.identifier)"

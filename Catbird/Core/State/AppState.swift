@@ -284,6 +284,15 @@ final class AppState {
     /// Observable font state that triggers SwiftUI updates
     var fontDidChange: Int = 0
 
+    /// Font settings last pushed through `fontDidChange`. The debounced settings path fires for any
+    /// settings edit; bumping the counter when fonts did not change rebuilds every feed controller.
+    @ObservationIgnored private var appliedFontSignature: String?
+
+    private var currentFontSignature: String {
+        "\(appSettings.fontStyle)|\(appSettings.fontSize)|\(appSettings.lineSpacing)|\(appSettings.letterSpacing)|"
+            + "\(appSettings.dynamicTypeEnabled)|\(appSettings.maxDynamicTypeSize)"
+    }
+
     /// Public access to theme manager
     var themeManager: ThemeManager {
         _themeManager
@@ -1100,6 +1109,7 @@ final class AppState {
             dynamicTypeEnabled: appSettings.dynamicTypeEnabled,
             maxDynamicTypeSize: appSettings.maxDynamicTypeSize
         )
+        if appliedFontSignature == nil { appliedFontSignature = currentFontSignature }
 
         // Set up proper reactive observation for settings changes
         setupSettingsObservation()
@@ -1206,9 +1216,14 @@ final class AppState {
                     maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
                 )
 
-                // Trigger SwiftUI updates
+                // Trigger SwiftUI updates. ThemeManager posts ThemeChanged itself when the theme
+                // really changed; fonts only rebuild views when their settings moved.
                 self.themeDidChange += 1
-                self.fontDidChange += 1
+                let fontSignature = self.currentFontSignature
+                if fontSignature != self.appliedFontSignature {
+                    self.appliedFontSignature = fontSignature
+                    self.fontDidChange += 1
+                }
 
                 // Update VideoCoordinator with new autoplay preference
                 VideoCoordinator.shared.appSettings = self.appSettings
