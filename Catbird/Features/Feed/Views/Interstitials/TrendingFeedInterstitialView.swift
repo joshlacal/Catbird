@@ -200,12 +200,17 @@ private struct TrendingTimelinePreviewPrefetch: ViewModifier {
   }
 }
 
-/// Compact topic summaries use their intrinsic text height; artwork still reserves
-/// its existing geometry so late media cannot shift the following timeline row.
+/// Topic cards: the title always wraps in full, the media fan sits beside the description
+/// (stacked above it at accessibility sizes), and the card grows vertically with its content.
+/// Every card stretches to the tallest card in the carousel so the row stays aligned.
 private struct TrendingTimelineTopicCard: View {
   let trend: AppBskyUnspeccedDefs.TrendView
   let onSelect: () -> Void
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+  /// Fixed media geometry, kept in step with `TrendingTopicArtworkPresentation` (108pt wide).
+  private let mediaWidth: CGFloat = 108
+  private let mediaHeight: CGFloat = 86
 
   var body: some View {
     Button(action: onSelect) {
@@ -217,48 +222,75 @@ private struct TrendingTimelineTopicCard: View {
               Text(TrendingTopicCategoryStyle.name(for: category))
                 .appFont(AppTextRole.caption.weight(.medium))
                 .foregroundStyle(TrendingTopicCategoryStyle.color(for: category))
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 .fixedSize(horizontal: false, vertical: true)
             }
-            TrendingTopicTitle(
-              title: trend.displayName, size: 18,
-              lineLimit: dynamicTypeSize.isAccessibilitySize ? nil : 2
-            )
+            TrendingTopicTitle(title: trend.displayName, size: 18, lineLimit: nil)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }
-        if let description = TrendingTopicPresentation.description(for: trend) {
-          Text(description)
-            .appFont(AppTextRole.subheadline)
-            .foregroundStyle(.secondary)
-            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        HStack(alignment: .bottom, spacing: DesignTokens.Spacing.sm) {
-          TrendingTopicArtwork(link: trend.link, actors: trend.actors)
-          Spacer(minLength: 0)
-          if trend.postCount > 0 {
-            Text(postCountText)
-              .appFont(AppTextRole.caption)
-              .foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
-          }
-        }
+        previewAndDescription
+        footer
       }
       .multilineTextAlignment(.leading)
       .containerRelativeFrame(.horizontal, alignment: .topLeading) { viewportWidth, _ in
         // Keep the whole card inside the carousel, including both 16pt scroll
         // insets and the card's own horizontal padding.
-        let preferredWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 300 : 240
+        let preferredWidth: CGFloat = 300
         return min(preferredWidth, max(0, viewportWidth - 32 - 2 * DesignTokens.Spacing.base))
       }
       .padding(.horizontal, DesignTokens.Spacing.base)
       .padding(.vertical, DesignTokens.Spacing.md)
+      .frame(maxHeight: .infinity, alignment: .topLeading)
       .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .combine)
     .accessibilityHint("Open posts about this topic")
+  }
+
+  @ViewBuilder
+  private var previewAndDescription: some View {
+    if dynamicTypeSize.isAccessibilitySize {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+        mediaFan
+        descriptionText
+      }
+    } else {
+      HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+        mediaFan
+        descriptionText
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+  }
+
+  /// Decorative media only; avatars are shown in the footer instead.
+  private var mediaFan: some View {
+    TrendingTopicArtwork(link: trend.link, actors: trend.actors, showParticipants: false)
+      .frame(width: mediaWidth, height: mediaHeight, alignment: .topLeading)
+  }
+
+  @ViewBuilder
+  private var descriptionText: some View {
+    if let description = TrendingTopicPresentation.description(for: trend) {
+      Text(description)
+        .appFont(AppTextRole.subheadline)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private var footer: some View {
+    HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+      TrendingTopicParticipants(link: trend.link, actors: trend.actors)
+      Spacer(minLength: 0)
+      if trend.postCount > 0 {
+        Text(postCountText)
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
   }
 
   private var postCountText: String {

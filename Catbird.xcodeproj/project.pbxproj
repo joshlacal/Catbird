@@ -1055,7 +1055,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CATBIRD_TELEMETRY_BACKEND = disabled;
-				CATBIRD_GLITCHTIP_ALLOWED_HOST = "";
+				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
 				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -1147,7 +1147,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CATBIRD_TELEMETRY_BACKEND = disabled;
-				CATBIRD_GLITCHTIP_ALLOWED_HOST = "";
+				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
 				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;

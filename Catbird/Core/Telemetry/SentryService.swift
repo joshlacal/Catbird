@@ -5,6 +5,8 @@ import Sentry
 #endif
 
 enum SentryService {
+    /// SentrySDK.start must run on the main thread (it reads UIApplication state).
+    @MainActor
     static func start() {
         #if canImport(Sentry)
         let configuration = telemetryConfiguration()
@@ -81,6 +83,8 @@ enum SentryService {
 
     static func addBreadcrumb(level: String, category: String, message: String) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let crumb = Breadcrumb(level: mapLevel(level), category: category)
         crumb.message = redactingAccountIdentifiers(message)
         SentrySDK.addBreadcrumb(crumb)
@@ -89,6 +93,8 @@ enum SentryService {
 
     static func captureMessage(_ message: String, level: String, category: String) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let event = Event(level: mapLevel(level))
         event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         event.tags = ["category": category]
@@ -98,6 +104,8 @@ enum SentryService {
 
     static func captureMessage(_ message: String, level: String, category: String, extras: [String: Any]?) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let event = Event(level: mapLevel(level))
         event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         event.tags = ["category": category]
@@ -120,6 +128,8 @@ enum SentryService {
         fingerprint: [String]? = nil
     ) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let event = Event(level: mapLevel(level))
         event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         var combinedTags = tags ?? [:]

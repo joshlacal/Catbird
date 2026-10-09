@@ -92,55 +92,52 @@ private struct PlatformAgeAccessNotice: View {
     #endif
   }
 
-  var body: some View {
-    ScrollView {
-      VStack(spacing: 20) {
-        if isResolvedMatureRestriction {
-          Image(systemName: "person.crop.circle.badge.exclamationmark")
-            .font(.largeTitle)
-            .foregroundStyle(.secondary)
-          Text("Mature content is unavailable")
-            .font(.headline)
-          Text("Mature content is restricted under the current age requirements. Other features, Settings, and safety tools remain available.")
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-        } else if isBusy {
-          ProgressView()
-          Text(appState.ageAccess.isRequesting ? "Complete the system age check" : "Checking availability…")
-            .font(.headline)
-        } else {
-          Image(systemName: "person.crop.circle.badge.exclamationmark")
-            .font(.largeTitle)
-            .foregroundStyle(.secondary)
-          Text("This feature is unavailable")
-            .font(.headline)
-          Text(unavailableExplanation)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-          Button("Retry") { retry() }
-            .buttonStyle(.borderedProminent)
-            .disabled(presenter == nil)
-            .accessibilityIdentifier("platform_age_retry")
-        }
+  /// A pending or in-flight check shows only a quiet spinner. Content stays withheld
+  /// by the wrapper; no copy, restriction UI or safety links are shown until settled.
+  private var showsPendingIndicator: Bool {
+    !isResolvedMatureRestriction && isBusy
+  }
 
-        VStack(spacing: 12) {
-          Button("Report or Block") { showingSafetyTools = true }
-          Button("Moderation Settings") { settingsRequest = SceneSettingsRequest(route: .moderation) }
-          Button("Blocked Accounts") {
-            settingsRequest = SceneSettingsRequest(route: SettingsRoute(target: .init(screen: .blockedAccounts)))
+  var body: some View {
+    Group {
+      if showsPendingIndicator {
+        ProgressView()
+          .accessibilityLabel("Loading")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        ScrollView {
+          VStack(spacing: 20) {
+            if isResolvedMatureRestriction {
+              Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+              Text("Mature content is unavailable")
+                .font(.headline)
+              Text("Mature content is restricted under the current age requirements. Other features, Settings, and safety tools remain available.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            } else {
+              Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+              Text("This feature is unavailable")
+                .font(.headline)
+              Text(unavailableExplanation)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+              Button("Retry") { retry() }
+                .buttonStyle(.borderedProminent)
+                .disabled(presenter == nil)
+                .accessibilityIdentifier("platform_age_retry")
+            }
+
+            safetyLinks
           }
-          Button("Muted Accounts") {
-            settingsRequest = SceneSettingsRequest(route: SettingsRoute(target: .init(screen: .mutedAccounts)))
-          }
-          Button("Contact Developer") {
-            settingsRequest = SceneSettingsRequest(route: SettingsRoute(target: .init(screen: .help)))
-          }
-          Button("Settings & Account") { settingsRequest = SceneSettingsRequest(route: .home) }
+          .frame(maxWidth: 480)
+          .padding(24)
+          .frame(maxWidth: .infinity)
         }
       }
-      .frame(maxWidth: 480)
-      .padding(24)
-      .frame(maxWidth: .infinity)
     }
     .accessibilityIdentifier("platform_age_access_notice")
     .background { originAnchor }
@@ -149,6 +146,23 @@ private struct PlatformAgeAccessNotice: View {
     }
     .sheet(item: $settingsRequest) { request in
       SettingsView(initialTarget: request.route.target)
+    }
+  }
+
+  private var safetyLinks: some View {
+    VStack(spacing: 12) {
+      Button("Report or Block") { showingSafetyTools = true }
+      Button("Moderation Settings") { settingsRequest = SceneSettingsRequest(route: .moderation) }
+      Button("Blocked Accounts") {
+        settingsRequest = SceneSettingsRequest(route: SettingsRoute(target: .init(screen: .blockedAccounts)))
+      }
+      Button("Muted Accounts") {
+        settingsRequest = SceneSettingsRequest(route: SettingsRoute(target: .init(screen: .mutedAccounts)))
+      }
+      Button("Contact Developer") {
+        settingsRequest = SceneSettingsRequest(route: SettingsRoute(target: .init(screen: .help)))
+      }
+      Button("Settings & Account") { settingsRequest = SceneSettingsRequest(route: .home) }
     }
   }
 
