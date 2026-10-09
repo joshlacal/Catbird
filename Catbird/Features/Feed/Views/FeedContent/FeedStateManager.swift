@@ -949,7 +949,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
         
         self.posts = validPosts
-        self.loadingState = .idle
+        // Restoration races the initial network load; cached rows may show early, but
+        // must not mark that in-flight load idle (which lets a duplicate load start).
+        if !isLoadingInitialData { self.loadingState = .idle }
         self.hasReachedEnd = false
         
         // Update feed model's posts to match
