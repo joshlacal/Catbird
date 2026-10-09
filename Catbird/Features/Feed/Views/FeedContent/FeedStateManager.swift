@@ -463,14 +463,60 @@ final class FeedStateManager: StateInvalidationSubscriber {
     func refreshUserInitiated(displayScale: CGFloat) async {
         logger.debug("🔄 User-initiated refresh")
 
-        // Delegate to standard refresh
-        await refresh()
+        // A pull that lands during another load must not be dropped: wait for that
+        // load, then either publish its fresh first page or run this refresh.
+        let postsBeforeWait = posts
+        let refreshTimeBeforeWait = feedModel.lastRefreshTime
+        if hasInFlightLoad {
+            logger.debug("🔄 User refresh waiting for in-flight feed load")
+            await waitForInFlightLoad()
+            guard !Task.isCancelled, !isCleanedUp, !isAppInBackground,
+                  !appState.isAccountSwitchSuspended else { return }
+        }
+
+        if !hasInFlightLoad, feedModel.lastRefreshTime != refreshTimeBeforeWait, feedModel.error == nil {
+            // The in-flight load fetched the top of the feed while we waited.
+            markUserAction()
+            postsBeforeRefresh = postsBeforeWait
+            isTrackingNewPosts = false
+            await updatePostsFromModel(immediate: true)
+            hasReachedEnd = !feedModel.hasMore
+            if case .error = loadingState {
+                errorMessage = nil
+                loadingState = .idle
+            }
+            await trackNewPostsAfterRefresh()
+        } else {
+            await refresh()
+        }
 
         // Pull-to-refresh is the explicit "show me something new" gesture, so it
-        // also replaces the trending set the feed is currently showing.
+        // also replaces the trending set the feed is currently showing. It loads
+        // independently so the refresh control ends as soon as posts are applied.
         if let trendingRequestID {
             trendingInvalidated = true
-            await loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale)
+            trendingRefreshTask?.cancel()
+            trendingRefreshTask = Task { [weak self] in
+                await self?.loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale)
+            }
+        }
+    }
+
+    /// Whether a load owned by this manager or its model is still running.
+    private var hasInFlightLoad: Bool {
+        isLoadingInitialData || isLoading || feedModel.isLoading || feedModel.isBackgroundRefreshing
+    }
+
+    /// Waits up to `timeout` for the in-flight load to finish.
+    private func waitForInFlightLoad(timeout: Duration = .seconds(5)) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while hasInFlightLoad, clock.now < deadline {
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                return
+            }
         }
     }
     
@@ -546,7 +592,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
                 return
             }
 
-            await updatePostsFromModel()
+            await updatePostsFromModel(immediate: true)
 
             guard !Task.isCancelled && !isAppInBackground else { return }
 
@@ -748,6 +794,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private var trendingRequestID: String?
     private var trendingLoadedAt: Date?
     private var trendingInvalidated = false
+    private var trendingRefreshTask: Task<Void, Never>?
 
     /// How long a loaded trending set stays on screen before a reappear refetches it.
     static let trendingMaxAge: TimeInterval = 15 * 60
@@ -780,12 +827,22 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
     // MARK: - Data Updates
     
-    /// Updates posts from the feed model with debouncing
+    /// Updates posts from the feed model, debounced unless `immediate` (user-initiated refresh).
     @MainActor
-    private func updatePostsFromModel() async {
+    private func updatePostsFromModel(immediate: Bool = false) async {
         // Cancel any existing update task
         updateTask?.cancel()
-        
+
+        if immediate {
+            updateTask = nil
+            let oldCount = posts.count
+            guard posts != feedModel.posts else { return }
+            posts = feedModel.posts
+            cleanupViewModels()
+            logger.debug("Updated posts from model immediately: \(oldCount) -> \(self.posts.count) posts")
+            return
+        }
+
         updateTask = Task {
             // Debounce rapid updates
             try await Task.sleep(nanoseconds: 50_000_000) // 50ms
@@ -1351,6 +1408,10 @@ final class FeedStateManager: StateInvalidationSubscriber {
         )
         
         if didRefresh {
+            guard !Task.isCancelled, !isCleanedUp, !isAppInBackground,
+                  !appState.isAccountSwitchSuspended else { return }
+            // Publish whatever the background load accepted into the model.
+            await updatePostsFromModel()
             logger.info("🔄 Automatic refresh completed successfully")
         }
     }
@@ -1368,6 +1429,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
+        trendingRefreshTask?.cancel()
         stopAutomaticRefreshMonitoring()
 
         // Clear references
@@ -1388,6 +1450,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
+        trendingRefreshTask?.cancel()
         autoRefreshTask?.cancel()
         logger.debug("FeedStateManager deallocated")
     }

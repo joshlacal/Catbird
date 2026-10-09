@@ -212,6 +212,8 @@ final class AppState {
     /// The labelers and client the last successful definitions load covered.
     @ObservationIgnored private var loadedModerationDefinitionsKey: ModerationDefinitionsKey?
     @ObservationIgnored private var moderationDefinitionsLoad: ModerationDefinitionsLoad?
+    /// The normalized labeler set the on-disk definitions cache was last consulted or written for.
+    @ObservationIgnored private var moderationDefinitionsDiskKey: [String]?
 
 
     /// Current user's profile data for optimistic updates.
@@ -731,6 +733,9 @@ final class AppState {
 
         postManager.updateClient(client)
         preferencesManager.updateClient(client)
+        // Seed accept-labelers from the stored confirmed preferences before any feed request.
+        // No-op until `initializePreferencesManager` has configured the account's row.
+        await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
         await notificationManager.updateClient(client)
         graphManager = GraphManager(atProtoClient: client)
         blockedAuthorHydrator = makeBlockedAuthorHydrator()
@@ -759,10 +764,9 @@ final class AppState {
 
         if isAuthenticated {
             accountServiceWork.start { [self] in
-                // Load current user profile for optimistic updates
-                await self.loadCurrentUserProfile(did: userDID)
-
-                await AppStateManager.shared.authentication.refreshAvailableAccounts()
+                // Load current user profile for optimistic updates, concurrently with the preferences
+                // fetch: the feed's moderation policy and accept-labelers header wait on preferences.
+                async let profileLoad: Void = self.loadCurrentUserProfile(did: userDID)
 
                 // Synchronize server preferences with app settings
                 do {
@@ -773,6 +777,9 @@ final class AppState {
                 } catch {
                     logger.error("Failed to synchronize preferences: \(error.localizedDescription)")
                 }
+
+                await profileLoad
+                await AppStateManager.shared.authentication.refreshAvailableAccounts()
 
                 await self.activitySubscriptionService.refreshSubscriptions()
                 self.nuxPresenter.evaluateAndPresentIfNeeded(
@@ -805,6 +812,9 @@ final class AppState {
         // Update client references in all managers before kicking off parallel refresh work
         postManager.updateClient(client)
         preferencesManager.updateClient(client)
+        // The shared client still carries the previous account's labelers; seed this account's
+        // confirmed ones before the feed load below.
+        await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
         await notificationManager.updateClient(client)
 
         chatManager.updateAppState(self) // Wire AppState reference to ChatManager
@@ -1069,6 +1079,11 @@ final class AppState {
 
         // The persisted row is readable now: use this account's own confirmed preferences, if any.
         refreshModerationPolicy()
+        // Seed the accept-labelers header from the same confirmed row before any feed request; the
+        // server preferences fetch keeps it current. No-op until the client is set in `initialize()`.
+        accountServiceWork.start { [self] in
+            await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
+        }
 
         // Apply theme settings (now that SwiftData is available, this will use the persisted values)
         _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode, accentColor: appSettings.accentColor)
@@ -1451,6 +1466,11 @@ final class AppState {
         preferencesManager.updateClient(newClient)
         // Re-read this account's own stored policy for the new client before any request uses it.
         refreshModerationPolicy()
+        // The new client starts without this account's accept-labelers header; seed it from the
+        // confirmed stored row so feed requests made before the next preferences fetch carry it.
+        accountServiceWork.start { [self] in
+            await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
+        }
         graphManager = GraphManager(atProtoClient: newClient)
         // Token refresh / re-login: fresh hydrator so stale-token failures don't
         // poison the identity cache for the (unchanged) account.
@@ -1676,6 +1696,7 @@ final class AppState {
         let subscriptions = stored.labelers
         let labelerDIDs = subscriptions.map { $0.did.didString() }
         moderationLabelerDIDs = labelerDIDs
+        seedModerationDefinitionsFromDisk(labelerDIDs: labelerDIDs)
         applyModerationPolicy(ModerationPolicy(
             accountDID: userDID,
             serverAdultContentEnabled: stored.adultContentEnabled,
@@ -1694,6 +1715,22 @@ final class AppState {
             labelerDIDs: [],
             labelerDefinitions: [:],
             isConfirmed: false)
+    }
+
+    /// Before the first network load for a labeler set, uses the definitions stored on disk for exactly
+    /// this account and set, so custom labels resolve on the first frame. Only raw labeler definitions
+    /// come from disk; preferences and the age restriction are applied at runtime as always. Called only
+    /// with server-confirmed subscriptions. The network load still runs and overwrites the entry.
+    @MainActor
+    private func seedModerationDefinitionsFromDisk(labelerDIDs: [String]) {
+        let key = LabelerDefinitionsDiskCache.normalizedLabelerDIDs(labelerDIDs)
+        guard moderationDefinitionsDiskKey != key else { return }
+        moderationDefinitionsDiskKey = key
+        // Definitions already loaded from the network for this set are newer than the disk copy.
+        if let loaded = loadedModerationDefinitionsKey,
+           LabelerDefinitionsDiskCache.normalizedLabelerDIDs(loaded.labelerDIDs) == key { return }
+        guard let cached = LabelerDefinitionsDiskCache.load(accountDID: userDID, labelerDIDs: key) else { return }
+        moderationDefinitions = cached
     }
 
     @MainActor
@@ -1735,6 +1772,8 @@ final class AppState {
             guard !Task.isCancelled, self.client === client, moderationLabelerDIDs == key.labelerDIDs else { return }
             moderationDefinitions = definitions
             loadedModerationDefinitionsKey = key
+            moderationDefinitionsDiskKey = LabelerDefinitionsDiskCache.normalizedLabelerDIDs(key.labelerDIDs)
+            LabelerDefinitionsDiskCache.store(definitions, accountDID: userDID, labelerDIDs: key.labelerDIDs)
             rebuildModerationPolicy()
         } catch {
             logger.error("Could not load labeler definitions for the moderation policy: \(error.localizedDescription)")

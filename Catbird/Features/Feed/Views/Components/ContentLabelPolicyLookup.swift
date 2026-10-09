@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Petrel
 
 /// Read-only, successful-result-only definitions cache for the content warning consumer.
@@ -99,6 +100,86 @@ final class ContentLabelDefinitionLookup {
       inFlight.removeValue(forKey: key)
       entry.task.cancel()
     }
+  }
+}
+
+/// The last successfully loaded label value definitions of an account's subscribed labelers, kept on
+/// disk so the first feed frame after launch already resolves custom labels instead of waiting for
+/// `app.bsky.labeler.getServices`.
+///
+/// It holds only the labelers' raw published definitions. Preferences, adult-content state and
+/// platform age restrictions are never stored here; the effective policy is always rebuilt at runtime
+/// from the server-confirmed preferences row. An entry is used only for the exact account and
+/// subscribed-labeler set it was stored for, and the network refresh always runs and overwrites it.
+enum LabelerDefinitionsDiskCache {
+  typealias Definitions = [String: [ComAtprotoLabelDefs.LabelValueDefinition]]
+
+  private struct Entry: Codable {
+    let accountDID: String
+    let labelerDIDs: [String]
+    let definitions: Definitions
+  }
+
+  private static let logger = Logger(subsystem: "blue.catbird", category: "LabelerDefinitionsDiskCache")
+  /// Serializes writes and removals so an older write never lands after a newer one.
+  private static let ioQueue = DispatchQueue(label: "blue.catbird.labeler-definitions-cache", qos: .utility)
+
+  /// The cache key for a subscription list: deduplicated and sorted.
+  static func normalizedLabelerDIDs(_ labelerDIDs: [String]) -> [String] {
+    Array(Set(labelerDIDs)).sorted()
+  }
+
+  /// Synchronously reads the entry for this account, if it was stored for exactly these labelers.
+  static func load(accountDID: String, labelerDIDs: [String]) -> Definitions? {
+    guard let url = fileURL(accountDID: accountDID),
+          let data = try? Data(contentsOf: url) else { return nil }
+    do {
+      let entry = try JSONDecoder().decode(Entry.self, from: data)
+      guard entry.accountDID == accountDID,
+            entry.labelerDIDs == normalizedLabelerDIDs(labelerDIDs) else { return nil }
+      return entry.definitions
+    } catch {
+      logger.error("Discarding unreadable labeler definitions cache: \(error.localizedDescription)")
+      ioQueue.async { try? FileManager.default.removeItem(at: url) }
+      return nil
+    }
+  }
+
+  /// Replaces this account's entry in the background.
+  static func store(_ definitions: Definitions, accountDID: String, labelerDIDs: [String]) {
+    guard let url = fileURL(accountDID: accountDID) else { return }
+    let entry = Entry(
+      accountDID: accountDID, labelerDIDs: normalizedLabelerDIDs(labelerDIDs), definitions: definitions)
+    let data: Data
+    do {
+      data = try JSONEncoder().encode(entry)
+    } catch {
+      logger.error("Could not encode labeler definitions cache: \(error.localizedDescription)")
+      return
+    }
+    ioQueue.async {
+      do {
+        try FileManager.default.createDirectory(
+          at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: [.atomic])
+      } catch {
+        logger.error("Could not write labeler definitions cache: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// Removes this account's entry, e.g. on sign-out.
+  static func remove(accountDID: String) {
+    guard let url = fileURL(accountDID: accountDID) else { return }
+    ioQueue.async { try? FileManager.default.removeItem(at: url) }
+  }
+
+  private static func fileURL(accountDID: String) -> URL? {
+    guard !accountDID.isEmpty,
+          let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+          let name = accountDID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
+    return base.appendingPathComponent("LabelerDefinitions", isDirectory: true)
+      .appendingPathComponent("\(name).json", isDirectory: false)
   }
 }
 

@@ -1896,6 +1896,17 @@ final class PreferencesManager {
     return uniqueDIDs.prefix(20).map { (did: $0, redact: $0 == ModerationPrefs.blueskyModerationDID) }
   }
 
+  /// Applies `atproto-accept-labelers` from this account's stored, server-confirmed preferences, so
+  /// requests issued before the launch preferences fetch completes already name the subscribed
+  /// labelers. A row the server never confirmed is ignored; the fetch keeps the header current.
+  @MainActor
+  func applyAcceptLabelersHeaderFromConfirmedPreferences() async {
+    guard !accountDID.isEmpty, client != nil, modelContext != nil,
+          let stored = try? confirmedFeedFilterPreferences(),
+          stored.accountDID == accountDID else { return }
+    await applyAcceptLabelersHeader(from: stored)
+  }
+
   /// Updates the network header `atproto-accept-labelers` based on current preferences
   @MainActor
   private func applyAcceptLabelersHeader(from preferences: Preferences) async {

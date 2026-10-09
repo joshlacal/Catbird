@@ -710,6 +710,7 @@ final class AppStateManager {
     writeAccountsToAppGroup()
     // Stop showing the signed-out account's posts in widgets and Spotlight
     if let loggingOutDID {
+      LabelerDefinitionsDiskCache.remove(accountDID: loggingOutDID)
       FeedWidgetDataProvider.shared.clearWidgetData(for: loggingOutDID)
       await SpotlightEntityDonator.shared.removeAll()
     }

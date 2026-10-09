@@ -66,6 +66,9 @@ final class FeedModel: StateInvalidationSubscriber {
   // A replacement or account reset invalidates work suspended in preparation.
   @MainActor private var publicationGeneration: UInt64 = 0
 
+  /// Persistence and shadow hydration for the most recently published first page.
+  @ObservationIgnored @MainActor private var postPublicationWork: Task<Void, Never>?
+
   private struct PublicationIdentity {
     let generation: UInt64
     let feedKey: String
@@ -461,6 +464,7 @@ final class FeedModel: StateInvalidationSubscriber {
       self.lastRefreshTime = Date()
       self.successfulResponseFeedKey = publication.feedKey
 
+      var didReplacePosts = true
       if strategy == .backgroundRefresh && !posts.isEmpty {
         let existingIds = Set(posts.map { $0.id })
         let newIds = Set(newPosts.map { $0.id })
@@ -468,31 +472,25 @@ final class FeedModel: StateInvalidationSubscriber {
 
         if uniqueNewPostCount > posts.count / 10 || forceRefresh {
           self.posts = newPosts
-          // Persist feed data for caching using account-scoped key
-          await PersistentFeedStateManager.shared.saveFeedData(
-            self.posts,
-            for: publication.feedKey,
-            cursor: newCursor
-          )
+        } else {
+          didReplacePosts = false
         }
       } else {
         self.posts = newPosts
-        // Persist feed data for caching
-        await PersistentFeedStateManager.shared.saveFeedData(
-          self.posts,
-          for: publication.feedKey,
-          cursor: newCursor
-        )
       }
 
-      try checkPublication(publication)
       logger.debug("🔍 loadFeed completed - loaded \(self.posts.count) posts, cursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
 
-      await refreshPostShadows(fetchedPosts)
-      
-      // Update widget data
-      try checkPublication(publication)
-      FeedWidgetDataProvider.shared.updateWidgetData(from: newPosts, feedType: fetch)
+      // The filtered page is published above; persistence, shadow hydration and
+      // widget updates follow without holding the caller's refresh open.
+      schedulePostPublicationWork(
+        postsToPersist: didReplacePosts ? self.posts : nil,
+        cursor: newCursor,
+        fetchedPosts: fetchedPosts,
+        widgetPosts: newPosts,
+        fetch: fetch,
+        publication: publication
+      )
     } catch {
       // Use standardized error handling
       error.logError(context: "Feed load for \(fetch.identifier)", operation: "loadFeed")
@@ -504,6 +502,35 @@ final class FeedModel: StateInvalidationSubscriber {
       }
     }
 
+  }
+
+  /// Persists a published first page and hydrates its shadows and widget data.
+  /// Runs after the page is visible; each run waits for the previous one so
+  /// cache writes land in publication order.
+  @MainActor
+  private func schedulePostPublicationWork(
+    postsToPersist: [CachedFeedViewPost]?,
+    cursor: String?,
+    fetchedPosts: [AppBskyFeedDefs.FeedViewPost],
+    widgetPosts: [CachedFeedViewPost],
+    fetch: FetchType,
+    publication: PublicationIdentity
+  ) {
+    let previousWork = postPublicationWork
+    postPublicationWork = Task { @MainActor [weak self] in
+      await previousWork?.value
+      if let postsToPersist {
+        await PersistentFeedStateManager.shared.saveFeedData(
+          postsToPersist,
+          for: publication.feedKey,
+          cursor: cursor
+        )
+      }
+      guard let self, (try? self.checkPublication(publication)) != nil else { return }
+      await self.refreshPostShadows(fetchedPosts)
+      guard (try? self.checkPublication(publication)) != nil else { return }
+      FeedWidgetDataProvider.shared.updateWidgetData(from: widgetPosts, feedType: fetch)
+    }
   }
 
   @MainActor
