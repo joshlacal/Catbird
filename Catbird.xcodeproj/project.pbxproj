@@ -119,6 +119,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Telemetry.xcconfig; sourceTree = "<group>"; };
 		21196F102DC1115900662CC3 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		21196F122DC1115900662CC3 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationServiceExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -430,6 +431,7 @@
 			isa = PBXGroup;
 			children = (
 				21AC6E632DD0E0E700251536 /* .swiftlint.yml */,
+				21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */,
 				215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */,
 				212E93FF2D60132700D3E1DD /* Catbird */,
 				212E94142D60132A00D3E1DD /* CatbirdTests */,
@@ -1053,10 +1055,10 @@
 		};
 		212E94252D60132A00D3E1DD /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */;
 			buildSettings = {
 				CATBIRD_TELEMETRY_BACKEND = glitchtip;
 				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
-				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -1145,10 +1147,10 @@
 		};
 		212E94262D60132A00D3E1DD /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */;
 			buildSettings = {
 				CATBIRD_TELEMETRY_BACKEND = glitchtip;
 				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
-				CATBIRD_GLITCHTIP_DSN = "";
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
