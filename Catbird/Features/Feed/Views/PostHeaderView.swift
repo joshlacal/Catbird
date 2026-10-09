@@ -112,16 +112,11 @@ struct PostHeaderView: View {
                 // name it shows in full, truncated if at least a few characters fit,
                 // or not at all, rather than as a stray "@" or "(".
                 if hasDisplayName {
-                    ViewThatFits(in: .horizontal) {
+                    HandleFitLayout(minimumWidth: Self.minimumTruncatedHandleWidth + spacing) {
                         handleText
-                            .fixedSize()
                             .padding(.leading, spacing)
-                        handleText
-                            .frame(idealWidth: Self.minimumTruncatedHandleWidth, alignment: .leading)
-                            .padding(.leading, spacing)
-                        Color.clear
-                            .frame(width: 0, height: 0)
                     }
+                    .clipped()
                     .layoutPriority(0)
                 } else {
                     handleText
@@ -168,4 +163,36 @@ struct PostHeaderView: View {
         )
         .environment(AppStateManager.shared)
   }
+}
+
+/// Sizes the handle beside a display name in one measurement: its full width when
+/// that fits, the offered width when at least `minimumWidth` fits (the text
+/// truncates), and zero otherwise (clipped away by the caller). Feed rows lay
+/// this out on every scroll, where `ViewThatFits` built and measured three candidates.
+private struct HandleFitLayout: Layout {
+    let minimumWidth: CGFloat
+
+    func makeCache(subviews: Subviews) -> CGSize {
+        subviews.first?.sizeThatFits(.unspecified) ?? .zero
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) -> CGSize {
+        let ideal = cache
+        guard let available = proposal.width else { return ideal }
+        if available >= ideal.width { return ideal }
+        if available >= minimumWidth { return CGSize(width: available, height: ideal.height) }
+        return .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) {
+        guard let handle = subviews.first else { return }
+        handle.place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: cache.height))
+    }
+
+    func updateCache(_ cache: inout CGSize, subviews: Subviews) {
+        cache = makeCache(subviews: subviews)
+    }
 }
