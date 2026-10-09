@@ -53,6 +53,8 @@ struct ActionButtonsView: View {
   @Environment(AppState.self) private var appState
   @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.feedInteractionTarget) private var feedInteractionTarget
+  @Environment(\.fontManager) private var fontManager
+  @Environment(\.legibilityWeight) private var legibilityWeight
 
   // Post to display actions for. Boxed because an inline `PostView` is about
   // 3 KB, and `.task(id:)`, `.onChange(of:)` and `PostShareMenu` would each
@@ -69,6 +71,9 @@ struct ActionButtonsView: View {
 
   // State for managing animations and loading
   @State private var initialLoadComplete: Bool = false
+
+  /// Share sheet chosen from the UIKit row's share menu.
+  @State private var shareDestination: PostShareDestination?
 
   // Customization option
   let isBig: Bool
@@ -115,75 +120,10 @@ struct ActionButtonsView: View {
 
   // MARK: - Body
   var body: some View {
-    HStack {
-      // Reply Button
-      InteractionButton(
-        iconName: "bubble.left",
-        count: isBig ? nil : interactionState.replyCount,
-        isActive: false,
-        isFirstAppear: isFirstAppear,
-        color: .secondary,
-        isBig: isBig
-      ) {
-        handleReplyTap()
-      }
-      .accessibilityIdentifier("replyButton")
-        .accessibilityLabel(countedLabel("Reply", count: interactionState.replyCount, singular: "reply", plural: "replies"))
-      .disabled(postBox.value.viewer?.replyDisabled ?? false)
-      // Subtle glass and mark as the matched transition source for this post
-      .padding(.vertical, isBig ? 3 : 2)
-      .frame(maxWidth: .infinity, alignment: .leading)
-
-      repostMenu
-        .accessibilityIdentifier("repostButton")
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      // Like Button
-      InteractionButton(
-        iconName: interactionState.isLiked ? "heart.fill" : "heart",
-        count: isBig ? nil : interactionState.likeCount,
-        isActive: interactionState.isLiked,
-        animateActivation: interactionState.animateLike,  // Use state property
-        animateScale: initialLoadComplete,
-        isFirstAppear: isFirstAppear,
-        color: interactionState.isLiked ? .red : .secondary,
-        isBig: isBig
-      ) {
-        // Haptic feedback using shared generator
-        PlatformHaptics.medium()
-
-        // Set animation flag to true
-        interactionState.animateLike = true
-
-        let wasLiked = interactionState.isLiked
-        Task {
-          do {
-            try await viewModel.toggleLike(feedInteractionTarget: feedInteractionTarget)
-          } catch {
-            logger.error("Error toggling like: \(error)")
-            showFailureToast(
-              for: error, action: wasLiked ? "remove your like" : "like this post")
-          }
-          // UI state will be updated via the shadow manager and refreshState
-          // Reset animation flag after a short delay if needed
-          try? await Task.sleep(for: .milliseconds(500))  // Adjust delay as needed
-          await MainActor.run { interactionState.animateLike = false }
-        }
-      }
-      .accessibilityIdentifier("likeButton")
-      .accessibilityLabel(countedLabel(
-        interactionState.isLiked ? "Unlike" : "Like",
-        count: interactionState.likeCount, singular: "like", plural: "likes"))
-      .frame(maxWidth: .infinity, alignment: .leading)
-
-      PostShareMenu(post: postBox, appState: appState, isBig: isBig)
-
-    }
-    .font(isBig ? .title3 : .callout)
-    .frame(height: isBig ? 54 : 45)
-    .padding(.leading, ActionButtonsView.baseUnit)
-    .padding(.trailing, ActionButtonsView.baseUnit * 4)
+    actionRow
     .onAppear {
+      // Only the SwiftUI row uses `isFirstAppear` (to skip the first symbol transition).
+      guard !usesUIKitRow else { return }
       // Set isFirstAppear to false after a tiny delay
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
         isFirstAppear = false
@@ -234,6 +174,135 @@ struct ActionButtonsView: View {
       Task { await refreshState() }
     }
     .id(appState.userDID)
+  }
+
+  /// Feed rows on iOS draw the row in UIKit (see `FeedActionBar`); the large
+  /// thread-detail row and macOS keep the SwiftUI row.
+  private var usesUIKitRow: Bool {
+    #if os(iOS)
+    !isBig
+    #else
+    false
+    #endif
+  }
+
+  @ViewBuilder
+  private var actionRow: some View {
+    #if os(iOS)
+    if usesUIKitRow {
+      uikitRow
+    } else {
+      swiftUIRow
+    }
+    #else
+    swiftUIRow
+    #endif
+  }
+
+  #if os(iOS)
+  private var uikitRow: some View {
+    FeedActionBar(state: actionBarState, actions: actionBarActions)
+      .frame(height: FeedActionBar.height)
+      .postShareSheet(destination: $shareDestination, post: postBox, appState: appState)
+  }
+
+  private var actionBarState: FeedActionBarState {
+    let post = postBox.value
+    return FeedActionBarState(
+      postURI: post.uri.uriString(),
+      replyCount: interactionState.replyCount,
+      isReplyDisabled: post.viewer?.replyDisabled ?? false,
+      repostCount: interactionState.repostCount,
+      isReposted: interactionState.isReposted,
+      isQuoteDisabled: post.viewer?.embeddingDisabled ?? false,
+      likeCount: interactionState.likeCount,
+      isLiked: interactionState.isLiked,
+      isShareEnabled: isValidShareOrigin,
+      canSendViaChat: appState.isAuthenticated,
+      canCopyLink: ActionButtonViewModel.shareURL(for: post) != nil,
+      reduceMotion: appState.appSettings.effectiveReduceMotion,
+      fonts: .resolved(
+        fontManager: fontManager,
+        boldText: legibilityWeight == .bold || appState.appSettings.effectiveBoldText)
+    )
+  }
+
+  private var actionBarActions: FeedActionBarActions {
+    FeedActionBarActions(
+      reply: { handleReplyTap() },
+      toggleRepost: { handleRepostToggle() },
+      quote: { handleQuotePost() },
+      toggleLike: { handleLikeTap() },
+      sendViaChat: {
+        guard isValidShareOrigin else { return }
+        shareDestination = PostShareDestination(kind: .chat, sceneContext: sceneContext)
+      },
+      copyLink: {
+        guard isValidShareOrigin, let url = ActionButtonViewModel.shareURL(for: postBox.value) else { return }
+        PostShareDestination.copyLink(url, appState: appState)
+      },
+      moreSharing: {
+        guard isValidShareOrigin else { return }
+        shareDestination = PostShareDestination(kind: .native, sceneContext: sceneContext)
+      }
+    )
+  }
+
+  private var isValidShareOrigin: Bool {
+    !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
+  }
+  #endif
+
+  private var swiftUIRow: some View {
+    HStack {
+      // Reply Button
+      InteractionButton(
+        iconName: "bubble.left",
+        count: isBig ? nil : interactionState.replyCount,
+        isActive: false,
+        isFirstAppear: isFirstAppear,
+        color: .secondary,
+        isBig: isBig
+      ) {
+        handleReplyTap()
+      }
+      .accessibilityIdentifier("replyButton")
+        .accessibilityLabel(countedLabel("Reply", count: interactionState.replyCount, singular: "reply", plural: "replies"))
+      .disabled(postBox.value.viewer?.replyDisabled ?? false)
+      // Subtle glass and mark as the matched transition source for this post
+      .padding(.vertical, isBig ? 3 : 2)
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      repostMenu
+        .accessibilityIdentifier("repostButton")
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+      // Like Button
+      InteractionButton(
+        iconName: interactionState.isLiked ? "heart.fill" : "heart",
+        count: isBig ? nil : interactionState.likeCount,
+        isActive: interactionState.isLiked,
+        animateActivation: interactionState.animateLike,  // Use state property
+        animateScale: initialLoadComplete,
+        isFirstAppear: isFirstAppear,
+        color: interactionState.isLiked ? .red : .secondary,
+        isBig: isBig
+      ) {
+        handleLikeTap()
+      }
+      .accessibilityIdentifier("likeButton")
+      .accessibilityLabel(countedLabel(
+        interactionState.isLiked ? "Unlike" : "Like",
+        count: interactionState.likeCount, singular: "like", plural: "likes"))
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      PostShareMenu(post: postBox, appState: appState, isBig: isBig)
+
+    }
+    .font(isBig ? .title3 : .callout)
+    .frame(height: isBig ? 54 : 45)
+    .padding(.leading, ActionButtonsView.baseUnit)
+    .padding(.trailing, ActionButtonsView.baseUnit * 4)
   }
 
   private var repostMenu: some View {
@@ -315,6 +384,29 @@ struct ActionButtonsView: View {
     guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID else { return }
     appState.feedFeedbackManager.trackReply(postURI: postBox.value.uri, target: feedInteractionTarget)
     sceneContext.presentPostComposer(initialText: nil, parentPost: postBox.value, quotedPost: nil)
+  }
+
+  private func handleLikeTap() {
+    // Haptic feedback using shared generator
+    PlatformHaptics.medium()
+
+    // Set animation flag to true
+    interactionState.animateLike = true
+
+    let wasLiked = interactionState.isLiked
+    Task {
+      do {
+        try await viewModel.toggleLike(feedInteractionTarget: feedInteractionTarget)
+      } catch {
+        logger.error("Error toggling like: \(error)")
+        showFailureToast(
+          for: error, action: wasLiked ? "remove your like" : "like this post")
+      }
+      // UI state will be updated via the shadow manager and refreshState
+      // Reset animation flag after a short delay if needed
+      try? await Task.sleep(for: .milliseconds(500))  // Adjust delay as needed
+      await MainActor.run { interactionState.animateLike = false }
+    }
   }
 
   private func handleRepostToggle() {
@@ -447,7 +539,7 @@ struct PostShareMenu: View {
   var onCopyLink: ((URL) -> Void)?
   var onChooseMore: (() -> Void)?
 
-  @State private var destination: Destination?
+  @State private var destination: PostShareDestination?
 
   init(
     post: AppBskyFeedDefs.PostView,
@@ -484,13 +576,6 @@ struct PostShareMenu: View {
     self.onChooseMore = onChooseMore
   }
 
-  private struct Destination: Identifiable {
-    enum Kind { case chat, native }
-    let id = UUID()
-    let kind: Kind
-    let sceneContext: SceneNavigationContext
-  }
-
   private var isValidOrigin: Bool {
     !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
   }
@@ -501,7 +586,7 @@ struct PostShareMenu: View {
       Button {
         guard isValidOrigin else { return }
         if let onChooseChat { onChooseChat() } else {
-          destination = Destination(kind: .chat, sceneContext: sceneContext)
+          destination = PostShareDestination(kind: .chat, sceneContext: sceneContext)
         }
       } label: {
         Label("Send via Chat", systemImage: "bubble.left.and.bubble.right")
@@ -516,7 +601,7 @@ struct PostShareMenu: View {
         if let onCopyLink {
           onCopyLink(url)
         } else {
-          copyLink(url)
+          PostShareDestination.copyLink(url, appState: appState)
         }
       } label: {
         Label("Copy Link", systemImage: "link")
@@ -528,7 +613,7 @@ struct PostShareMenu: View {
       Button {
         guard isValidOrigin else { return }
         if let onChooseMore { onChooseMore() } else {
-          destination = Destination(kind: .native, sceneContext: sceneContext)
+          destination = PostShareDestination(kind: .native, sceneContext: sceneContext)
         }
       } label: {
         Label("More…", systemImage: "square.and.arrow.up")
@@ -558,22 +643,66 @@ struct PostShareMenu: View {
     .disabled(!isValidOrigin)
     .accessibilityIdentifier("shareButton")
     .accessibilityLabel("Share post")
-    .sheet(item: $destination) { destination in
-      shareDestination(destination)
-    }
-    .onChange(of: destination?.sceneContext.isInvalidated) { _, isInvalidated in
-      if isInvalidated == true { destination = nil }
-    }
-    .onChange(of: sceneContext.accountDID) { _, _ in
-      destination = nil
-    }
-    .onChange(of: sceneContext.sceneID) { _, _ in
-      destination = nil
-    }
+    .postShareSheet(destination: $destination, post: postBox, appState: appState)
+  }
+}
+
+/// A share target chosen from a post's share menu, presented as a sheet from the
+/// scene that chose it.
+struct PostShareDestination: Identifiable {
+  enum Kind { case chat, native }
+  let id = UUID()
+  let kind: Kind
+  let sceneContext: SceneNavigationContext
+
+  @MainActor static func copyLink(_ url: URL, appState: AppState) {
+    #if os(iOS)
+    UIPasteboard.general.url = url
+    #elseif os(macOS)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.writeObjects([url as NSURL])
+    #endif
+    PlatformHaptics.light()
+    appState.toastManager.show(ToastItem(message: "Link copied", icon: "link"))
+  }
+}
+
+extension View {
+  /// Presents the chat or system share sheet for `destination`, and drops it when
+  /// its scene goes away or switches account.
+  func postShareSheet(
+    destination: Binding<PostShareDestination?>,
+    post: EquatableBox<AppBskyFeedDefs.PostView>,
+    appState: AppState
+  ) -> some View {
+    modifier(PostShareSheetModifier(destination: destination, postBox: post, appState: appState))
+  }
+}
+
+private struct PostShareSheetModifier: ViewModifier {
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Binding var destination: PostShareDestination?
+  let postBox: EquatableBox<AppBskyFeedDefs.PostView>
+  let appState: AppState
+
+  func body(content: Content) -> some View {
+    content
+      .sheet(item: $destination) { destination in
+        shareDestination(destination)
+      }
+      .onChange(of: destination?.sceneContext.isInvalidated) { _, isInvalidated in
+        if isInvalidated == true { destination = nil }
+      }
+      .onChange(of: sceneContext.accountDID) { _, _ in
+        destination = nil
+      }
+      .onChange(of: sceneContext.sceneID) { _, _ in
+        destination = nil
+      }
   }
 
   @ViewBuilder
-  private func shareDestination(_ destination: Destination) -> some View {
+  private func shareDestination(_ destination: PostShareDestination) -> some View {
     #if os(iOS)
     if !destination.sceneContext.isInvalidated,
        destination.sceneContext.accountDID == appState.userDID {
@@ -593,16 +722,5 @@ struct PostShareMenu: View {
       ShareLink(item: url)
     }
     #endif
-  }
-
-  private func copyLink(_ url: URL) {
-    #if os(iOS)
-    UIPasteboard.general.url = url
-    #elseif os(macOS)
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.writeObjects([url as NSURL])
-    #endif
-    PlatformHaptics.light()
-    appState.toastManager.show(ToastItem(message: "Link copied", icon: "link"))
   }
 }
