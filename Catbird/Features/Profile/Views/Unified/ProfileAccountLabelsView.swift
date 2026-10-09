@@ -14,39 +14,30 @@ struct ProfileAccountLabelsView: View {
   @State private var loadedLabelers: [String: AppBskyLabelerDefs.LabelerViewDetailed] = [:]
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
+    // Chips wrap inline; the issuer stays available to VoiceOver and in the label's details.
+    LabelChipFlowLayout {
       ForEach(labels) { label in
         let info = AccountLabelPresentation(
           label: label,
           labeler: labelers?.first { $0.creator.did == label.src } ?? loadedLabelers[label.src.didString()]
         )
         Button { onSelectLabel(label) } label: {
-          HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "tag")
-              .appFont(AppTextRole.subheadline)
-              .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-              Text(info.name)
-                .appFont(AppTextRole.subheadline)
-                .foregroundStyle(Color.accentColor)
-              Text(info.attribution)
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(.secondary)
-            }
-            .lineLimit(nil)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-          }
-          .padding(.vertical, 6)
-          .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-          .contentShape(Rectangle())
+          LabelChip(
+            title: info.name,
+            systemImage: "tag",
+            tint: info.severity == .warning ? .orange : .accentColor
+          )
+          .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("\(info.name), \(info.attribution)"))
+        .accessibilityAddTraits(.isButton)
         .accessibilityHint("Opens details for this label")
         .accessibilityIdentifier("profileAccountLabel-\(label.id)")
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .task(id: metadataRequest) { await loadMetadata(for: metadataRequest) }
   }
 

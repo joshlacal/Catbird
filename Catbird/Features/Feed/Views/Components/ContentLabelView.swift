@@ -59,19 +59,13 @@ struct ContentLabelView: View {
             Button {
                 showsDetails = true
             } label: {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "tag")
-                        .accessibilityHidden(true)
-                    Text(names.joined(separator: " · "))
-                        .lineLimit(nil)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
+                LabelChipFlowLayout {
+                    ForEach(Array(names.enumerated()), id: \.offset) { index, name in
+                        LabelChip(title: name, systemImage: index == 0 ? "tag" : nil)
+                    }
                 }
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(Color.secondary)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

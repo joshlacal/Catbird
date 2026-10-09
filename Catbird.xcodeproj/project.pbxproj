@@ -119,7 +119,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Telemetry.xcconfig; sourceTree = "<group>"; };
 		21196F102DC1115900662CC3 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		21196F122DC1115900662CC3 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationServiceExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -127,6 +126,7 @@
 		219E58022EBC27F500C8D6F2 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
 		219E58042EBC27FF00C8D6F2 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		21AC6E632DD0E0E700251536 /* .swiftlint.yml */ = {isa = PBXFileReference; lastKnownFileType = text.yaml; path = .swiftlint.yml; sourceTree = "<group>"; };
+		21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Telemetry.xcconfig; sourceTree = "<group>"; };
 		21EBFE092EB53D9300E707B6 /* Catbird.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Catbird.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		21EBFE0A2EB53D9300E707B6 /* CatbirdNotificationWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CatbirdNotificationWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		21EBFE0B2EB53D9300E707B6 /* CatbirdFeedWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CatbirdFeedWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1057,12 +1057,12 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */;
 			buildSettings = {
-				CATBIRD_TELEMETRY_BACKEND = glitchtip;
-				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
+				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
+				CATBIRD_TELEMETRY_BACKEND = glitchtip;
 				CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_MODULE_CACHE_PATH = "$(DERIVED_DATA_DIR)/ModuleCache";
@@ -1149,12 +1149,12 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 21CB7E1A2F8A000100A1B2C3 /* Telemetry.xcconfig */;
 			buildSettings = {
-				CATBIRD_TELEMETRY_BACKEND = glitchtip;
-				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
 				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
+				CATBIRD_GLITCHTIP_ALLOWED_HOST = diagnostics.catbird.blue;
+				CATBIRD_TELEMETRY_BACKEND = glitchtip;
 				CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_MODULE_CACHE_PATH = "$(DERIVED_DATA_DIR)/ModuleCache";
