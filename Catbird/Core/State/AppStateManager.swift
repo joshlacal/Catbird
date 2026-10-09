@@ -494,7 +494,11 @@ final class AppStateManager {
       logger.error("❌ Cannot transition to authenticated - no client available after switch")
       throw AccountSwitchError.clientUnavailable
     }
-    let targetStatus = await readAccountStatus(client: client, userDID: userDID)
+    // A switch must read status first so a rejected or restricted target can roll back. With no
+    // account to roll back to (launch, fresh sign-in), the feed mounts now and status is checked after.
+    let checksStatusAfterPublish = effectivePreviousDID == nil
+    let targetStatus: AccountStatus =
+      checksStatusAfterPublish ? .active : await readAccountStatus(client: client, userDID: userDID)
     try validateSwitchAttempt(composerSwitchAttemptID)
     try checkSwitchTaskCancellation(composerSwitchAttemptID)
     if targetStatus == .reauthRequired,
@@ -661,6 +665,13 @@ final class AppStateManager {
       }
     }
 
+    if checksStatusAfterPublish {
+      Task { [weak self, weak appState] in
+        guard let self, let appState else { return }
+        await self.applyRestrictedStatusAfterPublish(appState, client: client)
+      }
+    }
+
     // Configure widget data provider with active account DID
     FeedWidgetDataProvider.shared.configure(accountDID: userDID)
 
@@ -805,6 +816,25 @@ final class AppStateManager {
       return ["sessionExpired", "invalidSession", "missingSession"].contains { description.contains($0) }
     }
     return false
+  }
+
+  /// Moves an already-published account to its restriction screen when the deferred status check
+  /// finds it deactivated or taken down, pausing its services first as a switch would.
+  private func applyRestrictedStatusAfterPublish(_ appState: AppState, client: ATProtoClient) async {
+    let status = await readAccountStatus(client: client, userDID: appState.userDID)
+    guard status == .deactivated || status == .takendown else { return }
+    func stillCurrent() -> Bool {
+      guard !isTransitioning, !isLoggingOut, case .authenticated(let current) = lifecycle else { return false }
+      return current === appState && authManager.client === client
+    }
+    guard stillCurrent() else { return }
+    do {
+      try await appState.suspendForAccountSwitch()
+    } catch {
+      logger.error("Could not pause restricted account services: \(error.localizedDescription)")
+    }
+    guard stillCurrent() else { return }
+    setLifecycle(status == .deactivated ? .deactivated(appState) : .takendown(appState))
   }
 
   func checkAccountStatus(for appState: AppState) async -> AppLifecycle {
