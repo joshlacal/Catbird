@@ -361,30 +361,31 @@ struct MainContentView: View {
       currentFeedName = "Timeline"
     }
   }
+  private var tabSelectionBinding: Binding<Int> {
+    Binding(
+      get: { selectedTab },
+      set: { newValue in
+        if selectedTab == newValue {
+          logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
+          lastTappedTab = newValue
+        }
+        selectedTab = newValue
+
+        // Update the navigation manager with the new tab index
+        navigationManager.updateCurrentTab(newValue)
+      }
+    )
+  }
 
   var body: some View {
     ZStack(alignment: .top) {
       #if os(iOS)
       SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen) {
         ZStack(alignment: .bottomTrailing) {
-          TabView(
-            selection: Binding(
-              get: { selectedTab },
-              set: { newValue in
-                if selectedTab == newValue {
-                  logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-                  lastTappedTab = newValue
-                }
-                selectedTab = newValue
-
-                // Update the navigation manager with the new tab index
-                navigationManager.updateCurrentTab(newValue)
-              }
-            )
-          ) {
+          TabView(selection: tabSelectionBinding) {
             // Home Tab
             Tab("Home", systemImage: "house", value: 0) {
-              PlatformAgeProtectedContent(operation: .generalContent) {
+              PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_home_\(appState.userDID)") {
                 HomeView(
                   selectedTab: $selectedTab,
                   lastTappedTab: $lastTappedTab,
@@ -400,12 +401,13 @@ struct MainContentView: View {
                   }
                 }
               }
+              .equatable()
             }
             .accessibilityIdentifier("tab_home")
 
             // Search Tab
             Tab(value: 1, role: .search) {
-              PlatformAgeProtectedContent(operation: .generalContent) {
+              PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_search_\(appState.userDID)") {
                 RefinedSearchView(
                   appState: appState,
                   selectedTab: $selectedTab,
@@ -413,67 +415,29 @@ struct MainContentView: View {
                 )
                 .id(appState.userDID)
               }
+              .equatable()
             }
             .accessibilityIdentifier("tab_search")
 
             // Notifications Tab
-            Tab("Notifications", systemImage: "bell", value: 2) {
-              PlatformAgeProtectedContent(operation: .generalContent) {
-                NotificationsView(
-                  appState: appState,
-                  selectedTab: $selectedTab,
-                  lastTappedTab: $lastTappedTab
-                )
-                .id(appState.userDID)
-              }
-            }
-            .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
-            .accessibilityIdentifier("tab_notifications")
+            NotificationsTab(
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab
+            )
 
-            // Profile Tab - Hidden in compact width to save space
-            if shouldShowProfileTab {
-              Tab("Profile", systemImage: "person", value: 3) {
-                NavigationStack(path: sceneContext.navigationManager.pathBinding(for: 3)) {
-                  PlatformAgeProtectedContent(operation: .generalContent) {
-                    UnifiedProfileView(
-                      appState: appState,
-                      selectedTab: $selectedTab,
-                      lastTappedTab: $lastTappedTab,
-                      path: sceneContext.navigationManager.pathBinding(for: 3)
-                    )
-                    .id(appState.userDID)
-                  }
-                  .navigationDestination(for: NavigationDestination.self) { destination in
-                    NavigationHandler.viewForDestination(
-                      destination,
-                      path: sceneContext.navigationManager.pathBinding(for: 3),
-                      appState: appState,
-                      selectedTab: $selectedTab
-                    )
-                  }
-                }
-                .overlay(alignment: .bottomTrailing) {
-                  if selectedTab == 3 && appState.ageAccess.allows(.generalContent) {
-                    composeOverlay
-                  }
-                }
-              }
-              .accessibilityIdentifier("tab_profile")
-            }
+            // Profile Tab - Kept resident in hierarchy and hidden on compact (P266)
+            MainProfileTab(
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab,
+              composeOverlay: AnyView(composeOverlay)
+            )
 
             #if os(iOS)
             // Chat Tab (iOS only)
-            Tab("Messages", systemImage: "envelope", value: 4) {
-              PlatformAgeProtectedContent(operation: .directMessaging) {
-                ChatTabView(
-                  selectedTab: $selectedTab,
-                  lastTappedTab: $lastTappedTab
-                )
-                .id(appState.userDID)
-              }
-            }
-            .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
-            .accessibilityIdentifier("tab_messages")
+            MessagesTab(
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab
+            )
             #endif
           }
           #if targetEnvironment(macCatalyst)
@@ -492,16 +456,17 @@ struct MainContentView: View {
         }
       } drawer: {
           NavigationStack(path: $drawerNavigationPath) {
-              PlatformAgeProtectedContent(operation: .generalContent) {
-              FeedsStartPage(
-                appState: appState,
-                selectedFeed: $selectedFeed,
-                currentFeedName: $currentFeedName,
-                isDrawerOpen: $isDrawerOpen
-              )
-              // A new identity per account rebuilds the drawer's view model and profile header.
-              .id(appState.userDID)
+              PlatformAgeProtectedContent(operation: .generalContent, identityKey: "drawer_\(appState.userDID)") {
+                FeedsStartPage(
+                  appState: appState,
+                  selectedFeed: $selectedFeed,
+                  currentFeedName: $currentFeedName,
+                  isDrawerOpen: $isDrawerOpen
+                )
+                // A new identity per account rebuilds the drawer's view model and profile header.
+                .id(appState.userDID)
               }
+              .equatable()
               .containerBackground(.clear, for: .navigation)
               .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(
@@ -718,21 +683,12 @@ struct MainContentView: View {
           .environment(sceneContext)
         }
       }
-      .sheet(isPresented: Binding(
-        get: {
-          if showingOnboarding || showingPostComposer || !appState.ageAccess.allows(.generalContent) { return false }
-          return appState.nuxPresenter.activeAnnouncement != nil
-        },
-        set: { if !$0 { appState.nuxPresenter.dismissActiveAnnouncement() } }
-      )) {
-        if let nuxID = appState.nuxPresenter.activeAnnouncement {
-          NuxAnnouncementView(nuxID: nuxID) {
-            appState.nuxPresenter.dismissActiveAnnouncement()
-          }
-          .applyAppStateEnvironment(appState)
-        .environment(sceneContext)
-        }
-      }
+      .modifier(
+        NuxAnnouncementSheetModifier(
+          showingOnboarding: showingOnboarding,
+          showingPostComposer: showingPostComposer
+        )
+      )
       .onChange(of: sceneContext.urlHandler.externalIntentPresenter.activeIntent) { _, newIntent in
         guard let intent = newIntent else { return }
         switch intent {
@@ -820,6 +776,14 @@ struct MainContentView: View {
       .task(id: selectedFeed) {
         // Fetch feed name when selectedFeed changes to a custom feed
         if case .feed(let uri) = selectedFeed {
+          // If currentFeedName is already known and valid (not empty and not placeholder "Feed"), skip network fetch
+          if !currentFeedName.isEmpty && currentFeedName != "Feed" && currentFeedName != "Timeline" {
+            return
+          }
+          if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
+            currentFeedName = cachedName
+            return
+          }
           // Fetch feed generator info to get display name
           if let client = appState.atProtoClient {
             do {
@@ -845,6 +809,13 @@ struct MainContentView: View {
             currentFeedName = "Timeline"
           }
         } else if case .list(let uri) = selectedFeed {
+          if !currentFeedName.isEmpty && currentFeedName != "List" && currentFeedName != "Timeline" {
+            return
+          }
+          if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
+            currentFeedName = cachedName
+            return
+          }
           do {
             let listDetails = try await appState.listManager.getListDetails(uri.uriString())
             await MainActor.run {
@@ -860,7 +831,7 @@ struct MainContentView: View {
       }
       
       #elseif os(macOS)
-      PlatformAgeProtectedContent(operation: .generalContent) {
+      PlatformAgeProtectedContent(operation: .generalContent, identityKey: "macos_main_\(appState.userDID)") {
         MacOSMainView()
           .id(appState.userDID)
           .onAppear {
@@ -896,6 +867,7 @@ struct MainContentView: View {
             }
           }
       }
+      .equatable()
       #endif
       
       NetworkStatusIndicator()
@@ -1218,6 +1190,123 @@ private struct AppStateThemeModifier: ViewModifier {
     } else {
       content
     }
+  }
+}
+
+// MARK: - Tab Content Subviews (Isolated Badge & Layout Updates)
+
+#if os(iOS)
+private struct NotificationsTab: TabContent {
+  typealias TabValue = Int
+  @Environment(AppState.self) private var appState
+  @Binding var selectedTab: Int
+  @Binding var lastTappedTab: Int?
+
+  var body: some TabContent<Int> {
+    Tab("Notifications", systemImage: "bell", value: 2) {
+      PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_notifications_\(appState.userDID)") {
+        NotificationsView(
+          appState: appState,
+          selectedTab: $selectedTab,
+          lastTappedTab: $lastTappedTab
+        )
+        .id(appState.userDID)
+      }
+      .equatable()
+    }
+    .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
+    .accessibilityIdentifier("tab_notifications")
+  }
+}
+
+private struct MainProfileTab: TabContent {
+  typealias TabValue = Int
+  @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @Binding var selectedTab: Int
+  @Binding var lastTappedTab: Int?
+  let composeOverlay: AnyView
+
+  var body: some TabContent<Int> {
+    Tab("Profile", systemImage: "person", value: 3) {
+      NavigationStack(path: sceneContext.navigationManager.pathBinding(for: 3)) {
+        PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_profile_\(appState.userDID)") {
+          UnifiedProfileView(
+            appState: appState,
+            selectedTab: $selectedTab,
+            lastTappedTab: $lastTappedTab,
+            path: sceneContext.navigationManager.pathBinding(for: 3)
+          )
+          .id(appState.userDID)
+        }
+        .equatable()
+        .navigationDestination(for: NavigationDestination.self) { destination in
+          NavigationHandler.viewForDestination(
+            destination,
+            path: sceneContext.navigationManager.pathBinding(for: 3),
+            appState: appState,
+            selectedTab: $selectedTab
+          )
+        }
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if selectedTab == 3 && appState.ageAccess.allows(.generalContent) {
+          composeOverlay
+        }
+      }
+    }
+    .hidden(horizontalSizeClass != .regular)
+    .accessibilityIdentifier("tab_profile")
+  }
+}
+
+private struct MessagesTab: TabContent {
+  typealias TabValue = Int
+  @Environment(AppState.self) private var appState
+  @Binding var selectedTab: Int
+  @Binding var lastTappedTab: Int?
+
+  var body: some TabContent<Int> {
+    Tab("Messages", systemImage: "envelope", value: 4) {
+      PlatformAgeProtectedContent(operation: .directMessaging, identityKey: "tab_messages_\(appState.userDID)") {
+        ChatTabView(
+          selectedTab: $selectedTab,
+          lastTappedTab: $lastTappedTab
+        )
+        .id(appState.userDID)
+      }
+      .equatable()
+    }
+    .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
+    .accessibilityIdentifier("tab_messages")
+  }
+}
+#endif
+
+private struct NuxAnnouncementSheetModifier: ViewModifier {
+  @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  let showingOnboarding: Bool
+  let showingPostComposer: Bool
+
+  func body(content: Content) -> some View {
+    content
+      .sheet(isPresented: Binding(
+        get: {
+          if showingOnboarding || showingPostComposer || !appState.ageAccess.allows(.generalContent) { return false }
+          return appState.nuxPresenter.activeAnnouncement != nil
+        },
+        set: { if !$0 { appState.nuxPresenter.dismissActiveAnnouncement() } }
+      )) {
+        if let nuxID = appState.nuxPresenter.activeAnnouncement {
+          NuxAnnouncementView(nuxID: nuxID) {
+            appState.nuxPresenter.dismissActiveAnnouncement()
+          }
+          .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
+        }
+      }
   }
 }
 

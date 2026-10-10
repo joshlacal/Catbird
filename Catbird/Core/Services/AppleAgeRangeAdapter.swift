@@ -1,4 +1,5 @@
 import Foundation
+import os
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -25,9 +26,30 @@ protocol AgeRegulatoryChecking: Sendable {
 final class AppleAgeRangeAdapter: AgeRegulatoryChecking, Sendable {
     static let shared = AppleAgeRangeAdapter()
 
-    init() {}
+    private let initialPreflightTask: Task<PlatformAgeSignal, Never>
+    private let initialPreflightConsumed = OSAllocatedUnfairLock(initialState: false)
+
+    init() {
+        self.initialPreflightTask = Task {
+            await Self.performPreflight()
+        }
+    }
 
     func preflight() async -> PlatformAgeSignal {
+        let shouldConsumeInitial = initialPreflightConsumed.withLock { consumed -> Bool in
+            if !consumed {
+                consumed = true
+                return true
+            }
+            return false
+        }
+        if shouldConsumeInitial {
+            return await initialPreflightTask.value
+        }
+        return await Self.performPreflight()
+    }
+
+    private static func performPreflight() async -> PlatformAgeSignal {
         #if canImport(DeclaredAgeRange)
         if #available(iOS 26.4, macOS 26.4, *) {
             do {

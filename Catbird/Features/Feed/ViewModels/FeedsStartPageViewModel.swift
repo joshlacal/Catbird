@@ -54,6 +54,8 @@ final class FeedsStartPageViewModel {
   private let generatorRetryDelayBase: UInt64 = 500_000_000 // 0.5 seconds base delay
 
   // logger
+  @ObservationIgnored private var authObservationTask: Task<Void, Never>?
+
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedsStartPageViewModel")
 
   private var appState: AppState
@@ -63,9 +65,24 @@ final class FeedsStartPageViewModel {
     self.appState = appState
     self.modelContext = modelContext
 
-    // Setup observation of authentication state changes to detect logouts
-    Task {
+    startAuthObservation()
+  }
+
+  deinit {
+    authObservationTask?.cancel()
+  }
+
+  func cancel() {
+    authObservationTask?.cancel()
+    authObservationTask = nil
+  }
+
+  func startAuthObservation() {
+    guard authObservationTask == nil else { return }
+    authObservationTask = Task { [weak self] in
       for await state in AppStateManager.shared.authentication.stateChanges {
+        guard !Task.isCancelled else { break }
+        guard let self else { break }
         if case .unauthenticated = state {
           // Mark that a logout occurred
           self.didLogout = true
@@ -81,15 +98,14 @@ final class FeedsStartPageViewModel {
           // Reset loaded state
           self.hasLoadedFeedsAtLeastOnce = false
 
-          logger.info("User logged out - cleared local feed data")
+          self.logger.info("User logged out - cleared local feed data")
         } else if case .authenticated = state {
           // Don't trigger an immediate refresh if we already have data
           // This prevents double-loading and race conditions
           if !self.hasLoadedFeedsAtLeastOnce {
-            logger.info("First authentication detected - will load feeds when view is ready")
-            // Don't do anything here - wait for the view to trigger initialization
+            self.logger.info("First authentication detected - will load feeds when view is ready")
           } else {
-            logger.info("Auth state change detected but feeds already loaded - no action needed")
+            self.logger.info("Auth state change detected but feeds already loaded - no action needed")
           }
         }
       }
@@ -100,16 +116,12 @@ final class FeedsStartPageViewModel {
   func initializeWithModelContext(_ modelContext: ModelContext) async {
     // Set model context
     self.modelContext = modelContext
+    logger.debug("✅ ModelContext is set")
 
-    // Initialize PreferencesManager with ModelContext
-    appState.initializePreferencesManager(with: modelContext)
-
-    logger.debug("✅ ModelContext is set and PreferencesManager initialized")
-
-    // Only force refresh if we haven't loaded feeds before
+    // Only refresh if we haven't loaded feeds before
     if !hasLoadedFeedsAtLeastOnce {
-      logger.info("🔄 Forcing first feed refresh during initialization")
-      await loadFeedsIfNeeded(forceRefresh: true)
+      logger.info("🔄 First feed refresh during initialization")
+      await loadFeedsIfNeeded(forceRefresh: false)
       await updateCaches()
       hasLoadedFeedsAtLeastOnce = true
     } else {
@@ -132,9 +144,13 @@ final class FeedsStartPageViewModel {
   func updateCaches() async {
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
-      _cachedPinnedFeeds = preferences.pinnedFeeds
-      _cachedSavedFeeds = preferences.savedFeeds
-      _cachedPinnedFeedsSet = Set(preferences.pinnedFeeds)
+      let pinned = preferences.pinnedFeeds
+      let saved = preferences.savedFeeds
+      let pinnedSet = Set(pinned)
+
+      _cachedPinnedFeeds = pinned
+      _cachedSavedFeeds = saved
+      _cachedPinnedFeedsSet = pinnedSet
 
       // Update widget data with feed preferences
       await updateWidgetFeedPreferences()
@@ -182,11 +198,7 @@ final class FeedsStartPageViewModel {
     isLoading = true
     logger.info("📊 Loading feeds with forceRefresh=\(forceRefresh)")
     do {
-      // Initialize PreferencesManager if needed
-      if let modelContext = modelContext {
-        appState.initializePreferencesManager(with: modelContext)
-      }
-
+      // PreferencesManager is configured by app bootstrap
       // Try to load preferences using PreferencesManager with force refresh option
       try await appState.preferencesManager.fetchPreferences(forceRefresh: forceRefresh)
       try Task.checkCancellation()

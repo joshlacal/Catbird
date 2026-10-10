@@ -23,8 +23,9 @@ struct HomeView: View {
   @State private var showingQuickFilter = false
 
   // For logging
-  let id = UUID().uuidString.prefix(6)
-  private let logger = Logger(subsystem: "blue.catbird", category: "HomeView")
+  private let id = "home"
+  private static let logger = Logger(subsystem: "blue.catbird", category: "HomeView")
+  private var logger: Logger { Self.logger }
 
   var body: some View {
     // Capture appState early to ensure it's available for sheet presentations
@@ -120,10 +121,10 @@ struct HomeView: View {
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .platformIgnoresSafeArea()
         .navigationTitle(currentFeedName)
+        .ensureNavigationFonts()
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
         #endif
-        .ensureNavigationFonts()
         #if !targetEnvironment(macCatalyst)
         .toolbar {
           leadingToolbarContent

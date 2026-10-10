@@ -6,21 +6,34 @@ import UIKit
 
 /// The protected subtree is created only while its operation is admitted.
 /// Navigation, Settings and contextual safety controls belong outside this wrapper.
-struct PlatformAgeProtectedContent<ProtectedContent: View>: View {
+struct PlatformAgeProtectedContent<ProtectedContent: View>: View, Equatable {
   @Environment(AppState.self) private var appState
   let operation: AgeRestrictedOperation
   let safetyTarget: String?
+  let identityKey: String?
   private let content: () -> ProtectedContent
 
   init(
-    operation: AgeRestrictedOperation, safetyTarget: String? = nil,
+    operation: AgeRestrictedOperation,
+    safetyTarget: String? = nil,
+    identityKey: String? = nil,
     @ViewBuilder content: @escaping () -> ProtectedContent
   ) {
     self.operation = operation
     self.safetyTarget = safetyTarget
+    self.identityKey = identityKey
     self.content = content
   }
 
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    guard lhs.operation == rhs.operation && lhs.safetyTarget == rhs.safetyTarget else {
+      return false
+    }
+    if let lhsKey = lhs.identityKey, let rhsKey = rhs.identityKey {
+      return lhsKey == rhsKey
+    }
+    return lhs.identityKey == nil && rhs.identityKey == nil
+  }
   var body: some View {
     let allowed = appState.ageAccess.allows(operation)
     Group {

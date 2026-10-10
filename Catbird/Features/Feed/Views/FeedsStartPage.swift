@@ -89,7 +89,7 @@ struct FeedsStartPage: View {
   }
   @State private var isEditingFeeds = false
   @Binding var isDrawerOpen: Bool
-  @State private var viewModel: FeedsStartPageViewModel
+  @State private var viewModel: FeedsStartPageViewModel?
   @Binding var selectedFeed: FetchType
   @Binding var currentFeedName: String
 
@@ -203,18 +203,27 @@ struct FeedsStartPage: View {
     self._selectedFeed = selectedFeed
     self._currentFeedName = currentFeedName
     self._isDrawerOpen = isDrawerOpen
-    self._viewModel = State(wrappedValue: FeedsStartPageViewModel(appState: appState))
+    self._viewModel = State(initialValue: nil)
   }
 
   // MARK: - Helper Methods
-  private func isSelected(feedURI: String) -> Bool {
+  private var selectedFeedURIString: String? {
+    switch selectedFeed {
+    case .feed(let uri), .list(let uri):
+      return uri.uriString()
+    default:
+      return nil
+    }
+  }
+
+  private func isSelected(uri: ATProtocolURI? = nil, feedURI: String) -> Bool {
     if SystemFeedTypes.isTimelineFeed(feedURI) {
       return selectedFeed == .timeline
-    } else if let uri = try? ATProtocolURI(uriString: feedURI) {
-      // Consider both custom feeds and list feeds
-      return selectedFeed == .feed(uri) || selectedFeed == .list(uri)
     }
-    return false
+    if let uri {
+      return selectedFeedURIString == uri.uriString()
+    }
+    return selectedFeedURIString == feedURI
   }
 
   private func isDefaultFeedSelected() -> Bool {
@@ -249,46 +258,46 @@ struct FeedsStartPage: View {
   }
 
   @MainActor
-  private func updateFilteredFeeds() async {
-    // Update the caches first - this will ensure proper timeline position
+  private func refreshFeedLists() async {
+    guard let viewModel else { return }
     await viewModel.updateCaches()
+    applyFilter(using: viewModel)
+  }
 
-    // Then use the sync properties
+  @MainActor
+  private func applySearchFilter() {
+    guard let viewModel else { return }
+    applyFilter(using: viewModel)
+  }
+
+  @MainActor
+  private func applyFilter(using viewModel: FeedsStartPageViewModel) {
     let pinnedFeeds = viewModel.cachedPinnedFeeds
     let savedFeeds = viewModel.cachedSavedFeeds
 
-    // Set the default feed (for big button) to the first pinned feed
     defaultFeed = pinnedFeeds.first
-
-    // Get the name of the default feed
     if let feed = defaultFeed,
       let uri = try? ATProtocolURI(uriString: feed)
     {
-      defaultFeedName =
-        viewModel.displayName(for: uri)
-    } else if defaultFeed != nil && SystemFeedTypes.isTimelineFeed(defaultFeed!) {
-      defaultFeedName = "Timeline"
+      defaultFeedName = viewModel.displayName(for: uri)
     } else {
       defaultFeedName = "Timeline"
     }
 
-    // Filter pinned feeds - IMPORTANT: Include all feeds in the grid
-    filteredPinnedFeeds = pinnedFeeds.compactMap { feed in
-      // Apply search filter if needed
-      if !searchText.isEmpty
-        && !viewModel.filteredFeeds([feed], searchText: searchText).contains(feed)
-      {
-        return nil
-      }
-
-      return feed
+    let pinnedSet = Set(pinnedFeeds)
+    if searchText.isEmpty {
+      filteredPinnedFeeds = pinnedFeeds
+      filteredSavedFeeds = savedFeeds.filter { !pinnedSet.contains($0) }
+    } else {
+      filteredPinnedFeeds = viewModel.filteredFeeds(pinnedFeeds, searchText: searchText)
+      let filteredSaved = viewModel.filteredFeeds(savedFeeds, searchText: searchText)
+      filteredSavedFeeds = filteredSaved.filter { !pinnedSet.contains($0) }
     }
+  }
 
-    // Filter saved feeds, excluding any that are already in pinned
-    let filteredSaved = viewModel.filteredFeeds(savedFeeds, searchText: searchText)
-    filteredSavedFeeds = filteredSaved.filter { feed in
-      !pinnedFeeds.contains(feed)
-    }
+  @MainActor
+  private func updateFilteredFeeds() async {
+    await refreshFeedLists()
   }
 
   private func resetDragState() {
@@ -372,7 +381,8 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private var bigDefaultFeedButton: some View {
-    Button {
+    let selected = isDefaultFeedSelected()
+    return Button {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
@@ -400,7 +410,7 @@ struct FeedsStartPage: View {
       HStack(spacing: DesignTokens.Spacing.base) {
         FeedsDefaultFeedLabel(
           name: defaultFeedName,
-          isSelected: isDefaultFeedSelected()
+          isSelected: selected
         ) {
           defaultFeedIcon(iconSize: DesignTokens.Size.avatarLG)
         }
@@ -411,7 +421,7 @@ struct FeedsStartPage: View {
               .fill(.ultraThinMaterial)
               .overlay(
                 selectionBackground(
-                  isSelected: isDefaultFeedSelected(),
+                  isSelected: selected,
                   isDropTarget: isDefaultFeedDropTarget
                 )
               )
@@ -419,10 +429,10 @@ struct FeedsStartPage: View {
         }
         .modifier(LaunchpadGlassChip(
           cornerRadius: 24,
-          isEnabled: inSideDrawer && !isDefaultFeedSelected()
+          isEnabled: inSideDrawer && !selected
         ))
         .modifier(LaunchpadSelectionGlass(
-          isSelected: isDefaultFeedSelected(),
+          isSelected: selected,
           isDropTarget: false,
           cornerRadius: 24,
           namespace: defaultFeedGlassNamespace,
@@ -431,7 +441,6 @@ struct FeedsStartPage: View {
         .overlay {
           if inSideDrawer && isDefaultFeedDropTarget {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-              .stroke(Color.accentColor, lineWidth: 2)
           }
         }
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -440,27 +449,31 @@ struct FeedsStartPage: View {
     .buttonStyle(PlainButtonStyle())
     .padding(.vertical, 8)
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: DefaultFeedDropDelegate(
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          selectedFeed: $selectedFeed,
-          currentFeedName: $currentFeedName,
-          isDefaultFeedDropTarget: $isDefaultFeedDropTarget,
-          defaultFeed: $defaultFeed,
-          defaultFeedName: $defaultFeedName,
-          resetDragState: resetDragState
+      if let vm = viewModel {
+        content
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: DefaultFeedDropDelegate(
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            selectedFeed: $selectedFeed,
+            currentFeedName: $currentFeedName,
+            isDefaultFeedDropTarget: $isDefaultFeedDropTarget,
+            defaultFeed: $defaultFeed,
+            defaultFeedName: $defaultFeedName,
+            resetDragState: resetDragState
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .accessibility(label: Text("Open \(defaultFeedName) feed"))
     .accessibility(hint: Text("Your default feed. Double tap to open it and close the menu"))
-    .accessibilityValue(isDefaultFeedSelected() ? "Selected" : "")
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibilityAddTraits(.isButton)
   }
 
@@ -472,7 +485,7 @@ struct FeedsStartPage: View {
         let uri = try? ATProtocolURI(uriString: feedURI)
       {
         if uri.uriString().contains("/app.bsky.graph.list/"),
-           let list = viewModel.listDetails[uri] {
+           let list = viewModel?.listDetails[uri] {
           // List avatar
           LazyImage(
             request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: iconSize)
@@ -489,7 +502,7 @@ struct FeedsStartPage: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
           }
-        } else if let generator = viewModel.feedGenerators[uri] {
+        } else if let generator = viewModel?.feedGenerators[uri] {
           // Custom feed avatar
           LazyImage(
             request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
@@ -597,19 +610,20 @@ struct FeedsStartPage: View {
               iconView: AnyView(timelineListIcon())
             )
           } else if let uri = try? ATProtocolURI(uriString: feed) {
-            let title = viewModel.displayName(for: uri)
+            let title = viewModel?.displayName(for: uri) ?? "Feed"
             let subtitle: String? = {
               if uri.uriString().contains("/app.bsky.graph.list/") {
-                return viewModel.listDetails[uri]?.description
+                return viewModel?.listDetails[uri]?.description
               }
-              return viewModel.feedGenerators[uri]?.description
+              return viewModel?.feedGenerators[uri]?.description
             }()
             listRow(
               feedURI: feed,
               category: category,
               title: title,
               subtitle: subtitle,
-              iconView: AnyView(feedListIcon(for: uri))
+              iconView: AnyView(feedListIcon(for: uri)),
+              uri: uri
             )
           }
         }
@@ -643,7 +657,7 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func feedListIcon(for uri: ATProtocolURI) -> some View {
     Group {
-      if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel.listDetails[uri] {
+      if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel?.listDetails[uri] {
         LazyImage(
           request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: Self.listRowIconSize)
         ) { state in
@@ -653,7 +667,7 @@ struct FeedsStartPage: View {
             feedPlaceholder(for: list.name)
           }
         }
-      } else if let generator = viewModel.feedGenerators[uri] {
+      } else if let generator = viewModel?.feedGenerators[uri] {
         LazyImage(
           request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: Self.listRowIconSize)
         ) { state in
@@ -664,22 +678,23 @@ struct FeedsStartPage: View {
           }
         }
       } else {
-        feedPlaceholder(for: viewModel.extractTitle(from: uri))
+        feedPlaceholder(for: viewModel?.extractTitle(from: uri) ?? "")
       }
     }
     .frame(width: Self.listRowIconSize, height: Self.listRowIconSize)
     .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
-  @ViewBuilder
   private func listRow(
     feedURI: String,
     category: String,
     title: String,
     subtitle: String? = nil,
-    iconView: AnyView
+    iconView: AnyView,
+    uri: ATProtocolURI? = nil
   ) -> some View {
-    Button {
+    let selected = isSelected(uri: uri, feedURI: feedURI)
+    return Button {
       guard !isEditingFeeds else { return }
       #if os(iOS)
       PlatformHaptics.rigid()
@@ -720,7 +735,7 @@ struct FeedsStartPage: View {
 
         if isEditingFeeds {
           Button {
-            Task { await viewModel.removeFeed(feedURI) }
+            Task { await viewModel?.removeFeed(feedURI) }
           } label: {
             hitTarget44(
               Image(systemName: "minus.circle.fill")
@@ -731,9 +746,9 @@ struct FeedsStartPage: View {
           .buttonStyle(PlainButtonStyle())
           .accessibilityLabel("Remove feed")
         } else {
-          Image(systemName: isSelected(feedURI: feedURI) ? "checkmark.circle.fill" : "chevron.right")
+          Image(systemName: selected ? "checkmark.circle.fill" : "chevron.right")
             .appFont(AppTextRole.caption)
-            .foregroundStyle(isSelected(feedURI: feedURI) ? Color.accentColor : drawerTertiaryTextColor)
+            .foregroundStyle(selected ? Color.accentColor : drawerTertiaryTextColor)
             .accessibilityHidden(true)
         }
       }
@@ -741,7 +756,7 @@ struct FeedsStartPage: View {
       .padding(.horizontal, 10)
       .background(
         selectionBackground(
-          isSelected: isSelected(feedURI: feedURI),
+          isSelected: selected,
           isDropTarget: dropTargetItem == feedURI
         )
       )
@@ -750,39 +765,45 @@ struct FeedsStartPage: View {
     }
     .buttonStyle(PlainButtonStyle())
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
+      if let vm = viewModel {
+        content
+        .onDrag {
+          draggedFeedItem = feedURI
+          isDragging = true
+          draggedItemCategory = category
+          return NSItemProvider(object: feedURI as NSString)
+        }
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: FeedDropDelegate(
+            item: feedURI,
+            items: category == "pinned" ? (vm.cachedPinnedFeeds) : (vm.cachedSavedFeeds),
+            category: category,
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            resetDragState: resetDragState,
+            appSettings: appState.appSettings
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .accessibility(label: Text(title))
-    .accessibilityValue(isSelected(feedURI: feedURI) ? "Selected" : "")
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibility(hint: Text(isEditingFeeds ? "Editing — tap minus to remove" : "Double tap to open this feed"))
     .accessibilityAddTraits(.isButton)
   }
 
   @ViewBuilder
   private func feedLink(for uri: ATProtocolURI, feedURI: String, category: String) -> some View {
-    Button {
+    let selected = isSelected(uri: uri, feedURI: feedURI)
+    let displayName = viewModel?.displayName(for: uri) ?? "Feed"
+    return Button {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
@@ -796,19 +817,18 @@ struct FeedsStartPage: View {
       } else {
         selectedFeed = .feed(uri)
       }
-      currentFeedName =
-        viewModel.displayName(for: uri)
+      currentFeedName = displayName
       isDrawerOpen = false
     } label: {
       FeedsGridFeedLabel(
-        title: viewModel.displayName(for: uri),
-        isSelected: isSelected(feedURI: feedURI),
+        title: displayName,
+        isSelected: selected,
         iconSize: iconSize,
         itemWidth: itemWidth
       ) {
         // Feed icon
         Group {
-          if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel.listDetails[uri] {
+          if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel?.listDetails[uri] {
             LazyImage(
               request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: iconSize)
             ) { state in
@@ -818,7 +838,7 @@ struct FeedsStartPage: View {
                 feedPlaceholder(for: list.name)
               }
             }
-          } else if let generator = viewModel.feedGenerators[uri] {
+          } else if let generator = viewModel?.feedGenerators[uri] {
             LazyImage(
               request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
             ) { state in
@@ -829,7 +849,7 @@ struct FeedsStartPage: View {
               }
             }
           } else {
-            feedPlaceholder(for: viewModel.extractTitle(from: uri))
+            feedPlaceholder(for: viewModel?.extractTitle(from: uri) ?? "")
           }
         }
       }
@@ -837,7 +857,7 @@ struct FeedsStartPage: View {
         Group {
           if !inSideDrawer {
             selectionBackground(
-              isSelected: isSelected(feedURI: feedURI),
+              isSelected: selected,
               isDropTarget: dropTargetItem == feedURI
             )
           }
@@ -845,7 +865,7 @@ struct FeedsStartPage: View {
       )
       .modifier(
         LaunchpadSelectionGlass(
-          isSelected: isSelected(feedURI: feedURI),
+          isSelected: selected,
           isDropTarget: dropTargetItem == feedURI,
           cornerRadius: gridCellCornerRadius,
           namespace: glassNamespace,
@@ -857,48 +877,51 @@ struct FeedsStartPage: View {
     }
     .buttonStyle(PlainButtonStyle())
 
-
     .modifier(FeedRemovalBadgeOverlay(
       isEditing: isEditingFeeds,
       iconSize: iconSize,
       iconTopInset: 6,
-      action: { Task { await viewModel.removeFeed(feedURI) } }
+      action: { Task { await viewModel?.removeFeed(feedURI) } }
     ))
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
+      if let vm = viewModel {
+        content
+        .onDrag {
+          draggedFeedItem = feedURI
+          isDragging = true
+          draggedItemCategory = category
+          return NSItemProvider(object: feedURI as NSString)
+        }
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: FeedDropDelegate(
+            item: feedURI,
+            items: category == "pinned" ? vm.cachedPinnedFeeds : vm.cachedSavedFeeds,
+            category: category,
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            resetDragState: resetDragState,
+            appSettings: appState.appSettings
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .accessibility(
-      label: Text(viewModel.displayName(for: uri))
+      label: Text(displayName)
     )
-    .accessibilityValue(isSelected(feedURI: feedURI) ? "Selected" : "")
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibility(hint: Text("Double tap to open this feed"))
     .accessibilityAddTraits(.isButton)
   }
 
-  @ViewBuilder
   private func timelineFeedLink(feedURI: String, category: String) -> some View {
-    Button {
+    let selected = (selectedFeed == .timeline)
+    return Button {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
@@ -911,7 +934,7 @@ struct FeedsStartPage: View {
     } label: {
       FeedsGridFeedLabel(
         title: "Timeline",
-        isSelected: isSelected(feedURI: feedURI),
+        isSelected: selected,
         iconSize: iconSize,
         itemWidth: itemWidth
       ) {
@@ -932,7 +955,7 @@ struct FeedsStartPage: View {
         Group {
           if !inSideDrawer {
             selectionBackground(
-              isSelected: isSelected(feedURI: feedURI),
+              isSelected: selected,
               isDropTarget: dropTargetItem == feedURI
             )
           }
@@ -940,7 +963,7 @@ struct FeedsStartPage: View {
       )
       .modifier(
         LaunchpadSelectionGlass(
-          isSelected: isSelected(feedURI: feedURI),
+          isSelected: selected,
           isDropTarget: dropTargetItem == feedURI,
           cornerRadius: gridCellCornerRadius,
           namespace: glassNamespace,
@@ -951,33 +974,37 @@ struct FeedsStartPage: View {
     }
     .buttonStyle(PlainButtonStyle())
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
+      if let vm = viewModel {
+        content
+        .onDrag {
+          draggedFeedItem = feedURI
+          isDragging = true
+          draggedItemCategory = category
+          return NSItemProvider(object: feedURI as NSString)
+        }
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: FeedDropDelegate(
+            item: feedURI,
+            items: category == "pinned" ? vm.cachedPinnedFeeds : vm.cachedSavedFeeds,
+            category: category,
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            resetDragState: resetDragState,
+            appSettings: appState.appSettings
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .scaleEffect(draggedFeedItem == feedURI && isDragging ? 0.95 : 1.0)
     .accessibility(label: Text("Timeline"))
-    .accessibilityValue(isSelected(feedURI: feedURI) ? "Selected" : "")
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibility(hint: Text("Double tap to open the Timeline feed"))
     .accessibilityAddTraits(.isButton)
   }
@@ -1043,7 +1070,7 @@ struct FeedsStartPage: View {
       }
     }
     .task(id: searchText) {
-      await updateFilteredFeeds()
+      applySearchFilter()
     }
     .applyFeedsPageModifiers(
       viewModel: viewModel,
@@ -1070,11 +1097,13 @@ struct FeedsStartPage: View {
     )
     // The profile header always belongs to the account being shown.
     .task(id: appState.userDID) {
+      if viewModel == nil {
+        viewModel = FeedsStartPageViewModel(appState: appState)
+      }
       profile = nil
       guard appState.isAuthenticated else { return }
       await loadUserProfile()
     }
-    
   }
   
   @ViewBuilder
@@ -1129,9 +1158,10 @@ struct FeedsStartPage: View {
   }
 
   private func handleRefresh() async {
+    guard let viewModel else { return }
     await viewModel.fetchFeedGenerators()
     await viewModel.fetchListDetails()
-    await updateFilteredFeeds()
+    await refreshFeedLists()
     if appState.isAuthenticated {
       await loadUserProfile()
     }
@@ -1142,8 +1172,14 @@ struct FeedsStartPage: View {
       // Track current user for account switch detection
       currentUserDID = appState.userDID
 
-      await viewModel.initializeWithModelContext(modelContext)
-      await updateFilteredFeeds()
+      if viewModel == nil {
+        viewModel = FeedsStartPageViewModel(appState: appState)
+      }
+      guard let vm = viewModel else { return }
+      vm.startAuthObservation()
+
+      await vm.initializeWithModelContext(modelContext)
+      await refreshFeedLists()
       isInitialized = true
 
       withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
@@ -1152,8 +1188,8 @@ struct FeedsStartPage: View {
 
       if stateInvalidationSubscriber == nil {
         stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
-          viewModel: viewModel,
-          updateFilteredFeeds: updateFilteredFeeds
+          viewModel: vm,
+          updateFilteredFeeds: { await refreshFeedLists() }
         )
         appState.stateInvalidationBus.subscribe(stateInvalidationSubscriber!)
       }
@@ -1167,10 +1203,13 @@ struct FeedsStartPage: View {
     profile = nil
     currentUserDID = appState.userDID
 
+    let newVM = FeedsStartPageViewModel(appState: appState)
+    viewModel = newVM
+
     // Re-run initialization for the new account
     Task {
-      await viewModel.initializeWithModelContext(modelContext)
-      await updateFilteredFeeds()
+      await newVM.initializeWithModelContext(modelContext)
+      await refreshFeedLists()
       isInitialized = true
 
       withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
@@ -1184,6 +1223,7 @@ struct FeedsStartPage: View {
       appState.stateInvalidationBus.unsubscribe(subscriber)
       stateInvalidationSubscriber = nil
     }
+    viewModel?.cancel()
   }
 
   // (Drawer-level close/search/bookmarks moved to ContentView native toolbar)
@@ -1409,15 +1449,15 @@ struct FeedsStartPage: View {
           }
           .modifier(FeedNativeReorderContainer { sources, category, before in
             Task {
-              await viewModel.applyFeedReorder(sources: sources, category: category, before: before)
+              await viewModel?.applyFeedReorder(sources: sources, category: category, before: before)
               if category == "default", let feed = sources.first,
-                 viewModel.cachedPinnedFeeds.first == feed {
+                 viewModel?.cachedPinnedFeeds.first == feed {
                 if SystemFeedTypes.isTimelineFeed(feed) {
                   selectedFeed = .timeline
                   currentFeedName = "Timeline"
                 } else if let uri = try? ATProtocolURI(uriString: feed) {
                   selectedFeed = feed.contains("/app.bsky.graph.list/") ? .list(uri) : .feed(uri)
-                  currentFeedName = viewModel.displayName(for: uri)
+                  currentFeedName = viewModel?.displayName(for: uri) ?? "Feed"
                 }
               }
             }
@@ -1438,7 +1478,7 @@ struct FeedsStartPage: View {
   // MARK: - Overlays
   @ViewBuilder
   private func loadingOverlay() -> some View {
-    if viewModel.isLoading {
+    if viewModel?.isLoading == true {
       (inSideDrawer
         ? Color.clear
         : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
@@ -1694,7 +1734,7 @@ nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
 // MARK: - View Modifier Extension
 extension View {
     func applyFeedsPageModifiers(
-        viewModel: FeedsStartPageViewModel,
+        viewModel: FeedsStartPageViewModel?,
         appState: AppState,
         isEditingFeeds: Binding<Bool>,
         isDrawerOpen: Binding<Bool>,
@@ -1877,37 +1917,41 @@ private extension View {
             }
     }
     
+    @ViewBuilder
     func configuredDataObservers(
-        viewModel: FeedsStartPageViewModel,
+        viewModel: FeedsStartPageViewModel?,
         errorAlertMessage: Binding<String>,
         showErrorAlert: Binding<Bool>
     ) -> some View {
-        self
-            .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
-                Task { await viewModel.updateCaches() }
-            }
-            .onChange(of: viewModel.cachedSavedFeeds) { _, _ in
-                Task { await viewModel.updateCaches() }
-            }
-            .task {
-                // Retry fetching generators if we don't have them after initial load
-                try? await Task.sleep(for: .seconds(1))
-                if viewModel.feedGenerators.isEmpty {
-                    await viewModel.fetchFeedGenerators()
+        if let viewModel {
+            self
+                .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
+                    Task { await viewModel.updateCaches() }
                 }
-            }
-            .onChange(of: viewModel.feedGenerators) { _, _ in
-                Task { await viewModel.updateCaches() }
-            }
-            .onChange(of: viewModel.errorMessage) { _, newError in
-                if let errorMsg = newError {
-                    errorAlertMessage.wrappedValue = errorMsg
-                    showErrorAlert.wrappedValue = true
+                .onChange(of: viewModel.cachedSavedFeeds) { _, _ in
+                    Task { await viewModel.updateCaches() }
                 }
-            }
+                .task {
+                    // Retry fetching generators if we don't have them after initial load
+                    try? await Task.sleep(for: .seconds(1))
+                    if viewModel.feedGenerators.isEmpty {
+                        await viewModel.fetchFeedGenerators()
+                    }
+                }
+                .onChange(of: viewModel.feedGenerators) { _, _ in
+                    Task { await viewModel.updateCaches() }
+                }
+                .onChange(of: viewModel.errorMessage) { _, newError in
+                    if let errorMsg = newError {
+                        errorAlertMessage.wrappedValue = errorMsg
+                        showErrorAlert.wrappedValue = true
+                    }
+                }
+        } else {
+            self
+        }
     }
 }
-
 #Preview("FeedsStartPage") {
   AsyncPreviewContent { appState in
     FeedsStartPage(
