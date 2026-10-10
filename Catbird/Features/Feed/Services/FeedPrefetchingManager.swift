@@ -452,10 +452,14 @@ actor FeedPrefetchingManager {
         break
       }
 
-    case .appBskyEmbedVideoView:
-      // For video embeds, we could potentially prefetch video thumbnails
-      // but actual video prefetching would likely use too much data
-      break
+    case .appBskyEmbedVideoView(let videoView):
+      // Poster covers the player until its first frame; the stream itself is
+      // prewarmed by the feed controller, which knows moderation and autoplay.
+      if let thumbURL = videoView.thumbnail?.url,
+         !prefetchedAssets.contains(thumbURL.absoluteString) {
+        prefetchedAssets.insert(thumbURL.absoluteString)
+        await ImageLoadingManager.shared.startPrefetching(urls: [thumbURL])
+      }
 
     case .unexpected:
       break

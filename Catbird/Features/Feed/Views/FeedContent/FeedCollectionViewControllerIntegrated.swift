@@ -1297,6 +1297,27 @@ import os
       Task {
         await FeedPrefetchingManager.shared.prefetchAssets(for: posts)
       }
+      prewarmVideos(in: posts)
+    }
+
+    /// Buffers autoplaying videos a few cells ahead so their first frame is ready on arrival.
+    /// Media the user hides behind moderation is never fetched.
+    private func prewarmVideos(in posts: [CachedFeedViewPost]) {
+      let appState = stateManager.appState
+      guard appState.appSettings.autoplayVideos else { return }
+      for cached in posts {
+        guard let post = try? cached.feedViewPost.post,
+              case .appBskyEmbedVideoView(let video)? = post.embed,
+              video.presentation != "gif",
+              let url = video.playlist.url else { continue }
+        let media = appState.moderationPolicy.decide(post: post).ui(.contentMedia)
+        guard !media.filter, !media.blur else { continue }
+        let model = VideoModel(
+          id: url.absoluteString, url: url,
+          type: .hlsStream(playlistURL: url, cid: video.cid, aspectRatio: nil),
+          aspectRatio: 16.0 / 9.0)
+        Task { await VideoAssetManager.shared.prewarm(model) }
+      }
     }
   }
 

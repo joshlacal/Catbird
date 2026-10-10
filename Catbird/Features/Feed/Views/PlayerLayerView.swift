@@ -50,10 +50,7 @@ struct PlayerLayerView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PlayerContainer {
     let view = PlayerContainer(frame: .zero)
-    view.backgroundColor = .black
     view.playerLayer.videoGravity = gravity
-    // Hint to the compositor: no blending needed for video layer
-    view.playerLayer.isOpaque = true
     view.coordinator = context.coordinator
 
     // Layer attachment is synchronous; the owner controls asynchronous asset loading.
@@ -105,6 +102,7 @@ final class PlayerContainer: UIView {
 
   private var loopObserver: NSObjectProtocol?
   private var statusObserver: NSObjectProtocol?
+  private var readyObservation: NSKeyValueObservation?
   private var isCleanedUp = false
 
   /// A pool-owned player must keep playing when an old page releases its layer.
@@ -165,11 +163,25 @@ final class PlayerContainer: UIView {
     guard !isCleanedUp else { return }
     setupLoopObserver()
     setupStatusObserver()
+    updateBackdrop()
+    readyObservation = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] _, _ in
+      Task { @MainActor [weak self] in self?.updateBackdrop() }
+    }
   }
 
   private func removeAllObservers() {
     removeLoopObserver()
     removeStatusObserver()
+    readyObservation = nil
+  }
+
+  /// Transparent until the first frame renders, so the owner's poster shows instead of
+  /// a black box; black afterwards so letterbox bars stay black.
+  private func updateBackdrop() {
+    guard !isCleanedUp else { return }
+    let ready = playerLayer.isReadyForDisplay
+    backgroundColor = ready ? .black : .clear
+    playerLayer.isOpaque = ready
   }
 
   // Enhanced loop observer setup - KEEP THIS FOR VIDEO LOOPING
@@ -272,9 +284,7 @@ struct PlayerLayerView: NSViewRepresentable {
   func makeNSView(context: Context) -> PlayerContainerMac {
     let view = PlayerContainerMac(frame: .zero)
     view.wantsLayer = true
-    view.layer?.backgroundColor = NSColor.black.cgColor
     view.playerLayer.videoGravity = gravity
-    view.playerLayer.isOpaque = true
     view.coordinator = context.coordinator
 
     // Layer attachment is synchronous; the owner controls asynchronous asset loading.
@@ -324,6 +334,7 @@ final class PlayerContainerMac: NSView {
 
   private var loopObserver: NSObjectProtocol?
   private var statusObserver: NSObjectProtocol?
+  private var readyObservation: NSKeyValueObservation?
   private var isCleanedUp = false
 
   /// A pool-owned player must keep playing when an old page releases its layer.
@@ -369,11 +380,24 @@ final class PlayerContainerMac: NSView {
     guard !isCleanedUp else { return }
     setupLoopObserver()
     setupStatusObserver()
+    updateBackdrop()
+    readyObservation = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] _, _ in
+      Task { @MainActor [weak self] in self?.updateBackdrop() }
+    }
   }
 
   private func removeAllObservers() {
     removeLoopObserver()
     removeStatusObserver()
+    readyObservation = nil
+  }
+
+  /// See the iOS container: transparent until the first frame, black afterwards.
+  private func updateBackdrop() {
+    guard !isCleanedUp else { return }
+    let ready = playerLayer.isReadyForDisplay
+    playerLayer.backgroundColor = ready ? NSColor.black.cgColor : nil
+    playerLayer.isOpaque = ready
   }
 
   private func setupLoopObserver() {

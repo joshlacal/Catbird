@@ -46,6 +46,9 @@ final class VideoAssetManager {
   private let queue = DispatchQueue(label: "blue.catbird.videoasset", qos: .userInitiated)
   private var assetCache = NSCache<NSString, AVURLAsset>()
   private var playerCache = NSCache<NSString, AVPlayer>()
+  /// Players buffered before their cell appears, keyed by playlist URL because the
+  /// cell's model ID depends on where the post is shown. Taken once by `preparePlayer`.
+  private let prewarmedPlayers = NSCache<NSURL, AVPlayer>()
   // Actor-based task management for Swift 6 concurrency safety
   private let loadTracker = LoadTracker()
   private var timeObservers: [String: NSKeyValueObservation] = [:]
@@ -171,6 +174,13 @@ final class VideoAssetManager {
       }
     }
 
+    if let warm = prewarmedPlayers.object(forKey: model.url as NSURL) {
+      prewarmedPlayers.removeObject(forKey: model.url as NSURL)
+      logger.debug("Using prewarmed player for \(model.id)")
+      playerCache.setObject(warm, forKey: cacheKey as NSString)
+      return warm
+    }
+
     logger.debug("Preparing new player for \(cacheKey)")
 
     // Create appropriate player based on content type
@@ -184,45 +194,49 @@ final class VideoAssetManager {
     }
   }
 
+  /// Starts buffering an HLS video whose cell is about to scroll into view, so its
+  /// first frame is ready on arrival. Paused players buffer only the first ~2 s at
+  /// the 1.2 Mbps preview cap.
+  func prewarm(_ model: VideoModel) async {
+    guard prewarmedPlayers.object(forKey: model.url as NSURL) == nil,
+          let asset = try? await prepareAsset(for: model) else { return }
+    let player = await makeHLSPlayer(asset: asset)
+    prewarmedPlayers.setObject(player, forKey: model.url as NSURL)
+  }
+
   /// Prepares an HLS player with optimized settings
   private func prepareHLSPlayer(for model: VideoModel) async throws -> AVPlayer {
-    let cacheKey = generateCacheKey(from: model.id)
+    let player = await makeHLSPlayer(asset: try await prepareAsset(for: model))
+    playerCache.setObject(player, forKey: generateCacheKey(from: model.id) as NSString)
+    return player
+  }
 
-    // Get the asset (async operation)
-    let asset = try await prepareAsset(for: model)
+  @MainActor
+  private func makeHLSPlayer(asset: AVURLAsset) -> AVPlayer {
+    // Configure item with proper settings for silent, lightweight preview playback
+    let playerItem = AVPlayerItem(asset: asset)
 
-    // Configure player on main actor
-    return await MainActor.run {
-      // Configure item with proper settings for silent, lightweight preview playback
-      let playerItem = AVPlayerItem(asset: asset)
-      
-      // Preview-friendly defaults: shorter buffer, capped bitrate/resolution
-      playerItem.preferredForwardBufferDuration = 2.0
-      playerItem.preferredPeakBitRate = 1_200_000
-      #if os(iOS)
-      if #available(iOS 15.0, *) {
-        playerItem.preferredMaximumResolution = CGSize(width: 960, height: 540)
-      }
-      #endif
+    // Preview-friendly defaults: shorter buffer, capped bitrate/resolution
+    playerItem.preferredForwardBufferDuration = 2.0
+    playerItem.preferredPeakBitRate = 1_200_000
+    #if os(iOS)
+    playerItem.preferredMaximumResolution = CGSize(width: 960, height: 540)
+    #endif
 
-      // Disable audio tracks before creating the player (feed is muted by default)
-      let audioMix = AVMutableAudioMix()
-      audioMix.inputParameters = []
-      playerItem.audioMix = audioMix
+    // Disable audio tracks before creating the player (feed is muted by default)
+    let audioMix = AVMutableAudioMix()
+    audioMix.inputParameters = []
+    playerItem.audioMix = audioMix
 
-      // Create player with minimal resource usage
-      let player = AVPlayer(playerItem: playerItem)
-      // Favor responsive start; deeper buffering will be enabled when engaged
-      player.automaticallyWaitsToMinimizeStalling = false
-      player.volume = 0
-      player.isMuted = true
-      player.actionAtItemEnd = .none
-      player.preventsDisplaySleepDuringVideoPlayback = false
-
-      // Cache and return
-      self.playerCache.setObject(player, forKey: cacheKey as NSString)
-      return player
-    }
+    // Create player with minimal resource usage
+    let player = AVPlayer(playerItem: playerItem)
+    // Favor responsive start; deeper buffering will be enabled when engaged
+    player.automaticallyWaitsToMinimizeStalling = false
+    player.volume = 0
+    player.isMuted = true
+    player.actionAtItemEnd = .none
+    player.preventsDisplaySleepDuringVideoPlayback = false
+    return player
   }
 
   /// Prepares a player optimized for GIFs (Tenor and Giphy)
@@ -327,6 +341,8 @@ final class VideoAssetManager {
     // Increase cache limits to preserve more assets during scrolling
     assetCache.countLimit = 25  // Increased from 12
     playerCache.countLimit = 15  // Increased from 6
+    // Each holds a decoder and ~2 s of buffer; prefetch only looks a few cells ahead.
+    prewarmedPlayers.countLimit = 4
 
     // Scale cache size based on available memory
     let memoryLimit = ProcessInfo.processInfo.physicalMemory
@@ -359,6 +375,7 @@ final class VideoAssetManager {
 
       // More aggressive cache cleanup during memory pressure
       self.assetCache.removeAllObjects()
+      self.prewarmedPlayers.removeAllObjects()
       // Also clear player cache except for PiP videos
       Task { @MainActor in
         let coordinator = VideoCoordinator.shared

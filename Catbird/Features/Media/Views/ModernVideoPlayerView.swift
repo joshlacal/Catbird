@@ -8,6 +8,7 @@
 import AVKit
 import Foundation
 import Petrel
+import NukeUI
 import SwiftUI
 import os.log
 
@@ -274,6 +275,8 @@ struct ModernVideoPlayerView: View {
         shouldLoop: !model.type.isGif,
         onLayerReady: nil
       )
+      // The layer is transparent until its first frame, so the poster shows instead of black.
+      .background { videoPoster }
 
       if #available(iOS 18.0, *) {
         playerView
@@ -309,8 +312,23 @@ struct ModernVideoPlayerView: View {
       }
       .clipShape(RoundedRectangle(cornerRadius: 10))
     } else {
-      ProgressView()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      videoPoster
+        .overlay { ProgressView().tint(.white) }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+  }
+
+  /// Fit on black matches `.resizeAspect`, so the first frame replaces the poster without a jump.
+  private var videoPoster: some View {
+    Color.black.overlay {
+      if let thumbnailURL = model.thumbnailURL {
+        LazyImage(url: thumbnailURL) { state in
+          if let image = state.image {
+            image.resizable().scaledToFit()
+          }
+        }
+        .pipeline(ImageLoadingManager.shared.pipeline)
+      }
     }
   }
 
