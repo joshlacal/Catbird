@@ -24,11 +24,7 @@ extension View {
     
     /// Apply primary background color based on theme
     func themedPrimaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        ZStack {
-            Color.clear
-            self
-        }
-        .background { 
+        self.background { 
             ThemedContrastAwareBackground(
                 themeManager: themeManager,
                 appSettings: appSettings
@@ -37,18 +33,13 @@ extension View {
             }
             .ignoresSafeArea(.all)
         }
-        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Secondary Background
     
     /// Apply secondary background color based on theme
     func themedSecondaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        ZStack {
-            Color.clear
-            self
-        }
-        .background { 
+        self.background { 
             ThemedContrastAwareBackground(
                 themeManager: themeManager,
                 appSettings: appSettings
@@ -57,57 +48,40 @@ extension View {
             }
             .ignoresSafeArea(.all)
         }
-        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Tertiary Background
     
     /// Apply tertiary background color based on theme
     func themedTertiaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        ZStack {
-            Color.clear
-            self
-        }
-        .background { 
+        self.background { 
             ThemedBackground(themeManager: themeManager) { colorScheme in
                 Color.dynamicTertiaryBackground(themeManager, currentScheme: colorScheme)
             }
             .ignoresSafeArea(.all)
         }
-        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Elevated Background
     
     /// Apply elevated background color based on theme (for cards and modals)
     func themedElevatedBackground(_ themeManager: ThemeManager, elevation: ColorElevation = .low, appSettings: AppSettings) -> some View {
-        ZStack {
-            Color.clear
-            self
-        }
-        .background { 
+        self.background { 
             ThemedElevatedBackground(themeManager: themeManager, elevation: elevation)
         }
-        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Grouped Background
     
     /// Apply grouped background color based on theme (for list backgrounds)
     func themedGroupedBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        ZStack {
-            Color.clear
-            self
-        }
-        .background { 
+        self.background { 
             ThemedBackground(themeManager: themeManager) { colorScheme in
                 Color.dynamicGroupedBackground(themeManager, currentScheme: colorScheme)
             }
             .ignoresSafeArea(.all)
         }
-        .themeTransition(themeManager, appSettings: appSettings)
     }
-    
     // MARK: - Glass Effects
     
     /// Apply a glass-like card effect based on theme
@@ -121,7 +95,7 @@ extension View {
             .overlay(glassBorder(intensity: intensity, themeManager: themeManager, appSettings: appSettings))
             .cornerRadius(12)
             .background(glassShadow(intensity: intensity, themeManager: themeManager))
-            .themeTransition(themeManager, appSettings: appSettings)
+            // Background and border applied without redundant transition
     }
     
     /// Apply a glass-like button effect based on theme
@@ -136,7 +110,7 @@ extension View {
             .background(glassBackground(intensity: intensity, themeManager: themeManager))
             .overlay(glassBorder(intensity: intensity, themeManager: themeManager, appSettings: appSettings).cornerRadius(8))
             .cornerRadius(8)
-            .themeTransition(themeManager, appSettings: appSettings)
+            // Background and border applied without redundant transition
     }
     
     // MARK: - Private Helper Methods
@@ -170,9 +144,8 @@ extension View {
 
 extension View {
     /// Apply themed text color with automatic accessibility support
-    func themedText(_ themeManager: ThemeManager, style: TextStyle = .primary, appSettings: AppSettings) -> some View {
-        ThemedAccessibleTextView(content: self, themeManager: themeManager, style: style, appSettings: appSettings)
-            .themeTransition(themeManager, appSettings: appSettings)
+    func themedText(_ themeManager: ThemeManager, style: TextStyle = .primary, appSettings: AppSettings? = nil) -> some View {
+        self.modifier(ThemedTextModifier(themeManager: themeManager, style: style, appSettings: appSettings))
     }
 }
 
@@ -190,7 +163,6 @@ extension View {
                     Color.dynamicSeparator(themeManager, currentScheme: colorScheme, increaseContrast: increaseContrast)
                 }
             }
-            .themeTransition(themeManager, appSettings: appSettings)
     }
 }
 
@@ -204,7 +176,6 @@ extension View {
                 Color.dynamicBackground(themeManager, currentScheme: colorScheme)
             }
             .ignoresSafeArea(.all)
-            .themeTransition(themeManager, appSettings: appSettings)
         )
     }
 }
@@ -221,7 +192,7 @@ extension View {
                 }
                 .ignoresSafeArea(.all)
             }
-            .themeTransition(themeManager, appSettings: appSettings)
+            // Themed sheet background without redundant transition
     }
 }
 
@@ -446,20 +417,46 @@ struct ThemedGlassBackground: View {
     }
 }
 
+struct ThemedTextModifier: ViewModifier {
+    let themeManager: ThemeManager
+    let style: TextStyle
+    let appSettings: AppSettings?
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
+    
+    init(themeManager: ThemeManager, style: TextStyle = .primary, appSettings: AppSettings? = nil) {
+        self.themeManager = themeManager
+        self.style = style
+        self.appSettings = appSettings
+    }
+    
+    func body(content: Content) -> some View {
+        let increaseContrast = accessibilityContrast == .increased || (appSettings?.effectiveIncreaseContrast ?? false)
+        let color = Color.dynamicText(
+            themeManager,
+            style: style,
+            currentScheme: colorScheme,
+            increaseContrast: increaseContrast
+        )
+        content.foregroundStyle(color)
+    }
+}
+
 struct ThemedAccessibleTextView<Content: View>: View {
     let content: Content
     let themeManager: ThemeManager
     let style: TextStyle
-    let appSettings: AppSettings
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(AppState.self) private var appState
+    let appSettings: AppSettings?
+    
+    init(content: Content, themeManager: ThemeManager, style: TextStyle = .primary, appSettings: AppSettings? = nil) {
+        self.content = content
+        self.themeManager = themeManager
+        self.style = style
+        self.appSettings = appSettings
+    }
     
     var body: some View {
-        let baseColor = Color.dynamicText(themeManager, style: style, currentScheme: colorScheme)
-        let accessibleColor = appState.appSettings.effectiveIncreaseContrast ? 
-            Color.adaptiveForeground(appState: appState, defaultColor: baseColor) : baseColor
-            
-        content.foregroundColor(accessibleColor)
+        content.modifier(ThemedTextModifier(themeManager: themeManager, style: style, appSettings: appSettings))
     }
 }
 

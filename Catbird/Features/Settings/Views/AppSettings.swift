@@ -46,33 +46,108 @@ import AppKit
     }
 
     private let logger = Logger(subsystem: "blue.catbird", category: "AppSettings")
-    private var modelContext: ModelContext?
+    @ObservationIgnored private var modelContext: ModelContext?
     // These are detached copies. Failed writes cannot be autosaved by the shared context.
-    private var settingsModel: AppSettingsModel?
-    private var savedSettings: AppSettingsModel? {
+    @ObservationIgnored private var settingsModel: AppSettingsModel?
+    @ObservationIgnored private var savedSettings: AppSettingsModel? {
         didSet { confirmedReadingSnapshotIdentity = UUID() }
     }
-    private var confirmedReadingSnapshotIdentity = UUID()
-    private var pendingDrafts: [String: AppSettingsModel] = [:]
-    private var pendingBaselines: [String: AppSettingsModel] = [:]
+    @ObservationIgnored private var confirmedReadingSnapshotIdentity = UUID()
+    @ObservationIgnored private var pendingDrafts: [String: AppSettingsModel] = [:]
+    @ObservationIgnored private var pendingBaselines: [String: AppSettingsModel] = [:]
     private struct PendingEffect {
         let identity = UUID()
         let description: String?
         let action: @MainActor () async -> Void
     }
-    private var pendingEffects: [String: [String: PendingEffect]] = [:]
-    private var admittedEffectIdentities: Set<UUID> = []
-    private var startedEffectIdentities: [String: Set<UUID>] = [:]
-    private var accountDID: String?
-    private var suspendedAccountDID: String?
-    private var generation: UInt64 = 0
-    private var defaults = AppSettingsModel()
-    private var isInitializing = true
-    private var notificationDebounceTimer: Timer?
-    private var accessibilityObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    @ObservationIgnored private var pendingEffects: [String: [String: PendingEffect]] = [:]
+    @ObservationIgnored private var admittedEffectIdentities: Set<UUID> = []
+    @ObservationIgnored private var startedEffectIdentities: [String: Set<UUID>] = [:]
+    @ObservationIgnored private var accountDID: String?
+    @ObservationIgnored private var suspendedAccountDID: String?
+    @ObservationIgnored private var generation: UInt64 = 0
+    @ObservationIgnored private var defaults = AppSettingsModel()
+    @ObservationIgnored private var isInitializing = true
+    @ObservationIgnored private var notificationDebounceTimer: Timer?
+    @ObservationIgnored private var accessibilityObservers: [(NotificationCenter, NSObjectProtocol)] = []
     private(set) var systemAccessibility = SystemAccessibilitySnapshot()
     var persistence = Persistence.live
     private(set) var persistenceState: PersistenceState = .unavailable
+
+    // MARK: - Per-Key Observation Helpers
+
+    private func getSetting<T>(_ keyPath: KeyPath<AppSettings, T>, _ modelKeyPath: KeyPath<AppSettingsModel, T>, default defaultValue: T) -> T {
+        access(keyPath: keyPath)
+        return settingsModel?[keyPath: modelKeyPath] ?? defaultValue
+    }
+
+    private func setSetting<T: Equatable>(_ keyPath: KeyPath<AppSettings, T>, _ modelKeyPath: ReferenceWritableKeyPath<AppSettingsModel, T>, _ newValue: T, default defaultValue: T) {
+        guard canEditPersistedSettings else { return }
+        let current = settingsModel?[keyPath: modelKeyPath] ?? defaultValue
+        guard current != newValue else { return }
+        withMutation(keyPath: keyPath) {
+            settingsModel?[keyPath: modelKeyPath] = newValue
+        }
+        saveChanges()
+    }
+
+    private func updateModelIfChanged(from source: AppSettingsModel, into target: AppSettingsModel) {
+        func sync<T: Equatable>(_ keyPath: KeyPath<AppSettings, T>, _ modelKeyPath: ReferenceWritableKeyPath<AppSettingsModel, T>) {
+            if target[keyPath: modelKeyPath] != source[keyPath: modelKeyPath] {
+                withMutation(keyPath: keyPath) {
+                    target[keyPath: modelKeyPath] = source[keyPath: modelKeyPath]
+                }
+            }
+        }
+        sync(\.theme, \.theme)
+        sync(\.darkThemeMode, \.darkThemeMode)
+        sync(\.accentColor, \.accentColor)
+        sync(\.fontStyle, \.fontStyle)
+        sync(\.fontSize, \.fontSize)
+        sync(\.lineSpacing, \.lineSpacing)
+        sync(\.letterSpacing, \.letterSpacing)
+        sync(\.dynamicTypeEnabled, \.dynamicTypeEnabled)
+        sync(\.maxDynamicTypeSize, \.maxDynamicTypeSize)
+        sync(\.requireAltText, \.requireAltText)
+        sync(\.largerAltTextBadges, \.largerAltTextBadges)
+        sync(\.disableHaptics, \.disableHaptics)
+        sync(\.reduceMotion, \.reduceMotion)
+        sync(\.prefersCrossfade, \.prefersCrossfade)
+        sync(\.increaseContrast, \.increaseContrast)
+        sync(\.boldText, \.boldText)
+        sync(\.displayScale, \.displayScale)
+        sync(\.showReadingTimeEstimates, \.showReadingTimeEstimates)
+        sync(\.highlightLinks, \.highlightLinks)
+        sync(\.linkStyle, \.linkStyle)
+        sync(\.confirmBeforeActions, \.confirmBeforeActions)
+        sync(\.longPressDuration, \.longPressDuration)
+        sync(\.shakeToUndo, \.shakeToUndo)
+        sync(\.enableViaAttribution, \.enableViaAttribution)
+        sync(\.sensitiveContentScanningEnabled, \.sensitiveContentScanningEnabled)
+        sync(\.autoplayVideos, \.autoplayVideos)
+        sync(\.useInAppBrowser, \.useInAppBrowser)
+        sync(\.showTrendingTopics, \.showTrendingTopics)
+        sync(\.showTrendingVideos, \.showTrendingVideos)
+        sync(\.threadSortOrder, \.threadSortOrder)
+        sync(\.prioritizeFollowedUsers, \.prioritizeFollowedUsers)
+        sync(\.threadedReplies, \.threadedReplies)
+        sync(\.showHiddenPosts, \.showHiddenPosts)
+        sync(\.showSavedFeedSamples, \.showSavedFeedSamples)
+        sync(\.useWebViewEmbeds, \.useWebViewEmbeds)
+        sync(\.appLanguage, \.appLanguage)
+        sync(\.primaryLanguage, \.primaryLanguage)
+        if target.contentLanguages != source.contentLanguages {
+            withMutation(keyPath: \.contentLanguages) {
+                target.contentLanguages = source.contentLanguages
+            }
+        }
+        sync(\.hideNonPreferredLanguages, \.hideNonPreferredLanguages)
+        sync(\.showLanguageIndicators, \.showLanguageIndicators)
+        sync(\.loggedOutVisibility, \.loggedOutVisibility)
+        if target.externalMediaConsents != source.externalMediaConsents {
+            target.externalMediaConsents = source.externalMediaConsents
+        }
+    }
 
     var canEditPersistedSettings: Bool {
         !isLocalChangesSuspended && (persistenceState == .ready || persistenceState == .saving)
@@ -211,19 +286,23 @@ import AppKit
     }
 
     var effectiveReduceMotion: Bool {
-        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.reduceMotion, app: reduceMotion)
+        access(keyPath: \.effectiveReduceMotion)
+        return AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.reduceMotion, app: reduceMotion)
     }
 
     var effectivePrefersCrossfade: Bool {
-        AccessibilityAccommodationPolicy.usesCrossfade(system: systemAccessibility, reduceMotion: reduceMotion, prefersCrossfade: prefersCrossfade)
+        access(keyPath: \.effectivePrefersCrossfade)
+        return AccessibilityAccommodationPolicy.usesCrossfade(system: systemAccessibility, reduceMotion: reduceMotion, prefersCrossfade: prefersCrossfade)
     }
 
     var effectiveIncreaseContrast: Bool {
-        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.increaseContrast, app: increaseContrast)
+        access(keyPath: \.effectiveIncreaseContrast)
+        return AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.increaseContrast, app: increaseContrast)
     }
 
     var effectiveBoldText: Bool {
-        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.boldText, app: boldText)
+        access(keyPath: \.effectiveBoldText)
+        return AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.boldText, app: boldText)
     }
 
     init() {
@@ -272,7 +351,11 @@ import AppKit
             pendingDrafts.removeValue(forKey: accountDID)
             pendingBaselines.removeValue(forKey: accountDID)
             pendingEffects.removeValue(forKey: accountDID)
-            settingsModel = confirmedDisplay.map { snapshot($0, accountDID: accountDID) }
+            if let confirmedDisplay, let current = settingsModel, current.id == confirmedDisplay.id {
+                updateModelIfChanged(from: confirmedDisplay, into: current)
+            } else {
+                settingsModel = confirmedDisplay.map { snapshot($0, accountDID: accountDID) }
+            }
             persistenceState = savedSettings == nil ? .unavailable : .ready
             return .resolved
         }
@@ -392,7 +475,11 @@ import AppKit
             }
             guard isCurrent(accountDID, generation: attemptGeneration) else { return }
             savedSettings = snapshot(row, accountDID: accountDID)
-            settingsModel = snapshot(row, accountDID: accountDID)
+            if let existingModel = settingsModel, existingModel.id == row.id {
+                updateModelIfChanged(from: row, into: existingModel)
+            } else {
+                settingsModel = snapshot(row, accountDID: accountDID)
+            }
             // A repeat initialization must not silently discard a failed or debounced attempt.
             persistenceState = pendingDrafts[accountDID] == nil ? .ready : .saveFailed
             isInitializing = false
@@ -404,7 +491,11 @@ import AppKit
             )
         } catch {
             guard isCurrent(accountDID, generation: attemptGeneration) else { return }
-            settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            if let saved = savedSettings, let current = settingsModel, current.id == saved.id {
+                updateModelIfChanged(from: saved, into: current)
+            } else {
+                settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            }
             persistenceState = .unavailable
             isInitializing = false
             logger.error("Local settings could not be loaded: \(error.localizedDescription)")
@@ -507,7 +598,11 @@ import AppKit
             try persistence.save(context)
             guard isCurrent(accountDID, generation: attemptGeneration) else { return false }
             savedSettings = snapshot(row, accountDID: accountDID)
-            settingsModel = snapshot(row, accountDID: accountDID)
+            if let existingModel = settingsModel, existingModel.id == row.id {
+                updateModelIfChanged(from: row, into: existingModel)
+            } else {
+                settingsModel = snapshot(row, accountDID: accountDID)
+            }
             pendingDrafts.removeValue(forKey: accountDID)
             pendingBaselines.removeValue(forKey: accountDID)
             persistenceState = .ready
@@ -517,7 +612,11 @@ import AppKit
         } catch {
             guard isCurrent(accountDID, generation: attemptGeneration) else { return false }
             // Drop the private context; only the detached attempted values survive for Retry.
-            settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            if let saved = savedSettings, let current = settingsModel, current.id == saved.id {
+                updateModelIfChanged(from: saved, into: current)
+            } else {
+                settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            }
             persistenceState = .saveFailed
             logger.error("Local settings were not saved: \(error.localizedDescription)")
             return false
@@ -695,7 +794,7 @@ import AppKit
     // Appearance
     var theme: String {
         get { 
-            // Try SwiftData first, then UserDefaults fallback
+            access(keyPath: \.theme)
             if let theme = settingsModel?.theme {
                 return theme
             }
@@ -703,14 +802,18 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            settingsModel?.theme = newValue
+            let current = settingsModel?.theme ?? loadThemeSettingsFromUserDefaults().theme
+            guard current != newValue else { return }
+            withMutation(keyPath: \.theme) {
+                settingsModel?.theme = newValue
+            }
             saveChanges()
         }
     }
     
     var darkThemeMode: String {
         get {
-            // Try SwiftData first, then UserDefaults fallback
+            access(keyPath: \.darkThemeMode)
             if let darkMode = settingsModel?.darkThemeMode {
                 return darkMode
             }
@@ -718,13 +821,18 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            settingsModel?.darkThemeMode = newValue
+            let current = settingsModel?.darkThemeMode ?? loadThemeSettingsFromUserDefaults().darkThemeMode
+            guard current != newValue else { return }
+            withMutation(keyPath: \.darkThemeMode) {
+                settingsModel?.darkThemeMode = newValue
+            }
             saveChanges()
         }
     }
 
     var accentColor: String {
         get {
+            access(keyPath: \.accentColor)
             if let settingsModel = settingsModel {
                 return settingsModel.accentColor
             }
@@ -737,13 +845,18 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            settingsModel?.accentColor = newValue
+            let current = settingsModel?.accentColor ?? "default"
+            guard current != newValue else { return }
+            withMutation(keyPath: \.accentColor) {
+                settingsModel?.accentColor = newValue
+            }
             saveChanges()
         }
     }
     
     var fontStyle: String {
         get { 
+            access(keyPath: \.fontStyle)
             if let settingsModel = settingsModel {
                 return settingsModel.fontStyle
             }
@@ -751,8 +864,10 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            if let settingsModel = settingsModel {
-                settingsModel.fontStyle = newValue
+            let current = settingsModel?.fontStyle ?? loadFontSettingsFromUserDefaults().fontStyle
+            guard current != newValue else { return }
+            withMutation(keyPath: \.fontStyle) {
+                settingsModel?.fontStyle = newValue
             }
             saveChanges()
         }
@@ -760,6 +875,7 @@ import AppKit
     
     var fontSize: String {
         get { 
+            access(keyPath: \.fontSize)
             if let settingsModel = settingsModel {
                 return settingsModel.fontSize
             }
@@ -767,8 +883,10 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            if let settingsModel = settingsModel {
-                settingsModel.fontSize = newValue
+            let current = settingsModel?.fontSize ?? loadFontSettingsFromUserDefaults().fontSize
+            guard current != newValue else { return }
+            withMutation(keyPath: \.fontSize) {
+                settingsModel?.fontSize = newValue
             }
             saveChanges()
         }
@@ -776,6 +894,7 @@ import AppKit
     
     var lineSpacing: String {
         get { 
+            access(keyPath: \.lineSpacing)
             if let settingsModel = settingsModel {
                 return settingsModel.lineSpacing
             }
@@ -783,8 +902,10 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            if let settingsModel = settingsModel {
-                settingsModel.lineSpacing = newValue
+            let current = settingsModel?.lineSpacing ?? loadFontSettingsFromUserDefaults().lineSpacing
+            guard current != newValue else { return }
+            withMutation(keyPath: \.lineSpacing) {
+                settingsModel?.lineSpacing = newValue
             }
             saveChanges()
         }
@@ -792,6 +913,7 @@ import AppKit
     
     var letterSpacing: String {
         get { 
+            access(keyPath: \.letterSpacing)
             if let settingsModel = settingsModel {
                 return settingsModel.letterSpacing
             }
@@ -799,8 +921,10 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            if let settingsModel = settingsModel {
-                settingsModel.letterSpacing = newValue
+            let current = settingsModel?.letterSpacing ?? loadFontSettingsFromUserDefaults().letterSpacing
+            guard current != newValue else { return }
+            withMutation(keyPath: \.letterSpacing) {
+                settingsModel?.letterSpacing = newValue
             }
             saveChanges()
         }
@@ -808,6 +932,7 @@ import AppKit
     
     var dynamicTypeEnabled: Bool {
         get { 
+            access(keyPath: \.dynamicTypeEnabled)
             if let settingsModel = settingsModel {
                 return settingsModel.dynamicTypeEnabled
             }
@@ -815,8 +940,10 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            if let settingsModel = settingsModel {
-                settingsModel.dynamicTypeEnabled = newValue
+            let current = settingsModel?.dynamicTypeEnabled ?? loadFontSettingsFromUserDefaults().dynamicTypeEnabled
+            guard current != newValue else { return }
+            withMutation(keyPath: \.dynamicTypeEnabled) {
+                settingsModel?.dynamicTypeEnabled = newValue
             }
             saveChanges()
         }
@@ -824,6 +951,7 @@ import AppKit
     
     var maxDynamicTypeSize: String {
         get { 
+            access(keyPath: \.maxDynamicTypeSize)
             if let settingsModel = settingsModel {
                 return settingsModel.maxDynamicTypeSize
             }
@@ -831,8 +959,10 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            if let settingsModel = settingsModel {
-                settingsModel.maxDynamicTypeSize = newValue
+            let current = settingsModel?.maxDynamicTypeSize ?? loadFontSettingsFromUserDefaults().maxDynamicTypeSize
+            guard current != newValue else { return }
+            withMutation(keyPath: \.maxDynamicTypeSize) {
+                settingsModel?.maxDynamicTypeSize = newValue
             }
             saveChanges()
         }
@@ -840,236 +970,136 @@ import AppKit
     
     // Accessibility
     var requireAltText: Bool {
-        get { settingsModel?.requireAltText ?? defaults.requireAltText }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.requireAltText = newValue
-            saveChanges()
-        }
+        get { getSetting(\.requireAltText, \.requireAltText, default: defaults.requireAltText) }
+        set { setSetting(\.requireAltText, \.requireAltText, newValue, default: defaults.requireAltText) }
     }
     
     var largerAltTextBadges: Bool {
-        get { settingsModel?.largerAltTextBadges ?? defaults.largerAltTextBadges }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.largerAltTextBadges = newValue
-            saveChanges()
-        }
+        get { getSetting(\.largerAltTextBadges, \.largerAltTextBadges, default: defaults.largerAltTextBadges) }
+        set { setSetting(\.largerAltTextBadges, \.largerAltTextBadges, newValue, default: defaults.largerAltTextBadges) }
     }
     
     var disableHaptics: Bool {
-        get { settingsModel?.disableHaptics ?? defaults.disableHaptics }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.disableHaptics = newValue
-            saveChanges()
-        }
+        get { getSetting(\.disableHaptics, \.disableHaptics, default: defaults.disableHaptics) }
+        set { setSetting(\.disableHaptics, \.disableHaptics, newValue, default: defaults.disableHaptics) }
     }
 
     // Motion Settings
     var reduceMotion: Bool {
-        get { settingsModel?.reduceMotion ?? defaults.reduceMotion }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.reduceMotion = newValue
-            saveChanges()
-        }
+        get { getSetting(\.reduceMotion, \.reduceMotion, default: defaults.reduceMotion) }
+        set { setSetting(\.reduceMotion, \.reduceMotion, newValue, default: defaults.reduceMotion) }
     }
     
     var prefersCrossfade: Bool {
-        get { settingsModel?.prefersCrossfade ?? defaults.prefersCrossfade }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.prefersCrossfade = newValue
-            saveChanges()
-        }
+        get { getSetting(\.prefersCrossfade, \.prefersCrossfade, default: defaults.prefersCrossfade) }
+        set { setSetting(\.prefersCrossfade, \.prefersCrossfade, newValue, default: defaults.prefersCrossfade) }
     }
     
     // Display Settings
     var increaseContrast: Bool {
-        get { settingsModel?.increaseContrast ?? defaults.increaseContrast }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.increaseContrast = newValue
-            saveChanges()
-        }
+        get { getSetting(\.increaseContrast, \.increaseContrast, default: defaults.increaseContrast) }
+        set { setSetting(\.increaseContrast, \.increaseContrast, newValue, default: defaults.increaseContrast) }
     }
     
     var boldText: Bool {
-        get { settingsModel?.boldText ?? defaults.boldText }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.boldText = newValue
-            saveChanges()
-        }
+        get { getSetting(\.boldText, \.boldText, default: defaults.boldText) }
+        set { setSetting(\.boldText, \.boldText, newValue, default: defaults.boldText) }
     }
     
     var displayScale: Double {
-        get { settingsModel?.displayScale ?? defaults.displayScale }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.displayScale = newValue
-            saveChanges()
-        }
+        get { getSetting(\.displayScale, \.displayScale, default: defaults.displayScale) }
+        set { setSetting(\.displayScale, \.displayScale, newValue, default: defaults.displayScale) }
     }
     
     // Reading Settings
     var showReadingTimeEstimates: Bool {
-        get { settingsModel?.showReadingTimeEstimates ?? defaults.showReadingTimeEstimates }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.showReadingTimeEstimates = newValue
-            saveChanges()
-        }
+        get { getSetting(\.showReadingTimeEstimates, \.showReadingTimeEstimates, default: defaults.showReadingTimeEstimates) }
+        set { setSetting(\.showReadingTimeEstimates, \.showReadingTimeEstimates, newValue, default: defaults.showReadingTimeEstimates) }
     }
     
     var highlightLinks: Bool {
-        get { settingsModel?.highlightLinks ?? defaults.highlightLinks }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.highlightLinks = newValue
-            saveChanges()
-        }
+        get { getSetting(\.highlightLinks, \.highlightLinks, default: defaults.highlightLinks) }
+        set { setSetting(\.highlightLinks, \.highlightLinks, newValue, default: defaults.highlightLinks) }
     }
     
     var linkStyle: String {
-        get { settingsModel?.linkStyle ?? defaults.linkStyle }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.linkStyle = newValue
-            saveChanges()
-        }
+        get { getSetting(\.linkStyle, \.linkStyle, default: defaults.linkStyle) }
+        set { setSetting(\.linkStyle, \.linkStyle, newValue, default: defaults.linkStyle) }
     }
     
     // Interaction Settings
     var confirmBeforeActions: Bool {
-        get { settingsModel?.confirmBeforeActions ?? defaults.confirmBeforeActions }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.confirmBeforeActions = newValue
-            saveChanges()
-        }
+        get { getSetting(\.confirmBeforeActions, \.confirmBeforeActions, default: defaults.confirmBeforeActions) }
+        set { setSetting(\.confirmBeforeActions, \.confirmBeforeActions, newValue, default: defaults.confirmBeforeActions) }
     }
     
     var longPressDuration: Double {
-        get { settingsModel?.longPressDuration ?? defaults.longPressDuration }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.longPressDuration = newValue
-            saveChanges()
-        }
+        get { getSetting(\.longPressDuration, \.longPressDuration, default: defaults.longPressDuration) }
+        set { setSetting(\.longPressDuration, \.longPressDuration, newValue, default: defaults.longPressDuration) }
     }
     
     var shakeToUndo: Bool {
-        get { settingsModel?.shakeToUndo ?? defaults.shakeToUndo }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.shakeToUndo = newValue
-            saveChanges()
-        }
+        get { getSetting(\.shakeToUndo, \.shakeToUndo, default: defaults.shakeToUndo) }
+        set { setSetting(\.shakeToUndo, \.shakeToUndo, newValue, default: defaults.shakeToUndo) }
     }
     
     // Attribution Settings
     var enableViaAttribution: Bool {
-        get { settingsModel?.enableViaAttribution ?? defaults.enableViaAttribution }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.enableViaAttribution = newValue
-            saveChanges()
-        }
+        get { getSetting(\.enableViaAttribution, \.enableViaAttribution, default: defaults.enableViaAttribution) }
+        set { setSetting(\.enableViaAttribution, \.enableViaAttribution, newValue, default: defaults.enableViaAttribution) }
     }
     
     // Content and Media
     var sensitiveContentScanningEnabled: Bool {
-        get { settingsModel?.sensitiveContentScanningEnabled ?? defaults.sensitiveContentScanningEnabled }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.sensitiveContentScanningEnabled = newValue
-            saveChanges()
-        }
+        get { getSetting(\.sensitiveContentScanningEnabled, \.sensitiveContentScanningEnabled, default: defaults.sensitiveContentScanningEnabled) }
+        set { setSetting(\.sensitiveContentScanningEnabled, \.sensitiveContentScanningEnabled, newValue, default: defaults.sensitiveContentScanningEnabled) }
     }
 
     var autoplayVideos: Bool {
-        get { settingsModel?.autoplayVideos ?? defaults.autoplayVideos }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.autoplayVideos = newValue
-            saveChanges()
-        }
+        get { getSetting(\.autoplayVideos, \.autoplayVideos, default: defaults.autoplayVideos) }
+        set { setSetting(\.autoplayVideos, \.autoplayVideos, newValue, default: defaults.autoplayVideos) }
     }
     
     var useInAppBrowser: Bool {
-        get { settingsModel?.useInAppBrowser ?? defaults.useInAppBrowser }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.useInAppBrowser = newValue
-            saveChanges()
-        }
+        get { getSetting(\.useInAppBrowser, \.useInAppBrowser, default: defaults.useInAppBrowser) }
+        set { setSetting(\.useInAppBrowser, \.useInAppBrowser, newValue, default: defaults.useInAppBrowser) }
     }
     
     var showTrendingTopics: Bool {
-        get { settingsModel?.showTrendingTopics ?? defaults.showTrendingTopics }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.showTrendingTopics = newValue
-            saveChanges()
-        }
+        get { getSetting(\.showTrendingTopics, \.showTrendingTopics, default: defaults.showTrendingTopics) }
+        set { setSetting(\.showTrendingTopics, \.showTrendingTopics, newValue, default: defaults.showTrendingTopics) }
     }
     
     var showTrendingVideos: Bool {
-        get { settingsModel?.showTrendingVideos ?? defaults.showTrendingVideos }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.showTrendingVideos = newValue
-            saveChanges()
-        }
+        get { getSetting(\.showTrendingVideos, \.showTrendingVideos, default: defaults.showTrendingVideos) }
+        set { setSetting(\.showTrendingVideos, \.showTrendingVideos, newValue, default: defaults.showTrendingVideos) }
     }
     
     // Thread Preferences
     var threadSortOrder: String {
-        get { settingsModel?.threadSortOrder ?? defaults.threadSortOrder }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.threadSortOrder = newValue
-            saveChanges()
-        }
+        get { getSetting(\.threadSortOrder, \.threadSortOrder, default: defaults.threadSortOrder) }
+        set { setSetting(\.threadSortOrder, \.threadSortOrder, newValue, default: defaults.threadSortOrder) }
     }
     
     var prioritizeFollowedUsers: Bool {
-        get { settingsModel?.prioritizeFollowedUsers ?? defaults.prioritizeFollowedUsers }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.prioritizeFollowedUsers = newValue
-            saveChanges()
-        }
+        get { getSetting(\.prioritizeFollowedUsers, \.prioritizeFollowedUsers, default: defaults.prioritizeFollowedUsers) }
+        set { setSetting(\.prioritizeFollowedUsers, \.prioritizeFollowedUsers, newValue, default: defaults.prioritizeFollowedUsers) }
     }
     
     var threadedReplies: Bool {
-        get { settingsModel?.threadedReplies ?? defaults.threadedReplies }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.threadedReplies = newValue
-            saveChanges()
-        }
+        get { getSetting(\.threadedReplies, \.threadedReplies, default: defaults.threadedReplies) }
+        set { setSetting(\.threadedReplies, \.threadedReplies, newValue, default: defaults.threadedReplies) }
     }
     
     var showHiddenPosts: Bool {
-        get { settingsModel?.showHiddenPosts ?? defaults.showHiddenPosts }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.showHiddenPosts = newValue
-            saveChanges()
-        }
+        get { getSetting(\.showHiddenPosts, \.showHiddenPosts, default: defaults.showHiddenPosts) }
+        set { setSetting(\.showHiddenPosts, \.showHiddenPosts, newValue, default: defaults.showHiddenPosts) }
     }
     
     // Feed Preferences
     var showSavedFeedSamples: Bool {
-        get { settingsModel?.showSavedFeedSamples ?? defaults.showSavedFeedSamples }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.showSavedFeedSamples = newValue
-            saveChanges()
-        }
+        get { getSetting(\.showSavedFeedSamples, \.showSavedFeedSamples, default: defaults.showSavedFeedSamples) }
+        set { setSetting(\.showSavedFeedSamples, \.showSavedFeedSamples, newValue, default: defaults.showSavedFeedSamples) }
     }
     // MARK: - External Media Preferences
     func externalMediaConsent(for provider: ExternalMediaProvider) -> ExternalMediaConsent {
@@ -1081,6 +1111,7 @@ import AppKit
 
     func setExternalMediaConsent(_ consent: ExternalMediaConsent, for provider: ExternalMediaProvider) {
         guard canEditPersistedSettings else { return }
+        guard externalMediaConsent(for: provider) != consent else { return }
         settingsModel?.setConsent(consent, for: provider)
         saveChanges()
     }
@@ -1107,6 +1138,7 @@ import AppKit
     // WebView Embeds
     var useWebViewEmbeds: Bool {
         get { 
+            access(keyPath: \.useWebViewEmbeds)
             if let settingsModel = settingsModel {
                 return settingsModel.useWebViewEmbeds
             }
@@ -1114,68 +1146,54 @@ import AppKit
         }
         set {
             guard canEditPersistedSettings else { return }
-            settingsModel?.useWebViewEmbeds = newValue
+            let current = settingsModel?.useWebViewEmbeds ?? loadWebViewSettingsFromUserDefaults().useWebViewEmbeds
+            guard current != newValue else { return }
+            withMutation(keyPath: \.useWebViewEmbeds) {
+                settingsModel?.useWebViewEmbeds = newValue
+            }
             saveChanges()
         }
     }
-    
 
     // Languages
     var appLanguage: String {
-        get { settingsModel?.appLanguage ?? defaults.appLanguage }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.appLanguage = newValue
-            saveChanges()
-        }
+        get { getSetting(\.appLanguage, \.appLanguage, default: defaults.appLanguage) }
+        set { setSetting(\.appLanguage, \.appLanguage, newValue, default: defaults.appLanguage) }
     }
     
     var primaryLanguage: String {
-        get { settingsModel?.primaryLanguage ?? defaults.primaryLanguage }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.primaryLanguage = newValue
-            saveChanges()
-        }
+        get { getSetting(\.primaryLanguage, \.primaryLanguage, default: defaults.primaryLanguage) }
+        set { setSetting(\.primaryLanguage, \.primaryLanguage, newValue, default: defaults.primaryLanguage) }
     }
     
     var contentLanguages: [String] {
-        get { settingsModel?.contentLanguages ?? defaults.contentLanguages }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.contentLanguages = newValue
-            saveChanges()
-        }
+        get { getSetting(\.contentLanguages, \.contentLanguages, default: defaults.contentLanguages) }
+        set { setSetting(\.contentLanguages, \.contentLanguages, newValue, default: defaults.contentLanguages) }
     }
     
     var hideNonPreferredLanguages: Bool {
-        get { settingsModel?.hideNonPreferredLanguages ?? defaults.hideNonPreferredLanguages }
+        get { getSetting(\.hideNonPreferredLanguages, \.hideNonPreferredLanguages, default: defaults.hideNonPreferredLanguages) }
         set {
             guard canEditPersistedSettings else { return }
-            settingsModel?.hideNonPreferredLanguages = newValue
+            let current = settingsModel?.hideNonPreferredLanguages ?? defaults.hideNonPreferredLanguages
+            if current != newValue {
+                withMutation(keyPath: \.hideNonPreferredLanguages) {
+                    settingsModel?.hideNonPreferredLanguages = newValue
+                }
+            }
             saveChanges()
         }
     }
-    
     var showLanguageIndicators: Bool {
-        get { settingsModel?.showLanguageIndicators ?? defaults.showLanguageIndicators }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.showLanguageIndicators = newValue
-            saveChanges()
-        }
+        get { getSetting(\.showLanguageIndicators, \.showLanguageIndicators, default: defaults.showLanguageIndicators) }
+        set { setSetting(\.showLanguageIndicators, \.showLanguageIndicators, newValue, default: defaults.showLanguageIndicators) }
     }
     
     // Privacy
     var loggedOutVisibility: Bool {
-        get { settingsModel?.loggedOutVisibility ?? defaults.loggedOutVisibility }
-        set {
-            guard canEditPersistedSettings else { return }
-            settingsModel?.loggedOutVisibility = newValue
-            saveChanges()
-        }
+        get { getSetting(\.loggedOutVisibility, \.loggedOutVisibility, default: defaults.loggedOutVisibility) }
+        set { setSetting(\.loggedOutVisibility, \.loggedOutVisibility, newValue, default: defaults.loggedOutVisibility) }
     }
-
     // Developer Settings
     
     

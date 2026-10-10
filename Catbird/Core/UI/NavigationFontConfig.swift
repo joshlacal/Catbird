@@ -1,16 +1,28 @@
+import SwiftUI
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
 import AppKit
 #endif
 import CoreText
-import SwiftUI
+import OSLog
+
 
 /// Centralized navigation font configuration to ensure consistency across the app
 enum NavigationFontConfig {
     #if os(iOS)
 
     // MARK: - Font Cache
+    private static let signposter = OSSignposter(subsystem: "blue.catbird.performance", category: "NavigationFont")
+    private static var sharedDefaultFontManager: FontManager?
+    private static func defaultFontManager() -> FontManager {
+        if let manager = sharedDefaultFontManager {
+            return manager
+        }
+        let manager = FontManager()
+        sharedDefaultFontManager = manager
+        return manager
+    }
 
     /// Cached title font to avoid expensive Core Text operations
     private static var cachedTitleFont: UIFont?
@@ -227,6 +239,12 @@ enum NavigationFontConfig {
         let titleFont = createTitleFont(fontManager: fontManager)
         let largeTitleFont = createLargeTitleFont(fontManager: fontManager)
         
+        let currentTitleFont = appearance.titleTextAttributes[.font] as? UIFont
+        let currentLargeTitleFont = appearance.largeTitleTextAttributes[.font] as? UIFont
+        if currentTitleFont == titleFont && currentLargeTitleFont == largeTitleFont {
+            return
+        }
+        
         // Update title attributes while preserving other attributes
         var titleAttrs = appearance.titleTextAttributes
         titleAttrs[.font] = titleFont
@@ -240,8 +258,8 @@ enum NavigationFontConfig {
     
     /// Apply custom fonts to a navigation bar appearance (legacy method for backward compatibility)
     static func applyFonts(to appearance: UINavigationBarAppearance) {
-        // Use default FontManager instance for backward compatibility
-        applyFonts(to: appearance, fontManager: FontManager())
+        // Use shared default FontManager instance for backward compatibility
+        applyFonts(to: appearance, fontManager: defaultFontManager())
     }
     
     // MARK: - Early Initialization
@@ -307,22 +325,24 @@ enum NavigationFontConfig {
     /// Force apply fonts to all current navigation bars in the app (legacy method for backward compatibility)
     /// Call this after theme changes to ensure fonts are respected
     static func forceApplyToAllNavigationBars() {
-        // Use default FontManager instance for backward compatibility
-        forceApplyToAllNavigationBars(fontManager: FontManager())
+        // Use shared default FontManager instance for backward compatibility
+        forceApplyToAllNavigationBars(fontManager: defaultFontManager())
     }
     
     /// Perform the actual font update (must be called on main thread)
     private static func performFontUpdate(fontManager: FontManager) {
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-        
-        for window in windowScene.windows {
-            forceUpdateNavigationBarsRecursively(in: window.rootViewController, fontManager: fontManager)
+        signposter.emitEvent("NavFontApply")
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                forceUpdateNavigationBarsRecursively(in: window.rootViewController, fontManager: fontManager)
+            }
         }
     }
     
     /// Perform the actual font update (must be called on main thread) - legacy method
     private static func performFontUpdate() {
-        performFontUpdate(fontManager: FontManager())
+        performFontUpdate(fontManager: defaultFontManager())
     }
     
     /// Apply fonts to a specific navigation bar instance (for UIKit views) with FontManager integration
@@ -332,22 +352,10 @@ enum NavigationFontConfig {
         
         if let scrollEdge = navigationBar.scrollEdgeAppearance {
             applyFonts(to: scrollEdge, fontManager: fontManager)
-        } else {
-            // Create and apply scrollEdge appearance if it doesn't exist
-            let scrollEdgeAppearance = UINavigationBarAppearance()
-            scrollEdgeAppearance.configureWithDefaultBackground()
-            applyFonts(to: scrollEdgeAppearance, fontManager: fontManager)
-            navigationBar.scrollEdgeAppearance = scrollEdgeAppearance
         }
         
         if let compact = navigationBar.compactAppearance {
             applyFonts(to: compact, fontManager: fontManager)
-        } else {
-            // Create and apply compact appearance if it doesn't exist
-            let compactAppearance = UINavigationBarAppearance()
-            compactAppearance.configureWithDefaultBackground()
-            applyFonts(to: compactAppearance, fontManager: fontManager)
-            navigationBar.compactAppearance = compactAppearance
         }
         
         // Force the navigation bar to update
@@ -356,8 +364,8 @@ enum NavigationFontConfig {
     
     /// Apply fonts to a specific navigation bar instance (for UIKit views) - legacy method
     static func applyFonts(to navigationBar: UINavigationBar) {
-        // Use default FontManager instance for backward compatibility
-        applyFonts(to: navigationBar, fontManager: FontManager())
+        // Use shared default FontManager instance for backward compatibility
+        applyFonts(to: navigationBar, fontManager: defaultFontManager())
     }
     
     /// Recursively find and update navigation bars with custom fonts
@@ -384,7 +392,7 @@ enum NavigationFontConfig {
     
     /// Recursively find and update navigation bars with custom fonts - legacy method
     private static func forceUpdateNavigationBarsRecursively(in viewController: UIViewController?) {
-        forceUpdateNavigationBarsRecursively(in: viewController, fontManager: FontManager())
+        forceUpdateNavigationBarsRecursively(in: viewController, fontManager: defaultFontManager())
     }
     
     #else
@@ -425,83 +433,15 @@ enum NavigationFontConfig {
 #if os(iOS)
 /// ViewModifier that ensures navigation titles use the correct Core Text fonts with FontManager integration
 struct NavigationFontModifier: ViewModifier {
-    @Environment(\.fontManager) private var fontManager
-    
     func body(content: Content) -> some View {
         content
-            .onAppear {
-                // Force apply fonts when view appears
-                NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-            }
-            .onChange(of: UIApplication.shared.connectedScenes.count) { 
-                // Reapply fonts if scene configuration changes
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
-            .onChange(of: fontManager.fontStyle) {
-                // Invalidate cache and reapply fonts when font style changes
-                NavigationFontConfig.invalidateCache()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
-            .onChange(of: fontManager.fontSize) {
-                // Invalidate cache and reapply fonts when font size changes
-                NavigationFontConfig.invalidateCache()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
-            .onChange(of: fontManager.dynamicTypeEnabled) {
-                // Invalidate cache and reapply fonts when Dynamic Type setting changes
-                NavigationFontConfig.invalidateCache()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
     }
 }
 
 /// ViewModifier that forces font application for deep navigation contexts with FontManager integration
 struct DeepNavigationFontModifier: ViewModifier {
-    @Environment(\.fontManager) private var fontManager
-    
     func body(content: Content) -> some View {
         content
-            .onAppear {
-                // Apply fonts with a delay to ensure navigation context is established
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
-            .onChange(of: UIApplication.shared.connectedScenes.count) {
-                // Reapply fonts if scene configuration changes
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
-            .onChange(of: fontManager.fontStyle) {
-                // Invalidate cache and reapply fonts when font style changes
-                NavigationFontConfig.invalidateCache()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
-            .onChange(of: fontManager.fontSize) {
-                // Invalidate cache and reapply fonts when font size changes
-                NavigationFontConfig.invalidateCache()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
-            .onChange(of: fontManager.dynamicTypeEnabled) {
-                // Invalidate cache and reapply fonts when Dynamic Type setting changes
-                NavigationFontConfig.invalidateCache()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
-                }
-            }
     }
 }
 

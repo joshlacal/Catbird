@@ -4,7 +4,10 @@ import Petrel
 struct SettingsAvatarToolbarButton: View {
   @Environment(AppState.self) private var appState
   @Environment(AppStateManager.self) private var appStateManager
+  @MainActor private static var lastProfileRefreshTime: Date?
+  private static let refreshThrottleInterval: TimeInterval = 600 // 10 minutes
   @State private var avatarImages: [String: PlatformImage] = [:]
+
   let action: () -> Void
 
   var body: some View {
@@ -23,29 +26,15 @@ struct SettingsAvatarToolbarButton: View {
               }
             } label: {
               let labels = AccountMenuLabels(account: account)
-              let displayName = labels.title
-              let handle = labels.subtitle
               Label {
-                Text(displayName)
+                Text(labels.title)
                   .appBody()
                   .foregroundStyle(.primary)
                   .lineLimit(1)
               } icon: {
-                if let image = avatarImages[account.did] {
-                  #if os(iOS)
-                    Image(uiImage: image)
-                      .resizable()
-                  #elseif os(macOS)
-                    Image(nsImage: image)
-                      .resizable()
-                  #endif
-                } else if account.isActive {
-                  Image(systemName: "checkmark.circle.fill")
-                } else {
-                  Image(systemName: "person.circle")
-                }
+                accountMenuIcon(for: account)
               }
-              if let handle {
+              if let handle = labels.subtitle {
                 Text(handle)
                   .appCaption()
                   .foregroundStyle(.secondary)
@@ -98,6 +87,23 @@ struct SettingsAvatarToolbarButton: View {
     .clipShape(Circle())
     .id("\(appState.userDID)-\(avatarURL?.absoluteString ?? "noavatar")")
   }
+  @ViewBuilder
+  private func accountMenuIcon(for account: AuthenticationManager.AccountInfo) -> some View {
+    if let image = avatarImages[account.did] {
+      #if os(iOS)
+        Image(uiImage: image)
+          .resizable()
+      #elseif os(macOS)
+        Image(nsImage: image)
+          .resizable()
+      #endif
+    } else if account.isActive {
+      Image(systemName: "checkmark.circle.fill")
+    } else {
+      Image(systemName: "person.circle")
+    }
+  }
+
 
   /// Re-runs when the saved accounts or the active account change.
   private func accountsTaskID(_ accounts: [AuthenticationManager.AccountInfo]) -> [String] {
@@ -105,11 +111,19 @@ struct SettingsAvatarToolbarButton: View {
   }
 
   /// Refreshes saved accounts' names and avatars so the menu never falls back to an identifier.
+  /// Throttled to avoid network requests and UserDefaults churn on every tab switch or toolbar appearance.
+  @MainActor
   private func refreshAccountProfiles() async {
+    let now = Date()
+    if let last = Self.lastProfileRefreshTime, now.timeIntervalSince(last) < Self.refreshThrottleInterval {
+      return
+    }
     guard let client = appState.atProtoClient else { return }
+    Self.lastProfileRefreshTime = now
     await appStateManager.authentication.refreshCachedAccountProfiles(using: client)
   }
 
+  @MainActor
   private func loadAvatars(for accounts: [AuthenticationManager.AccountInfo]) async {
     for account in accounts {
       guard avatarImages[account.did] == nil else { continue }
