@@ -23,10 +23,14 @@ import SwiftUI
   /// The shadow-merged post being displayed. Boxed so render code can read one
   /// field without copying the whole model; use `currentPost` to replace it.
   var currentPostBox: EquatableBox<AppBskyFeedDefs.PostView>
-  var isAvatarLoaded = false
+  /// Not observed: nothing renders from it, and observing its write (once per
+  /// row, when the avatar loads) re-rendered the whole row while scrolling.
+  @ObservationIgnored var isAvatarLoaded = false
   var showingReportView = false
   var showingAddToListSheet = false
-  var initialLoadComplete = false  // For transaction animation control
+  /// Read live by the row's `.transaction` closure to skip animations until
+  /// loaded. Not observed for the same reason as `isAvatarLoaded`.
+  @ObservationIgnored var initialLoadComplete = false
   var postError: PostViewError?  // Error state tracking
   var isShowingThreadSummary = false
   var isThreadSummaryLoading = false
