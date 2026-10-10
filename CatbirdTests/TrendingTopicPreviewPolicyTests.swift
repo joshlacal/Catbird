@@ -668,6 +668,19 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(store.preview(key: "topic", context: .init()).media.count == 1)
   }
 
+  @Test("A fetch throwing CancellationError does not install a negative cache")
+  func cancellationErrorDoesNotPoisonCache() async throws {
+    let store = TrendingTopicMediaStore()
+    let post = try fixture("after-cancellation-error")
+    await store.load(key: "topic") { throw CancellationError() }
+
+    var fetches = 0
+    await store.load(key: "topic") { fetches += 1; return [post] }
+
+    #expect(fetches == 1)
+    #expect(store.preview(key: "topic", context: .init()).media.count == 1)
+  }
+
   @Test("Changing accepted labelers clears art and rejects stale successful requests")
   func labelerInvalidation() async throws {
     let store = TrendingTopicMediaStore()
@@ -783,6 +796,20 @@ struct TrendingTopicPreviewPolicyTests {
     await store.load(key: "pending") { fetches += 1; return [post] }
     #expect(fetches == 1)
     #expect(store.preview(key: "pending", context: .init()).media.count == 1)
+  }
+
+  @Test("Background transition drops cached preview entries and viewer state for external moderation refresh")
+  func backgroundInvalidation() async throws {
+    let store = TrendingTopicMediaStore()
+    let post = try fixture("background-viewer-state")
+    await store.load(key: "cached") { [post] }
+    #expect(store.preview(key: "cached", context: .init()).media.count == 1)
+    #expect(store.canReusePrefetchedFeed)
+
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+
+    #expect(store.preview(key: "cached", context: .init()) == .init(), "Background transition drops cached entries")
+    #expect(!store.canReusePrefetchedFeed, "Background transition resets prefetched feed reuse")
   }
   #endif
 

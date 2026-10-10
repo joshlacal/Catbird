@@ -82,6 +82,10 @@ struct UnifiedProfileView: View {
       currentUserDID: appState.userDID,
       stateInvalidationBus: appState.stateInvalidationBus
     )
+    if did == ModerationPrefs.blueskyModerationDID
+      || appState.moderationPolicy.prefs.labelers.contains(where: { $0.did == did }) {
+      viewModel.selectedProfileTab = .labelerInfo
+    }
     
     self._selectedTab = selectedTab
     self._lastTappedTab = Binding.constant(nil)
@@ -133,6 +137,17 @@ struct UnifiedProfileView: View {
 
   // MARK: - New helper function for refreshing content
   private func refreshAllContent() async {
+    switch viewModel.selectedProfileTab {
+    case .posts:
+      hasAttemptedLoadPosts = true
+    case .replies:
+      hasAttemptedLoadReplies = true
+    case .media:
+      hasAttemptedLoadMedia = true
+    default:
+      break
+    }
+
     async let profileTask: Void = viewModel.loadProfile()
     async let followersTask: Void = {
       if !viewModel.isCurrentUser {
@@ -142,13 +157,10 @@ struct UnifiedProfileView: View {
     async let feedTask: Void = {
       switch viewModel.selectedProfileTab {
       case .posts:
-        hasAttemptedLoadPosts = true
         await viewModel.loadPosts()
       case .replies:
-        hasAttemptedLoadReplies = true
         await viewModel.loadReplies()
       case .media:
-        hasAttemptedLoadMedia = true
         await viewModel.loadMediaPosts()
       case .more: break
       default: break

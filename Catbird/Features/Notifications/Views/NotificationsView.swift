@@ -19,6 +19,7 @@ struct NotificationsView: View {
   @State private var showingSettings = false
   private let loadMoreTriggerDedupInterval: TimeInterval = 0.35
   @State private var openIntervalState: OSSignpostIntervalState?
+  @State private var wasBackgrounded = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsView")
 
@@ -50,7 +51,7 @@ struct NotificationsView: View {
           openIntervalState = PerformanceSignposts.beginInterval("NotificationsOpen")
         }
         Task {
-          if viewModel.groupedNotifications.isEmpty {
+          if !viewModel.hasLoadedOnce {
             await viewModel.loadNotifications()
           } else if viewModel.isStale || appState.notificationManager.unreadCount > 0 {
             await viewModel.refreshNotifications()
@@ -86,7 +87,7 @@ struct NotificationsView: View {
         openIntervalState = PerformanceSignposts.beginInterval("NotificationsOpen")
       }
       viewModel.moderationPolicy = appState.moderationPolicy
-      if viewModel.groupedNotifications.isEmpty {
+      if !viewModel.hasLoadedOnce {
         await viewModel.loadNotifications()
       }
       if let state = openIntervalState {
@@ -99,8 +100,13 @@ struct NotificationsView: View {
         try? await viewModel.markNotificationsAsSeen()
       }
     }
-    .onChange(of: scenePhase) { oldPhase, newPhase in
-      guard newPhase == .active, oldPhase == .background else { return }
+    .onChange(of: scenePhase) { _, newPhase in
+      if newPhase == .background {
+        wasBackgrounded = true
+        return
+      }
+      guard newPhase == .active, wasBackgrounded else { return }
+      wasBackgrounded = false
       // Returning to the app on this tab: show what's new and clear the badge.
       if selectedTab == 2 {
         Task {

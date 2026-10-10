@@ -12,6 +12,7 @@ enum BGTaskSchedulerManager {
   private static var didRegister = false
   private static var lastScheduleTime: Date?
 
+  @MainActor
   static func registerIfNeeded() {
     // Simple guard - called from main thread during app init
     guard !didRegister else { 
@@ -42,12 +43,17 @@ enum BGTaskSchedulerManager {
     didRegister = true
     logger.info("BGTask registration completed for identifier: \(taskIdentifier)")
   }
+  @MainActor
+  static func cancel() {
+    BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+  }
+
 
   @MainActor
   static func schedule() {
     // Only schedule if there are actually pending items in the outbox (P186/P314)
     guard ComposerOutbox.shared.hasPendingItems else {
-      BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+      cancel()
       logger.debug("BGTask not scheduled: ComposerOutbox is empty")
       return
     }
@@ -118,7 +124,7 @@ enum BGTaskSchedulerManager {
       let success = await retryWork.value
       await MainActor.run {
         if !ComposerOutbox.shared.hasPendingItems {
-          BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+          cancel()
         }
       }
       GRDBSuspensionCoordinator.endBackgroundWork(reason: "Posting BGTask \(taskIdentifier)")

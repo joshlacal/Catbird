@@ -88,12 +88,6 @@ final class ListManager {
   // Cache of user's created lists
   @MainActor private(set) var userLists: [AppBskyGraphDefs.ListView] = []
   
-  // Cache of list members by list URI
-  @MainActor private(set) var listMembers: [String: [AppBskyActorDefs.ProfileView]] = [:]
-
-  // Cache of list item records by list URI (the item URI is needed to remove a member)
-  @MainActor private var listItems: [String: [AppBskyGraphDefs.ListItemView]] = [:]
-  
   // Cache of list details by URI
   @MainActor private(set) var listDetails: [String: AppBskyGraphDefs.ListView] = [:]
   
@@ -103,13 +97,10 @@ final class ListManager {
   // Cache timestamps for staleness detection
   @MainActor private var lastUserListsUpdate: Date?
   @MainActor private var lastMembershipUpdate: Date?
-  @MainActor private var listMemberUpdateTimes: [String: Date] = [:]
   @MainActor private var listDetailUpdateTimes: [String: Date] = [:]
   
-  // Cache expiration time (15 minutes for lists, 5 minutes for members)
+  // Cache expiration time (15 minutes for lists)
   private let listCacheExpirationTime: TimeInterval = 900
-  private let memberCacheExpirationTime: TimeInterval = 300
-  
   // Track operations in progress to prevent duplicates
   private var inProgressOperations: Set<String> = []
   
@@ -148,13 +139,10 @@ final class ListManager {
   @MainActor
   private func clearAllCaches() {
     userLists.removeAll()
-    listMembers.removeAll()
-    listItems.removeAll()
     listDetails.removeAll()
     userMemberships.removeAll()
     lastUserListsUpdate = nil
     lastMembershipUpdate = nil
-    listMemberUpdateTimes.removeAll()
     listDetailUpdateTimes.removeAll()
   }
   
@@ -168,10 +156,6 @@ final class ListManager {
     case .userLists:
       lastUpdate = lastUserListsUpdate
       expirationTime = listCacheExpirationTime
-    case .listMembers:
-      guard let listURI = listURI else { return true }
-      lastUpdate = listMemberUpdateTimes[listURI]
-      expirationTime = memberCacheExpirationTime
     case .listDetails:
       guard let listURI = listURI else { return true }
       lastUpdate = listDetailUpdateTimes[listURI]
@@ -187,7 +171,6 @@ final class ListManager {
   
   enum CacheType {
     case userLists
-    case listMembers
     case listDetails
     case userMemberships
   }
@@ -430,10 +413,7 @@ final class ListManager {
       await MainActor.run {
         userLists.removeAll { $0.uri.description == listURI }
         listDetails.removeValue(forKey: listURI)
-        listMembers.removeValue(forKey: listURI)
-        listItems.removeValue(forKey: listURI)
         listDetailUpdateTimes.removeValue(forKey: listURI)
-        listMemberUpdateTimes.removeValue(forKey: listURI)
       }
       
       logger.info("Successfully deleted list: \(listURI)")
@@ -468,15 +448,6 @@ final class ListManager {
     logger.info("Adding member \(userDID) to list \(listURI)")
     
     do {
-      // Check if user is already in the list only when not skipped and cached
-      if !skipDuplicateCheck {
-        let isAlreadyMember = await MainActor.run {
-          listMembers[listURI]?.contains(where: { $0.did.didString() == userDID }) ?? false
-        }
-        if isAlreadyMember {
-          throw ListError.memberAlreadyAdded
-        }
-      }
       
       // Create list item record
       let listItem = AppBskyGraphListitem(
@@ -502,7 +473,6 @@ final class ListManager {
       
       // Update local cache state instead of invalidating and forcing re-fetch
       await MainActor.run {
-        listMemberUpdateTimes[listURI] = Date()
         if let details = listDetails[listURI] {
           let updatedCount = (details.listItemCount ?? 0) + 1
           listDetails[listURI] = AppBskyGraphDefs.ListView(
@@ -598,15 +568,6 @@ final class ListManager {
       
       // Update local cache state instead of invalidating and forcing re-fetch
       await MainActor.run {
-        listMemberUpdateTimes[listURI] = Date()
-        if var members = listMembers[listURI] {
-          members.removeAll { $0.did.didString() == userDID }
-          listMembers[listURI] = members
-        }
-        if var items = listItems[listURI] {
-          items.removeAll { $0.subject.did.didString() == userDID }
-          listItems[listURI] = items
-        }
         if let details = listDetails[listURI] {
           let updatedCount = max(0, (details.listItemCount ?? 1) - 1)
           listDetails[listURI] = AppBskyGraphDefs.ListView(
@@ -652,15 +613,8 @@ final class ListManager {
     }
   }
 
-  /// Finds the listitem record that puts `userDID` on `listURI`, using the full member list
-  /// (which carries each item's URI) and falling back to paging the account's listitem records.
+  /// Finds the listitem record that puts `userDID` on `listURI`, paging the account's listitem records.
   private func listItemURI(for userDID: String, in listURI: String, client: ATProtoClient) async throws -> ATProtocolURI? {
-    let cachedItem = await MainActor.run {
-      listItems[listURI]?.first(where: { $0.subject.did.didString() == userDID })?.uri
-    }
-    if let cachedItem {
-      return cachedItem
-    }
     var cursor: String?
     repeat {
       let (responseCode, recordsData) = try await client.com.atproto.repo.listRecords(
@@ -778,46 +732,6 @@ final class ListManager {
     }
   }
   
-  /// Get members of a specific list
-  func getListMembers(_ listURI: String, forceRefresh: Bool = false) async throws -> [AppBskyActorDefs.ProfileView] {
-    guard let client = client else {
-      throw ListError.clientNotInitialized
-    }
-    
-    // Check cache first
-    let cacheIsStale = await isCacheStale(for: .listMembers, listURI: listURI)
-    if !forceRefresh && !cacheIsStale {
-      if let cached = await listMembers[listURI] {
-        return cached
-      }
-    }
-    
-    logger.info("Getting list members for: \(listURI)")
-    
-    do {
-      // Page through every member so counts, duplicate checks and removals see the whole list.
-      let items = try await StarterPackService.shared.fetchAllMembers(
-        client: client,
-        listUri: try ATProtocolURI(uriString: listURI)
-      )
-      
-      let members = items.map { $0.subject }
-      
-      await MainActor.run {
-        listMembers[listURI] = members
-        listItems[listURI] = items
-        listMemberUpdateTimes[listURI] = Date()
-      }
-      
-      logger.info("Successfully loaded \(members.count) members for list \(listURI)")
-      return members
-      
-    } catch {
-      logger.error("Failed to get list members: \(error.localizedDescription)")
-      throw ListError.wrapping(error)
-    }
-  }
-  
   /// Page members of a specific list lazily
   func getListMembersPage(
     _ listURI: String,
@@ -845,42 +759,6 @@ final class ListManager {
   
   // MARK: - Convenience Methods
   
-  /// Check if a user is a member of a specific list
-  func isUserMember(userDID: String, of listURI: String) async throws -> Bool {
-    let cachedResult = await MainActor.run {
-      listMembers[listURI]?.contains { $0.did.didString() == userDID }
-    }
-    if let cachedResult {
-      return cachedResult
-    }
-    
-    guard let client = client else {
-      throw ListError.clientNotInitialized
-    }
-    
-    do {
-      let (responseCode, data) = try await client.app.bsky.graph.getListsWithMembership(
-        input: .init(
-          actor: try ATIdentifier(string: userDID),
-          limit: 100,
-          cursor: nil,
-          purposes: ["app.bsky.graph.defs#curatelist", "app.bsky.graph.defs#modlist"]
-        )
-      )
-      if responseCode == 200, let data = data {
-        for item in data.listsWithMembership {
-          if item.list.uri.description == listURI {
-            return item.listItem != nil
-          }
-        }
-      }
-    } catch {
-      logger.warning("getListsWithMembership failed in isUserMember, falling back: \(error.localizedDescription)")
-    }
-    
-    return false
-  }
-  
   /// Get all lists that the current user has created
   var cachedUserLists: [AppBskyGraphDefs.ListView] {
     get async {
@@ -888,8 +766,4 @@ final class ListManager {
     }
   }
   
-  /// Get cached members for a list (returns empty array if not cached)
-  func getCachedMembers(for listURI: String) async -> [AppBskyActorDefs.ProfileView] {
-    await listMembers[listURI] ?? []
-  }
 }

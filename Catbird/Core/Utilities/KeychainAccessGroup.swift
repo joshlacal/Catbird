@@ -8,6 +8,15 @@ enum KeychainAccessGroup {
   private static let logger = Logger(subsystem: "blue.catbird", category: "KeychainAccessGroup")
   private static let lock = NSLock()
   private static var cachedTeamPrefix: String?
+  /// Clears in-memory and persisted team prefix cache (e.g. on keychain entitlement failure)
+  static func invalidateCache() {
+    lock.lock()
+    cachedTeamPrefix = nil
+    lock.unlock()
+    let bundleID = Bundle.main.bundleIdentifier ?? "blue.catbird"
+    UserDefaults.standard.removeObject(forKey: "keychain_team_prefix_\(bundleID)")
+  }
+
 
   /// - Parameter suffix: The access group suffix (e.g. "blue.catbird.shared")
   /// - Returns: The fully-qualified access group, or nil if resolution fails
@@ -43,10 +52,26 @@ enum KeychainAccessGroup {
       let bundleID = Bundle.main.bundleIdentifier ?? "blue.catbird"
       let cacheKey = "keychain_team_prefix_\(bundleID)"
       if let persisted = UserDefaults.standard.string(forKey: cacheKey), !persisted.isEmpty {
+        let candidateGroup = persisted + suffix
+        // Validate candidate prefix cheaply: a read query returns errSecMissingEntitlement (-34018) if the group is invalid
+        let validateQuery: [CFString: Any] = [
+          kSecClass: kSecClassGenericPassword,
+          kSecAttrAccessGroup: candidateGroup,
+          kSecMatchLimit: kSecMatchLimitOne,
+          kSecReturnAttributes: false,
+        ]
+        let status = SecItemCopyMatching(validateQuery as CFDictionary, nil)
+        if status != errSecMissingEntitlement {
+          lock.lock()
+          cachedTeamPrefix = persisted
+          lock.unlock()
+          return candidateGroup
+        }
+        logger.warning("Cached keychain team prefix \(persisted) invalid (status \(status)); clearing cache")
+        UserDefaults.standard.removeObject(forKey: cacheKey)
         lock.lock()
-        cachedTeamPrefix = persisted
+        cachedTeamPrefix = nil
         lock.unlock()
-        return persisted + suffix
       }
 
       // SecTask APIs are unavailable on iOS; infer the Team ID prefix from the

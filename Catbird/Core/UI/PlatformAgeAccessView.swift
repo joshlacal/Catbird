@@ -29,10 +29,10 @@ struct PlatformAgeProtectedContent<ProtectedContent: View>: View, Equatable {
     guard lhs.operation == rhs.operation && lhs.safetyTarget == rhs.safetyTarget else {
       return false
     }
-    if let lhsKey = lhs.identityKey, let rhsKey = rhs.identityKey {
-      return lhsKey == rhsKey
+    guard let lhsKey = lhs.identityKey, let rhsKey = rhs.identityKey else {
+      return false
     }
-    return lhs.identityKey == nil && rhs.identityKey == nil
+    return lhsKey == rhsKey
   }
   var body: some View {
     let allowed = appState.ageAccess.allows(operation)

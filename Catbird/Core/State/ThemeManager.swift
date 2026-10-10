@@ -135,8 +135,32 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
     
     // MARK: - Initialization
     
+    private var fontChangeObserver: (any NSObjectProtocol)?
+
     init(fontManager: FontManager) {
         self.fontManager = fontManager
+        #if os(iOS)
+        fontChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FontChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                NavigationFontConfig.invalidateCache()
+                await self.applyToNavigationBar()
+                NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: self.fontManager)
+                await self.performOptimizedForceUpdate()
+            }
+        }
+        #endif
+    }
+
+    deinit {
+        if let observer = fontChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
     
     // MARK: - Methods
@@ -763,28 +787,5 @@ extension EnvironmentValues {
     var themeManager: ThemeManager? {
         get { self[ThemeManagerKey.self] }
         set { self[ThemeManagerKey.self] = newValue }
-    }
-}
-
-// MARK: - Transition Support
-
-struct ThemeTransitionModifier: ViewModifier {
-    let themeManager: ThemeManager
-    let appSettings: AppSettings?
-    
-    init(themeManager: ThemeManager, appSettings: AppSettings? = nil) {
-        self.themeManager = themeManager
-        self.appSettings = appSettings
-    }
-    
-    func body(content: Content) -> some View {
-        content
-    }
-}
-
-extension View {
-    /// Add smooth transitions when theme changes
-    func themeTransition(_ themeManager: ThemeManager, appSettings: AppSettings? = nil) -> some View {
-        self.modifier(ThemeTransitionModifier(themeManager: themeManager, appSettings: appSettings))
     }
 }

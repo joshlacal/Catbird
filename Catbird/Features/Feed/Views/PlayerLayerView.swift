@@ -22,6 +22,7 @@ struct PlayerLayerView: UIViewRepresentable {
   let gravity: AVLayerVideoGravity
   let shouldLoop: Bool
   let pausesOnDismantle: Bool
+  let clampsForwardBuffer: Bool
   var onLayerReady: ((AVPlayerLayer) -> Void)?
 
   /// Initialize the player view
@@ -29,18 +30,22 @@ struct PlayerLayerView: UIViewRepresentable {
   ///   - player: The AVPlayer to use
   ///   - gravity: Video gravity (defaults to resizeAspectFill)
   ///   - shouldLoop: Whether the video should loop (defaults to true)
+  ///   - pausesOnDismantle: Whether playback pauses when dismantled
+  ///   - clampsForwardBuffer: Whether to clamp preferredForwardBufferDuration to 2s
   ///   - onLayerReady: Optional callback when the player layer is ready
   init(
     player: AVPlayer,
     gravity: AVLayerVideoGravity = .resizeAspectFill,
     shouldLoop: Bool = true,
     pausesOnDismantle: Bool = true,
+    clampsForwardBuffer: Bool = true,
     onLayerReady: ((AVPlayerLayer) -> Void)? = nil
   ) {
     self.player = player
     self.gravity = gravity
     self.shouldLoop = shouldLoop
     self.pausesOnDismantle = pausesOnDismantle
+    self.clampsForwardBuffer = clampsForwardBuffer
     self.onLayerReady = onLayerReady
   }
 
@@ -85,6 +90,9 @@ struct PlayerLayerView: UIViewRepresentable {
     }
 
     func configurePlayer(for view: PlayerContainer, player: AVPlayer, shouldLoop: Bool) {
+      if parent.clampsForwardBuffer {
+        player.currentItem?.preferredForwardBufferDuration = 2
+      }
       player.actionAtItemEnd = .none
       view.pausesOnDismantle = parent.pausesOnDismantle
       view.shouldLoop = shouldLoop
@@ -264,6 +272,7 @@ struct PlayerLayerView: NSViewRepresentable {
   let gravity: AVLayerVideoGravity
   let shouldLoop: Bool
   let pausesOnDismantle: Bool
+  let clampsForwardBuffer: Bool
   var onLayerReady: ((AVPlayerLayer) -> Void)?
 
   init(
@@ -271,12 +280,14 @@ struct PlayerLayerView: NSViewRepresentable {
     gravity: AVLayerVideoGravity = .resizeAspectFill,
     shouldLoop: Bool = true,
     pausesOnDismantle: Bool = true,
+    clampsForwardBuffer: Bool = true,
     onLayerReady: ((AVPlayerLayer) -> Void)? = nil
   ) {
     self.player = player
     self.gravity = gravity
     self.shouldLoop = shouldLoop
     self.pausesOnDismantle = pausesOnDismantle
+    self.clampsForwardBuffer = clampsForwardBuffer
     self.onLayerReady = onLayerReady
   }
 
@@ -321,6 +332,9 @@ struct PlayerLayerView: NSViewRepresentable {
     }
 
     func configurePlayer(for view: PlayerContainerMac, player: AVPlayer, shouldLoop: Bool) {
+      if parent.clampsForwardBuffer {
+        player.currentItem?.preferredForwardBufferDuration = 2
+      }
       player.actionAtItemEnd = .none
       view.pausesOnDismantle = parent.pausesOnDismantle
       view.shouldLoop = shouldLoop

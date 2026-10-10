@@ -527,9 +527,14 @@ private struct RecordEmbedContainer: View {
     Group {
       // Render warm data on the first sizing pass, before the task starts.
       if let record = displayedRecord {
-        RecordEmbedView(record: record, path: $navigationPath)
-          .environment(\.postID, uriString)
-          .foregroundStyle(.primary)
+        switch record {
+        case .appBskyEmbedRecordViewNotFound, .appBskyEmbedRecordViewBlocked, .appBskyEmbedRecordViewDetached:
+          unavailableView
+        default:
+          RecordEmbedView(record: record, path: $navigationPath)
+            .environment(\.postID, uriString)
+            .foregroundStyle(.primary)
+        }
       } else if !isActiveAccount {
         EmptyView()
       } else if isUnavailable {

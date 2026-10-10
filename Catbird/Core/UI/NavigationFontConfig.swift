@@ -20,8 +20,34 @@ enum NavigationFontConfig {
             return manager
         }
         let manager = FontManager()
+        let defaults = UserDefaults.standard
+        let fontStyle = defaults.string(forKey: "fontStyle") ?? "system"
+        let fontSize = defaults.string(forKey: "fontSize") ?? "default"
+        let dynamicTypeEnabled = defaults.object(forKey: "dynamicTypeEnabled") != nil 
+            ? defaults.bool(forKey: "dynamicTypeEnabled") 
+            : true
+        let maxDynamicTypeSize = defaults.string(forKey: "maxDynamicTypeSize") ?? "accessibility1"
+        manager.fontStyle = fontStyle
+        manager.fontSize = fontSize
+        manager.dynamicTypeEnabled = dynamicTypeEnabled
+        manager.maxDynamicTypeSize = maxDynamicTypeSize
         sharedDefaultFontManager = manager
         return manager
+    }
+
+    /// Resolves the app's active FontManager from the current AppState (via AppStateManager.shared),
+    /// falling back to a default FontManager populated from UserDefaults if none is available.
+    static func resolveActiveFontManager() -> FontManager {
+        #if os(iOS)
+        if Thread.isMainThread {
+            if let activeManager = MainActor.assumeIsolated({
+                AppStateManager.shared.lifecycle.appState?.fontManager
+            }) {
+                return activeManager
+            }
+        }
+        #endif
+        return defaultFontManager()
     }
 
     /// Cached title font to avoid expensive Core Text operations
@@ -45,6 +71,7 @@ enum NavigationFontConfig {
         lastDynamicTypeEnabled = nil
         lastMaxContentSizeCategory = nil
         lastSystemContentSizeCategory = nil
+        sharedDefaultFontManager = nil
     }
 
     /// Check if cache is valid for current FontManager settings
@@ -186,14 +213,12 @@ enum NavigationFontConfig {
     
     /// Creates the custom large title font with Core Text variations (legacy method for backward compatibility)
     static func createLargeTitleFont() -> UIFont {
-        // Use default FontManager instance for backward compatibility
-        return createLargeTitleFont(fontManager: FontManager())
+        return createLargeTitleFont(fontManager: resolveActiveFontManager())
     }
     
     /// Creates the custom title font with Core Text variations (legacy method for backward compatibility)
     static func createTitleFont() -> UIFont {
-        // Use default FontManager instance for backward compatibility
-        return createTitleFont(fontManager: FontManager())
+        return createTitleFont(fontManager: resolveActiveFontManager())
     }
     
     // MARK: - Helper Methods
@@ -258,8 +283,7 @@ enum NavigationFontConfig {
     
     /// Apply custom fonts to a navigation bar appearance (legacy method for backward compatibility)
     static func applyFonts(to appearance: UINavigationBarAppearance) {
-        // Use shared default FontManager instance for backward compatibility
-        applyFonts(to: appearance, fontManager: defaultFontManager())
+        applyFonts(to: appearance, fontManager: resolveActiveFontManager())
     }
     
     // MARK: - Early Initialization
@@ -325,8 +349,7 @@ enum NavigationFontConfig {
     /// Force apply fonts to all current navigation bars in the app (legacy method for backward compatibility)
     /// Call this after theme changes to ensure fonts are respected
     static func forceApplyToAllNavigationBars() {
-        // Use shared default FontManager instance for backward compatibility
-        forceApplyToAllNavigationBars(fontManager: defaultFontManager())
+        forceApplyToAllNavigationBars(fontManager: resolveActiveFontManager())
     }
     
     /// Perform the actual font update (must be called on main thread)
@@ -342,7 +365,7 @@ enum NavigationFontConfig {
     
     /// Perform the actual font update (must be called on main thread) - legacy method
     private static func performFontUpdate() {
-        performFontUpdate(fontManager: defaultFontManager())
+        performFontUpdate(fontManager: resolveActiveFontManager())
     }
     
     /// Apply fonts to a specific navigation bar instance (for UIKit views) with FontManager integration
@@ -364,8 +387,7 @@ enum NavigationFontConfig {
     
     /// Apply fonts to a specific navigation bar instance (for UIKit views) - legacy method
     static func applyFonts(to navigationBar: UINavigationBar) {
-        // Use shared default FontManager instance for backward compatibility
-        applyFonts(to: navigationBar, fontManager: defaultFontManager())
+        applyFonts(to: navigationBar, fontManager: resolveActiveFontManager())
     }
     
     /// Recursively find and update navigation bars with custom fonts
@@ -392,7 +414,7 @@ enum NavigationFontConfig {
     
     /// Recursively find and update navigation bars with custom fonts - legacy method
     private static func forceUpdateNavigationBarsRecursively(in viewController: UIViewController?) {
-        forceUpdateNavigationBarsRecursively(in: viewController, fontManager: defaultFontManager())
+        forceUpdateNavigationBarsRecursively(in: viewController, fontManager: resolveActiveFontManager())
     }
     
     #else
@@ -406,11 +428,15 @@ enum NavigationFontConfig {
     }
 
     static func createLargeTitleFont() -> NSFont {
-        return createLargeTitleFont(fontManager: FontManager())
+        return createLargeTitleFont(fontManager: resolveActiveFontManager())
     }
 
     static func createTitleFont() -> NSFont {
-        return createTitleFont(fontManager: FontManager())
+        return createTitleFont(fontManager: resolveActiveFontManager())
+    }
+
+    static func forceApplyToAllNavigationBars() {
+        // No-op on macOS
     }
 
     /// No-op on macOS (no font caching needed for navigation bars)

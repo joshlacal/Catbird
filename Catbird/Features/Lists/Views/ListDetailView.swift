@@ -79,6 +79,10 @@ final class ListDetailViewModel {
   
   @MainActor
   func loadInitialMembers() async {
+    guard !isLoadingMoreMembers else { return }
+    isLoadingMoreMembers = true
+    errorMessage = nil
+    defer { isLoadingMoreMembers = false }
     membersCursor = nil
     hasMoreMembers = true
     do {
@@ -92,6 +96,8 @@ final class ListDetailViewModel {
       hasMoreMembers = page.cursor != nil && !page.items.isEmpty
     } catch {
       logger.error("Failed to load initial members: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingError = true
     }
   }
   
@@ -531,11 +537,19 @@ struct ListDetailView: View {
   @ViewBuilder
   private func membersView(viewModel: ListDetailViewModel) -> some View {
     List {
-      if viewModel.isLoading && viewModel.members.isEmpty {
+      if (viewModel.isLoading || viewModel.isLoadingMoreMembers) && viewModel.members.isEmpty {
         ProgressView()
           .frame(maxWidth: .infinity, minHeight: 120)
           .listRowBackground(Color.clear)
           .listRowSeparator(.hidden)
+      } else if let error = viewModel.errorMessage, viewModel.members.isEmpty {
+        ContentUnavailableView(
+          "Could Not Load Members",
+          systemImage: "exclamationmark.triangle",
+          description: Text(error)
+        )
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
       } else if viewModel.members.isEmpty {
         ContentUnavailableView(
           "No Members",

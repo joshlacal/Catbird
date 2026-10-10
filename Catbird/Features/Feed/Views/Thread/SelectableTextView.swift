@@ -20,6 +20,31 @@ class SelectableSelfSizingTextView: UITextView {
   private var cachedMeasurementHeight: CGFloat = -1
   private var cachedMeasurementLength: Int = -1
 
+  func invalidateMeasurement() {
+    cachedMeasurementWidth = -1
+    cachedMeasurementHeight = -1
+    cachedMeasurementLength = -1
+    invalidateIntrinsicContentSize()
+  }
+
+  override var attributedText: NSAttributedString! {
+    didSet {
+      invalidateMeasurement()
+    }
+  }
+
+  override var text: String! {
+    didSet {
+      invalidateMeasurement()
+    }
+  }
+
+  override var font: UIFont? {
+    didSet {
+      invalidateMeasurement()
+    }
+  }
+
   private func measuredHeight(for width: CGFloat) -> CGFloat? {
     guard width.isFinite, width > 0 else { return nil }
 
@@ -98,8 +123,7 @@ class SelectableSelfSizingTextView: UITextView {
     let currentWidth = bounds.width
     if abs(currentWidth - lastKnownWidth) > 1 {
       lastKnownWidth = currentWidth
-      cachedMeasurementWidth = -1
-      invalidateIntrinsicContentSize()
+      invalidateMeasurement()
     }
   }
 
@@ -111,8 +135,7 @@ class SelectableSelfSizingTextView: UITextView {
       let currentWidth = bounds.width
       if abs(currentWidth - lastKnownWidth) > 1 {
         lastKnownWidth = currentWidth
-        cachedMeasurementWidth = -1
-        invalidateIntrinsicContentSize()
+        invalidateMeasurement()
         setNeedsLayout()
       }
     }
@@ -235,7 +258,7 @@ struct SelectableTextView: UIViewRepresentable {
 
       if uiView.attributedText != nsAttributedString {
         uiView.attributedText = nsAttributedString
-        uiView.invalidateIntrinsicContentSize()
+        uiView.invalidateMeasurement()
         uiView.setNeedsLayout()
       }
     }

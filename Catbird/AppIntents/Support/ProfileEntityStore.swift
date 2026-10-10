@@ -105,7 +105,7 @@ actor ProfileEntityStore {
     }
     flushTask?.cancel()
     flushTask = Task(priority: .utility) { [weak self] in
-      try? await Task.sleep(nanoseconds: UInt64(1_500_000_000))
+      try? await Task.sleep(nanoseconds: UInt64(flushInterval * 1_000_000_000))
       guard !Task.isCancelled else { return }
       await self?.flush()
     }

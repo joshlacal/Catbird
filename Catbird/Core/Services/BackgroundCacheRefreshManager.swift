@@ -20,6 +20,7 @@ enum BackgroundCacheRefreshManager {
   private static var didRegister = false
   private static var lastScheduleTime: Date?
 
+  @MainActor
   static func registerIfNeeded() {
     guard !didRegister else {
       logger.debug("Cache BGTask already registered")
@@ -44,8 +45,14 @@ enum BackgroundCacheRefreshManager {
     didRegister = true
     logger.info("Registered cache background refresh task")
   }
+  @MainActor
+  static func cancel() {
+    BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+  }
 
+  @MainActor
   static func schedule() {
+
       if !didRegister {
         logger.info("Lazily registering cache BGTask before scheduling")
         registerIfNeeded()
@@ -82,7 +89,9 @@ enum BackgroundCacheRefreshManager {
     let bgTask = CatbirdBackgroundTask(name: "BGTask-\(taskIdentifier)")
 
     // Schedule next refresh
-    schedule()
+    Task { @MainActor in
+      schedule()
+    }
 
     let refreshWork = Task<Bool, Never> {
       // Capture AppContext on main actor before starting background work

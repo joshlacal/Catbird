@@ -4,6 +4,7 @@ import Petrel
 struct SettingsAvatarToolbarButton: View {
   @Environment(AppState.self) private var appState
   @Environment(AppStateManager.self) private var appStateManager
+  @MainActor private static var lastKnownAccountDIDs: Set<String> = []
   @MainActor private static var lastProfileRefreshTime: Date?
   private static let refreshThrottleInterval: TimeInterval = 600 // 10 minutes
   @State private var avatarImages: [String: PlatformImage] = [:]
@@ -53,7 +54,7 @@ struct SettingsAvatarToolbarButton: View {
       .accessibilityLabel("Settings")
       .accessibilityHint("Opens Settings. Touch and hold to switch accounts.")
       .task(id: accountsTaskID(accounts)) {
-        await refreshAccountProfiles()
+        await refreshAccountProfiles(for: accounts)
         await loadAvatars(for: appStateManager.authentication.availableAccounts)
       }
     } else {
@@ -111,14 +112,21 @@ struct SettingsAvatarToolbarButton: View {
   }
 
   /// Refreshes saved accounts' names and avatars so the menu never falls back to an identifier.
-  /// Throttled to avoid network requests and UserDefaults churn on every tab switch or toolbar appearance.
+  /// Throttled to avoid network requests and UserDefaults churn on every tab switch or toolbar appearance,
+  /// but refreshes immediately whenever the account list changes or an account lacks cached profile data.
   @MainActor
-  private func refreshAccountProfiles() async {
+  private func refreshAccountProfiles(for accounts: [AuthenticationManager.AccountInfo]) async {
+    let currentDIDs = Set(accounts.map(\.did))
+    let accountListChanged = currentDIDs != Self.lastKnownAccountDIDs
+    let anyMissingProfile = accounts.contains { $0.cachedAvatarURL == nil || $0.cachedDisplayName == nil }
     let now = Date()
-    if let last = Self.lastProfileRefreshTime, now.timeIntervalSince(last) < Self.refreshThrottleInterval {
+    if !accountListChanged && !anyMissingProfile,
+       let last = Self.lastProfileRefreshTime,
+       now.timeIntervalSince(last) < Self.refreshThrottleInterval {
       return
     }
     guard let client = appState.atProtoClient else { return }
+    Self.lastKnownAccountDIDs = currentDIDs
     Self.lastProfileRefreshTime = now
     await appStateManager.authentication.refreshCachedAccountProfiles(using: client)
   }

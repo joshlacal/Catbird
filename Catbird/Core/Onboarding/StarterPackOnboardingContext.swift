@@ -86,9 +86,16 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         }
     }
     
+    private var authObserverTask: Task<Void, Never>?
+    
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         loadFromStorage()
+        startAuthObservation()
+    }
+    
+    deinit {
+        authObserverTask?.cancel()
     }
     
     private func loadFromStorage() {
@@ -128,11 +135,34 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
     func setPendingContext(_ context: StarterPackPendingContext) {
         self.activeFlowID = context.flowID
         self.pendingContext = context
+        resetStoredState()
     }
     
     func clearPendingContext() {
         self.activeFlowID = nil
         self.pendingContext = nil
+        resetStoredState()
+    }
+    
+    func resetStoredState() {
+        self.storedResult = nil
+        self.storedError = nil
+        self.activeFinalizationTask?.cancel()
+        self.activeFinalizationTask = nil
+    }
+    
+    private func startAuthObservation() {
+        authObserverTask = Task { [weak self] in
+            var lastDID: String?
+            for await state in await AppStateManager.shared.authentication.stateChanges {
+                guard !Task.isCancelled, let self else { return }
+                let currentDID = state.userDID
+                if currentDID != lastDID {
+                    lastDID = currentDID
+                    self.resetStoredState()
+                }
+            }
+        }
     }
     
     /// Finalizes starter pack join post-authentication by bulk following members and pinning feeds.
@@ -244,32 +274,28 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         // 3. Overlap preference pin sync (not a repo write) with bulk follow repo operations
         async let pinFeedsTask: Int = {
             guard !feedURIs.isEmpty else { return 0 }
-            do {
-                let prefs = try await appState.preferencesManager.getPreferences()
-                var currentPinned = prefs.pinnedFeeds
-                var addedCount = 0
-                for feedURI in feedURIs {
-                    if !currentPinned.contains(feedURI) {
-                        currentPinned.append(feedURI)
-                        addedCount += 1
-                    }
+            let prefs = try await appState.preferencesManager.getPreferences()
+            var currentPinned = prefs.pinnedFeeds
+            var addedCount = 0
+            for feedURI in feedURIs {
+                if !currentPinned.contains(feedURI) {
+                    currentPinned.append(feedURI)
+                    addedCount += 1
                 }
-                if addedCount > 0 {
-                    try await appState.preferencesManager.setPinnedFeeds(currentPinned)
-                }
-                return addedCount
-            } catch {
-                return 0
             }
+            if addedCount > 0 {
+                try await appState.preferencesManager.setPinnedFeeds(currentPinned)
+            }
+            return addedCount
         }()
         
         // 4. Bulk follow members with via strong reference using StarterPackService (idempotent)
         var followedCount = 0
         if !memberItems.isEmpty {
-            let eligible = memberItems.filter { item in
-                let did = item.subject.did.didString()
-                return did != appState.userDID && item.subject.viewer?.following == nil
-            }
+            let eligible = StarterPackService.shared.filterEligibleMembers(
+                memberItems,
+                currentAccountDID: appState.userDID
+            )
             let dids = eligible.map { $0.subject.did }
             if !dids.isEmpty {
                 followedCount = try await StarterPackService.shared.bulkFollow(
@@ -364,10 +390,11 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
             )
         }
         
-        // 6. Clear pending context ONLY after every required step has succeeded
-        clearPendingContext()
+        // 6. Wait for feed pinning before clearing pending context
+        let pinnedFeedsCount = try await pinFeedsTask
         
-        let pinnedFeedsCount = await pinFeedsTask
+        // 7. Clear pending context ONLY after every required step has succeeded
+        clearPendingContext()
         logger.info("Starter pack onboarding finalization completed: followed \(followedCount) members, pinned \(pinnedFeedsCount) feeds")
         return StarterPackFinalizationResult(
             followedCount: followedCount,

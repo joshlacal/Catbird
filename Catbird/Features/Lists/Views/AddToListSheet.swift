@@ -109,12 +109,14 @@ final class AddToListSheetViewModel {
   /// Picks up lists created from this sheet, which `ListManager` adds to its cache.
   @MainActor
   func syncCreatedLists() {
-    let cachedLists = appState.listManager.userLists
-      .filter { $0.purpose != .appbskygraphdefsreferencelist }
-    for list in cachedLists where membershipStatus[list.uri.description] == nil {
+    let known = Set(userLists.map { $0.uri.description })
+    let created = appState.listManager.userLists.filter {
+      $0.purpose != .appbskygraphdefsreferencelist && !known.contains($0.uri.description)
+    }
+    for list in created {
       membershipStatus[list.uri.description] = false
     }
-    userLists = cachedLists
+    userLists.insert(contentsOf: created, at: 0)
   }
 
   // MARK: - List Operations

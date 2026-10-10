@@ -65,6 +65,7 @@ final class FeedWidgetDataProvider {
       lastSignatures.removeAll()
       refreshWidgetConfigurations()
     }
+    self.accountDID = accountDID
     // Write active DID so widget knows which account is current
     sharedDefaults?.set(accountDID, forKey: "activeAccountDID")
     clearExportedPostsIfRequired()
@@ -193,9 +194,7 @@ final class FeedWidgetDataProvider {
     }
     guard !widgetSources.isEmpty else { return }
     lastSignatures.removeAll()
-    var wroteAny = false
     for (configKey, source) in widgetSources where writeWidgetData(source, configKey: configKey) {
-      wroteAny = true
       reloadFeedTimelines(for: configKey)
     }
   }
@@ -228,6 +227,7 @@ final class FeedWidgetDataProvider {
   /// account and feed preferences; no age response or verification state enters the App Group.
   private func clearExportedPosts() {
     widgetSources.removeAll()
+    lastSignatures.removeAll()
     if let sharedDefaults {
       for key in sharedDefaults.dictionaryRepresentation().keys
       where key.hasPrefix("widgetData_") || key.hasPrefix(FeedWidgetConstants.feedDataKey) {
@@ -367,24 +367,8 @@ final class FeedWidgetDataProvider {
           self.configuredFeedKeys = []
         } else {
           self.hasConfiguredFeedWidgets = true
-          var keys = Set<String>()
-          var allowsAllFeeds = false
-          for widget in feedWidgets {
-            if widget.kind == "CatbirdFeedRectangular" {
-              keys.insert(FeedWidgetConstants.timelineConfigKey)
-            } else if widget.kind == "CatbirdFeedWidget" {
-              keys.insert(FeedWidgetConstants.timelineConfigKey)
-              let desc = String(describing: widget.configuration)
-              if let range = desc.range(of: "at://") {
-                let sub = desc[range.lowerBound...]
-                let uri = sub.prefix(while: { !$0.isWhitespace && $0 != "\"" && $0 != ")" && $0 != "," && $0 != ">" })
-                keys.insert(FeedWidgetConstants.configKey(forFeedURI: String(uri)))
-              } else if desc.contains("pinned") || desc.contains("saved") || desc.contains("selectedFeed") {
-                allowsAllFeeds = true
-              }
-            }
-          }
-          self.configuredFeedKeys = allowsAllFeeds ? nil : keys
+          self.configuredFeedKeys = feedWidgets.allSatisfy { $0.kind == "CatbirdFeedRectangular" }
+            ? [FeedWidgetConstants.timelineConfigKey] : nil
         }
       } catch {
         self?.hasConfiguredFeedWidgets = true

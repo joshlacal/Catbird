@@ -153,7 +153,7 @@ struct TrendingTopicResolvedImageTests {
     store.retainImage(image, for: lateRequest, revision: revision)
     #expect(store.image(for: lateRequest) == nil, "Late completion with obsolete revision is rejected")
     #expect(store.image(for: request) != nil, "Returning to active preserves previously retained stills")
-    // Background transition explicitly clears stills to reclaim memory.
+    // Background transition explicitly clears entries and stills to reclaim memory and refresh moderation.
     NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
     #expect(store.image(for: request) == nil, "Background transition clears retained stills")
   }

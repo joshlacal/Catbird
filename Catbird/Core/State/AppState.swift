@@ -1602,6 +1602,7 @@ final class AppState {
     @MainActor
     func notifyAccountSwitched() {
         logger.info("Account switched notification")
+        ThreadManager.clearPrefillCache()
         stateInvalidationBus.notifyAccountSwitched()
     }
 

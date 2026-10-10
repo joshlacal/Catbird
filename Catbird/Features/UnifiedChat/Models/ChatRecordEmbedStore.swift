@@ -31,11 +31,14 @@ final class ChatRecordEmbedStore {
 
   func cachedRecord(uri: String, appState: AppState) -> Record? {
     guard isActive(appState), let client = appState.atProtoClient else { return nil }
-    return records[Key(account: appState.userDID, state: ObjectIdentifier(appState),
-      client: ObjectIdentifier(client), uri: uri)]
+    guard let record = records[Key(account: appState.userDID, state: ObjectIdentifier(appState),
+      client: ObjectIdentifier(client), uri: uri)] else { return nil }
+    guard case .appBskyEmbedRecordViewRecord = record else { return nil }
+    return record
   }
 
   func seed(_ record: Record, uri: String, appState: AppState) {
+    guard case .appBskyEmbedRecordViewRecord = record else { return }
     guard isActive(appState), let client = appState.atProtoClient else { return }
     let key = Key(account: appState.userDID, state: ObjectIdentifier(appState),
       client: ObjectIdentifier(client), uri: uri)

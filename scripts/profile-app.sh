@@ -4,7 +4,7 @@
 #
 # Templates: time-profiler, allocations, leaks, swiftui, app-launch, swift-concurrency, animation, network
 # Default: time-profiler for 30s
-# Device UDID default: 00008130-0016681004E1401C (overridable via env DEVICE_UDID)
+# Device UDID: required via env DEVICE_UDID or --device <id>
 #
 # Compatible with bash 3.2+.
 
@@ -14,9 +14,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Device identifiers
-# Physical device: iPhone UDID (overridable via env DEVICE_UDID)
-DEFAULT_DEVICE_UDID="00008130-0016681004E1401C"
-DEVICE_UDID="${DEVICE_UDID:-$DEFAULT_DEVICE_UDID}"
+# Physical device: iPhone UDID (required via env DEVICE_UDID or --device <id>)
+DEVICE_UDID="${DEVICE_UDID:-}"
 
 DERIVED_DATA="${DERIVED_DATA:-${PROJECT_ROOT}/../build/DerivedData-baseline}"
 TRACES_DIR="${TRACES_DIR:-${PROJECT_ROOT}/../build/traces}"
@@ -84,7 +83,7 @@ while [ $# -gt 0 ]; do
       echo "Options:"
       echo "  -d, --derived-data <path>  DerivedData output path"
       echo "  --duration <duration>      Trace duration (default: 30s)"
-      echo "  --device <id>              Device UDID (default: $DEFAULT_DEVICE_UDID)"
+      echo "  --device <id>              Device UDID (or set DEVICE_UDID env var)"
       echo "  --output-dir <path>        Directory to store traces"
       echo "  --output-name <name>       Custom output trace name"
       echo "  --skip-build               Skip xcodebuild"
@@ -106,6 +105,11 @@ fi
 if [ ${#POSITIONAL_ARGS[@]} -ge 3 ]; then
   OUTPUT_NAME="${POSITIONAL_ARGS[2]}"
 fi
+if [ -z "$DEVICE_UDID" ]; then
+  echo "Error: Device UDID is required. Set DEVICE_UDID env var or pass --device <UDID>." >&2
+  exit 1
+fi
+
 
 TEMPLATE=$(resolve_template "$TEMPLATE_KEY")
 

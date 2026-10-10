@@ -7,7 +7,7 @@
 # Options:
 #   -d, --derived-data <path>  DerivedData output path (default: ../build/DerivedData-baseline)
 #   --duration <duration>      Trace duration (e.g. 30s, default: 30s)
-#   --device <id>              Device UDID or CoreDevice ID
+#   --device <id>              Device UDID (required, or set DEVICE_UDID env var)
 #   --skip-build               Skip xcodebuild and use existing built app
 #   --output-dir <path>        Directory to store traces (default: ../build/traces)
 #
@@ -23,9 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Device identifiers
-# Physical device: iPhone UDID (overridable via env DEVICE_UDID)
-DEFAULT_DEVICE_UDID="00008130-0016681004E1401C"
-DEVICE_UDID="${DEVICE_UDID:-$DEFAULT_DEVICE_UDID}"
+# Physical device: iPhone UDID (required via env DEVICE_UDID or --device <id>)
+DEVICE_UDID="${DEVICE_UDID:-}"
 
 DERIVED_DATA="${PROJECT_ROOT}/../build/DerivedData-baseline"
 TRACES_DIR="${PROJECT_ROOT}/../build/traces"
@@ -71,10 +70,6 @@ while [ $# -gt 0 ]; do
       DEVICE_UDID="$2"
       shift 2
       ;;
-    --coredevice)
-      COREDEVICE_ID="$2"
-      shift 2
-      ;;
     --output-dir)
       TRACES_DIR="$2"
       shift 2
@@ -93,6 +88,11 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -z "$DEVICE_UDID" ]; then
+  echo "Error: Device UDID is required. Set DEVICE_UDID env var or pass --device <UDID>." >&2
+  exit 1
+fi
 
 if [ ${#TEMPLATES[@]} -eq 0 ]; then
   TEMPLATES=("Time Profiler")

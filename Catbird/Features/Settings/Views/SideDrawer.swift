@@ -252,7 +252,13 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             if !isDrawerOpen && !canOpen {
               return
             }
-            if !hasEverOpened { hasEverOpened = true }
+            if !hasEverOpened {
+              var transaction = Transaction()
+              transaction.disablesAnimations = true
+              withTransaction(transaction) {
+                hasEverOpened = true
+              }
+            }
             isDragging = true
             if isDrawerOpen {
               dragOffset = min(0, translation)
@@ -305,6 +311,15 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     // edge. Children that already manage their own safe area (NavigationStack,
     // TabView, etc.) are unaffected.
     .ignoresSafeArea()
+    .task {
+      // Lazily pre-mount FeedsStartPage after launch and the initial feed frames settle,
+      // preventing a frame drop on the first pan gesture while keeping cold launch lean.
+      try? await Task.sleep(for: .milliseconds(600))
+      guard !Task.isCancelled else { return }
+      if !hasEverOpened {
+        hasEverOpened = true
+      }
+    }
   }
 }
 

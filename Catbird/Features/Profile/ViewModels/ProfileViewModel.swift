@@ -66,6 +66,9 @@ import AppKit
     if labelerDetails != nil {
       return true
     }
+    if userDID == ModerationPrefs.blueskyModerationDID {
+      return true
+    }
     // Check if associated.labeler is explicitly true (not just present)
     if let labeler = profile?.associated?.labeler, labeler == true {
       return true
@@ -113,8 +116,13 @@ import AppKit
 
   // Check if this is the current user's profile - comparing correctly
   var isCurrentUser: Bool {
-    guard let profile = profile else { return false }
-    return profile.did.didString() == currentUserDID
+    if let profile = profile {
+      return profile.did.didString() == currentUserDID
+    }
+    if let currentUserDID = currentUserDID, !currentUserDID.isEmpty {
+      return userDID == currentUserDID
+    }
+    return false
   }
 
   // MARK: - Initialization
@@ -124,6 +132,9 @@ import AppKit
     self.userDID = userDID
     self.currentUserDID = currentUserDID
     self.stateInvalidationBus = stateInvalidationBus
+    if userDID == ModerationPrefs.blueskyModerationDID {
+      self.selectedProfileTab = .labelerInfo
+    }
     
       logger.debug("ProfileViewModel[\(self.instanceId)]: Initializing for userDID: \(userDID)")
     
@@ -364,7 +375,7 @@ import AppKit
   /// Loads known followers - people who follow this profile and are also followed by the current user
   func loadKnownFollowers(reset: Bool = false) async {
     let actor = profile?.did.didString() ?? userDID
-    guard let client = client, !actor.isEmpty, actor != "fallback", actor != "unknown", !self.isCurrentUser, !isLoadingKnownFollowers else { return }
+    guard let client = client, !actor.isEmpty, actor != "fallback", actor != "unknown", actor != currentUserDID, !self.isCurrentUser, !isLoadingKnownFollowers else { return }
 
     if !reset && !_knownFollowers.isEmpty {
       return
@@ -669,23 +680,6 @@ import AppKit
 
   private enum FeedType {
     case posts, replies, media
-  }
-
-  // MARK: - SwiftData Caching for Profile Tabs
-
-  /// Computes a unique feed key for this profile tab for SwiftData persistence
-  func profileFeedKey(for tab: ProfileTab) -> String {
-    let base = "author:\(userDID)"
-    let baseKey: String
-    switch tab {
-    case .posts: baseKey = base + ":posts"
-    case .replies: baseKey = base + ":replies"
-    case .media: baseKey = base + ":media"
-    case .likes: baseKey = base + ":likes"
-    default: baseKey = base + ":other"
-    }
-    let account = currentUserDID ?? "unknown-account"
-    return "\(account)-\(baseKey)"
   }
 
 

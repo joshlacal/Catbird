@@ -85,7 +85,7 @@ final class TrendingTopicMediaStore {
     setActive(UIApplication.shared.applicationState == .active)
     activityObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
       object: nil, queue: .main) { [weak self] _ in
-        // Refresh viewer metadata after another client or a background App Intent changed moderation.
+        // Resume active state when returning from resign-active (Control Center / notification shade).
         MainActor.assumeIsolated { self?.setActive(true) }
       }
     inactivityObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
@@ -94,7 +94,8 @@ final class TrendingTopicMediaStore {
       }
     backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
       object: nil, queue: .main) { [weak self] _ in
-        MainActor.assumeIsolated { self?.retainedImages.removeAll() }
+        // Refresh viewer metadata and invalidate cached previews when entering background so external blocks/mutes are honored on next foreground.
+        MainActor.assumeIsolated { self?.invalidateForGraphChange() }
       }
     memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
       object: nil, queue: .main) { [weak self] _ in
@@ -204,6 +205,7 @@ final class TrendingTopicMediaStore {
       try Task.checkCancellation()
       guard isActive, revision == requestRevision else { return }
       cache(posts: posts, quotedPosts: quotedPosts, key: key, lifetime: 900)
+    } catch is CancellationError {
       // Cancellation does not poison a later visible row's cache.
     } catch {
       guard isActive, !Task.isCancelled, revision == requestRevision else { return }

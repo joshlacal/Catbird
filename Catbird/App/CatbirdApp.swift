@@ -748,6 +748,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   @MainActor
   private func initializeModelContainer() async {
+    if case .failed = appStateManager.modelContainerState {
+      appStateManager.modelContainerState = .loading
+    }
     guard case .loading = appStateManager.modelContainerState else { return }
     logger.info("📦 Requesting off-main ModelContainer initialization")
     let result = await Task.detached(priority: .userInitiated) {
@@ -896,9 +899,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
         case .failed(let error):
           ErrorRecoveryView(error: error, retry: {
-            Task {
-              await initializeModelContainer()
-            }
+            appStateManager.modelContainerState = .loading
           })
     }
   }

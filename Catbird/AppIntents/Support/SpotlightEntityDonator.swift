@@ -43,6 +43,7 @@ actor SpotlightEntityDonator {
   private var donatedIDs = Set<String>()
   private var donatedSignatures = Set<String>()
   private var donationOrder: [String] = []
+  private var signatureOrder: [String] = []
   private let capacity = 2000
 
   /// Batching buffer within a ~1 s window
@@ -266,6 +267,7 @@ actor SpotlightEntityDonator {
     pendingPostSignatures.removeAll()
     pendingProfileEntities.removeAll()
     donatedSignatures.removeAll()
+    signatureOrder.removeAll()
     donatedIDs.removeAll()
     donationOrder.removeAll()
     postVerdicts.removeAll()
@@ -276,7 +278,7 @@ actor SpotlightEntityDonator {
   private func scheduleBatchFlush(context: ExportContext) {
     guard batchTask == nil else { return }
     batchTask = Task { [weak self] in
-      try? await Task.sleep(nanoseconds: 1_000_000_000)
+      try? await Task.sleep(nanoseconds: batchWindowNanoseconds)
       guard !Task.isCancelled else { return }
       await self?.flushPendingBatch(context: context)
     }
@@ -299,25 +301,19 @@ actor SpotlightEntityDonator {
     pendingProfileEntities.removeAll()
 
     if !posts.isEmpty {
-      await index(posts, context: context)
-      for post in posts {
-        if let sig = postSigs[post.id] {
-          rememberSignature(sig)
-        }
-      }
+      await index(posts, signatures: postSigs, context: context)
     }
     if !profiles.isEmpty {
-      await index(profiles, context: context)
+      await index(profiles, signatures: nil, context: context)
     }
   }
 
   private func rememberSignature(_ signature: String) {
     guard donatedSignatures.insert(signature).inserted else { return }
-    donationOrder.append(signature)
-    if donationOrder.count > capacity {
-      let evicted = donationOrder.removeFirst()
+    signatureOrder.append(signature)
+    if signatureOrder.count > capacity {
+      let evicted = signatureOrder.removeFirst()
       donatedSignatures.remove(evicted)
-      donatedIDs.remove(evicted)
     }
   }
 
@@ -348,34 +344,47 @@ actor SpotlightEntityDonator {
   }
 
   private func index<Entity: IndexedEntity>(
-    _ entities: [Entity], context: ExportContext
+    _ entities: [Entity], signatures: [String: String]? = nil, context: ExportContext
   ) async where Entity.ID == String {
     let mutation = enqueueIndexMutation { [weak self] in
-      await self?.performIndex(entities, context: context)
+      await self?.performIndex(entities, signatures: signatures, context: context)
     }
     await mutation.value
   }
 
   private func performIndex<Entity: IndexedEntity>(
-    _ entities: [Entity], context: ExportContext
+    _ entities: [Entity], signatures: [String: String]? = nil, context: ExportContext
   ) async where Entity.ID == String {
     guard await isCurrent(context) else { return }
-    let fresh = Array(entities.filter { !donatedIDs.contains($0.id) }.prefix(batchLimit))
+    let fresh = entities.filter { !donatedIDs.contains($0.id) }
     guard !fresh.isEmpty else { return }
-    var indexed = false
-    do {
-      try await CSSearchableIndex.default().indexAppEntities(fresh)
-      indexed = true
-    } catch {
-      logger.warning("Spotlight donation failed for \(fresh.count) entities: \(error.localizedDescription)")
+
+    for i in stride(from: 0, to: fresh.count, by: batchLimit) {
+      guard await isCurrent(context) else {
+        await removeIndexedEntities()
+        return
+      }
+      let chunk = Array(fresh[i..<min(i + batchLimit, fresh.count)])
+      var indexed = false
+      do {
+        try await CSSearchableIndex.default().indexAppEntities(chunk)
+        indexed = true
+      } catch {
+        logger.warning("Spotlight donation failed for \(chunk.count) entities: \(error.localizedDescription)")
+      }
+      guard await isCurrent(context) else {
+        // Still inside the same mutation queue: no later index operation can race this cleanup.
+        await removeIndexedEntities()
+        return
+      }
+      guard indexed else { continue }
+      for entity in chunk {
+        remember(entity.id)
+        if let sig = signatures?[entity.id] {
+          rememberSignature(sig)
+        }
+      }
     }
-    guard await isCurrent(context) else {
-      // Still inside the same mutation queue: no later index operation can race this cleanup.
-      await removeIndexedEntities()
-      return
-    }
-    guard indexed else { return }
-    for entity in fresh { remember(entity.id) }
   }
 
   private func remember(_ id: String) {

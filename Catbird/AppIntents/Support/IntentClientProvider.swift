@@ -101,8 +101,10 @@ actor IntentClientProvider {
     // If the active AppState already evaluated age access for this account, reuse its decision
     let activeRequirement: PlatformAgeSignal.Requirement? = await MainActor.run {
       guard let appState = AppStateManager.shared.lifecycle.appState,
-            appState.userDID == resolvedDID else { return nil }
-      return appState.ageAccess.signal.requirement
+            appState.userDID == resolvedDID,
+            !appState.ageAccess.isCheckingRequirement else { return nil }
+      let requirement = appState.ageAccess.signal.requirement
+      return requirement == .unavailable ? nil : requirement
     }
 
     if let activeRequirement {

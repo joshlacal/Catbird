@@ -166,6 +166,7 @@ struct ProfileRowView: View {
         switch effectiveStatus {
         case .blocking:
             Button {
+                showUnblockConfirmation = true
             } label: {
                 buttonLabel("Unblock", color: .white, backgroundColor: .red)
             }

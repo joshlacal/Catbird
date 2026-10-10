@@ -540,7 +540,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       guard let self else { return }
       defer {
         self.unreadCheckTask = nil
-        self.lastUnreadCheckAt = Date()
       }
       await self.checkUnreadNotifications()
     }
@@ -1287,6 +1286,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       guard !Task.isCancelled,
         isCurrentNotificationClient(client, generation: generation, accountDID: did)
       else { return }
+      lastUnreadCheckAt = Date()
       if count != unreadCount {
         unreadCount = count
 
@@ -1331,6 +1331,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
     } catch {
       notificationLogger.error("Error checking unread notifications: \(error.localizedDescription)")
+      lastUnreadCheckAt = Date()
     }
   }
 

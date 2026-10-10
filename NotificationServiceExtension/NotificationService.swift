@@ -363,7 +363,7 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// Base directory for the shared NSE avatar disk cache in the App Group.
-  private static var avatarCacheDirectory: URL? {
+  private static var avatarCacheDirectory: URL {
     let base = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: appGroupSuite
     )?.appendingPathComponent("Library/Caches/NSEAvatarCache", isDirectory: true)
@@ -379,21 +379,20 @@ class NotificationService: UNNotificationServiceExtension {
   ) async {
     let thumbnailURL = Self.thumbnailAvatarURL(from: rawURL)
     let fileKey = Self.sha256Hex(thumbnailURL.absoluteString)
+    let cacheDir = Self.avatarCacheDirectory
 
     // Check disk cache
-    if let cacheDir = Self.avatarCacheDirectory {
-      if let contents = try? FileManager.default.contentsOfDirectory(
-        at: cacheDir,
-        includingPropertiesForKeys: [.contentModificationDateKey]
-      ),
-        let match = contents.first(where: { $0.deletingPathExtension().lastPathComponent == fileKey })
-      {
-        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: match.path)
-        let ext = match.pathExtension
-        let mime = ext == "png" ? "image/png" : (ext == "gif" ? "image/gif" : "image/jpeg")
-        if attachFile(at: match, to: content, mimeType: mime) {
-          return
-        }
+    if let contents = try? FileManager.default.contentsOfDirectory(
+      at: cacheDir,
+      includingPropertiesForKeys: [.contentModificationDateKey]
+    ),
+      let match = contents.first(where: { $0.deletingPathExtension().lastPathComponent == fileKey })
+    {
+      try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: match.path)
+      let ext = match.pathExtension
+      let mime = ext == "png" ? "image/png" : (ext == "gif" ? "image/gif" : "image/jpeg")
+      if attachFile(at: match, to: content, mimeType: mime) {
+        return
       }
     }
 
@@ -417,37 +416,56 @@ class NotificationService: UNNotificationServiceExtension {
       default: fileExtension = "jpg"
       }
 
-      if let cacheDir = Self.avatarCacheDirectory {
-        let cachedFileURL = cacheDir.appendingPathComponent("\(fileKey).\(fileExtension)")
-        try? data.write(to: cachedFileURL)
+      let cachedFileURL = cacheDir.appendingPathComponent("\(fileKey).\(fileExtension)")
+      do {
+        try data.write(to: cachedFileURL, options: .atomic)
         Self.pruneAvatarCacheIfNeeded(in: cacheDir, maxEntries: 50)
         _ = attachFile(at: cachedFileURL, to: content, mimeType: mimeType)
-      } else {
+      } catch {
+        logger.warning("[NSE] Failed to write avatar to cache: \(error.localizedDescription)")
         let tempURL = FileManager.default.temporaryDirectory
           .appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
-        try data.write(to: tempURL)
-        _ = attachFile(at: tempURL, to: content, mimeType: mimeType)
+        try data.write(to: tempURL, options: .atomic)
+        do {
+          let attachment = try UNNotificationAttachment(
+            identifier: "avatar",
+            url: tempURL,
+            options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
+          )
+          content.attachments = [attachment]
+        } catch {
+          logger.warning("[NSE] Fallback UNNotificationAttachment failed: \(error.localizedDescription)")
+          try? FileManager.default.removeItem(at: tempURL)
+        }
       }
     } catch {
       logger.warning("[NSE] Failed to attach profile photo: \(error.localizedDescription)")
     }
   }
 
+  /// Attaches a file to notification content.
+  /// Copies the source file to a temporary location first because UNNotificationAttachment
+  /// moves the source file into the system notification attachment store.
   private func attachFile(
-    at fileURL: URL,
+    at sourceURL: URL,
     to content: UNMutableNotificationContent,
     mimeType: String = "image/jpeg"
   ) -> Bool {
+    let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension
+    let tempURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(UUID().uuidString).\(ext)")
     do {
+      try FileManager.default.copyItem(at: sourceURL, to: tempURL)
       let attachment = try UNNotificationAttachment(
         identifier: "avatar",
-        url: fileURL,
+        url: tempURL,
         options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
       )
       content.attachments = [attachment]
       return true
     } catch {
       logger.warning("[NSE] UNNotificationAttachment failed: \(error.localizedDescription)")
+      try? FileManager.default.removeItem(at: tempURL)
       return false
     }
   }

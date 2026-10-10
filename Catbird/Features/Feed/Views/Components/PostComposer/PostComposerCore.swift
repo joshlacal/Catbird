@@ -1264,7 +1264,7 @@ extension PostComposerViewModel {
     ) async -> [AppBskyRichtextFacet] {
         // Use the same PostParser logic that's used for real-time parsing to ensure consistency
         logger.debug("PostComposer: processFacets called with text length=\(text.count)")
-        let (_, _, facets, _, _) = PostParser.parsePostContent(text, resolvedProfiles: resolvedProfiles)
+        let (_, _, facets, _, _) = PostParser.parsePostContent(text, resolvedProfiles: resolvedProfiles, detectLanguage: false)
 
         // Try to resolve any unresolved mentions for posting
         var enhancedFacets = facets

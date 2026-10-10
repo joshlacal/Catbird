@@ -193,10 +193,14 @@ final class ChatManager: StateInvalidationSubscriber {
   // Chat tab visibility gating (P134)
   var isChatTabVisible: Bool = false {
     didSet {
-      if isChatTabVisible && !oldValue {
+      guard isChatTabVisible != oldValue else { return }
+      if isChatTabVisible {
+        startConversationsPolling()
         Task { @MainActor [weak self] in
           await self?.pollGetLog()
         }
+      } else {
+        startConversationsPolling()
       }
     }
   }
@@ -383,6 +387,7 @@ final class ChatManager: StateInvalidationSubscriber {
   func pausePolling() {
     isAppActive = false
     pausedPollingActiveConvoId = activeConversationId
+    activeConversationId = nil
     conversationsPollingTask?.cancel()
     conversationsPollingTask = nil
     for (_, task) in messagePollingTasks {
@@ -396,10 +401,11 @@ final class ChatManager: StateInvalidationSubscriber {
   @MainActor
   func resumePolling() {
     isAppActive = true
-    startConversationsPolling()
     if let convoId = pausedPollingActiveConvoId {
-      startMessagePolling(for: convoId)
       pausedPollingActiveConvoId = nil
+      startMessagePolling(for: convoId)
+    } else {
+      startConversationsPolling()
     }
     logger.debug("ChatManager polling resumed for active")
   }
@@ -552,6 +558,11 @@ final class ChatManager: StateInvalidationSubscriber {
     pendingActorSearchQuery = ""
     messageRequests = []
     acceptedConversations = []
+    logCursor = nil
+    lastFullReconcileTime = .distantPast
+    convoRevisions = [:]
+    pausedPollingActiveConvoId = nil
+    activeConversationId = nil
     logger.debug("Chat data cleared")
   }
 
@@ -659,7 +670,6 @@ final class ChatManager: StateInvalidationSubscriber {
         conversationsCursor = convosData.cursor
       }
 
-      conversationsCursor = convosData.cursor
       conversationsPollBackoff = 0
       recordConversationsLoad(failed: false)
 
@@ -1889,20 +1899,23 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // MARK: - Delta Log Processing (P134)
 
-  private func logCursorKey() -> String {
-    "chat.bsky.logCursor.\(pollingAccountDID ?? "default")"
+  private func logCursorKey(for accountDID: String?) -> String? {
+    guard let did = accountDID, !did.isEmpty else { return nil }
+    return "chat.bsky.logCursor.\(did)"
   }
 
   private func getPersistedLogCursor() -> String? {
+    guard let key = logCursorKey(for: pollingAccountDID) else { return nil }
     if let mem = logCursor { return mem }
-    let saved = UserDefaults.standard.string(forKey: logCursorKey())
+    let saved = UserDefaults.standard.string(forKey: key)
     logCursor = saved
     return saved
   }
 
   private func persistLogCursor(_ cursor: String) {
+    guard let key = logCursorKey(for: pollingAccountDID) else { return }
     logCursor = cursor
-    UserDefaults.standard.set(cursor, forKey: logCursorKey())
+    UserDefaults.standard.set(cursor, forKey: key)
   }
 
   @MainActor
@@ -1975,7 +1988,7 @@ final class ChatManager: StateInvalidationSubscriber {
             bumpConversationRevision(for: log.convoId)
           }
         case .unexpected:
-          break
+          convosNeedRefresh = true
         }
 
         if let related = log.relatedProfiles {
@@ -2001,31 +2014,77 @@ final class ChatManager: StateInvalidationSubscriber {
             originalMessagesMap[log.convoId]?.removeValue(forKey: dmv.id)
             bumpConversationRevision(for: log.convoId)
           }
+          if let idx = conversations.firstIndex(where: { $0.id == log.convoId }),
+             case .chatBskyConvoDefsMessageView(let last) = conversations[idx].lastMessage,
+             last.id == dmv.id {
+            convosNeedRefresh = true
+          }
         case .chatBskyConvoDefsMessageView(let mv):
           if originalMessagesMap[log.convoId]?[mv.id] != nil {
             originalMessagesMap[log.convoId]?.removeValue(forKey: mv.id)
             bumpConversationRevision(for: log.convoId)
           }
+          if let idx = conversations.firstIndex(where: { $0.id == log.convoId }),
+             case .chatBskyConvoDefsMessageView(let last) = conversations[idx].lastMessage,
+             last.id == mv.id {
+            convosNeedRefresh = true
+          }
         case .unexpected:
-          break
+          convosNeedRefresh = true
         }
 
       case .chatBskyConvoDefsLogAddReaction(let log):
-        if case .chatBskyConvoDefsMessageView(let mv) = log.message {
+        switch log.message {
+        case .chatBskyConvoDefsMessageView(let mv):
           var originals = originalMessagesMap[log.convoId] ?? [:]
           if originals[mv.id] != mv {
             originals[mv.id] = mv
             originalMessagesMap[log.convoId] = originals
             bumpConversationRevision(for: log.convoId)
           }
+        default:
+          convosNeedRefresh = true
+        }
+        if let related = log.relatedProfiles {
+          var profiles = relatedProfilesMap[log.convoId] ?? [:]
+          var changed = false
+          for p in related {
+            let did = p.did.didString()
+            if profiles[did] != p {
+              profiles[did] = p
+              changed = true
+            }
+          }
+          if changed {
+            relatedProfilesMap[log.convoId] = profiles
+            bumpConversationRevision(for: log.convoId)
+          }
         }
 
       case .chatBskyConvoDefsLogRemoveReaction(let log):
-        if case .chatBskyConvoDefsMessageView(let mv) = log.message {
+        switch log.message {
+        case .chatBskyConvoDefsMessageView(let mv):
           var originals = originalMessagesMap[log.convoId] ?? [:]
           if originals[mv.id] != mv {
             originals[mv.id] = mv
             originalMessagesMap[log.convoId] = originals
+            bumpConversationRevision(for: log.convoId)
+          }
+        default:
+          convosNeedRefresh = true
+        }
+        if let related = log.relatedProfiles {
+          var profiles = relatedProfilesMap[log.convoId] ?? [:]
+          var changed = false
+          for p in related {
+            let did = p.did.didString()
+            if profiles[did] != p {
+              profiles[did] = p
+              changed = true
+            }
+          }
+          if changed {
+            relatedProfilesMap[log.convoId] = profiles
             bumpConversationRevision(for: log.convoId)
           }
         }
@@ -2047,13 +2106,74 @@ final class ChatManager: StateInvalidationSubscriber {
           }
         }
 
-      case .chatBskyConvoDefsLogBeginConvo, .chatBskyConvoDefsLogAcceptConvo,
-           .chatBskyConvoDefsLogLeaveConvo, .chatBskyConvoDefsLogMuteConvo,
-           .chatBskyConvoDefsLogUnmuteConvo:
+      case .chatBskyConvoDefsLogReadMessage(let log):
+        if let idx = conversations.firstIndex(where: { $0.id == log.convoId }) {
+          let existing = conversations[idx]
+          if existing.unreadCount > 0 {
+            conversations[idx] = ChatBskyConvoDefs.ConvoView(
+              id: existing.id,
+              rev: log.rev,
+              members: existing.members,
+              lastMessage: existing.lastMessage,
+              muted: existing.muted,
+              status: existing.status,
+              unreadCount: 0
+            )
+            updateConversationsByStatus()
+          }
+        }
+
+      case .chatBskyConvoDefsLogMuteConvo(let log):
+        if let idx = conversations.firstIndex(where: { $0.id == log.convoId }) {
+          let existing = conversations[idx]
+          if !existing.muted {
+            conversations[idx] = ChatBskyConvoDefs.ConvoView(
+              id: existing.id,
+              rev: log.rev,
+              members: existing.members,
+              lastMessage: existing.lastMessage,
+              muted: true,
+              status: existing.status,
+              unreadCount: existing.unreadCount
+            )
+            updateConversationsByStatus()
+          }
+        } else {
+          convosNeedRefresh = true
+        }
+
+      case .chatBskyConvoDefsLogUnmuteConvo(let log):
+        if let idx = conversations.firstIndex(where: { $0.id == log.convoId }) {
+          let existing = conversations[idx]
+          if existing.muted {
+            conversations[idx] = ChatBskyConvoDefs.ConvoView(
+              id: existing.id,
+              rev: log.rev,
+              members: existing.members,
+              lastMessage: existing.lastMessage,
+              muted: false,
+              status: existing.status,
+              unreadCount: existing.unreadCount
+            )
+            updateConversationsByStatus()
+          }
+        } else {
+          convosNeedRefresh = true
+        }
+
+      case .chatBskyConvoDefsLogLeaveConvo(let log):
+        if let idx = conversations.firstIndex(where: { $0.id == log.convoId }) {
+          conversations.remove(at: idx)
+          updateConversationsByStatus()
+        }
+        convosNeedRefresh = true
+
+      case .chatBskyConvoDefsLogBeginConvo, .chatBskyConvoDefsLogAcceptConvo:
         convosNeedRefresh = true
 
       default:
-        break
+        logger.debug("Unknown getLog event encountered: \(String(describing: entry)), triggering full reconcile")
+        convosNeedRefresh = true
       }
     }
 
@@ -2487,19 +2607,12 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
       // Clear all local chat data after successful deletion
-      conversations = []
-      originalMessagesMap = [:]
-      systemMessagesMap = [:]
-      relatedProfilesMap = [:]
-      conversationsCursor = nil
-      messagesCursors = [:]
-      profileSignatureCache = [:]
-      filteredConversations = []
-      filteredProfiles = []
-      availabilityCache = [:]
+      if let key = logCursorKey(for: pollingAccountDID) {
+        UserDefaults.standard.removeObject(forKey: key)
+      }
+      clearChatData()
       updateConversationsByStatus()
       onUnreadCountChanged?()
-
       logger.debug("Successfully deleted chat account")
       return true
 
@@ -2769,24 +2882,33 @@ final class ChatManager: StateInvalidationSubscriber {
       guard let self = self else { return }
 
       while !Task.isCancelled {
-        let interval = await MainActor.run {
+        let pollStatus = await MainActor.run { () -> (shouldPoll: Bool, interval: TimeInterval) in
+          guard self.isAppActive, !self.pollingBarrier.isSuspended else {
+            return (false, self.backgroundPollInterval)
+          }
           if self.activeConversationId != nil {
-            return self.activeConversationPollInterval
+            return (true, self.activeConversationPollInterval)
           }
           if self.isChatTabVisible {
-            return self.activeListPollInterval
+            return (true, self.activeListPollInterval)
           }
-          // When neither chat tab nor active convo is on screen: slow 60s getLog check
-          return self.isAppActive ? 60.0 : self.backgroundPollInterval
+          let hasBadgeConsumer = self.onUnreadCountChanged != nil || self.onConversationsPolled != nil
+          if hasBadgeConsumer {
+            return (true, 60.0)
+          }
+          // Polling gated off: neither chat tab nor active conversation is visible, and no badge consumers need it
+          return (false, 60.0)
         }
 
         do {
-          try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+          try await Task.sleep(nanoseconds: UInt64(pollStatus.interval * 1_000_000_000))
         } catch {
           break
         }
 
         guard !Task.isCancelled else { break }
+
+        guard pollStatus.shouldPoll else { continue }
 
         let shouldSkip = await MainActor.run {
           !self.isAppActive || self.pollingBarrier.isSuspended
@@ -2826,35 +2948,8 @@ final class ChatManager: StateInvalidationSubscriber {
     guard !pollingBarrier.isSuspended else { return }
     stopMessagePolling(for: convoId)
     activeConversationId = convoId
-
-    messagePollingTasks[convoId] = Task { [weak self] in
-      guard let self = self else { return }
-
-      while !Task.isCancelled {
-        let interval = await MainActor.run {
-          let baseInterval =
-            self.isAppActive ? self.activeConversationPollInterval : self.backgroundPollInterval
-          return max(baseInterval, self.messagePollBackoffs[convoId] ?? 0)
-        }
-
-        do {
-          try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-        } catch {
-          break
-        }
-
-        guard !Task.isCancelled else { break }
-
-        let shouldSkip = await MainActor.run {
-          !self.isAppActive || self.pollingBarrier.isSuspended
-        }
-        if shouldSkip { continue }
-
-        // Open conversation: poll getLog cursor delta instead of full 30-message getMessages
-        await self.pollGetLog()
-      }
-    }
-
+    // Re-arm conversation polling so it immediately adapts to the 5s active conversation cadence
+    startConversationsPolling()
     logger.debug("Started message polling for conversation \(convoId)")
   }
   
@@ -2866,6 +2961,7 @@ final class ChatManager: StateInvalidationSubscriber {
     messagePollBackoffs[convoId] = nil
     if activeConversationId == convoId {
       activeConversationId = nil
+      startConversationsPolling()
     }
     logger.debug("Stopped message polling for conversation \(convoId)")
   }

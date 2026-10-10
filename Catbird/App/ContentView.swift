@@ -395,13 +395,13 @@ struct MainContentView: View {
                   isRootView: $isRootView
                 )
                 .id(appState.userDID)
-                .overlay(alignment: .bottomTrailing) {
-                  if selectedTab == 0 && isRootView {
-                    composeOverlay
-                  }
-                }
               }
               .equatable()
+              .overlay(alignment: .bottomTrailing) {
+                if selectedTab == 0 && isRootView {
+                  composeOverlay
+                }
+              }
             }
             .accessibilityIdentifier("tab_home")
 
@@ -848,26 +848,26 @@ struct MainContentView: View {
 
             scheduleNuxEvaluation(delay: 500_000_000)
           }
-          .sheet(isPresented: welcomePresentation) {
-            WelcomeOnboardingView()
-              .applyAppStateEnvironment(appState)
-              .environment(sceneContext)
-          }
-          .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
-            showingOnboarding = newValue
-          }
-          .onChange(of: showingOnboarding) { _, newValue in
-            if !newValue && appState.onboardingManager.showWelcomeSheet {
-              Task { @MainActor in
-                appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
-              }
-            }
-            if !newValue {
-              scheduleNuxEvaluation(delay: 300_000_000)
-            }
-          }
       }
       .equatable()
+      .sheet(isPresented: welcomePresentation) {
+        WelcomeOnboardingView()
+          .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
+      }
+      .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
+        showingOnboarding = newValue
+      }
+      .onChange(of: showingOnboarding) { _, newValue in
+        if !newValue && appState.onboardingManager.showWelcomeSheet {
+          Task { @MainActor in
+            appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
+          }
+        }
+        if !newValue {
+          scheduleNuxEvaluation(delay: 300_000_000)
+        }
+      }
       #endif
       
       NetworkStatusIndicator()

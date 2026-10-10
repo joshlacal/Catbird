@@ -94,7 +94,7 @@ struct PostParser {
   static func parsePostContent(
     _ content: String,
     resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:],
-    detectLanguage shouldDetectLanguage: Bool = false
+    detectLanguage shouldDetectLanguage: Bool = true
   ) -> (text: String, hashtags: [String], facets: [AppBskyRichtextFacet], urls: [String], detectedLanguage: String?) {
     var hashtags: [String] = []
     var facets: [AppBskyRichtextFacet] = []

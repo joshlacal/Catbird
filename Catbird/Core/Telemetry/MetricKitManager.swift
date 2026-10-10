@@ -24,12 +24,17 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   private var isSubscribed = false
   
   /// Custom metric log handles for various app operations
-  private(set) var feedLoadingLog: OSLog?
-  private(set) var imageLoadingLog: OSLog?
-  private(set) var networkRequestLog: OSLog?
-  private(set) var authenticationLog: OSLog?
-  private(set) var composerLog: OSLog?
-  
+  nonisolated static let feedLoadingLog: OSLog = MXMetricManager.makeLogHandle(category: "FeedLoading")
+  nonisolated static let imageLoadingLog: OSLog = MXMetricManager.makeLogHandle(category: "ImageLoading")
+  nonisolated static let networkRequestLog: OSLog = MXMetricManager.makeLogHandle(category: "NetworkRequest")
+  nonisolated static let authenticationLog: OSLog = MXMetricManager.makeLogHandle(category: "Authentication")
+  nonisolated static let composerLog: OSLog = MXMetricManager.makeLogHandle(category: "Composer")
+
+  nonisolated var feedLoadingLog: OSLog { Self.feedLoadingLog }
+  nonisolated var imageLoadingLog: OSLog { Self.imageLoadingLog }
+  nonisolated var networkRequestLog: OSLog { Self.networkRequestLog }
+  nonisolated var authenticationLog: OSLog { Self.authenticationLog }
+  nonisolated var composerLog: OSLog { Self.composerLog }
   // MARK: - Launch Task IDs
   
   /// Task ID for extended launch measurement tracking
@@ -46,12 +51,6 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   
   /// Sets up custom metric log handles for signpost-based metrics
   private func setupLogHandles() {
-    feedLoadingLog = MXMetricManager.makeLogHandle(category: "FeedLoading")
-    imageLoadingLog = MXMetricManager.makeLogHandle(category: "ImageLoading")
-    networkRequestLog = MXMetricManager.makeLogHandle(category: "NetworkRequest")
-    authenticationLog = MXMetricManager.makeLogHandle(category: "Authentication")
-    composerLog = MXMetricManager.makeLogHandle(category: "Composer")
-    
     metricLogger.info("✅ MetricKit log handles created")
   }
   

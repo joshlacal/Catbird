@@ -394,7 +394,11 @@ final class AppStateManager {
     if case .authenticated(let userDID) = authManager.state {
       logger.info("✅ Found authenticated session for: \(userDID)")
       // Wait for ModelContainer before building AppState, as AppState requires modelContext
-      _ = await waitForModelContainerReady()
+      guard (await waitForModelContainerReady()) != nil else {
+        logger.error("ModelContainer unavailable or failed; deferring AppState construction")
+        initializeTask = nil
+        return
+      }
       do {
         try await transitionToAuthenticated(userDID: userDID)
       } catch {
@@ -581,9 +585,11 @@ final class AppStateManager {
       }
     }
 
+    // Ensure ModelContainer is ready before building or updating AppState
+    _ = await waitForModelContainerReady()
+
     let appState: AppState
     let isCachedAccount: Bool
-
     if let existing = authenticatedStates[userDID] {
       // Reuse existing AppState
       logger.debug("♻️ Using existing AppState for: \(userDID)")
@@ -601,6 +607,7 @@ final class AppStateManager {
       if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
+        appState.initializePreferencesManager(with: container.mainContext)
       }
 
       // Only show transition overlay for actual account switches, not initial launch
@@ -622,6 +629,7 @@ final class AppStateManager {
       if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
+        appState.initializePreferencesManager(with: container.mainContext)
       }
       
       // Only show transition overlay for actual account switches, not initial launch
@@ -719,7 +727,7 @@ final class AppStateManager {
 
     // Write account list to App Group for widget extension
     writeAccountsToAppGroup()
-
+    ThreadManager.clearPrefillCache()
     logger.info("✅ Transitioned to authenticated state")
   }
 
@@ -735,6 +743,7 @@ final class AppStateManager {
     let loggingOutState = lifecycle.appState ?? interruptedSwitchSource
     let loggingOutDID = loggingOutState?.userDID
     composerSwitchQueue.invalidate()
+    ThreadManager.clearPrefillCache()
     lifecycle = .unauthenticated
     // An older switch/rollback must settle before its retained source is retired.
     await accountSwitchOperationBarrier.waitUntilIdle()

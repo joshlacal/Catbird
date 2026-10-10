@@ -33,6 +33,7 @@ struct SkyView {
   @MainActor
   private func makeView(context: Context) -> MTKView {
     let view = MTKView(frame: .zero, device: context.coordinator.device)
+    context.coordinator.currentView = view
     view.delegate = context.coordinator
     view.colorPixelFormat = .bgra8Unorm
     view.framebufferOnly = true
@@ -54,6 +55,10 @@ struct SkyView {
     #endif
     if !isEffectivelyAnimated { view.setNeedsDisplay(view.bounds) }
   }
+}
+
+extension Notification.Name {
+  static let skyResourcesDidUpdate = Notification.Name("blue.catbird.skyResourcesDidUpdate")
 }
 
 /// Lazily initialized shared Metal resources for SkyView instances, avoiding redundant
@@ -97,6 +102,9 @@ final class SkyResources: @unchecked Sendable {
       dev.makeRenderPipelineState(descriptor: descriptor) { [weak self] pipelineState, error in
         if let pipelineState {
           self?.pipeline = pipelineState
+          DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .skyResourcesDidUpdate, object: nil)
+          }
         } else if let error {
           self?.logger.error("Failed to compile sky pipeline: \(error.localizedDescription)")
         }
@@ -107,6 +115,9 @@ final class SkyResources: @unchecked Sendable {
     Task.detached(priority: .utility) { [weak self] in
       let noiseTex = Self.buildNoiseTexture(device: dev, queue: queue)
       self?.noise = noiseTex
+      DispatchQueue.main.async {
+        NotificationCenter.default.post(name: .skyResourcesDidUpdate, object: nil)
+      }
     }
   }
 
@@ -191,7 +202,10 @@ final class SkyRenderer: NSObject, MTKViewDelegate {
 
   let resources: SkyResources
   var device: MTLDevice? { resources.device }
-  private let start = CACurrentMediaTime()
+  private var elapsedTime: Double = 0
+  private var lastActiveTime: CFTimeInterval?
+  weak var currentView: MTKView?
+  private var resourcesObserver: AnyObject?
 
   var isDark = false
   var animated = true
@@ -199,11 +213,30 @@ final class SkyRenderer: NSObject, MTKViewDelegate {
   override init() {
     self.resources = SkyResources.shared
     super.init()
+    resourcesObserver = NotificationCenter.default.addObserver(
+      forName: .skyResourcesDidUpdate,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self, let view = self.currentView, view.isPaused else { return }
+      #if os(iOS)
+      view.setNeedsDisplay(view.bounds)
+      #elseif os(macOS)
+      view.needsDisplay = true
+      #endif
+    }
+  }
+
+  deinit {
+    if let observer = resourcesObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
   func draw(in view: MTKView) {
+    self.currentView = view
     guard let pass = view.currentRenderPassDescriptor else { return }
 
     // Clear to base sky color so the first frame is never blank/black
@@ -229,12 +262,32 @@ final class SkyRenderer: NSObject, MTKViewDelegate {
         commandBuffer.present(drawable)
         commandBuffer.commit()
       }
+      if view.isPaused {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak view] in
+          guard let view, view.isPaused else { return }
+          #if os(iOS)
+          view.setNeedsDisplay(view.bounds)
+          #elseif os(macOS)
+          view.needsDisplay = true
+          #endif
+        }
+      }
       return
     }
 
     guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
 
-    let elapsed = animated ? CACurrentMediaTime() - start : 0
+    let now = CACurrentMediaTime()
+    if animated {
+      if let last = lastActiveTime {
+        let delta = min(max(now - last, 0), 0.1)
+        elapsedTime += delta
+      }
+      lastActiveTime = now
+    } else {
+      lastActiveTime = nil
+    }
+    let elapsed = elapsedTime
     var uniforms: [Float] = [
       Float(view.drawableSize.width), Float(view.drawableSize.height),
       Float(Self.timeOffset + elapsed), isDark ? 1 : 0

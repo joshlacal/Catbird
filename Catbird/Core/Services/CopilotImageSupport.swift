@@ -137,13 +137,28 @@ enum CopilotImageSupport {
     configuration.httpCookieStorage = nil
     configuration.timeoutIntervalForRequest = 15
     configuration.timeoutIntervalForResource = 20
-    let session = URLSession(configuration: configuration)
-    defer { session.invalidateAndCancel() }
-    let (data, response) = try await session.data(for: URLRequest(url: url))
+
+    final class SessionHolder: @unchecked Sendable {
+      var task: URLSessionDataTask?
+      var session: URLSession?
+    }
+    let holder = SessionHolder()
+
+    let data: Data = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let delegate = BoundedImageDownloadDelegate(maxBytes: maximumDownloadBytes, continuation: continuation)
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        holder.session = session
+        let task = session.dataTask(with: URLRequest(url: url))
+        holder.task = task
+        task.resume()
+        session.finishTasksAndInvalidate()
+      }
+    } onCancel: {
+      holder.task?.cancel()
+      holder.session?.invalidateAndCancel()
+    }
     try Task.checkCancellation()
-    guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode),
-          response.url.map(isAllowedURL) == true,
-          data.count <= maximumDownloadBytes else { throw ImageLoadError.invalidResponse }
     return try decodeThumbnail(data)
   }
 
@@ -169,7 +184,74 @@ enum CopilotImageSupport {
     return image
   }
 
-  private enum ImageLoadError: Error { case invalidURL, invalidResponse, tooLarge, invalidImage }
+  fileprivate enum ImageLoadError: Error { case invalidURL, invalidResponse, tooLarge, invalidImage }
+}
+
+private final class BoundedImageDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+  let maxBytes: Int
+  private let lock = NSLock()
+  private var data = Data()
+  private var failureReason: CopilotImageSupport.ImageLoadError?
+  private var continuation: CheckedContinuation<Data, Error>?
+
+  init(maxBytes: Int, continuation: CheckedContinuation<Data, Error>) {
+    self.maxBytes = maxBytes
+    self.continuation = continuation
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    dataTask: URLSessionDataTask,
+    didReceive response: URLResponse,
+    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+  ) {
+    if response.expectedContentLength > Int64(maxBytes) {
+      lock.lock()
+      failureReason = .tooLarge
+      lock.unlock()
+      completionHandler(.cancel)
+      return
+    }
+    guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+          http.url.map(CopilotImageSupport.isAllowedURL) == true else {
+      lock.lock()
+      failureReason = .invalidResponse
+      lock.unlock()
+      completionHandler(.cancel)
+      return
+    }
+    completionHandler(.allow)
+  }
+
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive chunk: Data) {
+    lock.lock()
+    defer { lock.unlock() }
+    if data.count + chunk.count > maxBytes {
+      failureReason = .tooLarge
+      dataTask.cancel()
+      return
+    }
+    data.append(chunk)
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    lock.lock()
+    let cont = continuation
+    continuation = nil
+    let reason = failureReason
+    let downloaded = data
+    lock.unlock()
+
+    guard let cont else { return }
+
+    if let reason {
+      cont.resume(throwing: reason)
+    } else if let error {
+      cont.resume(throwing: error)
+    } else {
+      cont.resume(returning: downloaded)
+    }
+  }
 }
 
 /// A turn becomes stale when its account/client, context, or selected conversation changes.

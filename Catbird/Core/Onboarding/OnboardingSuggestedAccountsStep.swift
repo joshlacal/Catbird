@@ -17,6 +17,7 @@ public struct OnboardingSuggestedAccountsStep: View {
     @State private var followInProgressDIDs: Set<String> = []
     @State private var isLoading: Bool = true
     @State private var errorMessage: String?
+    @State private var followAllError: String?
     
     private let logger = Logger(subsystem: "blue.catbird", category: "OnboardingSuggestedAccounts")
     
@@ -98,6 +99,30 @@ public struct OnboardingSuggestedAccountsStep: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                if let followAllError {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(followAllError)
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Button {
+                            self.followAllError = nil
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                }
+                
                 List {
                     Section {
                         ForEach(suggestedActors, id: \.did) { actor in
@@ -354,8 +379,9 @@ public struct OnboardingSuggestedAccountsStep: View {
         let actorsToFollow = suggestedActors.filter { !followedDIDs.contains($0.did.didString()) }
         guard !actorsToFollow.isEmpty else { return }
         
+        followAllError = nil
         guard let client = appState.atProtoClient else {
-            errorMessage = "Couldn’t follow accounts. Please try again."
+            followAllError = "Couldn’t follow accounts. Please try again."
             return
         }
         
@@ -405,7 +431,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                         followInProgressDIDs.subtract(remainingDIDs)
                         followedDIDs.subtract(remainingDIDs)
                     }
-                    errorMessage = "Couldn’t follow everyone. Try again."
+                    followAllError = "Couldn’t follow everyone. Try again."
                     break
                 }
             }

@@ -344,10 +344,11 @@ struct ProfileHeader: View {
             localIsFollowing = false
             do {
                 let success: Bool
-                if let followingUri = profile.viewer?.following {
+                let did = profile.did.didString()
+                if let followingUri = appState.graphManager.followingCache[did] ?? profile.viewer?.following {
                     success = try await appState.graphManager.unfollowByUri(followingUri: followingUri)
                 } else {
-                    success = try await appState.unfollow(did: profile.did.didString())
+                    success = try await appState.unfollow(did: did)
                 }
                 if !success {
                     localIsFollowing = true

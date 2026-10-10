@@ -124,11 +124,45 @@ final class CatbirdPerfTests: XCTestCase {
     options.iterationCount = 5
 
     measure(metrics: metrics, options: options) {
-      tapTab("profile", fallbackLabel: "Profile", in: app)
-      _ = app.staticTexts.firstMatch.waitForExistence(timeout: 5)
+      let profileTab = app.buttons["tab_profile"].firstMatch
+      let fallbackProfileTab = app.tabBars.buttons["Profile"].firstMatch
+      let hasProfileTab = profileTab.exists || fallbackProfileTab.exists
 
-      // Return to home tab
-      tapTab("home", fallbackLabel: "Home", in: app)
+      if hasProfileTab {
+        tapTab("profile", fallbackLabel: "Profile", in: app)
+      } else {
+        // Compact width route: open side drawer via feed selector, then tap Profile
+        let feedSelector = app.buttons["Feed selector"].firstMatch
+        XCTAssertTrue(feedSelector.waitForExistence(timeout: 5), "Feed selector button should exist on compact width")
+        feedSelector.tap()
+
+        let drawerProfile = app.buttons["Profile"].firstMatch
+        let myProfile = app.buttons["My Profile"].firstMatch
+        let profileButton = drawerProfile.waitForExistence(timeout: 5) ? drawerProfile : myProfile
+        XCTAssertTrue(profileButton.waitForExistence(timeout: 5), "Profile button in drawer should exist")
+        profileButton.tap()
+      }
+
+      // Wait for a profile-specific element (Edit Profile button or handle text)
+      let editProfileButton = app.buttons["Edit Profile"].firstMatch
+      let handleText = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '@'")).firstMatch
+      let profileElement = editProfileButton.waitForExistence(timeout: 5) ? editProfileButton : handleText
+      XCTAssertTrue(
+        profileElement.waitForExistence(timeout: 5),
+        "Profile-specific element (Edit Profile button or @handle) should appear"
+      )
+
+      // Return to home feed
+      if hasProfileTab {
+        tapTab("home", fallbackLabel: "Home", in: app)
+      } else {
+        let backButton = app.navigationBars.buttons.firstMatch
+        if backButton.waitForExistence(timeout: 5) && backButton.isHittable {
+          backButton.tap()
+        }
+        let feedSelector = app.buttons["Feed selector"].firstMatch
+        _ = feedSelector.waitForExistence(timeout: 5)
+      }
     }
   }
 
@@ -185,8 +219,14 @@ final class CatbirdPerfTests: XCTestCase {
     let identified = app.buttons["tab_\(name)"].firstMatch
     let labeled = app.tabBars.buttons[fallbackLabel].firstMatch
     let button = identified.exists ? identified : labeled
-    if button.waitForExistence(timeout: 5) && button.isHittable {
-      button.tap()
-    }
+    XCTAssertTrue(
+      button.waitForExistence(timeout: 5),
+      "Tab button '\(name)' (fallback '\(fallbackLabel)') should exist"
+    )
+    XCTAssertTrue(
+      button.isHittable,
+      "Tab button '\(name)' (fallback '\(fallbackLabel)') should be hittable"
+    )
+    button.tap()
   }
 }

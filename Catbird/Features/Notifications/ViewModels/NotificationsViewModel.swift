@@ -176,7 +176,7 @@ private actor FollowRecordCreatedAtCacheActor {
   }
 
   var hasLoadedOnce: Bool {
-    !unfilteredGroupedNotifications.isEmpty
+    lastFetchDate != nil || !unfilteredGroupedNotifications.isEmpty
   }
 
   private static let signposter = OSSignposter(subsystem: "blue.catbird.performance", category: "Notifications")

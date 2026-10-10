@@ -312,7 +312,8 @@ public struct VideoFeedView: View {
     contentVisibilityObserver?(item)
   }
 
-  /// The viewer tapped Hide.
+  /// The viewer tapped Hide, or the player detached (scrolled out of the
+  /// attached range, or covered by a new policy).
   private func concealItem(_ item: VideoFeedItem) {
     guard revealedItems[item.revealIdentity] != nil else { return }
     revealedItems[item.revealIdentity] = nil
@@ -518,9 +519,11 @@ private struct VideoFeedItemView: View {
                 player: playerPool.player(for: index),
                 gravity: .resizeAspect,
                 shouldLoop: false,
-                pausesOnDismantle: false
+                pausesOnDismantle: false,
+                clampsForwardBuffer: false
               )
               .onAppear(perform: onContentVisible)
+              .onDisappear(perform: onConceal)
             }
 
             Button(action: onPlaybackToggle) {
