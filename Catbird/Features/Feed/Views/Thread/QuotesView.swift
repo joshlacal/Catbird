@@ -116,6 +116,7 @@ struct QuotesView: View {
         }
         .navigationTitle("Quotes")
         .task {
+            guard quotes.isEmpty else { return }
             await loadQuotes()
         }
     }

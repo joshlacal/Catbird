@@ -8,8 +8,7 @@ struct ProfileRowView: View {
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     @Environment(\.moderationPolicy) private var moderationPolicy
-    @State private var currentUserDid: String?
-    @State private var viewerStatus: ViewerStatus = .unknown
+    @State private var optimisticStatus: ViewerStatus?
     @State private var showUnblockConfirmation = false
     
     private enum ViewerStatus {
@@ -17,6 +16,14 @@ struct ProfileRowView: View {
         case notFollowing
         case following
         case blocking
+    }
+
+    private var isSelf: Bool {
+        profile.did.didString() == appState.userDID
+    }
+
+    private var effectiveStatus: ViewerStatus {
+        optimisticStatus ?? getInitialViewerStatus()
     }
     
     var body: some View {
@@ -43,7 +50,7 @@ struct ProfileRowView: View {
                 Spacer(minLength: DesignTokens.Spacing.sm)
 
                 // Follow button if logged in and not self
-                if let did = currentUserDid, did != profile.did.didString() {
+                if appState.isAuthenticated && !isSelf {
                     followButton()
                         .padding(.top, 2)
                 }
@@ -63,17 +70,9 @@ struct ProfileRowView: View {
             if !moderationPolicy.concealsAvatar(did: profile.did.didString(), labels: extractLabels(from: profile)) {
                 await ProfileEntityStore.shared.store(ProfileEntity(displayable: profile))
             }
-
-            // Fetch the DID asynchronously
-            currentUserDid = try? await appState.atProtoClient?.getDid()
-            
-            // Initialize viewer status
-            if viewerStatus == .unknown {
-                viewerStatus = getInitialViewerStatus()
-            }
         }
         .onChange(of: profile.did) { _, _ in
-            viewerStatus = getInitialViewerStatus()
+            optimisticStatus = nil
         }
     }
     
@@ -164,10 +163,9 @@ struct ProfileRowView: View {
     // Follow button with appropriate state
     @ViewBuilder
     private func followButton() -> some View {
-        switch viewerStatus {
+        switch effectiveStatus {
         case .blocking:
             Button {
-                showUnblockConfirmation = true
             } label: {
                 buttonLabel("Unblock", color: .white, backgroundColor: .red)
             }
@@ -180,12 +178,12 @@ struct ProfileRowView: View {
             ) {
                 Button("Unblock", role: .destructive) {
                     Task {
-                        let previous = viewerStatus
-                        viewerStatus = .notFollowing
+                        let previous = effectiveStatus
+                        optimisticStatus = .notFollowing
                         do {
                             _ = try await appState.unblock(did: profile.did.didString())
                         } catch {
-                            viewerStatus = previous
+                            optimisticStatus = previous
                         }
                     }
                 }
@@ -197,12 +195,12 @@ struct ProfileRowView: View {
         case .following:
             Button {
                 Task {
-                    let previous = viewerStatus
-                    viewerStatus = .notFollowing
+                    let previous = effectiveStatus
+                    optimisticStatus = .notFollowing
                     do {
                         _ = try await appState.unfollow(did: profile.did.didString())
                     } catch {
-                        viewerStatus = previous
+                        optimisticStatus = previous
                     }
                 }
             } label: {
@@ -213,12 +211,12 @@ struct ProfileRowView: View {
         case .notFollowing, .unknown:
             Button {
                 Task {
-                    let previous = viewerStatus
-                    viewerStatus = .following
+                    let previous = effectiveStatus
+                    optimisticStatus = .following
                     do {
                         _ = try await appState.follow(did: profile.did.didString())
                     } catch {
-                        viewerStatus = previous
+                        optimisticStatus = previous
                     }
                 }
             } label: {

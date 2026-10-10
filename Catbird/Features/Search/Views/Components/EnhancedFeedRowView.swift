@@ -5,12 +5,14 @@ import NukeUI
 /// Enhanced row view for displaying feed information in search results
 struct EnhancedFeedRowView: View {
     let feed: AppBskyFeedDefs.GeneratorView
+    @Environment(\.displayScale) private var displayScale
     
     var body: some View {
         HStack(spacing: 12) {
             // Feed avatar
-            if let avatar = feed.avatar {
-                LazyImage(url: URL(string: avatar.uriString())) { state in
+            if let avatar = feed.avatar,
+               let url = URL(string: avatar.uriString()) {
+                LazyImage(request: ImageRequestFactory.image(url, pointSize: 44, scale: displayScale, contentMode: .aspectFill)) { state in
                     if let image = state.image {
                         image
                             .resizable()

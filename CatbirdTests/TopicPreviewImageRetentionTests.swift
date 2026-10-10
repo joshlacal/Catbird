@@ -81,7 +81,9 @@ import UIKit
 @MainActor
 struct TrendingTopicResolvedImageTests {
   private func still() -> UIImage {
-    UIGraphicsImageRenderer(size: CGSize(width: 12, height: 12)).image { context in
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: CGSize(width: 12, height: 12), format: format).image { context in
       UIColor.blue.setFill()
       context.fill(CGRect(x: 0, y: 0, width: 12, height: 12))
     }
@@ -122,7 +124,7 @@ struct TrendingTopicResolvedImageTests {
     #expect(store.image(for: reload) == nil)
   }
 
-  @Test("Graph, labeler and activity invalidation clear stills and reject late completions")
+  @Test("Graph and labeler invalidation clear stills; resign-active preserves stills and rejects late completions")
   func hardInvalidationAndLateCompletion() {
     let store = TrendingTopicMediaStore()
     store.setActive(true)
@@ -140,12 +142,20 @@ struct TrendingTopicResolvedImageTests {
     #expect(store.image(for: request) == nil)
     revision = store.revision
     store.retainImage(image, for: request, revision: revision)
+    // P188/P261: Resign/active transitions (Control Center / notification shade) preserve
+    // retained stills so artwork does not blank, while rejecting late completions.
     store.setActive(false)
-    store.retainImage(image, for: request, revision: revision)
-    #expect(store.image(for: request) == nil)
+    let lateRequest = self.request(size: TrendingTopicImageRequests.avatarSize)
+    store.retainImage(image, for: lateRequest, revision: revision)
+    #expect(store.image(for: lateRequest) == nil, "Late completion while inactive is rejected")
+    #expect(store.image(for: request) != nil, "Resign-active preserves previously retained stills")
     store.setActive(true)
-    store.retainImage(image, for: request, revision: revision)
-    #expect(store.image(for: request) == nil)
+    store.retainImage(image, for: lateRequest, revision: revision)
+    #expect(store.image(for: lateRequest) == nil, "Late completion with obsolete revision is rejected")
+    #expect(store.image(for: request) != nil, "Returning to active preserves previously retained stills")
+    // Background transition explicitly clears stills to reclaim memory.
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    #expect(store.image(for: request) == nil, "Background transition clears retained stills")
   }
 }
 #endif

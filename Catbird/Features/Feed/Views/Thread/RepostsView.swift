@@ -76,6 +76,7 @@ struct RepostsView: View {
         }
         .navigationTitle("Reposts")
         .task {
+            guard reposts.isEmpty else { return }
             await loadReposts()
         }
     }

@@ -681,6 +681,7 @@ struct RefinedSearchView: View {
     }
     
     private func initializeOnAppear() {
+        viewModel.ensureLocalPreferencesAndStoredSearchesLoaded()
         // Subscribe to events only if this is the active search tab
         if selectedTab == 1 {
             viewModel.subscribeToEvents(displayScale: displayScale)

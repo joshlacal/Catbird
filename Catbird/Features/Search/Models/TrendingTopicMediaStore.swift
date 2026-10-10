@@ -55,6 +55,7 @@ final class TrendingTopicMediaStore {
   @ObservationIgnored private var graphObserver: NSObjectProtocol?
   @ObservationIgnored private var activityObserver: NSObjectProtocol?
   @ObservationIgnored private var inactivityObserver: NSObjectProtocol?
+  @ObservationIgnored private var backgroundObserver: NSObjectProtocol?
   @ObservationIgnored private var memoryObserver: NSObjectProtocol?
   private(set) var canReusePrefetchedFeed = true
   private(set) var isActive = true
@@ -91,6 +92,10 @@ final class TrendingTopicMediaStore {
       object: nil, queue: .main) { [weak self] _ in
         MainActor.assumeIsolated { self?.setActive(false) }
       }
+    backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+      object: nil, queue: .main) { [weak self] _ in
+        MainActor.assumeIsolated { self?.retainedImages.removeAll() }
+      }
     memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
       object: nil, queue: .main) { [weak self] _ in
         MainActor.assumeIsolated { self?.retainedImages.removeAll() }
@@ -104,10 +109,9 @@ final class TrendingTopicMediaStore {
     isActive = active
     if active {
       // Visible .task identities observe revision; departed surfaces retain no resume callbacks.
-      invalidateForGraphChange()
       prefetchCoordinator.setActive(true)
+      revision += 1
     } else {
-      retainedImages.removeAll()
       prefetchCoordinator.setActive(false)
       cancelRequests()
       cancelPrefetches()
@@ -119,6 +123,7 @@ final class TrendingTopicMediaStore {
     if let graphObserver { NotificationCenter.default.removeObserver(graphObserver) }
     if let activityObserver { NotificationCenter.default.removeObserver(activityObserver) }
     if let inactivityObserver { NotificationCenter.default.removeObserver(inactivityObserver) }
+    if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
     if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
   }
 
@@ -198,8 +203,7 @@ final class TrendingTopicMediaStore {
       let quotedPosts = await hydrate?(posts) ?? []
       try Task.checkCancellation()
       guard isActive, revision == requestRevision else { return }
-      cache(posts: posts, quotedPosts: quotedPosts, key: key, lifetime: 300)
-    } catch is CancellationError {
+      cache(posts: posts, quotedPosts: quotedPosts, key: key, lifetime: 900)
       // Cancellation does not poison a later visible row's cache.
     } catch {
       guard isActive, !Task.isCancelled, revision == requestRevision else { return }
@@ -288,12 +292,11 @@ final class TrendingTopicMediaStore {
   /// Called only for requests selected by the current moderated artwork, never to select media.
   /// Memory-only lookup avoids disk decode and an empty LazyImage state on the first frame.
   func image(for request: ImageRequest) -> Nuke.PlatformImage? {
-    guard isActive, !request.options.contains(.disableMemoryCacheReads) else { return nil }
+    guard !request.options.contains(.disableMemoryCacheReads) else { return nil }
     if let image = retainedImages.value(for: TrendingTopicImageRequests.identity(request)) { return image }
     guard let container = ImageLoadingManager.shared.pipeline.cache[request], !container.isPreview else { return nil }
     return staticImage(container.image)?.image
   }
-
   /// No tasks are retained. Late image completion cannot repopulate an invalidated account.
   func retainImage(_ image: Nuke.PlatformImage, for request: ImageRequest, revision expectedRevision: Int) {
     guard isActive, revision == expectedRevision, !request.options.contains(.disableMemoryCacheWrites),
@@ -361,10 +364,20 @@ enum TrendingTopicImageRequests {
 
   /// Priority is not part of the load identity, so visible rows raise a coalesced prefetch.
   static func request(_ url: URL, size: CGSize, displayScale: CGFloat, priority: ImageRequest.Priority = .low) -> ImageRequest {
+    if let req = ImageRequestFactory.image(url, pointSize: size, scale: displayScale, contentMode: .aspectFill, priority: priority) {
+      return req
+    }
     let pixels = CGSize(width: size.width * displayScale, height: size.height * displayScale)
     return ImageRequest(url: url, processors: [
       ImageProcessors.Resize(size: pixels, unit: .pixels, contentMode: .aspectFill)
     ], priority: priority)
+  }
+
+  static func avatarRequest(_ url: URL, size: CGSize, displayScale: CGFloat, priority: ImageRequest.Priority = .low) -> ImageRequest {
+    if let req = ImageRequestFactory.avatar(url, pointSize: size.width, scale: displayScale, contentMode: .aspectFill, priority: priority) {
+      return req
+    }
+    return request(url, size: size, displayScale: displayScale, priority: priority)
   }
 
   static func requests(
@@ -373,7 +386,7 @@ enum TrendingTopicImageRequests {
     displayScale: CGFloat
   ) -> [ImageRequest] {
     preview.media.prefix(3).map { request($0.url, size: cardSize, displayScale: displayScale) }
-      + (participants ?? preview.participants).prefix(3).map { request($0.avatar, size: avatarSize, displayScale: displayScale) }
+      + (participants ?? preview.participants).prefix(3).map { avatarRequest($0.avatar, size: avatarSize, displayScale: displayScale) }
   }
 }
 

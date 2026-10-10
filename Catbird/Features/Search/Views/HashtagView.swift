@@ -1,6 +1,6 @@
-import SwiftUI
+import OSLog
 import Petrel
-
+import SwiftUI
 struct HashtagView: View {
     let tag: String
     @Binding var path: NavigationPath
@@ -20,7 +20,7 @@ struct HashtagView: View {
     @State private var loadGeneration = 0
     
     private static let contentFilterService = ContentFilterService()
-    
+    private static let hashtagRegex = try? NSRegularExpression(pattern: "#([a-zA-Z0-9_]+)")
     var body: some View {
         postsList
             .navigationTitle("#\(tag)")
@@ -48,7 +48,6 @@ struct HashtagView: View {
             .onAppear {
                 if posts.isEmpty {
                     loadPosts()
-                    fetchRelatedTags()
                 }
             }
     }
@@ -251,10 +250,17 @@ struct HashtagView: View {
     private func loadPosts() {
         loadGeneration += 1
         let generation = loadGeneration
+        let isInitial = posts.isEmpty
         isLoading = true
         loadFailed = false
         
         Task {
+            let signpost = isInitial ? PerformanceSignposts.beginInterval("HashtagOpen") : nil
+            defer {
+                if let signpost {
+                    PerformanceSignposts.endInterval("HashtagOpen", signpost)
+                }
+            }
             guard generation == loadGeneration else { return }
             guard let client = appState.atProtoClient else {
                 loadFailed = true
@@ -283,6 +289,12 @@ struct HashtagView: View {
                 posts = visiblePosts
                 cursor = data.cursor
                 isLoading = false
+                
+                let related = Self.relatedTags(from: data.posts, excluding: tag)
+                relatedTags = related
+                if related.isEmpty {
+                    findPopularTagsInDomain()
+                }
             } catch {
                 guard generation == loadGeneration else { return }
                 logger.debug("Error loading hashtag posts: \(error)")
@@ -333,115 +345,67 @@ struct HashtagView: View {
         }
     }
     
-    private func fetchRelatedTags() {
-        Task {
-            do {
-                guard let client = appState.atProtoClient else { return }
-                
-                // First get posts with the current hashtag
-                let (_, data) = try await client.app.bsky.feed.searchPosts(
-                    input: .init(
-                        q: "#\(tag)",
-                        limit: 40  // Get a good sample size
-                    )
-                )
-                
-                // Extract hashtags from post content
-                var hashtagCounts: [String: Int] = [:]
-                
-                if let posts = data?.posts {
-                    for post in posts {
-                        if case let .knownType(record) = post.record {
-                            if let post = record as? AppBskyFeedPost {
-                                let text = post.text
-                            // Extract hashtags with regex
-                            let pattern = "#([a-zA-Z0-9_]+)"
-                            let regex = try? NSRegularExpression(pattern: pattern)
-                            
-                            if let matches = regex?.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-                                for match in matches {
-                                    if let range = Range(match.range(at: 1), in: text) {
-                                        let hashtag = String(text[range]).lowercased()
-                                        // Don't count the current tag
-                                        if hashtag != tag.lowercased() {
-                                            hashtagCounts[hashtag, default: 0] += 1
-                                        }
-                                    }
-                                }
+    nonisolated static func relatedTags(from posts: [AppBskyFeedDefs.PostView], excluding currentTag: String) -> [String] {
+        var hashtagCounts: [String: Int] = [:]
+        let excluded = currentTag.lowercased()
+        
+        for post in posts {
+            guard case let .knownType(record) = post.record,
+                  let feedPost = record as? AppBskyFeedPost else { continue }
+            var postTags = Set<String>()
+            if let facets = feedPost.facets {
+                for facet in facets {
+                    for feature in facet.features {
+                        if case .appBskyRichtextFacetTag(let tagFeature) = feature {
+                            let candidate = tagFeature.tag.lowercased()
+                            if candidate != excluded {
+                                postTags.insert(candidate)
                             }
                         }
                     }
                 }
-                }
-                
-                // Get the top related tags by frequency
-                await MainActor.run {
-                    relatedTags = Array(hashtagCounts.sorted { $0.value > $1.value }
-                                      .prefix(5)
-                                      .map { $0.key })
-                    
-                    // Fallback if we didn't find any related tags
-                    if relatedTags.isEmpty {
-                        // Try to find related tags by searching for popular tags in the same general domain
-                        findPopularTagsInDomain()
+            }
+            if postTags.isEmpty, let regex = hashtagRegex {
+                let text = feedPost.text
+                let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+                for match in matches {
+                    if let range = Range(match.range(at: 1), in: text) {
+                        let candidate = String(text[range]).lowercased()
+                        if candidate != excluded {
+                            postTags.insert(candidate)
+                        }
                     }
                 }
-            } catch {
-                logger.debug("Error fetching related hashtags: \(error)")
+            }
+            for tag in postTags {
+                hashtagCounts[tag, default: 0] += 1
             }
         }
+        
+        return Array(hashtagCounts.sorted { $0.value > $1.value }.prefix(5).map { $0.key })
     }
 
-    // Fallback method to find popular tags in the same domain
+    // Fallback method to find popular tags in the same domain when initial search yields no tags
     private func findPopularTagsInDomain() {
         Task {
             do {
                 guard let client = appState.atProtoClient else { return }
-                
-                // Use broader search terms based on the current tag
                 let searchTerm = getTopicFromTag(tag)
-                
                 let (_, data) = try await client.app.bsky.feed.searchPosts(
                     input: .init(
                         q: searchTerm,
-                        sort: "top",  // Get top posts for better hashtag discovery
+                        sort: "top",
                         limit: 20
                     )
                 )
-                
-                // Extract hashtags from post content
-                var hashtagCounts: [String: Int] = [:]
                 if let posts = data?.posts {
-                    for post in posts {
-                        if case let .knownType(record) = post.record {
-                            if let post = record as? AppBskyFeedPost {
-                                let text = post.text
-                                let pattern = "#([a-zA-Z0-9_]+)"
-                                let regex = try? NSRegularExpression(pattern: pattern)
-                                if let matches = regex?.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-                                    for match in matches {
-                                        if let range = Range(match.range(at: 1), in: text) {
-                                            let hashtag = String(text[range]).lowercased()
-                                            // Don't count the current tag or the search term if it's a hashtag
-                                            if hashtag != tag.lowercased() && (searchTerm.starts(with: "#") ? hashtag != searchTerm.dropFirst().lowercased() : true) {
-                                                hashtagCounts[hashtag, default: 0] += 1
-                                            }
-                                        }
-                                    }
-                                }
+                    let tags = Self.relatedTags(from: posts, excluding: tag)
+                    if !tags.isEmpty {
+                        await MainActor.run {
+                            if relatedTags.isEmpty {
+                                relatedTags = tags
                             }
                         }
-                    }
-                }
-                
-                // Update UI
-                await MainActor.run {
-                    // Update relatedTags with results, ensuring not to overwrite if primary search yielded results
-                    // This check might be redundant if findPopularTagsInDomain is only called when relatedTags is empty
-                    if relatedTags.isEmpty {
-                         relatedTags = Array(hashtagCounts.sorted { $0.value > $1.value }
-                                      .prefix(5)
-                                      .map { $0.key })
                     }
                 }
             } catch {

@@ -27,7 +27,7 @@ struct StarterPackCardView: View {
                             .frame(width: 44, height: 44)
                         
                         AsyncProfileImage(
-                            url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 44,
+                            url: starterPack.creator.finalAvatarURL(), size: 44,
                             did: starterPack.creator.did.didString(), labels: starterPack.creator.labels)
                     }
                     

@@ -48,7 +48,7 @@ struct TrendingTopicParticipantStack: View {
     if !participants.isEmpty {
       HStack(spacing: -6) {
         ForEach(participants) { participant in
-          TrendingTopicImage(request: TrendingTopicImageRequests.request(participant.avatar,
+          TrendingTopicImage(request: TrendingTopicImageRequests.avatarRequest(participant.avatar,
             size: TrendingTopicImageRequests.avatarSize, displayScale: displayScale, priority: .normal)) { image in
             image.resizable().scaledToFill()
               .frame(width: 26, height: 26)
@@ -133,7 +133,7 @@ private struct TrendingTopicImage<Content: View>: View {
     let store = appState.trendingTopicMediaStore
     let revision = store.revision
     let viewerDID = appState.userDID
-    if store.isActive, !appState.isAccountSwitchSuspended {
+    if !appState.isAccountSwitchSuspended {
       if let image = store.image(for: request) {
         content(Image(platformImage: image))
           .onAppear { retain(image, store: store, revision: revision, viewerDID: viewerDID) }

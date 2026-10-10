@@ -29,9 +29,9 @@ public struct TopicFeedView: View {
   }
 
   @State private var selectedTab: Tab = .top
+  @State private var visitedTabs: Set<Tab> = [.top]
   @State private var topTabState = TopicTabState(sort: "top")
   @State private var latestTabState = TopicTabState(sort: "latest")
-
   init(topic: String, path: Binding<NavigationPath>) {
     self.topic = topic
     self._path = path
@@ -55,24 +55,28 @@ public struct TopicFeedView: View {
 
       ZStack {
         // Top tab
-        TopicTabContentView(
-          topic: topic,
-          state: topTabState,
-          path: $path,
-          appState: appState
-        )
-        .opacity(selectedTab == .top ? 1 : 0)
-        .allowsHitTesting(selectedTab == .top)
+        if visitedTabs.contains(.top) {
+          TopicTabContentView(
+            topic: topic,
+            state: topTabState,
+            path: $path,
+            appState: appState
+          )
+          .opacity(selectedTab == .top ? 1 : 0)
+          .allowsHitTesting(selectedTab == .top)
+        }
 
         // Latest tab
-        TopicTabContentView(
-          topic: topic,
-          state: latestTabState,
-          path: $path,
-          appState: appState
-        )
-        .opacity(selectedTab == .latest ? 1 : 0)
-        .allowsHitTesting(selectedTab == .latest)
+        if visitedTabs.contains(.latest) {
+          TopicTabContentView(
+            topic: topic,
+            state: latestTabState,
+            path: $path,
+            appState: appState
+          )
+          .opacity(selectedTab == .latest ? 1 : 0)
+          .allowsHitTesting(selectedTab == .latest)
+        }
       }
     }
     .navigationTitle(topic)
@@ -84,12 +88,13 @@ public struct TopicFeedView: View {
         ShareLink(item: shareURL)
       }
     }
-    .task {
-      if !topTabState.hasLoadedInitial {
-        await topTabState.loadInitial(topic: topic, appState: appState)
-      }
-      if !latestTabState.hasLoadedInitial {
-        await latestTabState.loadInitial(topic: topic, appState: appState)
+    .onChange(of: selectedTab) { _, tab in
+      visitedTabs.insert(tab)
+    }
+    .task(id: selectedTab) {
+      let state = selectedTab == .top ? topTabState : latestTabState
+      if !state.hasLoadedInitial {
+        await state.loadInitial(topic: topic, appState: appState)
       }
     }
   }

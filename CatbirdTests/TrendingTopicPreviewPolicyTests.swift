@@ -755,7 +755,7 @@ struct TrendingTopicPreviewPolicyTests {
   }
 
   #if canImport(UIKit)
-  @Test("Returning to the foreground removes stale viewer state and rejects pending art")
+  @Test("Resign/active round trip preserves cached viewer state and rejects pending art (P188/P261)")
   func foregroundInvalidation() async throws {
     let store = TrendingTopicMediaStore()
     let source = PreviewControlledSource()
@@ -771,9 +771,11 @@ struct TrendingTopicPreviewPolicyTests {
     NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
 
     #expect(store.revision == revision + 1)
-    #expect(store.preview(key: "cached", context: .init()) == .init())
-    #expect(!store.canReusePrefetchedFeed)
-    #expect(!store.consumePrefetchedFeedReuse(for: "new-topic"))
+    // P188/P261: Resign/active transitions (Control Center / notification shade) preserve
+    // cached previews and prefetched feed reuse instead of dropping them.
+    #expect(store.preview(key: "cached", context: .init()).media.count == 1)
+    #expect(store.canReusePrefetchedFeed)
+    #expect(store.consumePrefetchedFeedReuse(for: "new-topic"))
     source.succeed(0, posts: [post])
     await pending.value
     #expect(store.preview(key: "pending", context: .init()) == .init())

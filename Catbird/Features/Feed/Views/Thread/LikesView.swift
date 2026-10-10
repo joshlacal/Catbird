@@ -83,6 +83,7 @@ struct LikesView: View {
         }
         .navigationTitle(resolvedTitle)
         .task {
+            guard likes.isEmpty else { return }
             await loadLikes()
         }
     }

@@ -64,6 +64,7 @@ struct BookmarksView: View {
     .navigationBarTitleDisplayMode(.large)
     #endif
     .task {
+      guard !hasLoaded, bookmarks.isEmpty else { return }
       await loadInitialBookmarks()
     }
     .refreshable {

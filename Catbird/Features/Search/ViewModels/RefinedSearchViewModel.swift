@@ -96,12 +96,14 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   private var requestGeneration = SearchRequestGeneration()
   private var activeSearchRequest: SearchRequestSnapshot?
   private var suggestedUsersGeneration: UInt64 = 0
-  private let searchDebounceTime: TimeInterval = 0.15
+  private let searchDebounceTime: TimeInterval = 0.25
+  private var lastFetchedTypeaheadTerm: String?
+  private var lastTrendingTopicsFetch: Date?
+  private var hasLoadedLocalPreferencesAndStoredSearches = false
   private var isSubscribed = false
   /// Set when filters were restored from a recent or saved search, so typing a new query starts
   /// from clean filters instead of silently inheriting them.
   private var filtersCameFromEntry = false
-
   // MARK: - Computed Properties
 
   /// Whether there are any search results for the active scope
@@ -127,6 +129,11 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
 
   init(appState: AppState) {
     self.appState = appState
+  }
+
+  public func ensureLocalPreferencesAndStoredSearchesLoaded() {
+    guard !hasLoadedLocalPreferencesAndStoredSearches else { return }
+    hasLoadedLocalPreferencesAndStoredSearches = true
     if let prefs = try? appState.preferencesManager.getLocalPreferences() {
       self.userInterests = prefs.interests
       let nuxCompleted = prefs.nuxStates.first(where: { $0.id == "ExploreInterestsCard" })?.completed ?? false
@@ -166,6 +173,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   private var hasLoadedDiscoveryContent = false
 
   public func initialize(client: ATProtoClient, displayScale: CGFloat) {
+    ensureLocalPreferencesAndStoredSearchesLoaded()
     guard !hasLoadedDiscoveryContent else { return }
     hasLoadedDiscoveryContent = true
     Task {
@@ -174,15 +182,18 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   }
 
   public func refreshDiscoveryContent(client: ATProtoClient, displayScale: CGFloat) async {
+    let signpost = PerformanceSignposts.beginInterval("SearchOpen")
+    defer {
+      PerformanceSignposts.endInterval("SearchOpen", signpost)
+    }
     hasLoadedDiscoveryContent = true
-    async let trendsTask: Void = fetchTrendingTopics(client: client, displayScale: displayScale)
+    async let trendsTask: Void = fetchTrendingTopics(client: client, displayScale: displayScale, force: true)
     async let suggestedTask: Void = fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
     async let videosTask: Void = fetchTrendingVideos(client: client)
     async let interestsTask: Void = loadUserInterests()
 
     _ = await (trendsTask, suggestedTask, videosTask, interestsTask)
   }
-
   public func loadUserInterests() async {
     if let prefs = try? await appState.preferencesManager.getPreferences() {
       userInterests = prefs.interests
@@ -209,8 +220,11 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     }
   }
 
-  public func fetchTrendingTopics(client: ATProtoClient, displayScale: CGFloat) async {
+  public func fetchTrendingTopics(client: ATProtoClient, displayScale: CGFloat, force: Bool = false) async {
     guard !isTrendingTopicsLoading else { return }
+    if !force, let last = lastTrendingTopicsFetch, Date().timeIntervalSince(last) < 900, !trendingTopics.isEmpty {
+      return
+    }
     isTrendingTopicsLoading = true
     defer {
       isTrendingTopicsLoading = false
@@ -227,6 +241,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
       if let topicsResponse = response, !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID {
         trendingTopics = topicsResponse.trends
+        lastTrendingTopicsFetch = Date()
         if isSubscribed {
           appState.prefetchTopicPreviews(trends: topicsResponse.trends, displayScale: displayScale, owner: .search)
         }
@@ -292,11 +307,13 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     defer { isTrendingVideosLoading = false }
     do {
       let feedUri = try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI)
-      let feedManager = FeedManager(client: client, fetchType: .feed(feedUri))
-      let (posts, _) = try await feedManager.fetchFeed(fetchType: .feed(feedUri), cursor: nil)
+      let (responseCode, response) = try await client.app.bsky.feed.getFeed(
+        input: .init(feed: feedUri, limit: 15, cursor: nil)
+      )
+      guard responseCode == 200, let feed = response?.feed else { return }
       // Previews the account's policy filters from lists are not kept; the
       // section re-filters with the live policy and covers moderated thumbnails.
-      trendingVideos = TrendingVideoModeration.listed(posts, policy: appState.moderationPolicy)
+      trendingVideos = TrendingVideoModeration.listed(feed, policy: appState.moderationPolicy)
     } catch {
       logger.error("Error fetching trending videos: \(error.localizedDescription)")
     }
@@ -325,11 +342,13 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
 
     searchTask?.cancel()
 
-    if query.isEmpty {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
       searchState = .idle
       typeaheadProfiles = []
       typeaheadSuggestions = []
       isCommittedSearch = false
+      lastFetchedTypeaheadTerm = nil
       return
     }
 
@@ -346,6 +365,10 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       history: recentTerms,
       trending: trendingTerms
     )
+
+    if trimmed == lastFetchedTypeaheadTerm && !typeaheadProfiles.isEmpty {
+      return
+    }
 
     searchTask = Task { [weak self] in
       guard let self else { return }
@@ -366,6 +389,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     }
 
     searchTask?.cancel()
+    lastFetchedTypeaheadTerm = nil
 
     syncSortWithScope()
 
@@ -412,8 +436,8 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     invalidateSearchRequests(resetCursors: true)
     searchState = .idle
     searchQuery = ""
+    lastFetchedTypeaheadTerm = nil
     isCommittedSearch = false
-    searchError = nil
     loadMoreError = nil
     filterState = SearchFilterState()
     filtersCameFromEntry = false
@@ -963,12 +987,17 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   // MARK: - Private Helpers
 
   private func fetchTypeahead(query: String, client: ATProtoClient) async {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    guard trimmed != lastFetchedTypeaheadTerm else { return }
     do {
       let input = AppBskyActorSearchActorsTypeahead.Parameters(
-        term: query,
+        term: trimmed,
         limit: 3
       )
       let (_, profileResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: input)
+      guard !Task.isCancelled, query == searchQuery, !isCommittedSearch else { return }
+      lastFetchedTypeaheadTerm = trimmed
       if let profiles = profileResponse?.actors {
         typeaheadProfiles = profiles
       }
