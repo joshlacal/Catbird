@@ -89,7 +89,7 @@ actor ContentFilterService {
       }
     }
     
-    if MutedWordMatcher.matches(feedPost: post, words: settings.mutedWords, now: Date()) { return false }
+    if settings.compiledMutedWords.matches(feedPost: post) { return false }
     if !passesLocalPostType(post.post, settings: settings) { return false }
 
     // Check reply filtering
@@ -133,8 +133,13 @@ actor ContentFilterService {
     if settings.hideNonPreferredLanguages,
        case .knownType(let record) = post.post.record,
        let feedPost = record as? AppBskyFeedPost,
-       !ReadingLanguagePolicy.allows(declaredLanguages: feedPost.langs?.map { $0.lang.minimalIdentifier } ?? [],
-         preferredLanguages: settings.preferredLanguages, text: feedPost.text) {
+       !ReadingLanguagePolicy.allows(
+         declaredLanguages: feedPost.langs?.map(\.languageTag) ?? [],
+         preferredBaseCodes: settings.preferredBaseCodes,
+         uri: post.post.uri.uriString(),
+         cid: post.post.cid.string,
+         text: feedPost.text
+       ) {
       return false
     }
 
@@ -242,14 +247,19 @@ actor ContentFilterService {
       return false
     }
     
-    if MutedWordMatcher.matches(post: post, words: settings.mutedWords, now: Date()) { return false }
+    if settings.compiledMutedWords.matches(post: post) { return false }
 
     // Declared and detected languages use the same account-local reading rules.
     if settings.hideNonPreferredLanguages,
        case .knownType(let record) = post.record,
        let feedPost = record as? AppBskyFeedPost,
-       !ReadingLanguagePolicy.allows(declaredLanguages: feedPost.langs?.map { $0.lang.minimalIdentifier } ?? [],
-         preferredLanguages: settings.preferredLanguages, text: feedPost.text) {
+       !ReadingLanguagePolicy.allows(
+         declaredLanguages: feedPost.langs?.map(\.languageTag) ?? [],
+         preferredBaseCodes: settings.preferredBaseCodes,
+         uri: post.uri.uriString(),
+         cid: post.cid.string,
+         text: feedPost.text
+       ) {
       return false
     }
 
