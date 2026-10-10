@@ -1,6 +1,7 @@
 import Contacts
 import OSLog
 import Petrel
+import NukeUI
 import SwiftUI
 
 /// Find Contacts / Address Book matching flow view (G64)
@@ -8,6 +9,7 @@ public struct FindContactsFlowView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.displayScale) private var displayScale
     
     public var isOnboarding: Bool = false
     public var onFinish: (() -> Void)?
@@ -534,11 +536,10 @@ public struct FindContactsFlowView: View {
         HStack(spacing: 12) {
             // Avatar
             if let avatar = match.profile.avatar, let url = URL(string: avatar.uriString()) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
+                LazyImage(request: ImageRequestFactory.avatar(url, pointSize: 44, scale: displayScale)) { state in
+                    if let image = state.image {
                         image.resizable().scaledToFill()
-                    default:
+                    } else {
                         Circle().fill(Color.secondary.opacity(0.2))
                     }
                 }
@@ -847,7 +848,11 @@ public struct FindContactsFlowView: View {
         step = .importing
         
         do {
-            let prepared = try service.fetchAndPrepareContacts(excludingSelfPhone: service.verifiedPhoneNumber)
+            let service = self.service
+            let selfPhone = service.verifiedPhoneNumber
+            let prepared = try await Task.detached(priority: .userInitiated) {
+                try service.fetchAndPrepareContacts(excludingSelfPhone: selfPhone)
+            }.value
             self.unmatchedContacts = prepared.unmatchedContacts
             
             if prepared.normalizedPhoneNumbers.isEmpty {
@@ -905,30 +910,64 @@ public struct FindContactsFlowView: View {
     }
     
     private func handleFollowAll() {
+        let indicesToFollow = matches.indices.filter { !matches[$0].isFollowing && !matches[$0].isDismissed }
+        guard !indicesToFollow.isEmpty else { return }
+        
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Couldn’t follow contacts. Please try again."
+            return
+        }
+        
         isFollowingAll = true
         errorMessage = nil
         
+        for idx in indicesToFollow {
+            matches[idx].isFollowing = true
+        }
+        
         Task { @MainActor in
+            let chunkSize = 50
+            let chunks = stride(from: 0, to: indicesToFollow.count, by: chunkSize).map {
+                Array(indicesToFollow[$0..<min($0 + chunkSize, indicesToFollow.count)])
+            }
+            
             var failureCount = 0
-            for i in matches.indices {
-                if !matches[i].isFollowing && !matches[i].isDismissed {
-                    do {
-                        let success = try await appState.follow(did: matches[i].profile.did.didString())
-                        if success {
-                            matches[i].isFollowing = true
-                        } else {
-                            failureCount += 1
-                        }
-                    } catch {
-                        logger.error("Follow failed for match: \(error.localizedDescription)")
-                        failureCount += 1
+            
+            for chunk in chunks {
+                do {
+                    let subjectDIDs = chunk.compactMap { try? DID(didString: matches[$0].profile.did.didString()) }
+                    let creates = try StarterPackService.shared.buildFollowWrites(subjectDIDs: subjectDIDs, via: nil)
+                    let writes = creates.map { ComAtprotoRepoApplyWrites.InputWritesUnion($0) }
+                    
+                    let input = try ComAtprotoRepoApplyWrites.Input(
+                        repo: ATIdentifier(string: appState.userDID),
+                        validate: true,
+                        writes: writes
+                    )
+                    
+                    let (responseCode, _) = try await client.com.atproto.repo.applyWrites(input: input)
+                    guard responseCode == 200 else {
+                        throw NSError(
+                            domain: "FindContactsFlow",
+                            code: responseCode,
+                            userInfo: [NSLocalizedDescriptionKey: "applyWrites returned \(responseCode)"]
+                        )
+                    }
+                } catch {
+                    logger.error("Failed batch follow for contacts chunk: \(error.localizedDescription)")
+                    failureCount += chunk.count
+                    for idx in chunk {
+                        matches[idx].isFollowing = false
                     }
                 }
             }
+            
             isFollowingAll = false
             if failureCount > 0 {
                 errorMessage = "Couldn’t follow \(failureCount) contact\(failureCount == 1 ? "" : "s"). Try again."
             }
+            
+            appState.graphManager.invalidateCache(for: .relationshipChanged, cacheTypes: .following)
         }
     }
     

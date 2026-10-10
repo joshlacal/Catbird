@@ -139,18 +139,11 @@ enum CopilotImageSupport {
     configuration.timeoutIntervalForResource = 20
     let session = URLSession(configuration: configuration)
     defer { session.invalidateAndCancel() }
-    let (bytes, response) = try await session.bytes(for: URLRequest(url: url))
+    let (data, response) = try await session.data(for: URLRequest(url: url))
     try Task.checkCancellation()
     guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode),
           response.url.map(isAllowedURL) == true,
-          response.expectedContentLength <= Int64(maximumDownloadBytes) else { throw ImageLoadError.invalidResponse }
-    var data = Data()
-    for try await byte in bytes {
-      guard data.count < maximumDownloadBytes else { throw ImageLoadError.tooLarge }
-      data.append(byte)
-      if data.count.isMultiple(of: 4_096) { try Task.checkCancellation() }
-    }
-    try Task.checkCancellation()
+          data.count <= maximumDownloadBytes else { throw ImageLoadError.invalidResponse }
     return try decodeThumbnail(data)
   }
 

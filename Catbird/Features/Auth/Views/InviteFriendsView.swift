@@ -1,6 +1,7 @@
 import CoreImage.CIFilterBuiltins
 import OSLog
 import Petrel
+import NukeUI
 import SwiftUI
 
 /// Six visual themes for the QR invite card
@@ -126,6 +127,7 @@ public struct InviteFriendsView: View {
     @Environment(AppState.self) private var appState
     @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.displayScale) private var displayScale
     
     @State private var selectedTheme: InviteTheme = .day
     @State private var showScanner: Bool = false
@@ -286,11 +288,10 @@ public struct InviteFriendsView: View {
             // Profile Header
             HStack(spacing: 12) {
                 if let currentAvatarURL {
-                    AsyncImage(url: currentAvatarURL) { phase in
-                        switch phase {
-                        case .success(let image):
+                    LazyImage(request: ImageRequestFactory.avatar(currentAvatarURL, pointSize: 48, scale: displayScale)) { state in
+                        if let image = state.image {
                             image.resizable().scaledToFill()
-                        default:
+                        } else {
                             Circle().fill(Color.white.opacity(0.3))
                         }
                     }

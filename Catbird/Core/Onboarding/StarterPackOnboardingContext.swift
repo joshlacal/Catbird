@@ -10,13 +10,25 @@ struct StarterPackPendingContext: Codable, Sendable, Equatable {
     let cid: String
     let name: String?
     let creatorDID: String?
+    let listUri: String?
+    let feedUris: [String]?
     
-    init(flowID: UUID = UUID(), uri: String, cid: String, name: String? = nil, creatorDID: String? = nil) {
+    init(
+        flowID: UUID = UUID(),
+        uri: String,
+        cid: String,
+        name: String? = nil,
+        creatorDID: String? = nil,
+        listUri: String? = nil,
+        feedUris: [String]? = nil
+    ) {
         self.flowID = flowID
         self.uri = uri
         self.cid = cid
         self.name = name
         self.creatorDID = creatorDID
+        self.listUri = listUri
+        self.feedUris = feedUris
     }
     
     enum CodingKeys: String, CodingKey {
@@ -25,6 +37,8 @@ struct StarterPackPendingContext: Codable, Sendable, Equatable {
         case cid
         case name
         case creatorDID
+        case listUri
+        case feedUris
     }
     
     init(from decoder: Decoder) throws {
@@ -34,6 +48,8 @@ struct StarterPackPendingContext: Codable, Sendable, Equatable {
         self.cid = try container.decode(String.self, forKey: .cid)
         self.name = try container.decodeIfPresent(String.self, forKey: .name)
         self.creatorDID = try container.decodeIfPresent(String.self, forKey: .creatorDID)
+        self.listUri = try container.decodeIfPresent(String.self, forKey: .listUri)
+        self.feedUris = try container.decodeIfPresent([String].self, forKey: .feedUris)
     }
 }
 
@@ -61,7 +77,9 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
     
     private(set) var activeFlowID: UUID?
     private(set) var isFinalizing: Bool = false
-    
+    private(set) var activeFinalizationTask: Task<StarterPackFinalizationResult, Error>?
+    private(set) var storedResult: StarterPackFinalizationResult?
+    private(set) var storedError: String?
     var pendingContext: StarterPackPendingContext? {
         didSet {
             saveToStorage()
@@ -125,6 +143,34 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         appState: AppState,
         context: StarterPackPendingContext
     ) async throws -> StarterPackFinalizationResult {
+        // Reuse in-flight finalization task if one is already running for this flow
+        if let existingTask = activeFinalizationTask, activeFlowID == context.flowID {
+            return try await existingTask.value
+        }
+        
+        let task = Task<StarterPackFinalizationResult, Error> { @MainActor in
+            do {
+                let result = try await self.performFinalization(client: client, appState: appState, context: context)
+                self.storedResult = result
+                self.storedError = nil
+                self.activeFinalizationTask = nil
+                return result
+            } catch {
+                self.storedError = error.localizedDescription
+                self.activeFinalizationTask = nil
+                throw error
+            }
+        }
+        self.activeFinalizationTask = task
+        return try await task.value
+    }
+    
+    @MainActor
+    private func performFinalization(
+        client: ATProtoClient,
+        appState: AppState,
+        context: StarterPackPendingContext
+    ) async throws -> StarterPackFinalizationResult {
         // 0. Validate that pending context and active flow token match to prevent stale/canceled context execution
         guard let currentPending = pendingContext, currentPending.flowID == context.flowID else {
             logger.warning("Stale or mismatched starter pack context flowID: \(context.flowID.uuidString), current: \(self.pendingContext?.flowID.uuidString ?? "none")")
@@ -163,56 +209,77 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         
         let strongRef = ComAtprotoRepoStrongRef(uri: starterPackURI, cid: starterPackCID)
         
-        // 1. Fetch starter pack details
-        let getPackParams = AppBskyGraphGetStarterPack.Parameters(starterPack: starterPackURI)
-        let (packCode, packData) = try await client.app.bsky.graph.getStarterPack(input: getPackParams)
-        
-        guard packCode == 200, let packView = packData?.starterPack else {
-            logger.error("Failed to fetch starter pack details: HTTP \(packCode)")
-            throw NSError(
-                domain: "StarterPackOnboarding",
-                code: packCode,
-                userInfo: [NSLocalizedDescriptionKey: "Starter pack unavailable (HTTP \(packCode))"]
-            )
-        }
-        
-        // 2. Fetch all members from backing list (throw on pagination/HTTP failure)
+        // 1 & 2: Fetch members and feed URIs (skip getStarterPack if listUri is already cached)
         var memberItems: [AppBskyGraphDefs.ListItemView] = []
-        if let listUri = packView.list?.uri {
+        var feedURIs: [String] = []
+        
+        if let listUriStr = context.listUri, let listUri = try? ATProtocolURI(uriString: listUriStr) {
             memberItems = try await StarterPackService.shared.fetchAllMembers(
                 client: client,
                 listUri: listUri
             )
+            feedURIs = context.feedUris ?? []
+        } else {
+            let getPackParams = AppBskyGraphGetStarterPack.Parameters(starterPack: starterPackURI)
+            let (packCode, packData) = try await client.app.bsky.graph.getStarterPack(input: getPackParams)
+            
+            guard packCode == 200, let packView = packData?.starterPack else {
+                logger.error("Failed to fetch starter pack details: HTTP \(packCode)")
+                throw NSError(
+                    domain: "StarterPackOnboarding",
+                    code: packCode,
+                    userInfo: [NSLocalizedDescriptionKey: "Starter pack unavailable (HTTP \(packCode))"]
+                )
+            }
+            
+            if let listUri = packView.list?.uri {
+                memberItems = try await StarterPackService.shared.fetchAllMembers(
+                    client: client,
+                    listUri: listUri
+                )
+            }
+            feedURIs = packView.feeds?.map { $0.uri.uriString() } ?? []
         }
         
-        // 3. Bulk follow members with via strong reference using StarterPackService (idempotent)
+        // 3. Overlap preference pin sync (not a repo write) with bulk follow repo operations
+        async let pinFeedsTask: Int = {
+            guard !feedURIs.isEmpty else { return 0 }
+            do {
+                let prefs = try await appState.preferencesManager.getPreferences()
+                var currentPinned = prefs.pinnedFeeds
+                var addedCount = 0
+                for feedURI in feedURIs {
+                    if !currentPinned.contains(feedURI) {
+                        currentPinned.append(feedURI)
+                        addedCount += 1
+                    }
+                }
+                if addedCount > 0 {
+                    try await appState.preferencesManager.setPinnedFeeds(currentPinned)
+                }
+                return addedCount
+            } catch {
+                return 0
+            }
+        }()
+        
+        // 4. Bulk follow members with via strong reference using StarterPackService (idempotent)
         var followedCount = 0
         if !memberItems.isEmpty {
-            followedCount = try await StarterPackService.shared.followAll(
-                client: client,
-                members: memberItems,
-                starterPack: packView,
-                currentAccountDID: appState.userDID
-            )
-        }
-        
-        // 4. Pin feeds from the pack
-        var pinnedFeedsCount = 0
-        if let feeds = packView.feeds, !feeds.isEmpty {
-            let prefs = try await appState.preferencesManager.getPreferences()
-            var currentPinned = prefs.pinnedFeeds
-            for feed in feeds {
-                let feedURI = feed.uri.uriString()
-                if !currentPinned.contains(feedURI) {
-                    currentPinned.append(feedURI)
-                    pinnedFeedsCount += 1
-                }
+            let eligible = memberItems.filter { item in
+                let did = item.subject.did.didString()
+                return did != appState.userDID && item.subject.viewer?.following == nil
             }
-            if pinnedFeedsCount > 0 {
-                try await appState.preferencesManager.setPinnedFeeds(currentPinned)
+            let dids = eligible.map { $0.subject.did }
+            if !dids.isEmpty {
+                followedCount = try await StarterPackService.shared.bulkFollow(
+                    client: client,
+                    dids: dids,
+                    via: strongRef,
+                    accountDID: appState.userDID
+                )
             }
         }
-        
         // 5. Update profile with joinedViaStarterPack
         var updatedProfile = false
         let getRecordParams = ComAtprotoRepoGetRecord.Parameters(
@@ -300,6 +367,7 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         // 6. Clear pending context ONLY after every required step has succeeded
         clearPendingContext()
         
+        let pinnedFeedsCount = await pinFeedsTask
         logger.info("Starter pack onboarding finalization completed: followed \(followedCount) members, pinned \(pinnedFeedsCount) feeds")
         return StarterPackFinalizationResult(
             followedCount: followedCount,

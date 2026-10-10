@@ -1,11 +1,13 @@
 import Foundation
 import OSLog
 import Petrel
+import NukeUI
 import SwiftUI
 
 /// Onboarding step for discovering and following suggested accounts based on selected interests
 public struct OnboardingSuggestedAccountsStep: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.displayScale) private var displayScale
     let selectedInterests: [String]
     let onContinue: () -> Void
     let onSkip: () -> Void
@@ -154,12 +156,14 @@ public struct OnboardingSuggestedAccountsStep: View {
         return HStack(spacing: 12) {
             // Avatar
             if let avatarURLString = actor.avatar?.uriString(), let url = URL(string: avatarURLString) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } placeholder: {
-                    Circle().fill(Color.secondary.opacity(0.2))
+                LazyImage(request: ImageRequestFactory.avatar(url, pointSize: 44, scale: displayScale)) { state in
+                    if let image = state.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Circle().fill(Color.secondary.opacity(0.2))
+                    }
                 }
                 .frame(width: 44, height: 44)
                 .clipShape(Circle())
@@ -222,6 +226,9 @@ public struct OnboardingSuggestedAccountsStep: View {
     // MARK: - Network Methods
     
     private func loadSuggestedAccounts() async {
+        let signpost = PerformanceSignposts.beginInterval("OnboardingSuggestedReady")
+        defer { PerformanceSignposts.endInterval("OnboardingSuggestedReady", signpost) }
+
         guard let client = appState.atProtoClient else {
             isLoading = false
             errorMessage = "Suggestions aren’t available right now."
@@ -231,70 +238,89 @@ public struct OnboardingSuggestedAccountsStep: View {
         isLoading = true
         errorMessage = nil
         
+        let interestIDs = selectedInterests.compactMap(BlueskyInterests.normalizedID)
+        let sortedInterestIDs = interestIDs.sorted()
+        var categories: [String?] = sortedInterestIDs.isEmpty ? [nil] : sortedInterestIDs.map { Optional($0) }
+        if !sortedInterestIDs.isEmpty {
+            categories.append(nil)
+        }
+        
+        typealias CategoryResult = (index: Int, actors: [AppBskyActorDefs.ProfileView])
+        
+        let results: [CategoryResult] = await withTaskGroup(of: CategoryResult?.self) { group in
+            for (index, category) in categories.enumerated() {
+                group.addTask {
+                    let limit = (category == nil) ? 30 : 25
+                    let params = AppBskyUnspeccedGetSuggestedOnboardingUsers.Parameters(
+                        category: category,
+                        limit: limit
+                    )
+                    do {
+                        let (code, output) = try await client.app.bsky.unspecced.getSuggestedOnboardingUsers(input: params)
+                        if code == 200, let data = output {
+                            return (index: index, actors: data.actors)
+                        }
+                    } catch {
+                        // Category failure handled gracefully
+                    }
+                    return nil
+                }
+            }
+            
+            var collected: [CategoryResult] = []
+            for await result in group {
+                if let result {
+                    collected.append(result)
+                }
+            }
+            return collected.sorted { $0.index < $1.index }
+        }
+        
         var actors: [AppBskyActorDefs.ProfileView] = []
         var seenDIDs = Set<String>()
+        var initialFollowed = Set<String>()
         
-        do {
-            // Suggestion categories are Bluesky interest ids; labels without one fall back to global suggestions.
-            let interestIDs = selectedInterests.compactMap(BlueskyInterests.normalizedID)
-            let categories: [String?] = interestIDs.isEmpty ? [nil] : interestIDs.map { Optional($0) }
-            
-            for category in categories {
-                let params = AppBskyUnspeccedGetSuggestedOnboardingUsers.Parameters(
-                    category: category,
-                    limit: 25
-                )
-                let (code, output) = try await client.app.bsky.unspecced.getSuggestedOnboardingUsers(input: params)
-                if code == 200, let data = output {
-                    for actor in data.actors {
-                        let did = actor.did.didString()
-                        if did != appState.userDID &&
-                            actor.viewer?.blocking == nil &&
-                            actor.viewer?.muted != true &&
-                            actor.viewer?.blockedBy != true &&
-                            !seenDIDs.contains(did) {
-                            seenDIDs.insert(did)
-                            actors.append(actor)
-                            if actor.viewer?.following != nil {
-                                followedDIDs.insert(did)
-                            }
-                        }
+        for result in results where result.index < (sortedInterestIDs.isEmpty ? 1 : sortedInterestIDs.count) {
+            for actor in result.actors {
+                let did = actor.did.didString()
+                if did != appState.userDID &&
+                    actor.viewer?.blocking == nil &&
+                    actor.viewer?.muted != true &&
+                    actor.viewer?.blockedBy != true &&
+                    !seenDIDs.contains(did) {
+                    seenDIDs.insert(did)
+                    actors.append(actor)
+                    if actor.viewer?.following != nil {
+                        initialFollowed.insert(did)
                     }
                 }
             }
-            
-            // Fallback to global suggestions if needed
-            if actors.count < 5 {
-                let globalParams = AppBskyUnspeccedGetSuggestedOnboardingUsers.Parameters(category: nil, limit: 30)
-                let (code, output) = try await client.app.bsky.unspecced.getSuggestedOnboardingUsers(input: globalParams)
-                if code == 200, let data = output {
-                    for actor in data.actors {
-                        let did = actor.did.didString()
-                        if did != appState.userDID &&
-                            actor.viewer?.blocking == nil &&
-                            actor.viewer?.muted != true &&
-                            actor.viewer?.blockedBy != true &&
-                            !seenDIDs.contains(did) {
-                            seenDIDs.insert(did)
-                            actors.append(actor)
-                            if actor.viewer?.following != nil {
-                                followedDIDs.insert(did)
-                            }
-                        }
+        }
+        
+        if actors.count < 5, let globalResult = results.first(where: { $0.index == categories.count - 1 }) {
+            for actor in globalResult.actors {
+                let did = actor.did.didString()
+                if did != appState.userDID &&
+                    actor.viewer?.blocking == nil &&
+                    actor.viewer?.muted != true &&
+                    actor.viewer?.blockedBy != true &&
+                    !seenDIDs.contains(did) {
+                    seenDIDs.insert(did)
+                    actors.append(actor)
+                    if actor.viewer?.following != nil {
+                        initialFollowed.insert(did)
                     }
                 }
             }
-            
-            await MainActor.run {
-                self.suggestedActors = actors
-                self.isLoading = false
-            }
-        } catch {
-            await MainActor.run {
-                logger.error("Failed to load suggested onboarding users: \(error)")
-                self.errorMessage = "Couldn’t load suggested accounts. Try again."
-                self.isLoading = false
-            }
+        }
+        
+        if actors.isEmpty {
+            self.errorMessage = "Couldn’t load suggested accounts. Try again."
+            self.isLoading = false
+        } else {
+            self.suggestedActors = actors
+            self.followedDIDs.formUnion(initialFollowed)
+            self.isLoading = false
         }
     }
     
@@ -325,11 +351,67 @@ public struct OnboardingSuggestedAccountsStep: View {
     }
     
     private func followAll() {
-        for actor in suggestedActors {
-            let did = actor.did.didString()
-            if !followedDIDs.contains(did) {
-                toggleFollow(for: actor)
+        let actorsToFollow = suggestedActors.filter { !followedDIDs.contains($0.did.didString()) }
+        guard !actorsToFollow.isEmpty else { return }
+        
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Couldn’t follow accounts. Please try again."
+            return
+        }
+        
+        let toFollowDIDs = actorsToFollow.map { $0.did.didString() }
+        let toFollowSet = Set(toFollowDIDs)
+        followInProgressDIDs.formUnion(toFollowSet)
+        followedDIDs.formUnion(toFollowSet)
+        
+        Task { @MainActor in
+            let signpost = PerformanceSignposts.beginInterval("FollowAllDone")
+            defer { PerformanceSignposts.endInterval("FollowAllDone", signpost) }
+            
+            let chunkSize = 50
+            let chunks = stride(from: 0, to: actorsToFollow.count, by: chunkSize).map {
+                Array(actorsToFollow[$0..<min($0 + chunkSize, actorsToFollow.count)])
             }
+            
+            for (chunkIndex, chunk) in chunks.enumerated() {
+                let chunkDIDs = chunk.map { $0.did.didString() }
+                do {
+                    let subjectDIDs = chunk.compactMap { try? DID(didString: $0.did.didString()) }
+                    let creates = try StarterPackService.shared.buildFollowWrites(subjectDIDs: subjectDIDs, via: nil)
+                    let writes = creates.map { ComAtprotoRepoApplyWrites.InputWritesUnion($0) }
+                    
+                    let input = try ComAtprotoRepoApplyWrites.Input(
+                        repo: ATIdentifier(string: appState.userDID),
+                        validate: true,
+                        writes: writes
+                    )
+                    
+                    let (responseCode, _) = try await client.com.atproto.repo.applyWrites(input: input)
+                    guard responseCode == 200 else {
+                        throw NSError(
+                            domain: "OnboardingSuggestedAccounts",
+                            code: responseCode,
+                            userInfo: [NSLocalizedDescriptionKey: "applyWrites failed with code \(responseCode)"]
+                        )
+                    }
+                    
+                    // Batch succeeded: remove from in-progress
+                    followInProgressDIDs.subtract(chunkDIDs)
+                } catch {
+                    logger.error("Failed batch follow at chunk \(chunkIndex): \(error.localizedDescription)")
+                    // Roll back this failed chunk and all remaining chunks
+                    for remainingChunk in chunks[chunkIndex...] {
+                        let remainingDIDs = remainingChunk.map { $0.did.didString() }
+                        followInProgressDIDs.subtract(remainingDIDs)
+                        followedDIDs.subtract(remainingDIDs)
+                    }
+                    errorMessage = "Couldn’t follow everyone. Try again."
+                    break
+                }
+            }
+            
+            // Invalidate following cache once for the entire batch operation
+            appState.graphManager.invalidateCache(for: .relationshipChanged, cacheTypes: .following)
         }
     }
 }

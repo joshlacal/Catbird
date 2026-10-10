@@ -293,13 +293,13 @@ public struct WelcomeOnboardingView: View {
                 
                 Spacer()
                 
-                if isFinalizingStarterPack {
+                if isFinalizing {
                     ProgressView()
-                } else if starterPackResult != nil {
+                } else if effectiveResult != nil {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                         .accessibilityHidden(true)
-                } else if starterPackError != nil {
+                } else if effectiveError != nil {
                     Button("Try Again") {
                         Task { await finalizeStarterPackIfNeeded() }
                     }
@@ -307,14 +307,14 @@ public struct WelcomeOnboardingView: View {
                 }
             }
             
-            if let starterPackError {
-                Text(starterPackError)
+            if let error = effectiveError {
+                Text(error)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             
-            if let result = starterPackResult {
+            if let result = effectiveResult {
                 HStack(spacing: 16) {
                     Label("\(result.followedCount) Followed", systemImage: "person.badge.plus")
                         .font(.caption)
@@ -333,10 +333,24 @@ public struct WelcomeOnboardingView: View {
         .padding(.horizontal, 24)
     }
     
+    private var isFinalizing: Bool {
+        isFinalizingStarterPack || StarterPackOnboardingManager.shared.isFinalizing
+    }
+    
+    private var effectiveResult: StarterPackFinalizationResult? {
+        starterPackResult ?? StarterPackOnboardingManager.shared.storedResult
+    }
+    
+    private var effectiveError: String? {
+        starterPackError ?? StarterPackOnboardingManager.shared.storedError
+    }
+
     private var starterPackStatusText: String {
-        if isFinalizingStarterPack { return "Joining starter pack…" }
-        if starterPackResult != nil { return "Joined" }
-        if starterPackError != nil { return "Couldn’t join" }
+        if let result = effectiveResult {
+            return "Joined • Followed \(result.followedCount), pinned \(result.pinnedFeedsCount) feeds"
+        }
+        if isFinalizing { return "Joining starter pack…" }
+        if effectiveError != nil { return "Couldn’t join" }
         return "Joining starter pack…"
     }
     
@@ -418,7 +432,7 @@ public struct WelcomeOnboardingView: View {
             starterPackContext = pendingContext
         }
         
-        guard !isFinalizingStarterPack else { return }
+        guard !isFinalizing else { return }
         isFinalizingStarterPack = true
         starterPackError = nil
         do {
@@ -427,17 +441,13 @@ public struct WelcomeOnboardingView: View {
                 appState: appState,
                 context: pendingContext
             )
-            await MainActor.run {
-                self.starterPackResult = result
-                self.isFinalizingStarterPack = false
-            }
+            self.starterPackResult = result
+            self.isFinalizingStarterPack = false
         } catch {
-            await MainActor.run {
-                self.isFinalizingStarterPack = false
-                self.starterPackError = UserFacingError.message(for: error, action: "follow everyone in this starter pack")
-                    ?? "Couldn’t follow everyone in this starter pack. Try again."
-                logger.error("Failed starter pack finalization: \(error)")
-            }
+            self.isFinalizingStarterPack = false
+            self.starterPackError = UserFacingError.message(for: error, action: "follow everyone in this starter pack")
+                ?? "Couldn’t follow everyone in this starter pack. Try again."
+            logger.error("Failed starter pack finalization: \(error)")
         }
     }
     

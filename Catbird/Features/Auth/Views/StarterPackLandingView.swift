@@ -1,6 +1,7 @@
 import Foundation
 import OSLog
 import Petrel
+import NukeUI
 import SwiftUI
 
 /// Logged-out landing screen for starter pack links, populating details anonymously and bridging to sign-up
@@ -11,6 +12,7 @@ public struct StarterPackLandingView: View {
     
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStateManager.self) private var appStateManager
+    @Environment(\.displayScale) private var displayScale
     @State private var starterPack: AppBskyGraphDefs.StarterPackView?
     @State private var sampledMembers: [AppBskyGraphDefs.ListItemView] = []
     @State private var totalMemberCount: Int = 0
@@ -87,10 +89,12 @@ public struct StarterPackLandingView: View {
                     // Creator Info
                     HStack(spacing: 8) {
                         if let avatar = pack.creator.avatar?.uriString(), let url = URL(string: avatar) {
-                            AsyncImage(url: url) { image in
-                                image.resizable().scaledToFill()
-                            } placeholder: {
-                                Circle().fill(Color.secondary.opacity(0.2))
+                            LazyImage(request: ImageRequestFactory.avatar(url, pointSize: 32, scale: displayScale)) { state in
+                                if let image = state.image {
+                                    image.resizable().scaledToFill()
+                                } else {
+                                    Circle().fill(Color.secondary.opacity(0.2))
+                                }
                             }
                             .frame(width: 32, height: 32)
                             .clipShape(Circle())
@@ -230,10 +234,12 @@ public struct StarterPackLandingView: View {
     private func memberRow(_ member: AppBskyActorDefs.ProfileView) -> some View {
         HStack(spacing: 12) {
             if let avatar = member.avatar?.uriString(), let url = URL(string: avatar) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Circle().fill(Color.secondary.opacity(0.2))
+                LazyImage(request: ImageRequestFactory.avatar(url, pointSize: 40, scale: displayScale)) { state in
+                    if let image = state.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Circle().fill(Color.secondary.opacity(0.2))
+                    }
                 }
                 .frame(width: 40, height: 40)
                 .clipShape(Circle())
@@ -265,10 +271,12 @@ public struct StarterPackLandingView: View {
     private func feedRow(_ feed: AppBskyFeedDefs.GeneratorView) -> some View {
         HStack(spacing: 12) {
             if let avatar = feed.avatar?.uriString(), let url = URL(string: avatar) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.2))
+                LazyImage(request: ImageRequestFactory.image(url, pointSize: CGSize(width: 40, height: 40), scale: displayScale)) { state in
+                    if let image = state.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.2))
+                    }
                 }
                 .frame(width: 40, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -365,7 +373,9 @@ public struct StarterPackLandingView: View {
             uri: pack.uri.uriString(),
             cid: pack.cid.string,
             name: packName,
-            creatorDID: pack.creator.did.didString()
+            creatorDID: pack.creator.did.didString(),
+            listUri: pack.list?.uri.uriString(),
+            feedUris: pack.feeds?.map { $0.uri.uriString() }
         )
         StarterPackOnboardingManager.shared.setPendingContext(pending)
         logger.info("Saved pending starter pack context for join: \(pack.uri.uriString()) (flow: \(self.flowID.uuidString))")
@@ -386,7 +396,9 @@ public struct StarterPackLandingView: View {
             uri: pack.uri.uriString(),
             cid: pack.cid.string,
             name: packName,
-            creatorDID: pack.creator.did.didString()
+            creatorDID: pack.creator.did.didString(),
+            listUri: pack.list?.uri.uriString(),
+            feedUris: pack.feeds?.map { $0.uri.uriString() }
         )
         StarterPackOnboardingManager.shared.setPendingContext(pending)
         logger.info("Saved pending starter pack context for sign-in: \(pack.uri.uriString()) (flow: \(self.flowID.uuidString))")

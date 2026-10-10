@@ -24,8 +24,13 @@ struct LoginView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.skyAnimationPaused) private var skyAnimationPaused
     @Environment(\.dismiss) private var dismiss
-    
+
+    /// Shared static fallback so text field shake animations do not allocate a new
+    /// AppSettings model and observers on every keystroke when signed out.
+    @MainActor static let signedOutFallback = AppSettings()
     // MARK: - Initialization
     init(isAddingNewAccount: Bool = false, initialAuthMode: AuthMode = .selection, isPresentedModally: Bool = false) {
         self.isAddingNewAccount = isAddingNewAccount
@@ -55,9 +60,6 @@ struct LoginView: View {
     
     // Task cancellation support
     @State private var authenticationTask: Task<Void, Never>?
-    @State private var timeoutCountdown: Int = 60
-    @State private var showTimeoutCountdown = false
-    
     // Track if we've already started re-authentication to prevent multiple OAuth prompts
     @State private var hasStartedReAuthentication = false
     // Capture the intended account independently of mutable global expiry state.
@@ -92,10 +94,9 @@ struct LoginView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                SkyView(animated: !reduceMotion)
+                SkyView(animated: !reduceMotion && scenePhase == .active && !isLoggingIn && !showSavedAccounts && !skyAnimationPaused && (isPresentedModally || StarterPackOnboardingManager.shared.activeFlowID == nil))
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
-
                 legalFooterScrim
 
                 // Main content scroll view
@@ -354,7 +355,6 @@ struct LoginView: View {
                 error = message
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
                 // Cancel authentication task on error
                 authenticationTask?.cancel()
                 authenticationTask = nil
@@ -365,8 +365,8 @@ struct LoginView: View {
                 // Centralized auth state observation in AppStateManager handles transitionToAuthenticated and error recovery.
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
                 // Clear any cancelled state from previous attempts - we succeeded
+                authenticationCancelled = false
                 authenticationCancelled = false
                 error = nil
                 // Cancel authentication task on success
@@ -375,7 +375,6 @@ struct LoginView: View {
             } else if case .authenticating(let progress) = newValue {
                 // Update local progress based on detailed auth progress
                 isLoggingIn = true
-                showTimeoutCountdown = true
 
                 // Map detailed progress to our local progress enum if needed
                 switch progress {
@@ -402,7 +401,6 @@ struct LoginView: View {
                 authenticationTask?.cancel()
                 authenticationTask = nil
             }
-            showTimeoutCountdown = false
             // Reset the re-authentication flag so it can trigger again if the user returns to this view
             hasStartedReAuthentication = false
         }
@@ -549,7 +547,7 @@ struct LoginView: View {
 #endif
         }
         .focused($focusedField, equals: Field.username)
-        .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? AppSettings())
+        .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? LoginView.signedOutFallback)
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .transition(AnyTransition.asymmetric(
             insertion: AnyTransition.scale(scale: 0.95).combined(with: AnyTransition.opacity),
@@ -771,7 +769,7 @@ struct LoginView: View {
 #endif
             }
             .focused($focusedField, equals: Field.pdsurl)
-            .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? AppSettings())
+            .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? LoginView.signedOutFallback)
             .frame(maxWidth: min(geometry.size.width * 0.9, 400))
             .transition(AnyTransition.opacity.combined(with: AnyTransition.move(edge: .top)))
         }
@@ -1004,8 +1002,6 @@ struct LoginView: View {
         // Reset state
         isLoggingIn = false
         loginProgress = .idle
-        showTimeoutCountdown = false
-        
         // Only show authenticationCancelled if user explicitly cancelled, not on errors
         // This prevents "Authentication cancelled" from appearing on auth failures
         authenticationCancelled = true
@@ -1020,29 +1016,9 @@ struct LoginView: View {
             cancelAuthenticationTaskAndPendingAttempt()
             isLoggingIn = false
             loginProgress = .idle
-            showTimeoutCountdown = false
             appStateManager.authentication.resetError()
         }
         dismiss()
-    }
-    
-    /// Starts the timeout countdown
-    private func startTimeoutCountdown() {
-        showTimeoutCountdown = true
-        timeoutCountdown = 60
-
-        // Create a countdown timer
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [self] timer in
-
-            DispatchQueue.main.async {
-                if self.timeoutCountdown > 0 && self.isLoggingIn {
-                    self.timeoutCountdown -= 1
-                } else {
-                    timer.invalidate()
-                    self.showTimeoutCountdown = false
-                }
-            }
-        }
     }
     
     private func authModeActionText() -> String {
@@ -1202,8 +1178,6 @@ struct LoginView: View {
             logger.info("Using custom Chat DID: \(customChatDID)")
         }
 
-        // Start timeout countdown
-        startTimeoutCountdown()
 
         // Clean up handle - remove @ prefix and whitespace
         let cleanHandle = handle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1264,7 +1238,6 @@ struct LoginView: View {
                     authenticationCancelled = true
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
                 } catch is CancellationError {
@@ -1273,7 +1246,6 @@ struct LoginView: View {
                     logger.notice("Authentication task cancelled (auth may have already succeeded)")
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                 } catch {
                     // Other authentication errors (including timeout)
                     logger.error("Authentication error: \(error.localizedDescription)")
@@ -1282,7 +1254,6 @@ struct LoginView: View {
                     authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                 }
                 
             } catch {
@@ -1302,7 +1273,6 @@ struct LoginView: View {
                 
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
             }
             
             // Clean up the task reference
@@ -1318,7 +1288,6 @@ struct LoginView: View {
             hasStartedReAuthentication = false
             isLoggingIn = false
             loginProgress = .idle
-            showTimeoutCountdown = false
             return
         }
 
@@ -1332,8 +1301,6 @@ struct LoginView: View {
         loginProgress = .startingAuth
         error = nil
 
-        // Start timeout countdown
-        startTimeoutCountdown()
 
         // Create and store the authentication task
         authenticationTask = Task { @MainActor in
@@ -1345,7 +1312,6 @@ struct LoginView: View {
                     logger.error("Failed to get auth URL for expired account re-authentication")
                     error = "Couldn’t start signing in. Try again."
                     isLoggingIn = false
-                    showTimeoutCountdown = false
                     hasStartedReAuthentication = false
                     return
                 }
@@ -1399,7 +1365,6 @@ struct LoginView: View {
                     authenticationCancelled = true
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                     hasStartedReAuthentication = false
 
                     // Clear expired account info to prevent automatic retry loop
@@ -1415,7 +1380,6 @@ struct LoginView: View {
                     authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                     hasStartedReAuthentication = false
                 }
 
@@ -1436,7 +1400,6 @@ struct LoginView: View {
 
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
                 hasStartedReAuthentication = false
             }
 
@@ -1458,8 +1421,6 @@ struct LoginView: View {
         isLoggingIn = true
         error = nil
         
-        // Start timeout countdown
-        startTimeoutCountdown()
         
         // Create and store the authentication task
         authenticationTask = Task { @MainActor in
@@ -1498,7 +1459,6 @@ struct LoginView: View {
                     // Only set authenticationCancelled for explicit user cancellation
                     authenticationCancelled = true
                     isLoggingIn = false
-                    showTimeoutCountdown = false
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
                 } catch {
@@ -1509,7 +1469,6 @@ struct LoginView: View {
                     self.error = AuthenticationManager.userFacingMessage(for: error)
                     authenticationCancelled = false
                     isLoggingIn = false
-                    showTimeoutCountdown = false
                 }
                 
             } catch {
@@ -1528,7 +1487,6 @@ struct LoginView: View {
                 }
                 
                 isLoggingIn = false
-                showTimeoutCountdown = false
             }
             
             // Clean up the task reference

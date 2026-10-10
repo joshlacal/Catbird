@@ -20,6 +20,7 @@ public struct SignupQueuedView: View {
     @State private var errorMessage: String?
     @State private var pollingTask: Task<Void, Never>?
     @State private var hasStartedOnboarding: Bool = false
+    @State private var isVisible: Bool = false
     
     private let logger = Logger(subsystem: "blue.catbird", category: "SignupQueuedView")
     
@@ -138,10 +139,16 @@ public struct SignupQueuedView: View {
                 }
             }
             .task {
+                isVisible = true
                 await checkQueueStatus(isManual: false)
+                guard !Task.isCancelled && isVisible else { return }
                 startPolling()
             }
+            .onAppear {
+                isVisible = true
+            }
             .onDisappear {
+                isVisible = false
                 stopPolling()
             }
         }
@@ -219,6 +226,7 @@ public struct SignupQueuedView: View {
     // MARK: - Polling & Status Check
     
     private func startPolling() {
+        guard isVisible else { return }
         stopPolling()
         pollingTask = Task { @MainActor in
             while !Task.isCancelled {

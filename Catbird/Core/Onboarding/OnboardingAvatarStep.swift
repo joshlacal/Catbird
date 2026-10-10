@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import OSLog
 import Petrel
 import PhotosUI
@@ -297,10 +298,15 @@ public struct OnboardingAvatarStep: View {
             .padding(.horizontal, 24)
             .onChange(of: selectedPhotoItem) { _, newItem in
                 Task {
-                    if let data = try? await newItem?.loadTransferable(type: Data.self),
-                       let uiImage = UIImage(data: data) {
-                        await MainActor.run {
-                            selectedPhoto = uiImage
+                    guard let newItem else { return }
+                    if let data = try? await newItem.loadTransferable(type: Data.self) {
+                        let downsampled = await Task.detached(priority: .userInitiated) {
+                            Self.downsampleAvatar(data: data, maxPixelSize: 1000)
+                        }.value
+                        if let downsampled {
+                            await MainActor.run {
+                                selectedPhoto = downsampled
+                            }
                         }
                     }
                 }
@@ -326,21 +332,23 @@ public struct OnboardingAvatarStep: View {
         
         Task {
             do {
-                let renderedImageData: Data?
+                let photo = (avatarMode == .photo) ? selectedPhoto : nil
+                let stickerData = (avatarMode != .photo) ? renderStickerImage() : nil
                 
-                if avatarMode == .photo, let selectedPhoto {
-                    renderedImageData = selectedPhoto.jpegData(compressionQuality: 0.85)
-                } else {
-                    renderedImageData = renderStickerImage()
-                }
-                
-                guard let imageData = renderedImageData else {
+                let imageData = try await Task.detached(priority: .userInitiated) { () -> Data in
+                    if let photo {
+                        if let jpeg = photo.jpegData(compressionQuality: 0.85) {
+                            return jpeg
+                        }
+                    } else if let stickerData {
+                        return stickerData
+                    }
                     throw NSError(
                         domain: "OnboardingAvatar",
                         code: 400,
                         userInfo: [NSLocalizedDescriptionKey: "Failed to render avatar image"]
                     )
-                }
+                }.value
                 
                 let profileVM = ProfileViewModel(client: client, userDID: appState.userDID, currentUserDID: appState.userDID)
                 
@@ -405,5 +413,26 @@ public struct OnboardingAvatarStep: View {
         #elseif os(macOS)
         return renderer.nsImage?.pngImageData()
         #endif
+    }
+    
+    // MARK: - Image Processing Helper
+    
+    private static func downsampleAvatar(data: Data, maxPixelSize: CGFloat = 1000) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: false
+        ]
+        guard let source = CGImageSourceCreateWithData(data as CFData, options as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        let downsampleOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        return UIImage(cgImage: cgImage)
     }
 }

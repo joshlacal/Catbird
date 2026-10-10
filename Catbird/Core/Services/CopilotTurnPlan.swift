@@ -3,8 +3,10 @@ import Foundation
 /// A conservative tool envelope derived only from the current user's request.
 /// This English lexical router is not an intent classifier: unfamiliar or ambiguous
 /// phrasing gets fewer tools. Source text and conversation history never grant authority.
+typealias CopilotToolKind = CopilotTurnPlan.ToolKind
+
 struct CopilotTurnPlan: Equatable, Sendable {
-  enum ToolKind: String, Equatable, Sendable {
+  enum ToolKind: String, Equatable, Hashable, Sendable {
     case fetchThread
     case searchPosts
     case searchProfiles

@@ -123,6 +123,8 @@ actor BlueskyIntelligenceAgent {
     private var model: SystemLanguageModel?
     private var session: LanguageModelSession?
     private var cachedTools: [any Tool]?
+    private var cachedInstructionsTokens: Int?
+    private var cachedToolTokens: [[CopilotTurnPlan.ToolKind]: Int] = [:]
     private var turnGeneration = CopilotTurnGeneration()
     private let turnHooks: CopilotTurnHooks?
     private var activeTurnTask: Task<Void, Never>?
@@ -455,8 +457,24 @@ actor BlueskyIntelligenceAgent {
             let reservedCost: Int
             let countsFullPrompt: Bool
             if #available(iOS 26.4, macOS 26.4, *) {
-                let instructionsTokens = try await model.tokenCount(for: instructions)
-                let toolsTokens = try await model.tokenCount(for: turnTools)
+                let instructionsTokens: Int
+                if let cached = cachedInstructionsTokens {
+                    instructionsTokens = cached
+                } else {
+                    let count = try await model.tokenCount(for: instructions)
+                    cachedInstructionsTokens = count
+                    instructionsTokens = count
+                }
+                
+                let toolsTokens: Int
+                if let cached = cachedToolTokens[plan.toolKinds] {
+                    toolsTokens = cached
+                } else {
+                    let count = try await model.tokenCount(for: turnTools)
+                    cachedToolTokens[plan.toolKinds] = count
+                    toolsTokens = count
+                }
+                
                 reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
                     + (turnTools.isEmpty ? 0 : AskCatbirdToolPolicy.onDeviceToolResultTokenReserve)
                 countsFullPrompt = true
@@ -469,6 +487,7 @@ actor BlueskyIntelligenceAgent {
             if #available(iOS 27.0, macOS 27.0, *) { reason = CopilotImageSupport.unavailableReason(model: model) }
             else { reason = CopilotImageSupport.unavailableReason() }
             let session = LanguageModelSession(model: model, tools: turnTools, instructions: instructions)
+            session.prewarm(promptPrefix: Prompt("You are the Bluesky client app \"Catbird\"'s agent."))
             let options = GenerationOptions(temperature: 0.25, maximumResponseTokens: maxResponseTokens)
             runtime = CopilotTurnRuntime(
                 contextSize: model.contextSize, reservedTokenCount: reservedCost, countsFullPrompt: countsFullPrompt,
@@ -1014,6 +1033,20 @@ actor BlueskyIntelligenceAgent {
         default:
             logger.debug("Language model unavailable: \(String(describing: candidate.availability))")
             return nil
+        }
+    }
+
+    /// Prewarms the underlying system language model and caches instruction token count.
+    func prewarm(client: ATProtoClient? = nil) async {
+        guard let model = prepareModel() else { return }
+        if #available(iOS 26.4, macOS 26.4, *) {
+            if cachedInstructionsTokens == nil {
+                let instructions = Instructions { Self.instructionsText }
+                cachedInstructionsTokens = try? await model.tokenCount(for: instructions)
+            }
+        }
+        if let client {
+            _ = await prepareTools(using: client)
         }
     }
 

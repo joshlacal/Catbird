@@ -7,6 +7,18 @@ import SwiftUI
 /// Draws `sky_blobs_fragment` (SkyShader.metal). The sky is soft, so it renders at
 /// half resolution and 30fps; with `animated == false` (Reduce Motion) it draws a
 /// single still frame and only redraws when SwiftUI updates the view.
+/// Environment key to pause sky animation (e.g. when covered by modal sheets).
+private struct SkyAnimationPausedKey: EnvironmentKey {
+  static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+  var skyAnimationPaused: Bool {
+    get { self[SkyAnimationPausedKey.self] }
+    set { self[SkyAnimationPausedKey.self] = newValue }
+  }
+}
+
 struct SkyView {
   var animated: Bool = true
   /// Fraction of the display scale to render at. Clouds are soft, so 0.5 is invisible.
@@ -14,6 +26,7 @@ struct SkyView {
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.skyAnimationPaused) private var skyAnimationPaused
 
   func makeCoordinator() -> SkyRenderer { SkyRenderer() }
 
@@ -29,114 +42,77 @@ struct SkyView {
 
   @MainActor
   private func configure(_ view: MTKView, context: Context) {
+    let isEffectivelyAnimated = animated && !skyAnimationPaused
     context.coordinator.isDark = colorScheme == .dark
-    context.coordinator.animated = animated
+    context.coordinator.animated = isEffectivelyAnimated
     view.preferredFramesPerSecond = 30
-    view.isPaused = !animated
-    view.enableSetNeedsDisplay = !animated
+    view.isPaused = !isEffectivelyAnimated
+    view.enableSetNeedsDisplay = !isEffectivelyAnimated
     #if os(iOS)
     let scale = displayScale * resolutionScale
     if view.contentScaleFactor != scale { view.contentScaleFactor = scale }
     #endif
-    if !animated { view.setNeedsDisplay(view.bounds) }
+    if !isEffectivelyAnimated { view.setNeedsDisplay(view.bounds) }
   }
 }
 
-#if os(iOS)
-extension SkyView: UIViewRepresentable {
-  func makeUIView(context: Context) -> MTKView {
-    let view = makeView(context: context)
-    view.isOpaque = true
-    return view
-  }
-
-  func updateUIView(_ uiView: MTKView, context: Context) {
-    configure(uiView, context: context)
-  }
-}
-#elseif os(macOS)
-extension SkyView: NSViewRepresentable {
-  func makeNSView(context: Context) -> MTKView {
-    makeView(context: context)
-  }
-
-  func updateNSView(_ nsView: MTKView, context: Context) {
-    configure(nsView, context: context)
-  }
-}
-#endif
-
-final class SkyRenderer: NSObject, MTKViewDelegate {
-  /// Starting the clock part-way in means the first frame already has a settled layout.
-  private static let timeOffset: Double = 20
+/// Lazily initialized shared Metal resources for SkyView instances, avoiding redundant
+/// device, command queue, sampler allocations, and offloading pipeline/noise generation.
+final class SkyResources: @unchecked Sendable {
+  static let shared = SkyResources()
 
   let device: MTLDevice?
-  private let queue: MTLCommandQueue?
-  private let pipeline: MTLRenderPipelineState?
-  private let noise: MTLTexture?
-  private let sampler: MTLSamplerState?
-  private let start = CACurrentMediaTime()
-  private let skyLogger = Logger(subsystem: "blue.catbird", category: "SkyView")
+  let queue: MTLCommandQueue?
+  let sampler: MTLSamplerState?
+  private(set) var pipeline: MTLRenderPipelineState?
+  private(set) var noise: MTLTexture?
 
-  var isDark = false
-  var animated = true
+  private let logger = Logger(subsystem: "blue.catbird", category: "SkyView")
 
-  override init() {
-    let device = MTLCreateSystemDefaultDevice()
-    self.device = device
-    queue = device?.makeCommandQueue()
-    noise = device.flatMap(Self.makeNoiseTexture)
+  private init() {
+    let dev = MTLCreateSystemDefaultDevice()
+    self.device = dev
+    self.queue = dev?.makeCommandQueue()
 
-    let samplerDescriptor = MTLSamplerDescriptor()
-    samplerDescriptor.sAddressMode = .repeat
-    samplerDescriptor.tAddressMode = .repeat
-    samplerDescriptor.minFilter = .linear
-    samplerDescriptor.magFilter = .linear
-    samplerDescriptor.mipFilter = .linear
-    sampler = device?.makeSamplerState(descriptor: samplerDescriptor)
+    if let dev {
+      let samplerDescriptor = MTLSamplerDescriptor()
+      samplerDescriptor.sAddressMode = .repeat
+      samplerDescriptor.tAddressMode = .repeat
+      samplerDescriptor.minFilter = .linear
+      samplerDescriptor.magFilter = .linear
+      samplerDescriptor.mipFilter = .linear
+      self.sampler = dev.makeSamplerState(descriptor: samplerDescriptor)
+    } else {
+      self.sampler = nil
+    }
 
-    var pipeline: MTLRenderPipelineState?
-    if let device, let library = device.makeDefaultLibrary() {
+    guard let dev, let queue else { return }
+
+    // Asynchronously create pipeline state off the critical first-frame path
+    if let library = dev.makeDefaultLibrary() {
       let descriptor = MTLRenderPipelineDescriptor()
       descriptor.vertexFunction = library.makeFunction(name: "sky_blobs_vertex")
       descriptor.fragmentFunction = library.makeFunction(name: "sky_blobs_fragment")
       descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-      pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
+      dev.makeRenderPipelineState(descriptor: descriptor) { [weak self] pipelineState, error in
+        if let pipelineState {
+          self?.pipeline = pipelineState
+        } else if let error {
+          self?.logger.error("Failed to compile sky pipeline: \(error.localizedDescription)")
+        }
+      }
     }
-    self.pipeline = pipeline
-    super.init()
-    if pipeline == nil { skyLogger.error("Sky pipeline unavailable; login background will be blank") }
-  }
 
-  func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
-
-  func draw(in view: MTKView) {
-    guard let pipeline, let queue, let noise, let sampler,
-          let pass = view.currentRenderPassDescriptor,
-          let drawable = view.currentDrawable,
-          let commandBuffer = queue.makeCommandBuffer(),
-          let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass)
-    else { return }
-
-    let elapsed = animated ? CACurrentMediaTime() - start : 0
-    var uniforms: [Float] = [
-      Float(view.drawableSize.width), Float(view.drawableSize.height),
-      Float(Self.timeOffset + elapsed), isDark ? 1 : 0
-    ]
-    encoder.setRenderPipelineState(pipeline)
-    encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Float>.stride * 4, index: 0)
-    encoder.setFragmentTexture(noise, index: 0)
-    encoder.setFragmentSamplerState(sampler, index: 0)
-    encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-    encoder.endEncoding()
-    commandBuffer.present(drawable)
-    commandBuffer.commit()
+    // Generate 256k-texel noise texture in background Task using the existing queue
+    Task.detached(priority: .utility) { [weak self] in
+      let noiseTex = Self.buildNoiseTexture(device: dev, queue: queue)
+      self?.noise = noiseTex
+    }
   }
 
   // swiftlint:disable identifier_name
-  /// 256×256 tileable value noise with four octaves in RGBA (8, 16, 32 and 64 cells
-  /// across). Deterministic, so the sky looks the same on every launch.
-  private static func makeNoiseTexture(device: MTLDevice) -> MTLTexture? {
+  /// 256×256 tileable value noise with four octaves in RGBA.
+  private static func buildNoiseTexture(device: MTLDevice, queue: MTLCommandQueue) -> MTLTexture? {
     let size = 256
     let frequencies = [8, 16, 32, 64]
     let lattices = frequencies.enumerated().map { index, frequency -> [Float] in
@@ -172,7 +148,6 @@ final class SkyRenderer: NSObject, MTKViewDelegate {
       pixelFormat: .rgba8Unorm, width: size, height: size, mipmapped: true)
     descriptor.usage = .shaderRead
     guard let texture = device.makeTexture(descriptor: descriptor),
-          let queue = device.makeCommandQueue(),
           let commandBuffer = queue.makeCommandBuffer(),
           let blit = commandBuffer.makeBlitCommandEncoder()
     else { return nil }
@@ -185,6 +160,94 @@ final class SkyRenderer: NSObject, MTKViewDelegate {
     return texture
   }
   // swiftlint:enable identifier_name
+}
+
+#if os(iOS)
+extension SkyView: UIViewRepresentable {
+  func makeUIView(context: Context) -> MTKView {
+    let view = makeView(context: context)
+    view.isOpaque = true
+    return view
+  }
+
+  func updateUIView(_ uiView: MTKView, context: Context) {
+    configure(uiView, context: context)
+  }
+}
+#elseif os(macOS)
+extension SkyView: NSViewRepresentable {
+  func makeNSView(context: Context) -> MTKView {
+    makeView(context: context)
+  }
+
+  func updateNSView(_ nsView: MTKView, context: Context) {
+    configure(nsView, context: context)
+  }
+}
+#endif
+
+final class SkyRenderer: NSObject, MTKViewDelegate {
+  private static let timeOffset: Double = 20
+
+  let resources: SkyResources
+  var device: MTLDevice? { resources.device }
+  private let start = CACurrentMediaTime()
+
+  var isDark = false
+  var animated = true
+
+  override init() {
+    self.resources = SkyResources.shared
+    super.init()
+  }
+
+  func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+  func draw(in view: MTKView) {
+    guard let pass = view.currentRenderPassDescriptor else { return }
+
+    // Clear to base sky color so the first frame is never blank/black
+    let clearColor = isDark
+      ? MTLClearColor(red: 0.05, green: 0.08, blue: 0.15, alpha: 1.0)
+      : MTLClearColor(red: 0.45, green: 0.65, blue: 0.90, alpha: 1.0)
+    pass.colorAttachments[0].clearColor = clearColor
+    pass.colorAttachments[0].loadAction = .clear
+
+    guard let pipeline = resources.pipeline,
+          let queue = resources.queue,
+          let noise = resources.noise,
+          let sampler = resources.sampler,
+          let drawable = view.currentDrawable,
+          let commandBuffer = queue.makeCommandBuffer()
+    else {
+      // If shaders or noise texture are still preparing asynchronously, commit the clear pass
+      if let queue = resources.queue,
+         let drawable = view.currentDrawable,
+         let commandBuffer = queue.makeCommandBuffer(),
+         let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) {
+        encoder.endEncoding()
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+      }
+      return
+    }
+
+    guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+
+    let elapsed = animated ? CACurrentMediaTime() - start : 0
+    var uniforms: [Float] = [
+      Float(view.drawableSize.width), Float(view.drawableSize.height),
+      Float(Self.timeOffset + elapsed), isDark ? 1 : 0
+    ]
+    encoder.setRenderPipelineState(pipeline)
+    encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Float>.stride * 4, index: 0)
+    encoder.setFragmentTexture(noise, index: 0)
+    encoder.setFragmentSamplerState(sampler, index: 0)
+    encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+    encoder.endEncoding()
+    commandBuffer.present(drawable)
+    commandBuffer.commit()
+  }
 }
 
 #Preview("Sky") {

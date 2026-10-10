@@ -139,6 +139,9 @@ struct CatbirdCopilotSheet: View {
                 successMessage = nil
                 contextTrimmedNotice = nil
                 await loadInitialConversation(for: did)
+                if #available(iOS 26.0, macOS 26.0, *) {
+                    await appState.blueskyAgent.prewarm(client: appState.atProtoClient)
+                }
             }
             .onChange(of: imageModerationSnapshot) { _, _ in
                 hideImages()
@@ -333,6 +336,9 @@ struct CatbirdCopilotSheet: View {
                 guard !Task.isCancelled, streamingAssistantTurnID == assistantTurnID,
                     targetConversationID == conversationID, accountDID == appState.userDID,
                     clientID == appState.atProtoClient.map(ObjectIdentifier.init) else { return }
+                var deltaBuffer = ""
+                var lastFlush = ContinuousClock.now
+
                 do {
                     for try await event in stream {
                         guard !Task.isCancelled else { break }
@@ -351,9 +357,16 @@ struct CatbirdCopilotSheet: View {
 
                         switch event {
                         case .textDelta(let delta):
-                            turns[turnIndex].text.append(delta)
+                            deltaBuffer.append(delta)
+                            let now = ContinuousClock.now
+                            if now - lastFlush >= .milliseconds(66) {
+                                turns[turnIndex].text.append(deltaBuffer)
+                                deltaBuffer = ""
+                                lastFlush = now
+                            }
 
                         case .responseReset:
+                            deltaBuffer = ""
                             turns[turnIndex].text = ""
                             turns[turnIndex].sources = nil
                             turns[turnIndex].proposal = nil
@@ -361,6 +374,11 @@ struct CatbirdCopilotSheet: View {
                             turns[turnIndex].proposalOutcome = nil
 
                         case .source(let source):
+                            if !deltaBuffer.isEmpty {
+                                turns[turnIndex].text.append(deltaBuffer)
+                                deltaBuffer = ""
+                                lastFlush = .now
+                            }
                             var currentSources = turns[turnIndex].sources ?? []
                             if !currentSources.contains(source) {
                                 currentSources.append(source)
@@ -368,11 +386,21 @@ struct CatbirdCopilotSheet: View {
                             turns[turnIndex].sources = currentSources
 
                         case .evidence(let evidence):
+                            if !deltaBuffer.isEmpty {
+                                turns[turnIndex].text.append(deltaBuffer)
+                                deltaBuffer = ""
+                                lastFlush = .now
+                            }
                             var retained = turns[turnIndex].evidence ?? []
                             if !retained.contains(evidence) { retained.append(evidence) }
                             turns[turnIndex].evidence = retained
 
                         case .proposal(let proposal):
+                            if !deltaBuffer.isEmpty {
+                                turns[turnIndex].text.append(deltaBuffer)
+                                deltaBuffer = ""
+                                lastFlush = .now
+                            }
                             turns[turnIndex].proposal = proposal
                             turns[turnIndex].proposalOutcome = "Proposed for confirmation; not executed."
 
@@ -386,6 +414,10 @@ struct CatbirdCopilotSheet: View {
                                 : "Some earlier messages were left out to keep this conversation within limits."
 
                         case .completed:
+                            if !deltaBuffer.isEmpty {
+                                turns[turnIndex].text.append(deltaBuffer)
+                                deltaBuffer = ""
+                            }
                             isResponding = false
                             activeStreamTask = nil
                             streamingAssistantTurnID = nil
@@ -393,11 +425,19 @@ struct CatbirdCopilotSheet: View {
                             await persistCurrentConversation()
 
                         case .failed(let failure):
+                            if !deltaBuffer.isEmpty {
+                                turns[turnIndex].text.append(deltaBuffer)
+                                deltaBuffer = ""
+                            }
                             removeInFlightTurnPair()
                             isResponding = false
                             activeStreamTask = nil
                             errorMessage = failure
                         }
+                    }
+                    if !deltaBuffer.isEmpty, let turnIndex = turns.firstIndex(where: { $0.id == assistantTurnID }) {
+                        turns[turnIndex].text.append(deltaBuffer)
+                        deltaBuffer = ""
                     }
                 } catch {
                     if streamingAssistantTurnID == assistantTurnID {
@@ -750,15 +790,32 @@ enum CopilotReferencePresentation {
             .components(separatedBy: .newlines).joined(separator: " ")
     }
 
-    static func render(_ text: String, sources: [CopilotSource]) -> AttributedString {
-        // Match a complete Markdown reference before bare identifiers so neither
-        // its brackets nor a duplicate destination leak into the visible text.
+    private static let referencePattern: NSRegularExpression? = {
         let identifier = #"(?:at://[^\s\[\]()<>\"`]+|did:[a-z]+:[^\s\[\]()<>\"`]+)"#
-        guard let pattern = try? NSRegularExpression(
+        return try? NSRegularExpression(
             pattern: #"\[([^\]\n]*)\]\(("# + identifier + #")\)|\[("# + identifier
                 + #")\]\((https?://[^\s()<>]+)\)|("# + identifier + ")"
-        ) else {
-            return ChatTextRenderer.attributedString(for: text)
+        )
+    }()
+
+    private final class AttributedStringBox {
+        let value: AttributedString
+        init(_ value: AttributedString) { self.value = value }
+    }
+    private static let renderCache = NSCache<NSString, AttributedStringBox>()
+
+    static func render(_ text: String, sources: [CopilotSource]) -> AttributedString {
+        let cacheKey = "\(text.hashValue)_\(sources.count)" as NSString
+        if let cached = renderCache.object(forKey: cacheKey) {
+            return cached.value
+        }
+        
+        // Match a complete Markdown reference before bare identifiers so neither
+        // its brackets nor a duplicate destination leak into the visible text.
+        guard let pattern = referencePattern else {
+            let rendered = ChatTextRenderer.attributedString(for: text)
+            renderCache.setObject(AttributedStringBox(rendered), forKey: cacheKey)
+            return rendered
         }
         var result = AttributedString()
         var cursor = text.startIndex
@@ -800,6 +857,7 @@ enum CopilotReferencePresentation {
             cursor = referenceEnd
         }
         result.append(ChatTextRenderer.attributedString(for: String(text[cursor...])))
+        renderCache.setObject(AttributedStringBox(result), forKey: cacheKey)
         return result
     }
 }
