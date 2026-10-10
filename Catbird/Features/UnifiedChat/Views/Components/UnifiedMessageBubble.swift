@@ -95,10 +95,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   var groupPosition: UnifiedMessageGroupPosition = .single
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.displayScale) private var displayScale
 
   @State private var bubbleGlobalFrame: CGRect = .zero
-  @State private var dragOffset: CGFloat = 0
-  @State private var hasTriggeredHaptic = false
   private let cornerRadius: CGFloat = 18
   private let maxBubbleWidth: CGFloat = 280
 
@@ -178,7 +177,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       navigationPath.append(NavigationDestination.profile(message.senderID))
     } label: {
       if let avatarURL = message.senderAvatarURL {
-        LazyImage(url: avatarURL) { state in
+        let request = ImageRequestFactory.avatar(avatarURL, pointSize: 32, scale: displayScale)
+        LazyImage(request: request) { state in
           if let image = state.image {
             image
               .resizable()
@@ -264,47 +264,13 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           )
           .clipShape(RoundedRectangle(cornerRadius: surfaceCornerRadius, style: .continuous))
       )
-      .offset(x: dragOffset)
-
-      let gesturedSurface: some View = {
-        if onReply != nil, !message.isTombstone {
-          return AnyView(
-            bubbleSurface
-              .gesture(
-                DragGesture(minimumDistance: 15)
-                  .onChanged { value in
-                    let translation = value.translation.width
-                    if abs(value.translation.height) < abs(translation) {
-                      let isSelf = message.isFromCurrentUser
-                      let validTranslation = isSelf ? min(0, translation) : max(0, translation)
-                      let damped = validTranslation * 0.4
-                      dragOffset = damped
-                      let isArmed = isSelf ? damped <= -30 : damped >= 30
-                      if isArmed && !hasTriggeredHaptic {
-                        PlatformHaptics.light()
-                        hasTriggeredHaptic = true
-                      } else if !isArmed && hasTriggeredHaptic {
-                        hasTriggeredHaptic = false
-                      }
-                    }
-                  }
-                  .onEnded { _ in
-                    let isSelf = message.isFromCurrentUser
-                    let isArmed = isSelf ? dragOffset <= -30 : dragOffset >= 30
-                    if isArmed {
-                      onReply?()
-                    }
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                      dragOffset = 0
-                      hasTriggeredHaptic = false
-                    }
-                  }
-              )
-          )
-        } else {
-          return AnyView(bubbleSurface)
-        }
-      }()
+      let gesturedSurface = SwipeToReplyContainer(
+        isFromCurrentUser: message.isFromCurrentUser,
+        enabled: onReply != nil && !message.isTombstone,
+        onReply: onReply
+      ) {
+        bubbleSurface
+      }
 
       Group {
         if onLongPress != nil, !message.isTombstone {
@@ -566,8 +532,10 @@ struct BubbleWidthLimiter: Layout {
     // reliable for capped embeds until they receive a concrete width.
     let naturalSize = subview.sizeThatFits(.unspecified)
     let width: CGFloat
+    let constrainedHeight: CGFloat?
     if naturalSize.width.isFinite, naturalSize.width < effectiveMaxWidth {
       width = max(naturalSize.width, 0)
+      constrainedHeight = nil
     } else {
       let constrainedSize = subview.sizeThatFits(
         ProposedViewSize(width: effectiveMaxWidth, height: nil)
@@ -575,13 +543,20 @@ struct BubbleWidthLimiter: Layout {
       width = constrainedSize.width.isFinite
         ? min(max(constrainedSize.width, 0), effectiveMaxWidth)
         : effectiveMaxWidth
+      constrainedHeight = (width == constrainedSize.width) ? constrainedSize.height : nil
     }
 
     // Match placeSubviews exactly, including when constrained content reports
     // a width below the cap. Measuring at the cap but placing more narrowly can
     // add wrapped lines that extend beyond the bubble's rounded clipping mask.
-    let placedSize = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
-    return CGSize(width: width, height: placedSize.height.isFinite ? max(placedSize.height, 0) : 0)
+    let height: CGFloat
+    if let constrainedHeight, constrainedHeight.isFinite {
+      height = max(constrainedHeight, 0)
+    } else {
+      let placedSize = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+      height = placedSize.height.isFinite ? max(placedSize.height, 0) : 0
+    }
+    return CGSize(width: width, height: height)
   }
 
   func placeSubviews(
@@ -597,6 +572,53 @@ struct BubbleWidthLimiter: Layout {
       anchor: .topLeading,
       proposal: ProposedViewSize(width: bounds.width, height: nil)
     )
+  }
+}
+
+private struct SwipeToReplyContainer<Content: View>: View {
+  let isFromCurrentUser: Bool
+  let enabled: Bool
+  let onReply: (() -> Void)?
+  @ViewBuilder let content: () -> Content
+
+  @State private var dragOffset: CGFloat = 0
+  @State private var hasTriggeredHaptic = false
+
+  var body: some View {
+    if enabled, let onReply {
+      content()
+        .offset(x: dragOffset)
+        .gesture(
+          DragGesture(minimumDistance: 15)
+            .onChanged { value in
+              let translation = value.translation.width
+              if abs(value.translation.height) < abs(translation) {
+                let validTranslation = isFromCurrentUser ? min(0, translation) : max(0, translation)
+                let damped = validTranslation * 0.4
+                dragOffset = damped
+                let isArmed = isFromCurrentUser ? damped <= -30 : damped >= 30
+                if isArmed && !hasTriggeredHaptic {
+                  PlatformHaptics.light()
+                  hasTriggeredHaptic = true
+                } else if !isArmed && hasTriggeredHaptic {
+                  hasTriggeredHaptic = false
+                }
+              }
+            }
+            .onEnded { _ in
+              let isArmed = isFromCurrentUser ? dragOffset <= -30 : dragOffset >= 30
+              if isArmed {
+                onReply()
+              }
+              withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                dragOffset = 0
+                hasTriggeredHaptic = false
+              }
+            }
+        )
+    } else {
+      content()
+    }
   }
 }
 

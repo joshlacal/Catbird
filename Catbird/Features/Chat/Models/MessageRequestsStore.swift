@@ -57,7 +57,8 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
 
   @ObservationIgnored private let appState: AppState
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "MessageRequests")
-
+  @ObservationIgnored private var cachedSource: [ChatBskyConvoDefs.ConvoView] = []
+  @ObservationIgnored private var cachedMappedRequests: [MessageRequestItem] = []
   init(appState: AppState) {
     self.appState = appState
     self.accountDID = appState.userDID
@@ -65,10 +66,17 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
 
   var blueskyRequests: [MessageRequestItem] {
     guard appState.userDID == accountDID else { return [] }
+    let source = appState.chatManager.messageRequests
+    if source == cachedSource {
+      return cachedMappedRequests
+    }
     let now = Date()
-    return appState.chatManager.messageRequests.map {
+    let mapped = source.map {
       MessageRequestItem(bluesky: $0, currentUserDID: accountDID, now: now)
     }
+    cachedSource = source
+    cachedMappedRequests = mapped
+    return mapped
   }
 
   func invalidate() {

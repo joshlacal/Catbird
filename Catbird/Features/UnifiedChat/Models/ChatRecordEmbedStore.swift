@@ -35,6 +35,16 @@ final class ChatRecordEmbedStore {
       client: ObjectIdentifier(client), uri: uri)]
   }
 
+  func seed(_ record: Record, uri: String, appState: AppState) {
+    guard isActive(appState), let client = appState.atProtoClient else { return }
+    let key = Key(account: appState.userDID, state: ObjectIdentifier(appState),
+      client: ObjectIdentifier(client), uri: uri)
+    if records[key] == nil, records.count >= 256, let evictedKey = records.keys.first {
+      records.removeValue(forKey: evictedKey)
+    }
+    records[key] = record
+  }
+
   func load(uri: String, appState: AppState) async throws -> Record {
     try Task.checkCancellation()
     guard isActive(appState), let client = appState.atProtoClient else { throw CancellationError() }

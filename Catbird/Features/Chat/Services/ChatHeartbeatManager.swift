@@ -3,6 +3,10 @@ import OSLog
 import Petrel
 import PetrelCatbird
 
+#if os(iOS)
+import UIKit
+#endif
+
 /// Sends a heartbeat POST to Nest every 60 seconds while any chat view is visible.
 ///
 /// Uses reference counting so multiple chat views (e.g., conversation list + detail)
@@ -34,6 +38,39 @@ final class ChatHeartbeatManager {
   var client: ATProtoClient? {
     get { _client }
     set { _client = newValue }
+  }
+
+  init() {
+    #if os(iOS)
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willResignActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.pause()
+    }
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.resume()
+    }
+    #endif
+  }
+
+  /// Pauses heartbeat while keeping activeViewCount (for app inactive / background).
+  func pause() {
+    logger.debug("Pausing chat heartbeat for inactive/background")
+    stopHeartbeat()
+  }
+
+  /// Resumes heartbeat if there are active views (when returning to active).
+  func resume() {
+    logger.debug("Resuming chat heartbeat for active state")
+    if activeViewCount > 0 {
+      startHeartbeat()
+    }
   }
 
   // MARK: - Public API

@@ -56,7 +56,8 @@ struct ConversationView: View {
     unifiedDataSource = BlueskyConversationDataSource(
       chatManager: chatManager,
       convoID: convoId,
-      currentUserDID: appState.userDID
+      currentUserDID: appState.userDID,
+      appState: appState
     )
   }
 
@@ -188,11 +189,6 @@ struct ConversationView: View {
     .onReceive(NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)) { _ in
       consumePendingDraftIfNeeded()
     }
-    .onChange(of: unifiedDataSource?.draftText) { _, text in
-      if text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
-        consumePendingDraftIfNeeded()
-      }
-    }
     .onDisappear {
       chatManager.stopMessagePolling(for: convoId)
       appState.chatHeartbeatManager.viewDisappeared()
@@ -294,7 +290,11 @@ struct ConversationView: View {
           } else if isOtherMemberDeleted {
             deletedAccountBanner
           } else {
-            blueskyInputBar(dataSource: dataSource)
+            ConversationInputBar(
+              dataSource: dataSource,
+              convoId: convoId,
+              onDraftEmptied: { consumePendingDraftIfNeeded() }
+            )
           }
         }
       }
@@ -353,8 +353,80 @@ struct ConversationView: View {
   // MARK: - Input Bar
   
 
-  @ViewBuilder
-  private func blueskyInputBar(dataSource: BlueskyConversationDataSource) -> some View {
+  // MARK: - Input Bar
+  // Eager reads of draft.value moved out of ConversationView.body to ConversationInputBar (P140)
+
+    // MARK: - Deleted Account Banner
+
+    private var deletedAccountBanner: some View {
+      HStack(spacing: 8) {
+        Image(systemName: "person.slash")
+          .foregroundStyle(.secondary)
+        Text("This account has been deleted")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 16)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+  }
+
+    // MARK: - Locked Conversation Banner
+
+    private var lockedConversationBanner: some View {
+      HStack(spacing: 8) {
+        Image(systemName: "lock.fill")
+          .foregroundStyle(.secondary)
+        Text("This group chat is locked")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 16)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+    }
+  
+  // MARK: - Message Actions
+  
+  private func presentMessageActions(for message: BlueskyMessageAdapter) {
+    PlatformHaptics.soft()
+  }
+
+    private var currentConversation: ChatBskyConvoDefs.ConvoView? {
+      chatManager.conversations.first(where: { $0.id == convoId })
+    }
+
+    private var conversationBlockState: BlueskyConversationBlockState {
+      currentConversation?.moderationBlockState(currentUserDID: appState.userDID) ?? .none
+    }
+
+    // Check if the other member's account has been deleted
+
+    private var isOtherMemberDeleted: Bool {
+      guard let convo = currentConversation, !convo.isGroupConversation else { return false }
+      let clientDid = appState.userDID
+      if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
+        return otherMember.handle.description == "missing.invalid"
+      }
+      return false
+    }
+
+    private var isConversationLocked: Bool {
+      currentConversation?.isLockedForSending ?? false
+    }
+
+  // Compute conversation title based on the other member
+  private var conversationTitle: String {
+    currentConversation?.displayTitle(currentUserDID: appState.userDID) ?? "Chat"
+  }
+}
+
+private struct ConversationInputBar: View {
+  let dataSource: BlueskyConversationDataSource
+  let convoId: String
+  let onDraftEmptied: () -> Void
+
+  var body: some View {
     VStack(spacing: 0) {
       if let staged = dataSource.draft.value.replyTarget {
         HStack(alignment: .center, spacing: 8) {
@@ -416,76 +488,11 @@ struct ConversationView: View {
         dismissKeyboardOnSend: false
       )
     }
-  }
-
-    // MARK: - Deleted Account Banner
-
-    private var deletedAccountBanner: some View {
-      HStack(spacing: 8) {
-        Image(systemName: "person.slash")
-          .foregroundStyle(.secondary)
-        Text("This account has been deleted")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
+    .onChange(of: dataSource.draftText) { _, text in
+      if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        onDraftEmptied()
       }
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 16)
-      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-  }
-
-    // MARK: - Locked Conversation Banner
-
-    private var lockedConversationBanner: some View {
-      HStack(spacing: 8) {
-        Image(systemName: "lock.fill")
-          .foregroundStyle(.secondary)
-        Text("This group chat is locked")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-      }
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 16)
-      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     }
-  
-  // MARK: - Message Actions
-  
-  private func presentMessageActions(for message: BlueskyMessageAdapter) {
-    PlatformHaptics.soft()
-  }
-
-    private var currentConversation: ChatBskyConvoDefs.ConvoView? {
-      chatManager.conversations.first(where: { $0.id == convoId })
-    }
-
-    private var conversationBlockState: BlueskyConversationBlockState {
-      currentConversation?.moderationBlockState(currentUserDID: appState.userDID) ?? .none
-    }
-
-    // Check if the other member's account has been deleted
-    private var isOtherMemberDeleted: Bool {
-      guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
-        return false
-      }
-      guard !convo.isGroupConversation else { return false }
-      let clientDid = appState.userDID
-      if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
-        return otherMember.handle.description == "missing.invalid"
-      }
-      return false
-    }
-
-    private var isConversationLocked: Bool {
-      chatManager.conversations.first(where: { $0.id == convoId })?.isLockedForSending ?? false
-    }
-
-  // Compute conversation title based on the other member
-  private var conversationTitle: String {
-    guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
-      return "Chat"
-    }
-
-    return convo.displayTitle(currentUserDID: appState.userDID)
   }
 }
 

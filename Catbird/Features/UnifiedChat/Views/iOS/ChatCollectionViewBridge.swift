@@ -66,5 +66,12 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onDeleteMessage = onDeleteMessage
     controller.onReportMessage = onReportMessage
   }
+
+  static func dismantleUIViewController(
+    _ controller: ChatCollectionViewController<DataSource>,
+    coordinator: ()
+  ) {
+    controller.dismantle()
+  }
 }
 #endif

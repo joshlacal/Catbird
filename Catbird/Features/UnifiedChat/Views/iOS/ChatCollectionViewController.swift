@@ -220,6 +220,12 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     }
   }
 
+  func dismantle() {
+    dismissMessageMenus()
+    observationTask?.cancel()
+    observationTask = nil
+  }
+
   // MARK: - Setup
 
   private func setupCollectionView() {
@@ -429,30 +435,31 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private func setupObservation() {
     observationTask?.cancel()
     observationTask = Task { @MainActor [weak self] in
-      guard let self else { return }
+      guard let initialSelf = self else { return }
 
       // Perform an initial snapshot so the UI is populated immediately.
-      await self.processObservationCycle()
+      await initialSelf.processObservationCycle()
 
       // Re-arm observation each time a tracked property changes.
       while !Task.isCancelled {
-        // withObservationTracking calls `apply` synchronously to register
-        // which @Observable properties are read, then invokes `onChange`
-        // asynchronously the NEXT time any of them mutates.
+        var didResume = false
         await withCheckedContinuation { continuation in
-          withObservationTracking {
+          withObservationTracking { [weak self] in
             // Touch the observable properties we care about so the
             // tracking system knows to wake us when they change.
+            guard let self else { return }
             _ = self.dataSource.messages
             _ = self.dataSource.showsTypingIndicator
             _ = self.dataSource.typingParticipantAvatarURL
             _ = self.dataSource.scrollToBottomTrigger
           } onChange: {
+            guard !didResume else { return }
+            didResume = true
             continuation.resume()
           }
         }
 
-        guard !Task.isCancelled else { break }
+        guard !Task.isCancelled, let self else { break }
         await self.processObservationCycle()
       }
     }
@@ -573,11 +580,19 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     let isInitialPopulate = !hasPerformedInitialScroll && previousItemCount == 0 && items.count > 0
 
     if isInitialPopulate {
-      // Apply without any animation for the initial load, then scroll to bottom
-      // and reveal the collection view in one frame.
+      let layout = collectionView.collectionViewLayout as? ChatAnchoredLayout
+      layout?.preservesSelfSizingAnchor = false
+      defer { layout?.preservesSelfSizingAnchor = true }
+
       UIView.performWithoutAnimation {
-        diffableDataSource.apply(snapshot, animatingDifferences: false)
-        collectionView.layoutIfNeeded()
+        diffableDataSource.applySnapshotUsingReloadData(snapshot)
+        if snapshot.numberOfItems > 0 {
+          collectionView.scrollToItem(
+            at: IndexPath(item: snapshot.numberOfItems - 1, section: 0),
+            at: .bottom,
+            animated: false
+          )
+        }
         scrollToBottom(animated: false)
         collectionView.alpha = 1
       }
@@ -1361,12 +1376,14 @@ extension ChatCollectionViewController: ChatMessageContextMenuFixtureReporting {
 @available(iOS 16.0, *)
 private struct TypingIndicatorView: View {
   let avatarURL: URL?
+  @Environment(\.displayScale) private var displayScale
   @State private var animate = false
 
   var body: some View {
     HStack(spacing: 8) {
       if let avatarURL {
-        LazyImage(url: avatarURL) { state in
+        let request = ImageRequestFactory.avatar(avatarURL, pointSize: 28, scale: displayScale)
+        LazyImage(request: request) { state in
           if let image = state.image {
             image
               .resizable()

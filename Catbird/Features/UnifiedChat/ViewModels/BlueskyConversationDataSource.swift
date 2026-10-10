@@ -14,6 +14,7 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   private let chatManager: ChatManager
   private let convoID: String
   private let currentUserDID: String
+  private weak var appState: AppState?
 
   private(set) var messages: [BlueskyMessageAdapter] = []
   var messageLoadState: ChatManager.MessageLoadState {
@@ -37,10 +38,11 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   }
   // MARK: - Init
 
-  init(chatManager: ChatManager, convoID: String, currentUserDID: String) {
+  init(chatManager: ChatManager, convoID: String, currentUserDID: String, appState: AppState? = nil) {
     self.chatManager = chatManager
     self.convoID = convoID
     self.currentUserDID = currentUserDID
+    self.appState = appState
     updateMessagesFromManager()
     hasReceivedInitialMessages = false
     startObservingChatManager()
@@ -170,6 +172,17 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     let systemMessages = chatManager.systemMessagesMap[convoID] ?? [:]
     let relatedProfiles = chatManager.relatedProfilesMap[convoID] ?? [:]
 
+
+    // Seed ChatRecordEmbedStore from hydrated record embeds in getMessages (P135)
+    if let state = appState ?? AppStateManager.shared.lifecycle.appState {
+      for messageView in originalMessages.values {
+        guard let embed = messageView.embed else { continue }
+        if case .appBskyEmbedRecordView(let recordView) = embed,
+           case .appBskyEmbedRecordViewRecord(let record) = recordView.record {
+          ChatRecordEmbedStore.shared.seed(recordView.record, uri: record.uri.uriString(), appState: state)
+        }
+      }
+    }
     // Get member profiles from the conversation
     let conversation = chatManager.conversations.first { $0.id == convoID }
     let memberProfiles: [String: ChatBskyActorDefs.ProfileViewBasic] = {
@@ -245,10 +258,10 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   
   private func startObservingChatManager() {
     withObservationTracking {
+      _ = chatManager.conversationRevision(for: convoID)
       _ = chatManager.originalMessagesMap[convoID]
       _ = chatManager.systemMessagesMap[convoID]
       _ = chatManager.relatedProfilesMap[convoID]
-      _ = chatManager.conversations
       _ = chatManager.hasMoreMessages(for: convoID)
     } onChange: { [weak self] in
       Task { @MainActor [weak self] in

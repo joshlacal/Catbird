@@ -1,6 +1,18 @@
 import Foundation
 import Petrel
 
+private final class AttributedStringBox: @unchecked Sendable {
+  let value: AttributedString
+  init(_ value: AttributedString) { self.value = value }
+}
+
+private let attributedTextCache: NSCache<NSString, AttributedStringBox> = {
+  let cache = NSCache<NSString, AttributedStringBox>()
+  cache.countLimit = 500
+  return cache
+}()
+
+
 /// Adapter that conforms ChatBskyConvoDefs.MessageView to UnifiedChatMessage
 /// Adapter that conforms ChatBskyConvoDefs.MessageView and SystemMessageView to UnifiedChatMessage
 struct BlueskyMessageAdapter: UnifiedChatMessage {
@@ -13,6 +25,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
   let currentUserDID: String
   let senderProfile: ChatBskyActorDefs.ProfileViewBasic?
   private let reactionViews: [ChatBskyConvoDefs.ReactionView]
+  let embed: UnifiedEmbed?
   private let customID: String?
   private let customSentAt: Date?
 
@@ -35,6 +48,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     self.senderProfile = senderProfile
     self.reactionViews = reactions
     self.customID = nil
+    self.embed = messageView.embed.flatMap { Self.convertEmbed($0) }
     self.customSentAt = nil
   }
 
@@ -54,6 +68,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     self.senderProfile = nil
     self.reactionViews = []
     self.customID = systemMessageView.id
+    self.embed = nil
     self.customSentAt = systemMessageView.sentAt.date
   }
 
@@ -73,6 +88,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     self.senderProfile = nil
     self.reactionViews = []
     self.customID = groupID
+    self.embed = nil
     self.customSentAt = systemGroupEvents.first?.sentAt ?? Date()
   }
 
@@ -139,34 +155,35 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
       )
     }
   }
-
   var attributedText: AttributedString {
     if isSystemMessage {
       return AttributedString(text)
     }
-    guard let facets = messageView?.facets, !facets.isEmpty else {
-      return ChatTextRenderer.attributedString(for: text)
+    let cacheKey = (id + ":" + text) as NSString
+    if let cached = attributedTextCache.object(forKey: cacheKey) {
+      return cached.value
     }
 
-    guard let msg = messageView else {
-      return ChatTextRenderer.attributedString(for: text)
+    let result: AttributedString
+    if let facets = messageView?.facets, !facets.isEmpty, let msg = messageView {
+      result = AppBskyFeedPost(
+        text: msg.text,
+        entities: nil,
+        facets: facets,
+        reply: nil,
+        embed: nil,
+        langs: nil,
+        labels: nil,
+        tags: nil,
+        createdAt: msg.sentAt
+      ).facetsAsAttributedString
+    } else {
+      result = ChatTextRenderer.attributedString(for: text)
     }
 
-    let facetedText = AppBskyFeedPost(
-      text: msg.text,
-      entities: nil,
-      facets: facets,
-      reply: nil,
-      embed: nil,
-      langs: nil,
-      labels: nil,
-      tags: nil,
-      createdAt: msg.sentAt
-    ).facetsAsAttributedString
-
-    return facetedText
+    attributedTextCache.setObject(AttributedStringBox(result), forKey: cacheKey)
+    return result
   }
-
   var senderID: String {
     messageView?.sender.did.didString() ?? ""
   }
@@ -186,8 +203,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
 
   var senderAvatarURL: URL? {
     if isSystemMessage { return nil }
-    guard let avatarString = senderProfile?.avatar?.uriString() else { return nil }
-    return URL(string: avatarString)
+    return senderProfile?.finalAvatarURL()
   }
 
   var sentAt: Date {
@@ -213,10 +229,6 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     }
   }
 
-  var embed: UnifiedEmbed? {
-    guard let embedUnion = messageView?.embed else { return nil }
-    return convertEmbed(embedUnion)
-  }
 
   var sendState: MessageSendState { .sent }
 
@@ -419,18 +431,18 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
 
   // MARK: - Embed Conversion
 
-  private func convertEmbed(_ embedUnion: ChatBskyConvoDefs.MessageViewEmbedUnion) -> UnifiedEmbed? {
+  private static func convertEmbed(_ embedUnion: ChatBskyConvoDefs.MessageViewEmbedUnion) -> UnifiedEmbed? {
     switch embedUnion {
     case .appBskyEmbedRecordView(let recordView):
       return convertRecord(recordView.record)
-case .chatBskyEmbedJoinLinkView(let joinLinkView):
+    case .chatBskyEmbedJoinLinkView(let joinLinkView):
       return convertJoinLink(joinLinkView.joinLinkPreview)
     case .unexpected:
       return nil
     }
   }
 
-  private func convertJoinLink(
+  private static func convertJoinLink(
     _ preview: ChatBskyEmbedJoinLink.ViewJoinLinkPreviewUnion
   ) -> UnifiedEmbed {
     switch preview {
@@ -454,8 +466,7 @@ case .chatBskyEmbedJoinLinkView(let joinLinkView):
     }
   }
 
-  private func convertRecord(_ recordUnion: AppBskyEmbedRecord.ViewRecordUnion?) -> UnifiedEmbed? {
-    guard let recordUnion else { return nil }
+  private static func convertRecord(_ recordUnion: AppBskyEmbedRecord.ViewRecordUnion?) -> UnifiedEmbed? {
 
     switch recordUnion {
     case .appBskyEmbedRecordViewRecord(let record):

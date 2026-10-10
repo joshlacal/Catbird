@@ -52,6 +52,9 @@ struct ChatTabView: View {
     #endif
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .onAppear(perform: handleOnAppear)
+    .onDisappear {
+      appState.chatManager.setChatTabVisible(false)
+    }
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
       preferredCompactColumn = newValue != nil ? .detail : .sidebar
@@ -352,11 +355,11 @@ struct ChatTabView: View {
   // MARK: - Event Handlers
 
   private func handleOnAppear() {
+    appState.chatManager.setChatTabVisible(true)
     resetUnifiedListForCurrentAccountIfNeeded()
 
     // A root request or conversation link can arrive before this tab mounts.
     consumeNavigationRequests()
-
     // Bluesky DMs
     Task {
       if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {

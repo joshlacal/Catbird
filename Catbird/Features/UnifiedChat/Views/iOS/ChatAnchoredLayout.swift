@@ -101,19 +101,22 @@ final class ChatTranscriptCell: UICollectionViewCell {
   // safe area again inside each hosting cell changes its fitted height on scroll.
   override var safeAreaInsets: UIEdgeInsets { .zero }
 
+  var lastFittedSize: CGSize?
   #if DEBUG
   private(set) var lastPreferredSize: CGSize?
   #endif
   override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
-    let attributes = super.preferredLayoutAttributesFitting(layoutAttributes).copy() as! UICollectionViewLayoutAttributes
+    let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
     let size = contentView.systemLayoutSizeFitting(
       CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height),
       withHorizontalFittingPriority: .required,
       verticalFittingPriority: .fittingSizeLevel
     )
-    attributes.size = CGSize(width: layoutAttributes.size.width, height: ceil(size.height))
+    let fitted = CGSize(width: layoutAttributes.size.width, height: ceil(size.height))
+    attributes.size = fitted
+    lastFittedSize = fitted
     #if DEBUG
-    lastPreferredSize = attributes.size
+    lastPreferredSize = fitted
     #endif
     return attributes
   }
@@ -303,8 +306,14 @@ struct ChatTranscriptContent<Content: View>: View {
   var body: some View {
     content
       .fixedSize(horizontal: false, vertical: true)
-      .onGeometryChange(for: CGSize.self) { $0.size } action: { [weak cell] _ in
-        cell?.invalidateIntrinsicContentSize()
+      .onGeometryChange(for: CGSize.self) { $0.size } action: { [weak cell] newSize in
+        guard let cell else { return }
+        if let last = cell.lastFittedSize {
+          guard abs(ceil(newSize.height) - last.height) > 0.5 || abs(newSize.width - last.width) > 0.5 else {
+            return
+          }
+        }
+        cell.invalidateIntrinsicContentSize()
       }
   }
 }

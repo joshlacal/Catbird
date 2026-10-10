@@ -169,14 +169,19 @@ struct ConversationRow: View {
       return "Yesterday"
     } else if let daysAgo = calendar.dateComponents([.day], from: date, to: now).day, daysAgo < 7 {
       // Show day name for dates within the last week
-      let formatter = DateFormatter()
-      formatter.dateFormat = "EEEE"  // e.g., "Monday"
-      return formatter.string(from: date)
+      return Self.weekdayFormatter.string(from: date)
     } else {
       // Short date with a two-digit year, as in Messages ("9/29/26", not "9/29/2026").
       return date.formatted(.dateTime.month(.defaultDigits).day().year(.twoDigits))
     }
   }
+
+  private static let weekdayFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = .autoupdatingCurrent
+    formatter.setLocalizedDateFormatFromTemplate("EEEE")
+    return formatter
+  }()
 }
 
 // MARK: - Last Message Preview Helper View
