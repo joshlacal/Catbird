@@ -21,6 +21,10 @@ struct ProfileHeader: View {
     
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.moderationPolicy) private var moderationPolicy
+    @Environment(\.displayScale) private var displayScale
+
+    private static let bioLinkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+    private static let bioHandleRegex = try? NSRegularExpression(pattern: "(?<![\\w@])@[A-Za-z0-9][A-Za-z0-9.-]*", options: [.caseInsensitive])
     @State private var isFollowButtonLoading = false
     @State private var localIsFollowing = false
     @State private var localActivitySubscription: AppBskyNotificationDefs.ActivitySubscription?
@@ -339,11 +343,13 @@ struct ProfileHeader: View {
             isFollowButtonLoading = true
             localIsFollowing = false
             do {
-                let success = try await appState.unfollow(did: profile.did.didString())
-                if success {
-                    try? await Task.sleep(for: .seconds(0.5))
-                    await viewModel.loadProfile()
+                let success: Bool
+                if let followingUri = profile.viewer?.following {
+                    success = try await appState.graphManager.unfollowByUri(followingUri: followingUri)
                 } else {
+                    success = try await appState.unfollow(did: profile.did.didString())
+                }
+                if !success {
                     localIsFollowing = true
                 }
             } catch {
@@ -419,7 +425,8 @@ struct ProfileHeader: View {
                                     .frame(width: avatarSize * 0.4, height: avatarSize * 0.4)
                             )
                     } else {
-                        LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                        let avatarURL = profile.avatar.flatMap { URL(string: $0.uriString()) }
+                        LazyImage(request: ImageRequestFactory.avatar(avatarURL, pointSize: avatarSize, scale: displayScale)) { state in
                             if let image = state.image {
                                 image.resizable().aspectRatio(contentMode: .fill)
                             } else {
@@ -458,7 +465,8 @@ struct ProfileHeader: View {
                                     .frame(width: avatarSize * 0.4, height: avatarSize * 0.4)
                             )
                     } else {
-                        LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                        let avatarURL = profile.avatar.flatMap { URL(string: $0.uriString()) }
+                        LazyImage(request: ImageRequestFactory.avatar(avatarURL, pointSize: avatarSize, scale: displayScale)) { state in
                             if let image = state.image {
                                 image.resizable().aspectRatio(contentMode: .fill)
                             } else {
@@ -861,7 +869,7 @@ struct ProfileHeader: View {
     }
 
     private func applyDetectedLinks(in text: String, to attributedText: NSMutableAttributedString) {
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+        guard let detector = Self.bioLinkDetector else {
             return
         }
 
@@ -908,8 +916,7 @@ struct ProfileHeader: View {
     }
 
     private func applyDetectedHandles(in text: String, to attributedText: NSMutableAttributedString) {
-        let pattern = "(?<![\\w@])@[A-Za-z0-9][A-Za-z0-9.-]*"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+        guard let regex = Self.bioHandleRegex else {
             return
         }
 
@@ -1050,30 +1057,23 @@ struct ProfileHeader: View {
             
         } else {
             Button(action: {
-                Task(priority: .userInitiated) {  // Explicit priority
+                Task(priority: .userInitiated) {
                     isFollowButtonLoading = true
-                    
-                    // Optimistically update UI
                     localIsFollowing = true
                     
                     do {
-                        // Perform follow operation
                         let success = try await appState.follow(did: profile.did.didString())
-                        
                         if success {
-                            await presentSuggestedFollowsIfAvailable()
-                            // Add a small delay before reloading
-                            try? await Task.sleep(for: .seconds(0.5))
-                            await viewModel.loadProfile()
+                            Task(priority: .utility) {
+                                await presentSuggestedFollowsIfAvailable()
+                            }
                         } else {
                             localIsFollowing = false
                         }
                     } catch {
-                        // Log error and revert local state
                         logger.debug("Error following: \(error.localizedDescription)")
                         localIsFollowing = false
                     }
-                    
                     isFollowButtonLoading = false
                 }
             }) {

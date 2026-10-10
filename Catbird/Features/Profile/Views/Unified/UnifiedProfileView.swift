@@ -133,28 +133,29 @@ struct UnifiedProfileView: View {
 
   // MARK: - New helper function for refreshing content
   private func refreshAllContent() async {
-    // First refresh profile
-    await viewModel.loadProfile()
-    
-    // Load known followers for other users
-    if !viewModel.isCurrentUser {
-      await viewModel.loadKnownFollowers()
-    }
-    
-    // Then refresh current tab content
-    switch viewModel.selectedProfileTab {
-    case .posts:
-      hasAttemptedLoadPosts = true
-      await viewModel.loadPosts()
-    case .replies:
-      hasAttemptedLoadReplies = true
-      await viewModel.loadReplies()
-    case .media:
-      hasAttemptedLoadMedia = true
-      await viewModel.loadMediaPosts()
-    case .more: break
-    default: break
-    }
+    async let profileTask: Void = viewModel.loadProfile()
+    async let followersTask: Void = {
+      if !viewModel.isCurrentUser {
+        await viewModel.loadKnownFollowers(reset: true)
+      }
+    }()
+    async let feedTask: Void = {
+      switch viewModel.selectedProfileTab {
+      case .posts:
+        hasAttemptedLoadPosts = true
+        await viewModel.loadPosts()
+      case .replies:
+        hasAttemptedLoadReplies = true
+        await viewModel.loadReplies()
+      case .media:
+        hasAttemptedLoadMedia = true
+        await viewModel.loadMediaPosts()
+      case .more: break
+      default: break
+      }
+    }()
+
+    _ = await (profileTask, followersTask, feedTask)
   }
   
 
@@ -292,27 +293,34 @@ struct UnifiedProfileView: View {
   }
 
   private func initialLoad() async {
+    let signpost = PerformanceSignposts.beginInterval("ProfileOpen")
+    defer {
+      PerformanceSignposts.endInterval("ProfileOpen", signpost)
+    }
+
     hasAttemptedLoad = true
     do {
-      await viewModel.loadProfile()
-      
-      // Check muting and blocking status
+      async let profileTask: Void = viewModel.loadProfile()
+      async let followersTask: Void = {
+        if !viewModel.isCurrentUser {
+          await viewModel.loadKnownFollowers()
+        }
+      }()
+      async let feedTask: Void = refreshCurrentTabContent()
+
+      _ = await (profileTask, followersTask, feedTask)
+
+      // Check muting and blocking status directly from viewer state to avoid scanning mute list
       if let profile = viewModel.profile, !viewModel.isCurrentUser {
         let did = profile.did.didString()
         if let viewer = profile.viewer {
           self.isBlocking = viewer.blocking != nil
+          self.isMuting = viewer.muted == true
         } else {
           self.isBlocking = await appState.isBlocking(did: did)
+          self.isMuting = await appState.isMuting(did: did)
         }
-        self.isMuting = await appState.isMuting(did: did)
-        
-        // Load known followers for other users
-        await viewModel.loadKnownFollowers()
       }
-      
-      // Load initial content for current tab
-      await refreshCurrentTabContent()
-      
     } catch {
       logger.error("Failed to load initial profile data: \(error.localizedDescription)")
     }
@@ -514,13 +522,13 @@ struct UnifiedProfileView: View {
     }
     .id(viewModel.userDID) // Use stable userDID instead of profile?.did
     .navigationTitle("")
+    .ensureDeepNavigationFonts()
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     .toolbarBackground(.hidden, for: .navigationBar)
     #else
     .toolbarBackground(.hidden, for: .automatic)
     #endif
-    .ensureDeepNavigationFonts()
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
       switch destination {
       case .section(let tab, let did):
@@ -735,12 +743,12 @@ struct UnifiedProfileView: View {
         handleTabChange(newValue)
       }
       .task {
-        // Wrap in error handling to prevent crashes
+        // Skip initialLoad when already attempted and profile is present (Quick win 12 / P154)
+        guard !hasAttemptedLoad || viewModel.profile == nil else { return }
         do {
           await initialLoad()
         } catch {
           logger.error("Failed to load initial profile data: \(error.localizedDescription)")
-          // Let the error state be handled by the view model
         }
       }
   }

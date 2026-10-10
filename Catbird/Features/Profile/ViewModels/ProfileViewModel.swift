@@ -19,6 +19,9 @@ import AppKit
   private(set) var posts: [AppBskyFeedDefs.FeedViewPost] = []
   private(set) var replies: [AppBskyFeedDefs.FeedViewPost] = []
   private(set) var postsWithMedia: [AppBskyFeedDefs.FeedViewPost] = []
+  private(set) var boxedPosts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
+  private(set) var boxedReplies: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
+  private(set) var boxedPostsWithMedia: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
   private(set) var isLoading = false
   private(set) var error: Error?
   var selectedProfileTab: ProfileTab = .posts
@@ -168,8 +171,11 @@ import AppKit
     
     await MainActor.run {
       self.posts = filteredPosts
+      self.boxedPosts = filteredPosts.map { EquatableBox($0) }
       self.replies = filteredReplies
+      self.boxedReplies = filteredReplies.map { EquatableBox($0) }
       self.postsWithMedia = filteredMediaPosts
+      self.boxedPostsWithMedia = filteredMediaPosts.map { EquatableBox($0) }
     }
     
       logger.debug("Applied content filtering to profile posts: \(self.posts.count) posts, \(self.replies.count) replies, \(self.postsWithMedia.count) media posts")
@@ -207,7 +213,9 @@ import AppKit
       )
 
       if responseCode == 200, let profile = profileData {
-        await SpotlightEntityDonator.shared.donate(profiles: [profile])
+        Task(priority: .utility) {
+          await SpotlightEntityDonator.shared.donate(profiles: [profile])
+        }
       }
 
       await MainActor.run {
@@ -260,41 +268,34 @@ import AppKit
   /// Loads the first page of the user's posts, replacing anything already loaded.
   func loadPosts() async {
     await loadFeed(type: .posts, resetCursor: true)
-    // Persist to SwiftData for profile posts feed
-    await cacheCurrentTabPosts(for: .posts)
   }
 
   /// Appends the next page of posts, if there is one.
   func loadMorePosts() async {
     guard hasMorePosts, postsCursor != nil else { return }
     await loadFeed(type: .posts, resetCursor: false)
-    await cacheCurrentTabPosts(for: .posts)
   }
 
   /// Loads the first page of the user's replies, replacing anything already loaded.
   func loadReplies() async {
     await loadFeed(type: .replies, resetCursor: true)
-    await cacheCurrentTabPosts(for: .replies)
   }
 
   /// Appends the next page of replies, if there is one.
   func loadMoreReplies() async {
     guard hasMoreReplies, repliesCursor != nil else { return }
     await loadFeed(type: .replies, resetCursor: false)
-    await cacheCurrentTabPosts(for: .replies)
   }
 
   /// Loads the first page of the user's media posts, replacing anything already loaded.
   func loadMediaPosts() async {
     await loadFeed(type: .media, resetCursor: true)
-    await cacheCurrentTabPosts(for: .media)
   }
 
   /// Appends the next page of media posts, if there is one.
   func loadMoreMediaPosts() async {
     guard hasMoreMedia, mediaPostsCursor != nil else { return }
     await loadFeed(type: .media, resetCursor: false)
-    await cacheCurrentTabPosts(for: .media)
   }
 
   /// Loads the first page of liked posts, replacing anything already loaded.
@@ -361,14 +362,22 @@ import AppKit
   }
 
   /// Loads known followers - people who follow this profile and are also followed by the current user
-  func loadKnownFollowers() async {
-    guard let client = client, let profile = profile, !self.isCurrentUser, !isLoadingKnownFollowers else { return }
+  func loadKnownFollowers(reset: Bool = false) async {
+    let actor = profile?.did.didString() ?? userDID
+    guard let client = client, !actor.isEmpty, actor != "fallback", actor != "unknown", !self.isCurrentUser, !isLoadingKnownFollowers else { return }
+
+    if !reset && !_knownFollowers.isEmpty {
+      return
+    }
 
     _isLoadingKnownFollowers = true
+    if reset {
+      knownFollowersCursor = nil
+    }
 
     do {
       let params = AppBskyGraphGetKnownFollowers.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
+        actor: try ATIdentifier(string: actor),
         limit: 20,
         cursor: knownFollowersCursor
       )
@@ -495,15 +504,17 @@ import AppKit
 
   /// Load different types of feeds
   private func loadFeed(type: FeedType, resetCursor: Bool) async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
+    let actor = profile?.did.didString() ?? userDID
+    guard let client = client, !actor.isEmpty, actor != "fallback", actor != "unknown", !isLoadingMorePosts else { return }
 
     _isLoadingMorePosts = true
 
     do {
+      let actorIdentifier = try ATIdentifier(string: actor)
       switch type {
       case .posts:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
+          actor: actorIdentifier,
           limit: 50,
           cursor: resetCursor ? nil : postsCursor,
           filter: "posts_and_author_threads",
@@ -533,13 +544,16 @@ import AppKit
             logger.debug("ProfileViewModel[\(self.instanceId)]: Found pinned post: \(pinned.post.uri.uriString())")
           }
           
+          let boxedPage = regularPosts.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
               self.pinnedPost = pinned
               self.posts = regularPosts
+              self.boxedPosts = boxedPage
             } else {
               // When paginating, don't update pinned post
               self.posts.append(contentsOf: regularPosts)
+              self.boxedPosts.append(contentsOf: boxedPage)
             }
             self.postsCursor = output?.cursor
             self.hasMorePosts = output?.cursor != nil
@@ -556,7 +570,7 @@ import AppKit
 
         repeat {
           let params = AppBskyFeedGetAuthorFeed.Parameters(
-            actor: try ATIdentifier(string: profile.did.didString()),
+            actor: actorIdentifier,
             limit: 30,
             cursor: cursor,
             filter: "posts_with_replies"
@@ -574,7 +588,7 @@ import AppKit
             guard post.reason == nil, let reply = post.reply else { return false }
             switch reply.parent {
             case .appBskyFeedDefsPostView(let parentPost):
-              return parentPost.author.did != profile.did
+              return parentPost.author.did.didString() != actor
             case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
               return true
             }
@@ -584,20 +598,22 @@ import AppKit
         if didReceivePage {
           let nextCursor = cursor
           let pageReplies = repliesToOthers
+          let boxedPage = pageReplies.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
               self.replies = pageReplies
+              self.boxedReplies = boxedPage
             } else {
               self.replies.append(contentsOf: pageReplies)
+              self.boxedReplies.append(contentsOf: boxedPage)
             }
             self.repliesCursor = nextCursor
             self.hasMoreReplies = nextCursor != nil
           }
         }
-
       case .media:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
+          actor: actorIdentifier,
           limit: 30,
           cursor: resetCursor ? nil : mediaPostsCursor,
           filter: "posts_with_media"
@@ -621,17 +637,19 @@ import AppKit
             return false
           }
 
+          let boxedPage = postsWithMedia.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
               self.postsWithMedia = postsWithMedia
+              self.boxedPostsWithMedia = boxedPage
             } else {
               self.postsWithMedia.append(contentsOf: postsWithMedia)
+              self.boxedPostsWithMedia.append(contentsOf: boxedPage)
             }
             self.mediaPostsCursor = output?.cursor
             self.hasMoreMedia = output?.cursor != nil
           }
         }
-
       }
 
       await MainActor.run {
@@ -670,33 +688,6 @@ import AppKit
     return "\(account)-\(baseKey)"
   }
 
-  /// Creates CachedFeedViewPost entries for the current tab and saves them via PersistentFeedStateManager
-  @MainActor
-  private func cacheCurrentTabPosts(for type: FeedType) async {
-    let tab: ProfileTab
-    let source: [AppBskyFeedDefs.FeedViewPost]
-    switch type {
-    case .posts:
-      tab = .posts
-      source = posts
-    case .replies:
-      tab = .replies
-      source = replies
-    case .media:
-      tab = .media
-      source = postsWithMedia
-    }
-
-    let key = profileFeedKey(for: tab)
-
-    // Map to CachedFeedViewPost with this tab-specific feed key, preserving feed order
-    let cached = source.enumerated().compactMap { (index, post) in
-      CachedFeedViewPost(from: post, feedType: key, feedOrder: index)
-    }
-
-    // Persist using the ModelActor
-    await PersistentFeedStateManager.shared.saveFeedData(cached, for: key)
-  }
 
   /// Loads the first page of feeds, replacing anything already loaded.
   func refreshFeeds() async throws {
@@ -961,8 +952,11 @@ import AppKit
       logger.debug("ProfileViewModel: Account switched, clearing profile data...")
       profile = nil
       posts = []
+      boxedPosts = []
       replies = []
+      boxedReplies = []
       postsWithMedia = []
+      boxedPostsWithMedia = []
       _likes = []
       _otherUserLikes = []
       _lists = []

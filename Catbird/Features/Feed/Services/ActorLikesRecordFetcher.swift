@@ -1,7 +1,24 @@
 import Foundation
 import Petrel
 
+private actor PDSClientCache {
+  private var clients: [URL: ATProtoClient] = [:]
+
+  func client(for pdsURL: URL, fallbackClient: ATProtoClient) async -> ATProtoClient {
+    if await fallbackClient.baseURL == pdsURL {
+      return fallbackClient
+    }
+    if let existing = clients[pdsURL] {
+      return existing
+    }
+    let newClient = await ATProtoClient(baseURL: pdsURL)
+    clients[pdsURL] = newClient
+    return newClient
+  }
+}
+
 enum ActorLikesRecordFetcher {
+  private static let clientCache = PDSClientCache()
   static func fetchLikedPosts(
     client: ATProtoClient,
     actorDID: String,
@@ -9,7 +26,7 @@ enum ActorLikesRecordFetcher {
     limit: Int = 25
   ) async throws -> (posts: [AppBskyFeedDefs.PostView], cursor: String?) {
     let pdsURL = try await client.resolveDIDToPDSURL(did: actorDID)
-    let pdsClient = await ATProtoClient(baseURL: pdsURL)
+    let pdsClient = await clientCache.client(for: pdsURL, fallbackClient: client)
 
     let (responseCode, recordsOutput) = try await pdsClient.com.atproto.repo.listRecords(
       input: ComAtprotoRepoListRecords.Parameters(

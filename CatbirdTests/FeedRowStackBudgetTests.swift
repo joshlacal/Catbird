@@ -39,7 +39,7 @@ struct FeedRowViewSizeBudgetTests {
   @Test("Feed row view values stay small enough for -Onone stack temporaries")
   func viewValueSizesStayWithinBudget() {
     // Pre-fix Debug sizes: EnhancedFeedPost 7_737, EnhancedFeedPost.Body 20_352, PostView 8_136,
-    // PostView.Body 22_473, FeedPostRow.Body 8_168, ProfileCachedPostsList.Body 400.
+    // PostView.Body 22_473, FeedPostRow.Body 8_168, ProfileBoxedPostsList.Body 400.
     // Post-fix (Oct 7, iOS 27.1 simulator): every struct below is at most 336 B and every
     // Body at most 2_936 B (ThreadViewMainPostView), so the budgets leave about 40% headroom.
     let viewBudget = 512  // any feed row view struct
@@ -67,7 +67,7 @@ struct FeedRowViewSizeBudgetTests {
       Self.row("ThreadRowView.Body", ThreadRowView.Body.self, bodyBudget),
       Self.row("ThreadViewMainPostView", ThreadViewMainPostView.self, viewBudget),
       Self.row("ThreadViewMainPostView.Body", ThreadViewMainPostView.Body.self, bodyBudget),
-      Self.row("ProfileCachedPostsList.Body", ProfileCachedPostsList.Body.self, bodyBudget),
+      Self.row("ProfileBoxedPostsList.Body", ProfileBoxedPostsList.Body.self, bodyBudget),
       // The fix stores large models through this box, so it must stay one pointer wide.
       Self.row("EquatableBox<FeedViewPost>", EquatableBox<AppBskyFeedDefs.FeedViewPost>.self,
         MemoryLayout<UnsafeRawPointer>.size),
@@ -146,36 +146,30 @@ struct FeedRowStackBudgetTests {
     #expect(reply.stack.usedBytes < Self.totalBudget, "Reply rows used \(reply.stack.usedBytes) B of main-thread stack")
   }
 
-  @Test("Cached reply rows in ProfileCachedPostsList stay within the main-thread stack budget")
-  func cachedProfileListReplyStaysWithinStackBudget() async throws {
+  @Test("Boxed reply rows in ProfileBoxedPostsList stay within the main-thread stack budget")
+  func boxedProfileListReplyStaysWithinStackBudget() async throws {
     try #require(pthread_main_np() == 1, "Stack budgets describe the main thread")
     let fixture = try await Fixture()
     defer { fixture.tearDown() }
-    let container = try CatbirdSwiftDataStore.makeContainer(
-      configuration: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
-    let feedKey = "stack-budget-profile-posts"
-    for (order, reply) in try (0..<2).map(Self.makeReply).enumerated() {
-      container.mainContext.insert(try #require(CachedFeedViewPost(from: reply, feedType: feedKey, feedOrder: order)))
-    }
-    try container.mainContext.save()
+    let posts = try (0..<2).map { try EquatableBox(Self.makeReply($0)) }
 
-    // Mirrors UnifiedProfileContentView: the list sits directly in the LazyVStack and reads
-    // the model context from the root. The probe below it can only sit lower than the header
-    // if @Query delivered the cached rows during the measured pass.
-    let cached = try measureLayoutPass(fixture, modelContainer: container) { receipt in
-      ProfileCachedPostsList(
-        feedKey: feedKey, contentMaxWidth: 600, isLoadingMore: false, hasMore: false,
+    // Mirrors UnifiedProfileContentView: the list sits directly in the LazyVStack and renders
+    // in-memory boxed posts. The probe below it can only sit lower than the header
+    // if the boxed rows rendered during the measured pass.
+    let boxed = try measureLayoutPass(fixture) { receipt in
+      ProfileBoxedPostsList(
+        posts: posts, contentMaxWidth: 600, isLoadingMore: false, hasMore: false,
         loadMore: {}, path: .constant(NavigationPath()))
       RealizationProbe(receipt: receipt)
     }
-    recordMeasurements([("cached", cached)], named: "profile-list-stack-high-water.txt")
+    recordMeasurements([("boxed", boxed)], named: "profile-list-stack-high-water.txt")
 
-    #expect(cached.realizedProbes > 0, "The probe below the cached rows must be realized inside the measured pass")
-    #expect(cached.probeOffset > Self.headerHeight + Self.minimumRowsHeight,
-      "Cached rows must occupy the space above the probe (probe at \(cached.probeOffset) pt)")
-    #expect(cached.stack.paintedBytes > 0, "The stack window could not be painted; see attachment")
-    #expect(!cached.stack.overflowedWindow, "Stack use reached the painted window's floor; see attachment")
-    #expect(cached.stack.usedBytes < Self.totalBudget, "Profile list used \(cached.stack.usedBytes) B of main-thread stack")
+    #expect(boxed.realizedProbes > 0, "The probe below the boxed rows must be realized inside the measured pass")
+    #expect(boxed.probeOffset > Self.headerHeight + Self.minimumRowsHeight,
+      "Boxed rows must occupy the space above the probe (probe at \(boxed.probeOffset) pt)")
+    #expect(boxed.stack.paintedBytes > 0, "The stack window could not be painted; see attachment")
+    #expect(!boxed.stack.overflowedWindow, "Stack use reached the painted window's floor; see attachment")
+    #expect(boxed.stack.usedBytes < Self.totalBudget, "Profile list used \(boxed.stack.usedBytes) B of main-thread stack")
   }
 
   // MARK: - Harness

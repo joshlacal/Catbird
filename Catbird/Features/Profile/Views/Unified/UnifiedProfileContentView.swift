@@ -213,7 +213,7 @@ private struct ProfileCurrentTabView: View {
     case .replies:
       ProfileFeedTabView(
         viewModel: viewModel,
-        posts: viewModel.replies,
+        posts: viewModel.boxedReplies,
         emptyTitle: "No Replies",
         emptyMessage: "This account hasn’t replied to anyone yet.",
         hasAttemptedLoad: hasAttemptedLoadReplies,
@@ -225,7 +225,7 @@ private struct ProfileCurrentTabView: View {
     case .media:
       ProfileFeedTabView(
         viewModel: viewModel,
-        posts: viewModel.postsWithMedia,
+        posts: viewModel.boxedPostsWithMedia,
         emptyTitle: "No Media Posts",
         emptyMessage: "This account hasn’t shared photos or videos yet.",
         hasAttemptedLoad: hasAttemptedLoadMedia,
@@ -250,13 +250,13 @@ private struct ProfilePostsTabView: View {
 
   var body: some View {
     LazyVStack(spacing: 0) {
-      if !hasAttemptedLoad || (viewModel.isLoading && viewModel.posts.isEmpty) {
+      if !hasAttemptedLoad || (viewModel.isLoading && viewModel.boxedPosts.isEmpty) {
         ProgressView("Loading…")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
           .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
-      } else if viewModel.posts.isEmpty && viewModel.pinnedPost == nil {
+      } else if viewModel.boxedPosts.isEmpty && viewModel.pinnedPost == nil {
         ProfileEmptyStateView(
           title: "No Posts",
           message: "This account hasn’t posted yet.",
@@ -280,8 +280,8 @@ private struct ProfilePostsTabView: View {
           }
         }
 
-        ProfileCachedPostsList(
-          feedKey: viewModel.profileFeedKey(for: .posts),
+        ProfileBoxedPostsList(
+          posts: viewModel.boxedPosts,
           contentMaxWidth: contentMaxWidth,
           isLoadingMore: viewModel.isLoadingMorePosts,
           hasMore: viewModel.hasMorePosts,
@@ -295,7 +295,7 @@ private struct ProfilePostsTabView: View {
 
 private struct ProfileFeedTabView: View {
   let viewModel: ProfileViewModel
-  let posts: [AppBskyFeedDefs.FeedViewPost]
+  let posts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]
   let emptyTitle: String
   let emptyMessage: String
   let hasAttemptedLoad: Bool
@@ -341,14 +341,56 @@ private struct ProfileFeedTabView: View {
         .frame(maxWidth: contentMaxWidth, alignment: .center)
         .frame(maxWidth: .infinity, alignment: .center)
       } else {
-        ProfileCachedPostsList(
-          feedKey: viewModel.profileFeedKey(for: viewModel.selectedProfileTab),
+        ProfileBoxedPostsList(
+          posts: posts,
           contentMaxWidth: contentMaxWidth,
           isLoadingMore: viewModel.isLoadingMorePosts,
           hasMore: hasMore,
           loadMore: loadAction,
           path: $navigationPath
         )
+      }
+    }
+  }
+}
+
+struct ProfileBoxedPostsList: View {
+  let posts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]
+  let contentMaxWidth: CGFloat
+  let isLoadingMore: Bool
+  let hasMore: Bool
+  let loadMore: @MainActor () async -> Void
+  @Binding var path: NavigationPath
+
+  var body: some View {
+    let lastPostID = posts.last?.value.id
+    Group {
+      ForEach(posts, id: \.value.id) { boxedPost in
+        VStack(spacing: 0) {
+          EnhancedFeedPost(
+            boxedPost: boxedPost,
+            id: boxedPost.value.id,
+            path: $path
+          )
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+
+          Divider()
+            .padding(.top, 8)
+        }
+        .contentShape(Rectangle())
+        .onAppear {
+          if hasMore && boxedPost.value.id == lastPostID && !isLoadingMore {
+            Task { await loadMore() }
+          }
+        }
+      }
+
+      if isLoadingMore && hasMore {
+        ProgressView()
+          .padding()
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
       }
     }
   }

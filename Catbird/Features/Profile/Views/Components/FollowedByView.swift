@@ -10,6 +10,7 @@ struct FollowedByView: View {
     let profileDID: String
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var currentColorScheme
+    @Environment(\.displayScale) private var displayScale
     @Binding var path: NavigationPath
     
     private let maxAvatarsToShow = 3
@@ -26,7 +27,8 @@ struct FollowedByView: View {
                         // Avatar stack
                         HStack(spacing: -8) {
                             ForEach(Array(knownFollowers.prefix(maxAvatarsToShow).enumerated()), id: \.element.did) { index, follower in
-                                LazyImage(url: URL(string: follower.avatar?.uriString() ?? "")) { state in
+                                let avatarURL = follower.avatar.flatMap { URL(string: $0.uriString()) }
+                                LazyImage(request: ImageRequestFactory.avatar(avatarURL, pointSize: avatarSize, scale: displayScale)) { state in
                                     if let image = state.image {
                                         image.resizable().aspectRatio(contentMode: .fill)
                                     } else {

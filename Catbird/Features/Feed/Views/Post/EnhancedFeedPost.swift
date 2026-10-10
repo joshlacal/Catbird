@@ -50,6 +50,18 @@ struct EnhancedFeedPost: View {
     self.isReadOnly = isReadOnly
   }
 
+  init(
+    boxedPost: EquatableBox<AppBskyFeedDefs.FeedViewPost>,
+    id: String? = nil,
+    path: Binding<NavigationPath>,
+    isReadOnly: Bool = false
+  ) {
+    self.id = id ?? boxedPost.value.id
+    self.source = .raw(boxedPost)
+    self._path = path
+    self.isReadOnly = isReadOnly
+  }
+
   // MARK: - Computed Properties
   var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
     entry?.value

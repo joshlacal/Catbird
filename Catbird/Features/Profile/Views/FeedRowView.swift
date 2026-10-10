@@ -4,11 +4,13 @@ import SwiftUI
 
 struct FeedRowView: View {
     let feed: AppBskyFeedDefs.GeneratorView
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         HStack(spacing: 14) {
             if let avatarURL = feed.avatar {
-                LazyImage(url: URL(string: avatarURL.uriString())) { state in
+                let url = URL(string: avatarURL.uriString())
+                LazyImage(request: ImageRequestFactory.image(url, pointSize: CGSize(width: 50, height: 50), scale: displayScale)) { state in
                     if let image = state.image {
                         image
                             .resizable()

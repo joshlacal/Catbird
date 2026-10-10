@@ -134,21 +134,20 @@ struct ProfileSectionView: View {
           } else {
               ForEach(viewModel.likes, id: \.post.uri) { post in
                   FeedPost(post: post, path: $path)
-                  
-                  // Load more when reaching the end
-                  if post == viewModel.likes.last && viewModel.hasMoreLikes {
+              }
+              
+              // Pagination trigger & loading indicator
+              if viewModel.hasMoreLikes {
+                  if viewModel.isLoadingLikes {
+                      ProgressView()
+                          .padding()
+                          .frame(maxWidth: .infinity)
+                  } else {
                       Color.clear.frame(height: 20)
                           .onAppear {
                               Task { await viewModel.loadMoreLikes() }
                           }
                   }
-              }
-              
-              // Loading indicator for pagination
-              if viewModel.isLoadingLikes && viewModel.hasMoreLikes {
-                  ProgressView()
-                      .padding()
-                      .frame(maxWidth: .infinity)
               }
           }
       } else {
@@ -170,21 +169,20 @@ struct ProfileSectionView: View {
                     .onTapGesture {
                         path.append(NavigationDestination.post(post.uri))
                     }
-
-                  // Load more when reaching the end
-                  if post == viewModel.otherUserLikes.last && viewModel.hasMoreLikes {
+              }
+              
+              // Pagination trigger & loading indicator
+              if viewModel.hasMoreLikes {
+                  if viewModel.isLoadingLikes {
+                      ProgressView()
+                          .padding()
+                          .frame(maxWidth: .infinity)
+                  } else {
                       Color.clear.frame(height: 20)
                           .onAppear {
                               Task { await viewModel.loadMoreLikes() }
                           }
                   }
-              }
-              
-              // Loading indicator for pagination
-              if viewModel.isLoadingLikes && viewModel.hasMoreLikes {
-                  ProgressView()
-                      .padding()
-                      .frame(maxWidth: .infinity)
               }
           }
 
@@ -209,21 +207,20 @@ struct ProfileSectionView: View {
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         .listRowSeparator(list.uri == viewModel.lists.first?.uri ? .hidden : .automatic, edges: .top)
+      }
 
-        // Load more when reaching the end
-        if list == viewModel.lists.last && viewModel.hasMoreLists {
+      // Pagination trigger & loading indicator
+      if viewModel.hasMoreLists {
+        if viewModel.isLoadingSection {
+          ProgressView()
+            .padding()
+            .frame(maxWidth: .infinity)
+        } else {
           Color.clear.frame(height: 20)
             .onAppear {
               Task { await viewModel.loadMoreLists() }
             }
         }
-      }
-
-      // Loading indicator for pagination
-      if viewModel.isLoadingSection && viewModel.hasMoreLists {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
       }
     }
   }
@@ -283,21 +280,20 @@ struct ProfileSectionView: View {
         } label: {
           StarterPackRowView(pack: pack)
         }
+      }
 
-        // Load more when reaching the end
-        if pack == viewModel.starterPacks.last && viewModel.hasMoreStarterPacks {
+      // Pagination trigger & loading indicator
+      if viewModel.hasMoreStarterPacks {
+        if viewModel.isLoadingSection {
+          ProgressView()
+            .padding()
+            .frame(maxWidth: .infinity)
+        } else {
           Color.clear.frame(height: 20)
             .onAppear {
               Task { await viewModel.loadStarterPacks() }
             }
         }
-      }
-
-      // Loading indicator for pagination
-      if viewModel.isLoadingSection && viewModel.hasMoreStarterPacks {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
       }
     }
   }
@@ -317,21 +313,20 @@ struct ProfileSectionView: View {
           FeedRowView(feed: feed)
         }
         .buttonStyle(.plain)
+      }
 
-        // Load more when reaching the end
-        if feed == viewModel.feeds.last && viewModel.hasMoreFeeds {
+      // Pagination trigger & loading indicator
+      if viewModel.hasMoreFeeds {
+        if viewModel.isLoadingSection {
+          ProgressView()
+            .padding()
+            .frame(maxWidth: .infinity)
+        } else {
           Color.clear.frame(height: 20)
             .onAppear {
               Task { await viewModel.loadMoreFeeds() }
             }
         }
-      }
-
-      // Loading indicator for pagination
-      if viewModel.isLoadingSection && viewModel.hasMoreFeeds {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
       }
     }
   }

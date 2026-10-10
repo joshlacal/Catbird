@@ -25,6 +25,7 @@ struct ProfileBannerHeader: View {
   let labels: [ComAtprotoLabelDefs.Label]?
 
   @Environment(\.moderationPolicy) private var moderationPolicy
+  @Environment(\.displayScale) private var displayScale
 
   init(bannerURL: URL?, did: String? = nil, labels: [ComAtprotoLabelDefs.Label]? = nil) {
     self.bannerURL = bannerURL
@@ -47,7 +48,7 @@ struct ProfileBannerHeader: View {
       if isConcealed {
         concealedPlaceholder
       } else if let bannerURL {
-        LazyImage(url: bannerURL) { state in
+        LazyImage(request: ImageRequestFactory.image(bannerURL, pointSize: CGSize(width: 800, height: 200), scale: displayScale)) { state in
           if let image = state.image {
             Color.clear
               .overlay {
@@ -56,8 +57,7 @@ struct ProfileBannerHeader: View {
                   .aspectRatio(contentMode: .fill)
               }
               .overlay {
-                Color(white: 0, opacity: 0.15)
-                  .blendMode(SwiftUI.BlendMode.overlay)
+                Color.black.opacity(0.15)
               }
               .clipped()
           } else if state.error != nil {
