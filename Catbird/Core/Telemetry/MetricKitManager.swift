@@ -115,37 +115,39 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   
   // MARK: - Past Payloads
   
-  /// Processes any payloads received while the app wasn't running
+  /// Processes any payloads received while the app wasn't running off the main thread
   private func processPastPayloads() {
-    let metricPayloads = MXMetricManager.shared.pastPayloads
-    let diagnosticPayloads = MXMetricManager.shared.pastDiagnosticPayloads
-    
-    if !metricPayloads.isEmpty {
-      metricLogger.info("📊 Processing \(metricPayloads.count) past metric payloads")
-      processMetricPayloads(metricPayloads)
-    }
-    
-    if !diagnosticPayloads.isEmpty {
-      metricLogger.info("🔍 Processing \(diagnosticPayloads.count) past diagnostic payloads")
-      processDiagnosticPayloads(diagnosticPayloads)
+    Task.detached(priority: .utility) { [weak self] in
+      let metricPayloads = MXMetricManager.shared.pastPayloads
+      let diagnosticPayloads = MXMetricManager.shared.pastDiagnosticPayloads
+      
+      if !metricPayloads.isEmpty {
+        self?.metricLogger.info("📊 Processing \(metricPayloads.count) past metric payloads")
+        self?.processMetricPayloads(metricPayloads)
+      }
+      
+      if !diagnosticPayloads.isEmpty {
+        self?.metricLogger.info("🔍 Processing \(diagnosticPayloads.count) past diagnostic payloads")
+        self?.processDiagnosticPayloads(diagnosticPayloads)
+      }
     }
   }
   
   // MARK: - Payload Processing
   
-  private func processMetricPayloads(_ payloads: [MXMetricPayload]) {
+  nonisolated private func processMetricPayloads(_ payloads: [MXMetricPayload]) {
     for payload in payloads {
       logMetricSummary(payload)
     }
   }
   
-  private func processDiagnosticPayloads(_ payloads: [MXDiagnosticPayload]) {
+  nonisolated private func processDiagnosticPayloads(_ payloads: [MXDiagnosticPayload]) {
     for payload in payloads {
       logDiagnosticSummary(payload)
     }
   }
   
-  private func logMetricSummary(_ payload: MXMetricPayload) {
+  nonisolated private func logMetricSummary(_ payload: MXMetricPayload) {
     let begin = payload.timeStampBegin
     let end = payload.timeStampEnd
     let version = payload.latestApplicationVersion
@@ -189,7 +191,7 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
     }
   }
   
-  private func logDiagnosticSummary(_ payload: MXDiagnosticPayload) {
+  nonisolated private func logDiagnosticSummary(_ payload: MXDiagnosticPayload) {
     let begin = payload.timeStampBegin
     let end = payload.timeStampEnd
     
@@ -255,16 +257,12 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
 extension MetricKitManager: MXMetricManagerSubscriber {
   
   nonisolated func didReceive(_ payloads: [MXMetricPayload]) {
-    Task { @MainActor in
-      metricLogger.info("📊 Received \(payloads.count) metric payload(s)")
-      processMetricPayloads(payloads)
-    }
+    metricLogger.info("📊 Received \(payloads.count) metric payload(s)")
+    processMetricPayloads(payloads)
   }
   
   nonisolated func didReceive(_ payloads: [MXDiagnosticPayload]) {
-    Task { @MainActor in
-      metricLogger.info("🔍 Received \(payloads.count) diagnostic payload(s)")
-      processDiagnosticPayloads(payloads)
-    }
+    metricLogger.info("🔍 Received \(payloads.count) diagnostic payload(s)")
+    processDiagnosticPayloads(payloads)
   }
 }

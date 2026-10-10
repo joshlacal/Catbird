@@ -1,136 +1,199 @@
 #!/bin/bash
 # profile-app.sh - Automated Instruments trace capture for Catbird
-# Usage: ./profile-app.sh [template] [duration] [output-name]
+# Usage: ./profile-app.sh [options] [template] [duration] [output-name]
 #
-# Templates: time-profiler, allocations, leaks, swiftui, app-launch, swift-concurrency
+# Templates: time-profiler, allocations, leaks, swiftui, app-launch, swift-concurrency, animation, network
 # Default: time-profiler for 30s
+# Device UDID default: 00008130-0016681004E1401C (overridable via env DEVICE_UDID)
+#
+# Compatible with bash 3.2+.
 
-set -euo pipefail
+set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TRACES_DIR="${PROJECT_ROOT}/../build/traces"
-DERIVED_DATA="${PROJECT_ROOT}/../build/DerivedData"
 
-# Default values
-TEMPLATE_KEY="${1:-time-profiler}"
-DURATION="${2:-30s}"
-OUTPUT_NAME="${3:-}"
-SIMULATOR="iPhone 17 Pro"
+# Device identifiers
+# Physical device: iPhone UDID (overridable via env DEVICE_UDID)
+DEFAULT_DEVICE_UDID="00008130-0016681004E1401C"
+DEVICE_UDID="${DEVICE_UDID:-$DEFAULT_DEVICE_UDID}"
 
-# Map template keys to Instruments template names
-declare -A TEMPLATE_MAP=(
-  ["time-profiler"]="Time Profiler"
-  ["allocations"]="Allocations"
-  ["leaks"]="Leaks"
-  ["swiftui"]="SwiftUI"
-  ["app-launch"]="App Launch"
-  ["swift-concurrency"]="Swift Concurrency"
-  ["animation"]="Animation Hitches"
-  ["network"]="Network"
-)
+DERIVED_DATA="${DERIVED_DATA:-${PROJECT_ROOT}/../build/DerivedData-baseline}"
+TRACES_DIR="${TRACES_DIR:-${PROJECT_ROOT}/../build/traces}"
 
-TEMPLATE="${TEMPLATE_MAP[$TEMPLATE_KEY]:-$TEMPLATE_KEY}"
+TEMPLATE_KEY="time-profiler"
+DURATION="30s"
+OUTPUT_NAME=""
+SKIP_BUILD=0
 
-# Generate output filename
+# Clean up instruments leftover files on exit
+cleanup_instruments_leftovers() {
+  local tmp_dir="${TMPDIR:-/tmp}"
+  rm -rf "$tmp_dir"/instruments*.ktrace 2>/dev/null || true
+  rm -rf /tmp/instruments*.ktrace 2>/dev/null || true
+}
+trap cleanup_instruments_leftovers EXIT
+
+# Bash 3.2-compatible template name resolution
+resolve_template() {
+  case "$1" in
+    time-profiler|"Time Profiler") echo "Time Profiler" ;;
+    allocations|"Allocations") echo "Allocations" ;;
+    leaks|"Leaks") echo "Leaks" ;;
+    swiftui|"SwiftUI") echo "SwiftUI" ;;
+    app-launch|"App Launch") echo "App Launch" ;;
+    swift-concurrency|"Swift Concurrency") echo "Swift Concurrency" ;;
+    animation|"animation-hitches"|"Animation Hitches") echo "Animation Hitches" ;;
+    network|"Network") echo "Network" ;;
+    system-trace|"System Trace") echo "System Trace" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# Parse options and positional arguments
+POSITIONAL_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d|--derived-data)
+      DERIVED_DATA="$2"
+      shift 2
+      ;;
+    --duration)
+      DURATION="$2"
+      shift 2
+      ;;
+    --device)
+      DEVICE_UDID="$2"
+      shift 2
+      ;;
+    --output-dir)
+      TRACES_DIR="$2"
+      shift 2
+      ;;
+    --output-name)
+      OUTPUT_NAME="$2"
+      shift 2
+      ;;
+    --skip-build)
+      SKIP_BUILD=1
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: $0 [options] [template] [duration] [output-name]"
+      echo ""
+      echo "Options:"
+      echo "  -d, --derived-data <path>  DerivedData output path"
+      echo "  --duration <duration>      Trace duration (default: 30s)"
+      echo "  --device <id>              Device UDID (default: $DEFAULT_DEVICE_UDID)"
+      echo "  --output-dir <path>        Directory to store traces"
+      echo "  --output-name <name>       Custom output trace name"
+      echo "  --skip-build               Skip xcodebuild"
+      exit 0
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ ${#POSITIONAL_ARGS[@]} -ge 1 ]; then
+  TEMPLATE_KEY="${POSITIONAL_ARGS[0]}"
+fi
+if [ ${#POSITIONAL_ARGS[@]} -ge 2 ]; then
+  DURATION="${POSITIONAL_ARGS[1]}"
+fi
+if [ ${#POSITIONAL_ARGS[@]} -ge 3 ]; then
+  OUTPUT_NAME="${POSITIONAL_ARGS[2]}"
+fi
+
+TEMPLATE=$(resolve_template "$TEMPLATE_KEY")
+
+mkdir -p "$TRACES_DIR"
+mkdir -p "$DERIVED_DATA"
+
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-if [[ -z "$OUTPUT_NAME" ]]; then
-  OUTPUT_NAME="${TEMPLATE_KEY}-${TIMESTAMP}"
+if [ -z "$OUTPUT_NAME" ]; then
+  TMPL_SLUG=$(echo "$TEMPLATE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+  OUTPUT_NAME="${TMPL_SLUG}-${TIMESTAMP}"
 fi
 OUTPUT_PATH="${TRACES_DIR}/${OUTPUT_NAME}.trace"
-
-# Ensure traces directory exists
-mkdir -p "$TRACES_DIR"
 
 echo "=== Catbird Performance Profiling ==="
 echo "Template:    $TEMPLATE"
 echo "Duration:    $DURATION"
-echo "Simulator:   $SIMULATOR"
+echo "Device UDID: $DEVICE_UDID"
+echo "DerivedData: $DERIVED_DATA"
 echo "Output:      $OUTPUT_PATH"
 echo ""
 
-# Find the built app
-APP_PATH=$(find "$DERIVED_DATA" -name "Catbird.app" -path "*Debug-iphonesimulator*" 2>/dev/null | head -1)
+# Locate or build the app
+APP_PATH=$(find "$DERIVED_DATA/Build/Products" -name "Catbird.app" -path "*Release-iphoneos*" 2>/dev/null | head -1)
 
-if [[ -z "$APP_PATH" ]]; then
-  echo "⚠️  Catbird.app not found in DerivedData. Building first..."
-  cd "$PROJECT_ROOT"
-  xcodebuild -project Catbird.xcodeproj \
-    -scheme Catbird \
-    -destination "platform=iOS Simulator,name=$SIMULATOR" \
-    -derivedDataPath "$DERIVED_DATA" \
-    -configuration Debug \
-    build \
-    -quiet
-  
-  APP_PATH=$(find "$DERIVED_DATA" -name "Catbird.app" -path "*Debug-iphonesimulator*" 2>/dev/null | head -1)
-  
-  if [[ -z "$APP_PATH" ]]; then
-    echo "❌ Build failed or app not found"
-    exit 1
+if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+  APP_PATH=$(find "$DERIVED_DATA" -name "Catbird.app" 2>/dev/null | head -1)
+fi
+
+if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ] || [ "$SKIP_BUILD" -eq 0 ]; then
+  if [ "$SKIP_BUILD" -eq 0 ]; then
+    echo "🔨 Building Catbird (Release-iphoneos, code coverage disabled)..."
+    xcodebuild -project "$PROJECT_ROOT/Catbird.xcodeproj" \
+      -scheme Catbird \
+      -configuration Release \
+      -destination "id=$DEVICE_UDID" \
+      -derivedDataPath "$DERIVED_DATA" \
+      ENABLE_CODE_COVERAGE=NO \
+      CLANG_COVERAGE_MAPPING=NO \
+      CLANG_ENABLE_CODE_COVERAGE=NO \
+      build
+    echo "✓ Build completed successfully."
+
+    APP_PATH=$(find "$DERIVED_DATA/Build/Products" -name "Catbird.app" -path "*Release-iphoneos*" 2>/dev/null | head -1)
+    if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+      APP_PATH=$(find "$DERIVED_DATA" -name "Catbird.app" 2>/dev/null | head -1)
+    fi
   fi
 fi
 
-echo "📱 App:       $APP_PATH"
-echo ""
-
-# Boot simulator if needed
-SIMULATOR_ID=$(xcrun simctl list devices | grep "$SIMULATOR" | grep -oE "[A-F0-9-]{36}" | head -1)
-if [[ -z "$SIMULATOR_ID" ]]; then
-  echo "❌ Simulator '$SIMULATOR' not found"
+if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+  echo "❌ Error: Could not find Catbird.app in $DERIVED_DATA" >&2
   exit 1
 fi
 
-SIMULATOR_STATE=$(xcrun simctl list devices | grep "$SIMULATOR_ID" | grep -o "(Booted)" || true)
-if [[ -z "$SIMULATOR_STATE" ]]; then
-  echo "🔄 Booting simulator..."
-  xcrun simctl boot "$SIMULATOR_ID" 2>/dev/null || true
-  sleep 3
+echo "📱 Found built app: $APP_PATH"
+echo ""
+
+# Verify binary has no coverage instrumentation
+VERIFY_SCRIPT="$SCRIPT_DIR/perf/verify-build.sh"
+if [ -f "$VERIFY_SCRIPT" ]; then
+  echo "🔍 Verifying binary has no coverage instrumentation..."
+  "$VERIFY_SCRIPT" "$APP_PATH"
+  echo "✓ Build verified clean."
+  echo ""
 fi
 
-# For App Launch template, we launch the app via xctrace
-# For other templates, we can attach to a running app or launch fresh
-if [[ "$TEMPLATE_KEY" == "app-launch" ]]; then
-  echo "🚀 Recording App Launch trace..."
+# Record trace using xctrace
+echo "⏱️ Recording trace with template '$TEMPLATE' for $DURATION..."
+if [ "$TEMPLATE" = "App Launch" ]; then
   xcrun xctrace record \
     --template "$TEMPLATE" \
-    --device "$SIMULATOR_ID" \
-    --launch -- "$APP_PATH" \
+    --device "$DEVICE_UDID" \
+    --time-limit "$DURATION" \
     --output "$OUTPUT_PATH" \
-    --time-limit "$DURATION"
+    --launch -- "$APP_PATH" || true
 else
-  # Install and launch the app first
-  echo "📲 Installing app..."
-  xcrun simctl install "$SIMULATOR_ID" "$APP_PATH"
-  
-  echo "🚀 Launching app..."
-  xcrun simctl launch "$SIMULATOR_ID" blue.catbird.Catbird
-  sleep 2
-  
-  # Get the PID
-  APP_PID=$(xcrun simctl spawn "$SIMULATOR_ID" launchctl list | grep catbird | awk '{print $1}' || true)
-  
-  if [[ -z "$APP_PID" || "$APP_PID" == "-" ]]; then
-    # Fallback: find by process name
-    APP_PID=$(pgrep -f "Catbird.app" | head -1 || true)
-  fi
-  
-  if [[ -z "$APP_PID" ]]; then
-    echo "⚠️  Could not find app PID, recording by launch instead..."
-    xcrun xctrace record \
-      --template "$TEMPLATE" \
-      --device "$SIMULATOR_ID" \
-      --launch -- "$APP_PATH" \
-      --output "$OUTPUT_PATH" \
-      --time-limit "$DURATION"
-  else
-    echo "📊 Recording trace (PID: $APP_PID)..."
-    xcrun xctrace record \
-      --template "$TEMPLATE" \
-      --attach "$APP_PID" \
-      --output "$OUTPUT_PATH" \
-      --time-limit "$DURATION"
-  fi
+  xcrun xctrace record \
+    --template "$TEMPLATE" \
+    --device "$DEVICE_UDID" \
+    --time-limit "$DURATION" \
+    --output "$OUTPUT_PATH" \
+    --attach "Catbird" || \
+  xcrun xctrace record \
+    --template "$TEMPLATE" \
+    --device "$DEVICE_UDID" \
+    --time-limit "$DURATION" \
+    --output "$OUTPUT_PATH" \
+    --launch -- "$APP_PATH" || true
 fi
 
 echo ""

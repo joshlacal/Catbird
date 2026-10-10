@@ -36,8 +36,9 @@ enum SentryService {
         options.dist = build
         options.sendDefaultPii = false
         options.enableCrashHandler = true
-        options.enableAppHangTracking = true
-
+        // Hang diagnostics are collected without runtime overhead by MetricKitManager (MXHangDiagnostic).
+        // Disabling Sentry's hang tracker eliminates an idle 400ms watchdog thread and main queue wakeup.
+        options.enableAppHangTracking = false
         // GlitchTip receives minimized failure reports, without session/performance envelopes.
         options.tracesSampleRate = 0
         options.profilesSampleRate = 0
