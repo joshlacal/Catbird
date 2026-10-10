@@ -3,6 +3,7 @@
 //  CatbirdTests
 //
 
+import AppIntents
 import Petrel
 import SwiftUI
 import Testing
@@ -464,7 +465,7 @@ struct ThreadReplyLayoutTests {
   // MARK: Cell
 
   @MainActor
-  @Test("ThreadRowCell sets a hosting configuration and clears it on reuse")
+  @Test("ThreadRowCell sets a hosting configuration and preserves it on reuse")
   func threadRowCellConfigurationAndReuse() async throws {
     guard #available(iOS 18.0, *) else { return }
     let cell = ThreadRowCell(frame: .zero)
@@ -492,8 +493,52 @@ struct ThreadReplyLayoutTests {
     )
     #expect(cell.contentConfiguration != nil)
     #expect(!(cell.contentConfiguration is UIListContentConfiguration))
+    cell.layoutIfNeeded()
+    let initialHostingView = descendants(of: cell).first {
+      let typeName = String(describing: type(of: $0))
+      return typeName.contains("Hosting")
+    }
+    #expect(initialHostingView != nil)
 
     cell.prepareForReuse()
-    #expect(cell.contentConfiguration == nil)
+    // P081/P036 deliberately keep the hosting configuration on reuse to update in place
+    #expect(cell.contentConfiguration != nil)
+
+    let postView2 = PublicPostTestFixtures.makePostView(
+      uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/reply2"),
+      authorDID: try DID(didString: "did:plc:testuser"),
+      text: "Second optimistic reply"
+    )
+    let threadItem2 = AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: postView2, depth: 1)
+    let replyRow2 = try #require(
+      build([ThreadRowBuilder.Item(threadItem2)], mode: .tree).first
+    )
+
+    cell.configure(
+      row: replyRow2,
+      threadItem: threadItem2,
+      parentAuthor: nil,
+      appState: appState,
+      sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()),
+      path: .constant(NavigationPath())
+    )
+    #expect(cell.contentConfiguration != nil)
+    #expect(!(cell.contentConfiguration is UIListContentConfiguration))
+    cell.layoutIfNeeded()
+    let reusedHostingView = descendants(of: cell).first {
+      let typeName = String(describing: type(of: $0))
+      return typeName.contains("Hosting")
+    }
+    #expect(reusedHostingView === initialHostingView)
+#if compiler(>=6.4)
+    if #available(anyAppleOS 26.0, *) {
+      let expectedURI = AppEntityAnnotationIdentifiers.postURI(replyRow2.id)
+      #expect(cell.appEntityIdentifier == expectedURI.map { EntityIdentifier(for: PostEntity.self, identifier: $0) })
+    }
+#endif
+  }
+
+  private func descendants(of view: UIView) -> [UIView] {
+    [view] + view.subviews.flatMap { descendants(of: $0) }
   }
 }

@@ -16,8 +16,19 @@ import AppKit
 #if os(iOS)
 // Custom UITextView that properly sizes itself and allows text selection
 class SelectableSelfSizingTextView: UITextView {
+  private var cachedMeasurementWidth: CGFloat = -1
+  private var cachedMeasurementHeight: CGFloat = -1
+  private var cachedMeasurementLength: Int = -1
+
   private func measuredHeight(for width: CGFloat) -> CGFloat? {
     guard width.isFinite, width > 0 else { return nil }
+
+    let currentLength = attributedText?.length ?? 0
+    if abs(width - cachedMeasurementWidth) < 0.5,
+       currentLength == cachedMeasurementLength,
+       cachedMeasurementHeight > 0 {
+      return cachedMeasurementHeight
+    }
 
     // Measure via TextKit 2 only. Touching `layoutManager` (even once) drops
     // the view into TextKit 1 compatibility mode, which cannot render
@@ -51,7 +62,11 @@ class SelectableSelfSizingTextView: UITextView {
     }
 
     // Add generous bottom padding to prevent clipping (8pt safety margin)
-    return ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
+    let height = ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
+    cachedMeasurementWidth = width
+    cachedMeasurementHeight = height
+    cachedMeasurementLength = currentLength
+    return height
   }
 
   override var intrinsicContentSize: CGSize {
@@ -80,10 +95,10 @@ class SelectableSelfSizingTextView: UITextView {
     super.layoutSubviews()
 
     // Invalidate synchronously when width changes to prevent truncation on first render.
-    // The previous async dispatch caused the initial frame to render with stale height.
     let currentWidth = bounds.width
     if abs(currentWidth - lastKnownWidth) > 1 {
       lastKnownWidth = currentWidth
+      cachedMeasurementWidth = -1
       invalidateIntrinsicContentSize()
     }
   }
@@ -91,13 +106,15 @@ class SelectableSelfSizingTextView: UITextView {
   override func didMoveToWindow() {
     super.didMoveToWindow()
     // When the view is added to a window (e.g. during navigation push),
-    // bounds.width is now correct. Force a fresh size calculation to fix
-    // truncation that occurs when intrinsicContentSize was first queried
-    // with a zero or transitional width.
+    // bounds.width is now correct. Invalidate only if width has actually changed.
     if window != nil {
-      lastKnownWidth = bounds.width
-      invalidateIntrinsicContentSize()
-      setNeedsLayout()
+      let currentWidth = bounds.width
+      if abs(currentWidth - lastKnownWidth) > 1 {
+        lastKnownWidth = currentWidth
+        cachedMeasurementWidth = -1
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+      }
     }
   }
 }
@@ -218,24 +235,25 @@ struct SelectableTextView: UIViewRepresentable {
 
       if uiView.attributedText != nsAttributedString {
         uiView.attributedText = nsAttributedString
-        // Trigger immediate layout update after content changes without animation
         uiView.invalidateIntrinsicContentSize()
         uiView.setNeedsLayout()
-        uiView.layoutIfNeeded()
-
-        // Force immediate superview layout to prevent cascading animations
-        uiView.superview?.layoutIfNeeded()
       }
     }
     
-    // Apply theme colors
+    // Apply theme colors only when changed
     let effectiveColorScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
-    uiView.textColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
-    uiView.tintColor = UIColor(.accentColor)
-    // UITextView paints `.link` runs using linkTextAttributes, ignoring the
-    // foregroundColor on the attributed string. Pin it to the text-safe accent.
-    uiView.linkTextAttributes = [.foregroundColor: UIColor(Color("AccentTextColor"))]
-    
+    let newTextColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
+    if uiView.textColor != newTextColor {
+      uiView.textColor = newTextColor
+    }
+    let newTintColor = UIColor(.accentColor)
+    if uiView.tintColor != newTintColor {
+      uiView.tintColor = newTintColor
+    }
+    let newLinkColor = UIColor(Color("AccentTextColor"))
+    if (uiView.linkTextAttributes[.foregroundColor] as? UIColor) != newLinkColor {
+      uiView.linkTextAttributes = [.foregroundColor: newLinkColor]
+    }
     // Update coordinator with current environment values
     context.coordinator.sceneContext = sceneContext
   }

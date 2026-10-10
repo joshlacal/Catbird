@@ -8,7 +8,6 @@
 import Foundation
 import Observation
 import Petrel
-import SwiftData
 import os
 
 enum ThreadSortAPIMapper {
@@ -25,7 +24,7 @@ enum ThreadSortAPIMapper {
 
 /// Manages loading and caching of thread data
 @Observable
-final class ThreadManager: StateInvalidationSubscriber {
+final class ThreadManager {
   // MARK: - Published Properties
 
   /// The thread data once loaded
@@ -59,11 +58,6 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// Reference to the app state
   private let appState: AppState
 
-  /// The URI of the currently loaded thread (for state invalidation)
-  private var currentThreadURI: ATProtocolURI?
-
-  /// Model context for SwiftData cache operations
-  @ObservationIgnored private var modelContext: ModelContext?
 
   /// The ATPROTO client for API calls
   private var client: ATProtoClient? {
@@ -74,53 +68,10 @@ final class ThreadManager: StateInvalidationSubscriber {
 
   init(appState: AppState) {
     self.appState = appState
-    // Subscribe to state invalidation events
-    appState.stateInvalidationBus.subscribe(self)
-  }
-
-  deinit {
-    // Unsubscribe from state invalidation events
-    appState.stateInvalidationBus.unsubscribe(self)
-  }
-
-  /// Configure with model context for SwiftData cache operations
-  func setModelContext(_ context: ModelContext) {
-    self.modelContext = context
-    logger.debug("ThreadManager configured with ModelContext for caching")
   }
 
   // MARK: - Thread Loading
 
-  /// Check if cached thread data exists
-  /// - Parameter uri: The post URI to look up in cache
-  /// - Returns: True if cache exists for this thread
-  @MainActor
-  private func hasCachedThread(uri: ATProtocolURI) async -> Bool {
-    guard let modelContext = modelContext else {
-      return false
-    }
-
-    let uriString = uri.uriString()
-    let threadCacheFeedType = "thread-cache"
-    let entryPrefix = CachedFeedViewPost.entryIdPrefix(for: uriString, feedType: threadCacheFeedType)
-    let descriptor = FetchDescriptor<CachedFeedViewPost>(
-      predicate: #Predicate<CachedFeedViewPost> { post in
-        post.id.starts(with: entryPrefix) && post.feedType == threadCacheFeedType
-      }
-    )
-
-    do {
-      let cachedPosts = try modelContext.fetch(descriptor)
-      let hasCached = !cachedPosts.isEmpty
-      if hasCached {
-        logger.info("✅ Found cached posts for thread: \(uri.uriString())")
-      }
-      return hasCached
-    } catch {
-      logger.error("Failed to check cached thread: \(error.localizedDescription)")
-      return false
-    }
-  }
 
   /// Load a thread by its URI
   func loadThread(
@@ -130,14 +81,7 @@ final class ThreadManager: StateInvalidationSubscriber {
     guard !Task.isCancelled else { return }
     isLoading = true
     error = nil
-    currentThreadURI = uri
-
     logger.debug("Loading thread: \(uri.uriString()) (context: \(visibilityContext))")
-
-    let hasCached = await hasCachedThread(uri: uri)
-    if hasCached {
-      logger.info("📦 Cache exists for this thread - will refresh with fresh data")
-    }
 
     do {
       guard let client = client else {
@@ -176,15 +120,15 @@ final class ThreadManager: StateInvalidationSubscriber {
         // alongside whatever parents/replies the AppView returned.
         self.blockedAnchor = Self.detectBlockedAnchor(in: output.thread)
 
-        // Save thread posts to cache for instant display on future visits
-        await cacheThreadPosts(output.thread)
-
         // Opening a thread is deliberate engagement: make its anchor post
         // findable in Spotlight. Non-public contexts stay out of the index.
         if visibilityContext == .public,
            let anchor = output.thread.first(where: { $0.depth == 0 }),
            case .appBskyUnspeccedDefsThreadItemPost(let anchorItem) = anchor.value {
-          await SpotlightEntityDonator.shared.donate(posts: [anchorItem.post])
+          let anchorPost = anchorItem.post
+          Task(priority: .utility) {
+            await SpotlightEntityDonator.shared.donate(posts: [anchorPost])
+          }
         }
       } else {
         // Handle specific errors
@@ -373,136 +317,6 @@ final class ThreadManager: StateInvalidationSubscriber {
     }
   }
 
-  // MARK: - Cache Management
-
-  /// Save thread posts to SwiftData cache for instant display on future visits
-  private func cacheThreadPosts(_ threadItems: [AppBskyUnspeccedGetPostThreadV2.ThreadItem]) async {
-    guard let modelContext = modelContext else {
-      logger.debug("Cannot cache thread posts - modelContext unavailable")
-      return
-    }
-
-    var savedCount = 0
-
-    for threadItem in threadItems {
-      // Only cache actual posts (not blocked/notfound items)
-      guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = threadItem.value else {
-        continue
-      }
-
-      // Convert to FeedViewPost for caching
-      let feedViewPost = AppBskyFeedDefs.FeedViewPost(
-        post: threadItemPost.post,
-        reply: nil,
-        reason: nil,
-        feedContext: nil,
-        reqId: nil
-      )
-
-      // Create cached post with special feedType for thread cache
-      guard let cachedPost = CachedFeedViewPost(
-        from: feedViewPost,
-        cursor: nil,
-        feedType: "thread-cache",
-        feedOrder: nil
-      ) else {
-        continue
-      }
-
-      await MainActor.run {
-        // Upsert: update existing post or insert new one to avoid constraint violations
-        let postId = cachedPost.id
-        let postFeedType = cachedPost.feedType
-        let descriptor = FetchDescriptor<CachedFeedViewPost>(
-          predicate: #Predicate<CachedFeedViewPost> { post in
-            post.id == postId && post.feedType == postFeedType
-          }
-        )
-
-        do {
-          let existing = try modelContext.fetch(descriptor)
-          _ = modelContext.upsert(
-            cachedPost,
-            existingModel: existing.first,
-            update: { existingPost, newPost in existingPost.update(from: newPost) }
-          )
-          savedCount += 1
-        } catch {
-          logger.error("Failed to check/save thread post to cache: \(error.localizedDescription)")
-        }
-      }
-    }
-
-    // Save all changes at once
-    await MainActor.run {
-      do {
-        if savedCount > 0 {
-          try modelContext.save()
-          logger.info("✅ Saved \(savedCount) thread posts to cache")
-        }
-      } catch {
-        logger.error("Failed to save thread posts to cache: \(error.localizedDescription)")
-      }
-    }
-  }
-
-  // MARK: - State Invalidation Handling
-  
-  /// Check if this manager is interested in a specific event
-  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
-    switch event {
-    case .threadUpdated(let rootUri):
-      // Only interested if it's our current thread
-      if let currentURI = currentThreadURI {
-        return currentURI.uriString() == rootUri || isRelatedToCurrentThread(rootUri)
-      }
-      return false
-      
-    case .replyCreated(_, let parentUri):
-      // Only interested if the reply is in our current thread
-      if let currentURI = currentThreadURI {
-        return currentURI.uriString() == parentUri || isRelatedToCurrentThread(parentUri)
-      }
-      return false
-      
-    case .accountSwitched:
-      // Always interested in account switches
-      return true
-      
-    default:
-      // Not interested in other events
-      return false
-    }
-  }
-  
-  /// Handle state invalidation events from the central event bus
-  func handleStateInvalidation(_ event: StateInvalidationEvent) async {
-    logger.debug("Handling state invalidation event: \(String(describing: event))")
-    
-    switch event {
-    case .threadUpdated(let rootUri):
-      // Refresh thread if this is the current thread or if the URI matches
-      if let currentURI = currentThreadURI, 
-         currentURI.uriString() == rootUri || isRelatedToCurrentThread(rootUri) {
-        await refreshCurrentThread()
-      }
-      
-    case .replyCreated(_, let parentUri):
-      // Refresh thread if a reply was created in the current thread
-      if let currentURI = currentThreadURI,
-         currentURI.uriString() == parentUri || isRelatedToCurrentThread(parentUri) {
-        await refreshCurrentThread()
-      }
-      
-    case .accountSwitched:
-      // Clear thread data when account is switched
-      await clearThreadData()
-      
-    default:
-      // Other events don't affect thread views
-      break
-    }
-  }
   /// Flattens a hierarchical `AppBskyFeedDefs.ThreadViewPost` into a V2-style `[ThreadItem]`
   /// with explicit depth values (negative for parents, 0 for anchor, positive for replies).
   public static func flattenThreadViewPost(_ root: AppBskyFeedDefs.ThreadViewPost) -> [AppBskyUnspeccedGetPostThreadV2.ThreadItem] {
@@ -596,41 +410,6 @@ final class ThreadManager: StateInvalidationSubscriber {
     return items
   }
   
-  /// Check if a URI is related to the current thread
-  private func isRelatedToCurrentThread(_ uri: String) -> Bool {
-    guard let currentURI = currentThreadURI else { return false }
-    
-    // Simple check: if the URIs match exactly
-    if currentURI.uriString() == uri {
-      return true
-    }
-    
-    // Could add more sophisticated checking here if needed
-    // (e.g., checking if the URI is a reply in the current thread)
-    return false
-  }
-  
-  /// Refresh the current thread
-  @MainActor
-  private func refreshCurrentThread() async {
-    guard let currentURI = currentThreadURI, !isLoading else { return }
-    
-    logger.debug("Refreshing current thread: \(currentURI.uriString())")
-    await loadThread(uri: currentURI)
-  }
-  
-  /// Clear thread data
-  @MainActor
-  private func clearThreadData() async {
-    threadData = nil
-    blockedAnchor = nil
-    hiddenReplies = []
-    currentThreadURI = nil
-    error = nil
-    isLoading = false
-    isLoadingMoreParents = false
-    isLoadingHiddenReplies = false
-  }
 }
 
 /// Parent post representation for the v2 thread API

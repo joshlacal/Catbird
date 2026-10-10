@@ -111,8 +111,8 @@ class PostHeightCalculator {
     
     /// Calculates height for a post, with caching for performance
     func calculateHeight(for post: AppBskyFeedDefs.PostView, mode: CalculationMode = .compact) -> CGFloat {
-        // Use post URI and CID as cache key for uniqueness
-        let cacheKey = "\(post.uri.uriString())-\(post.cid.string)-\(mode.rawValue)" as NSString
+        // Use post URI and mode as cache key (avoiding CID multibase base32 stringification)
+        let cacheKey = "\(post.uri.uriString())-\(mode.rawValue)" as NSString
         
         if let cachedHeight = heightCache.object(forKey: cacheKey) {
             return cachedHeight.doubleValue
@@ -133,7 +133,7 @@ class PostHeightCalculator {
     ) -> CGFloat {
         // Create comprehensive cache key including thread context
         let contextKey = "\(threadContext.displayMode.rawValue)-\(threadContext.sliceItems?.count ?? 0)-\(threadContext.hiddenCount)"
-        let cacheKey = "\(post.uri.uriString())-\(post.cid.string)-\(mode.rawValue)-\(contextKey)" as NSString
+        let cacheKey = "\(post.uri.uriString())-\(mode.rawValue)-\(contextKey)" as NSString
         
         if let cachedHeight = heightCache.object(forKey: cacheKey) {
             return cachedHeight.doubleValue

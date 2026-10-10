@@ -118,9 +118,10 @@ struct StateInvalidationBusOwnershipTests {
     weak var managerReference: ThreadManager?
     managerReference = manager
     #expect(managerReference != nil)
-    #expect(bus.subscriberCount == initialCount + 1)
+    // P083: ThreadManager no longer subscribes to StateInvalidationBus; the controller handles events directly.
+    #expect(bus.subscriberCount == initialCount)
 
-    // Dropping the owner must deallocate the manager and remove its weak subscription.
+    // Dropping the owner must deallocate the manager.
     manager = nil
     #expect(managerReference == nil)
     #expect(bus.subscriberCount == initialCount)

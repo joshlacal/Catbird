@@ -4,6 +4,7 @@ import SwiftUI
 import AppIntents
 import UIKit
 import os
+import OSLog
 
 @available(iOS 18.0, *)
 final class ThreadViewController: UIViewController, StateInvalidationSubscriber {
@@ -30,14 +31,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var isLoadingHiddenReplies = false  // Loading state for hidden replies
   private var hasLoadedHiddenReplies = false  // Whether hidden replies have been loaded
   
-  // Theme observation
-  private var themeObserver: UIKitStateObserver<ThemeManager>?
-  
-  // MARK: - UIUpdateLink for coordinated UI updates
-  #if os(iOS) && !targetEnvironment(macCatalyst)
-  @available(iOS 18.0, *)
-  private var updateLink: UIUpdateLink?
-  #endif
+  private var threadOpenSignpostState: OSSignpostIntervalState?
+  private var parentsEstimatedHeight: CGFloat = 200
+  private var mainPostEstimatedHeight: CGFloat = 400
+  private let repliesEstimatedHeightFloor: CGFloat = 150
+
   private var scrollPositionTracker = ThreadScrollPositionTracker()
 
   private var parentPosts: [ParentPost] = []
@@ -69,17 +67,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // UICollectionView invalid item count crashes under rapid updates.
   private var isApplyingSnapshot = false
   private var pendingSnapshot: NSDiffableDataSourceSnapshot<Section, Item>?
-  private var temporarySectionEstimatedHeights: [Section: CGFloat] = [:]
-  private var hasLoggedInitialRevealFirstPaintDiagnostics = false
 
   private static let mainPostID = "main-post-id"
   
   // Estimated height for parent posts (used for scroll position preservation)
   private let estimatedParentPostHeight: CGFloat = 120.0
   
-  // Optimized scroll system for iOS 18+
-  @available(iOS 18.0, *)
-  private lazy var optimizedScrollSystem = OptimizedScrollPreservationSystem()
 
   // Logger for debugging thread loading issues
   private let controllerLogger = Logger(
@@ -173,21 +166,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
 
     isApplyingSnapshot = true
-    let shouldLogTemporaryInitialDiagnostics = !hasScrolledToMainPost
-    if shouldLogTemporaryInitialDiagnostics {
-      controllerLogger.debug(
-        "🧪 TEMP THREAD JUMP: applySnapshot begin - sections: \(snapshot.sectionIdentifiers.count), items: \(snapshot.itemIdentifiers.count), contentOffsetY: \(self.collectionView.contentOffset.y)"
-      )
-    }
+
 
     UIView.performWithoutAnimation {
       dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
         guard let self else { return }
-        if shouldLogTemporaryInitialDiagnostics {
-          self.controllerLogger.debug(
-            "🧪 TEMP THREAD JUMP: applySnapshot completion - contentOffsetY: \(self.collectionView.contentOffset.y), hasPendingSnapshot: \(self.pendingSnapshot != nil)"
-          )
-        }
+
         self.isApplyingSnapshot = false
 
         // If another snapshot arrived while applying, apply the latest now
@@ -244,21 +228,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     optimisticRetryTasks.removeAll()
 
-    // Clean up UIUpdateLink
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    if #available(iOS 18.0, *) {
-      updateLink?.isEnabled = false
-      updateLink = nil
-    }
-    #endif
-    
-    // Clean up iOS 18+ optimized scroll system
-    if #available(iOS 18.0, *) {
-      let scrollSystem = optimizedScrollSystem
-      Task { @MainActor in
-        scrollSystem.cleanup()
-      }
-    }
+    endThreadOpenSignpost()
     
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
@@ -283,6 +253,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
     
+    if threadOpenSignpostState == nil {
+      threadOpenSignpostState = PerformanceSignposts.beginInterval("ThreadOpen")
+    }
     reloadThread()
   }
   
@@ -315,16 +288,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     
-    // Setup UIUpdateLink now that view is in window hierarchy
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    if #available(iOS 18.0, *) {
-      if updateLink == nil {
-        setupUIUpdateLink()
-      } else {
-        updateLink?.isEnabled = true
-      }
-    }
-    #endif
     
     // Ensure theming is applied after view appears (helps with material effects)
     DispatchQueue.main.async {
@@ -335,12 +298,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
 
-    // Stop driving display updates while another screen covers the thread
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    if #available(iOS 18.0, *) {
-      updateLink?.isEnabled = false
-    }
-    #endif
+    endThreadOpenSignpost()
   }
   
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -362,12 +320,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   // MARK: - Theme Observation and Updates
   private func setupThemeObserver() {
-    // Observe ThemeManager changes via @Observable and fallback notification
-    themeObserver = UIKitStateObserver(observing: appState.themeManager) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        self?.handleThemeChange()
-      }
-    }
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(handleThemeChangeNotification),
@@ -404,32 +356,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
   
-  // MARK: - UIUpdateLink Setup
-  #if os(iOS) && !targetEnvironment(macCatalyst)
-  @available(iOS 18.0, *)
-  private func setupUIUpdateLink() {
-    guard let windowScene = view.window?.windowScene else {
-      controllerLogger.warning("Cannot setup UIUpdateLink: windowScene not available")
-      return
-    }
-    
-    // Create UIUpdateLink for the window scene for smooth transitions
-    updateLink = UIUpdateLink(windowScene: windowScene)
-    
-    // Add action for coordinating smooth animations during updates
-    updateLink?.addAction(handler: { [weak self] _, _ in
-      // Use UIUpdateLink for what it's designed for - coordinating with display refresh
-      // Position restoration is handled separately using the proven ScrollPositionTracker pattern
-    })
-    
-    // Configure UIUpdateLink preferences for smooth transitions
-    updateLink?.isEnabled = true
-    updateLink?.requiresContinuousUpdates = false
-    updateLink?.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 60)
-    
-    controllerLogger.debug("UIUpdateLink setup completed for smooth transitions")
-  }
-  #endif
 
   // MARK: - UI Setup
   private func setupUI() {
@@ -534,55 +460,30 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   private func createCompositionalLayout() -> UICollectionViewLayout {
-    let parentPostsEstimatedHeightFloor: CGFloat = 200
-    let mainPostEstimatedHeightFloor: CGFloat = 400
-    let repliesEstimatedHeightFloor: CGFloat = 250
-
     let layoutProvider: UICollectionViewCompositionalLayoutSectionProvider = {
       [weak self] (sectionIndex, environment) -> NSCollectionLayoutSection? in
       guard let self = self, let section = Section(rawValue: sectionIndex) else { return nil }
 
-      self.heightCalculator.updateLayout(
+      if self.heightCalculator.updateLayout(
         containerWidth: environment.container.effectiveContentSize.width,
         traitCollection: environment.traitCollection
-      )
+      ) {
+        self.updateHeightEstimates()
+      }
 
-      var estimatedHeight: CGFloat
-
-      // Use pessimistic (max) height estimates across all items in each section.
-      // Overestimates cause cells to shrink (invisible), while underestimates cause
-      // cells to grow and push content down (the visible "jump scare").
+      let estimatedHeight: CGFloat
       switch section {
       case .loadMoreParents:
         estimatedHeight = 50  // Fixed height for load more button
-
       case .parentPosts:
-        let computedHeight = self.parentPosts
-            .map { self.heightCalculator.calculateParentPostHeight(for: $0) }
-            .max() ?? parentPostsEstimatedHeightFloor
-        estimatedHeight = max(computedHeight, parentPostsEstimatedHeightFloor)
-
+        estimatedHeight = self.parentsEstimatedHeight
       case .mainPost:
-        let computedHeight = self.mainPost.map {
-          self.heightCalculator.calculateHeight(
-            for: $0,
-            mode: .mainPost
-          )
-        } ?? mainPostEstimatedHeightFloor
-        estimatedHeight = max(computedHeight, mainPostEstimatedHeightFloor)
-
+        estimatedHeight = self.mainPostEstimatedHeight
       case .replies:
-        let computedHeight = self.replyRows
-            .compactMap { self.threadItemsByID[$0.id] }
-            .map { self.heightCalculator.calculateThreadItemHeight(for: $0) }
-            .max() ?? repliesEstimatedHeightFloor
-        estimatedHeight = max(computedHeight, repliesEstimatedHeightFloor)
-
+        estimatedHeight = self.repliesEstimatedHeightFloor
       case .bottomSpacer:
         estimatedHeight = 600
       }
-
-      self.temporarySectionEstimatedHeights[section] = estimatedHeight
 
       return self.createSection(with: estimatedHeight, for: section)
     }
@@ -598,6 +499,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     return layout
   }
+  private func updateHeightEstimates() {
+    let parentPostsEstimatedHeightFloor: CGFloat = 200
+    let mainPostEstimatedHeightFloor: CGFloat = 400
+
+    let computedParentsHeight = self.parentPosts
+      .map { self.heightCalculator.calculateParentPostHeight(for: $0) }
+      .max() ?? parentPostsEstimatedHeightFloor
+    self.parentsEstimatedHeight = max(computedParentsHeight, parentPostsEstimatedHeightFloor)
+
+    let computedMainHeight = self.mainPost.map {
+      self.heightCalculator.calculateHeight(for: $0, mode: .mainPost)
+    } ?? mainPostEstimatedHeightFloor
+    self.mainPostEstimatedHeight = max(computedMainHeight, mainPostEstimatedHeightFloor)
+  }
+
 
   // MARK: - Data Source Creation
   private func createDataSource() -> UICollectionViewDiffableDataSource<Section, Item> {
@@ -777,78 +693,34 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     processThreadData()
 
-    // Pre-calculate all post heights
+    // Pre-calculate heights for main post and parents
     if let mainPost = self.mainPost {
       _ = heightCalculator.calculateHeight(for: mainPost, mode: .mainPost)
-      
       for parent in parentPosts {
         _ = heightCalculator.calculateParentPostHeight(for: parent)
       }
-      
-      for row in replyRows {
-        if let item = threadItemsByID[row.id] {
-          _ = heightCalculator.calculateThreadItemHeight(for: item)
-        }
-      }
     }
+    updateHeightEstimates()
 
-    loadingView.isHidden = true
-    
     // Apply snapshot synchronously without animations
-    controllerLogger.debug(
-      "🧪 TEMP THREAD JUMP: about to apply initial snapshot - parents: \(self.parentPosts.count), replies: \(self.replyRows.count), hasMainPost: \(self.mainPost != nil)"
-    )
     updateDataSnapshot(animatingDifferences: false)
     updateUnavailableState()
-    
+
     isLoading = false
 
-    if mainPost != nil && !hasScrolledToMainPost {
-      // Wait for collection view to complete layout after snapshot application
-      // This is crucial when load more cell is present
-      controllerLogger.debug(
-        "🧪 TEMP THREAD JUMP: initial layout pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
-      )
-      UIView.performWithoutAnimation {
-        collectionView.performBatchUpdates({
-          // Force layout update
-          self.controllerLogger.debug("🧪 TEMP THREAD JUMP: initial layoutIfNeeded begin")
-          self.collectionView.layoutIfNeeded()
-          self.controllerLogger.debug(
-            "🧪 TEMP THREAD JUMP: initial layoutIfNeeded end - contentOffsetY: \(self.collectionView.contentOffset.y)"
-          )
-        }) { _ in }
-      }
-      controllerLogger.debug(
-        "🧪 TEMP THREAD JUMP: initial layout pass end - contentOffsetY: \(self.collectionView.contentOffset.y)"
-      )
-      // Proceed immediately after ensuring layout without animations
-      do {
-        // Now scroll to main post after layout is complete
-        self.controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: before scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
-        )
-        self.scrollToMainPostWithPartialParentVisibility(animated: false) { [weak self] in
-          guard let self, !Task.isCancelled, self.loadGeneration == thisGeneration else { return }
-          self.controllerLogger.debug(
-            "🧪 TEMP THREAD JUMP: initial stabilization complete - contentOffsetY: \(self.collectionView.contentOffset.y)"
-          )
-          // Fade in collection view only after stabilization completes
-          self.runInitialRevealAnimation(sequence: "initial-scroll-path")
-          // If VoiceOver is running, post focus to main post
-          if UIAccessibility.isVoiceOverRunning {
-            self.focusVoiceOverOnMainPost()
-          }
+    if !parentPosts.isEmpty && mainPost != nil && !hasScrolledToMainPost {
+      self.collectionView.layoutIfNeeded()
+      self.scrollToMainPostWithPartialParentVisibility(animated: false) { [weak self] in
+        guard let self, !Task.isCancelled, self.loadGeneration == thisGeneration else { return }
+        self.runInitialRevealAnimation()
+        if UIAccessibility.isVoiceOverRunning {
+          self.focusVoiceOverOnMainPost()
         }
-        self.controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: after scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
-        )
-        self.hasScrolledToMainPost = true
       }
+      self.hasScrolledToMainPost = true
     } else {
-      // Fade in collection view to mask any layout settling animations
-      self.runInitialRevealAnimation(sequence: "initial-no-scroll-path")
-      // If VoiceOver is running, post focus to main post
+      self.collectionView.layoutIfNeeded()
+      self.runInitialRevealAnimation()
       if UIAccessibility.isVoiceOverRunning {
         self.focusVoiceOverOnMainPost()
       }
@@ -1048,6 +920,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     parentRows = rows.filter { $0.depth < 0 && $0.kind != .readMoreUp }
     anchorRow = rows.first { $0.kind == .anchor }
     replyRows = rows.filter { $0.depth > 0 }
+    updateHeightEstimates()
   }
 
   // MARK: - Compose Prompt Management
@@ -1176,56 +1049,20 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     controllerLogger.debug("⬆️ LOAD MORE PARENTS: Updated loading cell, isLoading = \(isLoading)")
   }
 
-  private func runInitialRevealAnimation(sequence: String) {
-    controllerLogger.debug(
-      "🧪 TEMP THREAD JUMP: \(sequence) reveal animation about to start - alpha: \(self.collectionView.alpha)"
-    )
-    UIView.animate(withDuration: 0.25, delay: 0.1, options: [.curveEaseOut]) {
-      self.collectionView.alpha = 1
-    } completion: { [weak self] finished in
-      guard let self else { return }
-      self.controllerLogger.debug(
-        "🧪 TEMP THREAD JUMP: \(sequence) reveal animation completion begin - finished: \(finished), alpha: \(self.collectionView.alpha)"
-      )
-      self.logInitialRevealFirstPaintDiagnosticsIfNeeded()
-      self.controllerLogger.debug("🧪 TEMP THREAD JUMP: \(sequence) reveal animation completion end")
+  private func runInitialRevealAnimation() {
+    loadingView.isHidden = true
+    if collectionView.alpha < 1 {
+      UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut]) {
+        self.collectionView.alpha = 1
+      }
     }
-    controllerLogger.debug("🧪 TEMP THREAD JUMP: \(sequence) reveal animation started")
+    endThreadOpenSignpost()
   }
 
-  private func logInitialRevealFirstPaintDiagnosticsIfNeeded() {
-    guard !hasLoggedInitialRevealFirstPaintDiagnostics else { return }
-    hasLoggedInitialRevealFirstPaintDiagnostics = true
-
-    collectionView.layoutIfNeeded()
-
-    let visibleIndexPaths = collectionView.indexPathsForVisibleItems.sorted {
-      if $0.section == $1.section {
-        return $0.item < $1.item
-      }
-      return $0.section < $1.section
-    }
-
-    guard !visibleIndexPaths.isEmpty else {
-      controllerLogger.debug("🧪 TEMP THREAD JUMP: first-paint diagnostic - no visible cells")
-      return
-    }
-
-    let visibleSections = Set(visibleIndexPaths.compactMap { Section(rawValue: $0.section) })
-    for section in visibleSections.sorted(by: { $0.rawValue < $1.rawValue }) {
-      let estimatedHeightText = temporarySectionEstimatedHeights[section].map { "\($0)" } ?? "unavailable"
-      controllerLogger.debug(
-        "🧪 TEMP THREAD JUMP: first-paint section estimate - section: \(String(describing: section)), estimatedHeight: \(estimatedHeightText)"
-      )
-    }
-
-    for indexPath in visibleIndexPaths {
-      guard let section = Section(rawValue: indexPath.section) else { continue }
-      let estimatedHeightText = temporarySectionEstimatedHeights[section].map { "\($0)" } ?? "unavailable"
-      let actualHeightText = collectionView.layoutAttributesForItem(at: indexPath).map { "\($0.frame.height)" } ?? "unavailable"
-      controllerLogger.debug(
-        "🧪 TEMP THREAD JUMP: first-paint cell metrics - section: \(String(describing: section)), item: \(indexPath.item), estimatedSectionHeight: \(estimatedHeightText), actualFrameHeight: \(actualHeightText)"
-      )
+  private func endThreadOpenSignpost() {
+    if let state = threadOpenSignpostState {
+      PerformanceSignposts.endInterval("ThreadOpen", state)
+      threadOpenSignpostState = nil
     }
   }
 
@@ -1345,91 +1182,43 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             completion?()
           })
       } else {
-        // For non-animated scrolling, do multiple passes to ensure stability
-
-        // First pass - calculate initial position
-        self.controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: non-animated first pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
-        )
-        let firstPassOffset = calculateAndApplyOffset(true)
-        let firstPassVisibleTop = self.collectionView.layoutAttributesForItem(at: indexPath).map {
-          $0.frame.origin.y - self.collectionView.contentOffset.y
-        }
-        self.controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: non-animated first pass end - targetOffsetY: \(firstPassOffset.map { "\($0)" } ?? "nil"), contentOffsetY: \(self.collectionView.contentOffset.y), mainVisibleTop: \(firstPassVisibleTop.map { "\($0)" } ?? "unavailable")"
-        )
-
-        // Second immediate pass - recalculate and apply refined position
-        // This helps account for any layout adjustments after the first scroll
-        self.controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: non-animated second pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
-        )
-        let secondPassOffset = calculateAndApplyOffset(true)
-        let secondPassVisibleTop = self.collectionView.layoutAttributesForItem(at: indexPath).map {
-          $0.frame.origin.y - self.collectionView.contentOffset.y
-        }
-        self.controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: non-animated second pass end - targetOffsetY: \(secondPassOffset.map { "\($0)" } ?? "nil"), contentOffsetY: \(self.collectionView.contentOffset.y), mainVisibleTop: \(secondPassVisibleTop.map { "\($0)" } ?? "unavailable")"
-        )
-
-        // Log position after immediate passes
-        if let attrs = self.collectionView.layoutAttributesForItem(at: indexPath) {
-          let visibleTop = attrs.frame.origin.y - self.collectionView.contentOffset.y
-          self.controllerLogger.debug("INITIAL position - Main post visible top offset: \(visibleTop)pt")
-        }
-
-        // Final pass with transaction to track completion
         CATransaction.begin()
-        CATransaction.setCompletionBlock {
-          // Log positions after transaction completes to verify final position
-          if let attrs = self.collectionView.layoutAttributesForItem(at: indexPath) {
-            let visibleTop = attrs.frame.origin.y - self.collectionView.contentOffset.y
-            self.controllerLogger.debug("FINAL position - Main post visible top offset: \(visibleTop)pt")
-          }
-        }
         CATransaction.setDisableActions(true)
-        _ = calculateAndApplyOffset(true)
-        CATransaction.commit()
 
-        // Add a delayed verification pass to catch any post-layout position drift
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-          self.controllerLogger.debug(
-            "🧪 TEMP THREAD JUMP: delayed verification pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
+        var iteration = 0
+        let maxIterations = 3
+        while iteration < maxIterations {
+          iteration += 1
+          self.collectionView.layoutIfNeeded()
+
+          guard let attributes = self.collectionView.layoutAttributesForItem(at: indexPath) else {
+            self.collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+            break
+          }
+
+          let mainPostY = attributes.frame.origin.y
+          let adjustedTop = self.collectionView.adjustedContentInset.top
+          let scrollTarget = ThreadMainPostScrollTarget(
+            mainPostY: mainPostY,
+            adjustedTopInset: adjustedTop,
+            hasParentPosts: hasParentPosts
           )
-          if let attrs = self.collectionView.layoutAttributesForItem(at: indexPath) {
-            let visibleTop = attrs.frame.origin.y - self.collectionView.contentOffset.y
-            self.controllerLogger.debug(
-              "DELAYED position check - Main post visible top offset: \(visibleTop)pt")
-            self.controllerLogger.debug(
-              "🧪 TEMP THREAD JUMP: delayed verification pass metrics - contentOffsetY: \(self.collectionView.contentOffset.y), mainVisibleTop: \(visibleTop)"
-            )
 
-            // If position has drifted, correct it again
-            let adjustedContentInset = self.collectionView.adjustedContentInset
-            let scrollTarget = ThreadMainPostScrollTarget(
-              mainPostY: attrs.frame.origin.y,
-              adjustedTopInset: adjustedContentInset.top,
-              hasParentPosts: hasParentPosts
-            )
-            let expectedVisibleTop = scrollTarget.expectedVisibleTop
-            let correctedOffset = scrollTarget.offset
-            
-            if abs(visibleTop - expectedVisibleTop) > 2 {  // Allow 2pt tolerance
-              self.controllerLogger.debug("Correcting position drift to: \(correctedOffset)")
+          self.collectionView.setContentOffset(CGPoint(x: 0, y: scrollTarget.offset), animated: false)
+          self.collectionView.layoutIfNeeded()
 
-              // Use transaction to ensure it applies cleanly
-              CATransaction.begin()
-              CATransaction.setDisableActions(true)
-              self.collectionView.setContentOffset(CGPoint(x: 0, y: correctedOffset), animated: false)
-              CATransaction.commit()
+          if let currentAttrs = self.collectionView.layoutAttributesForItem(at: indexPath) {
+            let visibleTop = currentAttrs.frame.origin.y - self.collectionView.contentOffset.y
+            if abs(visibleTop - scrollTarget.expectedVisibleTop) <= 2 {
+              break
             }
           } else {
-            self.controllerLogger.debug(
-              "🧪 TEMP THREAD JUMP: delayed verification pass metrics unavailable - contentOffsetY: \(self.collectionView.contentOffset.y)"
-            )
+            break
           }
-          completion?()
         }
+
+        CATransaction.commit()
+        completion?()
       }
     }
 
@@ -1470,12 +1259,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       controllerLogger.warning("⬆️ LOAD MORE PARENTS: Failed to capture scroll anchor - position may jump")
     }
     
-    // Enable smooth transitions during the update
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    if #available(iOS 18.0, *) {
-      updateLink?.requiresContinuousUpdates = true
-    }
-    #endif
     
     // Get the oldest parent (first element since parentPosts is sorted oldest-to-newest)
     let oldestParent = parentPosts.first!
@@ -1489,11 +1272,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       func finishWithoutUpdate() {
         isLoadingMoreParents = false
         updateLoadingCell(isLoading: false)
-        #if os(iOS) && !targetEnvironment(macCatalyst)
-        if #available(iOS 18.0, *) {
-          updateLink?.requiresContinuousUpdates = false
-        }
-        #endif
       }
 
       // Get oldest parent URI - with v2 API it's directly on the thread item
@@ -1619,11 +1397,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       updateLoadingCell(isLoading: false)
       
       // Disable continuous updates now that loading is complete
-      #if os(iOS) && !targetEnvironment(macCatalyst)
-      if #available(iOS 18.0, *) {
-        updateLink?.requiresContinuousUpdates = false
-      }
-      #endif
       
       controllerLogger.debug("⬆️ LOAD MORE PARENTS: Successfully added \(newParentsCount) parents with precise position preservation")
     }
@@ -1734,12 +1507,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     
-    // Enable UIUpdateLink for smooth coordination
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    if #available(iOS 18.0, *) {
-      updateLink?.requiresContinuousUpdates = true
-    }
-    #endif
     
     // Step 3: Set estimated position immediately to prevent visual flash
     if let targetOffset = targetOffset {
@@ -2225,47 +1992,47 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     optimisticReplyUris.insert(replyUriString)
     
     // Schedule a background refresh to get real data with retries
+    // Single cheap confirmation after 2s instead of 5-step full-thread reloads
     optimisticRetryTasks[replyUriString]?.cancel()
     optimisticRetryTasks[replyUriString] = Task { [weak self] in
-      for attempt in 1...5 {
-        do {
-          try await Task.sleep(for: .seconds(Double(attempt) * 1.5)) // 1.5s, 3s, 4.5s, 6s, 7.5s
-        } catch {
-          return // Task cancelled
-        }
-        guard !Task.isCancelled else { return }
-        
-        let stillUnconfirmed = await MainActor.run { [weak self] () -> Bool in
-          guard let self = self else { return false }
-          if self.hasOptimisticUpdates && self.optimisticReplyUris.contains(replyUriString) {
-            self.controllerLogger.debug("Optimistic update refresh attempt \(attempt) for reply: \(replyUriString)")
-            self.reloadThread()
-          }
-          return self.optimisticReplyUris.contains(replyUriString)
-        }
-        
-        if !stillUnconfirmed {
+      do {
+        try await Task.sleep(for: .seconds(2.0))
+      } catch {
+        return // Task cancelled
+      }
+      guard !Task.isCancelled, let self = self else { return }
+
+      guard let client = self.appState.atProtoClient,
+            let uri = try? ATProtocolURI(uriString: replyUriString) else { return }
+
+      do {
+        let params = AppBskyFeedGetPosts.Parameters(uris: [uri])
+        let (responseCode, output) = try await client.app.bsky.feed.getPosts(input: params)
+        if responseCode == 200, let hydratedPost = output?.posts.first {
           await MainActor.run { [weak self] in
-            self?.controllerLogger.debug("Optimistic reply confirmed after attempt \(attempt)")
-            self?.optimisticRetryTasks.removeValue(forKey: replyUriString)
+            guard let self = self else { return }
+            self.controllerLogger.debug("Optimistic reply confirmed via getPosts: \(replyUriString)")
+            self.optimisticReplyUris.remove(replyUriString)
+            self.optimisticReplies.removeAll { $0.threadItem.uri.uriString() == replyUriString }
+            if self.optimisticReplyUris.isEmpty {
+              self.hasOptimisticUpdates = false
+            }
+            if let existingItem = self.threadItemsByID[replyUriString] {
+              let hydratedItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: hydratedPost, depth: existingItem.depth)
+              self.threadItemsByID[replyUriString] = hydratedItem
+            }
+            self.rebuildRows()
+            self.updateDataSnapshot(animatingDifferences: false)
+            self.optimisticRetryTasks.removeValue(forKey: replyUriString)
           }
           return
         }
+      } catch {
+        self.controllerLogger.debug("Optimistic reply getPosts check failed: \(error.localizedDescription)")
       }
-      
-      // Final cleanup after all attempts
+
       await MainActor.run { [weak self] in
-        guard let self = self else { return }
-        defer { self.optimisticRetryTasks.removeValue(forKey: replyUriString) }
-        if self.optimisticReplyUris.contains(replyUriString) {
-          self.controllerLogger.warning("Failed to confirm optimistic reply after 5 attempts, removing: \(replyUriString)")
-          self.optimisticReplyUris.remove(replyUriString)
-          self.optimisticReplies.removeAll { $0.threadItem.uri.uriString() == replyUriString }
-          if self.optimisticReplyUris.isEmpty {
-            self.hasOptimisticUpdates = false
-          }
-          self.reloadThread()
-        }
+        self?.optimisticRetryTasks.removeValue(forKey: replyUriString)
       }
     }
   }
@@ -2273,11 +2040,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   /// Writes every post represented by the upcoming UIKit snapshot before its
   /// responder annotations become visible to Siri/AppIntentsTesting.
   private func seedThreadEntityCache() {
-    var posts: [AppBskyFeedDefs.PostView] = rows.compactMap { self.threadItemsByID[$0.id]?.post }
+    let boundedRows = rows.prefix(50)
+    var posts: [AppBskyFeedDefs.PostView] = boundedRows.compactMap { self.threadItemsByID[$0.id]?.post }
     if let mainPost, !posts.contains(where: { $0.uri == mainPost.uri }) {
-      posts.append(mainPost)
+      posts.insert(mainPost, at: 0)
     }
-    PostEntityCache.upsert(posts)
+    PostEntityCache.upsert(Array(posts.prefix(50)))
   }
 }
 
@@ -2335,8 +2103,35 @@ extension ThreadViewController: UICollectionViewDelegate, UICollectionViewDataSo
 
   // MARK: - Prefetching
   func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-    // Start loading content for these cells ahead of time
-    // This can be implemented to preload images or other data
+    guard let client = appState.atProtoClient else { return }
+
+    var postsToPrefetch: [AppBskyFeedDefs.PostView] = []
+    for indexPath in indexPaths {
+      guard let item = dataSource.itemIdentifier(for: indexPath) else { continue }
+      let row: ThreadRow?
+      switch item {
+      case .parentPost(let r), .reply(let r), .mainPost(let r):
+        row = r
+      default:
+        row = nil
+      }
+
+      guard let row, let post = threadItemsByID[row.id]?.post else { continue }
+
+      let media = appState.moderationPolicy.decide(post: post).ui(.contentMedia)
+      if media.filter || media.blur {
+        continue
+      }
+      postsToPrefetch.append(post)
+    }
+
+    guard !postsToPrefetch.isEmpty else { return }
+
+    Task(priority: .utility) {
+      for post in postsToPrefetch {
+        await FeedPrefetchingManager.shared.prefetchPostData(post: post, client: client)
+      }
+    }
   }
 
   func collectionView(

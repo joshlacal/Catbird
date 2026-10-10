@@ -1,6 +1,5 @@
 import Petrel
 import SwiftUI
-import SwiftData
 import OSLog
 
 // Import cross-platform modifiers for iOS-specific modifiers
@@ -116,7 +115,6 @@ private struct UIKitThreadViewWrapper: View {
 /// Uses the V2 thread API (flat array of ThreadItem with depth values)
 private struct SwiftUIThreadView: View {
     @Environment(AppState.self) private var appState: AppState
-    @Environment(\.modelContext) private var modelContext
     let postURI: ATProtocolURI
     @Binding var path: NavigationPath
     let visibilityContext: PostVisibilityContext
@@ -353,7 +351,6 @@ private struct SwiftUIThreadView: View {
         contentOpacity = 0
 
         let manager = ThreadManager(appState: appState)
-        manager.setModelContext(modelContext)
         await manager.loadThread(uri: postURI, visibilityContext: visibilityContext)
         threadManager = manager
 

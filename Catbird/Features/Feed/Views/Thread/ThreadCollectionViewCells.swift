@@ -75,7 +75,7 @@ final class ThreadRowCell: UICollectionViewCell {
       content
         .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
-          .environment(sceneContext)
+        .environment(sceneContext)
         .transaction { txn in txn.animation = nil }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -89,7 +89,6 @@ final class ThreadRowCell: UICollectionViewCell {
       appEntityIdentifier = nil
     }
 #endif
-    contentConfiguration = nil
   }
 }
 
