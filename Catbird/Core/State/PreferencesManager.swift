@@ -67,6 +67,7 @@ final class PreferencesManager {
   /// Launch fires several forced refreshes back to back (initialize, the refresh loop, feed loading);
   /// they queue on the edit gate, so a server read this recent answers the ones behind it.
   @MainActor private var lastServerRead: (generation: UInt64, accountDID: String, at: Date)?
+  @ObservationIgnored private var localRowCache: Preferences?
   private static let forcedRefreshReuseWindow: TimeInterval = 5
   @MainActor private var specificEditInProgress = false
   @MainActor private var specificEditWaiters: [CheckedContinuation<Void, Never>] = []
@@ -177,6 +178,7 @@ final class PreferencesManager {
     if client == nil {
       logger.info("Client reset - clearing cached server preferences")
       cachedServerPreferences = nil
+      localRowCache = nil
     }
   }
 
@@ -190,12 +192,17 @@ final class PreferencesManager {
   /// Configure the manager for a specific account
   @MainActor
   func configure(accountDID: String) {
+    guard accountDID != self.accountDID else {
+      logger.debug("PreferencesManager.configure called with same accountDID (\(accountDID)) - skipping reconfigure")
+      return
+    }
     preferenceSessionGeneration &+= 1
     self.accountDID = accountDID
     appliedAcceptLabelerDIDs = nil
     labelerHeaderGeneration += 1
     // Clear cache so next fetch loads the correct account's data
     cachedServerPreferences = nil
+    localRowCache = nil
     logger.debug("PreferencesManager configured for account: \(accountDID)")
     let generation = preferenceSessionGeneration
     Task { @MainActor [weak self] in
@@ -257,7 +264,7 @@ final class PreferencesManager {
     let clearingClient = client
     // Clear cached server preferences
     cachedServerPreferences = nil
-
+    localRowCache = nil
     // Reset state
     appliedAcceptLabelerDIDs = nil
     labelerHeaderGeneration += 1
@@ -533,6 +540,14 @@ final class PreferencesManager {
       self.hideVerificationBadges = serverVerificationPrefs?.hideBadges ?? false
       try validatePreferenceOperation(operation)
       logger.info("Local preferences updated and saved from server data.")
+      if currentPrefs.isContentEqual(to: beforeRefresh) {
+        logger.info("Preferences unchanged from server read; skipping SwiftData save")
+        cachedServerPreferences = currentPrefs
+        localRowCache = currentPrefs
+        lastServerRead = (operation.generation, operation.accountDID, Date())
+        state = .ready
+        return
+      }
 
       // IMPORTANT: Update the cache with the processed preferences
       cachedServerPreferences = currentPrefs
@@ -578,7 +593,10 @@ final class PreferencesManager {
     if let cachedPrefs = cachedServerPreferences {
       return cachedPrefs
     }
-    
+    if let local = localRowCache {
+      return local
+    }
+
     // Fall back to SwiftData (synchronous fetch)
     guard let modelContext = modelContext else {
       logger.error("ModelContext not available for synchronous preferences load")
@@ -586,11 +604,14 @@ final class PreferencesManager {
     }
 
     if let migrated = try migrateLegacyPreferencesIfNeeded(in: modelContext) {
+      localRowCache = migrated
       return migrated
     }
 
     let preferences = try modelContext.fetch(scopedPreferencesFetchDescriptor())
-    return preferences.first
+    let row = preferences.first
+    localRowCache = row
+    return row
   }
 
   /// A created default row is not evidence that an empty remote policy was accepted.
@@ -703,6 +724,7 @@ final class PreferencesManager {
       throw PreferencesManagerError.modelContextNotInitialized
     }
 
+    let targetPreferences: Preferences
     if let existingPreferences = try await loadPreferences() {
       // Update all properties of the existing preferences
       existingPreferences.hasConfirmedServerPreferences = preferences.hasConfirmedServerPreferences
@@ -722,11 +744,14 @@ final class PreferencesManager {
       existingPreferences.postInteractionSettingsPref = preferences.postInteractionSettingsPref
       existingPreferences.verificationPrefs = preferences.verificationPrefs
       existingPreferences.hideVerificationBadges = preferences.hideVerificationBadges
+      targetPreferences = existingPreferences
     } else {
       preferences.accountDID = accountDID
       modelContext.insert(preferences)
+      targetPreferences = preferences
     }
     try modelContext.save()
+    localRowCache = targetPreferences
     logger.debug("Preferences saved successfully")
   }
 
@@ -1930,7 +1955,10 @@ final class PreferencesManager {
       let appliedAccountDID = accountDID
       labelerHeaderGeneration += 1
       let generation = labelerHeaderGeneration
-      appliedAcceptLabelerDIDs = nil
+      let previous = appliedAcceptLabelerDIDs
+      if previous != dids {
+        appliedAcceptLabelerDIDs = nil
+      }
       await client.setAcceptLabelers(labelers)
       guard self.client === client else { return }
       guard accountDID == appliedAccountDID, generation == labelerHeaderGeneration else {
@@ -1939,15 +1967,30 @@ final class PreferencesManager {
         return
       }
       appliedAcceptLabelerDIDs = dids
-      NotificationCenter.default.post(
-        name: Self.acceptLabelersHeaderDidChange,
-        object: self,
-        userInfo: ["accountDID": appliedAccountDID, "labelerDIDs": dids]
-      )
+      if previous != dids {
+        NotificationCenter.default.post(
+          name: Self.acceptLabelersHeaderDidChange,
+          object: self,
+          userInfo: ["accountDID": appliedAccountDID, "labelerDIDs": dids]
+        )
+      }
       logger.info("Applied atproto-accept-labelers header for \(dids.count) labeler(s) including default moderation service")
     } else {
       logger.debug("Client not available; deferring accept-labelers header update")
     }
+  }
+
+  /// Refreshes server preferences if older than the given threshold (default 15 minutes)
+  @MainActor
+  func refreshIfStale(staleThreshold: TimeInterval = 900) async throws {
+    let now = Date()
+    if let lastServerRead,
+       lastServerRead.generation == preferenceSessionGeneration,
+       lastServerRead.accountDID == accountDID,
+       now.timeIntervalSince(lastServerRead.at) < staleThreshold {
+      return
+    }
+    try await fetchPreferences(forceRefresh: false)
   }
 
   /// Retained compatibility entry point. Language choices have no server serializer.

@@ -37,6 +37,7 @@ private let feedViewPrefCache = PreferenceDecodeCache<FeedViewPreference?>()
 private let mutedWordsCache = PreferenceDecodeCache<[MutedWord]>()
 private let labelersCache = PreferenceDecodeCache<[LabelerPreference]>()
 private let contentLabelPrefsCache = PreferenceDecodeCache<[ContentLabelPreference]>()
+private let nuxStatesCache = PreferenceDecodeCache<[NuxState]>()
 
 @Model
 final class Preferences {
@@ -176,7 +177,9 @@ final class Preferences {
 
   var nuxStates: [NuxState] {
     get {
-      return (try? JSONDecoder().decode([NuxState].self, from: Data(nuxStatesData.utf8))) ?? []
+      nuxStatesCache.value(for: nuxStatesData) { raw in
+        (try? JSONDecoder().decode([NuxState].self, from: Data(raw.utf8))) ?? []
+      }
     }
     set {
       if let data = try? JSONEncoder().encode(newValue) {
@@ -273,6 +276,29 @@ final class Preferences {
     hideVerificationBadges = value.hideVerificationBadges
     primaryLanguage = value.primaryLanguage
     contentLanguages = value.contentLanguages
+  }
+
+  /// Compares raw backing string data and scalar flags to determine if server read changed any fields.
+  func isContentEqual(to other: Preferences) -> Bool {
+    return hasConfirmedServerPreferences == other.hasConfirmedServerPreferences
+      && adultContentEnabled == other.adultContentEnabled
+      && hideVerificationBadges == other.hideVerificationBadges
+      && activeProgressGuide == other.activeProgressGuide
+      && primaryLanguage == other.primaryLanguage
+      && pinnedFeedsData == other.pinnedFeedsData
+      && savedFeedsData == other.savedFeedsData
+      && contentLabelPrefsData == other.contentLabelPrefsData
+      && threadViewPrefData == other.threadViewPrefData
+      && feedViewPrefData == other.feedViewPrefData
+      && mutedWordsData == other.mutedWordsData
+      && hiddenPostsData == other.hiddenPostsData
+      && labelersData == other.labelersData
+      && nuxStatesData == other.nuxStatesData
+      && interestsData == other.interestsData
+      && queuedNudgesData == other.queuedNudgesData
+      && postInteractionSettingsData == other.postInteractionSettingsData
+      && verificationPrefsData == other.verificationPrefsData
+      && contentLanguagesData == other.contentLanguagesData
   }
 
   init(

@@ -63,6 +63,9 @@ final class ComposerOutbox {
   private let logger = Logger(subsystem: "blue.catbird", category: "ComposerOutbox")
   private var items: [ComposerOutboxItem] = []
   private let queueURL: URL
+  var hasPendingItems: Bool {
+    !items.isEmpty
+  }
 
   private init() {
     let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!

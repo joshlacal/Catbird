@@ -142,7 +142,31 @@ final class AppStateManager {
   // and reset all @State to initial values, causing full re-initialization on every foreground return.
   
   /// ModelContainer state for SwiftData
-  var modelContainerState: ModelContainerState = .loading
+  var modelContainerState: ModelContainerState = .loading {
+    didSet {
+      if case .loading = oldValue, !modelContainerContinuations.isEmpty {
+        let continuations = modelContainerContinuations
+        modelContainerContinuations.removeAll()
+        for cont in continuations {
+          cont.resume(returning: modelContainerState.container)
+        }
+      }
+    }
+  }
+
+  @ObservationIgnored
+  private var modelContainerContinuations: [CheckedContinuation<ModelContainer?, Never>] = []
+
+  /// Waits for ModelContainer initialization to resolve (ready or degraded) before proceeding
+  @MainActor
+  func waitForModelContainerReady() async -> ModelContainer? {
+    if case .loading = modelContainerState {
+      return await withCheckedContinuation { cont in
+        modelContainerContinuations.append(cont)
+      }
+    }
+    return modelContainerState.container
+  }
   
   /// Tracks if the app has been initialized (prevents duplicate initialization)
   var didInitialize: Bool = false
@@ -215,8 +239,24 @@ final class AppStateManager {
     #endif
   }
 
+  @ObservationIgnored
+  private var initializeTask: Task<Void, Never>?
+
   /// Initialize the app - check for saved session and transition to appropriate state
   func initialize() async {
+    if let existing = initializeTask {
+      await existing.value
+      return
+    }
+    let task = Task { @MainActor [weak self] in
+      guard let self else { return }
+      await self.performInitialize()
+    }
+    initializeTask = task
+    await task.value
+  }
+
+  private func performInitialize() async {
     logger.info("🚀 Initializing AppStateManager")
 
     #if os(iOS)
@@ -353,6 +393,8 @@ final class AppStateManager {
     // Check if we have an authenticated session
     if case .authenticated(let userDID) = authManager.state {
       logger.info("✅ Found authenticated session for: \(userDID)")
+      // Wait for ModelContainer before building AppState, as AppState requires modelContext
+      _ = await waitForModelContainerReady()
       do {
         try await transitionToAuthenticated(userDID: userDID)
       } catch {

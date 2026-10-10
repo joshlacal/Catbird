@@ -245,6 +245,11 @@ final class AppState {
 
     /// Preferences manager for handling user preferences
     @ObservationIgnored let preferencesManager = PreferencesManager()
+    private struct PreferencesBootstrapKey: Equatable {
+        let userDID: String
+        let containerID: ObjectIdentifier
+    }
+    @ObservationIgnored private var lastPreferencesBootstrapKey: PreferencesBootstrapKey?
     @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
@@ -692,34 +697,26 @@ final class AppState {
         guard !accountServiceWork.isSuspended, backgroundPollingTask == nil else { return }
         backgroundPollingTask = accountServiceWork.start(priority: .background) { [self] in
             while !Task.isCancelled {
-                await withTaskGroup(of: Void.self) { group in
-                    // Prune old feed models
-                    group.addTask {
-                        FeedModelContainer.shared.pruneOldModels(olderThan: 1800)
-                    }
+                // Prune old feed models
+                FeedModelContainer.shared.pruneOldModels(olderThan: 1800)
 
-                    // Refresh preferences
-                    group.addTask {
-                        if await self.isAuthenticated {
-                            do {
-                                try await self.preferencesManager.fetchPreferences(forceRefresh: true)
-                                await MainActor.run {
-                                    self.nuxPresenter.evaluateAndPresentIfNeeded(
-                                        isWelcomeShowing: self.onboardingManager.showWelcomeSheet
-                                    )
-                                }
-                            } catch {
-                                self.logger.error(
-                                    "Error during periodic preferences refresh: \(error.localizedDescription)"
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Wait for 5 minutes before the next poll
+                // Wait before next check (no forced 5-min preferences poll; refreshed on foreground when stale)
                 try? await Task.sleep(for: .seconds(300))
             }
+        }
+    }
+
+    /// Refreshes server preferences on foreground or demand when stale (15 min window)
+    @MainActor
+    func refreshPreferencesIfStale(staleThreshold: TimeInterval = 900) async {
+        guard await isAuthenticated else { return }
+        do {
+            try await preferencesManager.refreshIfStale(staleThreshold: staleThreshold)
+            self.nuxPresenter.evaluateAndPresentIfNeeded(
+                isWelcomeShowing: self.onboardingManager.showWelcomeSheet
+            )
+        } catch {
+            logger.debug("Stale preferences refresh skipped or failed: \(error.localizedDescription)")
         }
     }
 
@@ -745,7 +742,10 @@ final class AppState {
         // Seed accept-labelers from the stored confirmed preferences before any feed request.
         // No-op until `initializePreferencesManager` has configured the account's row.
         await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
-        await notificationManager.updateClient(client)
+        // P128: notification-client setup moved off launch critical path
+        accountServiceWork.start { [self] in
+            await notificationManager.updateClient(client)
+        }
         graphManager = GraphManager(atProtoClient: client)
         blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(client)
@@ -824,7 +824,10 @@ final class AppState {
         // The shared client still carries the previous account's labelers; seed this account's
         // confirmed ones before the feed load below.
         await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
-        await notificationManager.updateClient(client)
+        // P128: notification-client setup moved off account-switch critical path
+        accountServiceWork.start { [self] in
+            await notificationManager.updateClient(client)
+        }
 
         chatManager.updateAppState(self) // Wire AppState reference to ChatManager
         await chatManager.updateClient(client) // Update ChatManager client
@@ -1081,6 +1084,13 @@ final class AppState {
     /// Initializes the preferences manager with a model context
     @MainActor
     func initializePreferencesManager(with modelContext: ModelContext) {
+        let key = PreferencesBootstrapKey(userDID: userDID, containerID: ObjectIdentifier(modelContext.container))
+        if lastPreferencesBootstrapKey == key {
+            logger.debug("Skipping duplicate preferences bootstrap for \(self.userDID)")
+            return
+        }
+        lastPreferencesBootstrapKey = key
+
         preferencesManager.configure(accountDID: userDID)
         preferencesManager.setModelContext(modelContext)
         appSettings.initialize(with: modelContext, accountDID: userDID)
@@ -1299,15 +1309,7 @@ final class AppState {
         // Set the notification manager as the delegate for UNUserNotificationCenter
         UNUserNotificationCenter.current().delegate = notificationManager
 
-        // Ensure widget has initial data - force update after a delay to allow app to fully initialize
-        accountServiceWork.start { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, let self else { return }
-            self.notificationManager.updateWidgetUnreadCount(self.notificationManager.unreadCount)
-            self.logger.info(
-                "Initializing widget data at app startup with count: \(self.notificationManager.unreadCount)"
-            )
-        }
+        // P010/L6: removed delayed updateWidgetUnreadCount write; configure/checkUnread publish with dedup
 
         // Configure notification manager with app state reference for navigation
         notificationManager.configure(with: self)
@@ -1337,9 +1339,8 @@ final class AppState {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.accountServiceWork.start { [weak self] in
-                        await self?.notificationManager.checkUnreadNotifications()
-                    }
+                    self.notificationManager.scheduleUnreadCheck()
+                    await self.refreshPreferencesIfStale()
                 }
             }
         #elseif os(macOS)
@@ -1350,9 +1351,8 @@ final class AppState {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.accountServiceWork.start { [weak self] in
-                        await self?.notificationManager.checkUnreadNotifications()
-                    }
+                    self.notificationManager.scheduleUnreadCheck()
+                    await self.refreshPreferencesIfStale()
                 }
             }
         #endif

@@ -82,9 +82,8 @@ enum ChatBackgroundRefreshManager {
 
       let appState = activeState
 
-      if Task.isCancelled { return false }
-      await appState.chatManager.loadConversations(refresh: true)
-
+      // P186: In-memory chat conversations are discarded on background task completion;
+      // only persistable state (notifications/badges) is updated in background.
       if Task.isCancelled { return false }
       if appState.notificationManager.notificationsEnabled,
          appState.notificationManager.status == .registered {

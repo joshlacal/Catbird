@@ -6,6 +6,8 @@ import Security
 /// used by the app and its extensions.
 enum KeychainAccessGroup {
   private static let logger = Logger(subsystem: "blue.catbird", category: "KeychainAccessGroup")
+  private static let lock = NSLock()
+  private static var cachedTeamPrefix: String?
 
   /// - Parameter suffix: The access group suffix (e.g. "blue.catbird.shared")
   /// - Returns: The fully-qualified access group, or nil if resolution fails
@@ -20,8 +22,36 @@ enum KeychainAccessGroup {
       }
       return groups.first(where: { $0.hasSuffix(suffix) })
     #else
+      lock.lock()
+      if let cached = cachedTeamPrefix {
+        lock.unlock()
+        return cached + suffix
+      }
+      lock.unlock()
+
+      // Check Info.plist AppIdentifierPrefix if configured
+      if let plistPrefix = Bundle.main.object(forInfoDictionaryKey: "AppIdentifierPrefix") as? String,
+         !plistPrefix.isEmpty {
+        let normalized = plistPrefix.hasSuffix(".") ? plistPrefix : plistPrefix + "."
+        lock.lock()
+        cachedTeamPrefix = normalized
+        lock.unlock()
+        return normalized + suffix
+      }
+
+      // Check UserDefaults cache keyed by bundle identifier
+      let bundleID = Bundle.main.bundleIdentifier ?? "blue.catbird"
+      let cacheKey = "keychain_team_prefix_\(bundleID)"
+      if let persisted = UserDefaults.standard.string(forKey: cacheKey), !persisted.isEmpty {
+        lock.lock()
+        cachedTeamPrefix = persisted
+        lock.unlock()
+        return persisted + suffix
+      }
+
       // SecTask APIs are unavailable on iOS; infer the Team ID prefix from the
-      // default access group assigned to a throwaway probe item.
+      // default access group assigned to a throwaway probe item as fallback.
+      logger.info("Probing keychain for access group prefix (cache miss)")
       let probeService = "blue.catbird.accessGroupProbe"
       let probeAccount = UUID().uuidString
 
@@ -63,7 +93,12 @@ enum KeychainAccessGroup {
         return nil
       }
 
-      return String(defaultAccessGroup[...dot]) + suffix
+      let prefix = String(defaultAccessGroup[...dot])
+      lock.lock()
+      cachedTeamPrefix = prefix
+      lock.unlock()
+      UserDefaults.standard.set(prefix, forKey: cacheKey)
+      return prefix + suffix
     #endif
   }
 }

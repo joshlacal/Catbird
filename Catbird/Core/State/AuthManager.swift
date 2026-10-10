@@ -512,10 +512,21 @@ final class AuthenticationManager: AuthProgressDelegate {
   private let handleStorageKey = "catbird_account_handles"
   private let accountOrderKey = "catbird_account_order"
   private let userDefaults: UserDefaults
-  // State change handling with async streams
+  // State change handling with multicast async streams (one continuation per subscriber)
   @ObservationIgnored
-  private let stateSubject = AsyncStream<AuthState>.makeStream()
+  private let continuationsLock = NSLock()
+  @ObservationIgnored
+  private var stateContinuations: [UUID: AsyncStream<AuthState>.Continuation] = [:]
 
+  deinit {
+    continuationsLock.lock()
+    let continuations = Array(stateContinuations.values)
+    stateContinuations.removeAll()
+    continuationsLock.unlock()
+    for continuation in continuations {
+      continuation.finish()
+    }
+  }
   // The ATProtoClient used for authentication and API calls
   private(set) var client: ATProtoClient?
 
@@ -710,9 +721,22 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
   // MARK: - State Management
 
-  /// Access state changes as an AsyncSequence
+  /// Access state changes as a multicast AsyncSequence.
+  /// Each caller receives an independent stream; terminations are cleaned up automatically.
   var stateChanges: AsyncStream<AuthState> {
-    return stateSubject.stream
+    let id = UUID()
+    return AsyncStream<AuthState> { continuation in
+      continuationsLock.lock()
+      stateContinuations[id] = continuation
+      continuationsLock.unlock()
+
+      continuation.onTermination = { [weak self] _ in
+        guard let self else { return }
+        self.continuationsLock.lock()
+        self.stateContinuations.removeValue(forKey: id)
+        self.continuationsLock.unlock()
+      }
+    }
   }
   #if DEBUG
   nonisolated(unsafe) static var switchAccountOverride: (@Sendable (String) async throws -> (did: String, handle: String))?
@@ -976,8 +1000,13 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       pendingAuthAlert = nil
     }
     self.state = newState
-    // Emit synchronously - no Task wrapper to eliminate race windows
-    stateSubject.continuation.yield(newState)
+    // Emit synchronously to all active subscribers - no Task wrapper to eliminate race windows
+    continuationsLock.lock()
+    let continuations = Array(stateContinuations.values)
+    continuationsLock.unlock()
+    for continuation in continuations {
+      continuation.yield(newState)
+    }
   }
 
   #if DEBUG
@@ -1059,7 +1088,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 #endif
       // Update state on main actor
       client = newClient
-      await client?.applicationDidBecomeActive()
+      // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
 
       if client == nil {
         logger.critical(.clientCreationFailed)
@@ -1362,7 +1391,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         )
 
         #endif
-      await client?.applicationDidBecomeActive()
+      // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
       if let client = client { await client.setAuthenticationDelegate(self) }
@@ -1529,7 +1558,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       // Replace the main client with the authenticated legacy client
       client = legacyClient
-      await client?.applicationDidBecomeActive()
+      // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
       await client?.setAuthenticationDelegate(self)
@@ -2698,7 +2727,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       )
       #endif
       
-    await client?.applicationDidBecomeActive()
+    // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
     await client?.setAuthProgressDelegate(self)
     await client?.setFailureDelegate(self)
     if let client = client { await client.setAuthenticationDelegate(self) }

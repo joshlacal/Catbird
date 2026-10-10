@@ -150,20 +150,14 @@ enum LabelerDefinitionsDiskCache {
     guard let url = fileURL(accountDID: accountDID) else { return }
     let entry = Entry(
       accountDID: accountDID, labelerDIDs: normalizedLabelerDIDs(labelerDIDs), definitions: definitions)
-    let data: Data
-    do {
-      data = try JSONEncoder().encode(entry)
-    } catch {
-      logger.error("Could not encode labeler definitions cache: \(error.localizedDescription)")
-      return
-    }
     ioQueue.async {
       do {
+        let data = try JSONEncoder().encode(entry)
         try FileManager.default.createDirectory(
           at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: [.atomic])
       } catch {
-        logger.error("Could not write labeler definitions cache: \(error.localizedDescription)")
+        logger.error("Could not encode or write labeler definitions cache: \(error.localizedDescription)")
       }
     }
   }
