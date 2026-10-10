@@ -646,10 +646,13 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // For now, we'll regenerate them from the attributed text
       
       let newFacets = extractLinkFacetsFromAttributedText(textView.attributedText)
-      parent.linkFacets = newFacets
-      rtLogger.debug("Legacy facets updated: count=\(newFacets.count)")
+      if !parent.linkFacets.isEmpty || !newFacets.isEmpty {
+        if parent.linkFacets != newFacets {
+          parent.linkFacets = newFacets
+          rtLogger.debug("Legacy facets updated: count=\(newFacets.count)")
+        }
+      }
     }
-    
     private func extractLinkFacetsFromAttributedText(_ attributedText: NSAttributedString) -> [RichTextFacetUtils.LinkFacet] {
       var facets: [RichTextFacetUtils.LinkFacet] = []
       

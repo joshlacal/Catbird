@@ -1,9 +1,11 @@
 import AVFoundation
 import Foundation
+import ImageIO
 import os
+import OSLog
 import Petrel
 import SwiftUI
-
+import UniformTypeIdentifiers
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -16,26 +18,26 @@ extension PostComposerViewModel {
     
     // MARK: - Image Processing and Uploading
     
-    func createImagesEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        guard !mediaItems.isEmpty, let client = appState.atProtoClient else { 
+    func createImagesEmbed(items: [MediaItem]? = nil) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        let activeItems = items ?? mediaItems
+        guard !activeItems.isEmpty, let client = appState.atProtoClient else { 
             logger.trace("PostComposerUploading: createImagesEmbed - no media items or client")
             return nil 
         }
 
-        logger.info("PostComposerUploading: Creating images embed with \(self.mediaItems.count) items")
+        logger.info("PostComposerUploading: Creating images embed with \(activeItems.count) items")
         var imageEmbeds: [AppBskyEmbedImages.Image] = []
 
-        for (index, item) in mediaItems.enumerated() {
+        for (index, item) in activeItems.enumerated() {
             guard let rawData = item.rawData, item.image != nil, !item.isGifConversion else {
                 throw NSError(domain: "ComposerMedia", code: 1, userInfo: [
                     NSLocalizedDescriptionKey: "An attachment couldn’t be loaded. Retry it or remove it before posting."
                 ]) 
             }
 
-            logger.debug("PostComposerUploading: Processing image \(index + 1)/\(self.mediaItems.count) - size: \(rawData.count) bytes")
-            let imageData = try await processImageForUpload(rawData)
+            logger.debug("PostComposerUploading: Processing image \(index + 1)/\(activeItems.count) - size: \(rawData.count) bytes")
+            let (imageData, pixelSize) = try await ComposerImageProcessor.prepareImageForUpload(rawData)
             logger.debug("PostComposerUploading: Image processed - final size: \(imageData.count) bytes")
-
             let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
                 data: imageData,
                 mimeType: "image/jpeg",
@@ -55,6 +57,11 @@ extension PostComposerViewModel {
                 aspectRatio = AppBskyEmbedDefs.AspectRatio(
                     width: Int(ratio.width),
                     height: Int(ratio.height)
+                )
+            } else if pixelSize.width > 0 && pixelSize.height > 0 {
+                aspectRatio = AppBskyEmbedDefs.AspectRatio(
+                    width: Int(pixelSize.width),
+                    height: Int(pixelSize.height)
                 )
             } else {
                 aspectRatio = nil
@@ -249,63 +256,153 @@ extension PostComposerViewModel {
     }
     
     private func processImageForUpload(_ data: Data) async throws -> Data {
-        var processedData = data
+        let (processed, _) = try await ComposerImageProcessor.prepareImageForUpload(data)
+        return processed
+    }
+}
 
-        if checkImageFormat(data) == "HEIC" {
-            if let converted = convertHEICToJPEG(data) {
-                processedData = converted
+// MARK: - Off-Main ImageIO Processor
+
+enum ComposerImageProcessor {
+    /// Prepares an image for upload: downsamples to max 2000px, strips metadata, and compresses to fit under blob size limit (976_560 bytes).
+    /// Runs off the main actor using ImageIO and logs the "ComposerImageProcess" signpost interval.
+    nonisolated static func prepareImageForUpload(
+        _ data: Data,
+        maxPixelSize: Int = 2000,
+        maxBytes: Int = 976_560
+    ) async throws -> (data: Data, pixelSize: CGSize) {
+        let signpostState = PerformanceSignposts.beginInterval("ComposerImageProcess")
+        defer { PerformanceSignposts.endInterval("ComposerImageProcess", signpostState) }
+        
+        return try await Task.detached(priority: .userInitiated) {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+                throw NSError(domain: "ComposerImageProcessor", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to create image source"
+                ])
+            }
+            
+            var pixelSize: CGSize = .zero
+            if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+                let width = (properties[kCGImagePropertyPixelWidth] as? CGFloat) ?? 0
+                let height = (properties[kCGImagePropertyPixelHeight] as? CGFloat) ?? 0
+                let orientation = (properties[kCGImagePropertyOrientation] as? UInt32) ?? 1
+                if orientation >= 5 && orientation <= 8 {
+                    pixelSize = CGSize(width: height, height: width)
+                } else {
+                    pixelSize = CGSize(width: width, height: height)
+                }
+            }
+            
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+            
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                throw NSError(domain: "ComposerImageProcessor", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to decode thumbnail image"
+                ])
+            }
+            
+            let finalWidth = CGFloat(cgImage.width)
+            let finalHeight = CGFloat(cgImage.height)
+            if pixelSize == .zero || pixelSize.width == 0 || pixelSize.height == 0 {
+                pixelSize = CGSize(width: finalWidth, height: finalHeight)
+            } else {
+                let scale = min(CGFloat(maxPixelSize) / max(pixelSize.width, pixelSize.height), 1.0)
+                pixelSize = CGSize(width: round(pixelSize.width * scale), height: round(pixelSize.height * scale))
+            }
+            
+            // Encode using CGImageDestination, stripping metadata
+            var lowQuality: CGFloat = 0.3
+            var highQuality: CGFloat = 0.90
+            var bestData: Data?
+            
+            let initialQuality: CGFloat = 0.85
+            if let encoded = encodeJPEG(cgImage: cgImage, quality: initialQuality) {
+                if encoded.count <= maxBytes {
+                    return (encoded, pixelSize)
+                }
+                bestData = encoded
+                highQuality = initialQuality
+            }
+            
+            // Binary search (up to 4 steps) to find quality that fits under maxBytes
+            for _ in 0..<4 {
+                let midQuality = (lowQuality + highQuality) / 2.0
+                guard let encoded = encodeJPEG(cgImage: cgImage, quality: midQuality) else { break }
+                if encoded.count <= maxBytes {
+                    bestData = encoded
+                    lowQuality = midQuality
+                } else {
+                    highQuality = midQuality
+                }
+            }
+            
+            if let bestData, bestData.count <= maxBytes {
+                return (bestData, pixelSize)
+            }
+            
+            if let encoded = encodeJPEG(cgImage: cgImage, quality: lowQuality) {
+                return (encoded, pixelSize)
+            }
+            
+            throw NSError(domain: "ComposerImageProcessor", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to encode image under size limit"
+            ])
+        }.value
+    }
+    
+    private nonisolated static func encodeJPEG(cgImage: CGImage, quality: CGFloat) -> Data? {
+        let mutableData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(mutableData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: quality
+        ]
+        CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return mutableData as Data
+    }
+    
+    /// Creates a downsampled preview thumbnail (~300-360 px max) off main actor
+    nonisolated static func makePreview(from data: Data, maxPixel: CGFloat = 360) async -> (CGImage, CGSize)? {
+        await Task.detached(priority: .userInitiated) {
+            syncPreview(from: data, maxPixel: maxPixel)
+        }.value
+    }
+    
+    /// Synchronously creates a downsampled preview thumbnail (~300-360 px max) using ImageIO without full-res bitmap decode
+    nonisolated static func syncPreview(from data: Data, maxPixel: CGFloat = 360) -> (CGImage, CGSize)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        var originalSize = CGSize.zero
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+            let width = (properties[kCGImagePropertyPixelWidth] as? CGFloat) ?? 0
+            let height = (properties[kCGImagePropertyPixelHeight] as? CGFloat) ?? 0
+            let orientation = (properties[kCGImagePropertyOrientation] as? UInt32) ?? 1
+            if orientation >= 5 && orientation <= 8 {
+                originalSize = CGSize(width: height, height: width)
+            } else {
+                originalSize = CGSize(width: width, height: height)
             }
         }
-
-        if let image = PlatformImage(data: processedData),
-           let compressed = compressImage(image, maxSizeInBytes: 900_000) {
-            processedData = compressed
-        }
-
-        return processedData
-    }
-    
-    // MARK: - Image Format Utilities
-    
-    private func checkImageFormat(_ data: Data) -> String {
-        guard data.count >= 4 else { return "Unknown" }
-        
-        let bytes = data.prefix(4)
-        
-        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
-            return "JPEG"
-        } else if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-            return "PNG"
-        } else if bytes.starts(with: [0x00, 0x00, 0x00]) && data.count > 8 {
-            let ftypBytes = data.subdata(in: 4..<8)
-            if ftypBytes.starts(with: [0x66, 0x74, 0x79, 0x70]) {
-                return "HEIC"
-            }
-        }
-        
-        return "Unknown"
-    }
-    
-    private func convertHEICToJPEG(_ data: Data) -> Data? {
-        guard let image = PlatformImage(data: data) else {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        
-        #if os(iOS)
-        guard let jpegData = image.jpegData(compressionQuality: 0.8) else {
-            return nil
+        if originalSize == .zero {
+            originalSize = CGSize(width: thumbnail.width, height: thumbnail.height)
         }
-        #elseif os(macOS)
-        guard let jpegData = image.jpegImageData(compressionQuality: 0.8) else {
-            return nil
-        }
-        #endif
-        
-        return jpegData
-    }
-    
-    private func compressImage(_ image: PlatformImage, maxSizeInBytes: Int) -> Data? {
-        // Use the built-in compression method from CrossPlatformImage
-        return image.compressed(maxSizeInBytes: maxSizeInBytes)
+        return (thumbnail, originalSize)
     }
 }

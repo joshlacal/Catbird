@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
+import os
 import Petrel
 import SwiftUI
-
 // MARK: - Tenor API Models (shared with GifPickerView)
 
 struct TenorGif: Codable, Identifiable, Hashable {
@@ -206,6 +206,12 @@ struct CodableMediaItem: Codable, Hashable {
   let rawImageURLString: String?
   let caption: VideoCaption?
 
+  private static let attachmentPersistedURLs = OSAllocatedUnfairLock(initialState: [UUID: String]())
+
+  static func recordPersistedURL(_ urlString: String, for id: UUID) {
+    attachmentPersistedURLs.withLock { $0[id] = urlString }
+  }
+
   init(from mediaItem: PostComposerViewModel.MediaItem) {
     self.attachmentID = mediaItem.id
     self.altText = mediaItem.altText
@@ -216,16 +222,24 @@ struct CodableMediaItem: Codable, Hashable {
     self.rawVideoURLString = mediaItem.rawVideoURL?.absoluteString
     self.caption = mediaItem.caption
     // Persist image data to a temp file so it survives draft serialization (e.g. account switch)
-    if let rawData = mediaItem.rawData {
-      self.rawImageURLString = CodableMediaItem.persistImageData(rawData) ?? mediaItem.rawImageURL?.absoluteString
+    if let rawImageURLString = mediaItem.rawImageURL?.absoluteString {
+      self.rawImageURLString = rawImageURLString
+      CodableMediaItem.recordPersistedURL(rawImageURLString, for: mediaItem.id)
+    } else if let cached = CodableMediaItem.attachmentPersistedURLs.withLock({ $0[mediaItem.id] }) {
+      self.rawImageURLString = cached
+    } else if let rawData = mediaItem.rawData {
+      let persisted = CodableMediaItem.persistImageData(rawData) ?? mediaItem.rawImageURL?.absoluteString
+      if let persisted {
+        CodableMediaItem.recordPersistedURL(persisted, for: mediaItem.id)
+      }
+      self.rawImageURLString = persisted
     } else {
       self.rawImageURLString = mediaItem.rawImageURL?.absoluteString
     }
   }
-
   /// Write image data to a file in the shared drafts directory, returning the file URL string.
   /// Files are named by content, so autosaves and thread copies of the same image reuse one file.
-  private static func persistImageData(_ data: Data) -> String? {
+  static func persistImageData(_ data: Data) -> String? {
     guard let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
     ) else { return nil }
@@ -262,14 +276,28 @@ struct CodableMediaItem: Codable, Hashable {
       if isGifConversion && rawVideoURLString == nil {
         // Failed GIF preparation remains a retryable video source, never a still image post.
         item.rawData = data
-      } else if let platformImage = PlatformImage(data: data) {
+      } else {
         item.rawData = data
-        #if os(iOS)
-        item.image = Image(uiImage: platformImage)
-        #elseif os(macOS)
-        item.image = Image(nsImage: platformImage)
-        #endif
-        item.aspectRatio = CGSize(width: platformImage.imageSize.width, height: platformImage.imageSize.height)
+        item.rawImageURL = url
+        CodableMediaItem.recordPersistedURL(rawImageURLString, for: item.id)
+        if let (thumbnail, originalSize) = ComposerImageProcessor.syncPreview(from: data, maxPixel: 360) {
+          #if os(iOS)
+          item.image = Image(uiImage: UIImage(cgImage: thumbnail))
+          #elseif os(macOS)
+          let rep = NSBitmapImageRep(cgImage: thumbnail)
+          let nsImage = NSImage(size: NSSize(width: thumbnail.width, height: thumbnail.height))
+          nsImage.addRepresentation(rep)
+          item.image = Image(nsImage: nsImage)
+          #endif
+          item.aspectRatio = originalSize
+        } else if let platformImage = PlatformImage(data: data) {
+          #if os(iOS)
+          item.image = Image(uiImage: platformImage)
+          #elseif os(macOS)
+          item.image = Image(nsImage: platformImage)
+          #endif
+          item.aspectRatio = CGSize(width: platformImage.imageSize.width, height: platformImage.imageSize.height)
+        }
         item.isLoading = false
       }
     }

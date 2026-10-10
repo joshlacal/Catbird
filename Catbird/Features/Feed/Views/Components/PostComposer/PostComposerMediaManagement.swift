@@ -117,6 +117,18 @@ extension PostComposerViewModel {
               let currentIndex = mediaItems.firstIndex(where: { $0.id == id }) else { return }
         // Keep the bytes even if decoding or conversion fails, so retry never loses the source.
         mediaItems[currentIndex].rawData = data
+        let attachmentUUID = id
+        Task.detached(priority: .utility) {
+          if let urlString = CodableMediaItem.persistImageData(data) {
+            CodableMediaItem.recordPersistedURL(urlString, for: attachmentUUID)
+            if let fileURL = URL(string: urlString) {
+              await MainActor.run { [weak self] in
+                guard let self, let idx = self.mediaItems.firstIndex(where: { $0.id == attachmentUUID }) else { return }
+                self.mediaItems[idx].rawImageURL = fileURL
+              }
+            }
+          }
+        }
         if isDataAnimatedGIF(data) {
           mediaItems[currentIndex].isGifConversion = true
           guard mediaItems.count == 1, videoItem == nil, selectedGif == nil else {
@@ -137,15 +149,26 @@ extension PostComposerViewModel {
           await loadVideoThumbnail(for: converted)
           return
         }
-        guard let platformImage = PlatformImage(data: data) else {
+        if let (previewCGImage, originalSize) = await ComposerImageProcessor.makePreview(from: data, maxPixel: 360) {
+          #if os(iOS)
+          mediaItems[currentIndex].image = Image(uiImage: UIImage(cgImage: previewCGImage))
+          #elseif os(macOS)
+          let rep = NSBitmapImageRep(cgImage: previewCGImage)
+          let nsImage = NSImage(size: NSSize(width: previewCGImage.width, height: previewCGImage.height))
+          nsImage.addRepresentation(rep)
+          mediaItems[currentIndex].image = Image(nsImage: nsImage)
+          #endif
+          mediaItems[currentIndex].aspectRatio = originalSize
+        } else if let platformImage = PlatformImage(data: data) {
+          #if os(iOS)
+          mediaItems[currentIndex].image = Image(uiImage: platformImage)
+          #elseif os(macOS)
+          mediaItems[currentIndex].image = Image(nsImage: platformImage)
+          #endif
+          mediaItems[currentIndex].aspectRatio = platformImage.imageSize
+        } else {
           throw MediaPreviewImageError.unavailable
         }
-        #if os(iOS)
-        mediaItems[currentIndex].image = Image(uiImage: platformImage)
-        #elseif os(macOS)
-        mediaItems[currentIndex].image = Image(nsImage: platformImage)
-        #endif
-        mediaItems[currentIndex].aspectRatio = platformImage.imageSize
       } catch is CancellationError {
         // The matching finalizer exposes Retry without removing the attachment.
       } catch {
@@ -162,20 +185,26 @@ extension PostComposerViewModel {
 
     func removeMediaItem(at index: Int) {
         guard mediaItems.indices.contains(index) else { return }
-        mediaPreviewLoads.cancel(for: mediaItems[index].id)
-        mediaItems.remove(at: index)
-        syncMediaStateToCurrentThread()
-        saveDraftIfNeeded()
+        let id = mediaItems[index].id
+        removeMediaItem(withId: id)
     }
 
     func removeMediaItem(withId id: UUID) {
         mediaPreviewLoads.cancel(for: id)
         if videoItem?.id == id {
+            if let videoURL = videoItem?.rawVideoURL {
+                Task.detached(priority: .utility) {
+                    if let store = try? CapturedVideoStore.applicationStore(), store.owns(videoURL) {
+                        try? await store.removeVideoIfOwned(videoURL)
+                    } else if videoURL.path.contains("SharedDrafts") || videoURL.path.contains("/tmp/") {
+                        try? FileManager.default.removeItem(at: videoURL)
+                    }
+                }
+            }
             videoItem = nil
         } else {
             mediaItems.removeAll(where: { $0.id == id })
         }
-        
         // Sync media state to current thread
         syncMediaStateToCurrentThread()
         
@@ -214,8 +243,18 @@ extension PostComposerViewModel {
                 let squared = UIImage(cgImage: cg, scale: image.scale, orientation: image.imageOrientation)
                 if let jpeg = squared.jpegData(compressionQuality: 0.9) {
                     mediaItems[index].rawData = jpeg
-                    mediaItems[index].image = Image(uiImage: squared)
                     mediaItems[index].aspectRatio = CGSize(width: squared.size.width, height: squared.size.height)
+                    if let (thumb, _) = ComposerImageProcessor.syncPreview(from: jpeg, maxPixel: 360) {
+                        mediaItems[index].image = Image(uiImage: UIImage(cgImage: thumb))
+                    } else {
+                        mediaItems[index].image = Image(uiImage: squared)
+                    }
+                    let itemID = id
+                    Task.detached(priority: .utility) {
+                        if let urlString = CodableMediaItem.persistImageData(jpeg) {
+                            CodableMediaItem.recordPersistedURL(urlString, for: itemID)
+                        }
+                    }
                 }
             }
         }
@@ -284,13 +323,23 @@ extension PostComposerViewModel {
         logger.info("PostComposerMedia: Updating edited image at index \(index)")
 
         #if os(iOS)
-        // Convert image to SwiftUI Image
-        mediaItems[index].image = Image(uiImage: newImage)
-
-        // Convert to JPEG data for upload
+        // Convert to JPEG data for upload and update thumbnail preview
         if let jpegData = newImage.jpegData(compressionQuality: 0.9) {
             mediaItems[index].rawData = jpegData
+            let itemID = mediaItems[index].id
+            Task.detached(priority: .utility) {
+                if let urlString = CodableMediaItem.persistImageData(jpegData) {
+                    CodableMediaItem.recordPersistedURL(urlString, for: itemID)
+                }
+            }
+            if let (thumb, _) = ComposerImageProcessor.syncPreview(from: jpegData, maxPixel: 360) {
+                mediaItems[index].image = Image(uiImage: UIImage(cgImage: thumb))
+            } else {
+                mediaItems[index].image = Image(uiImage: newImage)
+            }
             logger.debug("PostComposerMedia: Converted edited image to JPEG - size: \(jpegData.count) bytes")
+        } else {
+            mediaItems[index].image = Image(uiImage: newImage)
         }
 
         // Update aspect ratio

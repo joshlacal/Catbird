@@ -14,8 +14,8 @@ extension PostComposerViewModel {
         // Use performance optimizer for debounced processing
         if let optimizer = performanceOptimizer {
             logger.trace("PostComposerTextProcessing: Using performance optimizer for debounced processing")
-            optimizer.debounceTextProcessing {
-                self.performUpdatePostContent()
+            optimizer.debounceTextProcessing { [weak self] in
+                self?.performUpdatePostContent()
             }
         } else {
             logger.trace("PostComposerTextProcessing: No optimizer, performing immediate update")
@@ -25,11 +25,22 @@ extension PostComposerViewModel {
     
     private func performUpdatePostContent() {
         logger.trace("PostComposerTextProcessing: updatePostContent start - length: \(self.postText.count), cursor: \(self.cursorPosition)")
-        suggestedLanguage = detectLanguage()
+        
+        let trimmedText = postText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedText.count >= 20 && trimmedText != lastDetectedLanguageText {
+            lastDetectedLanguageText = trimmedText
+            let detected = detectLanguage()
+            if detected != suggestedLanguage {
+                suggestedLanguage = detected
+            }
+        } else if trimmedText.isEmpty && suggestedLanguage != nil {
+            suggestedLanguage = nil
+            lastDetectedLanguageText = ""
+        }
         logger.trace("PostComposerTextProcessing: Detected language: \(self.suggestedLanguage?.lang.minimalIdentifier ?? "none")")
 
-        // Parse the text content to get URLs and update mentions
-        let (_, _, parsedFacets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+        // Parse the text content to get URLs and update mentions (skip duplicate language detection)
+        let (_, _, parsedFacets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles, detectLanguage: false)
         logger.trace("PostComposerTextProcessing: Parser results - facets: \(parsedFacets.count), URLs: \(urls.count), manualLinkFacets: \(self.manualLinkFacets.count)")
 
         // Merge in any manually created link facets (from the UIKit editor) so that:
@@ -67,11 +78,7 @@ extension PostComposerViewModel {
             postText = newText
             richAttributedText = nsAttributedText
             
-            // Update AttributedString for iOS 26+ compatibility
-            if #available(iOS 26.0, macOS 15.0, *) {
-                attributedPostText = AttributedString(nsAttributedText)
-                logger.trace("PostComposerTextProcessing: Updated AttributedString for iOS 26+")
-            }
+            // AttributedString is updated on-demand during facet export rather than every keystroke
             
             // Trigger standard post content update
             updatePostContent()
@@ -348,9 +355,9 @@ extension PostComposerViewModel {
                 }
             } else if let optimizer = performanceOptimizer {
                 // Use performance optimizer for debounced URL card loading
-                optimizer.debounceURLDetection(urls: [firstURL]) { urlsToProcess in
-                    Task {
-                        await self.loadURLCardsOptimized(urlsToProcess)
+                optimizer.debounceURLDetection(urls: [firstURL]) { [weak self] urlsToProcess in
+                    Task { [weak self] in
+                        await self?.loadURLCardsOptimized(urlsToProcess)
                     }
                 }
             } else {
@@ -461,10 +468,20 @@ extension PostComposerViewModel {
             var cardResponse = try await URLCardService.fetchURLCard(for: urlString)
             cardResponse.sourceURL = urlString
             urlCards[urlString] = cardResponse
+
+            // Eagerly pre-upload thumbnail so submit doesn't wait (P176)
+            if !cardResponse.image.isEmpty && thumbnailCache[cardResponse.resolvedURL] == nil && inFlightThumbnailUploads[cardResponse.resolvedURL] == nil {
+                let card = cardResponse
+                let key = card.resolvedURL
+                inFlightThumbnailUploads[key] = Task { [weak self] () -> Blob? in
+                    guard let self else { return nil }
+                    await self.uploadAndCacheThumbnail(imageURL: card.image, urlCard: card)
+                    return self.thumbnailCache[key]
+                }
+            }
         } catch {
             logger.error("Failed to load URL card for \(urlString): \(error)")
         }
-        
         isLoadingURLCard = false
     }
     

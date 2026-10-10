@@ -157,6 +157,10 @@ final class ComposerDraftManager {
       guard try model.decodeDraft() == expectedSavedDraft else {
         throw ComposerEditingError.savedDraftChanged
       }
+      // Return early if content did not change, skipping redundant writes, reloads, and pushes (P178)
+      if snapshot.draft == expectedSavedDraft {
+        return savedID
+      }
       try model.apply(snapshot.draft)
       model.touch()
       try context.save()
@@ -485,7 +489,7 @@ struct DraftPostViewModel: Identifiable {
     self.remoteId = draftPost.remoteId
     self.remoteMediaDeviceName = draftPost.remoteMediaDeviceName
     self.draftData = draftPost.draftData
-    if let draft = try? JSONDecoder().decode(PostComposerDraft.self, from: draftData) {
+    if let draft = content {
       let entries = draft.threadEntries
       self.postCount = draft.isThreadMode ? max(1, entries.count) : 1
 

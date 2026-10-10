@@ -216,54 +216,83 @@ extension PlatformImage {
     
     /// Compress image to target size in bytes
     func compressed(maxSizeInBytes: Int = 900_000) -> Data? {
-        var compression: CGFloat = 1.0
-        
         #if os(iOS)
-        var imageData = jpegData(compressionQuality: compression)
-        
-        // Gradually lower quality until we get under target size
-        while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
-            compression -= 0.1
-            imageData = jpegData(compressionQuality: compression)
+        // First try at standard high quality (0.85)
+        if let initial = jpegData(compressionQuality: 0.85), initial.count <= maxSizeInBytes {
+            return initial
         }
         
-        // If we still exceed the size limit, resize the image
-        if let bestData = imageData, bestData.count > maxSizeInBytes {
-            let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(bestData.count))
+        var low: CGFloat = 0.2
+        var high: CGFloat = 0.85
+        var bestData: Data?
+        
+        // Binary search up to 4 iterations instead of linear step-down
+        for _ in 0..<4 {
+            let mid = (low + high) / 2.0
+            if let data = jpegData(compressionQuality: mid) {
+                if data.count <= maxSizeInBytes {
+                    bestData = data
+                    low = mid
+                } else {
+                    high = mid
+                }
+            }
+        }
+        
+        if let bestData {
+            return bestData
+        }
+        
+        // If still exceeds size limit, resize the image dimensions
+        let currentBest = jpegData(compressionQuality: low)
+        if let currentBest, currentBest.count > maxSizeInBytes {
+            let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(currentBest.count))
             let newSize = CGSize(
                 width: imageSize.width * scale,
                 height: imageSize.height * scale
             )
-            
             if let resizedImage = resized(to: newSize) {
                 return resizedImage.jpegData(compressionQuality: 0.7)
             }
         }
-        
-        return imageData
+        return currentBest
         #elseif os(macOS)
-        var imageData = jpegImageData(compressionQuality: compression)
-        
-        // Gradually lower quality until we get under target size
-        while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
-            compression -= 0.1
-            imageData = jpegImageData(compressionQuality: compression)
+        if let initial = jpegImageData(compressionQuality: 0.85), initial.count <= maxSizeInBytes {
+            return initial
         }
         
-        // If we still exceed the size limit, resize the image
-        if let bestData = imageData, bestData.count > maxSizeInBytes {
-            let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(bestData.count))
+        var low: CGFloat = 0.2
+        var high: CGFloat = 0.85
+        var bestData: Data?
+        
+        for _ in 0..<4 {
+            let mid = (low + high) / 2.0
+            if let data = jpegImageData(compressionQuality: mid) {
+                if data.count <= maxSizeInBytes {
+                    bestData = data
+                    low = mid
+                } else {
+                    high = mid
+                }
+            }
+        }
+        
+        if let bestData {
+            return bestData
+        }
+        
+        let currentBest = jpegImageData(compressionQuality: low)
+        if let currentBest, currentBest.count > maxSizeInBytes {
+            let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(currentBest.count))
             let newSize = CGSize(
                 width: imageSize.width * scale,
                 height: imageSize.height * scale
             )
-            
             if let resizedImage = resized(to: newSize) {
                 return resizedImage.jpegImageData(compressionQuality: 0.7)
             }
         }
-        
-        return imageData
+        return currentBest
         #endif
     }
     

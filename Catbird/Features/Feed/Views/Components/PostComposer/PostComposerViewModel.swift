@@ -115,6 +115,11 @@ final class PostComposerViewModel {
   
   /// Cache for uploaded thumbnail blobs by URL
   var thumbnailCache: [String: Blob] = [:]
+  /// In-flight thumbnail upload tasks to avoid duplicate uploads
+  var inFlightThumbnailUploads: [String: Task<Blob?, Never>] = [:]
+  
+  /// Text snapshot for the last language detection pass to prevent repeated NLP runs
+  var lastDetectedLanguageText: String = ""
   
   // MARK: - Mention Properties
   
@@ -1006,6 +1011,14 @@ final class PostComposerViewModel {
     parentRestorationTask?.cancel()
     quoteRestorationTasks.values.forEach { $0.cancel() }
     interactionDefaultsTask?.cancel()
+    parentRestorationTask = nil
+    quoteRestorationTasks.removeAll()
+    interactionDefaultsTask = nil
+    inFlightThumbnailUploads.values.forEach { $0.cancel() }
+    inFlightThumbnailUploads.removeAll()
+    if #available(iOS 16.0, macOS 13.0, *) {
+      _performanceOptimizer?.cancelAll()
+    }
   }
 
   // MARK: - Post Interaction Settings Helper (G40)

@@ -303,65 +303,15 @@ struct PostComposerViewUIKit: View {
 
           // Trailing: Post button with glass effect
           ToolbarItem(placement: .primaryAction) {
-#if compiler(>=6.2)
-            if #available(iOS 26.0, macOS 26.0, *) {
-              Button(action: {
+            ComposerPostToolbarButton(
+              vm: vm,
+              isSubmitting: isSubmitting,
+              hasPendingMediaIntent: hasPendingMediaIntent,
+              action: {
                 closePlusMenu()
                 submitAction(vm: vm)
-              }) {
-                if isSubmitting {
-                  ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(.white)
-                } else {
-                  Image(systemName: "arrow.up")
-                }
               }
-              .disabled(!canSubmit(vm: vm) || isSubmitting)
-              .opacity(isSubmitting ? 0.7 : 1)
-              .buttonStyle(.glassProminent)
-              .keyboardShortcut(.return, modifiers: .command)
-              .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
-            } else {
-              Button(action: {
-                closePlusMenu()
-                submitAction(vm: vm)
-              }) {
-                if isSubmitting {
-                  ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(.white)
-                } else {
-                  Image(systemName: "arrow.up")
-                }
-              }
-              .disabled(!canSubmit(vm: vm) || isSubmitting)
-              .opacity(isSubmitting ? 0.7 : 1)
-              .buttonStyle(.borderedProminent)
-              .buttonBorderShape(.capsule)
-              .keyboardShortcut(.return, modifiers: .command)
-              .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
-            }
-#else
-            Button(action: {
-              closePlusMenu()
-              submitAction(vm: vm)
-            }) {
-              if isSubmitting {
-                ProgressView()
-                  .progressViewStyle(.circular)
-                  .tint(.white)
-              } else {
-                Image(systemName: "arrow.up")
-              }
-            }
-            .disabled(!canSubmit(vm: vm) || isSubmitting)
-            .opacity(isSubmitting ? 0.7 : 1)
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.capsule)
-            .keyboardShortcut(.return, modifiers: .command)
-            .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
-#endif
+            )
           }
         }
         .navigationDestination(for: NavigationDestination.self) { destination in
@@ -402,16 +352,12 @@ struct PostComposerViewUIKit: View {
             }
           }
           ToolbarItem(placement: .primaryAction) {
-            Button(action: { submitAction(vm: vm) }) {
-              if isSubmitting {
-                ProgressView().progressViewStyle(.circular)
-              } else {
-                Image(systemName: "arrow.up")
-              }
-            }
-            .disabled(!canSubmit(vm: vm) || isSubmitting)
-            .keyboardShortcut(.return, modifiers: .command)
-            .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+            ComposerPostToolbarButton(
+              vm: vm,
+              isSubmitting: isSubmitting,
+              hasPendingMediaIntent: hasPendingMediaIntent,
+              action: { submitAction(vm: vm) }
+            )
           }
         }
         .navigationDestination(for: NavigationDestination.self) { destination in
@@ -556,13 +502,8 @@ struct PostComposerViewUIKit: View {
       ? AnyLayout(HStackLayout(spacing: 8))
       : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
     return layout {
-      ComposerChipsStrip(
-        outlineTags: vm.outlineTags,
-        selectedLanguages: vm.selectedLanguages,
-        selectedLabels: vm.selectedLabels,
-        interactionSettings: vm.interactionSettings,
-        suggestedLanguage: vm.suggestedLanguage,
-        hasText: !vm.postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      ComposerChipsStripLeaf(
+        vm: vm,
         onRemoveTag: { tag in
           closePlusMenu()
           vm.outlineTags.removeAll { $0 == tag }
@@ -582,18 +523,15 @@ struct PostComposerViewUIKit: View {
         onEditLabels: {
           closePlusMenu()
           showingLabelSelector = true
-        },
-        showsInteractionSettings: !vm.isReply
+        }
       )
       .frame(maxWidth: compactReply ? .infinity : nil, alignment: .leading)
 
-      ComposerAccessoryBar(
+      ComposerAccessoryBarLeaf(
+        vm: vm,
         isPlusMenuOpen: $showingPlusMenu,
-        characterCount: vm.postText.count,
         allowTenor: appState.appSettings.externalMediaConsent(for: .klipy) != .hide,
         isAddToThreadDisabled: hasPendingMediaIntent,
-        showsThreadgate: !vm.isReply,
-        threadgateValue: vm.interactionSettings.summary,
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
           onPhotos: { presentPhotoPicker(vm: vm) },
@@ -825,5 +763,118 @@ struct PostComposerViewUIKit: View {
 
   func hasContent(vm: PostComposerViewModel) -> Bool {
     return vm.hasMeaningfulDraftContent || hasPendingMediaIntent
+  }
+}
+// MARK: - Isolated Keystroke Leaf Views (P175)
+
+private struct ComposerPostToolbarButton: View {
+  let vm: PostComposerViewModel
+  let isSubmitting: Bool
+  let hasPendingMediaIntent: Bool
+  let action: () -> Void
+
+  private var canSubmitPost: Bool {
+    vm.submitValidationState.canSubmit && !isSubmitting && !hasPendingMediaIntent
+  }
+
+  var body: some View {
+    #if compiler(>=6.2)
+    if #available(iOS 26.0, macOS 26.0, *) {
+      Button(action: action) {
+        if isSubmitting {
+          ProgressView()
+            .progressViewStyle(.circular)
+            .tint(.white)
+        } else {
+          Image(systemName: "arrow.up")
+        }
+      }
+      .disabled(!canSubmitPost || isSubmitting)
+      .opacity(isSubmitting ? 0.7 : 1)
+      .buttonStyle(.glassProminent)
+      .keyboardShortcut(.return, modifiers: .command)
+      .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+    } else {
+      Button(action: action) {
+        if isSubmitting {
+          ProgressView()
+            .progressViewStyle(.circular)
+            .tint(.white)
+        } else {
+          Image(systemName: "arrow.up")
+        }
+      }
+      .disabled(!canSubmitPost || isSubmitting)
+      .opacity(isSubmitting ? 0.7 : 1)
+      .buttonStyle(.borderedProminent)
+      .buttonBorderShape(.capsule)
+      .keyboardShortcut(.return, modifiers: .command)
+      .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+    }
+    #else
+    Button(action: action) {
+      if isSubmitting {
+        ProgressView()
+          .progressViewStyle(.circular)
+          .tint(.white)
+      } else {
+        Image(systemName: "arrow.up")
+      }
+    }
+    .disabled(!canSubmitPost || isSubmitting)
+    .opacity(isSubmitting ? 0.7 : 1)
+    .buttonStyle(.borderedProminent)
+    .buttonBorderShape(.capsule)
+    .keyboardShortcut(.return, modifiers: .command)
+    .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+    #endif
+  }
+}
+
+private struct ComposerChipsStripLeaf: View {
+  let vm: PostComposerViewModel
+  let onRemoveTag: (String) -> Void
+  let onToggleLanguage: (LanguageCodeContainer) -> Void
+  let onApplySuggestedLanguage: () -> Void
+  let onEditInteractionSettings: () -> Void
+  let onEditLabels: () -> Void
+
+  var body: some View {
+    ComposerChipsStrip(
+      outlineTags: vm.outlineTags,
+      selectedLanguages: vm.selectedLanguages,
+      selectedLabels: vm.selectedLabels,
+      interactionSettings: vm.interactionSettings,
+      suggestedLanguage: vm.suggestedLanguage,
+      hasText: !vm.postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      onRemoveTag: onRemoveTag,
+      onToggleLanguage: onToggleLanguage,
+      onApplySuggestedLanguage: onApplySuggestedLanguage,
+      onEditInteractionSettings: onEditInteractionSettings,
+      onEditLabels: onEditLabels,
+      showsInteractionSettings: !vm.isReply
+    )
+  }
+}
+
+private struct ComposerAccessoryBarLeaf: View {
+  let vm: PostComposerViewModel
+  @Binding var isPlusMenuOpen: Bool
+  let allowTenor: Bool
+  let isAddToThreadDisabled: Bool
+  let languageValue: String
+  let actions: ComposerBarActions
+
+  var body: some View {
+    ComposerAccessoryBar(
+      isPlusMenuOpen: $isPlusMenuOpen,
+      characterCount: vm.postText.count,
+      allowTenor: allowTenor,
+      isAddToThreadDisabled: isAddToThreadDisabled,
+      showsThreadgate: !vm.isReply,
+      threadgateValue: vm.interactionSettings.summary,
+      languageValue: languageValue,
+      actions: actions
+    )
   }
 }

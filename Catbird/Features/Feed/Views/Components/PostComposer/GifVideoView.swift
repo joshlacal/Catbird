@@ -12,7 +12,7 @@ struct GifVideoView: View {
     @State private var player: AVPlayer?
     @State private var hasError = false
     @State private var isVisibleOnScreen = false
-    private let visibilityThreshold: Double = 0.2
+    private let visibilityThreshold: Double = 0.5
     @State private var observerToken: (any NSObjectProtocol)?
     
     var body: some View {
@@ -22,12 +22,15 @@ struct GifVideoView: View {
                     // Fallback to static image if video fails
                     fallbackImageView
                 } else if let player = player {
-                    // Use existing PlayerLayerView for proper video rendering
-                    PlayerLayerView(
-                        player: player,
-                        gravity: .resizeAspectFill,
-                        shouldLoop: true
-                    )
+                    // Use poster under PlayerLayerView for instant display (P179)
+                    ZStack {
+                        fallbackImageView
+                        PlayerLayerView(
+                            player: player,
+                            gravity: .resizeAspectFill,
+                            shouldLoop: true
+                        )
+                    }
                     .aspectRatio(aspectRatio, contentMode: .fit)
                     .clipped()
                 } else {
@@ -185,15 +188,25 @@ struct GifVideoView: View {
 
     /// Get the best video URL for animation from Tenor's media formats
     private var bestVideoURL: URL? {
-        // Priority: loopedmp4 > mp4 > tinymp4 > nanomp4
-        if let loopedMP4 = gif.media_formats.loopedmp4 {
-            return URL(string: loopedMP4.url)
-        } else if let mp4 = gif.media_formats.mp4 {
-            return URL(string: mp4.url)
+        // Never use loopedmp4 in grid cells; PlayerLayerView already loops.
+        // Choose smallest adequate MP4 rendition whose pixel width fits the cell (P179)
+        func formatWidth(_ item: TenorMediaItem?) -> Int {
+            item?.dims.first ?? 0
+        }
+        
+        let targetWidth = 360
+        if let nanoMP4 = gif.media_formats.nanomp4, formatWidth(nanoMP4) >= targetWidth {
+            return URL(string: nanoMP4.url)
+        } else if let tinyMP4 = gif.media_formats.tinymp4, formatWidth(tinyMP4) >= targetWidth {
+            return URL(string: tinyMP4.url)
         } else if let tinyMP4 = gif.media_formats.tinymp4 {
             return URL(string: tinyMP4.url)
+        } else if let mp4 = gif.media_formats.mp4 {
+            return URL(string: mp4.url)
         } else if let nanoMP4 = gif.media_formats.nanomp4 {
             return URL(string: nanoMP4.url)
+        } else if let loopedMP4 = gif.media_formats.loopedmp4 {
+            return URL(string: loopedMP4.url)
         }
         return nil
     }

@@ -616,7 +616,7 @@ struct AnimatedCategoryGifView: View {
     let gif: TenorGif
     @State private var player: AVPlayer?
     @State private var hasError = false
-    
+    @State private var observerTokens: [any NSObjectProtocol] = []
     var body: some View {
         Group {
             if hasError {
@@ -663,18 +663,18 @@ struct AnimatedCategoryGifView: View {
         avPlayer.isMuted = true // GIFs are silent
         avPlayer.actionAtItemEnd = .none
         
-        // Set up looping notification
-        NotificationCenter.default.addObserver(
+        // Set up looping notification with weak capture to prevent leak (P099)
+        let loopToken = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: playerItem,
             queue: .main
-        ) { _ in
-            avPlayer.seek(to: .zero)
-            avPlayer.play()
+        ) { [weak avPlayer] _ in
+            avPlayer?.seek(to: .zero)
+            avPlayer?.play()
         }
         
         // Monitor for player errors
-        NotificationCenter.default.addObserver(
+        let errorToken = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: playerItem,
             queue: .main
@@ -682,6 +682,7 @@ struct AnimatedCategoryGifView: View {
             self.hasError = true
         }
         
+        self.observerTokens = [loopToken, errorToken]
         self.player = avPlayer
         
         // Start playing immediately
@@ -689,9 +690,12 @@ struct AnimatedCategoryGifView: View {
     }
     
     private func cleanupPlayer() {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        observerTokens.removeAll()
         player?.pause()
         player = nil
-        NotificationCenter.default.removeObserver(self)
     }
     
     /// Get the best video URL for category animation (prefer smaller sizes for performance)

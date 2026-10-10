@@ -98,10 +98,10 @@ actor VideoUploadCheckpointStore {
 
     let snapshotName = UUID().uuidString + ".video"
     let destination = directory.appendingPathComponent(snapshotName)
-    // Copy in fixed-size buffers, also proving the exact bytes did not change during import.
-    let copied = try copy(source: sourceURL, destination: destination, offset: 0, count: original.count)
-    guard copied.digest == original.digest,
-      try fingerprint(sourceURL).digest == original.digest
+    // APFS copy-on-write clonefile avoids duplicating disk space and memory (P177)
+    try fileManager.copyItem(at: sourceURL, to: destination)
+    let copied = try fingerprint(destination)
+    guard copied.digest == original.digest, copied.count == original.count
     else { throw VideoUploadFileError.sourceChanged }
     try fileManager.setAttributes([.posixPermissions: 0o400], ofItemAtPath: destination.path)
     let checkpoint = VideoUploadCheckpoint(

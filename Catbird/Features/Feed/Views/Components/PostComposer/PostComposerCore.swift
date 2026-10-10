@@ -1,5 +1,6 @@
 import Foundation
 import os
+import OSLog
 import Petrel
 import SwiftUI
 #if os(iOS)
@@ -402,19 +403,35 @@ extension PostComposerViewModel {
                         var mediaItem = MediaItem()
                         mediaItem.rawData = data
 
-                        #if os(iOS)
-                        let platformImage = UIImage(data: data)
-                        if let platformImage = platformImage {
-                            mediaItem.image = Image(uiImage: platformImage)
-                            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+                        let itemID = mediaItem.id
+                        Task.detached(priority: .utility) {
+                            if let urlString = CodableMediaItem.persistImageData(data) {
+                                CodableMediaItem.recordPersistedURL(urlString, for: itemID)
+                            }
                         }
-                        #elseif os(macOS)
-                        let platformImage = NSImage(data: data)
-                        if let platformImage = platformImage {
-                            mediaItem.image = Image(nsImage: platformImage)
-                            mediaItem.aspectRatio = platformImage.size
+                        if let (thumbnail, originalSize) = await ComposerImageProcessor.makePreview(from: data, maxPixel: 360) {
+                            #if os(iOS)
+                            mediaItem.image = Image(uiImage: UIImage(cgImage: thumbnail))
+                            #elseif os(macOS)
+                            let rep = NSBitmapImageRep(cgImage: thumbnail)
+                            let nsImage = NSImage(size: NSSize(width: thumbnail.width, height: thumbnail.height))
+                            nsImage.addRepresentation(rep)
+                            mediaItem.image = Image(nsImage: nsImage)
+                            #endif
+                            mediaItem.aspectRatio = originalSize
+                        } else {
+                            #if os(iOS)
+                            if let platformImage = UIImage(data: data) {
+                                mediaItem.image = Image(uiImage: platformImage)
+                                mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+                            }
+                            #elseif os(macOS)
+                            if let platformImage = NSImage(data: data) {
+                                mediaItem.image = Image(nsImage: platformImage)
+                                mediaItem.aspectRatio = platformImage.size
+                            }
+                            #endif
                         }
-                        #endif
                         mediaItem.isLoading = false
 
                         if isDataAnimatedGIF(data) {
@@ -435,19 +452,35 @@ extension PostComposerViewModel {
         var mediaItem = MediaItem()
         mediaItem.rawData = genmojiData
 
-        #if os(iOS)
-        let platformImage = UIImage(data: genmojiData)
-        if let platformImage = platformImage {
-            mediaItem.image = Image(uiImage: platformImage)
-            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+        let itemID = mediaItem.id
+        Task.detached(priority: .utility) {
+            if let urlString = CodableMediaItem.persistImageData(genmojiData) {
+                CodableMediaItem.recordPersistedURL(urlString, for: itemID)
+            }
         }
-        #elseif os(macOS)
-        let platformImage = NSImage(data: genmojiData)
-        if let platformImage = platformImage {
-            mediaItem.image = Image(nsImage: platformImage)
-            mediaItem.aspectRatio = platformImage.size
+        if let (thumbnail, originalSize) = await ComposerImageProcessor.makePreview(from: genmojiData, maxPixel: 360) {
+            #if os(iOS)
+            mediaItem.image = Image(uiImage: UIImage(cgImage: thumbnail))
+            #elseif os(macOS)
+            let rep = NSBitmapImageRep(cgImage: thumbnail)
+            let nsImage = NSImage(size: NSSize(width: thumbnail.width, height: thumbnail.height))
+            nsImage.addRepresentation(rep)
+            mediaItem.image = Image(nsImage: nsImage)
+            #endif
+            mediaItem.aspectRatio = originalSize
+        } else {
+            #if os(iOS)
+            if let platformImage = UIImage(data: genmojiData) {
+                mediaItem.image = Image(uiImage: platformImage)
+                mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+            }
+            #elseif os(macOS)
+            if let platformImage = NSImage(data: genmojiData) {
+                mediaItem.image = Image(nsImage: platformImage)
+                mediaItem.aspectRatio = platformImage.size
+            }
+            #endif
         }
-        #endif
         mediaItem.isLoading = false
 
         let source = MediaSource.genmojiConversion(genmojiData)
@@ -502,6 +535,9 @@ extension PostComposerViewModel {
 
     @discardableResult
     func createThread() async throws -> Bool {
+        let submitSignpost = PerformanceSignposts.beginInterval("ComposerSubmit")
+        defer { PerformanceSignposts.endInterval("ComposerSubmit", submitSignpost) }
+
         try appState.ageAccess.require(.generalContent)
         guard !isSubmissionActive else { throw editingOwnershipError() }
         try ensureDraftReferencesReadyForPosting()
@@ -617,11 +653,7 @@ extension PostComposerViewModel {
     }
 
     private func createImagesEmbedForEntry(_ entry: ThreadEntry) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        // Temporarily set mediaItems for image upload
-        let originalItems = mediaItems
-        mediaItems = entry.mediaItems
-        defer { mediaItems = originalItems }
-        return try await createImagesEmbed()
+        return try await createImagesEmbed(items: entry.mediaItems)
     }
 
     func createVideoEmbedForEntry(_ entry: ThreadEntry) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
@@ -661,6 +693,9 @@ extension PostComposerViewModel {
             endSubmission()
         }
 
+        let submitSignpost = PerformanceSignposts.beginInterval("ComposerSubmit")
+        defer { PerformanceSignposts.endInterval("ComposerSubmit", submitSignpost) }
+
         beginSubmission()
 
         // Start MetricKit tracking for post composition
@@ -669,11 +704,9 @@ extension PostComposerViewModel {
         }
 
         logger.info("Creating post with text: \(self.postText)")
-        // Process facets (mentions, links, etc.)
+        // Process facets and embeds concurrently
         logger.debug("Processing facets...")
-        let facets = await processFacets()
-        try appState.ageAccess.require(.generalContent)
-        logger.debug("Processed \(facets.count) facets")
+        async let facetsTask = processFacets()
 
         // Create embed if needed
         var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
@@ -721,7 +754,9 @@ extension PostComposerViewModel {
         } else {
             logger.debug("No embed needed")
         }
-
+        let facets = await facetsTask
+        try appState.ageAccess.require(.generalContent)
+        logger.debug("Processed \(facets.count) facets")
         let selfLabels = Self.selfLabels(from: selectedLabels)
 
         let threadgateRules = postingThreadgateRules()
@@ -770,26 +805,17 @@ extension PostComposerViewModel {
 
     /// Pre-upload thumbnails for all URL cards that don't have them yet
     @MainActor
-    func preUploadThumbnails() async {
+    func preUploadThumbnails() {
         let urlCardsToProcess = urlCards.values.filter {
-            !$0.image.isEmpty && thumbnailCache[$0.resolvedURL] == nil && $0.thumbnailBlob == nil
+            !$0.image.isEmpty && thumbnailCache[$0.resolvedURL] == nil && $0.thumbnailBlob == nil && inFlightThumbnailUploads[$0.resolvedURL] == nil
         }
 
-        // Process thumbnails in background to avoid blocking UI
-        if #available(iOS 16.0, macOS 13.0, *), let optimizer = performanceOptimizer {
-            for urlCard in urlCardsToProcess {
-                do {
-                    try await optimizer.executeThumbnailUpload {
-                        await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-                    }
-                } catch {
-                    logger.error("Failed to upload thumbnail for \(urlCard.resolvedURL): \(error)")
-                }
-            }
-        } else {
-            // Fallback for older OS versions
-            for urlCard in urlCardsToProcess {
-                await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+        for urlCard in urlCardsToProcess {
+            let key = urlCard.resolvedURL
+            inFlightThumbnailUploads[key] = Task { [weak self] () -> Blob? in
+                guard let self else { return nil }
+                await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+                return self.thumbnailCache[key]
             }
         }
     }
@@ -1116,10 +1142,19 @@ extension PostComposerViewModel {
         let cacheKey = urlCard.resolvedURL
         var thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]
 
-        // If no thumbnail exists but image URL is available, try to upload synchronously
+        // If no thumbnail exists but image URL is available, await in-flight upload or start one
         if thumbBlob == nil && !urlCard.image.isEmpty {
-            await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-            thumbBlob = thumbnailCache[cacheKey]
+            if let inFlight = inFlightThumbnailUploads[cacheKey] {
+                thumbBlob = await inFlight.value
+            } else {
+                let task = Task { [weak self] () -> Blob? in
+                    guard let self else { return nil }
+                    await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+                    return self.thumbnailCache[cacheKey]
+                }
+                inFlightThumbnailUploads[cacheKey] = task
+                thumbBlob = await task.value
+            }
         }
 
         let external = AppBskyEmbedExternal.External(
@@ -1134,7 +1169,7 @@ extension PostComposerViewModel {
     }
 
     /// Uploads thumbnail for external embed and caches the blob reference
-    private func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async {
+    func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async {
         guard let client = appState.atProtoClient,
               let url = URL(string: imageURL) else {
             logger.warning("Cannot upload thumbnail: invalid URL or missing client")
@@ -1212,68 +1247,8 @@ extension PostComposerViewModel {
 
     /// Resizes image data to fit within specified byte limit
     private func resizeImageData(_ data: Data, maxSizeBytes: Int) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                guard let image = PlatformImage(data: data) else {
-                    continuation.resume(throwing: ThumbnailUploadError.invalidImageData)
-                    return
-                }
-
-                var compressionQuality: CGFloat = 1.0
-                var resizedData = data
-
-                // Try different compression qualities
-                while resizedData.count > maxSizeBytes && compressionQuality > 0.1 {
-                    compressionQuality -= 0.1
-
-                    #if os(iOS)
-                    if let compressed = image.jpegData(compressionQuality: compressionQuality) {
-                        resizedData = compressed
-                    }
-                    #elseif os(macOS)
-                    if let tiffData = image.tiffRepresentation,
-                       let bitmapRep = NSBitmapImageRep(data: tiffData),
-                       let compressed = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: compressionQuality]) {
-                        resizedData = compressed
-                    }
-                    #endif
-                }
-
-                // If still too large, resize the image dimensions
-                if resizedData.count > maxSizeBytes {
-                    let scale = sqrt(Double(maxSizeBytes) / Double(resizedData.count))
-                    let newSize = CGSize(
-                        width: image.size.width * scale,
-                        height: image.size.height * scale
-                    )
-
-                    #if os(iOS)
-                    UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
-                    image.draw(in: CGRect(origin: .zero, size: newSize))
-                    let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
-                    UIGraphicsEndImageContext()
-
-                    if let resizedImage = resizedImage,
-                       let finalData = resizedImage.jpegData(compressionQuality: 0.8) {
-                        resizedData = finalData
-                    }
-                    #elseif os(macOS)
-                    let resizedImage = NSImage(size: newSize, flipped: false) { rect in
-                        image.draw(in: rect)
-                        return true
-                    }
-
-                    if let tiffData = resizedImage.tiffRepresentation,
-                       let bitmapRep = NSBitmapImageRep(data: tiffData),
-                       let finalData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
-                        resizedData = finalData
-                    }
-                    #endif
-                }
-
-                continuation.resume(returning: resizedData)
-            }
-        }
+        let (processed, _) = try await ComposerImageProcessor.prepareImageForUpload(data, maxPixelSize: 1000, maxBytes: maxSizeBytes)
+        return processed
     }
 
     // MARK: - Facet Processing
@@ -1356,65 +1331,67 @@ extension PostComposerViewModel {
         for mentions: [(handle: String, range: NSRange)],
         in text: String
     ) async -> [AppBskyRichtextFacet] {
-        guard let client = appState.atProtoClient else { return [] }
+        guard let client = appState.atProtoClient, !mentions.isEmpty else { return [] }
 
-        var newFacets: [AppBskyRichtextFacet] = []
+        return await withTaskGroup(of: (AppBskyRichtextFacet?, String, AppBskyActorDefs.ProfileViewBasic?).self) { group in
+            for (handle, range) in mentions {
+                group.addTask { [client] in
+                    do {
+                        let params = AppBskyActorSearchActorsTypeahead.Parameters(q: handle, limit: 1)
+                        let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
 
-        for (handle, range) in mentions {
-            do {
-                // Try to resolve the profile
-                let params = AppBskyActorSearchActorsTypeahead.Parameters(q: handle, limit: 1)
-                let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
+                        if responseCode >= 200 && responseCode < 300,
+                           let response = searchResponse,
+                           let profile = response.actors.first,
+                           profile.handle.description.lowercased() == handle.lowercased() {
 
-                if responseCode >= 200 && responseCode < 300,
-                   let response = searchResponse,
-                   let profile = response.actors.first,
-                   profile.handle.description.lowercased() == handle.lowercased() {
+                            let profileBasic = AppBskyActorDefs.ProfileViewBasic(
+                                did: profile.did,
+                                handle: profile.handle,
+                                displayName: profile.displayName,
+                                pronouns: profile.pronouns, avatar: profile.avatar,
+                                associated: profile.associated,
+                                viewer: profile.viewer,
+                                labels: profile.labels,
+                                createdAt: profile.createdAt,
+                                verification: profile.verification,
+                                status: profile.status,
+                                debug: nil
+                            )
 
-                    // Store resolved profile for future use
-                    let profileBasic = AppBskyActorDefs.ProfileViewBasic(
-                        did: profile.did,
-                        handle: profile.handle,
-                        displayName: profile.displayName,
-                        pronouns: profile.pronouns, avatar: profile.avatar,
-                        associated: profile.associated,
-                        viewer: profile.viewer,
-                        labels: profile.labels,
-                        createdAt: profile.createdAt,
-                        verification: profile.verification,
-                        status: profile.status,
-                        debug: nil
+                            let byteRange = await MainActor.run {
+                                self.calculateByteRange(for: range, in: text)
+                            }
+                            let mention = AppBskyRichtextFacet.Mention(did: profile.did)
+                            let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
 
-                    )
-
-                    await MainActor.run {
-                        resolvedProfiles[handle] = profileBasic
+                            let facet = AppBskyRichtextFacet(
+                                index: AppBskyRichtextFacet.ByteSlice(
+                                    byteStart: byteRange.location,
+                                    byteEnd: byteRange.location + byteRange.length
+                                ),
+                                features: [feature]
+                            )
+                            return (facet, handle, profileBasic)
+                        }
+                    } catch {
+                        // ignore resolution failure
                     }
-
-                    // Create mention facet
-                    let byteRange = calculateByteRange(for: range, in: text)
-                    let mention = AppBskyRichtextFacet.Mention(did: profile.did)
-                    let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
-
-                    let facet = AppBskyRichtextFacet(
-                        index: AppBskyRichtextFacet.ByteSlice(
-                            byteStart: byteRange.location,
-                            byteEnd: byteRange.location + byteRange.length
-                        ),
-                        features: [feature]
-                    )
-                    newFacets.append(facet)
-
-                    logger.debug("PostComposer: Successfully resolved mention @\(handle) -> \(profile.did.didString())")
-                } else {
-                    logger.debug("PostComposer: Could not resolve mention @\(handle)")
+                    return (nil, handle, nil)
                 }
-            } catch {
-                logger.error("PostComposer: Failed to resolve mention @\(handle): \(error)")
             }
-        }
 
-        return newFacets
+            var newFacets: [AppBskyRichtextFacet] = []
+            for await (facet, handle, profileBasic) in group {
+                if let profileBasic {
+                    self.resolvedProfiles[handle] = profileBasic
+                }
+                if let facet {
+                    newFacets.append(facet)
+                }
+            }
+            return newFacets
+        }
     }
 
     private func calculateByteRange(for range: NSRange, in text: String) -> NSRange {

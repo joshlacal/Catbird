@@ -472,9 +472,8 @@ extension PostComposerViewUIKit {
 
         Spacer(minLength: 8)
 
-        // Trailing: character counter
-        CharacterLimitIndicatorWrapper(currentCount: vm.postText.count)
-          .layoutPriority(1)  // Higher priority to ensure visibility
+        // Trailing: character counter isolated in leaf view (P175)
+        ActiveEntryCharacterCounterLeaf(vm: vm)
       }
 
       submitValidationMessageView(vm: vm)
@@ -550,5 +549,15 @@ extension PostComposerViewUIKit {
         .layoutPriority(1)  // Higher priority to ensure visibility
     }
     .padding(.horizontal, 16)
+  }
+}
+// MARK: - Isolated Counter Leaf View (P175)
+
+private struct ActiveEntryCharacterCounterLeaf: View {
+  let vm: PostComposerViewModel
+
+  var body: some View {
+    CharacterLimitIndicatorWrapper(currentCount: vm.postText.count)
+      .layoutPriority(1)
   }
 }

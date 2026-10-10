@@ -61,14 +61,17 @@ final class PostComposerPerformanceOptimizer {
     func debounceTextProcessing(operation: @escaping () -> Void) {
         // Cancel previous work item
         textProcessingWorkItem?.cancel()
+        textProcessingWorkItem = nil
         
-        // Create new work item
-        let workItem = DispatchWorkItem {
+        // Create new work item with weak capture to break retain cycle
+        let workItem = DispatchWorkItem { [weak self] in
             let startTime = CFAbsoluteTimeGetCurrent()
             operation()
             let duration = CFAbsoluteTimeGetCurrent() - startTime
             
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.textProcessingWorkItem = nil
                 self.performanceMetrics.recordTextProcessingTime(duration)
                 if duration > 0.1 {
                     self.logger.warning("Slow text processing: \(duration)s")
@@ -84,9 +87,11 @@ final class PostComposerPerformanceOptimizer {
     func debounceURLDetection(urls: [String], operation: @escaping ([String]) -> Void) {
         // Cancel previous work item
         urlDetectionWorkItem?.cancel()
+        urlDetectionWorkItem = nil
         
-        // Create new work item
-        let workItem = DispatchWorkItem {
+        // Create new work item with weak capture to break retain cycle
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
             let startTime = CFAbsoluteTimeGetCurrent()
             
             // Filter out URLs that are already being processed
@@ -97,7 +102,9 @@ final class PostComposerPerformanceOptimizer {
             }
             
             let duration = CFAbsoluteTimeGetCurrent() - startTime
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.urlDetectionWorkItem = nil
                 self.performanceMetrics.recordURLDetectionTime(duration)
             }
         }
@@ -229,17 +236,20 @@ final class PostComposerPerformanceOptimizer {
     private func handleMemoryPressure() {
         logger.info("Handling memory pressure - clearing caches")
         
-        // Cancel pending work items
+        // Cancel pending work items and clear queues
+        cancelAll()
+        // Reset metrics
+        performanceMetrics = PerformanceMetrics()
+    }
+    /// Cancel all in-flight work items and clear queues (called on composer dismiss or dealloc)
+    func cancelAll() {
         urlDetectionWorkItem?.cancel()
+        urlDetectionWorkItem = nil
         textProcessingWorkItem?.cancel()
-        
-        // Clear request queues
+        textProcessingWorkItem = nil
         urlCardRequestQueue.removeAll()
         activeURLCardRequests.removeAll()
         activeRequestCount = 0
-        
-        // Reset metrics
-        performanceMetrics = PerformanceMetrics()
     }
     
     /// Check if we should limit operations due to memory pressure

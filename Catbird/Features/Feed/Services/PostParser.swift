@@ -89,8 +89,12 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
 }
 
 struct PostParser {
+  private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
   static func parsePostContent(
-    _ content: String, resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic]
+    _ content: String,
+    resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:],
+    detectLanguage shouldDetectLanguage: Bool = false
   ) -> (text: String, hashtags: [String], facets: [AppBskyRichtextFacet], urls: [String], detectedLanguage: String?) {
     var hashtags: [String] = []
     var facets: [AppBskyRichtextFacet] = []
@@ -189,8 +193,7 @@ struct PostParser {
     }
 
     // Add URL detection
-    let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-    if let detector = detector {
+    if let detector = Self.linkDetector {
       let matches = detector.matches(
         in: content, options: [], range: NSRange(location: 0, length: content.utf16.count))
 
@@ -239,8 +242,12 @@ struct PostParser {
     }
 
     // Detect language
-    let detectedLanguage = LanguageDetector.shared.detectLanguage(for: content)
-
+    let detectedLanguage: String?
+    if shouldDetectLanguage {
+      detectedLanguage = LanguageDetector.shared.detectLanguage(for: content)
+    } else {
+      detectedLanguage = nil
+    }
     return (content, hashtags, facets, urls, detectedLanguage)
   }
 }
