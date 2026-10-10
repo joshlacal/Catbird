@@ -172,7 +172,7 @@ public struct VideoFeedView: View {
       isVisible = false
       initialLoadRequestID = nil
       pagination.cancel()
-      playerPool.cleanup()
+      playerPool.pauseAll()
     }
   }
 
@@ -247,7 +247,6 @@ public struct VideoFeedView: View {
     if activeItemID == nil { activeItemID = items.first?.id }
     self.cursor = nextCursor
     self.hasMore = nextCursor != nil && nextCursor != currentCursor && !feedPosts.isEmpty
-    updatePrewarming(for: activeIndex)
   }
 
   private func fetchFeedPage(cursor: String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
@@ -261,7 +260,10 @@ public struct VideoFeedView: View {
     // Items the policy filters from lists are skipped (`contentList` filter).
     let visible = refreshed.filter { !$0.moderation(policy: moderationPolicy).isFilteredFromList }
     let visibleIdentities = Set(visible.map(\.revealIdentity))
-    revealedItems = revealedItems.filter { visibleIdentities.contains($0.key) }
+    let cleaned = revealedItems.filter { visibleIdentities.contains($0.key) }
+    if cleaned != revealedItems {
+      revealedItems = cleaned
+    }
     items = visible
     if !items.contains(where: { $0.id == activeItemID }) {
       activeItemID = items.first?.id
@@ -285,8 +287,10 @@ public struct VideoFeedView: View {
 
   /// The viewer tapped Show on the cover.
   private func revealItem(_ item: VideoFeedItem) {
-    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
-    revealedItems[item.revealIdentity] = item.moderation(policy: moderationPolicy).playback.blurs.map(\.key)
+    guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+    let blurs = item.moderation(policy: moderationPolicy).playback.blurs.map(\.key)
+    guard revealedItems[item.revealIdentity] != blurs else { return }
+    revealedItems[item.revealIdentity] = blurs
     if item.id == activeItemID {
       playbackIntent.select(item.id)
       playbackIntent.setPlaybackRequested(true, for: item.id)
@@ -300,21 +304,19 @@ public struct VideoFeedView: View {
   /// it. A pending request resumes, while an explicit pause stays paused; the
   /// snapshot check rejects old preference callbacks.
   private func playerDidAppear(for item: VideoFeedItem) {
-    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
+    guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
     if item.id == activeItemID {
       playbackIntent.select(item.id)
       updatePlaybackForActiveIndex(index)
-    } else {
-      updatePrewarming(for: activeIndex)
     }
     contentVisibilityObserver?(item)
   }
 
-  /// The viewer tapped Hide, or the player detached (scrolled out of the
-  /// attached range, or covered by a new policy).
+  /// The viewer tapped Hide.
   private func concealItem(_ item: VideoFeedItem) {
+    guard revealedItems[item.revealIdentity] != nil else { return }
     revealedItems[item.revealIdentity] = nil
-    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }),
+    guard let index = items.firstIndex(where: { $0.id == item.id }),
           index == activeIndex, !isItemEligibleForPlayback(items[index]) else { return }
     playerPool.pauseAll()
   }
@@ -336,7 +338,7 @@ public struct VideoFeedView: View {
 
   private func togglePlayback(for item: VideoFeedItem) {
     guard isVisible, scenePhase == .active, item.id == activeItemID,
-          items.contains(where: { $0.revealIdentity == item.revealIdentity }),
+          items.contains(where: { $0.id == item.id }),
           isItemEligibleForPlayback(item) else { return }
     if !playerPool.wantsPlayback && playerPool.playbackState == .failed {
       retryPlayback(for: item)
@@ -349,7 +351,7 @@ public struct VideoFeedView: View {
 
   private func retryPlayback(for item: VideoFeedItem) {
     guard isVisible, scenePhase == .active, item.id == activeItemID,
-          items.contains(where: { $0.revealIdentity == item.revealIdentity }),
+          items.contains(where: { $0.id == item.id }),
           isItemEligibleForPlayback(item) else { return }
     playbackIntent.select(item.id)
     playbackIntent.setPlaybackRequested(true, for: item.id)
@@ -357,10 +359,12 @@ public struct VideoFeedView: View {
   }
 
   private func updatePrewarming(for index: Int) {
-    guard isVisible, scenePhase == .active else { return }
-    let prewarmTargets = items.enumerated().compactMap { (offset, element) -> (index: Int, url: URL)? in
-      guard isItemEligibleForPlayback(element) else { return nil }
-      return (index: offset, url: element.playlistURL)
+    guard isVisible, scenePhase == .active, !items.isEmpty, items.indices.contains(index) else { return }
+    let window = max(0, index - 1)...min(items.count - 1, index + 1)
+    let prewarmTargets = window.compactMap { i -> (index: Int, url: URL)? in
+      let item = items[i]
+      guard isItemEligibleForPlayback(item) else { return nil }
+      return (index: i, url: item.playlistURL)
     }
     playerPool.prewarm(activeIndex: index, items: prewarmTargets)
   }
@@ -517,7 +521,6 @@ private struct VideoFeedItemView: View {
                 pausesOnDismantle: false
               )
               .onAppear(perform: onContentVisible)
-              .onDisappear(perform: onConceal)
             }
 
             Button(action: onPlaybackToggle) {
@@ -576,7 +579,10 @@ private struct VideoFeedItemView: View {
     .onChange(of: isActive) { _, active in
       if !active { actions?.cancel() }
     }
-    .onDisappear { actions?.cancel() }
+    .onDisappear {
+      actions?.cancel()
+      actions = nil
+    }
     .alert("Action unsuccessful", isPresented: Binding(
       get: { actions?.errorMessage != nil },
       set: { if !$0 { actions?.errorMessage = nil } }
@@ -601,18 +607,15 @@ private struct VideoFeedItemView: View {
       caption: { postCaption(lines: $0) },
       actions: { actionControls(horizontal: $0) },
       progress: {
-        VideoProgressBar(
-          currentTime: isActive ? playerPool.currentTime : 0,
-          duration: isActive ? playerPool.duration : 0,
-          bufferedTime: isActive ? playerPool.bufferedTime : 0,
-          onSeek: { seconds in playerPool.seek(to: seconds, at: index) }
+        VideoFeedProgressSlot(
+          progress: playerPool.progress,
+          pool: playerPool,
+          index: index,
+          isActive: isActive
         )
-        .disabled(!isActive || !playerPool.canSeek)
-        .accessibilityIdentifier("videoProgress")
       }
     )
   }
-
   private func author(compact: Bool) -> some View {
     Button { onProfileTap(item.post.author.did.didString()) } label: {
       HStack(spacing: 8) {
@@ -880,6 +883,25 @@ struct VideoFeedNavigationControls: View {
   }
 }
 
+private struct VideoFeedProgressSlot: View {
+  let progress: VideoFeedPlaybackProgress
+  let pool: VideoFeedPlayerPool
+  let index: Int
+  let isActive: Bool
+
+  var body: some View {
+    VideoProgressBar(
+      currentTime: isActive ? progress.currentTime : 0,
+      duration: isActive ? progress.duration : 0,
+      bufferedTime: isActive ? progress.bufferedTime : 0,
+      onSeek: { seconds in pool.seek(to: seconds, at: index) }
+    )
+    .disabled(!isActive || !progress.canSeek)
+    .accessibilityIdentifier("videoProgress")
+  }
+}
+
+
 struct VideoFeedOverlayControls<Author: View, Caption: View, Actions: View, Progress: View>: View {
   let pageSize: CGSize
   let hasCaption: Bool
@@ -1020,14 +1042,12 @@ private final class VideoFeedPostActions {
   }
 
   func observe() async {
-    await postViewModel.start(post: post)
+    await postViewModel.initializeFromServerState(post: post)
     guard !Task.isCancelled else { return }
-    await refresh()
-    guard !Task.isCancelled else { return }
-    isReady = true
     for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
       guard !Task.isCancelled else { return }
       await refresh()
+      isReady = true
     }
   }
 

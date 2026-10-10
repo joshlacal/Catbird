@@ -816,8 +816,10 @@ struct VideoProgressBar: View {
   }
 
   private func timeDescription(_ value: Double) -> String {
-    let seconds = Int(min(Double(Int.max / 2), VideoPlaybackTimeline.duration(value)))
-    return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
+    let totalSeconds = Int(min(Double(Int.max / 2), VideoPlaybackTimeline.duration(value)))
+    let minutes = totalSeconds / 60
+    let seconds = totalSeconds % 60
+    return seconds < 10 ? "\(minutes):0\(seconds)" : "\(minutes):\(seconds)"
   }
 }
 

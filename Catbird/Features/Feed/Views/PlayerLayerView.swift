@@ -85,7 +85,6 @@ struct PlayerLayerView: UIViewRepresentable {
     }
 
     func configurePlayer(for view: PlayerContainer, player: AVPlayer, shouldLoop: Bool) {
-      player.currentItem?.preferredForwardBufferDuration = 2
       player.actionAtItemEnd = .none
       view.pausesOnDismantle = parent.pausesOnDismantle
       view.shouldLoop = shouldLoop
@@ -165,7 +164,11 @@ final class PlayerContainer: UIView {
     setupStatusObserver()
     updateBackdrop()
     readyObservation = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] _, _ in
-      Task { @MainActor [weak self] in self?.updateBackdrop() }
+      if Thread.isMainThread {
+        MainActor.assumeIsolated { self?.updateBackdrop() }
+      } else {
+        Task { @MainActor [weak self] in self?.updateBackdrop() }
+      }
     }
   }
 
@@ -318,7 +321,6 @@ struct PlayerLayerView: NSViewRepresentable {
     }
 
     func configurePlayer(for view: PlayerContainerMac, player: AVPlayer, shouldLoop: Bool) {
-      player.currentItem?.preferredForwardBufferDuration = 2
       player.actionAtItemEnd = .none
       view.pausesOnDismantle = parent.pausesOnDismantle
       view.shouldLoop = shouldLoop
@@ -382,7 +384,11 @@ final class PlayerContainerMac: NSView {
     setupStatusObserver()
     updateBackdrop()
     readyObservation = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] _, _ in
-      Task { @MainActor [weak self] in self?.updateBackdrop() }
+      if Thread.isMainThread {
+        MainActor.assumeIsolated { self?.updateBackdrop() }
+      } else {
+        Task { @MainActor [weak self] in self?.updateBackdrop() }
+      }
     }
   }
 

@@ -9,22 +9,24 @@ public struct VideoFeedItem: Identifiable, Hashable, Sendable {
 
   /// A reveal authorizes this moderation snapshot, not every future version of
   /// the post. SwiftUI uses the same identity to recreate its warning state.
-  struct RevealIdentity: Hashable {
-    let postID: String
-    let labels: [ComAtprotoLabelDefs.Label]
-    let selfLabelValues: [String]
+  public struct RevealIdentity: Hashable, Sendable {
+    public let postID: String
+    public let labels: [ComAtprotoLabelDefs.Label]
+    public let selfLabelValues: [String]
+
+    public init(
+      postID: String,
+      labels: [ComAtprotoLabelDefs.Label],
+      selfLabelValues: [String]
+    ) {
+      self.postID = postID
+      self.labels = labels
+      self.selfLabelValues = selfLabelValues
+    }
   }
 
-  var selfLabelValues: [String] {
-    guard case .knownType(let record) = post.record,
-          let postRecord = record as? AppBskyFeedPost,
-          case .comAtprotoLabelDefsSelfLabels(let labels) = postRecord.labels else { return [] }
-    return labels.values.map { $0.val.lowercased() }
-  }
-
-  var revealIdentity: RevealIdentity {
-    RevealIdentity(postID: id, labels: post.labels ?? [], selfLabelValues: selfLabelValues)
-  }
+  public let selfLabelValues: [String]
+  public let revealIdentity: RevealIdentity
 
   /// The moderation this item needs: whether the feed skips it, and the merged
   /// `contentView` and `contentMedia` UI that covers the player
@@ -69,6 +71,21 @@ extension VideoFeedItem {
     self.post = post
     self.videoView = video
     self.playlistURL = url
+
+    let selfLabels: [String]
+    if case .knownType(let record) = post.record,
+       let postRecord = record as? AppBskyFeedPost,
+       case .comAtprotoLabelDefsSelfLabels(let labels) = postRecord.labels {
+      selfLabels = labels.values.map { $0.val.lowercased() }
+    } else {
+      selfLabels = []
+    }
+    self.selfLabelValues = selfLabels
+    self.revealIdentity = RevealIdentity(
+      postID: post.uri.uriString(),
+      labels: post.labels ?? [],
+      selfLabelValues: selfLabels
+    )
   }
 
   /// Keep the selected URI first, accepting its refreshed metadata when present.
@@ -85,19 +102,36 @@ extension VideoFeedItem {
     _ existing: [VideoFeedItem], with feedPosts: [AppBskyFeedDefs.FeedViewPost]
   ) -> [VideoFeedItem] {
     var result = existing
+    var indexMap = [String: Int]()
+    indexMap.reserveCapacity(existing.count + feedPosts.count)
+    for (index, item) in existing.enumerated() {
+      indexMap[item.id] = index
+    }
     var seen: Set<String> = []
+    seen.reserveCapacity(feedPosts.count)
+    var removedIndices: Set<Int>?
+
     for entry in feedPosts {
       let id = entry.post.uri.uriString()
-      guard !seen.contains(id) else { continue }
       let replacement = VideoFeedItem(post: entry.post)
-      let existingIndex = result.firstIndex(where: { $0.id == id })
+      let existingIndex = indexMap[id]
       guard existingIndex != nil || replacement != nil else { continue }
-      seen.insert(id)
+      guard seen.insert(id).inserted else { continue }
       if let index = existingIndex {
-        if let replacement { result[index] = replacement } else { result.remove(at: index) }
+        if let replacement {
+          result[index] = replacement
+        } else {
+          if removedIndices == nil { removedIndices = [] }
+          removedIndices?.insert(index)
+        }
       } else if let replacement {
+        indexMap[id] = result.count
         result.append(replacement)
       }
+    }
+
+    if let removedIndices, !removedIndices.isEmpty {
+      return result.enumerated().compactMap { removedIndices.contains($0.offset) ? nil : $0.element }
     }
     return result
   }
