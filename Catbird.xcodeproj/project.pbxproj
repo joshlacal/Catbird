@@ -15,7 +15,7 @@
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
 		215795952D9E16F60030A8C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */; };
-		215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */ = {isa = PBXBuildFile; productRef = 215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */; };
+		215ADE7F2E847268003F0DA4 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 215ADE7E2E847268003F0DA4 /* Sentry */; };
 		217ECDA92EB4268100BD113B /* Mantis in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 217ECDA82EB4268100BD113B /* Mantis */; };
 		21886699300B5FE800215DE7 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21886698300B5FE800215DE7 /* Petrel */; };
 		2188669C300B600600215DE7 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 2188669B300B600600215DE7 /* PetrelCatbird */; };
@@ -25,7 +25,7 @@
 		219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */ = {isa = PBXBuildFile; productRef = 219DA5B82EED838E00F717FA /* EmojiKit */; };
 		219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58022EBC27F500C8D6F2 /* Security.framework */; };
 		219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58042EBC27FF00C8D6F2 /* Foundation.framework */; };
-		21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000004 /* PetrelCatbird */; };
+		21A0C0DE300C0DE100000003 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000004 /* Petrel */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
@@ -367,7 +367,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */,
+				21A0C0DE300C0DE100000003 /* Petrel in Frameworks */,
 				B1A7E0000000000000000001 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -383,7 +383,7 @@
 				21094CF42EBD09010084BFBD /* GRDB in Frameworks */,
 				218866A5300B678A00215DE7 /* BluemojiKit in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
-				215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */,
+				215ADE7F2E847268003F0DA4 /* Sentry in Frameworks */,
 				21886699300B5FE800215DE7 /* Petrel in Frameworks */,
 				219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */,
 				2188669C300B600600215DE7 /* PetrelCatbird in Frameworks */,
@@ -503,7 +503,7 @@
 			);
 			name = NotificationServiceExtension;
 			packageProductDependencies = (
-				21A0C0DE300C0DE100000004 /* PetrelCatbird */,
+				21A0C0DE300C0DE100000004 /* Petrel */,
 				B1A7E0000000000000000002 /* GRDB */,
 			);
 			productName = NotificationServiceExtension;
@@ -539,7 +539,7 @@
 				212E946C2D6183D600D3E1DD /* NukeUI */,
 				218B7A8B2D70B1AE0053987F /* LazyPager */,
 				21E108292D70BE6F0030A71C /* OrderedCollections */,
-				215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */,
+				215ADE7E2E847268003F0DA4 /* Sentry */,
 				217ECDA82EB4268100BD113B /* Mantis */,
 				21094CF32EBD09010084BFBD /* GRDB */,
 				219DA5B82EED838E00F717FA /* EmojiKit */,
@@ -1780,10 +1780,10 @@
 			package = 212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */;
 			productName = NukeUI;
 		};
-		215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */ = {
+		215ADE7E2E847268003F0DA4 /* Sentry */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 215ADE7D2E847268003F0DA4 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
-			productName = "Sentry-Dynamic";
+			productName = Sentry;
 		};
 		217ECDA82EB4268100BD113B /* Mantis */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1818,9 +1818,9 @@
 			package = 219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */;
 			productName = EmojiKit;
 		};
-		21A0C0DE300C0DE100000004 /* PetrelCatbird */ = {
+		21A0C0DE300C0DE100000004 /* Petrel */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = PetrelCatbird;
+			productName = Petrel;
 		};
 		21E108292D70BE6F0030A71C /* OrderedCollections */ = {
 			isa = XCSwiftPackageProductDependency;

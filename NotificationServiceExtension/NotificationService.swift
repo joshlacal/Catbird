@@ -149,13 +149,19 @@ class NotificationService: UNNotificationServiceExtension {
         senderAvatarURL = cached.avatarURL
       }
 
-      // Fallback: fetch from the Bluesky API via a standalone client
+      // Slow fallback: fetch from the Bluesky API via a standalone client
       if senderName == nil,
         let clientDid = recipientDid ?? firstKnownAccountDID(),
         let profile = await fetchProfile(senderDid: senderDid, asAccount: clientDid)
       {
         senderName = profile.displayName ?? profile.handle
         senderAvatarURL = profile.avatarURL
+        await ProfileCacheDatabase.shared.write(
+          did: senderDid,
+          handle: profile.handle,
+          displayName: profile.displayName,
+          avatarURL: profile.avatarURL
+        )
       }
     }
 
@@ -262,11 +268,7 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   private func createStandaloneClient(for userDid: String) async -> ATProtoClient? {
-    #if targetEnvironment(simulator)
-      let accessGroup: String? = nil
-    #else
-      let accessGroup: String? = Self.sharedKeychainAccessGroup()
-    #endif
+    let accessGroup = Self.sharedKeychainAccessGroup
 
     let oauthConfig = OAuthConfiguration(
       clientId: "https://catbird.blue/oauth-client-metadata.json",
@@ -294,42 +296,114 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// Resolves the full shared keychain access group (`<TeamID>.blue.catbird.shared`).
-  /// iOS has no SecTask API, so the Team ID prefix is inferred from the default access
-  /// group of a throwaway probe item.
-  private static func sharedKeychainAccessGroup() -> String? {
-    let probeService = "blue.catbird.nse.accessGroupProbe"
-    let probeAccount = UUID().uuidString
-    let baseQuery: [CFString: Any] = [
-      kSecClass: kSecClassGenericPassword,
-      kSecAttrService: probeService,
-      kSecAttrAccount: probeAccount,
-    ]
-    var addQuery = baseQuery
-    addQuery[kSecValueData] = Data([0])
-    addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    _ = SecItemAdd(addQuery as CFDictionary, nil)
-    defer { SecItemDelete(baseQuery as CFDictionary) }
-
-    var matchQuery = baseQuery
-    matchQuery[kSecReturnAttributes] = true
-    matchQuery[kSecMatchLimit] = kSecMatchLimitOne
-    var item: CFTypeRef?
-    guard SecItemCopyMatching(matchQuery as CFDictionary, &item) == errSecSuccess,
-      let attrs = item as? [CFString: Any],
-      let defaultGroup = attrs[kSecAttrAccessGroup] as? String,
-      let dot = defaultGroup.firstIndex(of: ".")
-    else {
+  /// Checks Info.plist AppIdentifierPrefix, shared UserDefaults cache, and caches the result
+  /// for the lifetime of the process to avoid repetitive SecItem probe writes.
+  private static let sharedKeychainAccessGroup: String? = {
+    #if targetEnvironment(simulator)
       return nil
+    #else
+      // 1. Check Info.plist AppIdentifierPrefix
+      if let plistPrefix = Bundle.main.object(forInfoDictionaryKey: "AppIdentifierPrefix") as? String,
+        !plistPrefix.isEmpty, plistPrefix != "$(AppIdentifierPrefix)"
+      {
+        let normalized = plistPrefix.hasSuffix(".") ? plistPrefix : plistPrefix + "."
+        return normalized + "blue.catbird.shared"
+      }
+
+      // 2. Check shared UserDefaults cache
+      let defaults = UserDefaults(suiteName: appGroupSuite)
+      if let cached = defaults?.string(forKey: "keychain_team_prefix"), !cached.isEmpty {
+        let normalized = cached.hasSuffix(".") ? cached : cached + "."
+        return normalized + "blue.catbird.shared"
+      }
+
+      // 3. Fallback: probe keychain once and cache the result
+      let probeService = "blue.catbird.nse.accessGroupProbe"
+      let probeAccount = UUID().uuidString
+      let baseQuery: [CFString: Any] = [
+        kSecClass: kSecClassGenericPassword,
+        kSecAttrService: probeService,
+        kSecAttrAccount: probeAccount,
+      ]
+      var addQuery = baseQuery
+      addQuery[kSecValueData] = Data([0])
+      addQuery[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+      _ = SecItemAdd(addQuery as CFDictionary, nil)
+      defer { SecItemDelete(baseQuery as CFDictionary) }
+
+      var matchQuery = baseQuery
+      matchQuery[kSecReturnAttributes] = true
+      matchQuery[kSecMatchLimit] = kSecMatchLimitOne
+      var item: CFTypeRef?
+      guard SecItemCopyMatching(matchQuery as CFDictionary, &item) == errSecSuccess,
+        let attrs = item as? [CFString: Any],
+        let defaultGroup = attrs[kSecAttrAccessGroup] as? String,
+        let dot = defaultGroup.firstIndex(of: ".")
+      else {
+        return nil
+      }
+      let prefix = String(defaultGroup[...dot])
+      defaults?.set(prefix, forKey: "keychain_team_prefix")
+      return "\(defaultGroup[..<dot]).blue.catbird.shared"
+    #endif
+  }()
+
+  // MARK: - Attachments & Avatar Cache
+
+  /// Rewrites /img/avatar/ to /img/avatar_thumbnail/ for smaller payload size.
+  private static func thumbnailAvatarURL(from url: URL) -> URL {
+    let str = url.absoluteString
+    if str.contains("/img/avatar/") {
+      let rewritten = str.replacingOccurrences(of: "/img/avatar/", with: "/img/avatar_thumbnail/")
+      if let newURL = URL(string: rewritten) {
+        return newURL
+      }
     }
-    return "\(defaultGroup[..<dot]).blue.catbird.shared"
+    return url
   }
 
-  // MARK: - Attachments
+  /// Base directory for the shared NSE avatar disk cache in the App Group.
+  private static var avatarCacheDirectory: URL? {
+    let base = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: appGroupSuite
+    )?.appendingPathComponent("Library/Caches/NSEAvatarCache", isDirectory: true)
+      ?? FileManager.default.temporaryDirectory.appendingPathComponent("NSEAvatarCache", isDirectory: true)
+    try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    return base
+  }
 
-  /// Downloads and attaches the sender's profile photo to the notification.
-  private func attachProfilePhoto(to content: UNMutableNotificationContent, from url: URL) async {
+  /// Downloads and attaches the sender's profile photo using a thumbnail URL and a bounded disk cache.
+  private func attachProfilePhoto(
+    to content: UNMutableNotificationContent,
+    from rawURL: URL
+  ) async {
+    let thumbnailURL = Self.thumbnailAvatarURL(from: rawURL)
+    let fileKey = Self.sha256Hex(thumbnailURL.absoluteString)
+
+    // Check disk cache
+    if let cacheDir = Self.avatarCacheDirectory {
+      if let contents = try? FileManager.default.contentsOfDirectory(
+        at: cacheDir,
+        includingPropertiesForKeys: [.contentModificationDateKey]
+      ),
+        let match = contents.first(where: { $0.deletingPathExtension().lastPathComponent == fileKey })
+      {
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: match.path)
+        let ext = match.pathExtension
+        let mime = ext == "png" ? "image/png" : (ext == "gif" ? "image/gif" : "image/jpeg")
+        if attachFile(at: match, to: content, mimeType: mime) {
+          return
+        }
+      }
+    }
+
+    // Download with 8s timeout and returnCacheDataElseLoad
+    var request = URLRequest(url: thumbnailURL)
+    request.timeoutInterval = 8
+    request.cachePolicy = .returnCacheDataElseLoad
+
     do {
-      let (data, response) = try await URLSession.shared.data(from: url)
+      let (data, response) = try await URLSession.shared.data(for: request)
       guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
         logger.warning("[NSE] Profile photo download failed - invalid response")
         return
@@ -343,18 +417,59 @@ class NotificationService: UNNotificationServiceExtension {
       default: fileExtension = "jpg"
       }
 
-      let fileURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
-      try data.write(to: fileURL)
+      if let cacheDir = Self.avatarCacheDirectory {
+        let cachedFileURL = cacheDir.appendingPathComponent("\(fileKey).\(fileExtension)")
+        try? data.write(to: cachedFileURL)
+        Self.pruneAvatarCacheIfNeeded(in: cacheDir, maxEntries: 50)
+        _ = attachFile(at: cachedFileURL, to: content, mimeType: mimeType)
+      } else {
+        let tempURL = FileManager.default.temporaryDirectory
+          .appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
+        try data.write(to: tempURL)
+        _ = attachFile(at: tempURL, to: content, mimeType: mimeType)
+      }
+    } catch {
+      logger.warning("[NSE] Failed to attach profile photo: \(error.localizedDescription)")
+    }
+  }
 
+  private func attachFile(
+    at fileURL: URL,
+    to content: UNMutableNotificationContent,
+    mimeType: String = "image/jpeg"
+  ) -> Bool {
+    do {
       let attachment = try UNNotificationAttachment(
         identifier: "avatar",
         url: fileURL,
         options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
       )
       content.attachments = [attachment]
+      return true
     } catch {
-      logger.warning("[NSE] Failed to attach profile photo: \(error.localizedDescription)")
+      logger.warning("[NSE] UNNotificationAttachment failed: \(error.localizedDescription)")
+      return false
+    }
+  }
+
+  /// Keeps the avatar cache bounded to at most `maxEntries` items (LRU by modification date).
+  private static func pruneAvatarCacheIfNeeded(in directory: URL, maxEntries: Int) {
+    guard let files = try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.contentModificationDateKey],
+      options: .skipsHiddenFiles
+    ), files.count > maxEntries else { return }
+
+    let sorted = files.compactMap { url -> (URL, Date)? in
+      guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+        let date = values.contentModificationDate
+      else { return nil }
+      return (url, date)
+    }.sorted { $0.1 < $1.1 }  // oldest first
+
+    let toDelete = sorted.prefix(files.count - maxEntries)
+    for (url, _) in toDelete {
+      try? FileManager.default.removeItem(at: url)
     }
   }
 }
