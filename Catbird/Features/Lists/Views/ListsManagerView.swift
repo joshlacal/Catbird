@@ -11,8 +11,9 @@ final class ListsManagerViewModel {
   private let logger = Logger(subsystem: "blue.catbird", category: "ListsManagerView")
   
   // Data
-  var userLists: [AppBskyGraphDefs.ListView] = []
-  
+  var userLists: [AppBskyGraphDefs.ListView] = [] {
+    didSet { updateProjections() }
+  }
   // State
   var isLoading = false
   var isRefreshing = false
@@ -23,56 +24,79 @@ final class ListsManagerViewModel {
   var listToDelete: AppBskyGraphDefs.ListView?
   
   // Search and filtering
-  var searchText = ""
+  var searchText = "" {
+    didSet { updateProjections() }
+  }
   /// When set, only lists with this purpose are shown.
   let purposeFilter: AppBskyGraphDefs.ListPurpose?
   
-  // MARK: - Computed Properties
+  // MARK: - Precomputed Projections
   
-  /// Lists this screen manages. Starter pack backing lists are edited with their starter pack.
-  private var manageableLists: [AppBskyGraphDefs.ListView] {
-    userLists.filter { list in
+  struct ListSection: Identifiable {
+    let id: String
+    let category: String
+    let lists: [AppBskyGraphDefs.ListView]
+  }
+  
+  private(set) var hasLists: Bool = false
+  private(set) var sections: [ListSection] = []
+  
+  var filteredLists: [AppBskyGraphDefs.ListView] {
+    sections.flatMap(\.lists)
+  }
+  
+  var sortedCategories: [String] {
+    sections.map(\.category)
+  }
+  
+  var groupedLists: [String: [AppBskyGraphDefs.ListView]] {
+    Dictionary(uniqueKeysWithValues: sections.map { ($0.category, $0.lists) })
+  }
+  
+  private func updateProjections() {
+    let manageable = userLists.filter { list in
       guard list.purpose != .appbskygraphdefsreferencelist else { return false }
       guard let purposeFilter else { return true }
       return list.purpose == purposeFilter
     }
-  }
-
-  var hasLists: Bool {
-    !manageableLists.isEmpty
-  }
-
-  var filteredLists: [AppBskyGraphDefs.ListView] {
-    if searchText.isEmpty {
-      return manageableLists
-    } else {
-      let searchTerm = searchText.lowercased()
-      return manageableLists.filter { list in
-        list.name.lowercased().contains(searchTerm) ||
-        (list.description?.lowercased().contains(searchTerm) ?? false)
+    hasLists = !manageable.isEmpty
+    
+    let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    let searchLower = trimmed.lowercased()
+    
+    var peopleLists: [AppBskyGraphDefs.ListView] = []
+    var modLists: [AppBskyGraphDefs.ListView] = []
+    var otherLists: [AppBskyGraphDefs.ListView] = []
+    
+    for list in manageable {
+      if !searchLower.isEmpty {
+        let nameMatch = list.name.localizedCaseInsensitiveContains(searchLower)
+        let descMatch = list.description?.localizedCaseInsensitiveContains(searchLower) ?? false
+        if !nameMatch && !descMatch {
+          continue
+        }
       }
-    }
-  }
-  
-  /// People lists first, then moderation lists, then anything else.
-  var sortedCategories: [String] {
-    let order = ["People Lists", "Moderation Lists", "Other Lists"]
-    return groupedLists.keys.sorted {
-      (order.firstIndex(of: $0) ?? order.count) < (order.firstIndex(of: $1) ?? order.count)
-    }
-  }
-
-  var groupedLists: [String: [AppBskyGraphDefs.ListView]] {
-    Dictionary(grouping: filteredLists) { list in
       switch list.purpose {
       case .appbskygraphdefscuratelist:
-        return "People Lists"
+        peopleLists.append(list)
       case .appbskygraphdefsmodlist:
-        return "Moderation Lists"
+        modLists.append(list)
       default:
-        return "Other Lists"
+        otherLists.append(list)
       }
     }
+    
+    var result: [ListSection] = []
+    if !peopleLists.isEmpty {
+      result.append(ListSection(id: "people", category: "People Lists", lists: peopleLists))
+    }
+    if !modLists.isEmpty {
+      result.append(ListSection(id: "mod", category: "Moderation Lists", lists: modLists))
+    }
+    if !otherLists.isEmpty {
+      result.append(ListSection(id: "other", category: "Other Lists", lists: otherLists))
+    }
+    sections = result
   }
   
   // MARK: - Initialization
@@ -80,6 +104,7 @@ final class ListsManagerViewModel {
   init(appState: AppState, purposeFilter: AppBskyGraphDefs.ListPurpose? = nil) {
     self.appState = appState
     self.purposeFilter = purposeFilter
+    updateProjections()
   }
   
   // MARK: - Data Loading
@@ -228,7 +253,7 @@ private struct ListsManagerContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if !viewModel.hasLists {
       emptyStateView
-    } else if viewModel.filteredLists.isEmpty {
+    } else if viewModel.sections.isEmpty {
       ContentUnavailableView.search(text: viewModel.searchText)
     } else {
       listsView
@@ -255,11 +280,10 @@ private struct ListsManagerContent: View {
   }
 
   private var listsView: some View {
-    let groupedLists = viewModel.groupedLists
-    return List {
-      ForEach(viewModel.sortedCategories, id: \.self) { category in
-        Section(category) {
-          ForEach(groupedLists[category] ?? [], id: \.uri) { list in
+    List {
+      ForEach(viewModel.sections) { section in
+        Section(section.category) {
+          ForEach(section.lists, id: \.uri) { list in
             ListManagerRow(
               list: list,
               onNavigate: { navigate(to: $0) },

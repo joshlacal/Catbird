@@ -14,6 +14,7 @@ final class AddToListSheetViewModel {
   // Data
   var userLists: [AppBskyGraphDefs.ListView] = []
   var membershipStatus: [String: Bool] = [:] // listURI -> isMember
+  private var membershipItemURIs: [String: ATProtocolURI] = [:] // listURI -> listItemURI
   
   // State
   var isLoading = false
@@ -47,21 +48,55 @@ final class AddToListSheetViewModel {
     errorMessage = nil
     
     do {
-      // Load user's lists (starter pack backing lists aren't managed here)
-      userLists = try await appState.listManager.loadUserLists()
-        .filter { $0.purpose != .appbskygraphdefsreferencelist }
-      
-      // Check membership status for each list
-      for list in userLists {
-        let isMember = try await appState.listManager.isUserMember(
-          userDID: userDID,
-          of: list.uri.description
-        )
-        membershipStatus[list.uri.description] = isMember
+      guard let client = appState.atProtoClient else {
+        throw ListError.clientNotInitialized
       }
       
-        logger.info("Loaded \(self.userLists.count) lists for add-to-list sheet")
+      let actorIdentifier = try ATIdentifier(string: userDID)
+      var cursor: String? = nil
+      var accumulatedLists: [AppBskyGraphDefs.ListView] = []
+      var isFirstPage = true
       
+      repeat {
+        let input = AppBskyGraphGetListsWithMembership.Parameters(
+          actor: actorIdentifier,
+          limit: 50,
+          cursor: cursor,
+          purposes: [
+            "app.bsky.graph.defs#curatelist",
+            "app.bsky.graph.defs#modlist"
+          ]
+        )
+        
+        let (responseCode, output) = try await client.app.bsky.graph.getListsWithMembership(input: input)
+        guard responseCode == 200, let data = output else {
+          throw ListError.invalidResponse
+        }
+        
+        for item in data.listsWithMembership {
+          // Exclude reference lists (used in starter packs)
+          guard item.list.purpose != .appbskygraphdefsreferencelist else { continue }
+          let listURI = item.list.uri.description
+          accumulatedLists.append(item.list)
+          membershipStatus[listURI] = (item.listItem != nil)
+          if let itemURI = item.listItem?.uri {
+            membershipItemURIs[listURI] = itemURI
+          }
+        }
+        
+        // Progressively fill membership and lists
+        userLists = accumulatedLists
+        
+        if isFirstPage {
+          // Dismiss spinner as soon as first page arrives
+          isLoading = false
+          isFirstPage = false
+        }
+        
+        cursor = data.cursor
+      } while cursor != nil && !cursor!.isEmpty
+      
+      logger.info("Loaded \(self.userLists.count) lists for add-to-list sheet")
     } catch {
       logger.error("Failed to load lists: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
@@ -96,13 +131,18 @@ final class AddToListSheetViewModel {
     do {
       if currentlyMember {
         // Remove from list
-        try await appState.listManager.removeMember(userDID: userDID, from: listURI)
+        let itemURI = membershipItemURIs[listURI]
+        try await appState.listManager.removeMember(userDID: userDID, from: listURI, listItemURI: itemURI)
         membershipStatus[listURI] = false
+        membershipItemURIs.removeValue(forKey: listURI)
         logger.info("Removed user from list: \(listURI)")
       } else {
         // Add to list
-        try await appState.listManager.addMember(userDID: userDID, to: listURI)
+        let createdURI = try await appState.listManager.addMember(userDID: userDID, to: listURI, skipDuplicateCheck: true)
         membershipStatus[listURI] = true
+        if let createdURI {
+          membershipItemURIs[listURI] = createdURI
+        }
         logger.info("Added user to list: \(listURI)")
       }
       
@@ -334,7 +374,7 @@ struct ListSelectionRow: View {
             .lineLimit(2)
         }
         
-        Text("^[\(list.listItemCount ?? 0) member](inflect: true)")
+        Text(MemberCountFormatter.format(count: list.listItemCount ?? 0))
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }

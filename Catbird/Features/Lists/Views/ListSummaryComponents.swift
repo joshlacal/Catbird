@@ -2,6 +2,49 @@ import NukeUI
 import Petrel
 import SwiftUI
 
+
+// MARK: - Member Count Formatting
+
+public enum MemberCountFormatter {
+  private static let lock = NSLock()
+  private static var cache: [Int: String] = [:]
+
+  public static func format(count: Int) -> String {
+    lock.lock()
+    if let cached = cache[count] {
+      lock.unlock()
+      return cached
+    }
+    lock.unlock()
+
+    let formatted = String(AttributedString(localized: "^[\(count) member](inflect: true)").characters)
+    lock.lock()
+    cache[count] = formatted
+    lock.unlock()
+    return formatted
+  }
+}
+
+// MARK: - ListView Extension
+
+extension AppBskyGraphDefs.ListView {
+  func updatingListItemCount(_ newCount: Int?) -> AppBskyGraphDefs.ListView {
+    AppBskyGraphDefs.ListView(
+      uri: uri,
+      cid: cid,
+      creator: creator,
+      name: name,
+      purpose: purpose,
+      description: description,
+      descriptionFacets: descriptionFacets,
+      avatar: avatar,
+      listItemCount: newCount,
+      labels: labels,
+      viewer: viewer,
+      indexedAt: indexedAt
+    )
+  }
+}
 // MARK: - Purpose Styling
 
 /// Shared icon, tint, and labels for each list purpose so every list surface reads the same.
@@ -173,7 +216,7 @@ struct ListSummaryRow: View {
 
   private var subtitle: String {
     let count = list.listItemCount ?? 0
-    let members = String(AttributedString(localized: "^[\(count) member](inflect: true)").characters)
+    let members = MemberCountFormatter.format(count: count)
     var parts = [list.purpose.listKindLabel, members]
     if showsCreator {
       parts.append(String(localized: "by @\(list.creator.handle.description)"))

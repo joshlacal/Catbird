@@ -48,15 +48,8 @@ final class ListFeedViewModel {
     errorMessage = nil
     
     do {
-      // Load list details and members concurrently
-      async let listDetailsTask = appState.listManager.getListDetails(listURI.description)
-      async let membersTask = appState.listManager.getListMembers(listURI.description)
-      
-      listDetails = try await listDetailsTask
-      members = try await membersTask
-      
-      logger.info("Loaded list metadata: \(self.members.count) members")
-      
+      listDetails = try await appState.listManager.getListDetails(listURI.description)
+      logger.info("Loaded list metadata: \(self.listDetails?.name ?? "unknown")")
     } catch {
       logger.error("Failed to load list metadata: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
@@ -67,17 +60,25 @@ final class ListFeedViewModel {
   }
   
   @MainActor
+  func loadMembersIfNeeded() async {
+    guard members.isEmpty else { return }
+    do {
+      let page = try await appState.listManager.getListMembersPage(listURI.description, limit: 100)
+      members = page.members
+    } catch {
+      logger.error("Failed to load list members: \(error.localizedDescription)")
+    }
+  }
+  
+  @MainActor
   func refreshData() async {
     do {
-      // Refresh list details and members
-      async let listDetailsTask = appState.listManager.getListDetails(listURI.description, forceRefresh: true)
-      async let membersTask = appState.listManager.getListMembers(listURI.description, forceRefresh: true)
-      
-      listDetails = try await listDetailsTask
-      members = try await membersTask
-      
+      listDetails = try await appState.listManager.getListDetails(listURI.description, forceRefresh: true)
+      if !members.isEmpty {
+        let page = try await appState.listManager.getListMembersPage(listURI.description, limit: 100)
+        members = page.members
+      }
       logger.info("Refreshed list metadata")
-      
     } catch {
       logger.error("Failed to refresh list metadata: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
@@ -162,7 +163,7 @@ struct ListFeedView: View {
           Button {
             viewModel.showingMembersList = true
           } label: {
-            Label("View Members (\(viewModel.members.count))", systemImage: "person.2")
+            Label("View Members (\(viewModel.listDetails?.listItemCount ?? viewModel.members.count))", systemImage: "person.2")
           }
         } label: {
           Image(systemName: "ellipsis.circle")
@@ -228,7 +229,7 @@ struct ListFeedView: View {
           }
           
           HStack(spacing: 16) {
-            Text("^[\(listDetails.listItemCount ?? viewModel.members.count) member](inflect: true)")
+            Text(MemberCountFormatter.format(count: listDetails.listItemCount ?? viewModel.members.count))
               .font(.caption)
               .foregroundStyle(.tertiary)
             
@@ -250,7 +251,13 @@ struct ListFeedView: View {
   
   private func membersList(viewModel: ListFeedViewModel) -> some View {
     List {
-      ForEach(viewModel.members, id: \.did) { member in
+      if viewModel.members.isEmpty {
+        ProgressView()
+          .frame(maxWidth: .infinity)
+          .listRowBackground(Color.clear)
+          .listRowSeparator(.hidden)
+      } else {
+        ForEach(viewModel.members, id: \.did) { member in
         Button {
           path.append(NavigationDestination.profile(member.did.didString()))
           viewModel.showingMembersList = false
@@ -284,6 +291,10 @@ struct ListFeedView: View {
         }
         .buttonStyle(.plain)
       }
+      }
+    }
+    .task {
+      await viewModel.loadMembersIfNeeded()
     }
     .navigationTitle("List Members")
     #if os(iOS)

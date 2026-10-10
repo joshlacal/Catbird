@@ -447,7 +447,12 @@ final class ListManager {
   // MARK: - List Member Management
   
   /// Add a user to a list
-  func addMember(userDID: String, to listURI: String) async throws {
+  @discardableResult
+  func addMember(
+    userDID: String,
+    to listURI: String,
+    skipDuplicateCheck: Bool = false
+  ) async throws -> ATProtocolURI? {
     guard let client = client else {
       throw ListError.clientNotInitialized
     }
@@ -456,17 +461,21 @@ final class ListManager {
     defer { inProgressOperations.remove(operationId) }
     
     if inProgressOperations.contains(operationId) {
-      return // Operation already in progress
+      return nil // Operation already in progress
     }
     inProgressOperations.insert(operationId)
     
     logger.info("Adding member \(userDID) to list \(listURI)")
     
     do {
-      // Check if user is already in the list
-      let members = try await getListMembers(listURI)
-      if members.contains(where: { $0.did.didString() == userDID }) {
-        throw ListError.memberAlreadyAdded
+      // Check if user is already in the list only when not skipped and cached
+      if !skipDuplicateCheck {
+        let isAlreadyMember = await MainActor.run {
+          listMembers[listURI]?.contains(where: { $0.did.didString() == userDID }) ?? false
+        }
+        if isAlreadyMember {
+          throw ListError.memberAlreadyAdded
+        }
       }
       
       // Create list item record
@@ -476,7 +485,7 @@ final class ListManager {
         createdAt: ATProtocolDate(date: Date())
       )
       
-      let (responseCode, _) = try await client.com.atproto.repo.createRecord(
+      let (responseCode, createOutput) = try await client.com.atproto.repo.createRecord(
         input: .init(
           repo: try ATIdentifier(string: appState?.userDID ?? ""),
           collection: try NSID(nsidString: "app.bsky.graph.listitem"),
@@ -487,18 +496,52 @@ final class ListManager {
         )
       )
       
-      guard responseCode == 200 else {
+      guard responseCode == 200, let createdRecord = createOutput else {
         throw ListError.invalidResponse
       }
       
-      // Invalidate member cache for this list
+      // Update local cache state instead of invalidating and forcing re-fetch
       await MainActor.run {
-        listMemberUpdateTimes.removeValue(forKey: listURI)
-        listMembers.removeValue(forKey: listURI)
-        listItems.removeValue(forKey: listURI)
+        listMemberUpdateTimes[listURI] = Date()
+        if let details = listDetails[listURI] {
+          let updatedCount = (details.listItemCount ?? 0) + 1
+          listDetails[listURI] = AppBskyGraphDefs.ListView(
+            uri: details.uri,
+            cid: details.cid,
+            creator: details.creator,
+            name: details.name,
+            purpose: details.purpose,
+            description: details.description,
+            descriptionFacets: details.descriptionFacets,
+            avatar: details.avatar,
+            listItemCount: updatedCount,
+            labels: details.labels,
+            viewer: details.viewer,
+            indexedAt: details.indexedAt
+          )
+        }
+        if let index = userLists.firstIndex(where: { $0.uri.description == listURI }) {
+          let current = userLists[index]
+          let updatedCount = (current.listItemCount ?? 0) + 1
+          userLists[index] = AppBskyGraphDefs.ListView(
+            uri: current.uri,
+            cid: current.cid,
+            creator: current.creator,
+            name: current.name,
+            purpose: current.purpose,
+            description: current.description,
+            descriptionFacets: current.descriptionFacets,
+            avatar: current.avatar,
+            listItemCount: updatedCount,
+            labels: current.labels,
+            viewer: current.viewer,
+            indexedAt: current.indexedAt
+          )
+        }
       }
       
       logger.info("Successfully added member \(userDID) to list \(listURI)")
+      return createdRecord.uri
       
     } catch {
       logger.error("Failed to add member to list: \(error.localizedDescription)")
@@ -507,7 +550,11 @@ final class ListManager {
   }
   
   /// Remove a user from a list
-  func removeMember(userDID: String, from listURI: String) async throws {
+  func removeMember(
+    userDID: String,
+    from listURI: String,
+    listItemURI: ATProtocolURI? = nil
+  ) async throws {
     guard let client = client else {
       throw ListError.clientNotInitialized
     }
@@ -524,7 +571,12 @@ final class ListManager {
     
     do {
       // Find the listitem record for this user and list
-      guard let itemURI = try await listItemURI(for: userDID, in: listURI, client: client) else {
+      let itemURI: ATProtocolURI
+      if let listItemURI {
+        itemURI = listItemURI
+      } else if let foundURI = try await self.listItemURI(for: userDID, in: listURI, client: client) {
+        itemURI = foundURI
+      } else {
         throw ListError.memberNotInList
       }
       
@@ -544,11 +596,52 @@ final class ListManager {
         throw ListError.invalidResponse
       }
       
-      // Invalidate member cache for this list
+      // Update local cache state instead of invalidating and forcing re-fetch
       await MainActor.run {
-        listMemberUpdateTimes.removeValue(forKey: listURI)
-        listMembers.removeValue(forKey: listURI)
-        listItems.removeValue(forKey: listURI)
+        listMemberUpdateTimes[listURI] = Date()
+        if var members = listMembers[listURI] {
+          members.removeAll { $0.did.didString() == userDID }
+          listMembers[listURI] = members
+        }
+        if var items = listItems[listURI] {
+          items.removeAll { $0.subject.did.didString() == userDID }
+          listItems[listURI] = items
+        }
+        if let details = listDetails[listURI] {
+          let updatedCount = max(0, (details.listItemCount ?? 1) - 1)
+          listDetails[listURI] = AppBskyGraphDefs.ListView(
+            uri: details.uri,
+            cid: details.cid,
+            creator: details.creator,
+            name: details.name,
+            purpose: details.purpose,
+            description: details.description,
+            descriptionFacets: details.descriptionFacets,
+            avatar: details.avatar,
+            listItemCount: updatedCount,
+            labels: details.labels,
+            viewer: details.viewer,
+            indexedAt: details.indexedAt
+          )
+        }
+        if let index = userLists.firstIndex(where: { $0.uri.description == listURI }) {
+          let current = userLists[index]
+          let updatedCount = max(0, (current.listItemCount ?? 1) - 1)
+          userLists[index] = AppBskyGraphDefs.ListView(
+            uri: current.uri,
+            cid: current.cid,
+            creator: current.creator,
+            name: current.name,
+            purpose: current.purpose,
+            description: current.description,
+            descriptionFacets: current.descriptionFacets,
+            avatar: current.avatar,
+            listItemCount: updatedCount,
+            labels: current.labels,
+            viewer: current.viewer,
+            indexedAt: current.indexedAt
+          )
+        }
       }
       
       logger.info("Successfully removed member \(userDID) from list \(listURI)")
@@ -562,15 +655,12 @@ final class ListManager {
   /// Finds the listitem record that puts `userDID` on `listURI`, using the full member list
   /// (which carries each item's URI) and falling back to paging the account's listitem records.
   private func listItemURI(for userDID: String, in listURI: String, client: ATProtoClient) async throws -> ATProtocolURI? {
-    var items = await listItems[listURI]
-    if items == nil {
-      _ = try await getListMembers(listURI, forceRefresh: true)
-      items = await listItems[listURI]
+    let cachedItem = await MainActor.run {
+      listItems[listURI]?.first(where: { $0.subject.did.didString() == userDID })?.uri
     }
-    if let item = items?.first(where: { $0.subject.did.didString() == userDID }) {
-      return item.uri
+    if let cachedItem {
+      return cachedItem
     }
-
     var cursor: String?
     repeat {
       let (responseCode, recordsData) = try await client.com.atproto.repo.listRecords(
@@ -728,12 +818,67 @@ final class ListManager {
     }
   }
   
+  /// Page members of a specific list lazily
+  func getListMembersPage(
+    _ listURI: String,
+    cursor: String? = nil,
+    limit: Int = 50
+  ) async throws -> (members: [AppBskyActorDefs.ProfileView], items: [AppBskyGraphDefs.ListItemView], cursor: String?) {
+    guard let client = client else {
+      throw ListError.clientNotInitialized
+    }
+    
+    let (responseCode, listData) = try await client.app.bsky.graph.getList(
+      input: .init(
+        list: try ATProtocolURI(uriString: listURI),
+        limit: limit,
+        cursor: cursor
+      )
+    )
+    guard responseCode == 200, let listData = listData else {
+      throw ListError.invalidResponse
+    }
+    
+    let members = listData.items.map { $0.subject }
+    return (members: members, items: listData.items, cursor: listData.cursor)
+  }
+  
   // MARK: - Convenience Methods
   
   /// Check if a user is a member of a specific list
   func isUserMember(userDID: String, of listURI: String) async throws -> Bool {
-    let members = try await getListMembers(listURI)
-    return members.contains { $0.did.didString() == userDID }
+    let cachedResult = await MainActor.run {
+      listMembers[listURI]?.contains { $0.did.didString() == userDID }
+    }
+    if let cachedResult {
+      return cachedResult
+    }
+    
+    guard let client = client else {
+      throw ListError.clientNotInitialized
+    }
+    
+    do {
+      let (responseCode, data) = try await client.app.bsky.graph.getListsWithMembership(
+        input: .init(
+          actor: try ATIdentifier(string: userDID),
+          limit: 100,
+          cursor: nil,
+          purposes: ["app.bsky.graph.defs#curatelist", "app.bsky.graph.defs#modlist"]
+        )
+      )
+      if responseCode == 200, let data = data {
+        for item in data.listsWithMembership {
+          if item.list.uri.description == listURI {
+            return item.listItem != nil
+          }
+        }
+      }
+    } catch {
+      logger.warning("getListsWithMembership failed in isUserMember, falling back: \(error.localizedDescription)")
+    }
+    
+    return false
   }
   
   /// Get all lists that the current user has created

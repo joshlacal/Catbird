@@ -15,14 +15,17 @@ final class ListMemberManagementViewModel {
   var listDetails: AppBskyGraphDefs.ListView?
   var members: [AppBskyActorDefs.ProfileView] = []
   var searchResults: [AppBskyActorDefs.ProfileView] = []
+  private var memberItemURIs: [String: ATProtocolURI] = [:]
   
   // State
   var isLoading = false
+  var isLoadingMoreMembers = false
+  var hasMoreMembers = true
+  private var membersCursor: String?
   var isSearching = false
   var searchText = ""
   var errorMessage: String?
   var showingError = false
-  
   // Operations tracking
   private var operationsInProgress: Set<String> = []
   
@@ -83,10 +86,17 @@ final class ListMemberManagementViewModel {
       
       // Load list details and members concurrently
       async let listDetailsTask = appState.listManager.getListDetails(listURI)
-      async let membersTask = appState.listManager.getListMembers(listURI)
+      async let membersPageTask = appState.listManager.getListMembersPage(listURI, cursor: nil, limit: 50)
       
       listDetails = try await listDetailsTask
-      members = try await membersTask
+      let page = try await membersPageTask
+      members = page.members
+      memberItemURIs.removeAll()
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
       
       logger.info("Successfully loaded list data: \(self.members.count) members for list '\(self.listDetails?.name ?? "Unknown")'")
       
@@ -100,11 +110,45 @@ final class ListMemberManagementViewModel {
   }
   
   @MainActor
+  func loadMoreMembersIfNeeded() async {
+    guard !isLoadingMoreMembers, hasMoreMembers, !isLoading else { return }
+    isLoadingMoreMembers = true
+    defer { isLoadingMoreMembers = false }
+    
+    do {
+      let page = try await appState.listManager.getListMembersPage(
+        listURI,
+        cursor: membersCursor,
+        limit: 50
+      )
+      let existingDIDs = Set(members.map { $0.did.didString() })
+      let newMembers = page.members.filter { !existingDIDs.contains($0.did.didString()) }
+      members.append(contentsOf: newMembers)
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
+    } catch {
+      logger.error("Failed to load more members: \(error.localizedDescription)")
+    }
+  }
+  
+  @MainActor
   func refreshData() async {
     do {
       // Force refresh from server
       listDetails = try await appState.listManager.getListDetails(listURI, forceRefresh: true)
-      members = try await appState.listManager.getListMembers(listURI, forceRefresh: true)
+      membersCursor = nil
+      hasMoreMembers = true
+      let page = try await appState.listManager.getListMembersPage(listURI, cursor: nil, limit: 50)
+      members = page.members
+      memberItemURIs.removeAll()
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
       
       logger.info("Refreshed list data: \(self.members.count) members")
       
@@ -179,11 +223,23 @@ final class ListMemberManagementViewModel {
     operationsInProgress.insert(userDID)
     defer { operationsInProgress.remove(userDID) }
     
+    let candidate = searchResults.first(where: { $0.did.didString() == userDID })
+    
     do {
-      try await appState.listManager.addMember(userDID: userDID, to: listURI)
+      let createdURI = try await appState.listManager.addMember(userDID: userDID, to: listURI, skipDuplicateCheck: true)
       
-      // Refresh members list
-      members = try await appState.listManager.getListMembers(listURI, forceRefresh: true)
+      // Apply add locally
+      if let createdURI {
+        memberItemURIs[userDID] = createdURI
+      }
+      if let candidate, !members.contains(where: { $0.did.didString() == userDID }) {
+        withAnimation {
+          members.insert(candidate, at: 0)
+        }
+      }
+      if let count = listDetails?.listItemCount {
+        listDetails = listDetails?.updatingListItemCount(count + 1)
+      }
       
       // Remove from search results
       searchResults.removeAll { $0.did.didString() == userDID }
@@ -204,15 +260,38 @@ final class ListMemberManagementViewModel {
     operationsInProgress.insert(userDID)
     defer { operationsInProgress.remove(userDID) }
     
+    let itemURI = memberItemURIs[userDID]
+    let removedIndex = members.firstIndex(where: { $0.did.didString() == userDID })
+    let removedMember = removedIndex.map { members[$0] }
+    
+    // Apply remove locally
+    if let removedIndex {
+      withAnimation {
+        _ = members.remove(at: removedIndex)
+      }
+    }
+    memberItemURIs.removeValue(forKey: userDID)
+    if let count = listDetails?.listItemCount {
+      listDetails = listDetails?.updatingListItemCount(max(0, count - 1))
+    }
+    
     do {
-      try await appState.listManager.removeMember(userDID: userDID, from: listURI)
-      
-      // Refresh members list
-      members = try await appState.listManager.getListMembers(listURI, forceRefresh: true)
-      
+      try await appState.listManager.removeMember(userDID: userDID, from: listURI, listItemURI: itemURI)
       logger.info("Successfully removed member: \(userDID)")
       
     } catch {
+      // Rollback on failure
+      if let removedMember, let removedIndex {
+        withAnimation {
+          members.insert(removedMember, at: min(removedIndex, members.count))
+        }
+      }
+      if let itemURI {
+        memberItemURIs[userDID] = itemURI
+      }
+      if let count = listDetails?.listItemCount {
+        listDetails = listDetails?.updatingListItemCount(count + 1)
+      }
       logger.error("Failed to remove member: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
       showingError = true
@@ -435,8 +514,17 @@ struct ListMemberManagementView: View {
                 }
               )
             }
+            if viewModel.hasMoreMembers {
+              ProgressView()
+                .frame(maxWidth: .infinity)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .task {
+                  await viewModel.loadMoreMembersIfNeeded()
+                }
+            }
           } header: {
-            Text("^[\(viewModel.listDetails?.listItemCount ?? viewModel.members.count) Member](inflect: true)")
+            Text(MemberCountFormatter.format(count: viewModel.listDetails?.listItemCount ?? viewModel.members.count))
           }
         }
       }

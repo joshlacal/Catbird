@@ -19,13 +19,16 @@ final class ListDetailViewModel {
   // Core data
   var listDetails: AppBskyGraphDefs.ListView?
   var members: [AppBskyActorDefs.ProfileView] = []
+  private var memberItemURIs: [String: ATProtocolURI] = [:]
   
   // State
   var isLoading = false
+  var isLoadingMoreMembers = false
+  var hasMoreMembers = true
+  private var membersCursor: String?
   var errorMessage: String?
   var showingError = false
   var selectedTab: ListDetailTab = .feed
-  
   // MARK: - Computed Properties
   
   var isOwnList: Bool {
@@ -58,15 +61,13 @@ final class ListDetailViewModel {
     errorMessage = nil
     
     do {
-      // Load list details and members concurrently
-      async let listDetailsTask = appState.listManager.getListDetails(listURI.description)
-      async let membersTask = appState.listManager.getListMembers(listURI.description)
+      listDetails = try await appState.listManager.getListDetails(listURI.description)
       
-      listDetails = try await listDetailsTask
-      members = try await membersTask
+      if !hasPostsFeed || selectedTab == .members {
+        await loadInitialMembers()
+      }
       
-      logger.info("Loaded list data: \(self.members.count) members")
-      
+      logger.info("Loaded list data: \(self.listDetails?.name ?? "unknown")")
     } catch {
       logger.error("Failed to load list data: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
@@ -74,6 +75,49 @@ final class ListDetailViewModel {
     }
     
     isLoading = false
+  }
+  
+  @MainActor
+  func loadInitialMembers() async {
+    membersCursor = nil
+    hasMoreMembers = true
+    do {
+      let page = try await appState.listManager.getListMembersPage(listURI.description, cursor: nil, limit: 50)
+      members = page.members
+      memberItemURIs.removeAll()
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
+    } catch {
+      logger.error("Failed to load initial members: \(error.localizedDescription)")
+    }
+  }
+  
+  @MainActor
+  func loadMoreMembersIfNeeded() async {
+    guard !isLoadingMoreMembers, hasMoreMembers, !isLoading else { return }
+    isLoadingMoreMembers = true
+    defer { isLoadingMoreMembers = false }
+    
+    do {
+      let page = try await appState.listManager.getListMembersPage(
+        listURI.description,
+        cursor: membersCursor,
+        limit: 50
+      )
+      let existingDIDs = Set(members.map(\.did))
+      let newMembers = page.members.filter { !existingDIDs.contains($0.did) }
+      members.append(contentsOf: newMembers)
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
+    } catch {
+      logger.error("Failed to load more members: \(error.localizedDescription)")
+    }
   }
   
   /// Re-reads cached details so edits made on a pushed screen show up when returning.
@@ -88,22 +132,17 @@ final class ListDetailViewModel {
   @MainActor
   func refreshData() async {
     do {
-      // Refresh list details and members
-      async let listDetailsTask = appState.listManager.getListDetails(listURI.description, forceRefresh: true)
-      async let membersTask = appState.listManager.getListMembers(listURI.description, forceRefresh: true)
-      
-      listDetails = try await listDetailsTask
-      members = try await membersTask
-      
+      listDetails = try await appState.listManager.getListDetails(listURI.description, forceRefresh: true)
+      if !hasPostsFeed || selectedTab == .members || !members.isEmpty {
+        await loadInitialMembers()
+      }
       logger.info("Refreshed list data")
-      
     } catch {
       logger.error("Failed to refresh list data: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
       showingError = true
     }
   }
-
   // MARK: - Member Actions
 
   /// Removes an account from the viewer's own list, restoring it if the request fails.
@@ -111,14 +150,29 @@ final class ListDetailViewModel {
   func removeMember(_ member: AppBskyActorDefs.ProfileView) async {
     guard let index = members.firstIndex(where: { $0.did == member.did }) else { return }
     withAnimation { _ = members.remove(at: index) }
+    
+    let didString = member.did.didString()
+    let knownItemURI = memberItemURIs[didString]
+    memberItemURIs.removeValue(forKey: didString)
+    
+    if let currentCount = listDetails?.listItemCount {
+      listDetails = listDetails?.updatingListItemCount(max(0, currentCount - 1))
+    }
 
     do {
-      try await appState.listManager.removeMember(userDID: member.did.didString(), from: listURI.description)
-      if let details = try? await appState.listManager.getListDetails(listURI.description) {
-        listDetails = details
-      }
+      try await appState.listManager.removeMember(
+        userDID: didString,
+        from: listURI.description,
+        listItemURI: knownItemURI
+      )
     } catch {
       withAnimation { members.insert(member, at: min(index, members.count)) }
+      if let knownItemURI {
+        memberItemURIs[didString] = knownItemURI
+      }
+      if let currentCount = listDetails?.listItemCount {
+        listDetails = listDetails?.updatingListItemCount(currentCount + 1)
+      }
       logger.error("Failed to remove list member: \(error.localizedDescription)")
       errorMessage = UserFacingError.message(for: error, action: "remove this person from the list") ?? "Try again."
       showingError = true
@@ -220,6 +274,34 @@ struct ListDetailView: View {
   }
   
   @ViewBuilder
+  private func tabPickerAndContent(viewModel: ListDetailViewModel) -> some View {
+    @Bindable var viewModel = viewModel
+
+    // Tab Picker
+    Picker("View", selection: $viewModel.selectedTab) {
+      ForEach(ListDetailTab.allCases, id: \.self) { tab in
+        Text(tab.rawValue).tag(tab)
+      }
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+    .padding(.horizontal, 16)
+    .padding(.bottom, 8)
+
+    // Tab Content
+    TabView(selection: $viewModel.selectedTab) {
+      feedView(viewModel: viewModel)
+        .tag(ListDetailTab.feed)
+
+      membersView(viewModel: viewModel)
+        .tag(ListDetailTab.members)
+    }
+    #if os(iOS)
+    .tabViewStyle(.page(indexDisplayMode: .never))
+    #endif
+  }
+
+  @ViewBuilder
   private func contentView(viewModel: ListDetailViewModel) -> some View {
     @Bindable var viewModel = viewModel
     
@@ -236,28 +318,14 @@ struct ListDetailView: View {
         // Settings manages the list here, and moderation lists have no feed, so show people only.
         membersView(viewModel: viewModel)
       } else {
-        // Tab Picker
-        Picker("View", selection: $viewModel.selectedTab) {
-          ForEach(ListDetailTab.allCases, id: \.self) { tab in
-            Text(tab.rawValue).tag(tab)
-          }
+        tabPickerAndContent(viewModel: viewModel)
+      }
+    }
+    .onChange(of: viewModel.selectedTab) { _, newTab in
+      if newTab == .members, viewModel.members.isEmpty, viewModel.hasMoreMembers {
+        Task {
+          await viewModel.loadInitialMembers()
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
-        
-        // Tab Content
-        TabView(selection: $viewModel.selectedTab) {
-          feedView(viewModel: viewModel)
-            .tag(ListDetailTab.feed)
-
-          membersView(viewModel: viewModel)
-            .tag(ListDetailTab.members)
-        }
-        #if os(iOS)
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        #endif
       }
     }
     .navigationTitle(viewModel.listDetails?.name ?? "List")
@@ -402,7 +470,7 @@ struct ListDetailView: View {
           HStack(spacing: 8) {
             ListPurposeBadge(purpose: listDetails.purpose)
 
-            Text("^[\(listDetails.listItemCount ?? viewModel.members.count) member](inflect: true)")
+            Text(MemberCountFormatter.format(count: listDetails.listItemCount ?? viewModel.members.count))
               .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
           }
@@ -526,6 +594,15 @@ struct ListDetailView: View {
           // Profiles open in the main app, not inside Settings.
           .allowsHitTesting(!usesLocalNavigation)
           .accessibilityRemoveTraits(usesLocalNavigation ? .isButton : [])
+        }
+        if viewModel.hasMoreMembers {
+          ProgressView()
+            .frame(maxWidth: .infinity)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .task {
+              await viewModel.loadMoreMembersIfNeeded()
+            }
         }
       }
     }
