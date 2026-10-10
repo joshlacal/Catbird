@@ -336,12 +336,32 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesMessageEntity] {
     let client = try await MessagesSchemaRuntime.client()
     let directory = try await MessagesSchemaRuntime.directory(client: client)
+    let convos = Array(directory.conversations.prefix(10))
+
+    // Concurrently fetch recent messages across conversations (P236)
+    let convoMessages: [(ChatBskyConvoDefs.ConvoView, [ChatBskyConvoDefs.MessageView])] =
+      try await withThrowingTaskGroup(
+        of: (Int, ChatBskyConvoDefs.ConvoView, [ChatBskyConvoDefs.MessageView]).self
+      ) { group in
+        for (index, convo) in convos.enumerated() {
+          group.addTask {
+            let messages = try await MessagesSchemaRuntime.recentMessages(
+              in: convo.id, limit: 50, client: client)
+            return (index, convo, messages)
+          }
+        }
+        var results: [(Int, ChatBskyConvoDefs.ConvoView, [ChatBskyConvoDefs.MessageView])] = []
+        for try await item in group {
+          results.append(item)
+        }
+        results.sort { $0.0 < $1.0 }
+        return results.map { ($0.1, $0.2) }
+      }
+
     var remaining = Set(identifiers)
     var found: [String: CatbirdMessagesMessageEntity] = [:]
 
-    for convo in directory.conversations.prefix(10) where !remaining.isEmpty {
-      let messages = try await MessagesSchemaRuntime.recentMessages(
-        in: convo.id, limit: 50, client: client)
+    for (convo, messages) in convoMessages where !remaining.isEmpty {
       for message in messages where remaining.contains(message.id) {
         remaining.remove(message.id)
         found[message.id] = MessagesSchemaRuntime.messageEntity(
@@ -371,10 +391,29 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
     let directory = try await MessagesSchemaRuntime.directory(client: client)
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
 
+    let convos = Array(directory.conversations.prefix(conversationLimit))
+    // Concurrently fetch messages across conversations, preserving order (P236)
+    let convoResults: [(ChatBskyConvoDefs.ConvoView, [ChatBskyConvoDefs.MessageView])] =
+      try await withThrowingTaskGroup(
+        of: (Int, ChatBskyConvoDefs.ConvoView, [ChatBskyConvoDefs.MessageView]).self
+      ) { group in
+        for (index, convo) in convos.enumerated() {
+          group.addTask {
+            let messages = try await MessagesSchemaRuntime.recentMessages(
+              in: convo.id, limit: messagesPerConversation, client: client)
+            return (index, convo, messages)
+          }
+        }
+        var results: [(Int, ChatBskyConvoDefs.ConvoView, [ChatBskyConvoDefs.MessageView])] = []
+        for try await item in group {
+          results.append(item)
+        }
+        results.sort { $0.0 < $1.0 }
+        return results.map { ($0.1, $0.2) }
+      }
+
     var matchingEntities: [CatbirdMessagesMessageEntity] = []
-    for convo in directory.conversations.prefix(conversationLimit) {
-      let messages = try await MessagesSchemaRuntime.recentMessages(
-        in: convo.id, limit: messagesPerConversation, client: client)
+    for (convo, messages) in convoResults {
       for message in messages
       where trimmed.isEmpty || message.text.localizedCaseInsensitiveContains(trimmed) {
         matchingEntities.append(

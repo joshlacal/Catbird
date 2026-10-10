@@ -41,9 +41,16 @@ actor SpotlightEntityDonator {
   /// Insertion-ordered dedup memory so repeated feed refreshes don't re-index
   /// the same entities; evicts oldest once `capacity` is reached.
   private var donatedIDs = Set<String>()
+  private var donatedSignatures = Set<String>()
   private var donationOrder: [String] = []
   private let capacity = 2000
 
+  /// Batching buffer within a ~1 s window
+  private var pendingPostEntities: [PostEntity] = []
+  private var pendingPostSignatures: [String: String] = [:]
+  private var pendingProfileEntities: [ProfileEntity] = []
+  private var batchTask: Task<Void, Never>? = nil
+  private let batchWindowNanoseconds: UInt64 = 1_000_000_000
   /// Per-call cap: feeds can hand over hundreds of posts on a fast scroll.
   private let batchLimit = 50
 
@@ -97,7 +104,17 @@ actor SpotlightEntityDonator {
     recordVerdicts(for: posts, policy: policy)
     let indexable: [AppBskyFeedDefs.PostView] = SpotlightDonationModeration.indexableFeedPosts(
       posts, viewerDID: viewerDID, policy: policy)
-    await index(indexable.map { PostEntity(from: $0) }, context: context)
+    // Skip posts whose uri+cid signature is already indexed
+    let freshPosts = indexable.filter {
+      !donatedSignatures.contains("\($0.uri.uriString()):\($0.cid.string)")
+    }
+    guard !freshPosts.isEmpty else { return }
+    for post in freshPosts {
+      let entity = PostEntity(from: post)
+      pendingPostEntities.append(entity)
+      pendingPostSignatures[entity.id] = "\(post.uri.uriString()):\(post.cid.string)"
+    }
+    scheduleBatchFlush(context: context)
   }
 
   /// Indexes posts the account deliberately engaged with, such as the anchor
@@ -114,7 +131,17 @@ actor SpotlightEntityDonator {
     await purgeLegacyPostIndexIfNeeded()
     guard await isCurrent(context) else { return }
     recordVerdicts(for: posts, policy: policy)
-    await index(indexable.map { PostEntity(from: $0) }, context: context)
+    // Skip posts whose uri+cid signature is already indexed
+    let freshPosts = indexable.filter {
+      !donatedSignatures.contains("\($0.uri.uriString()):\($0.cid.string)")
+    }
+    guard !freshPosts.isEmpty else { return }
+    for post in freshPosts {
+      let entity = PostEntity(from: post)
+      pendingPostEntities.append(entity)
+      pendingPostSignatures[entity.id] = "\(post.uri.uriString()):\(post.cid.string)"
+    }
+    scheduleBatchFlush(context: context)
   }
 
   /// Indexes a post the account just liked, reposted, or bookmarked. The post
@@ -126,10 +153,10 @@ actor SpotlightEntityDonator {
       postVerdicts[postURI] == true
     else { return }
     let entities = await PostEntityStore.shared.entities(for: [postURI])
-    guard !entities.isEmpty, await isCurrent(context) else { return }
-    await purgeLegacyPostIndexIfNeeded()
-    guard await isCurrent(context) else { return }
-    await index(entities, context: context)
+    for entity in entities {
+      pendingPostEntities.append(entity)
+    }
+    scheduleBatchFlush(context: context)
   }
 
   /// Records whether each post may be indexed under `policy`, replacing every
@@ -215,7 +242,10 @@ actor SpotlightEntityDonator {
     // Also seed the deadline-safe resolution store (see donate(posts:)).
     await ProfileEntityStore.shared.store(entities: indexable.map { ProfileEntity(from: $0) })
     guard await isCurrent(context) else { return }
-    await index(indexable.map { ProfileEntity(from: $0) }, context: context)
+    for profile in indexable {
+      pendingProfileEntities.append(ProfileEntity(from: profile))
+    }
+    scheduleBatchFlush(context: context)
   }
 
   /// Removes every indexed post and profile so a signed-out or removed account's
@@ -230,11 +260,65 @@ actor SpotlightEntityDonator {
   }
 
   private func resetDonationMemory() {
+    batchTask?.cancel()
+    batchTask = nil
+    pendingPostEntities.removeAll()
+    pendingPostSignatures.removeAll()
+    pendingProfileEntities.removeAll()
+    donatedSignatures.removeAll()
     donatedIDs.removeAll()
     donationOrder.removeAll()
     postVerdicts.removeAll()
     verdictOrder.removeAll()
     verdictPolicy = nil
+  }
+
+  private func scheduleBatchFlush(context: ExportContext) {
+    guard batchTask == nil else { return }
+    batchTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 1_000_000_000)
+      guard !Task.isCancelled else { return }
+      await self?.flushPendingBatch(context: context)
+    }
+  }
+
+  private func flushPendingBatch(context: ExportContext) async {
+    batchTask = nil
+    guard await isCurrent(context) else {
+      pendingPostEntities.removeAll()
+      pendingPostSignatures.removeAll()
+      pendingProfileEntities.removeAll()
+      return
+    }
+
+    let posts = pendingPostEntities
+    let postSigs = pendingPostSignatures
+    let profiles = pendingProfileEntities
+    pendingPostEntities.removeAll()
+    pendingPostSignatures.removeAll()
+    pendingProfileEntities.removeAll()
+
+    if !posts.isEmpty {
+      await index(posts, context: context)
+      for post in posts {
+        if let sig = postSigs[post.id] {
+          rememberSignature(sig)
+        }
+      }
+    }
+    if !profiles.isEmpty {
+      await index(profiles, context: context)
+    }
+  }
+
+  private func rememberSignature(_ signature: String) {
+    guard donatedSignatures.insert(signature).inserted else { return }
+    donationOrder.append(signature)
+    if donationOrder.count > capacity {
+      let evicted = donationOrder.removeFirst()
+      donatedSignatures.remove(evicted)
+      donatedIDs.remove(evicted)
+    }
   }
 
   private func removeIndexedEntities() async {

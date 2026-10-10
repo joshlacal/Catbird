@@ -11,6 +11,11 @@
 import Foundation
 import OSLog
 import Petrel
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 @available(iOS 18.0, *)
 actor ProfileEntityStore {
@@ -23,16 +28,48 @@ actor ProfileEntityStore {
   private let capacity = 200
   private let defaults: UserDefaults?
   private static let storageKey = "recentProfileEntities.v1"
+  private let flushInterval: TimeInterval = 1.5
+
+  private var pendingBuffer: [String: PersistedProfileEntity] = [:]
+  private var pendingOrder: [String] = []
+  private var cachedPersisted: [PersistedProfileEntity]? = nil
+  private var flushTask: Task<Void, Never>? = nil
+  private let encoder = JSONEncoder()
+  private let decoder = JSONDecoder()
 
   init(
     defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
   ) {
     self.defaults = defaults
+    #if canImport(UIKit)
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willResignActiveNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      Task { [weak self] in await self?.flush() }
+    }
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      Task { [weak self] in await self?.flush() }
+    }
+    #elseif canImport(AppKit)
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willResignActiveNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      Task { [weak self] in await self?.flush() }
+    }
+    #endif
   }
 
   func store(_ entity: ProfileEntity) {
     storeInMemory(entity)
-    persist([entity])
+    buffer([entity])
   }
 
   private func storeInMemory(_ entity: ProfileEntity) {
@@ -48,7 +85,7 @@ actor ProfileEntityStore {
     for entity in newEntities {
       storeInMemory(entity)
     }
-    persist(newEntities)
+    buffer(newEntities)
   }
 
   func entities(for identifiers: [String]) -> [ProfileEntity] {
@@ -58,31 +95,82 @@ actor ProfileEntityStore {
       "resolve: \(hits.count)/\(identifiers.count) from store (\(self.entities.count) cached)")
     return hits
   }
-
-  private func persist(_ newEntities: [ProfileEntity]) {
-    guard let defaults, !newEntities.isEmpty else { return }
-    let fresh = newEntities.map(PersistedProfileEntity.init)
-    let freshIDs = Set(fresh.map(\.id))
-    var merged = fresh + persistedEntities().values.filter { !freshIDs.contains($0.id) }
-    if merged.count > capacity {
-      merged = Array(merged.prefix(capacity))
+  private func buffer(_ newEntities: [ProfileEntity]) {
+    guard !newEntities.isEmpty else { return }
+    for entity in newEntities {
+      let persisted = PersistedProfileEntity(entity)
+      if pendingBuffer.updateValue(persisted, forKey: persisted.id) == nil {
+        pendingOrder.append(persisted.id)
+      }
     }
-    guard let data = try? JSONEncoder().encode(merged) else { return }
-    defaults.set(data, forKey: Self.storageKey)
+    flushTask?.cancel()
+    flushTask = Task(priority: .utility) { [weak self] in
+      try? await Task.sleep(nanoseconds: UInt64(1_500_000_000))
+      guard !Task.isCancelled else { return }
+      await self?.flush()
+    }
+  }
+
+  func flush() {
+    guard let defaults, !pendingBuffer.isEmpty else { return }
+    flushTask?.cancel()
+    flushTask = nil
+
+    var persisted = cachedPersisted ?? loadPersistedFromDefaults()
+    let pendingList = pendingOrder.reversed().compactMap { pendingBuffer[$0] }
+    let pendingIDs = Set(pendingBuffer.keys)
+
+    persisted = pendingList + persisted.filter { !pendingIDs.contains($0.id) }
+    if persisted.count > capacity {
+      persisted = Array(persisted.prefix(capacity))
+    }
+
+    let changed = (cachedPersisted == nil) || (persisted != cachedPersisted!)
+    if changed {
+      let signpostState = PerformanceSignposts.beginInterval("EntityExport")
+      defer { PerformanceSignposts.endInterval("EntityExport", signpostState) }
+
+      do {
+        let data = try encoder.encode(persisted)
+        defaults.set(data, forKey: Self.storageKey)
+        cachedPersisted = persisted
+      } catch {
+        logger.error("ProfileEntityStore persist failed: \(error.localizedDescription)")
+      }
+    } else {
+      cachedPersisted = persisted
+    }
+    pendingBuffer.removeAll()
+    pendingOrder.removeAll()
+  }
+
+  func flushPendingWrites() {
+    flush()
+  }
+
+  private func loadPersistedFromDefaults() -> [PersistedProfileEntity] {
+    guard let defaults,
+          let data = defaults.data(forKey: Self.storageKey),
+          let values = try? decoder.decode([PersistedProfileEntity].self, from: data) else {
+      return []
+    }
+    return values
   }
 
   private func persistedEntities() -> [String: PersistedProfileEntity] {
-    guard
-      let defaults,
-      let data = defaults.data(forKey: Self.storageKey),
-      let values = try? JSONDecoder().decode([PersistedProfileEntity].self, from: data)
-    else { return [:] }
-    return Dictionary(values.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let persisted = cachedPersisted ?? loadPersistedFromDefaults()
+    var dict = Dictionary(persisted.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    // Merge pending buffer so in-process reads see entries immediately
+    for (id, entity) in pendingBuffer {
+      dict[id] = entity
+    }
+    return dict
   }
+
 }
 
 @available(iOS 18.0, *)
-private struct PersistedProfileEntity: Codable {
+private struct PersistedProfileEntity: Codable, Equatable {
   let id: String
   let handle: String
   let displayName: String?

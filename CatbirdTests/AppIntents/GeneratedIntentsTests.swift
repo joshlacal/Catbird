@@ -503,6 +503,7 @@ struct GeneratedIntentsTests {
       let view = try Fixture.postView(text: "Persisted for Siri")
       let writer = PostEntityStore(defaults: defaults)
       await writer.store(view)
+      await writer.flushPendingWrites()
 
       let reader = PostEntityStore(defaults: defaults)
       let entities = await reader.entities(for: [view.uri.uriString()])
@@ -534,6 +535,7 @@ struct GeneratedIntentsTests {
       let writer = ProfileEntityStore(defaults: defaults)
       await writer.store(profile)
 
+      await writer.flushPendingWrites()
       let reader = ProfileEntityStore(defaults: defaults)
       let entities = await reader.entities(for: [profile.id])
       #expect(entities.count == 1)

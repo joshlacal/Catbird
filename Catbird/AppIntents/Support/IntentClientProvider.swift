@@ -45,7 +45,6 @@ actor IntentClientProvider {
   private let regulatoryChecker: any AgeRegulatoryChecking
   private var accountsRequiringAgeCheck: Set<String> = []
   private var preflightsByDID: [String: Task<Void, Never>] = [:]
-
   init(regulatoryChecker: any AgeRegulatoryChecking = AppleAgeRangeAdapter.shared) {
     self.regulatoryChecker = regulatoryChecker
     _ = Self.lexiconRegistration
@@ -61,6 +60,11 @@ actor IntentClientProvider {
     let resolvedDID = try resolveDID(did)
     if purpose == .coveredUse {
       try await requireCoveredUse(for: resolvedDID)
+    }
+
+    // Reuse the app's active ATProtoClient when available for this DID (P235)
+    if let appClient = await resolveAppClient(for: resolvedDID) {
+      return appClient
     }
 
     if let cached = clientsByDID[resolvedDID] {
@@ -94,7 +98,16 @@ actor IntentClientProvider {
     let resolvedDID = try resolveDID(did)
     try Task.checkCancellation()
 
-    if let preflight = preflightsByDID[resolvedDID] {
+    // If the active AppState already evaluated age access for this account, reuse its decision
+    let activeRequirement: PlatformAgeSignal.Requirement? = await MainActor.run {
+      guard let appState = AppStateManager.shared.lifecycle.appState,
+            appState.userDID == resolvedDID else { return nil }
+      return appState.ageAccess.signal.requirement
+    }
+
+    if let activeRequirement {
+      recordRequirement(activeRequirement, for: resolvedDID)
+    } else if let preflight = preflightsByDID[resolvedDID] {
       await preflight.value
     } else {
       // Share concurrent checks for this account so an older response cannot
@@ -105,14 +118,25 @@ actor IntentClientProvider {
         self.recordRequirement(requirement, for: resolvedDID)
       }
       preflightsByDID[resolvedDID] = preflight
+      defer { preflightsByDID.removeValue(forKey: resolvedDID) }
       await preflight.value
-      preflightsByDID.removeValue(forKey: resolvedDID)
     }
 
     try Task.checkCancellation()
     guard !accountsRequiringAgeCheck.contains(resolvedDID) else {
       throw IntentError.serviceUnavailable(
         "This shortcut is unavailable under your device’s age requirements. Open Catbird to continue.")
+    }
+  }
+
+  private func resolveAppClient(for did: String) async -> ATProtoClient? {
+    await MainActor.run {
+      guard let appState = AppStateManager.shared.lifecycle.appState,
+            appState.userDID == did,
+            let client = appState.atProtoClient else {
+        return nil
+      }
+      return client
     }
   }
 
@@ -143,7 +167,6 @@ actor IntentClientProvider {
     inFlightByDID[did]?.cancel()
     inFlightByDID.removeValue(forKey: did)
   }
-
   // MARK: - Client Bootstrap
 
   private func makeStandaloneClient(for did: String) async throws -> ATProtoClient {

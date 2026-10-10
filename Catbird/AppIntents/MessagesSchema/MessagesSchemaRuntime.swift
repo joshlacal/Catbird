@@ -215,7 +215,17 @@ enum MessagesSchemaRuntime {
     }
   }
 
-  static func directory(client: ATProtoClient, limit: Int = 100) async throws -> ChatDirectory {
+  static func directory(
+    client: ATProtoClient, limit: Int = 100, useCache: Bool = true
+  ) async throws -> ChatDirectory {
+    if useCache {
+      return try await ChatDirectoryCache.shared.directory(client: client, limit: limit)
+    } else {
+      return try await freshDirectory(client: client, limit: limit)
+    }
+  }
+
+  static func freshDirectory(client: ATProtoClient, limit: Int = 100) async throws -> ChatDirectory {
     let userDID = try await client.getDid()
     let output = try unwrapIntentResponse(
       await client.chat.bsky.convo.listConvos(
@@ -231,6 +241,10 @@ enum MessagesSchemaRuntime {
       membersByConvoID: membersByConvoID,
       currentUserDID: userDID
     )
+  }
+
+  static func invalidateDirectoryCache(for did: String) async {
+    await ChatDirectoryCache.shared.invalidate(did: did)
   }
 
   static func personEntity(
@@ -338,4 +352,52 @@ enum MessagesSchemaRuntime {
   }
 }
 
+
+@available(anyAppleOS 27.0, *)
+actor ChatDirectoryCache {
+  static let shared = ChatDirectoryCache()
+
+  private struct Entry {
+    let directory: MessagesSchemaRuntime.ChatDirectory
+    let fetchedAt: Date
+  }
+
+  private var cache: [String: Entry] = [:]
+  private var inFlight: [String: Task<MessagesSchemaRuntime.ChatDirectory, Error>] = [:]
+  private let ttl: TimeInterval = 30.0
+
+  func directory(client: ATProtoClient, limit: Int = 100) async throws -> MessagesSchemaRuntime.ChatDirectory {
+    let userDID = try await client.getDid()
+    let now = Date()
+    if let entry = cache[userDID], now.timeIntervalSince(entry.fetchedAt) < ttl {
+      return entry.directory
+    }
+
+    if let task = inFlight[userDID] {
+      return try await task.value
+    }
+
+    let task = Task {
+      try await MessagesSchemaRuntime.freshDirectory(client: client, limit: limit)
+    }
+    inFlight[userDID] = task
+    defer { inFlight.removeValue(forKey: userDID) }
+
+    let directory = try await task.value
+    cache[userDID] = Entry(directory: directory, fetchedAt: Date())
+    return directory
+  }
+
+  func invalidate(did: String) {
+    cache.removeValue(forKey: did)
+    inFlight[did]?.cancel()
+    inFlight.removeValue(forKey: did)
+  }
+
+  func invalidateAll() {
+    cache.removeAll()
+    for task in inFlight.values { task.cancel() }
+    inFlight.removeAll()
+  }
+}
 #endif

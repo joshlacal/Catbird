@@ -14,6 +14,11 @@
 import Foundation
 import OSLog
 import Petrel
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 @available(iOS 18.0, *)
 actor PostEntityStore {
@@ -32,6 +37,30 @@ actor PostEntityStore {
     defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
   ) {
     self.defaults = defaults
+    #if canImport(UIKit)
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willResignActiveNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      Task { [weak self] in await self?.flush() }
+    }
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      Task { [weak self] in await self?.flush() }
+    }
+    #elseif canImport(AppKit)
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willResignActiveNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      Task { [weak self] in await self?.flush() }
+    }
+    #endif
   }
 
   func store(_ view: AppBskyFeedDefs.PostView) {
@@ -57,6 +86,15 @@ actor PostEntityStore {
     // (Siri, Shortcuts) can resolve entities without a network round trip.
     PostEntityCache.upsert(newViews, defaults: defaults)
   }
+  /// Flushes any pending post entity writes to UserDefaults immediately.
+  func flush() {
+    PostEntityCache.flushSync(defaults: defaults)
+  }
+
+  func flushPendingWrites() {
+    flush()
+  }
+
 
   /// Contract consumed by the generated PostEntityQuery (manifest
   /// `query.byIds.localStore`): identifiers with no cached view are simply

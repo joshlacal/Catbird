@@ -9,6 +9,9 @@ import Foundation
 import OSLog
 import Petrel
 import WidgetKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 final class FeedWidgetDataProvider {
@@ -24,9 +27,14 @@ final class FeedWidgetDataProvider {
   /// configuration key. A moderation policy change rebuilds the stored widget posts from these
   /// without a network load.
   private var widgetSources: [String: WidgetFeedSource] = [:]
+  /// In-memory uri+cid post IDs from the last write, keyed by configKey.
+  private var lastSignatures: [String: [String]] = [:]
+  private var hasConfiguredFeedWidgets: Bool? = nil
+  private var configuredFeedKeys: Set<String>? = nil
+  private var isQueryingConfigurations = false
   private var moderationPolicyObserver: NSObjectProtocol?
   private var ageAccessObserver: NSObjectProtocol?
-
+  private var activeObserver: NSObjectProtocol?
   private init() {
     moderationPolicyObserver = NotificationCenter.default.addObserver(
       forName: .moderationPolicyDidChange, object: nil, queue: .main
@@ -40,14 +48,23 @@ final class FeedWidgetDataProvider {
       let originDID = notification.userInfo?["accountDID"] as? String
       MainActor.assumeIsolated { self?.handleAgeAccessChange(originDID: originDID) }
     }
+    refreshWidgetConfigurations()
+    #if canImport(UIKit)
+    activeObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.refreshWidgetConfigurations() }
+    }
+    #endif
   }
 
   /// Configure the provider with the active account DID for key scoping
   func configure(accountDID: String) {
     if accountDID != self.accountDID {
       widgetSources.removeAll()
+      lastSignatures.removeAll()
+      refreshWidgetConfigurations()
     }
-    self.accountDID = accountDID
     // Write active DID so widget knows which account is current
     sharedDefaults?.set(accountDID, forKey: "activeAccountDID")
     clearExportedPostsIfRequired()
@@ -144,17 +161,28 @@ final class FeedWidgetDataProvider {
       return
     }
 
+    // Skip export entirely when no widget is configured on this device or for this feed (P233)
+    if hasConfiguredFeedWidgets == false { return }
+    if let configured = configuredFeedKeys, !configured.contains(configKey) { return }
+
+    // Skip moderation, write, and reload when the uri+cid signature of the top posts is unchanged
+    let prefixPosts = Array(posts.prefix(FeedWidgetPosts.sourceLimit))
+    let currentSignature = prefixPosts.map(\.id)
+    if let last = lastSignatures[configKey], last == currentSignature {
+      return
+    }
+
     let source = WidgetFeedSource(
-      posts: posts.prefix(FeedWidgetPosts.sourceLimit).compactMap { try? $0.feedViewPostBox },
+      posts: prefixPosts.compactMap { try? $0.feedViewPostBox },
       feedType: mapFeedType(feedType),
       totalPostCount: posts.count,
       loadedAt: Date())
     widgetSources[configKey] = source
     if writeWidgetData(source, configKey: configKey) {
-      reloadFeedTimelines()
+      lastSignatures[configKey] = currentSignature
+      reloadFeedTimelines(for: configKey)
     }
   }
-
   /// Rewrites every widget feed built this session when the active account's moderation policy
   /// changes, then requests that WidgetKit refresh the displayed entries.
   private func rebuildAfterModerationPolicyChange(originDID: String?) {
@@ -164,12 +192,11 @@ final class FeedWidgetDataProvider {
       return
     }
     guard !widgetSources.isEmpty else { return }
+    lastSignatures.removeAll()
     var wroteAny = false
     for (configKey, source) in widgetSources where writeWidgetData(source, configKey: configKey) {
       wroteAny = true
-    }
-    if wroteAny {
-      reloadFeedTimelines()
+      reloadFeedTimelines(for: configKey)
     }
   }
 
@@ -210,9 +237,12 @@ final class FeedWidgetDataProvider {
     reloadFeedTimelines()
   }
 
-  private func reloadFeedTimelines() {
+  private func reloadFeedTimelines(for configKey: String? = nil) {
     WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
-    WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedRectangular")
+    // CatbirdFeedRectangular only ever displays the Following timeline (P233)
+    if configKey == nil || configKey == FeedWidgetConstants.timelineConfigKey {
+      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedRectangular")
+    }
   }
 
   /// Writes the moderated widget posts for one configuration and reports whether it did.
@@ -226,6 +256,9 @@ final class FeedWidgetDataProvider {
       logger.error("Failed to access shared defaults")
       return false
     }
+
+    let signpostState = PerformanceSignposts.beginInterval("WidgetExport")
+    defer { PerformanceSignposts.endInterval("WidgetExport", signpostState) }
 
     let widgetPosts = FeedWidgetPosts.make(from: source.posts.map(\.value), policy: policy)
     let feedWidgetData = FeedWidgetDataEnhanced(
@@ -300,10 +333,69 @@ final class FeedWidgetDataProvider {
     if accountDID == did {
       accountDID = ""
       widgetSources.removeAll()
+      lastSignatures.removeAll()
     }
     WidgetCenter.shared.reloadAllTimelines()
 
     logger.info("Cleared widget data for a signed-out account")
+  }
+
+  /// Queries WidgetCenter for currently configured widgets once per session and on foreground.
+  private func refreshWidgetConfigurations() {
+    guard !isQueryingConfigurations else { return }
+    isQueryingConfigurations = true
+    #if os(iOS)
+    Task { @MainActor [weak self] in
+      defer { self?.isQueryingConfigurations = false }
+      do {
+        let widgets: [WidgetInfo]
+        if #available(iOS 18.0, macOS 15.0, *) {
+          widgets = try await WidgetCenter.shared.currentConfigurations()
+        } else {
+          widgets = try await withCheckedThrowingContinuation { continuation in
+            WidgetCenter.shared.getCurrentConfigurations { result in
+              continuation.resume(with: result)
+            }
+          }
+        }
+        let feedWidgets = widgets.filter {
+          $0.kind == "CatbirdFeedWidget" || $0.kind == "CatbirdFeedRectangular"
+        }
+        guard let self else { return }
+        if feedWidgets.isEmpty {
+          self.hasConfiguredFeedWidgets = false
+          self.configuredFeedKeys = []
+        } else {
+          self.hasConfiguredFeedWidgets = true
+          var keys = Set<String>()
+          var allowsAllFeeds = false
+          for widget in feedWidgets {
+            if widget.kind == "CatbirdFeedRectangular" {
+              keys.insert(FeedWidgetConstants.timelineConfigKey)
+            } else if widget.kind == "CatbirdFeedWidget" {
+              keys.insert(FeedWidgetConstants.timelineConfigKey)
+              let desc = String(describing: widget.configuration)
+              if let range = desc.range(of: "at://") {
+                let sub = desc[range.lowerBound...]
+                let uri = sub.prefix(while: { !$0.isWhitespace && $0 != "\"" && $0 != ")" && $0 != "," && $0 != ">" })
+                keys.insert(FeedWidgetConstants.configKey(forFeedURI: String(uri)))
+              } else if desc.contains("pinned") || desc.contains("saved") || desc.contains("selectedFeed") {
+                allowsAllFeeds = true
+              }
+            }
+          }
+          self.configuredFeedKeys = allowsAllFeeds ? nil : keys
+        }
+      } catch {
+        self?.hasConfiguredFeedWidgets = true
+        self?.configuredFeedKeys = nil
+      }
+    }
+    #else
+    hasConfiguredFeedWidgets = true
+    configuredFeedKeys = nil
+    isQueryingConfigurations = false
+    #endif
   }
 }
 
