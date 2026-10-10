@@ -13,6 +13,7 @@ struct NotificationsActivityListView: View {
   @State private var posts: [AppBskyFeedDefs.PostView] = []
   @State private var isLoading = true
   @State private var errorMessage: String?
+  @State private var hasLoaded = false
 
   private var contentMaxWidth: CGFloat {
     hSizeClass == .compact ? .infinity : 600
@@ -95,6 +96,7 @@ struct NotificationsActivityListView: View {
     .toolbarTitleDisplayMode(.inline)
     #endif
     .task {
+      guard !hasLoaded else { return }
       await loadPosts()
     }
     .refreshable {
@@ -133,6 +135,7 @@ struct NotificationsActivityListView: View {
 
       // Restore requested newest-first order and filter out deleted/missing posts
       posts = postURIs.compactMap { postMap[$0] }
+      hasLoaded = true
       isLoading = false
     } catch {
       errorMessage = UserFacingError.message(for: error, action: "load these posts")

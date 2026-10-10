@@ -48,6 +48,10 @@ enum NotificationListVisibilityPolicy {
         allows($0, preferences: preferences)
       }
       guard !notifications.isEmpty else { return nil }
+      if notifications.count == group.notifications.count {
+        return (index, group)
+      }
+
 
       let projected = GroupedNotification(
         id: group.id,

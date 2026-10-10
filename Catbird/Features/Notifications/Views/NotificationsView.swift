@@ -18,6 +18,7 @@ struct NotificationsView: View {
   @State private var lastLoadMoreTriggerTime: TimeInterval = .zero
   @State private var showingSettings = false
   private let loadMoreTriggerDedupInterval: TimeInterval = 0.35
+  @State private var openIntervalState: OSSignpostIntervalState?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsView")
 
@@ -45,10 +46,30 @@ struct NotificationsView: View {
     }
     .onChange(of: selectedTab) { oldValue, newValue in
       if newValue == 2 && oldValue != 2 {
+        if openIntervalState == nil {
+          openIntervalState = PerformanceSignposts.beginInterval("NotificationsOpen")
+        }
         Task {
-          await viewModel.refreshNotifications()
+          if viewModel.groupedNotifications.isEmpty {
+            await viewModel.loadNotifications()
+          } else if viewModel.isStale || appState.notificationManager.unreadCount > 0 {
+            await viewModel.refreshNotifications()
+          }
+          if let state = openIntervalState {
+            PerformanceSignposts.endInterval("NotificationsOpen", state)
+            openIntervalState = nil
+          }
           try? await viewModel.markNotificationsAsSeen()
         }
+      }
+    }
+    .onChange(of: appState.notificationManager.preferences) { _, _ in
+      viewModel.preferencesDidChange()
+    }
+    .onChange(of: viewModel.isLoading) { _, isLoading in
+      if !isLoading, let state = openIntervalState {
+        PerformanceSignposts.endInterval("NotificationsOpen", state)
+        openIntervalState = nil
       }
     }
     .onChange(of: selectedFilter) { _, newFilter in
@@ -61,25 +82,31 @@ struct NotificationsView: View {
       viewModel.moderationPolicy = policy
     }
     .task {
+      if openIntervalState == nil {
+        openIntervalState = PerformanceSignposts.beginInterval("NotificationsOpen")
+      }
       viewModel.moderationPolicy = appState.moderationPolicy
       if viewModel.groupedNotifications.isEmpty {
         await viewModel.loadNotifications()
+      }
+      if let state = openIntervalState {
+        PerformanceSignposts.endInterval("NotificationsOpen", state)
+        openIntervalState = nil
       }
       // The first visit creates this view with the tab already selected, so the
       // selectedTab change above never fires for it.
       if selectedTab == 2 {
         try? await viewModel.markNotificationsAsSeen()
       }
-      // Force widget update when notifications view appears
-      appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
     }
-    .onChange(of: scenePhase) { _, phase in
-      guard phase == .active else { return }
-      appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
+    .onChange(of: scenePhase) { oldPhase, newPhase in
+      guard newPhase == .active, oldPhase == .background else { return }
       // Returning to the app on this tab: show what's new and clear the badge.
       if selectedTab == 2 {
         Task {
-          await viewModel.refreshNotifications()
+          if viewModel.isStale || appState.notificationManager.unreadCount > 0 {
+            await viewModel.refreshNotifications()
+          }
           try? await viewModel.markNotificationsAsSeen()
         }
       }
@@ -283,6 +310,7 @@ struct NotificationsView: View {
                 navigationPath.wrappedValue.append(destination)
               }, path: navigationPath
             )
+            .equatable()
             #if os(macOS)
             .frame(maxWidth: 700)
             .frame(maxWidth: .infinity, alignment: .center)
@@ -383,10 +411,35 @@ struct NotificationsView: View {
 
 // MARK: - Notification Card
 
-struct NotificationCard: View {
+struct NotificationCard: View, Equatable {
   let group: GroupedNotification
   let onTap: (NavigationDestination) -> Void
   @Binding var path: NavigationPath
+
+  static func == (lhs: NotificationCard, rhs: NotificationCard) -> Bool {
+    guard lhs.group.id == rhs.group.id,
+          lhs.group.type == rhs.group.type,
+          lhs.group.pageNumber == rhs.group.pageNumber,
+          lhs.group.hasUnreadNotifications == rhs.group.hasUnreadNotifications,
+          lhs.group.subjectPost?.cid == rhs.group.subjectPost?.cid,
+          lhs.group.subjectPost?.viewer?.like == rhs.group.subjectPost?.viewer?.like,
+          lhs.group.subjectPost?.viewer?.repost == rhs.group.subjectPost?.viewer?.repost,
+          lhs.group.parentPost?.cid == rhs.group.parentPost?.cid,
+          lhs.group.parentPost?.viewer?.like == rhs.group.parentPost?.viewer?.like,
+          lhs.group.parentPost?.viewer?.repost == rhs.group.parentPost?.viewer?.repost,
+          lhs.group.notifications.count == rhs.group.notifications.count
+    else {
+      return false
+    }
+
+    for (ln, rn) in zip(lhs.group.notifications, rhs.group.notifications) {
+      if ln.cid != rn.cid || ln.isRead != rn.isRead {
+        return false
+      }
+    }
+
+    return true
+  }
   @Environment(AppState.self) private var appState: AppState
   @Environment(\.horizontalSizeClass) private var hSizeClass
 
@@ -1078,12 +1131,14 @@ struct NotificationAuthorAvatar: View {
   let author: AppBskyActorDefs.ProfileView
   let size: CGFloat
   @Environment(\.moderationPolicy) private var moderationPolicy
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
     if NotificationModeration.concealsAvatar(of: author, policy: moderationPolicy) {
       ModeratedAvatarPlaceholder(size: size)
     } else {
-      LazyImage(url: author.finalAvatarURL()) { state in
+      let request = ImageRequestFactory.avatar(author.finalAvatarURL(), pointSize: size, scale: displayScale)
+      LazyImage(request: request) { state in
         if let image = state.image {
           image
             .resizable()

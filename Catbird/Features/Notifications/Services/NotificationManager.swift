@@ -476,6 +476,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   @ObservationIgnored private var unreadCheckTask: Task<Void, Never>?
   @ObservationIgnored private var foregroundCheckTask: Task<Void, Never>?
   @ObservationIgnored private var resumeUnreadChecking = false
+  @ObservationIgnored private var lastUnreadCheckAt: Date?
+  @ObservationIgnored private var lastPublishedWidgetCount: Int?
+  @ObservationIgnored private var lastPublishedWidgetDate: Date?
+  private let widgetPublishLock = NSLock()
+  @ObservationIgnored private var didRegisterGraphObservers = false
 
   @MainActor
   func suspendForAccountSwitch() async {
@@ -525,11 +530,18 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   @MainActor
-  private func scheduleUnreadCheck() {
-    guard !pollingBarrier.isSuspended, unreadCheckTask == nil else { return }
+  func scheduleUnreadCheck() {
+    guard !pollingBarrier.isSuspended else { return }
+    if let last = lastUnreadCheckAt, Date().timeIntervalSince(last) < 15.0 {
+      return
+    }
+    guard unreadCheckTask == nil else { return }
     unreadCheckTask = Task { [weak self] in
       guard let self else { return }
-      defer { self.unreadCheckTask = nil }
+      defer {
+        self.unreadCheckTask = nil
+        self.lastUnreadCheckAt = Date()
+      }
       await self.checkUnreadNotifications()
     }
   }
@@ -1241,6 +1253,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     #endif
 
     // Update widget to clear count
+    widgetPublishLock.lock()
+    lastPublishedWidgetCount = nil
+    lastPublishedWidgetDate = nil
+    widgetPublishLock.unlock()
     updateWidgetUnreadCount(0)
 
     notificationLogger.info("Notification cleanup completed")
@@ -1324,6 +1340,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let accountDID = currentAccountDID
     Task { @MainActor in
       guard !pollingBarrier.isSuspended, clientGeneration == generation, currentAccountDID == accountDID else { return }
+      guard unreadCount != 0 else { return }
       unreadCount = 0
 
       // Update app badge
@@ -1424,6 +1441,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Set up observers for graph changes
   private func setupGraphObservers() {
+    guard !didRegisterGraphObservers else { return }
+    didRegisterGraphObservers = true
     // Observe changes to mutes and blocks
     NotificationCenter.default.addObserver(
       self,
@@ -1912,7 +1931,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
       await self.checkNotificationStatus()
       guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
-      await self.checkUnreadNotifications()
+      self.scheduleUnreadCheck()
       guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
       if let lastSync = self.lastRelationshipSync, Date().timeIntervalSince(lastSync) > 3600 {
         await self.syncRelationships()
@@ -1945,8 +1964,21 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Updates the widget with the current unread notification count
   func updateWidgetUnreadCount(_ count: Int) {
+    let now = Date()
+    widgetPublishLock.lock()
+    if let lastCount = lastPublishedWidgetCount,
+       lastCount == count,
+       let lastDate = lastPublishedWidgetDate,
+       now.timeIntervalSince(lastDate) < 15 * 60 {
+      widgetPublishLock.unlock()
+      return
+    }
+    lastPublishedWidgetCount = count
+    lastPublishedWidgetDate = now
+    widgetPublishLock.unlock()
+
     // Create widget data
-    let widgetData = NotificationWidgetData(count: count, lastUpdated: Date())
+    let widgetData = NotificationWidgetData(count: count, lastUpdated: now)
 
     // Encode to JSON
     guard let data = try? JSONEncoder().encode(widgetData) else {
@@ -1959,7 +1991,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     if let sharedDefaults = sharedDefaults {
       sharedDefaults.set(data, forKey: "notificationWidgetData")
       notificationLogger.info(
-        "📲 Widget data saved to UserDefaults: count=\(count), lastUpdated=\(Date())")
+        "📲 Widget data saved to UserDefaults: count=\(count), lastUpdated=\(now)")
     } else {
       notificationLogger.error(
         "❌ Failed to access shared UserDefaults with suite name 'group.blue.catbird'")
@@ -2203,11 +2235,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
       notificationLogger.info("✅ Successfully prefetched post for notification")
 
-      // Cache post to SwiftData for instant display
+      // Cache images for immediate display
       if let postView = posts.first {
-        await savePrefetchedPostToCache(postView)
-
-        // Cache images for immediate display
         await prefetchPostImages(postView)
       }
 
@@ -2217,64 +2246,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
   }
 
-  /// Save prefetched post to SwiftData cache for instant display
-  private func savePrefetchedPostToCache(_ postView: AppBskyFeedDefs.PostView) async {
-    guard let modelContext = modelContext else {
-      notificationLogger.debug("Cannot cache post - modelContext unavailable")
-      return
-    }
-
-    // Convert PostView to FeedViewPost for caching
-    let feedViewPost = AppBskyFeedDefs.FeedViewPost(
-      post: postView,
-      reply: nil,
-      reason: nil,
-      feedContext: nil,
-      reqId: nil
-    )
-
-    // Create cached post with special feedType for notification prefetch
-    guard
-      let cachedPost = CachedFeedViewPost(
-        from: feedViewPost,
-        cursor: nil,
-        feedType: "notification-prefetch",
-        feedOrder: nil
-      )
-    else {
-      notificationLogger.warning("Failed to create CachedFeedViewPost from prefetched post")
-      return
-    }
-
-    await MainActor.run {
-      // Upsert: update existing post or insert new one to avoid constraint violations
-      let postId = cachedPost.id
-      let postFeedType = cachedPost.feedType
-      let descriptor = FetchDescriptor<CachedFeedViewPost>(
-        predicate: #Predicate<CachedFeedViewPost> { post in
-          post.id == postId && post.feedType == postFeedType
-        }
-      )
-
-      do {
-        let existing = try modelContext.fetch(descriptor)
-        let savedPost = modelContext.upsert(
-          cachedPost,
-          existingModel: existing.first,
-          update: { existingPost, newPost in existingPost.update(from: newPost) }
-        )
-        try modelContext.save()
-        if existing.isEmpty {
-          notificationLogger.info("✅ Saved prefetched post to cache: \(postView.uri.uriString())")
-        } else {
-          notificationLogger.debug("Updated cached post: \(postView.uri.uriString())")
-        }
-      } catch {
-        notificationLogger.error(
-          "Failed to save prefetched post to cache: \(error.localizedDescription)")
-      }
-    }
-  }
 
   /// Prefetch images from a post for faster rendering
   private func prefetchPostImages(_ post: AppBskyFeedDefs.PostView) async {

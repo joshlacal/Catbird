@@ -84,6 +84,7 @@ struct ActivitySubscriptionsView: View {
 private struct ActivitySubscriptionRow: View {
   @Environment(AppState.self) private var appState: AppState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.displayScale) private var displayScale
   let entry: ActivitySubscriptionService.SubscriptionEntry
   @State private var actionError: String?
 
@@ -126,14 +127,15 @@ private struct ActivitySubscriptionRow: View {
 
   private var avatarView: some View {
     let url = entry.profile.avatar.flatMap { URL(string: $0.uriString()) }
+    let request = ImageRequestFactory.avatar(url, pointSize: 44, scale: displayScale)
 
-    return LazyImage(url: url) { state in
+    return LazyImage(request: request) { state in
       if let image = state.image {
         image.resizable().aspectRatio(contentMode: .fill)
       } else if state.error != nil {
         Color.systemGray5
       } else {
-        ProgressView()
+        Circle().fill(Color.secondary.opacity(0.2))
       }
     }
     .frame(width: 44, height: 44)
