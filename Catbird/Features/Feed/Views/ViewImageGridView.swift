@@ -242,33 +242,47 @@ struct ViewImageGridView: View {
         .fill(Color.gray.opacity(0.1))
         .frame(width: width, height: height)
 
-      LazyImage(request: ImageLoadingManager.imageRequest(
-        for: URL(string: viewImage.thumb.uriString()) ?? URL(string: "about:blank")!,
-        targetSize: CGSize(width: width, height: height)
-      )) { state in
-        if let image = state.image {
-          image
-            .resizable()
-            .aspectRatio(contentMode: .fill)
-            .frame(width: width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-            .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
-              source
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-        } else if state.error != nil {
-          Image(systemName: "photo")
-            .aspectRatio(contentMode: .fit)
-            .frame(width: width * 0.3, height: height * 0.3)
-            .foregroundStyle(.secondary)
-        } else {
-          ProgressView()
-            .scaleEffect(0.7)
+      let thumbURL = URL(string: viewImage.thumb.uriString()) ?? URL(string: "about:blank")!
+      let request = ImageLoadingManager.thumbnailRequest(for: thumbURL, targetSize: CGSize(width: width, height: height))
+
+      if let cached = ImageLoadingManager.shared.pipeline.cache[request]?.image {
+        Image(platformImage: cached)
+          .resizable()
+          .aspectRatio(contentMode: .fill)
+          .frame(width: width, height: height)
+          .clipShape(RoundedRectangle(cornerRadius: 10))
+          .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
+          .contentShape(RoundedRectangle(cornerRadius: 10))
+          .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
+            source
+              .clipShape(RoundedRectangle(cornerRadius: 10))
+          }
+      } else {
+        LazyImage(request: request) { state in
+          if let image = state.image {
+            image
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+              .frame(width: width, height: height)
+              .clipShape(RoundedRectangle(cornerRadius: 10))
+              .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
+              .contentShape(RoundedRectangle(cornerRadius: 10))
+              .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
+                source
+                  .clipShape(RoundedRectangle(cornerRadius: 10))
+              }
+          } else if state.error != nil {
+            Image(systemName: "photo")
+              .aspectRatio(contentMode: .fit)
+              .frame(width: width * 0.3, height: height * 0.3)
+              .foregroundStyle(.secondary)
+          } else {
+            ProgressView()
+              .scaleEffect(0.7)
+          }
         }
+        .pipeline(ImageLoadingManager.shared.pipeline)
       }
-      .pipeline(ImageLoadingManager.shared.pipeline)
     }
     .frame(width: width, height: height)
     .overlay(alignment: .bottomLeading) {
@@ -329,34 +343,49 @@ struct ViewImageGridView: View {
           .frame(maxWidth: .infinity)
           .frame(height: height)
 
-        LazyImage(request: ImageLoadingManager.imageRequest(
-          for: URL(string: viewImage.thumb.uriString()) ?? URL(string: "about:blank")!,
-          targetSize: CGSize(width: geometry.size.width, height: height)
-        )) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-              .frame(maxWidth: .infinity)
-              .frame(height: height)
-              .clipShape(RoundedRectangle(cornerRadius: 10))
-              .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
-              .contentShape(Rectangle())
-              .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
-                source
-                  .clipShape(RoundedRectangle(cornerRadius: 10))
-              }
-          } else if state.error != nil {
-            Image(systemName: "photo")
-              .aspectRatio(contentMode: .fit)
-              .frame(width: geometry.size.width * 0.3, height: height * 0.3)
-              .foregroundStyle(.secondary)
-          } else {
-            ProgressView()
-              .scaleEffect(0.7)
+        let thumbURL = URL(string: viewImage.thumb.uriString()) ?? URL(string: "about:blank")!
+        let request = ImageLoadingManager.thumbnailRequest(for: thumbURL, targetSize: CGSize(width: geometry.size.width, height: height))
+
+        if let cached = ImageLoadingManager.shared.pipeline.cache[request]?.image {
+          Image(platformImage: cached)
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
+            .contentShape(Rectangle())
+            .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
+              source
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        } else {
+          LazyImage(request: request) { state in
+            if let image = state.image {
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(maxWidth: .infinity)
+                .frame(height: height)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
+                .contentShape(Rectangle())
+                .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
+                  source
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            } else if state.error != nil {
+              Image(systemName: "photo")
+                .aspectRatio(contentMode: .fit)
+                .frame(width: geometry.size.width * 0.3, height: height * 0.3)
+                .foregroundStyle(.secondary)
+            } else {
+              ProgressView()
+                .scaleEffect(0.7)
+            }
           }
+          .pipeline(ImageLoadingManager.shared.pipeline)
         }
-        .pipeline(ImageLoadingManager.shared.pipeline)
       }
       .frame(maxWidth: .infinity)
       .frame(height: height)
@@ -883,10 +912,12 @@ struct EnhancedImageViewer: View {
 
 #if os(iOS)
         LazyPager(data: images, page: $currentIndex) { image in
+          let isCurrent = images.firstIndex(where: { $0.id == image.id }) == currentIndex
           ZoomableImageWrapper(
             image: image,
             liveTextEnabled: $liveTextEnabled,
-            liveTextSupported: liveTextSupported
+            liveTextSupported: liveTextSupported,
+            isCurrentPage: isCurrent
           )
           .accessibilityElement(children: .contain)
           .accessibilityLabel(image.alt)
@@ -908,6 +939,7 @@ struct EnhancedImageViewer: View {
           }
         }
         .settings { config in
+            config.preloadAmount = 1
             config.dismissVelocity = 1.5
             config.dismissTriggerOffset = 1
             config.dismissAnimationLength = 0.3
@@ -1356,17 +1388,21 @@ struct ZoomableImageWrapper: UIViewControllerRepresentable {
   let image: AppBskyEmbedImages.ViewImage
   @Binding var liveTextEnabled: Bool
   var liveTextSupported: Bool
+  var isCurrentPage: Bool = false
 
   func makeUIViewController(context: Context) -> ZoomableImageViewController {
-    ZoomableImageViewController(
+    let controller = ZoomableImageViewController(
       image: image,
       liveTextEnabled: liveTextEnabled,
       liveTextSupported: liveTextSupported
     )
+    controller.setCurrentPage(isCurrentPage)
+    return controller
   }
 
   func updateUIViewController(_ uiViewController: ZoomableImageViewController, context: Context) {
     uiViewController.updateLiveText(enabled: liveTextEnabled)
+    uiViewController.setCurrentPage(isCurrentPage)
   }
 }
 
@@ -1376,11 +1412,17 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   private let activityIndicator = UIActivityIndicatorView(style: .medium)
   private let accessibilityAltText: String
   private let liveTextSupported: Bool
+  private var liveTextEnabled: Bool
+  private var isCurrentPage: Bool = false
   private var imageAnalysisInteraction: ImageAnalysisInteraction?
+  private var cachedAnalysis: ImageAnalysis?
+  private var fullsizeImage: UIImage?
+  private var isAnalyzing = false
   private var spinnerWorkItem: DispatchWorkItem?
   private var didReceiveFullsize = false
 
   private static let viewerLogger = Logger(subsystem: "blue.catbird", category: "ZoomableImageViewer")
+  private static let sharedAnalyzer = ImageAnalyzer()
 
   private let imageSource: ImageSource
 
@@ -1395,13 +1437,15 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
     let thumbnail = URL(string: image.thumb.uriString())
     self.imageSource = .url(fullsize: fullsize, thumbnail: thumbnail)
     self.accessibilityAltText = image.alt
+    self.liveTextEnabled = liveTextEnabled
     self.liveTextSupported = liveTextSupported
     super.init(nibName: nil, bundle: nil)
   }
 
-  init(uiImage: UIImage, altText: String?, liveTextSupported: Bool) {
+  init(uiImage: UIImage, altText: String?, liveTextEnabled: Bool = false, liveTextSupported: Bool) {
     self.imageSource = .loaded(uiImage)
     self.accessibilityAltText = altText ?? "Image"
+    self.liveTextEnabled = liveTextEnabled
     self.liveTextSupported = liveTextSupported
     super.init(nibName: nil, bundle: nil)
   }
@@ -1483,7 +1527,7 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   private func setupLiveText() {
     let interaction = ImageAnalysisInteraction()
     imageView.addInteraction(interaction)
-    interaction.preferredInteractionTypes = .automatic
+    interaction.preferredInteractionTypes = liveTextEnabled ? .automatic : []
     self.imageAnalysisInteraction = interaction
   }
 
@@ -1491,18 +1535,38 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
     switch imageSource {
     case .loaded(let uiImage):
       imageView.image = uiImage
-      if liveTextSupported, let interaction = imageAnalysisInteraction {
-        analyzeImage(uiImage, interaction: interaction)
+      fullsizeImage = uiImage
+      didReceiveFullsize = true
+      if liveTextSupported && liveTextEnabled && isCurrentPage {
+        triggerAnalysisIfNeeded()
       }
 
     case .url(let fullsize, let thumbnail):
       let pipeline = ImageLoadingManager.shared.pipeline
 
-      if let thumbnail, let cachedThumb = pipeline.cache[ImageRequest(url: thumbnail)] {
-        imageView.image = cachedThumb.image
+      if let thumbnail {
+        if let cached = pipeline.cache[ImageRequest(url: thumbnail)]?.image {
+          imageView.image = cached
+        } else {
+          let probeSizes: [CGFloat] = [300, 400, 200, 600, 800]
+          for size in probeSizes {
+            let thumbReq = ImageLoadingManager.thumbnailRequest(for: thumbnail, targetSize: CGSize(width: size, height: size))
+            if let cached = pipeline.cache[thumbReq]?.image {
+              imageView.image = cached
+              break
+            }
+            let resizeReq = ImageLoadingManager.imageRequest(for: thumbnail, targetSize: CGSize(width: size, height: size))
+            if let cached = pipeline.cache[resizeReq]?.image {
+              imageView.image = cached
+              break
+            }
+          }
+        }
       }
 
-      scheduleSpinner()
+      if imageView.image == nil {
+        scheduleSpinner()
+      }
 
       if let thumbnail, imageView.image == nil {
         Task { [weak self] in
@@ -1550,6 +1614,7 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   }
 
   private func setFullsizeImage(_ image: UIImage) {
+    self.fullsizeImage = image
     let hadPlaceholder = imageView.image != nil
     if hadPlaceholder {
       UIView.transition(
@@ -1562,28 +1627,61 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
     } else {
       imageView.image = image
     }
-    if liveTextSupported, let interaction = imageAnalysisInteraction {
-      analyzeImage(image, interaction: interaction)
+    if liveTextSupported && liveTextEnabled && isCurrentPage {
+      triggerAnalysisIfNeeded()
     }
   }
 
   private func analyzeImage(_ image: UIImage, interaction: ImageAnalysisInteraction) {
-    Task {
+    guard !isAnalyzing else { return }
+    isAnalyzing = true
+    Task { [weak self] in
+      defer {
+        Task { @MainActor [weak self] in
+          self?.isAnalyzing = false
+        }
+      }
       do {
-        let analyzer = ImageAnalyzer()
         let configuration = ImageAnalyzer.Configuration([.text, .machineReadableCode])
-        let analysis = try await analyzer.analyze(image, configuration: configuration)
+        let analysis = try await Self.sharedAnalyzer.analyze(image, configuration: configuration)
         await MainActor.run {
-          interaction.analysis = analysis
+          guard let self else { return }
+          self.cachedAnalysis = analysis
+          if self.liveTextEnabled {
+            interaction.analysis = analysis
+          }
         }
       } catch {
-        print("Failed to analyze image: \(error)")
+        Self.viewerLogger.error("Failed to analyze image: \(error.localizedDescription)")
       }
     }
   }
 
   func updateLiveText(enabled: Bool) {
+    guard liveTextSupported else { return }
+    liveTextEnabled = enabled
     imageAnalysisInteraction?.preferredInteractionTypes = enabled ? .automatic : []
+    if enabled {
+      triggerAnalysisIfNeeded()
+    }
+  }
+
+  func setCurrentPage(_ isCurrent: Bool) {
+    isCurrentPage = isCurrent
+    if isCurrent && liveTextEnabled {
+      triggerAnalysisIfNeeded()
+    }
+  }
+
+  private func triggerAnalysisIfNeeded() {
+    guard liveTextSupported, liveTextEnabled, isCurrentPage, !isAnalyzing else { return }
+    guard let image = fullsizeImage ?? imageView.image else { return }
+    guard let interaction = imageAnalysisInteraction else { return }
+    if let cached = cachedAnalysis {
+      interaction.analysis = cached
+      return
+    }
+    analyzeImage(image, interaction: interaction)
   }
 
   @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
@@ -1623,6 +1721,7 @@ struct ZoomableUIImageWrapper: UIViewControllerRepresentable {
     ZoomableImageViewController(
       uiImage: uiImage,
       altText: altText,
+      liveTextEnabled: liveTextEnabled,
       liveTextSupported: liveTextSupported
     )
   }

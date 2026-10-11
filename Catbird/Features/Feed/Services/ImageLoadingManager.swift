@@ -29,15 +29,6 @@ actor ImageLoadingManager {
     /// The configured image pipeline
     nonisolated let pipeline: ImagePipeline
     
-    /// Cache of prefetched image URLs to avoid duplicate prefetching
-    private var prefetchedURLs = Set<URL>()
-    
-    /// Maximum number of prefetched images to store
-    private let maxPrefetchedImages = 100
-    
-    /// Cache clear threshold - when to start removing old images
-    private let cacheClearThreshold = 80
-    
     // MARK: - Initialization
     
     /// Private initializer for singleton pattern
@@ -56,22 +47,15 @@ actor ImageLoadingManager {
     /// Start prefetching images for the given URLs
     /// - Parameter urls: Array of image URLs to prefetch
     func startPrefetching(urls: [URL]) {
-        // Filter out already prefetched URLs
-        let newURLs = urls.filter { !prefetchedURLs.contains($0) }
-        guard !newURLs.isEmpty else { return }
-        
-        // Check if we need to clear some prefetched images
-        if prefetchedURLs.count > cacheClearThreshold {
-            clearOldPrefetchedURLs()
-        }
-        
-        // Add new URLs to the prefetched set
-        for url in newURLs {
-            prefetchedURLs.insert(url)
-        }
-        
-        // Start prefetching the new URLs  
-        prefetcher.startPrefetching(with: newURLs)
+        guard !urls.isEmpty else { return }
+        prefetcher.startPrefetching(with: urls)
+    }
+    
+    /// Start prefetching images for the given image requests
+    /// - Parameter requests: Array of configured image requests to prefetch
+    func startPrefetching(requests: [ImageRequest]) {
+        guard !requests.isEmpty else { return }
+        prefetcher.startPrefetching(with: requests)
     }
     
     /// Alias for startPrefetching for compatibility
@@ -83,18 +67,20 @@ actor ImageLoadingManager {
     /// Stop prefetching images for the given URLs
     /// - Parameter urls: Array of image URLs to stop prefetching
     func stopPrefetching(urls: [URL]) {
+        guard !urls.isEmpty else { return }
         prefetcher.stopPrefetching(with: urls)
-        
-        // Remove URLs from the prefetched set
-        for url in urls {
-            prefetchedURLs.remove(url)
-        }
+    }
+    
+    /// Stop prefetching images for the given image requests
+    /// - Parameter requests: Array of image requests to stop prefetching
+    func stopPrefetching(requests: [ImageRequest]) {
+        guard !requests.isEmpty else { return }
+        prefetcher.stopPrefetching(with: requests)
     }
     
     /// Clear all prefetched images
     func clearAllPrefetchedImages() {
         prefetcher.stopPrefetching()
-        prefetchedURLs.removeAll()
         
         // Clear this pipeline's memory cache (not the unused shared one)
         pipeline.cache.removeAll(caches: [.memory])
@@ -131,8 +117,13 @@ actor ImageLoadingManager {
         // Improve performance for scrolling
         config.isProgressiveDecodingEnabled = false
 
-        // Configure request priorities and caching
-        config.dataCachePolicy = .automatic
+        // Single disk store: store original data in DataCache once.
+        // Disable URLCache so original data is not duplicated, and do not
+        // store re-encoded processed images to disk.
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.urlCache = nil
+        config.dataLoader = DataLoader(configuration: sessionConfig)
+        config.dataCachePolicy = .storeOriginalData
         config.isTaskCoalescingEnabled = true
 
         // Create operation queues with appropriate QoS
@@ -146,10 +137,10 @@ actor ImageLoadingManager {
         encodingQueue.maxConcurrentOperationCount = 1 // Serial queue for encoding
         config.imageEncodingQueue = encodingQueue
 
-        // Lower priority for processing queue to avoid blocking decoding
+        // 2 concurrent processing operations at userInitiated QoS for visible requests
         let processingQueue = OperationQueue()
-        processingQueue.qualityOfService = .utility // Lower than decoding
-        processingQueue.maxConcurrentOperationCount = 1 // Reduce to 1 for better memory usage
+        processingQueue.qualityOfService = .userInitiated
+        processingQueue.maxConcurrentOperationCount = 2
         config.imageProcessingQueue = processingQueue
 
         // Critical: defer image decompression to background
@@ -162,23 +153,6 @@ actor ImageLoadingManager {
         return ImagePipeline(configuration: config)
     }
     
-    /// Clear older prefetched URLs when the cache gets too large
-    private func clearOldPrefetchedURLs() {
-        // If we exceed the threshold, remove the oldest entries
-        if prefetchedURLs.count > cacheClearThreshold {
-            // Remove approximately 50% of the cached URLs
-            let countToRemove = prefetchedURLs.count / 2
-            let urlsToRemove = Array(prefetchedURLs.prefix(countToRemove))
-            
-            // Stop prefetching these URLs
-            prefetcher.stopPrefetching(with: urlsToRemove)
-            
-            // Remove them from our tracked set
-            for url in urlsToRemove {
-                prefetchedURLs.remove(url)
-            }
-        }
-    }
 }
 
 // MARK: - Image Processing Helpers
@@ -199,6 +173,33 @@ extension ImageLoadingManager {
             ImageProcessors.Resize(size: safeSize, contentMode: contentMode, crop: false, upscale: false)
         ]
     }
+    /// Create a request with ImageIO thumbnail decoding directly at the target display size,
+    /// avoiding full decode and redraw on the processing queue.
+    static func thumbnailRequest(
+        for url: URL,
+        targetSize: CGSize,
+        contentMode: ImageProcessingOptions.ContentMode = .aspectFill
+    ) -> ImageRequest {
+        let safeSize = normalizedTargetSize(targetSize)
+        var request = ImageRequest(url: url)
+        request.userInfo[.thumbnailKey] = ImageRequest.ThumbnailOptions(
+            size: safeSize,
+            unit: .points,
+            contentMode: contentMode
+        )
+
+        let area = safeSize.width * safeSize.height
+        if area < 100_000 {
+            request.priority = .high
+        } else if area < 500_000 {
+            request.priority = .normal
+        } else {
+            request.priority = .low
+        }
+
+        return request
+    }
+
 
     /// Create a request with optimized caching key for the given size
     static func imageRequest(for url: URL, targetSize: CGSize) -> ImageRequest {

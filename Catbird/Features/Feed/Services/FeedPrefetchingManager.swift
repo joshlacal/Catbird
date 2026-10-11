@@ -8,6 +8,11 @@
 import Foundation
 import Petrel
 import OSLog
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// Manages prefetching of feed data for smoother user experience
 actor FeedPrefetchingManager {
@@ -25,19 +30,47 @@ actor FeedPrefetchingManager {
 
   /// Cache of prefetched post embeds for faster display
   private var prefetchedEmbeds: [String: Any] = [:]
-  
-  /// Cache of prefetched assets to avoid redundant requests
-  private var prefetchedAssets: Set<String> = []
-  
+
   /// Priority queue for prefetching based on viewport visibility
   private var prefetchPriorities: [String: Int] = [:]
 
   /// Cache expiration time (5 minutes)
   private let cacheExpirationTime: TimeInterval = 300
   
-  /// Asset cache expiration time (10 minutes)
-  private let assetCacheExpirationTime: TimeInterval = 600
+  /// Avatar size used by feed rows (48pt, DesignTokens.Size.avatarLG)
+  private static let feedRowAvatarSize: CGFloat = 48.0
 
+  /// Cached display scale for image request building
+  private var cachedDisplayScale: CGFloat?
+
+  private func currentDisplayScale() async -> CGFloat {
+    if let scale = cachedDisplayScale { return scale }
+    let scale = await MainActor.run {
+      #if os(iOS)
+      return UIScreen.main.scale
+      #elseif os(macOS)
+      return NSScreen.main?.backingScaleFactor ?? 2.0
+      #else
+      return 2.0
+      #endif
+    }
+    cachedDisplayScale = scale
+    return scale
+  }
+
+  private func shouldConcealAvatar(did: String?, labels: [ComAtprotoLabelDefs.Label]?) async -> Bool {
+    await MainActor.run {
+      AppStateManager.shared.lifecycle.appState?.moderationPolicy.concealsAvatar(did: did, labels: labels) ?? false
+    }
+  }
+
+  private func isMediaFilteredOrBlurred(post: AppBskyFeedDefs.PostView) async -> Bool {
+    await MainActor.run {
+      guard let policy = AppStateManager.shared.lifecycle.appState?.moderationPolicy else { return false }
+      let media = policy.decide(post: post).ui(.contentMedia)
+      return media.filter || media.blur
+    }
+  }
   // Initialize as private for singleton pattern
   private init() {}
 
@@ -101,17 +134,15 @@ actor FeedPrefetchingManager {
   /// Prefetch assets for cached feed view posts (used by collection view prefetching)
   /// - Parameter posts: Array of cached posts to prefetch assets for
   func prefetchAssets(for posts: [CachedFeedViewPost]) async {
-    // Extract image URLs from cached posts and prefetch them
-    let manager = await ImageLoadingManager.shared
-    
     for post in posts {
       guard let feedViewPost = try? post.feedViewPost else { continue }
       
-      // Prefetch avatar
-      if let avatarUrl = feedViewPost.post.author.avatar {
-        if let url = URL(string: avatarUrl.uriString()) {
-          await manager.startPrefetching(urls: [url])
-        }
+      // Prefetch avatar the row actually displays (ImageRequestFactory.avatar at 48pt)
+      await prefetchAvatarImageOptimized(for: feedViewPost.post.author)
+      
+      // Skip embed images if media is blurred or filtered by moderation
+      if await isMediaFilteredOrBlurred(post: feedViewPost.post) {
+        continue
       }
       
       // Prefetch embed images
@@ -126,47 +157,39 @@ actor FeedPrefetchingManager {
   ///   - post: The post to prefetch data for
   ///   - client: The ATProto client for making requests
   func prefetchPostData(post: AppBskyFeedDefs.FeedViewPost, client: ATProtoClient) async {
-    // Prefetch avatar image
-    await prefetchAvatarImage(for: post.post.author)
+    await prefetchAvatarImageOptimized(for: post.post.author)
 
-    // Prefetch embedded content if present
     if let embed = post.post.embed {
-      await prefetchEmbedContent(embed: embed)
+      await prefetchEmbedContentOptimized(embed: embed)
     }
 
-    // For replies, prefetch parent post data
     if let reply = post.reply {
       switch reply.parent {
       case .appBskyFeedDefsPostView(let parentPost):
-        await prefetchAvatarImage(for: parentPost.author)
+        await prefetchAvatarImageOptimized(for: parentPost.author)
       default:
         break
       }
     }
   }
 
-    func prefetchPostData(post: AppBskyFeedDefs.PostView, client: ATProtoClient) async {
-        // Prefetch avatar image
-        await prefetchAvatarImage(for: post.author)
-        
-        // Prefetch embedded content if present
-        if let embed = post.embed {
-            await prefetchEmbedContent(embed: embed)
-        }
+  func prefetchPostData(post: AppBskyFeedDefs.PostView, client: ATProtoClient) async {
+    await prefetchAvatarImageOptimized(for: post.author)
+    
+    if let embed = post.embed {
+      await prefetchEmbedContentOptimized(embed: embed)
+    }
+  }
 
+  func prefetchPostData(post: AppBskyEmbedRecord.ViewRecord, client: ATProtoClient) async {
+    await prefetchAvatarImageOptimized(for: post.author)
+    
+    if let embeds = post.embeds {
+      for embed in embeds {
+        await prefetchRecordEmbed(embed)
+      }
     }
-    
-    
-    
-    func prefetchPostData(post: AppBskyEmbedRecord.ViewRecord, client: ATProtoClient) async {
-        // Prefetch avatar image
-        await prefetchAvatarImage(for: post.author)
-        
-        // Prefetch embedded content if present
-        if let embeds = post.embeds {
-            await prefetchEmbedContent(embeds: embeds)
-        }
-    }
+  }
 
     
   // MARK: - Private Helper Methods
@@ -210,202 +233,112 @@ actor FeedPrefetchingManager {
     await prefetchAvatarImageOptimized(for: profile)
   }
   
-  /// Optimized avatar image prefetching with deduplication
+  /// Optimized avatar image prefetching with display-size request and moderation gating
   private func prefetchAvatarImageOptimized(for profile: AppBskyActorDefs.ProfileViewBasic) async {
-    guard let avatarURL = profile.finalAvatarURL() else { return }
-    
-    let urlString = avatarURL.absoluteString
-    
-    // Skip if already prefetched recently
-    guard !prefetchedAssets.contains(urlString) else { return }
-    
-    // Mark as prefetched to avoid duplicates
-    prefetchedAssets.insert(urlString)
-    
-    let manager = ImageLoadingManager.shared
-    await manager.startPrefetching(urls: [avatarURL])
-    
-    // Clean up old assets periodically (simple LRU)
-    if prefetchedAssets.count > 1000 {
-      cleanupOldAssets()
+    // P224: Gate on moderation policy so blurred avatars are not downloaded
+    if await shouldConcealAvatar(did: profile.did.didString(), labels: profile.labels) {
+      return
     }
-  }
-  
-  /// Clean up old prefetched assets to prevent memory growth
-  private func cleanupOldAssets() {
-    // Remove random 20% of cached assets to implement simple cache eviction
-    let assetsToRemove = prefetchedAssets.prefix(prefetchedAssets.count / 5)
-    prefetchedAssets.subtract(assetsToRemove)
+
+    let rawURL = profile.finalAvatarURL() ?? profile.avatar.flatMap { URL(string: $0.uriString()) }
+    guard let rawURL else { return }
+
+    let scale = await currentDisplayScale()
+    guard let request = ImageRequestFactory.avatar(rawURL, pointSize: Self.feedRowAvatarSize, scale: scale) else {
+      return
+    }
+
+    // Skip if already decoded in memory cache
+    if ImageLoadingManager.shared.pipeline.cache[request] != nil {
+      return
+    }
+
+    await ImageLoadingManager.shared.startPrefetching(requests: [request])
   }
 
+  /// Extract gallery URLs, capping at prefix(3) for 5+ items since only 2-3 fit on screen
+  private func extractGalleryURLs(from galleryView: AppBskyEmbedGallery.View) -> [URL] {
+    let items = galleryView.items
+    let itemsToPrefetch = items.count <= 4 ? items : Array(items.prefix(3))
+    return itemsToPrefetch.compactMap { item -> URL? in
+      guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+      return URL(string: image.thumbnail.uriString())
+    }
+  }
+
+  private func prefetchRecordEmbed(_ embed: AppBskyEmbedRecord.ViewRecordEmbedsUnion) async {
+    switch embed {
+    case .appBskyEmbedImagesView(let imagesView):
+      let imageURLs = imagesView.images.compactMap { URL(string: $0.thumb.uriString()) }
+      if !imageURLs.isEmpty {
+        await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
+      }
+    case .appBskyEmbedGalleryView(let galleryView):
+      let imageURLs = extractGalleryURLs(from: galleryView)
+      if !imageURLs.isEmpty {
+        await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
+      }
+    case .appBskyEmbedExternalView(let externalView):
+      if let thumbURL = externalView.external.thumb.flatMap({ URL(string: $0.uriString()) }) {
+        await ImageLoadingManager.shared.startPrefetching(urls: [thumbURL])
+      }
+    case .appBskyEmbedRecordView(let recordView):
+      switch recordView.record {
+      case .appBskyEmbedRecordViewRecord(let record):
+        await prefetchAvatarImageOptimized(for: record.author)
+      default:
+        break
+      }
+    case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
+      switch recordWithMediaView.media {
+      case .appBskyEmbedImagesView(let imagesView):
+        let imageURLs = imagesView.images.compactMap { URL(string: $0.thumb.uriString()) }
+        if !imageURLs.isEmpty {
+          await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
+        }
+      case .appBskyEmbedGalleryView(let galleryView):
+        let imageURLs = extractGalleryURLs(from: galleryView)
+        if !imageURLs.isEmpty {
+          await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
+        }
+      default:
+        break
+      }
+    case .appBskyEmbedVideoView(let videoView):
+      if let thumbURL = videoView.thumbnail?.url {
+        await ImageLoadingManager.shared.startPrefetching(urls: [thumbURL])
+      }
+    case .unexpected:
+      break
+    }
+  }
   /// Prefetch content for post embeds
   private func prefetchEmbedContent(embed: AppBskyFeedDefs.PostViewEmbedUnion) async {
     await prefetchEmbedContentOptimized(embed: embed)
   }
   
-  private func prefetchEmbedContent(embeds: [AppBskyEmbedRecord.ViewRecordEmbedsUnion]) async {
-      for embed in embeds {
-          switch embed {
-          case .appBskyEmbedImagesView(let imagesView):
-            // Prefetch all images in the embed with deduplication
-            let imageURLs = imagesView.images.compactMap {
-              URL(string: $0.thumb.uriString())
-            }.filter { url in
-              !prefetchedAssets.contains(url.absoluteString)
-            }
-
-            if !imageURLs.isEmpty {
-              // Mark as prefetched
-              for url in imageURLs {
-                prefetchedAssets.insert(url.absoluteString)
-              }
-              
-              let manager = ImageLoadingManager.shared
-              await manager.startPrefetching(urls: imageURLs)
-            }
-
-          case .appBskyEmbedGalleryView(let galleryView):
-            // Prefetch gallery thumbnails with deduplication
-            let imageURLs = galleryView.items.compactMap { item -> URL? in
-              guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-              return URL(string: image.thumbnail.uriString())
-            }.filter { url in
-              !prefetchedAssets.contains(url.absoluteString)
-            }
-
-            if !imageURLs.isEmpty {
-              // Mark as prefetched
-              for url in imageURLs {
-                prefetchedAssets.insert(url.absoluteString)
-              }
-
-              let manager = ImageLoadingManager.shared
-              await manager.startPrefetching(urls: imageURLs)
-            }
-
-          case .appBskyEmbedExternalView(let externalView):
-            // Prefetch external thumbnail if available
-            if let thumbURL = externalView.external.thumb.flatMap({ URL(string: $0.uriString()) }),
-               !prefetchedAssets.contains(thumbURL.absoluteString) {
-              prefetchedAssets.insert(thumbURL.absoluteString)
-              
-              let manager = ImageLoadingManager.shared
-              await manager.startPrefetching(urls: [thumbURL])
-            }
-
-          case .appBskyEmbedRecordView(let recordView):
-            // For record embeds, prefetch the author's avatar
-            switch recordView.record {
-            case .appBskyEmbedRecordViewRecord(let record):
-              await prefetchAvatarImageOptimized(for: record.author)
-            default:
-              break
-            }
-
-          case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
-            // Prefetch media in record with media embeds
-            switch recordWithMediaView.media {
-            case .appBskyEmbedImagesView(let imagesView):
-              let imageURLs = imagesView.images.compactMap {
-                URL(string: $0.thumb.uriString())
-              }.filter { url in
-                !prefetchedAssets.contains(url.absoluteString)
-              }
-
-              if !imageURLs.isEmpty {
-                // Mark as prefetched
-                for url in imageURLs {
-                  prefetchedAssets.insert(url.absoluteString)
-                }
-
-                let manager = ImageLoadingManager.shared
-                await manager.startPrefetching(urls: imageURLs)
-              }
-            case .appBskyEmbedGalleryView(let galleryView):
-              let imageURLs = galleryView.items.compactMap { item -> URL? in
-                guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-                return URL(string: image.thumbnail.uriString())
-              }.filter { url in
-                !prefetchedAssets.contains(url.absoluteString)
-              }
-
-              if !imageURLs.isEmpty {
-                for url in imageURLs {
-                  prefetchedAssets.insert(url.absoluteString)
-                }
-
-                let manager = ImageLoadingManager.shared
-                await manager.startPrefetching(urls: imageURLs)
-              }
-            default:
-              break
-            }
-
-          case .appBskyEmbedVideoView:
-            // For video embeds, we could potentially prefetch video thumbnails
-            // but actual video prefetching would likely use too much data
-            break
-
-          case .unexpected:
-            break
-          }
-
-      }
-
-  }
   
   /// Optimized embed content prefetching with deduplication
   private func prefetchEmbedContentOptimized(embed: AppBskyFeedDefs.PostViewEmbedUnion) async {
     switch embed {
     case .appBskyEmbedImagesView(let imagesView):
-      // Prefetch all images in the embed with deduplication
-      let imageURLs = imagesView.images.compactMap {
-        URL(string: $0.thumb.uriString())
-      }.filter { url in
-        !prefetchedAssets.contains(url.absoluteString)
-      }
-
+      let imageURLs = imagesView.images.compactMap { URL(string: $0.thumb.uriString()) }
       if !imageURLs.isEmpty {
-        // Mark as prefetched
-        for url in imageURLs {
-          prefetchedAssets.insert(url.absoluteString)
-        }
-        
-        let manager = ImageLoadingManager.shared
-        await manager.startPrefetching(urls: imageURLs)
+        await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
       }
 
     case .appBskyEmbedGalleryView(let galleryView):
-      // Prefetch gallery thumbnails with deduplication
-      let imageURLs = galleryView.items.compactMap { item -> URL? in
-        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-        return URL(string: image.thumbnail.uriString())
-      }.filter { url in
-        !prefetchedAssets.contains(url.absoluteString)
-      }
-
+      let imageURLs = extractGalleryURLs(from: galleryView)
       if !imageURLs.isEmpty {
-        // Mark as prefetched
-        for url in imageURLs {
-          prefetchedAssets.insert(url.absoluteString)
-        }
-
-        let manager = ImageLoadingManager.shared
-        await manager.startPrefetching(urls: imageURLs)
+        await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
       }
 
     case .appBskyEmbedExternalView(let externalView):
-      // Prefetch external thumbnail if available
-      if let thumbURL = externalView.external.thumb.flatMap({ URL(string: $0.uriString()) }),
-         !prefetchedAssets.contains(thumbURL.absoluteString) {
-        prefetchedAssets.insert(thumbURL.absoluteString)
-        
-        let manager = ImageLoadingManager.shared
-        await manager.startPrefetching(urls: [thumbURL])
+      if let thumbURL = externalView.external.thumb.flatMap({ URL(string: $0.uriString()) }) {
+        await ImageLoadingManager.shared.startPrefetching(urls: [thumbURL])
       }
 
     case .appBskyEmbedRecordView(let recordView):
-      // For record embeds, prefetch the author's avatar
       switch recordView.record {
       case .appBskyEmbedRecordViewRecord(let record):
         await prefetchAvatarImageOptimized(for: record.author)
@@ -414,55 +347,28 @@ actor FeedPrefetchingManager {
       }
 
     case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
-      // Prefetch media in record with media embeds
       switch recordWithMediaView.media {
       case .appBskyEmbedImagesView(let imagesView):
-        let imageURLs = imagesView.images.compactMap {
-          URL(string: $0.thumb.uriString())
-        }.filter { url in
-          !prefetchedAssets.contains(url.absoluteString)
-        }
-
+        let imageURLs = imagesView.images.compactMap { URL(string: $0.thumb.uriString()) }
         if !imageURLs.isEmpty {
-          // Mark as prefetched
-          for url in imageURLs {
-            prefetchedAssets.insert(url.absoluteString)
-          }
-
-          let manager = ImageLoadingManager.shared
-          await manager.startPrefetching(urls: imageURLs)
+          await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
         }
       case .appBskyEmbedGalleryView(let galleryView):
-        let imageURLs = galleryView.items.compactMap { item -> URL? in
-          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-          return URL(string: image.thumbnail.uriString())
-        }.filter { url in
-          !prefetchedAssets.contains(url.absoluteString)
-        }
-
+        let imageURLs = extractGalleryURLs(from: galleryView)
         if !imageURLs.isEmpty {
-          for url in imageURLs {
-            prefetchedAssets.insert(url.absoluteString)
-          }
-
-          let manager = ImageLoadingManager.shared
-          await manager.startPrefetching(urls: imageURLs)
+          await ImageLoadingManager.shared.startPrefetching(urls: imageURLs)
         }
       default:
         break
       }
 
     case .appBskyEmbedVideoView(let videoView):
-      // Poster covers the player until its first frame; the stream itself is
-      // prewarmed by the feed controller, which knows moderation and autoplay.
-      if let thumbURL = videoView.thumbnail?.url,
-         !prefetchedAssets.contains(thumbURL.absoluteString) {
-        prefetchedAssets.insert(thumbURL.absoluteString)
+      if let thumbURL = videoView.thumbnail?.url {
         await ImageLoadingManager.shared.startPrefetching(urls: [thumbURL])
       }
 
     case .unexpected:
       break
-}
+    }
   }
 }
