@@ -509,7 +509,10 @@ actor PersistentFeedStateManager {
         logger.info("Purged \(invalidPostIds.count) invalid cached posts during loadFeedBundle")
       }
 
-      // If the restored set was truncated to 50 posts, drop the cursor so pagination is consistent (P2)
+      // The persisted cursor continues after the *last persisted* post. When the
+      // restore is truncated it would skip everything between post 50 and that
+      // point, so a truncated restore returns no cursor; FeedModel then replaces the
+      // restored rows with a fresh head page instead of paginating from them.
       let returnedCursor = orderedPosts.count > 50 ? nil : feedState.cursor
       return (validPosts, returnedCursor)
     } catch {

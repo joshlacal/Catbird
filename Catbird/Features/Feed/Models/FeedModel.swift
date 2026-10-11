@@ -57,6 +57,10 @@ final class FeedModel: StateInvalidationSubscriber {
   @MainActor private(set) var isLoadingMore = false
   @MainActor private(set) var isBackgroundRefreshing = false
   @MainActor private(set) var hasMore = true
+  /// Restored rows with no cursor that continues after them (a truncated
+  /// restore). Paginating from here would fetch page 1 and append the newest
+  /// posts below older ones, so the next head load replaces these rows instead.
+  @MainActor private(set) var restoredRowsLackCursor = false
   @MainActor private(set) var error: Error?
   /// The failure of the most recent page request, cleared when the next one starts.
   @MainActor private(set) var loadMoreError: Error?
@@ -69,7 +73,10 @@ final class FeedModel: StateInvalidationSubscriber {
   }
 
   // Pagination
-  @MainActor private(set) var cursor: String?
+  @MainActor private(set) var cursor: String? {
+    // Any real cursor means the rows now have a valid continuation.
+    didSet { if cursor != nil { restoredRowsLackCursor = false } }
+  }
   
   // A replacement or account reset invalidates work suspended in preparation.
   @MainActor private var publicationGeneration: UInt64 = 0
@@ -293,9 +300,10 @@ final class FeedModel: StateInvalidationSubscriber {
     self.posts = posts
     markPersisted()
     self.isLoading = false
-    // Preserve pagination state if we have a stored cursor; allow pagination fallback when nil
+    // Without a cursor, loadMore reloads the head instead of appending page 1.
     self.hasMore = cursor != nil || !posts.isEmpty
     self.cursor = cursor
+    self.restoredRowsLackCursor = cursor == nil && !posts.isEmpty
     
     logger.debug("Restored \(posts.count) persisted posts to FeedModel")
 
@@ -474,10 +482,11 @@ final class FeedModel: StateInvalidationSubscriber {
         let newIds = Set(newPosts.map { $0.id })
         let uniqueNewPostCount = newIds.subtracting(existingIds).count
 
-        if uniqueNewPostCount > posts.count / 10 || forceRefresh {
+        if uniqueNewPostCount > posts.count / 10 || forceRefresh || restoredRowsLackCursor {
           self.posts = newPosts
           self.cursor = newCursor
           self.hasMore = newCursor != nil
+          self.restoredRowsLackCursor = false
         } else {
           didReplacePosts = false
         }
@@ -485,6 +494,7 @@ final class FeedModel: StateInvalidationSubscriber {
         self.posts = newPosts
         self.cursor = newCursor
         self.hasMore = newCursor != nil
+        self.restoredRowsLackCursor = false
       }
 
       logger.debug("🔍 loadFeed completed - loaded \(self.posts.count) posts, cursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
@@ -564,6 +574,11 @@ final class FeedModel: StateInvalidationSubscriber {
     guard !Task.isCancelled else { return }
     guard !isLoading && !isLoadingMore && hasMore else {
         logger.debug("🔍 loadMore skipped - isLoading: \(self.isLoading), isLoadingMore: \(self.isLoadingMore), hasMore: \(self.hasMore), cursor: \(self.cursor ?? "nil")")
+      return
+    }
+    if restoredRowsLackCursor {
+      // A nil cursor would fetch page 1 and append it below older restored rows.
+      await loadFeed(fetch: lastFeedType, forceRefresh: true, strategy: .backgroundRefresh)
       return
     }
 
@@ -1178,6 +1193,7 @@ final class FeedModel: StateInvalidationSubscriber {
     // Clear current posts
     posts.removeAll()
     cursor = nil
+    restoredRowsLackCursor = false
     hasMore = true
     error = nil
     
