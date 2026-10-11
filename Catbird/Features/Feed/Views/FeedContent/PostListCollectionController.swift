@@ -136,8 +136,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   private var pendingScrollOffset: CGFloat?
   private var animatePendingScroll = false
   /// Lets the first row (a profile banner) sit under a transparent navigation
-  /// bar instead of below it. UIKit's automatic inset would push the header
-  /// down by the bar height; this surface insets only the bottom itself.
+  /// bar instead of below it, where UIKit's automatic top inset would put it.
   var extendsUnderTopBar = false {
     didSet {
       guard extendsUnderTopBar != oldValue, isViewLoaded else { return }
@@ -158,18 +157,16 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     if extendsUnderTopBar { applyContentInsetBehavior() }
   }
 
+  /// Keeps UIKit's automatic insets and cancels only the top one, so the header
+  /// starts under the bar. `.never` is not an option: it hands each cell the safe
+  /// area it overlaps, UIHostingConfiguration adds that to the cell's height, and
+  /// a row straddling the tab bar then grows on every pass (layout feedback loop).
   private func applyContentInsetBehavior() {
     guard let collectionView else { return }
-    if extendsUnderTopBar {
-      collectionView.contentInsetAdjustmentBehavior = .never
-      let safeArea = view.safeAreaInsets
-      collectionView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: safeArea.bottom, right: 0)
-      collectionView.verticalScrollIndicatorInsets = UIEdgeInsets(
-        top: safeArea.top, left: 0, bottom: safeArea.bottom, right: 0)
-    } else {
-      collectionView.contentInsetAdjustmentBehavior = .automatic
-      collectionView.contentInset = .zero
-      collectionView.verticalScrollIndicatorInsets = .zero
+    collectionView.contentInsetAdjustmentBehavior = .automatic
+    let top = extendsUnderTopBar ? -view.safeAreaInsets.top : 0
+    if collectionView.contentInset.top != top {
+      collectionView.contentInset = UIEdgeInsets(top: top, left: 0, bottom: 0, right: 0)
     }
   }
 
@@ -265,8 +262,6 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     collectionView.prefetchDataSource = self
     collectionView.directionalLayoutMargins = .zero
     collectionView.alwaysBounceVertical = true
-    // Lets the under-bar header cell resize when its SwiftUI content changes.
-    collectionView.selfSizingInvalidation = .enabledIncludingConstraints
     collectionView.keyboardDismissMode = .onDrag
     collectionView.scrollsToTop = isScrollsToTop
     applyContentInsetBehavior()
@@ -346,21 +341,9 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
       }
       .margins(.all, 0)
     }
-    // UIHostingConfiguration pads and sizes content by the safe area its cell
-    // overlaps, so a header drawn under the bar would sit a bar-height low in an
-    // over-tall cell. That header is hosted with safe-area regions turned off.
-    let underBarHeaderRegistration = UICollectionView.CellRegistration<SafeAreaFreeHostingCell, Item> {
-      [weak self] cell, _, _ in
-      guard let self else { return }
-      cell.setContent(self.hosted(self.headerView ?? AnyView(EmptyView())).id(self.appState?.userDID))
-    }
     dataSource = UICollectionViewDiffableDataSource<Section, Item>(collectionView: collectionView) {
-      [weak self] collectionView, indexPath, item in
-      if item == .header, self?.extendsUnderTopBar == true {
-        return collectionView.dequeueConfiguredReusableCell(
-          using: underBarHeaderRegistration, for: indexPath, item: item)
-      }
-      return collectionView.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
+      collectionView, indexPath, item in
+      collectionView.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
     }
   }
 
@@ -498,36 +481,6 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
       aspectRatio: 16.0 / 9.0
     )
     await VideoAssetManager.shared.prewarm(model)
-  }
-}
-
-/// Hosts SwiftUI with safe-area regions off, so content drawn under a bar is
-/// neither pushed down nor grown by the bar's inset.
-private final class SafeAreaFreeHostingCell: UICollectionViewListCell {
-  private let host = UIHostingController(rootView: AnyView(EmptyView()))
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    backgroundConfiguration = .clear()
-    host.safeAreaRegions = []
-    host.sizingOptions = .intrinsicContentSize
-    host.view.backgroundColor = .clear
-    host.view.translatesAutoresizingMaskIntoConstraints = false
-    contentView.addSubview(host.view)
-    NSLayoutConstraint.activate([
-      host.view.topAnchor.constraint(equalTo: contentView.topAnchor),
-      host.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-      host.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-      host.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-    ])
-  }
-
-  @available(*, unavailable)
-  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-  func setContent(_ content: some View) {
-    host.rootView = AnyView(content)
-    host.view.invalidateIntrinsicContentSize()
   }
 }
 

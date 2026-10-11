@@ -9,21 +9,26 @@ import UIKit
 @Suite("Secondary post list scrolling")
 @MainActor
 struct PostListCollectionControllerTests {
-  @Test("Profile lists draw the header under the top bar; other lists keep automatic insets")
+  @Test("Profile lists cancel only the top inset and keep automatic adjustment")
   func underTopBarInsetMode() throws {
     let plain = PostListCollectionController()
     plain.loadViewIfNeeded()
     #expect(try #require(plain.collectionView).contentInsetAdjustmentBehavior == .automatic)
 
+    // .never would hand cells the safe area they overlap; UIHostingConfiguration
+    // grows them by it, which loops for a row straddling the tab bar.
     let profile = PostListCollectionController()
     profile.extendsUnderTopBar = true
+    profile.additionalSafeAreaInsets = UIEdgeInsets(top: 100, left: 0, bottom: 0, right: 0)
     profile.loadViewIfNeeded()
+    profile.view.frame = CGRect(x: 0, y: 0, width: 390, height: 640)
+    profile.view.layoutIfNeeded()
     let collection = try #require(profile.collectionView)
-    #expect(collection.contentInsetAdjustmentBehavior == .never)
-    #expect(collection.adjustedContentInset.top == 0)
+    #expect(collection.contentInsetAdjustmentBehavior == .automatic)
+    #expect(collection.contentInset.top == -profile.view.safeAreaInsets.top)
 
     profile.extendsUnderTopBar = false
-    #expect(collection.contentInsetAdjustmentBehavior == .automatic)
+    #expect(collection.contentInset.top == 0)
   }
 
   @Test("One controller restores normalized tab offsets without crossing account/profile keys")
