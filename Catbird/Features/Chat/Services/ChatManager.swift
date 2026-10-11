@@ -211,6 +211,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // Log cursor and slow reconcile state (P134)
   private var logCursor: String?
+  private var logPollPolicy = ChatLogPollPolicy()
   private var lastFullReconcileTime: Date = .distantPast
   private let fullReconcileInterval: TimeInterval = 300.0
   private var pausedPollingActiveConvoId: String?
@@ -559,6 +560,7 @@ final class ChatManager: StateInvalidationSubscriber {
     messageRequests = []
     acceptedConversations = []
     logCursor = nil
+    logPollPolicy = ChatLogPollPolicy()
     lastFullReconcileTime = .distantPast
     convoRevisions = [:]
     pausedPollingActiveConvoId = nil
@@ -1861,39 +1863,54 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func getConversationLog(cursor: String? = nil) async -> (logs: [ChatBskyConvoGetLog.OutputLogsUnion]?, cursor: String?) {
-    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (nil, nil) }
+    let result = await fetchConversationLog(cursor: cursor)
+    return (result.logs, result.cursor)
+  }
+
+  @MainActor
+  private func fetchConversationLog(cursor: String?) async -> (
+    logs: [ChatBskyConvoGetLog.OutputLogsUnion]?, cursor: String?, outcome: ChatLogFetchOutcome
+  ) {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (nil, nil, .skipped) }
     defer { pollingBarrier.finish(ticket) }
 
     guard let client = client else {
       logger.error("Cannot get conversation log: client is nil")
       errorState = .noClient
-      return (nil, nil)
+      return (nil, nil, .skipped)
     }
 
     let params = ChatBskyConvoGetLog.Parameters(cursor: cursor)
     do {
       let (responseCode, response) = try await client.chat.bsky.convo.getLog(input: params)
-      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (nil, nil) }
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else {
+        return (nil, nil, .skipped)
+      }
 
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "getConversationLog")
-        return (nil, nil)
+        return (nil, nil, ChatLogPollPolicy.outcome(forStatusCode: responseCode))
       }
 
       guard let logData = response else {
         logger.error("No data returned from conversation log request")
         setEmptyResponseError(context: "getConversationLog")
-        return (nil, nil)
+        return (nil, nil, .serverError)
       }
 
       logger.debug("Successfully retrieved conversation log with \(logData.logs.count) events")
-      return (logData.logs, logData.cursor)
+      return (logData.logs, logData.cursor, .success)
 
     } catch {
-      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (nil, nil) }
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else {
+        return (nil, nil, .skipped)
+      }
       logger.error("Error getting conversation log: \(error.localizedDescription)")
       setErrorState(error)
-      return (nil, nil)
+      if case let Petrel.NetworkError.responseError(statusCode) = error {
+        return (nil, nil, ChatLogPollPolicy.outcome(forStatusCode: statusCode))
+      }
+      return (nil, nil, .transportError)
     }
   }
 
@@ -1918,21 +1935,44 @@ final class ChatManager: StateInvalidationSubscriber {
     UserDefaults.standard.set(cursor, forKey: key)
   }
 
+  private func clearPersistedLogCursor() {
+    logCursor = nil
+    if let key = logCursorKey(for: pollingAccountDID) {
+      UserDefaults.standard.removeObject(forKey: key)
+    }
+  }
+
   @MainActor
   func pollGetLog() async {
-    guard let client = client, !pollingBarrier.isSuspended else { return }
+    guard client != nil, !pollingBarrier.isSuspended else { return }
 
-    let currentCursor = getPersistedLogCursor()
-    guard let currentCursor else {
-      // First time: fetch latest cursor to establish cursor baseline
-      let (_, cursor) = await getConversationLog(cursor: nil)
-      if let cursor {
-        persistLogCursor(cursor)
+    guard let currentCursor = getPersistedLogCursor() else {
+      await establishLogBaseline()
+      return
+    }
+
+    let (logs, newCursor, outcome) = await fetchConversationLog(cursor: currentCursor)
+    switch logPollPolicy.record(outcome) {
+    case .none:
+      break
+    case .backOff:
+      increaseConversationsPollBackoff()
+      return
+    case .resetCursor:
+      // The server will not move this cursor forward; without a reset the open
+      // conversation would never receive another message.
+      logger.warning("getLog refused the persisted cursor (\(String(describing: outcome))); rebuilding the baseline")
+      clearPersistedLogCursor()
+      await establishLogBaseline()
+      await loadConversations(refresh: true)
+      if let activeConversationId {
+        await loadMessages(convoId: activeConversationId, refresh: true)
       }
       return
     }
 
-    let (logs, newCursor) = await getConversationLog(cursor: currentCursor)
+    guard outcome == .success else { return }
+    conversationsPollBackoff = 0
     if let newCursor, newCursor != currentCursor {
       persistLogCursor(newCursor)
     }
@@ -1941,6 +1981,19 @@ final class ChatManager: StateInvalidationSubscriber {
       await applyLogEntries(logs)
       onUnreadCountChanged?()
       onConversationsPolled?()
+    }
+  }
+
+  /// Records the server's current log position, so the next poll returns only
+  /// events from here on. Snapshot loads cover everything before it.
+  @MainActor
+  private func establishLogBaseline() async {
+    let (_, cursor, outcome) = await fetchConversationLog(cursor: nil)
+    if let cursor, outcome == .success {
+      persistLogCursor(cursor)
+      conversationsPollBackoff = 0
+    } else if outcome != .skipped {
+      increaseConversationsPollBackoff()
     }
   }
 
@@ -1954,6 +2007,7 @@ final class ChatManager: StateInvalidationSubscriber {
         switch log.message {
         case .chatBskyConvoDefsMessageView(let mv):
           var originals = originalMessagesMap[log.convoId] ?? [:]
+          let alreadySeen = originals[mv.id] != nil
           if originals[mv.id] != mv {
             originals[mv.id] = mv
             originalMessagesMap[log.convoId] = originals
@@ -1961,6 +2015,11 @@ final class ChatManager: StateInvalidationSubscriber {
           }
           if let idx = conversations.firstIndex(where: { $0.id == log.convoId }) {
             let existing = conversations[idx]
+            // A replayed event, or one the last listConvos snapshot already holds,
+            // must not count as unread again or roll lastMessage back.
+            guard ChatLogPollPolicy.isNewMessage(
+              logRev: log.rev, convoRev: existing.rev, alreadySeen: alreadySeen)
+            else { break }
             let isCurrentViewer = mv.sender.did.didString() == pollingAccountDID
             let isViewing = activeConversationId == log.convoId
             let newUnread = (isCurrentViewer || isViewing) ? existing.unreadCount : existing.unreadCount + 1
@@ -2900,8 +2959,11 @@ final class ChatManager: StateInvalidationSubscriber {
           return (false, 60.0)
         }
 
+        // A rate limit or failing getLog stretches the cadence until a poll succeeds.
+        let backoff = await MainActor.run { self.conversationsPollBackoff }
+        let interval = pollStatus.shouldPoll ? max(pollStatus.interval, backoff) : pollStatus.interval
         do {
-          try await Task.sleep(nanoseconds: UInt64(pollStatus.interval * 1_000_000_000))
+          try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         } catch {
           break
         }
@@ -2993,7 +3055,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let current = max(conversationsPollBackoff, activeListPollInterval)
     conversationsPollBackoff = min(current * 2, maxPollBackoffInterval)
     logger.warning(
-      "Rate limited (429) on listConvos, backing conversations polling off to \(self.conversationsPollBackoff)s")
+      "Conversations polling failed or was rate limited, backing off to \(self.conversationsPollBackoff)s")
   }
 
   /// Doubles the message poll interval for a conversation after a rate limit, up to the cap.
