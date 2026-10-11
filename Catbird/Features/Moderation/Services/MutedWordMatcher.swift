@@ -155,13 +155,17 @@ enum MutedWordMatcher {
       return false
     }
 
+    /// Substring search on the folded strings. `String.contains` compares whole
+    /// grapheme clusters, so it would miss 👍 inside 👍🏽, ❤ inside ❤️ and a Thai
+    /// consonant carrying a combining vowel; a literal UTF-16 search matches them,
+    /// as Bluesky's `includes`-based matcher does.
     private func matches(foldedHaystack: String, authorIsFollowed: Bool) -> Bool {
       for needle in contentNeedlesAll {
-        if foldedHaystack.contains(needle) { return true }
+        if foldedHaystack.range(of: needle, options: .literal) != nil { return true }
       }
       if !authorIsFollowed {
         for needle in contentNeedlesUnfollowedOnly {
-          if foldedHaystack.contains(needle) { return true }
+          if foldedHaystack.range(of: needle, options: .literal) != nil { return true }
         }
       }
       return false

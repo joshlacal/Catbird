@@ -60,6 +60,33 @@ struct ModerationPerformanceOptimizationTests {
     }
   }
 
+  @Test("Compiled muted words match inside emoji modifier sequences and Thai clusters")
+  func compiledMutedWordMatchesInsideGraphemeClusters() {
+    let words = [
+      MutedWord(id: "1", value: "👍", targets: ["content"], actorTarget: nil, expiresAt: nil),
+      MutedWord(id: "2", value: "❤", targets: ["content"], actorTarget: nil, expiresAt: nil),
+      MutedWord(id: "3", value: "ก", targets: ["content"], actorTarget: nil, expiresAt: nil),
+    ]
+    let compiled = MutedWordMatcher.Compiled(words: words)
+
+    let matching = [
+      ("great 👍🏽 job", "skin-tone modifier"),
+      ("love ❤️ you", "VS16 presentation selector"),
+      ("ไปกินข้าว", "Thai consonant with combining vowel"),
+    ]
+    for (text, description) in matching {
+      #expect(
+        compiled.matches(text: text, tags: [], altText: "", authorIsFollowed: false),
+        "Expected a match for \(description)"
+      )
+      #expect(
+        compiled.matches(text: "clean", tags: [], altText: text, authorIsFollowed: false),
+        "Expected an alt-text match for \(description)"
+      )
+    }
+    #expect(!compiled.matches(text: "no emoji here", tags: [], altText: "", authorIsFollowed: false))
+  }
+
   // MARK: - Language Filtering & Cache
 
   @Test("Reading language policy caches detected language per uri and cid")
