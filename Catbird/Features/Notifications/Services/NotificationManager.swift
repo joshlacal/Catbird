@@ -1341,8 +1341,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let accountDID = currentAccountDID
     Task { @MainActor in
       guard !pollingBarrier.isSuspended, clientGeneration == generation, currentAccountDID == accountDID else { return }
-      guard unreadCount != 0 else { return }
-      unreadCount = 0
+      // The badge can be non-zero while unreadCount is already 0 (a push set it
+      // while the app was suspended), so the badge reset must not be skipped.
+      if unreadCount != 0 { unreadCount = 0 }
 
       // Update app badge
       #if os(iOS)
