@@ -48,7 +48,12 @@ import AppKit
     private let logger = Logger(subsystem: "blue.catbird", category: "AppSettings")
     @ObservationIgnored private var modelContext: ModelContext?
     // These are detached copies. Failed writes cannot be autosaved by the shared context.
-    @ObservationIgnored private var settingsModel: AppSettingsModel?
+    @ObservationIgnored private var settingsModel: AppSettingsModel? {
+        // Getters observe per key, and replacing the whole model (load, account
+        // switch, rollback) mutates no key, so every getter also observes this.
+        didSet { if oldValue !== settingsModel { settingsModelRevision &+= 1 } }
+    }
+    private var settingsModelRevision: UInt64 = 0
     @ObservationIgnored private var savedSettings: AppSettingsModel? {
         didSet { confirmedReadingSnapshotIdentity = UUID() }
     }
@@ -78,6 +83,7 @@ import AppKit
 
     private func getSetting<T>(_ keyPath: KeyPath<AppSettings, T>, _ modelKeyPath: KeyPath<AppSettingsModel, T>, default defaultValue: T) -> T {
         access(keyPath: keyPath)
+        access(keyPath: \.settingsModelRevision)
         return settingsModel?[keyPath: modelKeyPath] ?? defaultValue
     }
 
@@ -287,21 +293,25 @@ import AppKit
 
     var effectiveReduceMotion: Bool {
         access(keyPath: \.effectiveReduceMotion)
+        access(keyPath: \.settingsModelRevision)
         return AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.reduceMotion, app: reduceMotion)
     }
 
     var effectivePrefersCrossfade: Bool {
         access(keyPath: \.effectivePrefersCrossfade)
+        access(keyPath: \.settingsModelRevision)
         return AccessibilityAccommodationPolicy.usesCrossfade(system: systemAccessibility, reduceMotion: reduceMotion, prefersCrossfade: prefersCrossfade)
     }
 
     var effectiveIncreaseContrast: Bool {
         access(keyPath: \.effectiveIncreaseContrast)
+        access(keyPath: \.settingsModelRevision)
         return AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.increaseContrast, app: increaseContrast)
     }
 
     var effectiveBoldText: Bool {
         access(keyPath: \.effectiveBoldText)
+        access(keyPath: \.settingsModelRevision)
         return AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.boldText, app: boldText)
     }
 
@@ -795,6 +805,7 @@ import AppKit
     var theme: String {
         get { 
             access(keyPath: \.theme)
+            access(keyPath: \.settingsModelRevision)
             if let theme = settingsModel?.theme {
                 return theme
             }
@@ -814,6 +825,7 @@ import AppKit
     var darkThemeMode: String {
         get {
             access(keyPath: \.darkThemeMode)
+            access(keyPath: \.settingsModelRevision)
             if let darkMode = settingsModel?.darkThemeMode {
                 return darkMode
             }
@@ -833,6 +845,7 @@ import AppKit
     var accentColor: String {
         get {
             access(keyPath: \.accentColor)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.accentColor
             }
@@ -857,6 +870,7 @@ import AppKit
     var fontStyle: String {
         get { 
             access(keyPath: \.fontStyle)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.fontStyle
             }
@@ -876,6 +890,7 @@ import AppKit
     var fontSize: String {
         get { 
             access(keyPath: \.fontSize)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.fontSize
             }
@@ -895,6 +910,7 @@ import AppKit
     var lineSpacing: String {
         get { 
             access(keyPath: \.lineSpacing)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.lineSpacing
             }
@@ -914,6 +930,7 @@ import AppKit
     var letterSpacing: String {
         get { 
             access(keyPath: \.letterSpacing)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.letterSpacing
             }
@@ -933,6 +950,7 @@ import AppKit
     var dynamicTypeEnabled: Bool {
         get { 
             access(keyPath: \.dynamicTypeEnabled)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.dynamicTypeEnabled
             }
@@ -952,6 +970,7 @@ import AppKit
     var maxDynamicTypeSize: String {
         get { 
             access(keyPath: \.maxDynamicTypeSize)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.maxDynamicTypeSize
             }
@@ -1139,6 +1158,7 @@ import AppKit
     var useWebViewEmbeds: Bool {
         get { 
             access(keyPath: \.useWebViewEmbeds)
+            access(keyPath: \.settingsModelRevision)
             if let settingsModel = settingsModel {
                 return settingsModel.useWebViewEmbeds
             }

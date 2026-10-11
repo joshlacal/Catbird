@@ -44,6 +44,21 @@ struct AppSettingsAccountSwitchTests {
     #expect(effects == 1)
   }
 
+  @Test("Replacing the settings model notifies views observing a single key")
+  func modelReplacementNotifiesKeyObservers() async throws {
+    let fixture = try LocalSettingsSwitchFixture()
+    defer { fixture.cleanUp() }
+    await fixture.settle()
+    var changed = false
+    withObservationTracking {
+      _ = fixture.settings.theme
+    } onChange: {
+      changed = true
+    }
+    fixture.settings.configure(accountDID: "did:plc:settingsobservationother")
+    #expect(changed, "A view reading theme must re-render when the account's model is replaced")
+  }
+
   @Test("Closed flush saves the row but refuses retirement until its follow-up effect finishes")
   func closedFlushDefersPublication() async throws {
     let fixture = try LocalSettingsSwitchFixture()
