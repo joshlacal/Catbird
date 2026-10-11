@@ -746,16 +746,27 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   // MARK: - ModelContainer Async Initialization
 
+  /// The open in progress. Every window shows LoadingView while the store opens,
+  /// so a multi-window restore would otherwise open the SQLite store twice at once.
+  @MainActor private static var inFlightModelContainerOpen: Task<ModelContainerState, Never>?
+
   @MainActor
   private func initializeModelContainer() async {
     if case .failed = appStateManager.modelContainerState {
       appStateManager.modelContainerState = .loading
     }
     guard case .loading = appStateManager.modelContainerState else { return }
+    if let inFlight = Self.inFlightModelContainerOpen {
+      _ = await inFlight.value
+      return
+    }
     logger.info("📦 Requesting off-main ModelContainer initialization")
-    let result = await Task.detached(priority: .userInitiated) {
+    let open = Task.detached(priority: .userInitiated) {
       CatbirdSwiftDataStore.openWithRecovery()
-    }.value
+    }
+    Self.inFlightModelContainerOpen = open
+    let result = await open.value
+    Self.inFlightModelContainerOpen = nil
     appStateManager.modelContainerState = result
     if case .ready = result {
       scheduleStableLaunchMarker()
