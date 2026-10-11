@@ -7,6 +7,7 @@ import XCTest
 import Petrel
 @testable import Catbird
 
+@MainActor
 final class NotificationParityTests: XCTestCase {
 
   private func makeProfile(did: String, handle: String) -> AppBskyActorDefs.ProfileView {

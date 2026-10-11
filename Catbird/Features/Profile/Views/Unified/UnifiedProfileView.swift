@@ -50,6 +50,7 @@ struct UnifiedProfileView: View {
   @State private var hasAttemptedLoadReplies = false
   @State private var hasAttemptedLoadMedia = false
   @State private var isHeaderScrolledPast = false
+  @State private var scrollToTopRequestID = 0
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
   #if DEBUG
   private let layoutLogger = Logger(subsystem: "blue.catbird", category: "LayoutDebug")
@@ -274,6 +275,7 @@ struct UnifiedProfileView: View {
 
     if newValue == 3 {
       // Double-tapped profile tab - refresh profile and scroll to top
+      scrollToTopRequestID += 1
       Task {
         await viewModel.loadProfile()
         // Send scroll to top command
@@ -526,7 +528,8 @@ struct UnifiedProfileView: View {
           refreshAllContent: refreshAllContent,
           onTabChange: handleTabChange,
           requestUnblock: { isShowingUnblockConfirmation = true },
-          onHeaderScrolledPastChange: { isHeaderScrolledPast = $0 }
+          onHeaderScrolledPastChange: { isHeaderScrolledPast = $0 },
+          scrollToTopRequestID: scrollToTopRequestID
         )
       } else {
         errorView
@@ -753,6 +756,11 @@ struct UnifiedProfileView: View {
       }
       .onChange(of: lastTappedTab) { _, newValue in
         handleTabChange(newValue)
+      }
+      .onChange(of: sceneContext.tabTappedAgain) { _, newValue in
+        if newValue == 3 {
+          scrollToTopRequestID += 1
+        }
       }
       .task {
         // Skip initialLoad when already attempted and profile is present (Quick win 12 / P154)

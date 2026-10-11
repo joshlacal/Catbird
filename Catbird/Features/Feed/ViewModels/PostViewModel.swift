@@ -7,7 +7,6 @@
 
 import Foundation
 import Petrel
-import PetrelCatbird
 import Observation
 import OSLog
 /// ViewModel for managing post state and interactions

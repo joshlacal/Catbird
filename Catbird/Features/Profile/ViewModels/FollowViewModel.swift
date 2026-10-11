@@ -10,6 +10,7 @@ import Petrel
 import Observation
 import OSLog
 
+@MainActor
 @Observable final class FollowViewModel {
     private let client: ATProtoClient?
     private let userDID: String  // This is the DID of the profile we're viewing

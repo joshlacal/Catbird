@@ -46,6 +46,7 @@ Catbird uses modern Swift patterns and SwiftUI best practices:
 - **Concurrency**: Swift 6 structured concurrency with actors
 - **Networking**: [Petrel](https://github.com/joshlacal/Petrel) AT Protocol library
 - **Navigation**: Type-safe navigation with SwiftUI's navigation APIs
+- **Secondary post lists**: A shared UIKit collection controller recycles iOS rows, forwards the scene environment, and restores normalized scroll offsets per profile tab. macOS uses a native `List` with the same refresh, pagination, and bookmark-removal callbacks.
 
 ## Project Structure
 

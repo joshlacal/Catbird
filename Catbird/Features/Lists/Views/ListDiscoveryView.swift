@@ -3,6 +3,7 @@ import Petrel
 import OSLog
 import NukeUI
 
+@MainActor
 @Observable
 final class ListDiscoveryViewModel {
   // MARK: - Properties

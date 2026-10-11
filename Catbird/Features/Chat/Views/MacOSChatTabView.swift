@@ -2,7 +2,7 @@
 import GRDB
 import OSLog
 import Petrel
-import PetrelCatbird
+import PetrelCatbirdLite
 import SwiftUI
 
 // MARK: - MLS List Change Observer

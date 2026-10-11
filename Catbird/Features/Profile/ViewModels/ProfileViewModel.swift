@@ -10,6 +10,7 @@ import UIKit
 import AppKit
 #endif
 
+@MainActor
 @Observable final class ProfileViewModel: StateInvalidationSubscriber, Hashable, Equatable {
   // MARK: - Properties
 
@@ -141,21 +142,18 @@ import AppKit
     // Subscribe to state invalidation events if bus is provided with safety check
     // Use a completely deferred subscription to avoid any metadata cache conflicts during init
     if let bus = stateInvalidationBus {
-      Task.detached { [weak self, weak bus] in
+      Task { @MainActor [weak self] in
         // Wait longer to ensure object is fully initialized
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
-        
-        await MainActor.run {
-          guard let self = self, let bus = bus else { return }
-          bus.subscribe(self)
-          self.logger.debug("ProfileViewModel[\(self.instanceId)]: Deferred subscription completed")
-        }
+        guard let self else { return }
+        bus.subscribe(self)
+        self.logger.debug("ProfileViewModel[\(self.instanceId)]: Deferred subscription completed")
       }
     }
   }
   
-  deinit {
-      logger.debug("ProfileViewModel[\(self.instanceId)]: Deinitializing")
+  isolated deinit {
+    logger.debug("ProfileViewModel[\(self.instanceId)]: Deinitializing")
     
     // Cancel all active tasks to prevent crashes
     for task in activeLoadTasks {
@@ -877,7 +875,7 @@ import AppKit
     }
   }
   
-  private static func nilIfBlank(_ value: String) -> String? {
+  nonisolated private static func nilIfBlank(_ value: String) -> String? {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
   }
@@ -885,7 +883,7 @@ import AppKit
   // MARK: - StateInvalidationSubscriber
   
   /// Check if this subscriber is interested in a specific event
-  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+  nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
     switch event {
     case .postCreated(let post):
       // Only interested if:
@@ -1171,12 +1169,12 @@ import AppKit
   
   // MARK: - Hashable & Equatable conformance to prevent Swift metadata cache conflicts
   
-  func hash(into hasher: inout Hasher) {
+  nonisolated func hash(into hasher: inout Hasher) {
     hasher.combine(instanceId)
     hasher.combine(userDID)
   }
   
-  static func == (lhs: ProfileViewModel, rhs: ProfileViewModel) -> Bool {
+  nonisolated static func == (lhs: ProfileViewModel, rhs: ProfileViewModel) -> Bool {
     return lhs.instanceId == rhs.instanceId && lhs.userDID == rhs.userDID
   }
 

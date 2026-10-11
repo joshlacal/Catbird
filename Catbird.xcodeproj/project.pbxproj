@@ -18,7 +18,7 @@
 		215ADE7F2E847268003F0DA4 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 215ADE7E2E847268003F0DA4 /* Sentry */; };
 		217ECDA92EB4268100BD113B /* Mantis in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 217ECDA82EB4268100BD113B /* Mantis */; };
 		21886699300B5FE800215DE7 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21886698300B5FE800215DE7 /* Petrel */; };
-		2188669C300B600600215DE7 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 2188669B300B600600215DE7 /* PetrelCatbird */; };
+		2188669C300B600600215DE7 /* PetrelCatbirdLite in Frameworks */ = {isa = PBXBuildFile; productRef = 2188669B300B600600215DE7 /* PetrelCatbirdLite */; };
 		218866A2300B61AC00215DE7 /* CatbirdBrand in Frameworks */ = {isa = PBXBuildFile; productRef = 218866A1300B61AC00215DE7 /* CatbirdBrand */; };
 		218866A5300B678A00215DE7 /* BluemojiKit in Frameworks */ = {isa = PBXBuildFile; productRef = 218866A4300B678A00215DE7 /* BluemojiKit */; };
 		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
@@ -386,7 +386,7 @@
 				215ADE7F2E847268003F0DA4 /* Sentry in Frameworks */,
 				21886699300B5FE800215DE7 /* Petrel in Frameworks */,
 				219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */,
-				2188669C300B600600215DE7 /* PetrelCatbird in Frameworks */,
+				2188669C300B600600215DE7 /* PetrelCatbirdLite in Frameworks */,
 				218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */,
 				219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */,
 				217ECDA92EB4268100BD113B /* Mantis in Frameworks */,
@@ -544,7 +544,7 @@
 				21094CF32EBD09010084BFBD /* GRDB */,
 				219DA5B82EED838E00F717FA /* EmojiKit */,
 				21886698300B5FE800215DE7 /* Petrel */,
-				2188669B300B600600215DE7 /* PetrelCatbird */,
+				2188669B300B600600215DE7 /* PetrelCatbirdLite */,
 				218866A1300B61AC00215DE7 /* CatbirdBrand */,
 				218866A4300B678A00215DE7 /* BluemojiKit */,
 			);
@@ -1794,9 +1794,9 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = Petrel;
 		};
-		2188669B300B600600215DE7 /* PetrelCatbird */ = {
+		2188669B300B600600215DE7 /* PetrelCatbirdLite */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = PetrelCatbird;
+			productName = PetrelCatbirdLite;
 		};
 		218866A1300B61AC00215DE7 /* CatbirdBrand */ = {
 			isa = XCSwiftPackageProductDependency;

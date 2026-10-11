@@ -10,7 +10,6 @@ import Nuke
 import NukeUI
 import Observation
 import Petrel
-import PetrelCatbird
 import SwiftUI
 
 // MARK: - PostState

@@ -9,6 +9,7 @@ import UIKit
 import AppKit
 #endif
 
+@MainActor
 @Observable
 final class CreateListViewModel {
   // MARK: - Properties

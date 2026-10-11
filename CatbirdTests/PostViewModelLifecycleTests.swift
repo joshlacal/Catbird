@@ -1,6 +1,6 @@
 import Foundation
 import Petrel
-import PetrelCatbird
+import PetrelCatbirdLite
 import SwiftUI
 import Testing
 @testable import Catbird

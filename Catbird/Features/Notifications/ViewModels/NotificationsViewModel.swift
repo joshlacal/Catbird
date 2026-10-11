@@ -133,7 +133,7 @@ private actor FollowRecordCreatedAtCacheActor {
 
 // MARK: - ViewModel
 
-@Observable final class NotificationsViewModel {
+@MainActor @Observable final class NotificationsViewModel {
   // MARK: - Properties
 
   /// One page of `listNotifications`, as the client returns it. Injected by
@@ -470,7 +470,7 @@ private actor FollowRecordCreatedAtCacheActor {
   }
 
   /// The production page loader: one `listNotifications` call on the client.
-  private static func clientPageLoader(_ client: ATProtoClient) -> PageLoader {
+  private nonisolated static func clientPageLoader(_ client: ATProtoClient) -> PageLoader {
     { reasons, cursor in
       // Use the filter reasons when creating parameters
       let params = AppBskyNotificationListNotifications.Parameters(
@@ -561,7 +561,8 @@ private actor FollowRecordCreatedAtCacheActor {
     }
 
     // Fetch posts and viewer follow records concurrently
-    async let fetchedPostsTask = fetchPosts(uris: Array(urisToFetch))
+    let urisSnapshot = Array(urisToFetch)
+    async let fetchedPostsTask = fetchPosts(uris: urisSnapshot)
     async let viewerFollowCreatedAtTask = fetchViewerFollowCreatedAtByURI(for: notifications)
     var fetchedPosts = await fetchedPostsTask
     let viewerFollowCreatedAtByURI = await viewerFollowCreatedAtTask
@@ -735,7 +736,7 @@ private actor FollowRecordCreatedAtCacheActor {
   }
 
   /// Match the hydrated original post, even when the server omits reasonSubject.
-  static func viaRepostGroupingSubject(
+  nonisolated static func viaRepostGroupingSubject(
     for notification: AppBskyNotificationListNotifications.Notification
   ) -> String {
     if case .knownType(let record) = notification.record {
@@ -750,7 +751,7 @@ private actor FollowRecordCreatedAtCacheActor {
       ?? "\(notification.uri.uriString())_\(notification.cid)"
   }
 
-  static func classifyFollowNotification(
+  nonisolated static func classifyFollowNotification(
     inboundFollowCreatedAt: Date?,
     viewerFollowCreatedAt: Date?
   ) -> NotificationType {
@@ -795,7 +796,7 @@ private actor FollowRecordCreatedAtCacheActor {
     default: return nil
     }
   }
-  private static func followRecordCreatedAt(
+  private nonisolated static func followRecordCreatedAt(
     in notification: AppBskyNotificationListNotifications.Notification
   ) -> Date? {
     guard case .knownType(let record) = notification.record,

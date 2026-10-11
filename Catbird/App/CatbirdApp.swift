@@ -8,7 +8,7 @@ import CoreText
 import GRDB
 import OSLog
 import Petrel
-import PetrelCatbird
+import PetrelCatbirdLite
 import Security
 import SwiftData
 import SwiftUI
@@ -713,7 +713,7 @@ struct CatbirdApp: App {
 
     // Register blue.catbird.* / place.stream.* lexicon types with Petrel's decoder registry
     // before any responses containing custom types are decoded.
-    PetrelCatbirdLexicons.register()
+    PetrelCatbirdLiteLexicons.register()
 
 
     // Bridge Petrel logs into Sentry (Sentry is initialized in AppDelegate)

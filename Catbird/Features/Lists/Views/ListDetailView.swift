@@ -8,6 +8,7 @@ enum ListDetailTab: String, CaseIterable {
   case members = "People"
 }
 
+@MainActor
 @Observable
 final class ListDetailViewModel {
   // MARK: - Properties

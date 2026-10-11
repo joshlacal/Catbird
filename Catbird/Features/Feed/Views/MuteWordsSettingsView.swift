@@ -174,9 +174,13 @@ struct MuteWordsSettingsView: View {
     // Imported rules can lack IDs; retain every rule without inventing an identity for server edits.
     ForEach(Array(displayedMuteWords.enumerated()), id: \.offset) { _, word in
       muteWordRow(word)
-        .deleteDisabled(!canEdit || !hasUniqueIdentifier(word.id))
+        .deleteDisabled(hasSearchText || !canEdit || !hasUniqueIdentifier(word.id))
     }
-    .onDelete(perform: hasSearchText || !canEdit ? nil : deleteMuteWords)
+    .onDelete { offsets in
+      if !hasSearchText && canEdit {
+        deleteMuteWords(at: offsets)
+      }
+    }
   }
   
   @ViewBuilder

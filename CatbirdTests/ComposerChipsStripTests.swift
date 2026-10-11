@@ -1,6 +1,6 @@
 import Foundation
 import Petrel
-import PetrelCatbird
+import PetrelCatbirdLite
 import Testing
 @testable import Catbird
 @Suite("Composer chips strip visibility", .serialized)

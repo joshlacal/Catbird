@@ -85,38 +85,19 @@ struct BookmarksView: View {
   
   // MARK: - Bookmarks List
   private var bookmarksListView: some View {
-    List {
-      ForEach(bookmarks, id: \.subject.uri) { bookmarkView in
-        bookmarkRowView(bookmarkView)
-          .listRowInsets(EdgeInsets())
-          .listRowSeparator(.hidden)
-          .listRowBackground(Color.clear)
-          .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-              Task { await removeBookmark(bookmarkView) }
-            } label: {
-              Label("Remove Bookmark", systemImage: "bookmark.slash")
-            }
-          }
-      }
-      
-      // Load more content
-      if hasMoreContent && !isLoading {
-        ProgressView()
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, BookmarksView.baseUnit * 6)
-          .listRowInsets(EdgeInsets())
-          .listRowSeparator(.hidden)
-          .listRowBackground(Color.clear)
-          .task {
-            await loadMoreBookmarks()
-          }
-      }
+    PostListCollectionView(
+      bookmarks: bookmarks,
+      hasMore: hasMoreContent,
+      isLoadingMore: isLoading,
+      footerState: hasMoreContent ? (isLoading ? .loading : .hidden) : .hidden,
+      onLoadMore: { await loadMoreBookmarks() },
+      onRefresh: { await refreshBookmarks() },
+      onRemoveBookmark: removeBookmark,
+      appState: appState,
+      accessibilityIdentifier: "bookmarks.posts"
+    ) { bookmarkView in
+      bookmarkRowView(bookmarkView)
     }
-    .listStyle(.plain)
-    .listSectionSeparator(.hidden)
-    .scrollContentBackground(.hidden)
-    .environment(\.defaultMinListRowHeight, 0)
   }
   
   // MARK: - Bookmark Row
@@ -249,6 +230,8 @@ struct BookmarksView: View {
   private func loadMoreBookmarks() async {
     guard hasMoreContent, !isLoading else { return }
     guard let client = appState.atProtoClient else { return }
+    isLoading = true
+    defer { isLoading = false }
     
     do {
       let (moreBookmarks, nextCursor) = try await appState.bookmarksManager.fetchBookmarks(
@@ -277,10 +260,10 @@ struct BookmarksView: View {
   }
 
   /// Removes a bookmark optimistically, restoring the row if the request fails.
-  private func removeBookmark(_ bookmarkView: AppBskyBookmarkDefs.BookmarkView) async {
+  private func removeBookmark(_ bookmarkView: AppBskyBookmarkDefs.BookmarkView) async -> Bool {
     guard let client = appState.atProtoClient,
           let index = bookmarks.firstIndex(where: { $0.subject.uri == bookmarkView.subject.uri })
-    else { return }
+    else { return false }
 
     let postUri = bookmarkView.subject.uri
     let postUriString = postUri.uriString()
@@ -290,11 +273,13 @@ struct BookmarksView: View {
     do {
       try await appState.bookmarksManager.deleteBookmark(postUri: postUri, client: client)
       appState.toastManager.show(ToastItem(message: "Bookmark removed", icon: "bookmark"))
+      return true
     } catch {
       withAnimation { bookmarks.insert(bookmarkView, at: min(index, bookmarks.count)) }
       await appState.postShadowManager.setBookmarked(postUri: postUriString, isBookmarked: true)
       showFailureToast(for: error, action: "remove this bookmark")
       logger.error("Failed to remove bookmark: \(error)")
+      return false
     }
   }
 

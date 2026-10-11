@@ -13,7 +13,7 @@ import UIKit
 @MainActor
 struct SearchTabReselectionFixture: View {
   static let launchArgument = "--search-tab-reselection-ui-fixture"
-  static let accountDID = "did:plc:searchtabfixtureviewer"
+  nonisolated static let accountDID = "did:plc:searchtabfixtureviewer"
   /// Adds typeahead profiles and feed discovery data for visual checks of Search
   /// and Discover Feeds. Search history is seeded with `historyArgument`, else cleared.
   static let visualArgument = "--search-visual-fixture"
@@ -23,6 +23,7 @@ struct SearchTabReselectionFixture: View {
   static let topicsArgument = "--search-visual-large-topics"
   static let hashtagArgument = "--search-visual-hashtag"
   static let moderatedHashtagArgument = "--search-visual-hashtag-moderated-page"
+  static let profileArgument = "--search-visual-profile"
 
   @State private var account: AppState?
   @State private var context: SceneNavigationContext?
@@ -73,11 +74,13 @@ struct SearchTabReselectionFixture: View {
       let visual = arguments.contains(Self.visualArgument), topics = arguments.contains(Self.topicsArgument)
       let hashtag = arguments.contains(Self.hashtagArgument)
       let moderatedHashtag = arguments.contains(Self.moderatedHashtagArgument)
+      let profile = arguments.contains(Self.profileArgument)
       // Each launch starts on the timeline; Home otherwise restores the previous run's feed.
       UserDefaults.standard.removeObject(forKey: "lastSelectedFeed_\(Self.accountDID)")
       preparationStage = "local transport"
       try SearchTabLocalProtocol.prepare(visual: visual, topics: topics,
-                                         hashtag: hashtag, moderatedHashtag: moderatedHashtag)
+                                         hashtag: hashtag, moderatedHashtag: moderatedHashtag,
+                                         profile: profile)
       if visual {
         let queryCount = arguments.contains(Self.shortHistoryArgument) ? 1
           : arguments.contains(Self.overflowHistoryArgument) ? 10 : nil
@@ -99,7 +102,7 @@ struct SearchTabReselectionFixture: View {
         configuration: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
       PersistentFeedStateManager.initialize(with: memory)
       state.composerDraftManager.configureForTesting(modelContext: memory.mainContext)
-      if topics || hashtag {
+      if topics || hashtag || profile {
         state.preferencesManager.configure(accountDID: state.userDID)
         state.preferencesManager.updateClient(client)
       }
@@ -146,7 +149,11 @@ struct SearchTabReselectionFixture: View {
       await home.restorePersistedPosts(rows, cursor: nil)
       preparationStage = "scene context"
       let scene = SceneNavigationContext(appState: state, sceneID: UUID())
-      if hashtag {
+      if profile {
+        scene.navigationManager.navigate(to: .profile(Self.accountDID), in: 0)
+        scene.navigationManager.updateCurrentTab(0)
+        selectedTab = 0
+      } else if hashtag {
         scene.navigationManager.navigate(to: .hashtag("localtopic"), in: 1)
         scene.navigationManager.updateCurrentTab(1)
         selectedTab = 1
@@ -182,7 +189,8 @@ private final class SearchTabLocalProtocol: URLProtocol, @unchecked Sendable {
 
   @MainActor
   static func prepare(visual: Bool = false, topics: Bool = false,
-                      hashtag: Bool = false, moderatedHashtag: Bool = false) throws {
+                      hashtag: Bool = false, moderatedHashtag: Bool = false,
+                      profile: Bool = false) throws {
     let timestamp = ISO8601DateFormatter().string(from: Date())
     func post(_ index: Int, text: String) -> [String: Any] {
       ["uri": "at://did:plc:searchtabfixtureauthor/app.bsky.feed.post/row\(index)",
@@ -217,6 +225,21 @@ private final class SearchTabLocalProtocol: URLProtocol, @unchecked Sendable {
       merged["app.bsky.graph.getMutes"] = [
         "mutes": moderatedHashtag ? [SearchHashtagPayloads.mutedProfile] : []
       ]
+    }
+    if profile {
+      let detailedProfile: [String: Any] = [
+        "did": SearchTabReselectionFixture.accountDID,
+        "handle": "search-viewer.test",
+        "displayName": "Local Search Viewer",
+        "description": "Visual fixture account for profile collection stack verification.",
+        "followersCount": 42,
+        "followsCount": 18,
+        "postsCount": 32,
+        "indexedAt": timestamp
+      ]
+      merged["app.bsky.actor.getProfile"] = detailedProfile
+      merged["app.bsky.feed.getAuthorFeed"] = ["feed": feed]
+      merged["app.bsky.graph.getKnownFollowers"] = ["followers": []]
     }
     let encoded = try merged.mapValues { try JSONSerialization.data(withJSONObject: $0) }
     let hashtagData = hashtag

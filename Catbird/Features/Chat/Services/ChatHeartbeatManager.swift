@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 import Petrel
-import PetrelCatbird
+import PetrelCatbirdLite
 
 #if os(iOS)
 import UIKit

@@ -12,7 +12,7 @@
 
 import Foundation
 import Petrel
-import PetrelCatbird
+import PetrelCatbirdLite
 import os.log
 
 /// Vends per-account `ATProtoClient` instances to App Intents.
@@ -36,7 +36,7 @@ actor IntentClientProvider {
   /// Petrel's decoder registry. App Intents can run in a process that never
   /// executes the main app's launch path (CatbirdApp.swift), so this can't
   /// assume registration already happened.
-  private static let lexiconRegistration: Void = PetrelCatbirdLexicons.register()
+  private static let lexiconRegistration: Void = PetrelCatbirdLiteLexicons.register()
 
   private let logger = Logger(subsystem: "blue.catbird", category: "AppIntents")
 

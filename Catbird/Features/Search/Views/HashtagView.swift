@@ -45,9 +45,9 @@ struct HashtagView: View {
             .onChange(of: sortByRecent) { _, _ in
                 reloadPosts()
             }
-            .onAppear {
+            .task {
                 if posts.isEmpty {
-                    loadPosts()
+                    await loadPosts()
                 }
             }
     }
@@ -129,7 +129,7 @@ struct HashtagView: View {
     private func reloadPosts() {
         posts = []
         cursor = nil
-        loadPosts()
+        Task { await loadPosts() }
     }
 
     private var loadFailedState: some View {
@@ -139,7 +139,7 @@ struct HashtagView: View {
             Text("Check your connection and try again.")
         } actions: {
             Button("Try Again") {
-                loadPosts()
+                Task { await loadPosts() }
             }
         }
         .padding(.vertical, 24)
@@ -173,63 +173,59 @@ struct HashtagView: View {
     }
 
     private var postsList: some View {
-        List {
-            header
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
-
+        Group {
             if isLoading && posts.isEmpty {
-                ProgressView("Loading posts")
-                    .frame(maxWidth: .infinity, minHeight: 160)
-                    .listRowSeparator(.hidden)
+                VStack {
+                    header
+                    Spacer()
+                    ProgressView("Loading posts")
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                    Spacer()
+                }
             } else if loadFailed && posts.isEmpty {
-                loadFailedState
-                    .listRowSeparator(.hidden)
+                VStack {
+                    header
+                    loadFailedState
+                }
             } else if posts.isEmpty {
-                emptyState
-                    .listRowSeparator(.hidden)
-            }
-
-            ForEach(posts, id: \.uri) { post in
-                Button {
-                    path.append(NavigationDestination.post(post.uri))
-                } label: {
-                    PostView(
-                        post: post,
-                        grandparentAuthor: nil,
-                        isParentPost: false,
-                        isSelectable: true,
-                        path: $path,
-                        appState: appState
-                    )
-                    .padding(.vertical, 4)
+                VStack {
+                    header
+                    emptyState
+                    if cursor != nil {
+                        Button("Load More") {
+                            Task { await loadMorePosts() }
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                .listRowSeparator(.hidden)
-            }
-            
-            if isLoading && !posts.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .listRowSeparator(.hidden)
-            } else if !isLoading, cursor != nil {
-                Button {
-                    loadMorePosts()
-                } label: {
-                    Text("Load More")
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding()
-                        .background(Color.accentColor.opacity(0.1))
-                        .cornerRadius(8)
+            } else {
+                PostListCollectionView(
+                    posts: posts,
+                    headerView: AnyView(header),
+                    hasMore: cursor != nil,
+                    isLoadingMore: isLoading,
+                    footerState: loadFailed ? .failed : (cursor != nil ? (isLoading ? .loading : .hidden) : .hidden),
+                    onLoadMore: { await loadMorePosts() },
+                    onRefresh: { await loadPosts() },
+                    appState: appState,
+                    accessibilityIdentifier: "hashtag.posts"
+                ) { post in
+                    Button {
+                        path.append(NavigationDestination.post(post.uri))
+                    } label: {
+                        PostView(
+                            post: post,
+                            grandparentAuthor: nil,
+                            isParentPost: false,
+                            isSelectable: true,
+                            path: $path,
+                            appState: appState
+                        )
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .padding(.vertical, 8)
-                .listRowSeparator(.hidden)
             }
         }
-        .listStyle(.plain)
         .accessibilityIdentifier("hashtag.posts")
     }
     
@@ -247,14 +243,14 @@ struct HashtagView: View {
         return await Self.contentFilterService.filterPostViews(posts, settings: settings)
     }
     
-    private func loadPosts() {
+    private func loadPosts() async {
         loadGeneration += 1
         let generation = loadGeneration
         let isInitial = posts.isEmpty
         isLoading = true
         loadFailed = false
         
-        Task {
+        do {
             let signpost = isInitial ? PerformanceSignposts.beginInterval("HashtagOpen") : nil
             defer {
                 if let signpost {
@@ -304,12 +300,13 @@ struct HashtagView: View {
         }
     }
     
-    private func loadMorePosts() {
+    private func loadMorePosts() async {
         guard let currentCursor = cursor, !isLoading else { return }
         let generation = loadGeneration
         isLoading = true
+        loadFailed = false
         
-        Task {
+        do {
             guard let client = appState.atProtoClient else {
                 isLoading = false
                 return
@@ -327,6 +324,7 @@ struct HashtagView: View {
                 guard generation == loadGeneration else { return }
                 guard (200..<300).contains(status), let data else {
                     logger.debug("Loading more hashtag posts failed with status \(status)")
+                    loadFailed = true
                     isLoading = false
                     return
                 }
@@ -340,6 +338,7 @@ struct HashtagView: View {
             } catch {
                 guard generation == loadGeneration else { return }
                 logger.debug("Error loading more hashtag posts: \(error)")
+                loadFailed = true
                 isLoading = false
             }
         }

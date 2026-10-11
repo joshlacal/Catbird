@@ -14,8 +14,12 @@ View modifiers that stretch a view in a scroll view when a person scrolls beyond
 
 import SwiftUI
 
-@Observable private class FlexibleHeaderGeometry {
+@Observable class FlexibleHeaderGeometry {
     var offset: CGFloat = 0
+
+    init(offset: CGFloat = 0) {
+        self.offset = offset
+    }
 }
 
 /// A view modifer that stretches content when the containing geometry offset changes.
@@ -65,6 +69,7 @@ extension View {
         modifier(FlexibleHeaderContentModifier(baseHeight: height))
     }
 }
+
 
 /// Clips a banner header to a uniform rounded rectangle whose radius matches
 /// the concentric radius of the banner's top corners against its container.

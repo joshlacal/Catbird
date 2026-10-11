@@ -11,6 +11,7 @@ import Testing
 // paginating until it has the items it wanted).
 
 @Suite("Moderation rendering: notification pagination")
+@MainActor
 struct NotificationPaginationModerationTests {
   private typealias F = RenderingFixtures
   private typealias Notification = AppBskyNotificationListNotifications.Notification

@@ -60,7 +60,8 @@ public struct TopicFeedView: View {
             topic: topic,
             state: topTabState,
             path: $path,
-            appState: appState
+            appState: appState,
+            scrollsToTop: selectedTab == .top
           )
           .opacity(selectedTab == .top ? 1 : 0)
           .allowsHitTesting(selectedTab == .top)
@@ -72,7 +73,8 @@ public struct TopicFeedView: View {
             topic: topic,
             state: latestTabState,
             path: $path,
-            appState: appState
+            appState: appState,
+            scrollsToTop: selectedTab == .latest
           )
           .opacity(selectedTab == .latest ? 1 : 0)
           .allowsHitTesting(selectedTab == .latest)
@@ -107,6 +109,7 @@ private struct TopicTabContentView: View {
   @Bindable var state: TopicTabState
   @Binding var path: NavigationPath
   let appState: AppState
+  let scrollsToTop: Bool
 
   var body: some View {
     Group {
@@ -153,60 +156,31 @@ private struct TopicTabContentView: View {
           Spacer()
         }
       } else {
-        List {
-          if let error = state.errorMessage {
-            HStack {
-              Text(error)
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(.secondary)
-              Spacer()
-              Button("Try Again") {
-                Task {
-                  await state.loadMore(topic: topic, appState: appState)
-                }
-              }
-              .appFont(AppTextRole.caption)
-            }
-            .listRowSeparator(.hidden)
+        PostListCollectionView(
+          posts: state.posts,
+          hasMore: state.cursor != nil,
+          isLoadingMore: state.isLoadingMore,
+          footerState: state.errorMessage != nil ? .failed : (state.cursor != nil ? (state.isLoadingMore ? .loading : .hidden) : .hidden),
+          onLoadMore: { await state.loadMore(topic: topic, appState: appState) },
+          onRefresh: { await state.refresh(topic: topic, appState: appState) },
+          scrollsToTop: scrollsToTop,
+          appState: appState,
+          accessibilityIdentifier: "topic.posts"
+        ) { post in
+          Button {
+            path.append(NavigationDestination.post(post.uri))
+          } label: {
+            PostView(
+              post: post,
+              grandparentAuthor: nil,
+              isParentPost: false,
+              isSelectable: true,
+              path: $path,
+              appState: appState
+            )
+            .padding(.vertical, 4)
           }
-
-          ForEach(state.posts, id: \.uri) { post in
-            NavigationLink(value: NavigationDestination.post(post.uri)) {
-              PostView(
-                post: post,
-                grandparentAuthor: nil,
-                isParentPost: false,
-                isSelectable: true,
-                path: $path,
-                appState: appState
-              )
-              .padding(.vertical, 4)
-            }
-            .buttonStyle(.plain)
-            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-            .listRowSeparator(.hidden)
-            .onAppear {
-              if post.uri == state.posts.last?.uri, state.cursor != nil, !state.isLoadingMore {
-                Task {
-                  await state.loadMore(topic: topic, appState: appState)
-                }
-              }
-            }
-          }
-
-          if state.isLoadingMore {
-            HStack {
-              Spacer()
-              ProgressView()
-                .padding(.vertical, 8)
-              Spacer()
-            }
-            .listRowSeparator(.hidden)
-          }
-        }
-        .listStyle(.plain)
-        .refreshable {
-          await state.refresh(topic: topic, appState: appState)
+          .buttonStyle(.plain)
         }
       }
     }

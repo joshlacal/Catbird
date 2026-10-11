@@ -4,7 +4,7 @@ import UIKit
 import Foundation
 import OSLog
 import Petrel
-import PetrelCatbird
+import PetrelCatbirdLite
 import SwiftUI
 
 // PostEmbedData is now defined in UnifiedChat/Models/UnifiedEmbed.swift

@@ -17,10 +17,317 @@ struct UnifiedProfileContentView: View {
   let requestUnblock: @MainActor () -> Void
   /// Reports whether the banner has scrolled fully out of view, taking the header name under the bar.
   var onHeaderScrolledPastChange: @MainActor (Bool) -> Void = { _ in }
+  var scrollToTopRequestID: Int = 0
 
   private static let bannerHeight: CGFloat = 200
 
+  #if os(iOS)
+  @State private var headerGeometry = FlexibleHeaderGeometry()
+  #endif
+
   var body: some View {
+    #if os(iOS)
+    iosBody
+    #else
+    macOSBody
+    #endif
+  }
+
+  // MARK: - iOS Implementation (PostListCollectionView Stack)
+
+  #if os(iOS)
+  private var iosBody: some View {
+    ZStack {
+      PostListCollectionView(
+        boxedPosts: currentBoxedPosts,
+        headerView: AnyView(profileHeaderView),
+        emptyView: nil,
+        hasMore: currentHasMore,
+        isLoadingMore: currentIsLoadingMore,
+        footerState: currentFooterState,
+        onLoadMore: currentLoadMoreAction,
+        onRefresh: { await refreshAllContent() },
+        onScrollOffsetChanged: { normalizedOffset in
+          headerGeometry.offset = min(normalizedOffset, 0)
+          onHeaderScrolledPastChange(normalizedOffset > Self.bannerHeight)
+        },
+        scrollsToTop: true,
+        scrollPositionKey: currentScrollPositionKey,
+        scrollToTopRequestID: scrollToTopRequestID,
+        appState: appState,
+        accessibilityIdentifier: "profile.posts"
+      ) { boxedPost in
+        postRowView(boxedPost: boxedPost)
+      }
+      .environment(\.moderationListFilterExemptDID, profile.did.didString())
+      .ignoresSafeArea(edges: .top)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+    }
+    .entityContext(
+      EntityIdentifier(
+        for: ProfileEntity.self,
+        identifier: profile.did.didString()
+      )
+    )
+  }
+
+  private var currentScrollPositionKey: String {
+    "\(appState.userDID):\(profile.did.didString()):\(viewModel.selectedProfileTab.rawValue)"
+  }
+
+  private var currentBoxedPosts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] {
+    switch viewModel.selectedProfileTab {
+    case .posts:
+      if !hasAttemptedLoadPosts || (viewModel.isLoading && viewModel.boxedPosts.isEmpty) {
+        return []
+      }
+      var posts = viewModel.boxedPosts
+      if let pinned = viewModel.pinnedPost {
+        posts.insert(EquatableBox(pinned), at: 0)
+      }
+      return posts
+    case .replies:
+      if !hasAttemptedLoadReplies || (viewModel.isLoading && viewModel.boxedReplies.isEmpty) {
+        return []
+      }
+      return viewModel.boxedReplies
+    case .media:
+      if !hasAttemptedLoadMedia || (viewModel.isLoading && viewModel.boxedPostsWithMedia.isEmpty) {
+        return []
+      }
+      return viewModel.boxedPostsWithMedia
+    case .labelerInfo, .more:
+      return []
+    default:
+      return []
+    }
+  }
+
+  private var currentHasMore: Bool {
+    switch viewModel.selectedProfileTab {
+    case .posts: viewModel.hasMorePosts
+    case .replies: viewModel.hasMoreReplies
+    case .media: viewModel.hasMoreMedia
+    default: false
+    }
+  }
+
+  private var currentIsLoadingMore: Bool {
+    switch viewModel.selectedProfileTab {
+    case .posts, .replies, .media: viewModel.isLoadingMorePosts
+    default: false
+    }
+  }
+
+  private var currentFooterState: PostListFooterState {
+    currentHasMore && currentIsLoadingMore ? .loading : .hidden
+  }
+
+  private var currentLoadMoreAction: (@MainActor () async -> Void)? {
+    switch viewModel.selectedProfileTab {
+    case .posts: { await viewModel.loadMorePosts() }
+    case .replies: { await viewModel.loadMoreReplies() }
+    case .media: { await viewModel.loadMoreMediaPosts() }
+    default: nil
+    }
+  }
+
+  @ViewBuilder
+  private var profileHeaderView: some View {
+    @Bindable var viewModel = viewModel
+
+    VStack(spacing: 0) {
+      ProfileBannerHeader(
+        bannerURL: profile.banner.flatMap { URL(string: $0.uriString()) },
+        did: profile.did.didString(),
+        labels: profile.labels
+      )
+      .frame(maxWidth: contentMaxWidth, alignment: .center)
+      .frame(maxWidth: .infinity, alignment: .center)
+
+      ProfileHeader(
+        profile: profile,
+        viewModel: viewModel,
+        appState: appState,
+        isEditingProfile: $isEditingProfile,
+        path: $navigationPath,
+        screenWidth: contentMaxWidth,
+        hideAvatar: false
+      )
+      .padding(.horizontal, 16)
+      .frame(maxWidth: contentMaxWidth, alignment: .center)
+      .frame(maxWidth: .infinity, alignment: .center)
+
+      ProfileBlockRelationshipView(
+        viewer: profile.viewer,
+        navigationPath: $navigationPath,
+        requestUnblock: requestUnblock
+      )
+      .padding(.horizontal, 16)
+      .padding(.top, 8)
+      .frame(maxWidth: contentMaxWidth, alignment: .center)
+      .frame(maxWidth: .infinity, alignment: .center)
+
+      if !viewModel.isCurrentUser && !viewModel.knownFollowers.isEmpty {
+        FollowedByView(
+          knownFollowers: viewModel.knownFollowers,
+          knownFollowersTotal: max(profile.viewer?.knownFollowers?.count ?? 0, viewModel.knownFollowers.count),
+          totalFollowersCount: profile.followersCount ?? 0,
+          profileDID: profile.did.didString(),
+          path: $navigationPath
+        )
+        .padding(.horizontal, 16)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
+      }
+
+      ProfileTabSelector(
+        path: $navigationPath,
+        selectedTab: $viewModel.selectedProfileTab,
+        onTabChange: onTabChange,
+        isLabeler: viewModel.isLabeler
+      )
+      .padding(.top, 12)
+      .padding(.horizontal, 16)
+      .frame(maxWidth: contentMaxWidth, alignment: .center)
+      .frame(maxWidth: .infinity, alignment: .center)
+
+      tabContentInHeader
+    }
+    .frame(maxWidth: .infinity, alignment: .center)
+    .environment(headerGeometry)
+  }
+
+  @ViewBuilder
+  private var tabContentInHeader: some View {
+    switch viewModel.selectedProfileTab {
+    case .labelerInfo:
+      if let labelerDetails = viewModel.labelerDetails {
+        LabelerInfoTab(labelerDetails: labelerDetails)
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+      } else {
+        ProgressView("Loading…")
+          .frame(maxWidth: .infinity, minHeight: 100)
+          .padding()
+      }
+    case .more:
+      MoreView(profileDID: viewModel.profile?.did.didString() ?? viewModel.userDID, path: $navigationPath)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
+    case .posts:
+      if !hasAttemptedLoadPosts || (viewModel.isLoading && viewModel.boxedPosts.isEmpty) {
+        ProgressView("Loading…")
+          .frame(maxWidth: .infinity, minHeight: 100)
+          .padding()
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+      } else if viewModel.boxedPosts.isEmpty && viewModel.pinnedPost == nil {
+        ProfileEmptyStateView(
+          title: "No Posts",
+          message: "This account hasn’t posted yet.",
+          isCurrentUser: viewModel.isCurrentUser
+        )
+        .padding(.top, 40)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
+      }
+    case .replies:
+      if !hasAttemptedLoadReplies || (viewModel.isLoading && viewModel.boxedReplies.isEmpty) {
+        ProgressView("Loading…")
+          .frame(maxWidth: .infinity, minHeight: 100)
+          .padding()
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+      } else if viewModel.boxedReplies.isEmpty && viewModel.hasMoreReplies {
+        VStack(spacing: 12) {
+          if viewModel.isLoadingMorePosts {
+            ProgressView()
+          } else {
+            Text("No recent posts here yet.")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(.secondary)
+            Button("Load More") {
+              Task { await viewModel.loadMoreReplies() }
+            }
+            .buttonStyle(.bordered)
+          }
+        }
+        .frame(maxWidth: .infinity, minHeight: 160)
+        .padding(.top, 24)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
+      } else if viewModel.boxedReplies.isEmpty {
+        ProfileEmptyStateView(
+          title: "No Replies",
+          message: "This account hasn’t replied to anyone yet.",
+          isCurrentUser: viewModel.isCurrentUser
+        )
+        .padding(.top, 40)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
+      }
+    case .media:
+      if !hasAttemptedLoadMedia || (viewModel.isLoading && viewModel.boxedPostsWithMedia.isEmpty) {
+        ProgressView("Loading…")
+          .frame(maxWidth: .infinity, minHeight: 100)
+          .padding()
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+      } else if viewModel.boxedPostsWithMedia.isEmpty && viewModel.hasMoreMedia {
+        VStack(spacing: 12) {
+          if viewModel.isLoadingMorePosts {
+            ProgressView()
+          } else {
+            Text("No recent posts here yet.")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(.secondary)
+            Button("Load More") {
+              Task { await viewModel.loadMoreMediaPosts() }
+            }
+            .buttonStyle(.bordered)
+          }
+        }
+        .frame(maxWidth: .infinity, minHeight: 160)
+        .padding(.top, 24)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
+      } else if viewModel.boxedPostsWithMedia.isEmpty {
+        ProfileEmptyStateView(
+          title: "No Media Posts",
+          message: "This account hasn’t shared photos or videos yet.",
+          isCurrentUser: viewModel.isCurrentUser
+        )
+        .padding(.top, 40)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
+      }
+    default:
+      EmptyView()
+    }
+  }
+
+  @ViewBuilder
+  private func postRowView(boxedPost: EquatableBox<AppBskyFeedDefs.FeedViewPost>) -> some View {
+    VStack(spacing: 0) {
+      EnhancedFeedPost(
+        boxedPost: boxedPost,
+        id: boxedPost.value.id,
+        path: $navigationPath
+      )
+      .frame(maxWidth: contentMaxWidth, alignment: .center)
+      .frame(maxWidth: .infinity, alignment: .center)
+
+      Divider()
+        .padding(.top, 8)
+    }
+  }
+  #endif
+
+  // MARK: - macOS Implementation
+
+  #if os(macOS)
+  private var macOSBody: some View {
     ZStack {
       ScrollView {
         VStack(spacing: 0) {
@@ -65,8 +372,46 @@ struct UnifiedProfileContentView: View {
       )
     )
   }
+  #endif
 }
 
+private struct ProfileBlockRelationshipView: View {
+  let viewer: AppBskyActorDefs.ViewerState?
+  @Binding var navigationPath: NavigationPath
+  let requestUnblock: @MainActor () -> Void
+
+  var body: some View {
+    let relationship = BlockRelationship(viewer: viewer)
+    if relationship.direction != .unknown {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(relationship.statusText)
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.medium)
+        HStack(spacing: 16) {
+          if relationship.canUnblockDirectly {
+            Button("Unblock") {
+              requestUnblock()
+            }
+            .appFont(AppTextRole.callout)
+          }
+          if let listRef = relationship.listRef {
+            Button("View List") {
+              navigationPath.append(NavigationDestination.list(listRef.uri))
+            }
+            .appFont(AppTextRole.callout)
+          }
+        }
+      }
+      .padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.systemGroupedBackground)
+      .clipShape(RoundedRectangle(cornerRadius: 10))
+      .accessibilityElement(children: .contain)
+    }
+  }
+}
+
+#if os(macOS)
 private struct UnifiedProfileDetailsView: View {
   let profile: AppBskyActorDefs.ProfileViewDetailed
   let viewModel: ProfileViewModel
@@ -139,46 +484,9 @@ private struct UnifiedProfileDetailsView: View {
         hasAttemptedLoadMedia: hasAttemptedLoadMedia,
         navigationPath: $navigationPath
       )
-      // A profile's own posts are not list-filtered on its feed (`ignoreFilterFor` upstream).
       .environment(\.moderationListFilterExemptDID, profile.did.didString())
 
       Spacer(minLength: 200)
-    }
-  }
-}
-
-private struct ProfileBlockRelationshipView: View {
-  let viewer: AppBskyActorDefs.ViewerState?
-  @Binding var navigationPath: NavigationPath
-  let requestUnblock: @MainActor () -> Void
-
-  var body: some View {
-    let relationship = BlockRelationship(viewer: viewer)
-    if relationship.direction != .unknown {
-      VStack(alignment: .leading, spacing: 6) {
-        Text(relationship.statusText)
-          .appFont(AppTextRole.subheadline)
-          .fontWeight(.medium)
-        HStack(spacing: 16) {
-          if relationship.canUnblockDirectly {
-            Button("Unblock") {
-              requestUnblock()
-            }
-            .appFont(AppTextRole.callout)
-          }
-          if let listRef = relationship.listRef {
-            Button("View List") {
-              navigationPath.append(NavigationDestination.list(listRef.uri))
-            }
-            .appFont(AppTextRole.callout)
-          }
-        }
-      }
-      .padding(12)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(Color.systemGroupedBackground)
-      .clipShape(RoundedRectangle(cornerRadius: 10))
-      .accessibilityElement(children: .contain)
     }
   }
 }
@@ -313,7 +621,6 @@ private struct ProfileFeedTabView: View {
           .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
       } else if posts.isEmpty && hasMore {
-        // The pages fetched so far had nothing for this tab, but older posts may.
         VStack(spacing: 12) {
           if viewModel.isLoadingMorePosts {
             ProgressView()
@@ -353,6 +660,7 @@ private struct ProfileFeedTabView: View {
     }
   }
 }
+#endif
 
 struct ProfileBoxedPostsList: View {
   let posts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]

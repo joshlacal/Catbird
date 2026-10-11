@@ -7,7 +7,6 @@
 
 import SwiftUI
 import Petrel
-import PetrelCatbird
 import Observation
 import OSLog
 

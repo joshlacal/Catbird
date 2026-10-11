@@ -7,7 +7,8 @@ import SwiftUI
 
 public enum MemberCountFormatter {
   private static let lock = NSLock()
-  private static var cache: [Int: String] = [:]
+  /// Safety invariant: Synchronized access is protected by `lock`.
+  nonisolated(unsafe) private static var cache: [Int: String] = [:]
 
   public static func format(count: Int) -> String {
     lock.lock()

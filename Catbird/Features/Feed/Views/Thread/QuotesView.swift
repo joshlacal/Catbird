@@ -42,11 +42,20 @@ struct QuotesView: View {
                     .padding()
                     .foregroundColor(.secondary)
             } else {
-                List {
-                    ForEach(quotes, id: \.uri) { post in
-                        Button {
-                            path.append(NavigationDestination.post(post.uri))
-                        } label: {
+                PostListCollectionView(
+                    posts: quotes,
+                    hasMore: cursor != nil,
+                    isLoadingMore: isLoadingPage,
+                    footerState: pageError != nil ? .failed : (cursor != nil ? .loading : .hidden),
+                    onLoadMore: { await loadMoreQuotes() },
+                    onRefresh: { await loadQuotes() },
+                    appState: appState,
+                    accessibilityIdentifier: "quotes.posts"
+                ) { post in
+                    Button {
+                        path.append(NavigationDestination.post(post.uri))
+                    } label: {
+                        VStack(spacing: 0) {
                             PostView(
                                 post: post,
                                 grandparentAuthor: nil,
@@ -57,52 +66,16 @@ struct QuotesView: View {
                             )
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .contentShape(Rectangle())
-                        .listRowSeparator(.visible)
-                        .listRowSeparatorTint(Color.separator)
-                        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-                        .alignmentGuide(.listRowSeparatorTrailing) { d in d.width }
-                        .listRowBackground(
-                            Color.primaryBackground(
-                                themeManager: appState.themeManager,
-                                currentScheme: colorScheme
-                            )
-                        )
-                        .listRowInsets(EdgeInsets())
-                    }
 
-                    if pageError != nil {
-                        ListPageFailureRow {
-                            Task { await loadMoreQuotes() }
+                            Rectangle()
+                                .fill(Color.separator)
+                                .frame(height: 0.5)
                         }
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(
-                            Color.primaryBackground(
-                                themeManager: appState.themeManager,
-                                currentScheme: colorScheme
-                            )
-                        )
-                    } else if cursor != nil {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .onAppear {
-                                Task { await loadMoreQuotes() }
-                            }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(
-                                Color.primaryBackground(
-                                    themeManager: appState.themeManager,
-                                    currentScheme: colorScheme
-                                )
-                            )
                     }
-                }
-                .listStyle(.plain)
-                .refreshable {
-                    await loadQuotes()
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .frame(maxWidth: contentMaxWidth)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .background(
                     Color.primaryBackground(
@@ -110,8 +83,6 @@ struct QuotesView: View {
                         currentScheme: colorScheme
                     )
                 )
-                .frame(maxWidth: contentMaxWidth)
-                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationTitle("Quotes")

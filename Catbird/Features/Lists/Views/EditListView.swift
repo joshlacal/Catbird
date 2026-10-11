@@ -10,6 +10,7 @@ import UIKit
 import AppKit
 #endif
 
+@MainActor
 @Observable
 final class EditListViewModel {
   // MARK: - Properties
