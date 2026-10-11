@@ -165,16 +165,27 @@ private struct PostRevealFadeModifier: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content
-            .animation(nil, value: hasAppeared)
-            .opacity(shouldFade && !hasAppeared ? 0 : 1)
-            .animation(shouldFade ? .easeInOut(duration: 0.18) : nil, value: hasAppeared)
-            .onAppear { hasAppeared = true }
+        if !shouldFade {
+            content
+        } else {
+            content
+                .animation(nil, value: hasAppeared)
+                .opacity(!hasAppeared ? 0 : 1)
+                .animation(.easeInOut(duration: 0.18), value: hasAppeared)
+                .onAppear {
+                    if !hasAppeared { hasAppeared = true }
+                }
+        }
     }
 }
 
 extension View {
+    @ViewBuilder
     func postRevealFade(isEnabled: Bool) -> some View {
-        modifier(PostRevealFadeModifier(isEnabled: isEnabled))
+        if isEnabled {
+            modifier(PostRevealFadeModifier(isEnabled: isEnabled))
+        } else {
+            self
+        }
     }
 }

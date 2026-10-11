@@ -11,7 +11,7 @@ actor BlockedAuthorHydrator {
 
   private let fetchProfiles: ProfilesFetcher
   private let coalesceNanos: UInt64
-  private var cache: [String: AppBskyActorDefs.ProfileViewDetailed] = [:]
+  private let cachedProfiles = OSAllocatedUnfairLock(initialState: [String: AppBskyActorDefs.ProfileViewDetailed]())
   /// DIDs that resolved to nothing (deactivated/taken down) — cached to avoid refetch loops.
   private var unresolvable: Set<String> = []
   private var queue: Set<String> = []
@@ -29,14 +29,17 @@ actor BlockedAuthorHydrator {
     self.coalesceNanos = coalesceNanos
     self.fetchProfiles = fetchProfiles
   }
+  nonisolated func cachedProfile(for did: String) -> AppBskyActorDefs.ProfileViewDetailed? {
+    cachedProfiles.withLock { $0[did] }
+  }
 
   func profile(for did: String) async -> AppBskyActorDefs.ProfileViewDetailed? {
-    if let hit = cache[did] { return hit }
+    if let hit = cachedProfile(for: did) { return hit }
     if unresolvable.contains(did) { return nil }
     let observedGeneration = generation
     queue.insert(did)
     await currentFlushTask().value
-    if let hit = cache[did] { return hit }
+    if let hit = cachedProfile(for: did) { return hit }
     guard generation != observedGeneration else {
       // No invalidation raced this call — a genuine miss (unresolvable).
       return nil
@@ -47,18 +50,18 @@ actor BlockedAuthorHydrator {
     if unresolvable.contains(did) { return nil }
     queue.insert(did)
     await currentFlushTask().value
-    return cache[did]
+    return cachedProfile(for: did)
   }
 
   func prefetch(dids: [String]) async {
-    let missing = dids.filter { self.cache[$0] == nil && !self.unresolvable.contains($0) }
+    let missing = dids.filter { self.cachedProfile(for: $0) == nil && !self.unresolvable.contains($0) }
     guard !missing.isEmpty else { return }
     queue.formUnion(missing)
     await currentFlushTask().value
   }
 
   func invalidateAll() {
-    cache.removeAll()
+    cachedProfiles.withLock { $0.removeAll() }
     unresolvable.removeAll()
     generation &+= 1
   }
@@ -81,7 +84,9 @@ actor BlockedAuthorHydrator {
     for chunk in stride(from: 0, to: dids.count, by: 25).map({ Array(dids[$0..<min($0 + 25, dids.count)]) }) {
       do {
         let profiles = try await fetchProfiles(chunk)
-        for profile in profiles { cache[profile.did.didString()] = profile }
+        cachedProfiles.withLock { dict in
+          for profile in profiles { dict[profile.did.didString()] = profile }
+        }
         let returned = Set(profiles.map { $0.did.didString() })
         unresolvable.formUnion(chunk.filter { !returned.contains($0) })
       } catch {

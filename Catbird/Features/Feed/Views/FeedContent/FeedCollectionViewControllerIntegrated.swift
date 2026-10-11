@@ -62,6 +62,112 @@ import os
     }
   }
 
+  /// Thread-safe row height cache keyed by post ID + width + font generation + content size category + content signature (P068 / feed-perf step 1)
+  final class FeedRowHeightCache {
+    struct Key: Hashable {
+      let postID: String
+      let width: Int
+      let fontGeneration: Int
+      let contentSizeCategory: UIContentSizeCategory
+      let contentSignature: FeedPostContentSignature
+    }
+    private let capacity: Int = 1000
+    private var cache: [Key: CGFloat] = [:]
+    private var postIDsToKeys: [String: Set<Key>] = [:]
+    private var keyAccessTimes: [Key: UInt64] = [:]
+    private var accessCounter: UInt64 = 0
+
+    func height(for postID: String, width: Int, fontGeneration: Int, contentSizeCategory: UIContentSizeCategory, contentSignature: FeedPostContentSignature) -> CGFloat? {
+      let key = Key(postID: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature)
+      guard let height = cache[key] else { return nil }
+      accessCounter &+= 1
+      keyAccessTimes[key] = accessCounter
+      return height
+    }
+
+    func store(height: CGFloat, for postID: String, width: Int, fontGeneration: Int, contentSizeCategory: UIContentSizeCategory, contentSignature: FeedPostContentSignature) {
+      guard height > 0 else { return }
+      let key = Key(postID: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature)
+      accessCounter &+= 1
+      keyAccessTimes[key] = accessCounter
+      cache[key] = height
+      postIDsToKeys[postID, default: []].insert(key)
+      if cache.count > capacity {
+        evictOldest()
+      }
+    }
+
+    private func evictOldest() {
+      let sortedKeys = keyAccessTimes.sorted { $0.value < $1.value }
+      let toRemove = max(1, sortedKeys.count - (capacity * 9 / 10))
+      for (key, _) in sortedKeys.prefix(toRemove) {
+        cache.removeValue(forKey: key)
+        keyAccessTimes.removeValue(forKey: key)
+        postIDsToKeys[key.postID]?.remove(key)
+        if postIDsToKeys[key.postID]?.isEmpty == true {
+          postIDsToKeys.removeValue(forKey: key.postID)
+        }
+      }
+    }
+
+    func invalidate(postID: String) {
+      if let keys = postIDsToKeys.removeValue(forKey: postID) {
+        for key in keys {
+          cache.removeValue(forKey: key)
+          keyAccessTimes.removeValue(forKey: key)
+        }
+      }
+    }
+
+    func removeAll() {
+      cache.removeAll(keepingCapacity: true)
+      postIDsToKeys.removeAll(keepingCapacity: true)
+      keyAccessTimes.removeAll(keepingCapacity: true)
+    }
+  }
+
+  /// Custom list cell that intercepts self-sizing to return cached heights directly (P068 / feed-perf step 1)
+  final class FeedPostCollectionViewCell: UICollectionViewListCell {
+    var postID: String?
+    var fontGeneration: Int = 0
+    var contentSizeCategory: UIContentSizeCategory = .unspecified
+    var contentSignature: FeedPostContentSignature?
+    weak var heightCache: FeedRowHeightCache?
+    var isFreshlyConfigured: Bool = false
+
+    override func prepareForReuse() {
+      super.prepareForReuse()
+      postID = nil
+      contentSignature = nil
+      isFreshlyConfigured = false
+    }
+
+    override func preferredLayoutAttributesFitting(
+      _ layoutAttributes: UICollectionViewLayoutAttributes
+    ) -> UICollectionViewLayoutAttributes {
+      let width = Int(layoutAttributes.size.width)
+      // Serve cached height ONLY for the first measurement of a freshly configured cell;
+      // any re-measure (self-sizing invalidation from in-row height changes: moderation,
+      // gates, muted-quote, translation, link hydration, etc.) must fall through to real fitting.
+      if isFreshlyConfigured, let postID, let contentSignature, width > 0,
+         let cached = heightCache?.height(for: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature) {
+        isFreshlyConfigured = false
+        let attrs = layoutAttributes
+        attrs.size.height = cached
+        return attrs
+      }
+      // Invalidate on ANY self-sizing re-measure (falls through when isFreshlyConfigured is false)
+      if !isFreshlyConfigured, let postID {
+        heightCache?.invalidate(postID: postID)
+      }
+      isFreshlyConfigured = false
+      let attrs = super.preferredLayoutAttributesFitting(layoutAttributes)
+      if let postID, let contentSignature, width > 0 {
+        heightCache?.store(height: attrs.size.height, for: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature)
+      }
+      return attrs
+    }
+  }
   @available(iOS 16.0, *)
   final class FeedCollectionViewControllerIntegrated: UIViewController {
     // MARK: - Types
@@ -151,6 +257,18 @@ import os
     private var shouldReconfigureAllOnce = false
     /// O(1) post lookup used during cell configuration
     private var postsByID: [String: CachedFeedViewPost] = [:]
+    /// O(1) index lookup used during willDisplay / triggerLoadMore (P064)
+    private var postIndicesByID: [String: Int] = [:]
+    /// Measured row height cache
+    private let rowHeightCache = FeedRowHeightCache()
+    private var lastLayoutWidth: CGFloat = 0
+    /// FirstFeedContent signpost interval state
+    private var firstFeedContentSignpostState: OSSignpostIntervalState?
+    /// Track fling velocity and throttle row building during fast flings (feed-perf step 3)
+    private var currentScrollVelocity: CGFloat = 0
+    private var frameConfigCount = 0
+    private var lastFrameTime: CFTimeInterval = 0
+    private var deferredPlaceholderPostIDs: Set<String> = []
     private var trendingContent = TrendingFeedContent()
     private var appliedTrendingContent = TrendingFeedContent()
     private var appliedFooterState: FeedPaginationFooterState?
@@ -185,6 +303,7 @@ import os
       self.navigationPath = navigationPath
       self.onScrollOffsetChanged = onScrollOffsetChanged
       self.scrollRestoration = FeedViewportRestoration(anchor: viewportState.getScrollAnchor()?.viewportAnchor)
+      self.firstFeedContentSignpostState = PerformanceSignposts.beginInterval("FirstFeedContent")
 
       super.init(nibName: nil, bundle: nil)
     }
@@ -207,24 +326,22 @@ import os
     // MARK: - Theme Support
 
     private func setupThemeObserver() {
-      // Observe ThemeManager's @Observable properties directly
+      // Observe ThemeManager's @Observable properties directly (P218: drop duplicate notification observer)
       themeObserver = UIKitStateObserver(observing: stateManager.appState.themeManager) {
         [weak self] _ in
         self?.handleThemeChange()
       }
-      // Keep the notification observer as a fallback for explicit theme changes
       NotificationCenter.default.addObserver(
         self,
-        selector: #selector(handleThemeChangeNotification),
-        name: NSNotification.Name("ThemeChanged"),
+        selector: #selector(handleFontChangeNotification),
+        name: NSNotification.Name("FontChanged"),
         object: nil
       )
     }
 
-    @objc private func handleThemeChangeNotification() {
-      DispatchQueue.main.async { [weak self] in
-        self?.handleThemeChange()
-      }
+    @objc private func handleFontChangeNotification() {
+      rowHeightCache.removeAll()
+      forceCellReconfiguration()
     }
 
     private func handleThemeChange() {
@@ -268,8 +385,8 @@ import os
     }
 
     private func handleFeedFeedbackChange() {
-      // When this feed starts or stops accepting feedback, cells must rebuild
-      reloadAllCells()
+      // When this feed starts or stops accepting feedback, reconfigure rather than reloadData (P075)
+      forceCellReconfiguration()
       updateBackgroundState()
     }
 
@@ -361,8 +478,15 @@ import os
     }
     override func viewDidLayoutSubviews() {
       super.viewDidLayoutSubviews()
-      if let collectionView = collectionView, let bgView = collectionView.backgroundView {
-        bgView.frame = collectionView.bounds
+      if let collectionView = collectionView {
+        let currentWidth = collectionView.bounds.width
+        if lastLayoutWidth > 0 && abs(lastLayoutWidth - currentWidth) > 0.5 {
+          rowHeightCache.removeAll()
+        }
+        lastLayoutWidth = currentWidth
+        if let bgView = collectionView.backgroundView {
+          bgView.frame = collectionView.bounds
+        }
       }
       restoreScrollPositionIfReady()
       #if DEBUG
@@ -397,6 +521,10 @@ import os
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
       super.traitCollectionDidChange(previousTraitCollection)
       #if os(iOS)
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+          rowHeightCache.removeAll()
+          forceCellReconfiguration()
+        }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
           // System appearance changed; update dynamic backgrounds to reflect dim/black correctly
           updateThemeColors()
@@ -405,6 +533,10 @@ import os
       #endif
     }
 
+    override func didReceiveMemoryWarning() {
+      super.didReceiveMemoryWarning()
+      rowHeightCache.removeAll()
+    }
     // MARK: - Collection View Setup
 
     private func setupCollectionView() {
@@ -553,7 +685,7 @@ import os
 
     private func setupDataSource() {
       // Registration for post cells
-      let postRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
+      let postRegistration = UICollectionView.CellRegistration<FeedPostCollectionViewCell, String> {
         [weak self] cell, indexPath, postId in
         let signpostId = PerformanceSignposts.beginCellConfiguration(postId: postId)
         defer { PerformanceSignposts.endCellConfiguration(id: signpostId) }
@@ -561,6 +693,8 @@ import os
         guard let self = self,
           let post = self.postsByID[postId]
         else {
+          cell.postID = nil
+          cell.isFreshlyConfigured = false
           cell.contentConfiguration = nil
           return
         }
@@ -575,21 +709,61 @@ import os
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         cell.selectedBackgroundView = nil
 
+        // Set up cell properties for row height caching
+        cell.heightCache = self.rowHeightCache
+        let appState = self.stateManager.appState
+        cell.fontGeneration = appState.fontManager.generation
+        cell.contentSizeCategory = self.traitCollection.preferredContentSizeCategory
+
+        // Throttle row building during fast flings: cap new cell configurations per frame (feed-perf step 3)
+        let now = CACurrentMediaTime()
+        if now - self.lastFrameTime > 0.016 {
+          self.lastFrameTime = now
+          self.frameConfigCount = 0
+        }
+        self.frameConfigCount += 1
+        let postSignature = FeedPostContentSignature(post)
+        let isFastFling = abs(self.currentScrollVelocity) > 3500
+        if isFastFling && self.frameConfigCount > 3 {
+          self.deferredPlaceholderPostIDs.insert(postId)
+          let estimatedHeight = self.rowHeightCache.height(
+            for: postId,
+            width: Int(self.collectionView.bounds.width),
+            fontGeneration: cell.fontGeneration,
+            contentSizeCategory: cell.contentSizeCategory,
+            contentSignature: postSignature
+          ) ?? 120
+          cell.postID = nil
+          cell.contentSignature = nil
+          cell.isFreshlyConfigured = false
+          cell.contentConfiguration = UIHostingConfiguration {
+            Color.clear
+              .frame(height: estimatedHeight)
+          }
+          .margins(.all, 0)
+          cell.configurationUpdateHandler = nil
+          return
+        }
+
+        self.deferredPlaceholderPostIDs.remove(postId)
+        cell.postID = postId
+        cell.contentSignature = postSignature
+        cell.isFreshlyConfigured = true
         let viewModel = self.stateManager.viewModel(for: post)
 
         // Configure cell with UIHostingConfiguration and inject required environment
-        let appState = self.stateManager.appState
         let accountID = appState.userDID ?? "unknown-account"
         let feedID = self.stateManager.currentFeedType.identifier
         let hostingIdentity = "\(accountID)-\(feedID)-\(post.id)"
-        // The configuration closure runs once, here: the policy it injects is
-        // a snapshot, so the row tracks the live policy itself.
         cell.contentConfiguration = UIHostingConfiguration {
           FeedPostRow(
             viewModel: viewModel,
             navigationPath: self.navigationPath,
             feedTypeIdentifier: self.stateManager.currentFeedType.identifier,
-            tracksVisibilityForFeedback: false
+            tracksVisibilityForFeedback: false,
+            onHeightInvalidated: { [weak self] in
+              self?.rowHeightCache.invalidate(postID: postId)
+            }
           )
           .trackingModerationPolicy(of: appState)
           .applyAppStateEnvironment(appState)
@@ -831,7 +1005,11 @@ import os
         if shouldReconfigureAllOnce { return true }
         switch item {
         case .post(_, _, let id):
-          return appliedPostSignatures[id] != capturedSignatures[id]
+          let changed = appliedPostSignatures[id] != capturedSignatures[id]
+          if changed {
+            rowHeightCache.invalidate(postID: id)
+          }
+          return changed
         case .trendingInterstitial:
           return appliedTrendingContent != capturedTrendingContent
         case .footer:
@@ -841,6 +1019,10 @@ import os
         }
       }
       postsByID = capturedPostsByID
+      postIndicesByID = Dictionary(
+        capturedPosts.enumerated().map { ($1.id, $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
       guard shouldReloadDataOnce || currentItems != items || !reconfiguredItems.isEmpty else {
         updateDiagnostics?.skippedSnapshots += 1
         restoreScrollPositionIfReady()
@@ -880,6 +1062,10 @@ import os
         updateDiagnostics?.reconfiguredItems += reconfiguredItems.count
         snapshot.reconfigureItems(reconfiguredItems)
         await dataSource.apply(snapshot, animatingDifferences: false)
+      }
+      if let state = firstFeedContentSignpostState, !capturedPosts.isEmpty {
+        PerformanceSignposts.endInterval("FirstFeedContent", state)
+        firstFeedContentSignpostState = nil
       }
       guard !Task.isCancelled, generation == feedGeneration, manager === stateManager else { return }
 
@@ -1070,31 +1256,32 @@ import os
       guard let item = dataSource.itemIdentifier(for: indexPath) else { return nil }
       switch item {
       case .post(_, _, let id):
-        return stateManager.posts.firstIndex(where: { $0.id == id })
+        return postIndicesByID[id]
       default:
         return nil
       }
     }
     
     private func trackPostSeenIfNeeded(at indexPath: IndexPath) {
-      guard let postIndex = postIndexForRow(at: indexPath) else { return }
+      guard stateManager.feedInteractionTarget != nil else { return } // P209: Skip on feeds without feedback target
+      guard let item = dataSource.itemIdentifier(for: indexPath),
+            case .post(_, _, let id) = item,
+            let post = postsByID[id] else { return }
       
-      let postViewModel = stateManager.posts[postIndex]
-      let postID = postViewModel.id
       let now = Date().timeIntervalSinceReferenceDate
-      if let lastSeenTimestamp = recentlySeenPostTimestamps[postID],
+      if let lastSeenTimestamp = recentlySeenPostTimestamps[id],
          now - lastSeenTimestamp < seenTrackingDedupInterval
       {
         return
       }
       
-      recentlySeenPostTimestamps[postID] = now
+      recentlySeenPostTimestamps[id] = now
       if recentlySeenPostTimestamps.count > 200 {
         let cutoff = now - seenTrackingDedupInterval * 2
         recentlySeenPostTimestamps = recentlySeenPostTimestamps.filter { $0.value >= cutoff }
       }
       
-      if let item = try? postViewModel.feedViewPost {
+      if let item = try? post.feedViewPost {
         stateManager.appState.feedFeedbackManager.trackPostSeen(
           postURI: item.post.uri, target: stateManager.feedInteractionTarget,
           feedContext: item.feedContext, reqId: item.reqId)
@@ -1264,11 +1451,17 @@ import os
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-      if !decelerate { captureCurrentScrollPosition() }
+      if !decelerate {
+        currentScrollVelocity = 0
+        captureCurrentScrollPosition()
+        reconfigureDeferredPlaceholdersIfNeeded()
+      }
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+      currentScrollVelocity = 0
       captureCurrentScrollPosition()
+      reconfigureDeferredPlaceholdersIfNeeded()
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
@@ -1276,7 +1469,26 @@ import os
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+      currentScrollVelocity = scrollView.panGestureRecognizer.velocity(in: view).y
       onScrollOffsetChanged?(scrollView.contentOffset.y)
+    }
+
+    private func reconfigureDeferredPlaceholdersIfNeeded() {
+      guard !deferredPlaceholderPostIDs.isEmpty, let dataSource else { return }
+      let accountID = stateManager.appState.userDID ?? "unknown-account"
+      let feedID = stateManager.currentFeedType.identifier
+      let itemsToReconfigure = deferredPlaceholderPostIDs.map {
+        Item.post(account: accountID, feed: feedID, id: $0)
+      }
+      deferredPlaceholderPostIDs.removeAll()
+      var snapshot = dataSource.snapshot()
+      snapshot.reconfigureItems(itemsToReconfigure.filter { snapshot.indexOfItem($0) != nil })
+      dataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+      super.viewWillTransition(to: size, with: coordinator)
+      rowHeightCache.removeAll()
     }
   }
 
@@ -1287,9 +1499,9 @@ import os
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath])
     {
       let posts = indexPaths.compactMap { indexPath -> CachedFeedViewPost? in
-        guard let postIndex = self.postIndexForRow(at: indexPath),
-              postIndex < self.stateManager.posts.count else { return nil }
-        return self.stateManager.posts[postIndex]
+        guard let item = dataSource.itemIdentifier(for: indexPath),
+              case .post(_, _, let id) = item else { return nil }
+        return self.postsByID[id]
       }
       
       guard !posts.isEmpty else { return }
@@ -1308,7 +1520,6 @@ import os
       for cached in posts {
         guard let post = try? cached.feedViewPost.post,
               case .appBskyEmbedVideoView(let video)? = post.embed,
-              video.presentation != "gif",
               let url = video.playlist.url else { continue }
         let media = appState.moderationPolicy.decide(post: post).ui(.contentMedia)
         guard !media.filter, !media.blur else { continue }

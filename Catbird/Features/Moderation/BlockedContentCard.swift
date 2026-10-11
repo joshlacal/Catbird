@@ -26,7 +26,7 @@ struct BlockedContentCard: View {
 
   @State private var cardState = BlockedContentCardState()
 
-  private let logger = Logger(subsystem: "blue.catbird", category: "BlockedContentCard")
+  private static let logger = Logger(subsystem: "blue.catbird", category: "BlockedContentCard")
 
   init(
     relationship: BlockRelationship,
@@ -76,10 +76,27 @@ struct BlockedContentCard: View {
         )
       }
     }
+    .onChange(of: authorDid) { _, _ in
+      cardState = BlockedContentCardState()
+    }
+    .onAppear {
+      if cardState.identity?.did != authorDid {
+        cardState = BlockedContentCardState()
+      }
+      if cardState.identity == nil, let cached = appState.blockedAuthorHydrator?.cachedProfile(for: authorDid) {
+        cardState.identity = BlockedAuthorIdentity(profile: cached)
+        cardState.hydrationSettled = true
+      }
+    }
     .task(id: authorDid) {
-      let profile = await appState.blockedAuthorHydrator?.profile(for: authorDid)
-      cardState.identity = profile.map { BlockedAuthorIdentity(profile: $0) }
-      cardState.hydrationSettled = true
+      if cardState.identity?.did != authorDid {
+        cardState = BlockedContentCardState()
+      }
+      if cardState.identity == nil {
+        let profile = await appState.blockedAuthorHydrator?.profile(for: authorDid)
+        cardState.identity = profile.map { BlockedAuthorIdentity(profile: $0) }
+        cardState.hydrationSettled = true
+      }
     }
     .alert("Unblock", isPresented: $cardState.isConfirmingUnblock) {
       Button("Cancel", role: .cancel) {}
@@ -124,7 +141,7 @@ struct BlockedContentCard: View {
         try await appState.unblock(did: authorDid)
         cardState.unblockSucceeded = true
       } catch {
-        logger.error("unblock failed: \(error.localizedDescription)")
+        Self.logger.error("unblock failed: \(error.localizedDescription)")
         appState.toastManager.show(ToastItem(
           message: "Couldn’t unblock this account. Try again.", icon: "exclamationmark.triangle.fill"))
       }
@@ -147,7 +164,7 @@ struct BlockedContentCard: View {
           cardState.revealFailed = true
         }
       } catch {
-        logger.error("reveal fetch failed: \(error.localizedDescription)")
+        Self.logger.error("reveal fetch failed: \(error.localizedDescription)")
         cardState.revealFailed = true
       }
     }
@@ -176,11 +193,13 @@ private struct BlockedContentCardState: Equatable {
 /// The profile fields the card shows. The card keeps these rather than the
 /// hydrated `ProfileViewDetailed`, which is about 5 KB stored inline.
 private struct BlockedAuthorIdentity: Equatable {
+  let did: String
   let handle: String
   let displayName: String?
   let avatarURL: URL?
 
   init(profile: AppBskyActorDefs.ProfileViewDetailed) {
+    did = profile.did.didString()
     handle = profile.handle.description
     displayName = profile.displayName
     avatarURL = profile.finalAvatarURL()

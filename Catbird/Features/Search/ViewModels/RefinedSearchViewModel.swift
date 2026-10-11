@@ -307,13 +307,15 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     defer { isTrendingVideosLoading = false }
     do {
       let feedUri = try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI)
-      let (responseCode, response) = try await client.app.bsky.feed.getFeed(
-        input: .init(feed: feedUri, limit: 15, cursor: nil)
+      let (posts, _) = try await FeedManager.fetchCustomFeed(
+        client: client,
+        generatorUri: feedUri,
+        cursor: nil,
+        limit: 15
       )
-      guard responseCode == 200, let feed = response?.feed else { return }
       // Previews the account's policy filters from lists are not kept; the
       // section re-filters with the live policy and covers moderated thumbnails.
-      trendingVideos = TrendingVideoModeration.listed(feed, policy: appState.moderationPolicy)
+      trendingVideos = TrendingVideoModeration.listed(posts, policy: appState.moderationPolicy)
     } catch {
       logger.error("Error fetching trending videos: \(error.localizedDescription)")
     }

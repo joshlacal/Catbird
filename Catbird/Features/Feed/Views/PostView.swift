@@ -166,6 +166,47 @@ struct PostView: View, Identifiable {
 
   // MARK: - Initialization
   init(
+    postBox: EquatableBox<AppBskyFeedDefs.PostView>,
+    grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?,
+    isParentPost: Bool,
+    isSelectable: Bool,
+    path: Binding<NavigationPath>,
+    appState: AppState,
+    isToYou: Bool = false,
+    hasVisibleThreadContext: Bool = false,
+    avatarScale: PostAvatarScale = .regular,
+    visibilityContext: PostVisibilityContext = .public,
+    rootPostURI: ATProtocolURI? = nil,
+    rootAuthorDID: String? = nil,
+    isReplyHiddenByThreadgate: Bool = false,
+    opThreadPostIndex: Int? = nil,
+    opThreadPostCount: Int? = nil
+  ) {
+    self.postBox = postBox
+    self.replyTarget = grandparentAuthor.map { PostReplyTarget($0) }
+    self.isParentPost = isParentPost
+    self.isSelectable = isSelectable
+    self._path = path
+    self.isToYou = isToYou
+    self.avatarScale = avatarScale
+    self.visibilityContext = visibilityContext
+    self.opThreadPostIndex = opThreadPostIndex
+    self.opThreadPostCount = opThreadPostCount
+    _postState = State(initialValue: PostState(postBox: postBox))  // Initialize consolidated state
+    _viewModel = State(initialValue: PostViewModel(post: postBox.value, appState: appState, visibilityContext: visibilityContext))
+    _contextMenuViewModel = State(
+      initialValue: PostContextMenuViewModel(
+        appState: appState,
+        post: postBox.value,
+        allowsThreadSummary: (hasVisibleThreadContext || isParentPost) && (postBox.value.replyCount ?? 0) > 0,
+        visibilityContext: visibilityContext,
+        rootPostURI: rootPostURI,
+        rootAuthorDID: rootAuthorDID,
+        isReplyHiddenByThreadgate: isReplyHiddenByThreadgate
+      ))
+  }
+
+  init(
     post: AppBskyFeedDefs.PostView,
     grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?,
     isParentPost: Bool,
@@ -182,30 +223,23 @@ struct PostView: View, Identifiable {
     opThreadPostIndex: Int? = nil,
     opThreadPostCount: Int? = nil
   ) {
-    self.postBox = EquatableBox(post)
-    self.replyTarget = grandparentAuthor.map { PostReplyTarget($0) }
-    self.isParentPost = isParentPost
-    self.isSelectable = isSelectable
-    self._path = path
-    self.isToYou = isToYou
-    self.avatarScale = avatarScale
-    self.visibilityContext = visibilityContext
-    self.opThreadPostIndex = opThreadPostIndex
-    self.opThreadPostCount = opThreadPostCount
-    _postState = State(initialValue: PostState(postBox: postBox))  // Initialize consolidated state
-    _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
-    // The thread context, root and threadgate inputs only seed the menu model,
-    // which SwiftUI keeps from the first init, so the view does not store them.
-    _contextMenuViewModel = State(
-      initialValue: PostContextMenuViewModel(
-        appState: appState,
-        post: post,
-        allowsThreadSummary: (hasVisibleThreadContext || isParentPost) && (post.replyCount ?? 0) > 0,
-        visibilityContext: visibilityContext,
-        rootPostURI: rootPostURI,
-        rootAuthorDID: rootAuthorDID,
-        isReplyHiddenByThreadgate: isReplyHiddenByThreadgate
-      ))
+    self.init(
+      postBox: EquatableBox(post),
+      grandparentAuthor: grandparentAuthor,
+      isParentPost: isParentPost,
+      isSelectable: isSelectable,
+      path: path,
+      appState: appState,
+      isToYou: isToYou,
+      hasVisibleThreadContext: hasVisibleThreadContext,
+      avatarScale: avatarScale,
+      visibilityContext: visibilityContext,
+      rootPostURI: rootPostURI,
+      rootAuthorDID: rootAuthorDID,
+      isReplyHiddenByThreadgate: isReplyHiddenByThreadgate,
+      opThreadPostIndex: opThreadPostIndex,
+      opThreadPostCount: opThreadPostCount
+    )
   }
   // MARK: - Body
   var body: some View {
@@ -246,9 +280,6 @@ struct PostView: View, Identifiable {
         postState.postError = Self.detectPostError(in: newPost, isReadOnlyPreview: true)
         return
       }
-      // Route through the shadow instead of assigning the raw payload: a page
-      // fetched before the AppView indexed a like/repost would otherwise revert
-      // the optimistic state when the feed re-supplies the cell on reappear.
       Task { @MainActor in
         postState.currentPost = await appState.postShadowManager.mergeShadow(post: newPost)
       }
@@ -355,6 +386,7 @@ struct PostView: View, Identifiable {
     }
   }
 
+
   /// Re-read the actual active account and displayed post at every pixel boundary.
   /// The global lifecycle fence also invalidates a retained sheet when an account
   /// leaves and returns; a same-URI post cannot inherit its former authorization.
@@ -381,69 +413,71 @@ struct PostView: View, Identifiable {
   private func handleConfirmedCopilotAction(_ proposal: CopilotProposal, context: CopilotContext) async throws {
     let currentURI = postState.currentPostBox.value.uri.uriString()
     let currentCID = postState.currentPostBox.value.cid.string
+    let vm = viewModel
+    let menuVm = contextMenuViewModel
     switch proposal {
     case .likePost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if !viewModel.isLiked {
-        try await viewModel.toggleLike()
+      if !vm.isLiked {
+        try await vm.toggleLike()
       }
 
     case .unlikePost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if viewModel.isLiked {
-        try await viewModel.toggleLike()
+      if vm.isLiked {
+        try await vm.toggleLike()
       }
 
     case .repostPost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if !viewModel.isReposted {
-        try await viewModel.toggleRepost()
+      if !vm.isReposted {
+        try await vm.toggleRepost()
       }
 
     case .unrepostPost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if viewModel.isReposted {
-        try await viewModel.toggleRepost()
+      if vm.isReposted {
+        try await vm.toggleRepost()
       }
 
     case .bookmarkPost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if !viewModel.isBookmarked {
-        try await viewModel.toggleBookmark()
+      if !vm.isBookmarked {
+        try await vm.toggleBookmark()
       }
 
     case .unbookmarkPost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if viewModel.isBookmarked {
-        try await viewModel.toggleBookmark()
+      if vm.isBookmarked {
+        try await vm.toggleBookmark()
       }
 
     case .hidePost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if !contextMenuViewModel.isPostHidden {
-        await contextMenuViewModel.hidePost()
+      if !menuVm.isPostHidden {
+        await menuVm.hidePost()
       }
 
     case .unhidePost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else {
         throw CopilotProposalError.staleTarget
       }
-      if contextMenuViewModel.isPostHidden {
-        await contextMenuViewModel.unhidePost()
+      if menuVm.isPostHidden {
+        await menuVm.unhidePost()
       }
 
     default:
@@ -458,32 +492,32 @@ struct PostView: View, Identifiable {
 
   @MainActor
   private func handleDedicatedProposal(_ proposal: CopilotProposal) {
-    let currentURI = postState.currentPostBox.value.uri.uriString()
-    let currentCID = postState.currentPostBox.value.cid.string
-    let authorDID = postState.currentPostBox.value.author.did.didString()
+    let state = postState
+    let currentURI = state.currentPostBox.value.uri.uriString()
+    let currentCID = state.currentPostBox.value.cid.string
+    let authorDID = state.currentPostBox.value.author.did.didString()
 
     switch proposal {
     case .reportPost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else { return }
-      postState.showingReportView = true
+      state.showingReportView = true
 
     case .deletePost(let uri, let cid):
       guard uri == currentURI && cid == currentCID else { return }
       guard authorDID == appState.userDID else { return }
-      postState.showDeleteConfirmation = true
+      state.showDeleteConfirmation = true
 
     case .addActorToList(let actorDID):
       guard actorDID == authorDID else { return }
-      postState.showingAddToListSheet = true
+      state.showingAddToListSheet = true
 
     case .prepareReply(let uri, let cid, let text):
       guard uri == currentURI && cid == currentCID else { return }
-      sceneContext.presentPostComposer(initialText: text, parentPost: postState.currentPost)
+      sceneContext.presentPostComposer(initialText: text, parentPost: state.currentPost)
 
     case .prepareQuote(let uri, let cid, let text):
       guard uri == currentURI && cid == currentCID else { return }
-      sceneContext.presentPostComposer(initialText: text, quotedPost: postState.currentPost)
-
+      sceneContext.presentPostComposer(initialText: text, quotedPost: state.currentPost)
     case .preparePostDraft(let text):
       sceneContext.presentPostComposer(initialText: text)
 
@@ -497,58 +531,49 @@ struct PostView: View, Identifiable {
     guard !Task.isCancelled else { return }
     let post = postBox.value
 
+    let state = postState
+    let vm = viewModel
+    let menuVm = contextMenuViewModel
+
     // Discovery previews use the fetched payload without donating entities or
     // starting interaction/shadow work. Label decisions still run in the views.
     if isReadOnlyPreview {
-      postState.currentPost = post
-      postState.postError = Self.detectPostError(in: post, isReadOnlyPreview: true)
-      postState.initialLoadComplete = true
+      state.currentPost = post
+      state.postError = Self.detectPostError(in: post, isReadOnlyPreview: true)
+      state.initialLoadComplete = true
       return
     }
 
-    if postState.currentPostBox != postBox {
-      postState.currentPostBox = postBox
+    if state.currentPostBox != postBox {
+      state.currentPostBox = postBox
     }
-    if viewModel.postId != post.uri.uriString() || viewModel.postCid != post.cid {
+    if vm.postId != post.uri.uriString() || vm.postCid != post.cid {
       viewModel = PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext)
     }
 
     // Check for error conditions first
     if let error = Self.detectPostError(in: post, isReadOnlyPreview: isReadOnlyPreview) {
-      postState.postError = error
-      postState.initialLoadComplete = true
+      state.postError = error
+      state.initialLoadComplete = true
       return
     }
-    // Seed before any lifecycle wait or image prefetch. The responder may be
-    // visible to AppIntentsTesting as soon as this view renders. The stores are
-    // persisted to the App Group for Siri and App Intents, so a post the policy
-    // keeps out of lists or gates (body or media) is not donated, nor is an
-    // author whose avatar stays a placeholder.
-    if #available(iOS 18.0, *) {
-      let moderation = PostModerationPresentation.make(post: post, policy: appState.moderationPolicy)
-      if !moderation.isFilteredFromList, !moderation.concealsBody, !moderation.concealsMedia {
-        await PostEntityStore.shared.store(post)
-      }
-      if !moderation.concealsAvatar {
-        await ProfileEntityStore.shared.store(ProfileEntity(from: post.author))
-      }
-    }
+    // Note: P034 per-row App Intents entity store removed (coalesced export in SpotlightEntityDonator covers it).
     
     // Set up report callback
-    contextMenuViewModel.onReportPost = {
-      postState.showingReportView = true  // Use consolidated state
+    menuVm.onReportPost = {
+      state.showingReportView = true  // Use consolidated state
     }
     
     // Set up add to list callback
-    contextMenuViewModel.onAddAuthorToList = {
-      postState.showingAddToListSheet = true  // Use consolidated state
+    menuVm.onAddAuthorToList = {
+      state.showingAddToListSheet = true  // Use consolidated state
     }
     
     // Set up bookmark callback
-    contextMenuViewModel.onToggleBookmark = {
+    menuVm.onToggleBookmark = {
       Task {
         do {
-          try await viewModel.toggleBookmark()
+          try await vm.toggleBookmark()
         } catch {
           logger.error("Failed to toggle bookmark: \(error)")
           if let message = UserFacingError.message(for: error, action: "update your bookmarks") {
@@ -560,7 +585,7 @@ struct PostView: View, Identifiable {
     }
 
 #if canImport(FoundationModels)
-    contextMenuViewModel.onSummarizeThread = {
+    menuVm.onSummarizeThread = {
       summarizeCurrentThread()
     }
 #endif
@@ -569,7 +594,7 @@ struct PostView: View, Identifiable {
     fetchCurrentUserDid()
 
     // Deterministic async initialization of PostViewModel
-    await viewModel.start(post: post)
+    await vm.start(post: post)
     guard !Task.isCancelled else { return }
 
     // Preserve the thermally scaled delay
@@ -583,15 +608,15 @@ struct PostView: View, Identifiable {
     guard !Task.isCancelled else { return }
 
     // Mark initial load as complete for transaction animation control
-    postState.initialLoadComplete = true
+    state.initialLoadComplete = true
 
     // Structured shadow observation loop for real-time updates
     for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
       guard !Task.isCancelled else { break }
       let merged = await appState.postShadowManager.mergeShadow(post: post)
       guard !Task.isCancelled else { break }
-      if merged != postState.currentPost {
-        postState.currentPost = merged
+      if merged != state.currentPost {
+        state.currentPost = merged
       }
     }
   }
@@ -599,27 +624,28 @@ struct PostView: View, Identifiable {
 #if canImport(FoundationModels)
   @MainActor
   private func summarizeCurrentThread() {
-    postState.threadSummaryTask?.cancel()
-    postState.threadSummaryTask = nil
+    let state = postState
+    state.threadSummaryTask?.cancel()
+    state.threadSummaryTask = nil
 
-    postState.isShowingThreadSummary = true
-    postState.isThreadSummaryLoading = true
-    postState.threadSummaryText = nil
-    postState.threadSummaryError = nil
-    postState.canRetryThreadSummary = false
+    state.isShowingThreadSummary = true
+    state.isThreadSummaryLoading = true
+    state.threadSummaryText = nil
+    state.threadSummaryError = nil
+    state.canRetryThreadSummary = false
 
     guard appState.atProtoClient != nil else {
-      postState.threadSummaryError = "Sign in to summarize threads."
-      postState.isThreadSummaryLoading = false
-      postState.canRetryThreadSummary = false
+      state.threadSummaryError = "Sign in to summarize threads."
+      state.isThreadSummaryLoading = false
+      state.canRetryThreadSummary = false
       return
     }
 
     if #available(iOS 26.0, macOS 26.0, *) {
       let agent = appState.blueskyAgent
-      let targetURI = postState.currentPost.uri
+      let targetURI = state.currentPost.uri
 
-      postState.threadSummaryTask = Task {
+      state.threadSummaryTask = Task {
         do {
           var accumulatedText = ""
           let stream = await agent.streamThreadSummary(at: targetURI)
@@ -630,7 +656,7 @@ struct PostView: View, Identifiable {
             accumulatedText += chunk
             
             await MainActor.run {
-              self.postState.threadSummaryText = accumulatedText
+              state.threadSummaryText = accumulatedText
             }
           }
           
@@ -643,29 +669,29 @@ struct PostView: View, Identifiable {
               .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
 
             if cleaned.isEmpty || squashed.range(of: #"^(null)+$"#, options: .regularExpression) != nil {
-              self.postState.threadSummaryError = "The model couldn’t generate a summary for this thread."
-              self.postState.isThreadSummaryLoading = false
-              self.postState.canRetryThreadSummary = true
-            } else {
-              self.postState.threadSummaryText = cleaned
-              self.postState.isThreadSummaryLoading = false
-              self.postState.canRetryThreadSummary = false
+            state.threadSummaryError = "The model couldn’t generate a summary for this thread."
+            state.isThreadSummaryLoading = false
+            state.canRetryThreadSummary = true
+          } else {
+            state.threadSummaryText = cleaned
+            state.isThreadSummaryLoading = false
+            state.canRetryThreadSummary = false
             }
           }
         } catch {
           guard !Task.isCancelled else { return }
           let (message, retryable) = summarizeThreadErrorMessage(for: error)
           await MainActor.run {
-            self.postState.threadSummaryError = message
-            self.postState.isThreadSummaryLoading = false
-            self.postState.canRetryThreadSummary = retryable
+            state.threadSummaryError = message
+            state.isThreadSummaryLoading = false
+            state.canRetryThreadSummary = retryable
           }
         }
       }
     } else {
-      postState.threadSummaryError = "Thread summarization requires iOS 26 or later."
-      postState.isThreadSummaryLoading = false
-      postState.canRetryThreadSummary = false
+      state.threadSummaryError = "Thread summarization requires iOS 26 or later."
+      state.isThreadSummaryLoading = false
+      state.canRetryThreadSummary = false
     }
   }
 
@@ -773,10 +799,12 @@ struct PostView: View, Identifiable {
   }
 
   /// Prefetch the avatar image for better performance
-  /// Note: Relies on Nuke's built-in timeout handling rather than creating separate timeout tasks
   private func prefetchAvatar() async {
     guard let finalAvatarURL = getFinalAvatarURL(), !postState.isAvatarLoaded else { return }
-    await ImageLoadingManager.shared.startPrefetching(urls: [finalAvatarURL])
+    let request = ImageRequestFactory.avatar(finalAvatarURL, pointSize: Self.avatarSize, scale: 2.0)
+    if request != nil {
+      await ImageLoadingManager.shared.startPrefetching(urls: [finalAvatarURL])
+    }
   }
 }
 

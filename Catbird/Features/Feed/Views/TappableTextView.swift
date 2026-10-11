@@ -17,8 +17,8 @@ struct TappableTextView: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.fontManager) private var fontManager
 
-  // State to track if the string contains only emojis
-  @State private var containsOnlyEmojis: Bool = false
+  // Pre-computed flag for emoji-only text scaling
+  private let containsOnlyEmojis: Bool
     
   private var textDesign: Font.Design
   private var textWeight: Font.Weight
@@ -39,8 +39,8 @@ struct TappableTextView: View {
     self.fontWidth = nil
     self.lineSpacing = 1.6
     self.letterSpacing = 0.2
+    self.containsOnlyEmojis = Self.determineIfOnlyEmojis(attributedString)
   }
-    
   public init(
       attributedString: AttributedString,
       textSize: CGFloat? = nil,
@@ -59,8 +59,8 @@ struct TappableTextView: View {
       self.fontWidth = fontWidth
       self.lineSpacing = lineSpacing
       self.letterSpacing = letterSpacing
+      self.containsOnlyEmojis = Self.determineIfOnlyEmojis(attributedString)
   }
-
     var body: some View {
         Group {
             if containsOnlyEmojis {
@@ -128,10 +128,6 @@ struct TappableTextView: View {
             }
         }
         .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
-        .onAppear {
-            checkIfOnlyEmojis()
-        }
-
     }
     
     // Helper function to convert Font.TextStyle to AppTextRole
@@ -161,28 +157,11 @@ struct TappableTextView: View {
       return textSize
   }
   
-  // Function to check if the string contains only emojis
-  private func checkIfOnlyEmojis() {
-      // Safely extract a plain string and handle potential crashes
-      let plainString: String
-      do {
-          plainString = String(attributedString.characters.reduce("") { result, char in
-              result + String(char)
-          })
-      } catch {
-          // If any error occurs during processing, assume it's not emoji-only
-          containsOnlyEmojis = false
-          return
-      }
-      
-      // Skip empty strings
-      guard !plainString.isEmpty else {
-          containsOnlyEmojis = false
-          return
-      }
-      
-      // Check if the string contains only emoji characters
-      containsOnlyEmojis = plainString.containsOnlyEmojis
+  private static func determineIfOnlyEmojis(_ attributedString: AttributedString) -> Bool {
+      let characters = attributedString.characters
+      guard !characters.isEmpty, characters.count <= 15 else { return false }
+      let str = String(characters)
+      return str.containsOnlyEmojis
   }
 }
 

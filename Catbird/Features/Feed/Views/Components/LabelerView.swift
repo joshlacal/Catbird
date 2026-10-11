@@ -6,6 +6,20 @@
 //
 
 import SwiftUI
+private enum LabelerDateFormatter {
+    nonisolated(unsafe) private static let formatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+    private static let lock = NSLock()
+
+    static func string(for date: Date) -> String {
+        lock.withLock {
+            formatter.localizedString(for: date, relativeTo: Date())
+        }
+    }
+}
 import Petrel
 
 struct LabelerView: View {
@@ -83,9 +97,7 @@ struct LabelerView: View {
     }
     
     private var formattedDate: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: labeler.indexedAt.date, relativeTo: Date())
+        LabelerDateFormatter.string(for: labeler.indexedAt.date)
     }
     
     private func labelsView(labels: [ComAtprotoLabelDefs.Label]) -> some View {
@@ -231,9 +243,7 @@ struct LabelerDetailedView: View {
     }
     
     private var formattedDate: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: labeler.indexedAt.date, relativeTo: Date())
+        LabelerDateFormatter.string(for: labeler.indexedAt.date)
     }
     
     private func policiesView(policies: AppBskyLabelerDefs.LabelerPolicies) -> some View {

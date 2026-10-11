@@ -25,6 +25,10 @@ struct PostShadow: Equatable, Sendable {
     // Flag to indicate this is an optimistic/temporary post
     var isOptimistic: Bool = false
 
+    /// Whether any non-default modifications exist that alter the post presentation
+    var hasModifications: Bool {
+        likeDecided || repostDecided || likeUri != nil || repostUri != nil || bookmarked != nil || isDeleted || pinned || embed != nil || isOptimistic
+    }
     init(
         likeUri: ATProtocolURI? = nil,
         repostUri: ATProtocolURI? = nil,
@@ -120,8 +124,18 @@ actor PostShadowManager {
     ///   - uri: The post URI to update
     ///   - updates: A closure that modifies the shadow state
     func updateShadow(forUri uri: String, updates: (inout PostShadow) -> Void) {
-        var shadow = shadows[uri] ?? PostShadow()
+        let oldShadow = shadows[uri]
+        var shadow = oldShadow ?? PostShadow()
         updates(&shadow)
+        guard shadow != oldShadow else { return }
+        
+        // Bound memory (P200): cap shadows dictionary at 1000 items
+        if shadows[uri] == nil && shadows.count >= 1000 {
+            if let evictCandidate = shadows.keys.first(where: { continuations[$0]?.isEmpty ?? true }) {
+                shadows.removeValue(forKey: evictCandidate)
+            }
+        }
+        
         shadows[uri] = shadow
         notifyObservers(uri: uri, shadow: shadow)
     }
@@ -284,10 +298,9 @@ actor PostShadowManager {
     /// - Parameter post: The original post view from the API
     /// - Returns: A new post view with shadow state applied
     func mergeShadow(post: AppBskyFeedDefs.PostView) -> AppBskyFeedDefs.PostView {
-        guard let shadow = getShadow(forUri: post.uri.uriString()) else {
+        guard let shadow = getShadow(forUri: post.uri.uriString()), shadow.hasModifications else {
             return post
         }
-        
         if shadow.isDeleted {
             return post // Or handle deleted state as needed
         }

@@ -100,14 +100,15 @@ final class FeedManager {
         return (response.feed, response.cursor)
     }
     
-    private func fetchCustomFeed(
+    public static func fetchCustomFeed(
         client: ATProtoClient,
         generatorUri: ATProtocolURI,
-        cursor: String?
+        cursor: String? = nil,
+        limit: Int = 50
     ) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
         let params = AppBskyFeedGetFeed.Parameters(
             feed: generatorUri,
-            limit: 50,
+            limit: limit,
             cursor: cursor
         )
         
@@ -118,6 +119,15 @@ final class FeedManager {
         }
         
         return (response.feed, response.cursor)
+    }
+    
+    public func fetchCustomFeed(
+        client: ATProtoClient,
+        generatorUri: ATProtocolURI,
+        cursor: String? = nil,
+        limit: Int = 50
+    ) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
+        try await Self.fetchCustomFeed(client: client, generatorUri: generatorUri, cursor: cursor, limit: limit)
     }
     
     private func fetchAuthorFeed(

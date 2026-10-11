@@ -25,6 +25,49 @@ enum ThreadSortAPIMapper {
 /// Manages loading and caching of thread data
 @Observable
 final class ThreadManager {
+  // MARK: - Thread Anchor Prefill Cache (P080)
+
+  private struct PrefillKey: Hashable {
+    let userDID: String
+    let uri: String
+  }
+
+  private struct PrefillEntry {
+    let post: AppBskyFeedDefs.PostView
+    let timestamp: Date
+  }
+
+  private static let prefillLock = NSLock()
+  private static var prefillEntries: [PrefillKey: PrefillEntry] = [:]
+  private static let prefillTTL: TimeInterval = 10.0
+
+  public static func storePrefillPost(_ post: AppBskyFeedDefs.PostView, userDID: String?) {
+    guard let userDID, !userDID.isEmpty else { return }
+    let key = PrefillKey(userDID: userDID, uri: post.uri.uriString())
+    prefillLock.withLock {
+      let now = Date()
+      prefillEntries = prefillEntries.filter { now.timeIntervalSince($0.value.timestamp) < prefillTTL }
+      prefillEntries[key] = PrefillEntry(post: post, timestamp: now)
+    }
+  }
+
+  public static func prefillPost(for uri: ATProtocolURI, userDID: String?) -> AppBskyFeedDefs.PostView? {
+    guard let userDID, !userDID.isEmpty else { return nil }
+    let key = PrefillKey(userDID: userDID, uri: uri.uriString())
+    return prefillLock.withLock {
+      guard let entry = prefillEntries.removeValue(forKey: key) else { return nil }
+      if Date().timeIntervalSince(entry.timestamp) < prefillTTL {
+        return entry.post
+      }
+      return nil
+    }
+  }
+
+  public static func clearPrefillCache() {
+    prefillLock.withLock {
+      prefillEntries.removeAll()
+    }
+  }
   // MARK: - Published Properties
 
   /// The thread data once loaded

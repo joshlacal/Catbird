@@ -95,6 +95,7 @@ struct EnhancedFeedPost: View {
 
   private var sliceItems: [FeedSliceItem]? {
     guard case .cached(let cachedPost) = source else { return nil }
+    guard threadDisplayMode != .standard else { return nil }
     return cachedPost.sliceItems
   }
 
@@ -308,6 +309,7 @@ private struct FeedParentPostRow: View {
           variant: .feed,
           path: $path
         )
+        .id("\(entry.value.id)-parent-\(blocked.author.did.didString())")
         .padding(.top, Self.baseUnit)
 
       case .unexpected:
@@ -434,6 +436,7 @@ private struct FeedCollapsedThread: View {
           hasVisibleThreadContext: true
         )
         .environment(\.feedPostID, id)
+        .id("\(id)-root-\(rootURI.uriString())")
         .contentShape(Rectangle())
         .onTapGesture {
           guard !isReadOnly else { return }

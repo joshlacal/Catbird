@@ -17,6 +17,7 @@ struct PostHeaderView: View {
 
     @Environment(AppState.self) private var appState: AppState?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     init(
         displayName: String,
@@ -39,10 +40,10 @@ struct PostHeaderView: View {
     /// Narrowest width at which a truncated handle still reads as one ("@abc…").
     private static let minimumTruncatedHandleWidth: CGFloat = 56
 
-    private var handleText: some View {
+    private func handleText(color: Color) -> some View {
         Text("@\(handle)")
             .appBody()
-            .foregroundColor(metadataColor)
+            .foregroundColor(color)
             .lineLimit(1)
             .truncationMode(.tail)
     }
@@ -61,8 +62,9 @@ struct PostHeaderView: View {
 
     @ViewBuilder
     private var standardHeader: some View {
+        let metaColor = metadataColor
         let shortTimeAgo = shortTimeAgoString(from: timeAgo)
-        let accessibleTimeAgo = formatTimeAgo(from: timeAgo, forAccessibility: true)
+        let accessibleTimeAgo = voiceOverEnabled ? formatTimeAgo(from: timeAgo, forAccessibility: true) : shortTimeAgo
         let hasDisplayName = !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         HStack(alignment: .top) {
@@ -91,7 +93,7 @@ struct PostHeaderView: View {
                         if let pronouns, !pronouns.isEmpty {
                             Text("\(pronouns)")
                                 .appBody()
-                                .foregroundColor(metadataColor)
+                                .foregroundColor(metaColor)
                                 .lineLimit(1)
                                 .opacity(0.9)
                                 .textScale(.secondary)
@@ -113,13 +115,13 @@ struct PostHeaderView: View {
                 // or not at all, rather than as a stray "@" or "(".
                 if hasDisplayName {
                     HandleFitLayout(minimumWidth: Self.minimumTruncatedHandleWidth + spacing) {
-                        handleText
+                        handleText(color: metaColor)
                             .padding(.leading, spacing)
                     }
                     .clipped()
                     .layoutPriority(0)
                 } else {
-                    handleText
+                    handleText(color: metaColor)
                         .layoutPriority(0)
                 }
                 if !hasDisplayName && isAutomated {
@@ -132,7 +134,7 @@ struct PostHeaderView: View {
                                // Separator and Time
             HStack(alignment: .top, spacing: spacing) {
                 Text("·")
-                    .foregroundStyle(metadataColor)
+                    .foregroundStyle(metaColor)
                     .accessibilityHidden(true)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -140,12 +142,11 @@ struct PostHeaderView: View {
 
                 Text(shortTimeAgo)
                     .appBody()
-                    .foregroundStyle(metadataColor)
+                    .foregroundStyle(metaColor)
                     .accessibilityLabel(accessibleTimeAgo)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
-
             }
             .layoutPriority(1)
             

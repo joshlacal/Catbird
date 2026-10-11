@@ -252,6 +252,29 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Prevent VoiceOver from auto-scrolling
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
+    // P080: Render tapped post as anchor immediately while thread loads
+    if mainPost == nil, let prefilled = ThreadManager.prefillPost(for: postURI, userDID: appState.userDID) {
+      mainPost = prefilled
+      let anchor = ThreadRow(
+        id: postURI.uriString(),
+        kind: .anchor,
+        depth: 0,
+        parentID: nil,
+        indentLevel: 0,
+        continuingRails: [],
+        lineIn: false,
+        lineOut: false,
+        isLastSibling: true,
+        startsBranch: false,
+        mode: ThreadLayoutMode(threadedReplies: appState.appSettings.threadedReplies)
+      )
+      self.anchorRow = anchor
+      self.rows = [anchor]
+      self.loadingView.isHidden = true
+      setupComposePrompt(with: prefilled)
+      updateDataSnapshot(animatingDifferences: false)
+    }
+
     
     if threadOpenSignpostState == nil {
       threadOpenSignpostState = PerformanceSignposts.beginInterval("ThreadOpen")
@@ -2013,9 +2036,14 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             guard let self = self else { return }
             self.controllerLogger.debug("Optimistic reply confirmed via getPosts: \(replyUriString)")
             self.optimisticReplyUris.remove(replyUriString)
-            self.optimisticReplies.removeAll { $0.threadItem.uri.uriString() == replyUriString }
             if self.optimisticReplyUris.isEmpty {
               self.hasOptimisticUpdates = false
+            }
+            if let idx = self.optimisticReplies.firstIndex(where: { $0.threadItem.uri.uriString() == replyUriString }) {
+              let depth = self.optimisticReplies[idx].threadItem.depth
+              let parentID = self.optimisticReplies[idx].parentID
+              let hydratedItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: hydratedPost, depth: depth)
+              self.optimisticReplies[idx] = OptimisticReply(threadItem: hydratedItem, parentID: parentID)
             }
             if let existingItem = self.threadItemsByID[replyUriString] {
               let hydratedItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: hydratedPost, depth: existingItem.depth)
@@ -2032,7 +2060,17 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
 
       await MainActor.run { [weak self] in
-        self?.optimisticRetryTasks.removeValue(forKey: replyUriString)
+        guard let self = self else { return }
+        self.optimisticRetryTasks.removeValue(forKey: replyUriString)
+        if self.optimisticReplyUris.contains(replyUriString) {
+          self.controllerLogger.warning("Failed to confirm optimistic reply via getPosts, clearing pending state and falling back to reloadThread: \(replyUriString)")
+          self.optimisticReplyUris.remove(replyUriString)
+          self.optimisticReplies.removeAll { $0.threadItem.uri.uriString() == replyUriString }
+          if self.optimisticReplyUris.isEmpty {
+            self.hasOptimisticUpdates = false
+          }
+          self.reloadThread()
+        }
       }
     }
   }

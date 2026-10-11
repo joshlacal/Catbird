@@ -37,6 +37,7 @@ struct ExternalEmbedLabelGate<Content: View>: View {
 struct StandardSiteEmbedView: View {
   let card: StandardSiteCard
   @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -161,7 +162,7 @@ struct StandardSiteEmbedView: View {
         .appFont(AppTextRole.title2)
         .foregroundStyle(.secondary)
       if let iconURL = card.iconURL {
-        LazyImage(url: iconURL) { state in
+        LazyImage(request: ImageRequestFactory.image(iconURL, pointSize: CGSize(width: 44, height: 44), scale: displayScale)) { state in
           if let image = state.image { image.resizable().scaledToFill() }
         }
       }
