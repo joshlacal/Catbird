@@ -426,6 +426,26 @@ final class ListManager {
   
   // MARK: - List Member Management
   
+  /// The listitem record that already puts `userDID` on `listURI`, if any.
+  /// Asks the server rather than a loaded member page, which may be partial.
+  func existingListItemURI(of userDID: String, in listURI: String) async throws -> ATProtocolURI? {
+    guard let client = client else { throw ListError.clientNotInitialized }
+    let actor = try ATIdentifier(string: userDID)
+    var cursor: String?
+    var pages = 0
+    repeat {
+      let (responseCode, output) = try await client.app.bsky.graph.getListsWithMembership(
+        input: .init(actor: actor, limit: 100, cursor: cursor, purposes: nil))
+      guard responseCode == 200, let data = output else { throw ListError.invalidResponse }
+      if let match = data.listsWithMembership.first(where: { $0.list.uri.uriString() == listURI }) {
+        return match.listItem?.uri
+      }
+      cursor = data.cursor
+      pages += 1
+    } while cursor?.isEmpty == false && pages < 10
+    return nil
+  }
+
   /// Add a user to a list
   @discardableResult
   func addMember(

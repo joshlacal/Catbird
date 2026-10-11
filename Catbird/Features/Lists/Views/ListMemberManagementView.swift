@@ -227,6 +227,15 @@ final class ListMemberManagementViewModel {
     let candidate = searchResults.first(where: { $0.did.didString() == userDID })
     
     do {
+      // Search results are filtered against loaded member pages only. With more
+      // pages unloaded, ask the server so a second listitem is never created.
+      if hasMoreMembers, !members.contains(where: { $0.did.didString() == userDID }),
+         let existingURI = try await appState.listManager.existingListItemURI(of: userDID, in: listURI) {
+        memberItemURIs[userDID] = existingURI
+        searchResults.removeAll { $0.did.didString() == userDID }
+        logger.info("Skipped adding \(userDID): already a member")
+        return
+      }
       let createdURI = try await appState.listManager.addMember(userDID: userDID, to: listURI, skipDuplicateCheck: true)
       
       // Apply add locally
