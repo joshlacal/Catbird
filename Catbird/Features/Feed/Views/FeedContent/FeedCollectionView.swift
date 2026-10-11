@@ -136,6 +136,9 @@ struct SimpleFeedCollectionWrapper: View {
     
     @State private var stateManager: FeedStateManager?
     @State private var isInitialized = false
+    /// Keeps the shown manager retained for as long as this view is in the
+    /// hierarchy, including while a pushed screen covers it.
+    @State private var lease = FeedStateLease()
     
     var body: some View {
         Group {
@@ -145,12 +148,6 @@ struct SimpleFeedCollectionWrapper: View {
                     navigationPath: $navigationPath
                 )
                 .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
-                .onAppear {
-                    FeedStateStore.shared.attach(stateManager)
-                }
-                .onDisappear {
-                    FeedStateStore.shared.detach(stateManager)
-                }
                 .task {
                     if !isInitialized {
                         isInitialized = true
@@ -160,10 +157,9 @@ struct SimpleFeedCollectionWrapper: View {
                 .onChange(of: feedType) { oldFeedType, newFeedType in
                     // Send the old feed's pending feedback before switching
                     Task { await appState.feedFeedbackManager.flushInteractions() }
-                    FeedStateStore.shared.detach(stateManager)
                     // Switch to a dedicated manager per feed to keep per-feed scroll state
                     let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
-                    FeedStateStore.shared.attach(newManager)
+                    lease.hold(newManager)
                     self.stateManager = newManager
                     Task { @MainActor in
                         if newManager.posts.isEmpty { await newManager.loadInitialData() }
@@ -174,7 +170,7 @@ struct SimpleFeedCollectionWrapper: View {
                     .onAppear {
                         // Resolve a per-feed state manager from the shared store
                         let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
-                        FeedStateStore.shared.attach(manager)
+                        lease.hold(manager)
                         self.stateManager = manager
                     }
             }
@@ -182,7 +178,7 @@ struct SimpleFeedCollectionWrapper: View {
         .onAppear {
             if stateManager == nil || stateManager?.isCleanedUp == true {
                 let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
-                FeedStateStore.shared.attach(manager)
+                lease.hold(manager)
                 self.stateManager = manager
             }
         }
@@ -198,6 +194,9 @@ struct FeedCollectionWrapper: View {
     
     @State private var stateManager: FeedStateManager?
     @State private var isInitialized = false
+    /// Keeps the shown manager retained for as long as this view is in the
+    /// hierarchy, including while a pushed screen covers it.
+    @State private var lease = FeedStateLease()
     
     var body: some View {
         Group {
@@ -207,12 +206,6 @@ struct FeedCollectionWrapper: View {
                     navigationPath: $navigationPath
                 )
                 .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
-                .onAppear {
-                    FeedStateStore.shared.attach(stateManager)
-                }
-                .onDisappear {
-                    FeedStateStore.shared.detach(stateManager)
-                }
                 .task {
                     if !isInitialized {
                         isInitialized = true
@@ -222,10 +215,9 @@ struct FeedCollectionWrapper: View {
                 .onChange(of: feedType) { oldFeedType, newFeedType in
                     // Send the old feed's pending feedback before switching
                     Task { await appState.feedFeedbackManager.flushInteractions() }
-                    FeedStateStore.shared.detach(stateManager)
                     // Switch to the store-managed manager for the new feed
                     let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
-                    FeedStateStore.shared.attach(newManager)
+                    lease.hold(newManager)
                     self.stateManager = newManager
                     Task { @MainActor in
                         if newManager.posts.isEmpty { await newManager.loadInitialData() }
@@ -236,7 +228,7 @@ struct FeedCollectionWrapper: View {
                     .onAppear {
                         // Resolve a per-feed state manager from the shared store
                         let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
-                        FeedStateStore.shared.attach(manager)
+                        lease.hold(manager)
                         self.stateManager = manager
                     }
             }
@@ -244,7 +236,7 @@ struct FeedCollectionWrapper: View {
         .onAppear {
             if stateManager == nil || stateManager?.isCleanedUp == true {
                 let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
-                FeedStateStore.shared.attach(manager)
+                lease.hold(manager)
                 self.stateManager = manager
             }
         }

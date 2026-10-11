@@ -144,7 +144,8 @@ final class FeedStateStore: StateInvalidationSubscriber {
 
     stateManagers[cacheKey] = stateManager
     touchAccess(cacheKey)
-    enforceRetentionLimit()
+    // The caller attaches the manager only after this returns; never evict it here.
+    enforceRetentionLimit(protecting: cacheKey)
     makeActive(stateManager)
     logger.debug("📦 Stored new state manager for \(cacheKey) in cache (total: \(self.stateManagers.count))")
     // Attempt to restore persisted data
@@ -343,11 +344,11 @@ final class FeedStateStore: StateInvalidationSubscriber {
     accessOrder.append(key)
   }
 
-  private func enforceRetentionLimit() {
+  private func enforceRetentionLimit(protecting protectedKey: String) {
     var index = 0
     while accessOrder.count > maxRetainedManagers && index < accessOrder.count {
       let key = accessOrder[index]
-      if isAttached(cacheKey: key) {
+      if key == protectedKey || isAttached(cacheKey: key) {
         index += 1
         continue
       }
@@ -433,5 +434,45 @@ extension FeedStateStore {
     default:
       return false
     }
+  }
+}
+
+/// One view's hold on a feed state manager. A view keeps it in `@State`, so it
+/// lives exactly as long as the view stays in the hierarchy: covering the feed
+/// with a pushed screen or another tab keeps the hold, removing the view drops
+/// it. Attach and detach therefore always pair, which `onAppear`/`onDisappear`
+/// did not (appear fired from several places, disappear from one).
+@MainActor
+final class FeedStateLease {
+  private var heldKey: String?
+  private let store: FeedStateStore
+
+  init(store: FeedStateStore = .shared) {
+    self.store = store
+  }
+
+  var cacheKey: String? { heldKey }
+
+  func hold(_ manager: FeedStateManager) {
+    hold(cacheKey: manager.cacheKey)
+  }
+
+  func hold(cacheKey: String) {
+    guard heldKey != cacheKey else { return }
+    if let heldKey { store.detach(cacheKey: heldKey) }
+    store.attach(cacheKey: cacheKey)
+    heldKey = cacheKey
+  }
+
+  func release() {
+    if let heldKey { store.detach(cacheKey: heldKey) }
+    heldKey = nil
+  }
+
+  deinit {
+    // `isolated deinit` needs iOS 18.4; hop to the main actor instead.
+    guard let key = heldKey else { return }
+    let store = self.store
+    Task { @MainActor in store.detach(cacheKey: key) }
   }
 }
