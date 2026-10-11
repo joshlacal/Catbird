@@ -269,6 +269,9 @@ final class PreferencesManager {
     appliedAcceptLabelerDIDs = nil
     labelerHeaderGeneration += 1
     state = .initializing
+    defer {
+      accountDID = ""
+    }
 
     guard let modelContext = modelContext else {
       logger.warning("ModelContext not available when trying to clear preferences")
@@ -1605,9 +1608,15 @@ final class PreferencesManager {
       // the caller edited. So the policy is rebuilt for all of them; only the feed notification below
       // is limited to the kinds that change what a feed shows.
       storedPreferencesDidChange?(operation.accountDID)
-      if ["adultContent", "contentLabels", "mutedWords", "hiddenPosts", "labelers", "feedView", "threadView"].contains(preferenceType) {
-        NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: nil,
-                                        userInfo: ["accountDID": operation.accountDID])
+      if ["adultContent", "contentLabels", "mutedWords", "hiddenPosts", "labelers", "feedView"].contains(preferenceType) {
+        NotificationCenter.default.post(
+          name: NSNotification.Name("FeedPreferencesChanged"),
+          object: nil,
+          userInfo: [
+            "accountDID": operation.accountDID,
+            "preferenceType": preferenceType
+          ]
+        )
       }
       if preferenceType == "labelers" {
         await applyAcceptLabelersHeader(from: localPrefs)
@@ -1648,10 +1657,19 @@ final class PreferencesManager {
     try validatePreferenceOperation(operation)
     state = .ready
     storedPreferencesDidChange?(operation.accountDID)
-    NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: nil,
-                                    userInfo: ["accountDID": operation.accountDID])
-  }
+    if ["adultContent", "contentLabels", "mutedWords", "hiddenPosts", "labelers", "feedView"].contains(preferenceType) {
+      NotificationCenter.default.post(
+        name: NSNotification.Name("FeedPreferencesChanged"),
+        object: nil,
+        userInfo: [
+          "accountDID": operation.accountDID,
+          "preferenceType": preferenceType,
+          "isNoOp": true
+        ]
+      )
+    }
 
+  }
   @MainActor
   func removeContentLabelOverride(label: String, labelerDid: DID, expectedAccountDID: String? = nil) async throws {
     try await updateSpecificPreferences(preferenceType: "contentLabels", expectedAccountDID: expectedAccountDID) {

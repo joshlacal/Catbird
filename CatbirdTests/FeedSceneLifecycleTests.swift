@@ -225,7 +225,8 @@ struct FeedSceneLifecycleTests {
     let inactiveTransition = effects.lifecycle.update(.inactive, for: scene, now: start)
     let inactive = try #require(inactiveTransition)
     await effects.apply(inactive)
-    #expect(effects.saveCount == 1)
+    // P004: Inactivity deliberately skips saving to avoid rewriting feeds on temporary interruptions (e.g. Control Center)
+    #expect(effects.saveCount == 0)
     #expect(effects.notifications == [.inactive])
     #expect(!effects.isSuspended)
     #expect(effects.resumeDurations.isEmpty)
@@ -239,6 +240,16 @@ struct FeedSceneLifecycleTests {
     #expect(effects.notifications == [.inactive, .active])
     #expect(!effects.isSuspended)
     #expect(effects.resumeDurations.isEmpty)
+    #expect(effects.saveCount == 0)
+
+    // P004: Background transition must trigger exactly 1 save
+    let backgroundTransition = effects.lifecycle.update(
+      .background, for: scene, now: start.addingTimeInterval(interruptionDuration + 1)
+    )
+    let background = try #require(backgroundTransition)
+    await effects.apply(background)
+    #expect(effects.saveCount == 1)
+    #expect(effects.notifications == [.inactive, .active, .background])
   }
 }
 

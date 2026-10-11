@@ -60,10 +60,13 @@ struct FeedView: View {
     // CRITICAL FIX: Use .onAppear on the Group to ensure stateManager is initialized
     // BEFORE .task runs, preventing the race condition where .task sees nil stateManager
     .onAppear {
-      if stateManager == nil {
+      if stateManager == nil || stateManager?.isCleanedUp == true {
         logger.debug("Initializing stateManager synchronously on appear")
         stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
         currentFetch = fetch
+      }
+      if let manager = stateManager {
+        feedStateStore.attach(manager)
       }
       
       // CRITICAL: Always ensure we attempt to load data when the view appears
@@ -76,6 +79,11 @@ struct FeedView: View {
             await manager.loadInitialData()
           }
         }
+      }
+    }
+    .onDisappear {
+      if let manager = stateManager {
+        feedStateStore.detach(manager)
       }
     }
     .task {
@@ -110,8 +118,12 @@ struct FeedView: View {
       logger.debug("Feed type changed from \(currentFetch?.identifier ?? "nil") to \(fetch.identifier)")
       Task { await appState.feedFeedbackManager.flushInteractions() }
 
+      if let oldManager = stateManager {
+        feedStateStore.detach(oldManager)
+      }
       // Switch to a dedicated state manager per feed to keep per-feed scroll state
       let newManager = feedStateStore.stateManager(for: fetch, appState: appState)
+      feedStateStore.attach(newManager)
       self.stateManager = newManager
       self.currentFetch = fetch
       

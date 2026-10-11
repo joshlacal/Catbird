@@ -39,11 +39,19 @@ final class FeedModel: StateInvalidationSubscriber {
     return "\(account)-\(feedIdentifier)"
   }
   
+  @ObservationIgnored @MainActor var onPostsChanged: (@MainActor () -> Void)?
+
   @MainActor var posts: [CachedFeedViewPost] = [] {
-    didSet { contentRevision &+= 1 }
+    didSet {
+      contentRevision &+= 1
+      onPostsChanged?()
+    }
   }
   @MainActor private var contentRevision: UInt64 = 0
-
+  @MainActor var currentContentRevision: UInt64 { contentRevision }
+  @MainActor private(set) var lastPersistedRevision: UInt64 = 0
+  @MainActor var hasUnsavedChanges: Bool { contentRevision != lastPersistedRevision }
+  @MainActor func markPersisted() { lastPersistedRevision = contentRevision }
   // State tracking
   @MainActor private(set) var isLoading = false
   @MainActor private(set) var isLoadingMore = false
@@ -61,7 +69,7 @@ final class FeedModel: StateInvalidationSubscriber {
   }
 
   // Pagination
-  @MainActor private var cursor: String?
+  @MainActor private(set) var cursor: String?
   
   // A replacement or account reset invalidates work suspended in preparation.
   @MainActor private var publicationGeneration: UInt64 = 0
@@ -126,10 +134,7 @@ final class FeedModel: StateInvalidationSubscriber {
       }
       return cached
     }
-    let localFilters = appState.feedFilterSettings
-    return filterCachedPosts(cachedPosts,
-      settings: appState.makeFilterSettings(snapshot: retainedFilterPreferenceSnapshot(), localFilters: localFilters),
-      hideDuplicateParents: localFilters.isFilterEnabled(name: "Hide Duplicate Posts"))
+    return cachedPosts
   }
   // Navigation state
   @MainActor var isReturningFromNavigation = false
@@ -153,19 +158,20 @@ final class FeedModel: StateInvalidationSubscriber {
         || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language"),
       preferredLanguages: appState.appSettings.contentLanguages)
     
-    // Subscribe to state invalidation events
-    appState.stateInvalidationBus.subscribe(self)
-    
-    // Subscribe to social graph changes (mute/block/follow changes)
-    NotificationCenter.default.addObserver(
+    // Subscribe to social graph changes (mute/block/follow changes), scoped to account (P011, C10)
+    let graphToken = NotificationCenter.default.addObserver(
       forName: NSNotification.Name("UserGraphChanged"),
       object: nil,
       queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor in
+    ) { [weak self] notification in
+      guard let self else { return }
+      let originDID = notification.userInfo?["accountDID"] as? String
+      guard originDID == nil || originDID == self.appState.userDID else { return }
+      Task { @MainActor [weak self] in
         await self?.handleSocialGraphChange()
       }
     }
+    settingsObservers.append(graphToken)
     
     // Settings edits use a separate scoped refresh; graph/intent behavior stays independent.
     for name in ["FeedPreferencesChanged", "FeedFiltersChanged", "LanguagePreferencesChanged", "AppSettingsChanged"] {
@@ -173,10 +179,17 @@ final class FeedModel: StateInvalidationSubscriber {
         forName: NSNotification.Name(name), object: nil, queue: .main
       ) { [weak self] notification in
         let originDID = notification.userInfo?["accountDID"] as? String
+        let preferenceType = notification.userInfo?["preferenceType"] as? String
+        let isNoOp = notification.userInfo?["isNoOp"] as? Bool ?? false
         let settingsIdentity = (notification.object as? AppSettings).map(ObjectIdentifier.init)
         MainActor.assumeIsolated {
-          self?.handleSettingsPreferenceChange(originDID: originDID, settingsIdentity: settingsIdentity,
-            isAppSettingsChange: name == "AppSettingsChanged")
+          self?.handleSettingsPreferenceChange(
+            originDID: originDID,
+            settingsIdentity: settingsIdentity,
+            isAppSettingsChange: name == "AppSettingsChanged",
+            preferenceType: preferenceType,
+            isNoOp: isNoOp
+          )
         }
       }
       settingsObservers.append(token)
@@ -190,9 +203,23 @@ final class FeedModel: StateInvalidationSubscriber {
       let originDID = notification.userInfo?["accountDID"] as? String
       MainActor.assumeIsolated { self?.handleModerationPolicyChange(originDID: originDID) }
     })
+
+    // Subscribe to post visibility changes (hide/unhide) to re-filter immediately (P0)
+    let visibilityToken = NotificationCenter.default.addObserver(
+      forName: Notification.Name.feedPostVisibilityChanged,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        let filtered = self.applyFilters(withSettings: self.appState.feedFilterSettings)
+        if filtered.count != self.posts.count { self.posts = filtered }
+      }
+    }
+    settingsObservers.append(visibilityToken)
     
     // Subscribe to intent rule changes
-    NotificationCenter.default.addObserver(
+    let rulesToken = NotificationCenter.default.addObserver(
       forName: .intentRulesDidChange,
       object: nil,
       queue: .main
@@ -201,9 +228,10 @@ final class FeedModel: StateInvalidationSubscriber {
         await self?.handleSocialGraphChange()
       }
     }
+    settingsObservers.append(rulesToken)
 
     // Subscribe to intent control feature flag changes
-    NotificationCenter.default.addObserver(
+    let flagToken = NotificationCenter.default.addObserver(
       forName: .intentControlsFeatureFlagDidChange,
       object: nil,
       queue: .main
@@ -212,13 +240,11 @@ final class FeedModel: StateInvalidationSubscriber {
         await self?.handleSocialGraphChange()
       }
     }
+    settingsObservers.append(flagToken)
   }
   
   deinit {
-    // Unsubscribe from state invalidation events
-    appState.stateInvalidationBus.unsubscribe(self)
-    
-    // Remove NotificationCenter observers
+    // Remove all block-based NotificationCenter observers
     settingsObservers.forEach(NotificationCenter.default.removeObserver)
     NotificationCenter.default.removeObserver(self)
   }
@@ -264,37 +290,17 @@ final class FeedModel: StateInvalidationSubscriber {
       return
     }
     
-    // Filter out posts that can't be decoded (malformed cached data)
-    var validPosts: [CachedFeedViewPost] = []
-    var invalidPostIds: [String] = []
-    
-    for post in posts {
-      if (try? post.feedViewPost) != nil {
-        validPosts.append(post)
-      } else {
-        invalidPostIds.append(post.id)
-        logger.warning("Cached post \(post.id) cannot be decoded - will be removed from cache")
-      }
-    }
-    
-    // If we found invalid posts, remove them from the cache
-    if !invalidPostIds.isEmpty {
-      logger.info("Removing \(invalidPostIds.count) invalid cached posts")
-      Task.detached { [invalidPostIds] in
-        await PersistentFeedStateManager.shared.removeInvalidPosts(withIds: invalidPostIds)
-      }
-    }
-    
-    self.posts = validPosts
+    self.posts = posts
+    markPersisted()
     self.isLoading = false
     // Preserve pagination state if we have a stored cursor; allow pagination fallback when nil
-    self.hasMore = cursor != nil || !validPosts.isEmpty
+    self.hasMore = cursor != nil || !posts.isEmpty
     self.cursor = cursor
     
-    logger.debug("Restored \(validPosts.count) persisted posts to FeedModel (\(invalidPostIds.count) invalid posts filtered out)")
+    logger.debug("Restored \(posts.count) persisted posts to FeedModel")
 
     // Refresh shadows for restored posts
-    let feedViewPosts = validPosts.compactMap { try? $0.feedViewPost }
+    let feedViewPosts = posts.compactMap { (try? $0.feedViewPostBox)?.value }
     await refreshPostShadows(feedViewPosts, authoritative: false)
   }
   
@@ -459,8 +465,6 @@ final class FeedModel: StateInvalidationSubscriber {
       logger.debug("🔍 FeedTuner returned \(slices.count) slices")
       let newPosts = try await prepareCachedPosts(slices, publication: publication)
 
-      self.cursor = newCursor
-      self.hasMore = newCursor != nil
       self.lastRefreshTime = Date()
       self.successfulResponseFeedKey = publication.feedKey
 
@@ -472,11 +476,15 @@ final class FeedModel: StateInvalidationSubscriber {
 
         if uniqueNewPostCount > posts.count / 10 || forceRefresh {
           self.posts = newPosts
+          self.cursor = newCursor
+          self.hasMore = newCursor != nil
         } else {
           didReplacePosts = false
         }
       } else {
         self.posts = newPosts
+        self.cursor = newCursor
+        self.hasMore = newCursor != nil
       }
 
       logger.debug("🔍 loadFeed completed - loaded \(self.posts.count) posts, cursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
@@ -516,6 +524,7 @@ final class FeedModel: StateInvalidationSubscriber {
     fetch: FetchType,
     publication: PublicationIdentity
   ) {
+    let capturedRevision = contentRevision
     let previousWork = postPublicationWork
     postPublicationWork = Task { @MainActor [weak self] in
       await previousWork?.value
@@ -525,6 +534,9 @@ final class FeedModel: StateInvalidationSubscriber {
           for: publication.feedKey,
           cursor: cursor
         )
+        if let self {
+          self.lastPersistedRevision = max(self.lastPersistedRevision, capturedRevision)
+        }
       }
       guard let self, (try? self.checkPublication(publication)) != nil else { return }
       await self.refreshPostShadows(fetchedPosts)
@@ -587,17 +599,20 @@ final class FeedModel: StateInvalidationSubscriber {
       self.posts.append(contentsOf: uniqueNewPosts)
       self.cursor = newCursor
       self.hasMore = newCursor != nil
-      // Persist combined feed data for caching using account-scoped key
-      await PersistentFeedStateManager.shared.saveFeedData(
-        self.posts,
-        for: publication.feedKey,
-        cursor: newCursor
-      )
-      
+      // Release isLoadingMore immediately after appending/publishing (P055)
+      if publication.generation == publicationGeneration {
+        isLoadingMore = false
+      }
+
       try checkPublication(publication)
       logger.debug("🔍 loadMore completed - added \(uniqueNewPosts.count) posts, newCursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
 
-      await refreshPostShadows(fetchedPosts)
+      scheduleLoadMorePostPublicationWork(
+        newPostsToPersist: uniqueNewPosts,
+        cursor: newCursor,
+        fetchedPosts: fetchedPosts,
+        publication: publication
+      )
     } catch {
       // Use standardized error handling
       error.logError(context: "Load more for \(fetchType.identifier)", operation: "loadMore")
@@ -609,6 +624,32 @@ final class FeedModel: StateInvalidationSubscriber {
       }
     }
 
+  }
+
+  @MainActor
+  private func scheduleLoadMorePostPublicationWork(
+    newPostsToPersist: [CachedFeedViewPost],
+    cursor: String?,
+    fetchedPosts: [AppBskyFeedDefs.FeedViewPost],
+    publication: PublicationIdentity
+  ) {
+    let capturedRevision = contentRevision
+    let previousWork = postPublicationWork
+    postPublicationWork = Task { @MainActor [weak self] in
+      await previousWork?.value
+      if !newPostsToPersist.isEmpty {
+        await PersistentFeedStateManager.shared.appendFeedPage(
+          newPostsToPersist,
+          for: publication.feedKey,
+          cursor: cursor
+        )
+        if let self {
+          self.lastPersistedRevision = max(self.lastPersistedRevision, capturedRevision)
+        }
+      }
+      guard let self, (try? self.checkPublication(publication)) != nil else { return }
+      await self.refreshPostShadows(fetchedPosts)
+    }
   }
 
   func prefetchNextPage() async {
@@ -636,7 +677,11 @@ final class FeedModel: StateInvalidationSubscriber {
   ///   network. Restored or prewarmed pages may predate an interaction the shadow
   ///   already holds, so they must not be allowed to clear it.
   private func refreshPostShadows(_ posts: [AppBskyFeedDefs.FeedViewPost], authoritative: Bool = true) async {
-    await SpotlightEntityDonator.shared.donateFeed(posts: posts.map(\.post), viewerDID: appState.userDID)
+    let postsToDonate = posts.map(\.post)
+    let viewerDID = appState.userDID
+    Task(priority: .utility) {
+      await SpotlightEntityDonator.shared.donateFeed(posts: postsToDonate, viewerDID: viewerDID)
+    }
 
     // Use task group for parallel shadow updates
     await withTaskGroup(of: Void.self) { group in
@@ -784,9 +829,9 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // First pass: collect all parent post URIs
     for cachedPost in postsToFilter {
-      guard let feedViewPost = try? cachedPost.feedViewPost else { continue }
+      guard let box = try? cachedPost.feedViewPostBox else { continue }
 
-      if let reply = feedViewPost.reply {
+      if let reply = box.value.reply {
         switch reply.parent {
         case .appBskyFeedDefsPostView(let parentView):
           parentPostURIs.insert(parentView.uri.uriString())
@@ -798,14 +843,14 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // Second pass: filter out standalone posts that are also parents in replies
     return postsToFilter.filter { cachedPost in
-      guard let post = try? cachedPost.feedViewPost else {
+      guard let box = try? cachedPost.feedViewPostBox else {
         return false
       }
 
-      let postURI = post.post.uri.uriString()
+      let postURI = box.value.post.uri.uriString()
 
       // If this post's URI is in the parent set AND it's not a reply itself, filter it out
-      if parentPostURIs.contains(postURI) && post.reply == nil {
+      if parentPostURIs.contains(postURI) && box.value.reply == nil {
         return false
       }
 
@@ -827,8 +872,8 @@ final class FeedModel: StateInvalidationSubscriber {
   private func filterCachedPosts(_ candidates: [CachedFeedViewPost], settings: FeedTunerSettings,
                                 hideDuplicateParents: Bool) -> [CachedFeedViewPost] {
     let visible = candidates.filter { cached in
-      guard let post = try? cached.feedViewPost else { return false }
-      return contentFilterService.shouldShowFeedViewPost(post, settings: settings)
+      guard let box = try? cached.feedViewPostBox else { return false }
+      return contentFilterService.shouldShowFeedViewPost(box.value, settings: settings)
     }
     return hideDuplicateParents ? deduplicatePosts(visible) : visible
   }
@@ -868,18 +913,15 @@ final class FeedModel: StateInvalidationSubscriber {
       visibleSlices, publication: publication, smartFilterDecisions: smartFilterDecisions
     )
 
-    let deduplicatedPosts = filterCachedPosts(newCachedPosts, settings: tunerSettings,
-      hideDuplicateParents: filterSettings.isFilterEnabled(name: "Hide Duplicate Posts"))
-
     if feedType == .timeline {
       let result = await IntentControlCoordinator.shared.applyIntentControls(
-        to: deduplicatedPosts,
+        to: newCachedPosts,
         accountDID: appState.userDID
       )
       try checkPublication(publication)
       return result
     }
-    return deduplicatedPosts
+    return newCachedPosts
   }
 
   // Enhanced loadFeed method with filtering capabilities
@@ -1191,7 +1233,7 @@ final class FeedModel: StateInvalidationSubscriber {
     while !Task.isCancelled {
       guard (try? checkPublication(publication)) != nil, !posts.isEmpty else { return }
       let revision = contentRevision
-      let validFeedViewPosts = posts.compactMap { try? $0.feedViewPost }
+      let validFeedViewPosts = posts.compactMap { (try? $0.feedViewPostBox)?.value }
       guard !validFeedViewPosts.isEmpty else { return }
 
       let tunedSlices = await feedTuner.tune(validFeedViewPosts, filterSettings: filterSettings)
@@ -1231,11 +1273,26 @@ final class FeedModel: StateInvalidationSubscriber {
   }
 
   @MainActor
-  private func handleSettingsPreferenceChange(originDID: String?, settingsIdentity: ObjectIdentifier?,
-                                              isAppSettingsChange: Bool) {
+  private func handleSettingsPreferenceChange(
+    originDID: String?,
+    settingsIdentity: ObjectIdentifier?,
+    isAppSettingsChange: Bool,
+    preferenceType: String? = nil,
+    isNoOp: Bool = false
+  ) {
+    guard !isNoOp else { return }
     let manager = AppStateManager.shared
     guard originDID == appState.userDID,
           manager.lifecycle.isAuthenticated, manager.lifecycle.appState === appState else { return }
+
+    // Scoped invalidation (P011, C10):
+    // Local-only / tightening edits (hiddenPosts, mutedWords) only re-filter posts locally without network reload
+    if preferenceType == "hiddenPosts" || preferenceType == "mutedWords" {
+      let filtered = applyFilters(withSettings: appState.feedFilterSettings)
+      if filtered.count != posts.count { posts = filtered }
+      return
+    }
+
     let signature = ReadingLanguageFilterSignature(
       hideOtherLanguages: appState.appSettings.hideNonPreferredLanguages
         || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language"),

@@ -55,7 +55,12 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private(set) var loadingState: LoadingState = .idle {
         didSet {
             if case .error(let error) = loadingState {
-                reconnectRetryState.requestFailed(error, allowsAutomaticRetry: reconnectRetryTask == nil)
+                let isPathSatisfied = appState.networkMonitor.isConnected
+                reconnectRetryState.requestFailed(
+                    error,
+                    allowsAutomaticRetry: reconnectRetryTask == nil,
+                    isPathSatisfied: isPathSatisfied
+                )
             }
         }
     }
@@ -130,19 +135,24 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Dependencies
     let appState: AppState
-    private let feedModel: FeedModel
+    let feedModel: FeedModel
     private var feedType: FetchType
     
     /// Account-scoped cache identifier for persistence helpers
     private var feedCacheIdentifier: String {
         "\(appState.userDID)-\(feedType.identifier)"
     }
+
+    var cacheKey: String {
+        let account = appState.userDID ?? "unknown-account"
+        return "\(account)-\(feedType.identifier)"
+    }
     
     /// Debouncing and coordination
     private var refreshTask: Task<Void, Error>?
     private var loadMoreTask: Task<Void, Error>?
     private var updateTask: Task<Void, Error>?
-    
+    nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
     /// Automatic refresh coordination
     private var autoRefreshTask: Task<Void, Never>?
     private var reconnectRetryTask: Task<Void, Never>?
@@ -162,7 +172,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Only FeedStateStore's aggregate scene lifecycle may suspend shared work.
     private var isAppInBackground = false
-    private var isCleanedUp = false
+    private(set) var isCleanedUp = false
 
     /// Initial loads run in their caller's task, not one of the cancellable slots.
     private var isLoadingInitialData = false
@@ -193,6 +203,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Initialize with current feed data
         self.posts = feedModel.posts
+        feedModel.onPostsChanged = { [weak self] in
+            guard let self, !self.isCleanedUp else { return }
+            if self.posts != self.feedModel.posts {
+                self.posts = self.feedModel.posts
+                self.cleanupViewModels()
+            }
+        }
         
         // Set up observers for feed model changes
         setupObservers()
@@ -202,33 +219,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Start automatic refresh monitoring
         startAutomaticRefreshMonitoring()
-        
         logger.debug("FeedStateManager initialized for feed type: \(feedType.identifier)")
     }
-
 
     // MARK: - Setup
     
     private func setupObservers() {
-        // Filter edits, blocks, mutes and hidden posts all take effect immediately
-        // on the posts already on screen, without waiting for a refresh.
-        for name in [
-            NSNotification.Name("FeedFiltersChanged"),
-            NSNotification.Name("UserGraphChanged"),
-            Notification.Name.feedPostVisibilityChanged
-        ] {
-            NotificationCenter.default.addObserver(
-                forName: name,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    await self?.reapplyFilters()
-                }
-            }
-        }
-
-        NotificationCenter.default.addObserver(
+        let deleteToken = NotificationCenter.default.addObserver(
             forName: Notification.Name.feedPostDeleted,
             object: nil,
             queue: .main
@@ -238,6 +235,60 @@ final class FeedStateManager: StateInvalidationSubscriber {
                 self?.removePost(withURI: uri)
             }
         }
+        notificationTokens.append(deleteToken)
+
+        // Filter edits, quick filters and hidden posts take effect immediately on screen (P0)
+        let filterToken = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FeedFiltersChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.reapplyFilters()
+            }
+        }
+        notificationTokens.append(filterToken)
+
+        let visibilityToken = NotificationCenter.default.addObserver(
+            forName: Notification.Name.feedPostVisibilityChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.reapplyFilters()
+            }
+        }
+        notificationTokens.append(visibilityToken)
+
+        let graphToken = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserGraphChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            let originDID = notification.userInfo?["accountDID"] as? String
+            guard originDID == nil || originDID == self.appState.userDID else { return }
+            Task { @MainActor in
+                await self.reapplyFilters()
+            }
+        }
+        notificationTokens.append(graphToken)
+
+        let prefToken = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FeedPreferencesChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            let originDID = notification.userInfo?["accountDID"] as? String
+            guard originDID == nil || originDID == self.appState.userDID else { return }
+            let prefType = notification.userInfo?["preferenceType"] as? String
+            guard prefType == "hiddenPosts" || prefType == "mutedWords" else { return }
+            Task { @MainActor in
+                await self.reapplyFilters()
+            }
+        }
+        notificationTokens.append(prefToken)
     }
     
     // MARK: - ViewModel Management
@@ -647,7 +698,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
                 paginationError = error
             }
 
-            await updatePostsFromModel()
+            await updatePostsFromModel(immediate: true)
             guard !Task.isCancelled && !isAppInBackground else { return }
             
             // Check if we've reached the end
@@ -836,8 +887,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
         if immediate {
             updateTask = nil
             let oldCount = posts.count
-            guard posts != feedModel.posts else { return }
-            posts = feedModel.posts
+            let modelPosts = feedModel.posts
+            guard posts != modelPosts else { return }
+            posts = modelPosts
             cleanupViewModels()
             logger.debug("Updated posts from model immediately: \(oldCount) -> \(self.posts.count) posts")
             return
@@ -859,7 +911,6 @@ final class FeedStateManager: StateInvalidationSubscriber {
             }
             
             posts = newPosts
-            
             // Clean up ViewModels for posts no longer in the feed
             cleanupViewModels()
             
@@ -877,6 +928,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Trigger FeedModel to re-process its posts with current filter settings
         let filteredPosts = feedModel.applyFilters(withSettings: appState.feedFilterSettings)
+        guard posts != filteredPosts else { return }
         
         // Update our display
         posts = filteredPosts
@@ -927,37 +979,16 @@ final class FeedStateManager: StateInvalidationSubscriber {
             return
         }
         
-        // Filter out posts that can't be decoded (malformed cached data)
-        var validPosts: [CachedFeedViewPost] = []
-        var invalidPostIds: [String] = []
-        
-        for post in posts {
-            if (try? post.feedViewPost) != nil {
-                validPosts.append(post)
-            } else {
-                invalidPostIds.append(post.id)
-                logger.warning("Cached post \(post.id) cannot be decoded - will be removed from cache")
-            }
-        }
-        
-        // If we found invalid posts, remove them from the cache
-        if !invalidPostIds.isEmpty {
-            logger.info("Removing \(invalidPostIds.count) invalid cached posts")
-            Task.detached { [invalidPostIds] in
-                await PersistentFeedStateManager.shared.removeInvalidPosts(withIds: invalidPostIds)
-            }
-        }
-        
-        self.posts = validPosts
+        self.posts = posts
         // Restoration races the initial network load; cached rows may show early, but
         // must not mark that in-flight load idle (which lets a duplicate load start).
         if !isLoadingInitialData { self.loadingState = .idle }
         self.hasReachedEnd = false
         
         // Update feed model's posts to match
-        await feedModel.restorePersistedPosts(validPosts, cursor: cursor)
+        await feedModel.restorePersistedPosts(posts, cursor: cursor)
         
-        logger.debug("Restored \(validPosts.count) persisted posts (\(invalidPostIds.count) invalid posts filtered out)")
+        logger.debug("Restored \(posts.count) persisted posts")
     }
     
     // MARK: - iOS 18+ Smart Refresh Methods
@@ -1444,10 +1475,16 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // Unsubscribe from state invalidation events
         appState.stateInvalidationBus.unsubscribe(self)
         
+        feedModel.onPostsChanged = nil
+        notificationTokens.forEach(NotificationCenter.default.removeObserver)
+        notificationTokens.removeAll()
+        
         logger.debug("FeedStateManager cleaned up")
     }
     
     isolated deinit {
+        feedModel.onPostsChanged = nil
+        notificationTokens.forEach(NotificationCenter.default.removeObserver)
         reconnectRetryTask?.cancel()
         refreshTask?.cancel()
         loadMoreTask?.cancel()
@@ -1564,11 +1601,16 @@ extension FeedStateManager {
                 await loadInitialData()
             }
             
-        case .postCreated, .replyCreated:
-            // Don't automatically refresh for new posts - let user pull to refresh
-            // This prevents disrupting scroll position when user returns from post creation
-            logger.debug("New post created, but skipping automatic refresh to preserve scroll position")
-            
+        case .postCreated(let post):
+            if feedType == .timeline {
+                await feedModel.handleStateInvalidation(.postCreated(post))
+                if posts != feedModel.posts {
+                    posts = feedModel.posts
+                    cleanupViewModels()
+                }
+            }
+        case .replyCreated:
+            break
         default:
             // Other events don't require action for feed state
             break

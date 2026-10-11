@@ -118,7 +118,6 @@ final class PostContextMenuViewModel {
                     let deletedURI = post.uri.uriString()
                     await MainActor.run {
                         NotificationCenter.default.post(name: .feedPostDeleted, object: deletedURI)
-                        appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
                         appState.stateInvalidationBus.notify(.profileUpdated(did: did))
                         if let rootURI = resolvedRootPostURI?.uriString() {
                             appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI))
@@ -258,7 +257,6 @@ final class PostContextMenuViewModel {
                     isPinnedOverride = false
                     appState.stateInvalidationBus.notify(.profileUpdated(did: did))
                     appState.stateInvalidationBus.notify(.feedUpdated(.author(did)))
-                    appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
                     appState.toastManager.show(
                         ToastItem(
                             message: "Post unpinned from profile",
@@ -299,7 +297,6 @@ final class PostContextMenuViewModel {
                     isPinnedOverride = true
                     appState.stateInvalidationBus.notify(.profileUpdated(did: did))
                     appState.stateInvalidationBus.notify(.feedUpdated(.author(did)))
-                    appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
                     appState.toastManager.show(
                         ToastItem(
                             message: "Post pinned to profile",
@@ -423,7 +420,6 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error detaching quote: \(error)")
@@ -461,7 +457,6 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error reattaching quote: \(error)")
@@ -497,7 +492,6 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI.uriString()))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error hiding reply for everyone: \(error)")
@@ -532,7 +526,6 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI.uriString()))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error showing reply for everyone: \(error)")

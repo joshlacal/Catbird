@@ -15,7 +15,7 @@ import os
 
 /// A value snapshot survives in-place SwiftData mutations. Cache bookkeeping such
 /// as pagination cursors and timestamps must not invalidate a rendered row.
-struct FeedPostContentSignature: Equatable {
+struct FeedPostContentSignature: Hashable {
     let serializedPost: Data
     let serializedSliceItems: Data?
     let threadDisplayMode: String?
@@ -85,8 +85,6 @@ final class FeedPostViewModel {
     private var _hasMedia: Bool?
     private var _isThread: Bool?
 
-    /// Cached decoded FeedViewPost to avoid repeated JSON parsing
-    private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
     
     // MARK: - Dependencies
     
@@ -106,14 +104,9 @@ final class FeedPostViewModel {
         logger.debug("FeedPostViewModel initialized for post: \(post.id)")
     }
 
-    /// Accessor for feedViewPost from the cached post (with caching to avoid repeated JSON parsing)
+    /// Accessor for feedViewPost from the cached post's EquatableBox
     private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
-        if let cached = _cachedFeedViewPost {
-            return cached
-        }
-        let decoded = try? post.feedViewPost
-        _cachedFeedViewPost = decoded
-        return decoded
+        (try? post.feedViewPostBox)?.value
     }
     
     // MARK: - Data Updates
@@ -546,7 +539,6 @@ final class FeedPostViewModel {
     
     /// Clears all cached properties
     private func clearAllCache() {
-        _cachedFeedViewPost = nil
         _displayText = nil
         _truncatedText = nil
         _authorDisplayName = nil
@@ -575,17 +567,9 @@ final class FeedPostViewModel {
         return ""
     }
     
-    /// Checks the current bookmark state from viewer state and shadow manager
+    /// Checks the current bookmark state from viewer state
     private func checkBookmarkState() -> Bool {
-        guard let fvp = feedViewPost else { return false }
-
-        // Check viewer state first (server state)
-        if let bookmarked = fvp.post.viewer?.bookmarked {
-            return bookmarked
-        }
-
-        // No shadow state fallback needed since we use optimistic updates elsewhere
-        return false
+        (try? post.feedViewPostBox)?.value.post.viewer?.bookmarked ?? false
     }
 
     /// Formats date as time ago string

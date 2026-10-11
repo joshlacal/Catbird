@@ -195,7 +195,7 @@ final class BackgroundFeedLoader {
       )
       
       // Get the new posts
-      let newPosts = feedModel.applyFilters(withSettings: appState.feedFilterSettings)
+      let newPosts = feedModel.posts
       
       // Compare with current posts to determine what's new
       let (pendingPosts, newPostCount) = calculatePendingContent(

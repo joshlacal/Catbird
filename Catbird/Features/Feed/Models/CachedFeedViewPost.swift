@@ -309,6 +309,48 @@ final class CachedFeedViewPost: Identifiable {
         self._hasDecodedSliceItems = true
     }
 
+    init(record: CachedFeedRecord) {
+        self.id = record.id
+        self.feedType = record.feedType
+        self.serializedPost = record.serializedPost
+        self.cursor = record.cursor
+        self.cachedAt = record.cachedAt
+        self.createdAt = record.createdAt
+        self.feedOrder = record.feedOrder
+        self.threadDisplayMode = record.threadDisplayMode
+        self.threadPostCount = record.threadPostCount
+        self.threadHiddenCount = record.threadHiddenCount
+        self.isPartOfThread = record.isPartOfThread
+        self.isIncompleteThread = record.isIncompleteThread
+        self.isTemporary = record.isTemporary
+        self.isRepost = record.isRepost
+        self.repostIndexedAt = record.repostIndexedAt
+        self.smartFilterCollapseRuleID = record.smartFilterCollapseRuleID
+        self.isSmartFilterPending = record.isSmartFilterPending
+        self.serializedSliceItems = record.serializedSliceItems
+    }
+
+    convenience init(
+        record: CachedFeedRecord,
+        postBox: EquatableBox<AppBskyFeedDefs.FeedViewPost>?,
+        sliceItems: [FeedSliceItem]?
+    ) {
+        self.init(record: record)
+        if let postBox {
+            self._cachedFeedViewPost = postBox
+            self._cachedFeedViewPostData = record.serializedPost
+        }
+        if let sliceItems {
+            self._cachedSliceItems = sliceItems
+            self._cachedSliceItemsData = record.serializedSliceItems
+            self._hasDecodedSliceItems = true
+        } else if record.serializedSliceItems == nil {
+            self._cachedSliceItems = nil
+            self._cachedSliceItemsData = nil
+            self._hasDecodedSliceItems = true
+        }
+    }
+
     /// Reconstructs the original FeedViewPost, caching the result to avoid repeated JSON decoding
     var feedViewPost: AppBskyFeedDefs.FeedViewPost {
         get throws {
@@ -359,12 +401,17 @@ final class CachedFeedViewPost: Identifiable {
     
     /// Accessor for post URI (for compatibility with existing code)
     var uri: ATProtocolURI? {
-        try? feedViewPost.post.uri
+        try? feedViewPostBox.value.post.uri
     }
 
     /// Accessor for post viewer state (for compatibility)
     var viewer: AppBskyFeedDefs.ViewerState? {
-        (try? feedViewPost)?.post.viewer
+        try? feedViewPostBox.value.post.viewer
+    }
+
+    /// Accessor for post URI string avoiding by-value FeedViewPost copies
+    var postURIString: String? {
+        try? feedViewPostBox.value.post.uri.uriString()
     }
     
     /// Reconstructs the slice items for thread rendering
@@ -383,7 +430,6 @@ final class CachedFeedViewPost: Identifiable {
     var isThreadSlice: Bool {
         return (sliceItems?.count ?? 0) > 1
     }
-    
     /// Computed property to get the thread slice representation
     var threadSlice: FeedSlice? {
         guard let items = sliceItems, !items.isEmpty else { return nil }
@@ -568,6 +614,55 @@ struct PreparedFeedSlice: Sendable {
             root: root,
             parent: parent,
             grandparentAuthor: grandparentAuthor
+        )
+    }
+}
+
+// MARK: - Sendable Record & Snapshot
+
+/// Sendable snapshot of a cached feed post row for safe actor-boundary crossing
+struct CachedFeedRecord: Sendable, Identifiable {
+    let id: String
+    let feedType: String
+    let serializedPost: Data
+    let serializedSliceItems: Data?
+    let cursor: String?
+    let cachedAt: Date
+    let createdAt: Date
+    let feedOrder: Int?
+    let threadDisplayMode: String?
+    let threadPostCount: Int?
+    let threadHiddenCount: Int?
+    let isPartOfThread: Bool
+    let isIncompleteThread: Bool
+    let isTemporary: Bool
+    let isRepost: Bool
+    let repostIndexedAt: Date?
+    let smartFilterCollapseRuleID: String?
+    let isSmartFilterPending: Bool
+}
+
+extension CachedFeedViewPost {
+    func asRecord() -> CachedFeedRecord {
+        CachedFeedRecord(
+            id: id,
+            feedType: feedType,
+            serializedPost: serializedPost,
+            serializedSliceItems: serializedSliceItems,
+            cursor: cursor,
+            cachedAt: cachedAt,
+            createdAt: createdAt,
+            feedOrder: feedOrder,
+            threadDisplayMode: threadDisplayMode,
+            threadPostCount: threadPostCount,
+            threadHiddenCount: threadHiddenCount,
+            isPartOfThread: isPartOfThread,
+            isIncompleteThread: isIncompleteThread,
+            isTemporary: isTemporary,
+            isRepost: isRepost,
+            repostIndexedAt: repostIndexedAt,
+            smartFilterCollapseRuleID: smartFilterCollapseRuleID,
+            isSmartFilterPending: isSmartFilterPending
         )
     }
 }

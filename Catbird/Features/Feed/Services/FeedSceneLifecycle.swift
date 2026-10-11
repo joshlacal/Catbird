@@ -80,9 +80,11 @@ enum FeedSceneLifecycleEffects {
   ) async {
     guard isCurrent() else { return }
     switch transition.phase {
-    case .background, .inactive:
+    case .background:
       await save()
       guard isCurrent() else { return }
+      _ = await notify(transition.phase)
+    case .inactive:
       _ = await notify(transition.phase)
     case .active:
       let resumedSuspendedManagers = await notify(.active)

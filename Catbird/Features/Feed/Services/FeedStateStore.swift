@@ -16,19 +16,59 @@ final class FeedStateStore: StateInvalidationSubscriber {
   static let shared = FeedStateStore()
   
   private var stateManagers: [String: FeedStateManager] = [:]
+  private var accessOrder: [String] = []
+  private let maxRetainedManagers = 4
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedStateStore")
   private var modelContext: ModelContext?
   private weak var appState: AppState?
+  nonisolated(unsafe) private var memoryWarningObserver: NSObjectProtocol?
+  private var attachedCounts: [String: Int] = [:]
+
+  func attach(_ manager: FeedStateManager) {
+    attach(cacheKey: manager.cacheKey)
+  }
+
+  func detach(_ manager: FeedStateManager) {
+    detach(cacheKey: manager.cacheKey)
+  }
+
+  func attach(cacheKey: String) {
+    attachedCounts[cacheKey, default: 0] += 1
+  }
+
+  func detach(cacheKey: String) {
+    let current = attachedCounts[cacheKey, default: 0]
+    if current <= 1 {
+      attachedCounts.removeValue(forKey: cacheKey)
+    } else {
+      attachedCounts[cacheKey] = current - 1
+    }
+  }
+
+  func isAttached(cacheKey: String) -> Bool {
+    (attachedCounts[cacheKey] ?? 0) > 0
+  }
   
   // Scene roots register independently; data managers remain account/feed scoped.
   private var sceneLifecycle = FeedSceneLifecycle()
   private var lastBackgroundTime: TimeInterval = 0
   
   private init() {
-    // Modern lifecycle management will be handled via @Environment(\.scenePhase)
-    // No more UIKit notifications needed
-    
-    // Note: AppState will be set via setAppState() when first accessed
+    #if canImport(UIKit) && !os(watchOS)
+    memoryWarningObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didReceiveMemoryWarningNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.handleMemoryWarning()
+    }
+    #endif
+  }
+
+  deinit {
+    if let memoryWarningObserver {
+      NotificationCenter.default.removeObserver(memoryWarningObserver)
+    }
   }
   
   /// Set the AppState reference for state invalidation subscription
@@ -49,18 +89,22 @@ final class FeedStateStore: StateInvalidationSubscriber {
     // Set appState reference on first access for state invalidation subscription
     setAppState(appState)
 
-    // CRITICAL: Cache key must include account identity to prevent cross-account contamination
-    let accountID = appState.userDID ?? "unknown-account"
-    let cacheKey = "\(accountID)-\(feedType.identifier)"
+    // Evict any managers from other accounts to release old AppState graphs (P194)
+    let currentAccount = appState.userDID ?? "unknown-account"
+    let foreignKeys = stateManagers.keys.filter { !$0.hasPrefix("\(currentAccount)-") }
+    for key in foreignKeys {
+      stateManagers[key]?.cleanup()
+      stateManagers.removeValue(forKey: key)
+      accessOrder.removeAll { $0 == key }
+    }
+
+    let cacheKey = "\(currentAccount)-\(feedType.identifier)"
 
     if let existing = stateManagers[cacheKey] {
-      // CRITICAL: Validate cached manager belongs to the correct account
-      // Without this check, we could return Account B's manager when switching back to Account A
-      if existing.appState === appState {
+      // Validate cached manager belongs to the correct account and is alive (P1)
+      if existing.appState === appState && !existing.isCleanedUp {
         logger.debug("✅ Reusing existing state manager for \(cacheKey) (posts: \(existing.posts.count), isLoading: \(existing.isLoading))")
 
-        // Ensure the existing state manager has the correct feed type
-        // This handles cases where the feed type might have different parameters
         if existing.currentFeedType.identifier != feedType.identifier {
           logger.warning("⚠️ Feed type mismatch in existing state manager - updating from \(existing.currentFeedType.identifier) to \(feedType.identifier)")
           Task {
@@ -68,13 +112,14 @@ final class FeedStateStore: StateInvalidationSubscriber {
           }
         }
 
+        touchAccess(cacheKey)
         makeActive(existing)
         return existing
       } else {
-        // AppState mismatch - this is a stale cached manager from a different account
         logger.warning("⚠️ Cached manager for \(cacheKey) has stale AppState reference - removing and creating new")
         existing.cleanup()
         stateManagers.removeValue(forKey: cacheKey)
+        accessOrder.removeAll { $0 == cacheKey }
       }
     }
 
@@ -98,9 +143,10 @@ final class FeedStateStore: StateInvalidationSubscriber {
     )
 
     stateManagers[cacheKey] = stateManager
+    touchAccess(cacheKey)
+    enforceRetentionLimit()
     makeActive(stateManager)
-    logger.debug("📦 Stored new state manager for \(cacheKey) in cache")
-
+    logger.debug("📦 Stored new state manager for \(cacheKey) in cache (total: \(self.stateManagers.count))")
     // Attempt to restore persisted data
     Task {
       await restorePersistedData(for: stateManager, feedIdentifier: cacheKey)
@@ -173,24 +219,21 @@ final class FeedStateStore: StateInvalidationSubscriber {
 
     guard sceneLifecycle.isCurrent(transition), !stateManagers.isEmpty else { return }
 
-    // Collect all feed data for batch saving
-    var feedDataBatch: [(identifier: String, posts: [CachedFeedViewPost])] = []
-
     for (identifier, stateManager) in stateManagers {
-      let posts = stateManager.posts
-      if !posts.isEmpty {
-        feedDataBatch.append((identifier: identifier, posts: posts))
-
+      guard sceneLifecycle.isCurrent(transition) else { return }
+      let feedModel = stateManager.feedModel
+      if feedModel.hasUnsavedChanges {
+        let posts = stateManager.posts
+        if !posts.isEmpty {
+          await PersistentFeedStateManager.shared.saveFeedData(posts, for: identifier, cursor: feedModel.cursor)
+          feedModel.markPersisted()
+        }
+      } else {
+        await PersistentFeedStateManager.shared.touchFeedState(for: identifier, cursor: feedModel.cursor)
       }
     }
 
-    // Save individual feeds (remove iOS 18 batch saving since method doesn't exist)
-    for (identifier, posts) in feedDataBatch {
-      guard sceneLifecycle.isCurrent(transition) else { return }
-      await PersistentFeedStateManager.shared.saveFeedData(posts, for: identifier)
-    }
-
-    logger.debug("Enhanced state saving completed for \(feedDataBatch.count) feeds")
+    logger.debug("Enhanced state saving completed for \(self.stateManagers.count) feeds")
   }
 
   private func saveAllStates() async {
@@ -277,12 +320,11 @@ final class FeedStateStore: StateInvalidationSubscriber {
   }
   
   func clearStateManager(for feedIdentifier: String) {
-    // Clear managers for this feed type across all accounts
-    // Cache keys are now in format "accountID-feedIdentifier"
     let keysToRemove = stateManagers.keys.filter { $0.hasSuffix("-\(feedIdentifier)") }
     for key in keysToRemove {
       stateManagers[key]?.cleanup()
       stateManagers.removeValue(forKey: key)
+      accessOrder.removeAll { $0 == key }
     }
     logger.debug("Cleared state manager(s) for \(feedIdentifier) (\(keysToRemove.count) instances)")
   }
@@ -292,7 +334,46 @@ final class FeedStateStore: StateInvalidationSubscriber {
        stateManager.cleanup()
     }
     stateManagers.removeAll()
+    accessOrder.removeAll()
     logger.debug("Cleared all state managers")
+  }
+
+  private func touchAccess(_ key: String) {
+    accessOrder.removeAll { $0 == key }
+    accessOrder.append(key)
+  }
+
+  private func enforceRetentionLimit() {
+    var index = 0
+    while accessOrder.count > maxRetainedManagers && index < accessOrder.count {
+      let key = accessOrder[index]
+      if isAttached(cacheKey: key) {
+        index += 1
+        continue
+      }
+      accessOrder.remove(at: index)
+      if let manager = stateManagers.removeValue(forKey: key) {
+        logger.debug("LRU evicting FeedStateManager for \(key)")
+        manager.cleanup()
+      }
+    }
+  }
+
+  func handleMemoryWarning() {
+    logger.warning("⚠️ Memory warning received: trimming feed state managers")
+    let activeKey = accessOrder.last
+    var keysToKeep = Set<String>()
+    if let activeKey {
+      keysToKeep.insert(activeKey)
+    }
+    for (key, _) in stateManagers where isAttached(cacheKey: key) {
+      keysToKeep.insert(key)
+    }
+    for (key, manager) in stateManagers where !keysToKeep.contains(key) {
+      manager.cleanup()
+      stateManagers.removeValue(forKey: key)
+    }
+    accessOrder.removeAll { !keysToKeep.contains($0) }
   }
   
   // Only managers actually suspended by the aggregate can need restoration.
@@ -336,17 +417,8 @@ extension FeedStateStore {
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {
     switch event {
     case .accountSwitched:
-      // CRITICAL FIX: Do NOT clear persistent cache on account switch.
-      // Doing so wipes data for the account we just switched TO if it was previously cached,
-      // and prevents the previous account's data from being available if we switch back.
-      // Data is already namespaced by account DID in the cache keys/database.
-      logger.debug("🔄 Account switched - preserving feed state for seamless transition")
-
-    // We can optionally clear memory for accounts that are no longer active to save RAM,
-    // but we should NOT wipe the persistent store.
-    // For now, we keep managers in memory as AppState eviction handles the heavy lifting
-    // of cleaning up unused AppState instances, which naturally releases their resources.
-      
+      logger.debug("🔄 Account switched - evicting in-memory feed managers to release old account AppState graphs")
+      clearAllStateManagers()
     default:
       // Other events are handled by individual FeedStateManagers
       break
