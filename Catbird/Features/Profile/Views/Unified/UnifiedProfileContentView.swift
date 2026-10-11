@@ -59,6 +59,7 @@ struct UnifiedProfileContentView: View {
       ) { boxedPost in
         postRowView(boxedPost: boxedPost)
       }
+      .extendingUnderTopBar()
       .environment(\.moderationListFilterExemptDID, profile.did.didString())
       .ignoresSafeArea(edges: .top)
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)

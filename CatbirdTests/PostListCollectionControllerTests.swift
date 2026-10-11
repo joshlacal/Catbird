@@ -9,6 +9,23 @@ import UIKit
 @Suite("Secondary post list scrolling")
 @MainActor
 struct PostListCollectionControllerTests {
+  @Test("Profile lists draw the header under the top bar; other lists keep automatic insets")
+  func underTopBarInsetMode() throws {
+    let plain = PostListCollectionController()
+    plain.loadViewIfNeeded()
+    #expect(try #require(plain.collectionView).contentInsetAdjustmentBehavior == .automatic)
+
+    let profile = PostListCollectionController()
+    profile.extendsUnderTopBar = true
+    profile.loadViewIfNeeded()
+    let collection = try #require(profile.collectionView)
+    #expect(collection.contentInsetAdjustmentBehavior == .never)
+    #expect(collection.adjustedContentInset.top == 0)
+
+    profile.extendsUnderTopBar = false
+    #expect(collection.contentInsetAdjustmentBehavior == .automatic)
+  }
+
   @Test("One controller restores normalized tab offsets without crossing account/profile keys")
   func restoresOffsetsAfterSnapshots() async throws {
     let controller = PostListCollectionController()

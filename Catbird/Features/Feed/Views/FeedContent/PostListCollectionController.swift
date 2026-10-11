@@ -135,6 +135,15 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   private var scrollToTopRequestID = 0
   private var pendingScrollOffset: CGFloat?
   private var animatePendingScroll = false
+  /// Lets the first row (a profile banner) sit under a transparent navigation
+  /// bar instead of below it. UIKit's automatic inset would push the header
+  /// down by the bar height; this surface insets only the bottom itself.
+  var extendsUnderTopBar = false {
+    didSet {
+      guard extendsUnderTopBar != oldValue, isViewLoaded else { return }
+      applyContentInsetBehavior()
+    }
+  }
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -142,6 +151,26 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     setupCollectionView()
     setupDataSource()
     applySnapshot()
+  }
+
+  override func viewSafeAreaInsetsDidChange() {
+    super.viewSafeAreaInsetsDidChange()
+    if extendsUnderTopBar { applyContentInsetBehavior() }
+  }
+
+  private func applyContentInsetBehavior() {
+    guard let collectionView else { return }
+    if extendsUnderTopBar {
+      collectionView.contentInsetAdjustmentBehavior = .never
+      let safeArea = view.safeAreaInsets
+      collectionView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: safeArea.bottom, right: 0)
+      collectionView.verticalScrollIndicatorInsets = UIEdgeInsets(
+        top: safeArea.top, left: 0, bottom: safeArea.bottom, right: 0)
+    } else {
+      collectionView.contentInsetAdjustmentBehavior = .automatic
+      collectionView.contentInset = .zero
+      collectionView.verticalScrollIndicatorInsets = .zero
+    }
   }
 
   override func viewDidDisappear(_ animated: Bool) {
@@ -235,10 +264,12 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     collectionView.delegate = self
     collectionView.prefetchDataSource = self
     collectionView.directionalLayoutMargins = .zero
-    collectionView.contentInsetAdjustmentBehavior = .automatic
     collectionView.alwaysBounceVertical = true
+    // Lets the under-bar header cell resize when its SwiftUI content changes.
+    collectionView.selfSizingInvalidation = .enabledIncludingConstraints
     collectionView.keyboardDismissMode = .onDrag
     collectionView.scrollsToTop = isScrollsToTop
+    applyContentInsetBehavior()
     view.addSubview(collectionView)
     NSLayoutConstraint.activate([
       collectionView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -315,9 +346,21 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
       }
       .margins(.all, 0)
     }
+    // UIHostingConfiguration pads and sizes content by the safe area its cell
+    // overlaps, so a header drawn under the bar would sit a bar-height low in an
+    // over-tall cell. That header is hosted with safe-area regions turned off.
+    let underBarHeaderRegistration = UICollectionView.CellRegistration<SafeAreaFreeHostingCell, Item> {
+      [weak self] cell, _, _ in
+      guard let self else { return }
+      cell.setContent(self.hosted(self.headerView ?? AnyView(EmptyView())).id(self.appState?.userDID))
+    }
     dataSource = UICollectionViewDiffableDataSource<Section, Item>(collectionView: collectionView) {
-      collectionView, indexPath, item in
-      collectionView.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
+      [weak self] collectionView, indexPath, item in
+      if item == .header, self?.extendsUnderTopBar == true {
+        return collectionView.dequeueConfiguredReusableCell(
+          using: underBarHeaderRegistration, for: indexPath, item: item)
+      }
+      return collectionView.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
     }
   }
 
@@ -458,6 +501,36 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   }
 }
 
+/// Hosts SwiftUI with safe-area regions off, so content drawn under a bar is
+/// neither pushed down nor grown by the bar's inset.
+private final class SafeAreaFreeHostingCell: UICollectionViewListCell {
+  private let host = UIHostingController(rootView: AnyView(EmptyView()))
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    backgroundConfiguration = .clear()
+    host.safeAreaRegions = []
+    host.sizingOptions = .intrinsicContentSize
+    host.view.backgroundColor = .clear
+    host.view.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(host.view)
+    NSLayoutConstraint.activate([
+      host.view.topAnchor.constraint(equalTo: contentView.topAnchor),
+      host.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      host.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+      host.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  func setContent(_ content: some View) {
+    host.rootView = AnyView(content)
+    host.view.invalidateIntrinsicContentSize()
+  }
+}
+
 private struct PostListCollectionRepresentable: UIViewControllerRepresentable {
   let list: PostListCollectionView
 
@@ -479,6 +552,7 @@ private struct PostListCollectionRepresentable: UIViewControllerRepresentable {
     controller.onRemoveBookmark = list.onRemoveBookmark
     controller.onScrollOffsetChanged = list.onScrollOffsetChanged
     controller.isScrollsToTop = list.scrollsToTop
+    controller.extendsUnderTopBar = list.extendsUnderTopBar
     controller.setEntries(list.entries, hasMore: list.hasMore, isLoadingMore: list.isLoadingMore, footerState: list.footerState)
     controller.view.accessibilityIdentifier = list.accessibilityIdentifier
   }
@@ -507,6 +581,15 @@ struct PostListCollectionView: View {
   var scrollToTopRequestID: Int
   var appState: AppState?
   var accessibilityIdentifier: String?
+  var extendsUnderTopBar = false
+
+  /// Draws the first row under a transparent navigation bar (profile banners).
+  /// Pair with `.ignoresSafeArea(edges: .top)`.
+  func extendingUnderTopBar() -> Self {
+    var copy = self
+    copy.extendsUnderTopBar = true
+    return copy
+  }
 
   init(
     entries: [PostListEntry],
