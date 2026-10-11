@@ -683,7 +683,8 @@ struct CatbirdApp: App {
   // MARK: - State Restoration
   @State private var restorationIdentifier = "CatbirdMainApp"
 
-  @Environment(\.modelContext) private var modelContext
+  // No @Environment(\.modelContext) here: an App struct is outside every
+  // .modelContainer, so it reads SwiftUI's empty placeholder context, not the store.
   @Environment(\.scenePhase) private var scenePhase
 
   #if os(iOS)
@@ -1290,7 +1291,7 @@ private extension CatbirdApp {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
       }
-      FeedStateStore.shared.setModelContext(modelContext)
+      FeedStateStore.shared.setModelContext(container.mainContext)
     }
 
     if #available(iOS 26.0, macOS 26.0, *) {
@@ -1421,7 +1422,11 @@ private extension CatbirdApp {
 
     // If authenticated, initialize preferences manager and app services
     if let appState = appStateManager.lifecycle.appState {
-      appState.initializePreferencesManager(with: modelContext)
+      // Bind the real store. AppStateManager has normally done this already, and the
+      // bootstrap key makes a repeat with the same container a no-op.
+      if let container = appStateManager.modelContainerState.container {
+        appState.initializePreferencesManager(with: container.mainContext)
+      }
 
       // P001: Dead model-warmup calls removed
 
