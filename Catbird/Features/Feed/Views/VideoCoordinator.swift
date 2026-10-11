@@ -9,6 +9,7 @@ import AVKit
 import Foundation
 import Observation
 import SwiftUI
+import OSLog
 import os.log
 
 /// Manages video playback and state across the app
@@ -30,6 +31,13 @@ final class VideoCoordinator {
   private var isApplicationActive = true
 
   private let logger = Logger(subsystem: "blue.catbird", category: "VideoCoordinator")
+
+  // MARK: - Loop Observers & LRU
+  private var loopObserverTokens: [String: NSObjectProtocol] = [:]
+  private var lastVisibleTimes: [String: Date] = [:]
+  private let maxNonVisibleVideos = 6
+  private var fullscreenActiveVideoIDs: Set<String> = []
+  private let signposter = OSSignposter(subsystem: "blue.catbird.performance", category: "VideoRegistry")
 
   // App settings for autoplay preference
   weak var appSettings: AppSettings? {
@@ -85,6 +93,16 @@ final class VideoCoordinator {
     // playback state; the existing registration is still valid.
     if pipActiveVideoIDs.contains(model.id) {
       logger.debug("📺 Skipping re-register for PiP-active video \(model.id)")
+      return
+    }
+
+    // P099: Skip re-registering if already managed on the exact same player instance
+    if let existing = activeVideos[model.id], existing.player === player {
+      logger.debug("📹 Player for \(model.id) already registered on the same instance, updating state")
+      player.isMuted = model.isMuted
+      player.volume = model.isMuted ? 0 : model.volume
+      lastVisibleTimes[model.id] = Date()
+      updatePlaybackStates()
       return
     }
 
@@ -161,7 +179,11 @@ final class VideoCoordinator {
       activeVideos[model.id] = (model, player, lastPosition)
     }
 
-    logger.debug("📹 Total active videos: \(self.activeVideos.count)")
+    lastVisibleTimes[model.id] = Date()
+    enforceLRUCap()
+
+    signposter.emitEvent("PlayerRegistered", "count: \(self.activeVideos.count), visible: \(self.visibleVideoIDs.count)")
+    logger.debug("📹 Total active videos: \(self.activeVideos.count), visible: \(self.visibleVideoIDs.count)")
 
     playbackObservers[model.id] = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
       Task { @MainActor [weak self] in self?.updateAudioSessionOwnership() }
@@ -175,23 +197,36 @@ final class VideoCoordinator {
 
   /// Check if a video stream should be preserved during scrolling
   func shouldPreserveStream(for modelId: String) -> Bool {
-    // Never tear down a stream that is actively playing in PiP
-    if pipActiveVideoIDs.contains(modelId) {
-      return true
-    }
+    // Only preserve streams that are actively playing in PiP or Fullscreen
+    pipActiveVideoIDs.contains(modelId) || fullscreenActiveVideoIDs.contains(modelId)
+  }
 
-    // Preserve if video was recently visible
-    if let (model, _, _) = activeVideos[modelId] {
-      // Always preserve GIFs since they're small and loop
-      if model.type.isGif {
-        return true
+  /// Track fullscreen active status
+  func setFullscreenActive(_ active: Bool, for modelId: String) {
+    if active {
+      fullscreenActiveVideoIDs.insert(modelId)
+      markedForCleanup.remove(modelId)
+      preservedStreams.removeValue(forKey: modelId)
+      if let (model, player, _) = activeVideos[modelId] {
+        player.configureForEngagedPlayback(isUnmuted: !model.isMuted)
       }
-
-      // For HLS streams, preserve if recently active
-      return true  // For now, preserve all streams during scroll
+    } else {
+      fullscreenActiveVideoIDs.remove(modelId)
+      if let (model, player, _) = activeVideos[modelId], model.isMuted {
+        player.configureForFeedPreview()
+      }
+      if !visibleVideoIDs.contains(modelId) {
+        markForCleanup(modelId)
+      }
     }
+  }
 
-    return false
+  func isFullscreenActive(_ modelId: String) -> Bool {
+    fullscreenActiveVideoIDs.contains(modelId)
+  }
+
+  func isRegistered(_ modelId: String) -> Bool {
+    activeVideos[modelId] != nil
   }
 
   /// Mark a video for potential cleanup instead of immediate destruction
@@ -203,9 +238,9 @@ final class VideoCoordinator {
     Task { @MainActor in
       try? await Task.sleep(nanoseconds: UInt64(streamPreservationTime * 1_000_000_000))
 
-      // Only clean up if still marked, not visible, and not playing in PiP
+      // Only clean up if still marked, not visible, and not playing in PiP or Fullscreen
       if markedForCleanup.contains(modelId) && !visibleVideoIDs.contains(modelId)
-        && !pipActiveVideoIDs.contains(modelId)
+        && !pipActiveVideoIDs.contains(modelId) && !fullscreenActiveVideoIDs.contains(modelId)
       {
         logger.debug("⏰ Delayed cleanup triggered for \(modelId)")
         forceUnregister(modelId)
@@ -217,7 +252,31 @@ final class VideoCoordinator {
   func forceUnregister(_ modelId: String) {
     markedForCleanup.remove(modelId)
     preservedStreams.removeValue(forKey: modelId)
+    lastVisibleTimes.removeValue(forKey: modelId)
     unregister(modelId)
+  }
+
+  /// Evict oldest non-visible, non-PiP videos exceeding LRU cap
+  private func enforceLRUCap() {
+    let nonVisibleCandidates = activeVideos.keys.filter { id in
+      !visibleVideoIDs.contains(id)
+        && !pipActiveVideoIDs.contains(id)
+        && !fullscreenActiveVideoIDs.contains(id)
+        && markedForCleanup.contains(id)
+    }
+    guard nonVisibleCandidates.count > maxNonVisibleVideos else { return }
+
+    let sortedByAge = nonVisibleCandidates.sorted { id1, id2 in
+      let time1 = lastVisibleTimes[id1] ?? .distantPast
+      let time2 = lastVisibleTimes[id2] ?? .distantPast
+      return time1 < time2
+    }
+
+    let excessCount = nonVisibleCandidates.count - maxNonVisibleVideos
+    for id in sortedByAge.prefix(excessCount) {
+      logger.debug("🗑️ LRU evicting non-visible video \(id)")
+      forceUnregister(id)
+    }
   }
 
   /// Update visibility of a video model
@@ -228,6 +287,7 @@ final class VideoCoordinator {
     if isVisible {
       // For becoming visible, process immediately to avoid playback delays
       visibleVideoIDs.insert(modelId)
+      lastVisibleTimes[modelId] = Date()
       // Remove from cleanup queue if becoming visible again
       markedForCleanup.remove(modelId)
       preservedStreams.removeValue(forKey: modelId)
@@ -246,6 +306,8 @@ final class VideoCoordinator {
         guard !Task.isCancelled else { return }
 
         visibleVideoIDs.remove(modelId)
+        lastVisibleTimes[modelId] = Date()
+        enforceLRUCap()
         // Don't immediately pause, let updatePlaybackStates handle it
         updatePlaybackStates()
       }
@@ -268,7 +330,12 @@ final class VideoCoordinator {
       pauseVideo(currentlyPlaying)
     }
 
-    // Start playing the requested video
+    if !model.isMuted {
+      player.configureForEngagedPlayback(isUnmuted: true)
+    } else {
+      player.configureForFeedPreview()
+    }
+
     player.seek(to: lastPlaybackTime)
     player.safePlay()
 
@@ -278,6 +345,7 @@ final class VideoCoordinator {
 
     // Ensure video is marked as visible
     visibleVideoIDs.insert(modelId)
+    lastVisibleTimes[modelId] = Date()
     updateAudioSessionOwnership()
   }
 
@@ -320,11 +388,12 @@ final class VideoCoordinator {
     logger.debug("🔄 Setting up looping observer for \(modelId)")
 
     // Remove any existing observers for this item
-    NotificationCenter.default.removeObserver(
-      self, name: .AVPlayerItemDidPlayToEndTime, object: item)
-
+    if let oldToken = loopObserverTokens.removeValue(forKey: modelId) {
+      NotificationCenter.default.removeObserver(oldToken)
+    }
     // Add new observer for looping
-    NotificationCenter.default.addObserver(
+    // Add new observer for looping (P099: retain token)
+    let token = NotificationCenter.default.addObserver(
       forName: .AVPlayerItemDidPlayToEndTime,
       object: item,
       queue: .main
@@ -346,6 +415,7 @@ final class VideoCoordinator {
         }
       }
     }
+    loopObserverTokens[modelId] = token
   }
 
   /// Update the playback state of all managed videos
@@ -355,17 +425,20 @@ final class VideoCoordinator {
       defer { updateAudioSessionOwnership() }
 
       let autoplayEnabled = shouldAutoplayVideos()
+
+      // Only inspect currently visible active videos (stops walking all registered players)
+      let visibleActiveIDs = visibleVideoIDs.filter { activeVideos[$0] != nil }
+
       logger.debug(
-        "🎮 updatePlaybackStates - autoplay enabled: \(autoplayEnabled), visible videos: \(self.visibleVideoIDs.count), total videos: \(self.activeVideos.count)"
+        "🎮 updatePlaybackStates - autoplay enabled: \(autoplayEnabled), visible videos: \(visibleActiveIDs.count), total active: \(self.activeVideos.count)"
       )
 
       // Find the top visible video with improved prioritization
-      let topVideoId = activeVideos.keys
-        .filter { visibleVideoIDs.contains($0) }
+      let topVideoId = visibleActiveIDs
         .sorted { id1, id2 in
-          // First priority: videos that are already playing
-          let isPlaying1 = activeVideos[id1]?.model.isPlaying ?? false
-          let isPlaying2 = activeVideos[id2]?.model.isPlaying ?? false
+          // First priority: videos that are currently playing (timeControlStatus != .paused)
+          let isPlaying1 = activeVideos[id1]?.player.timeControlStatus != .paused
+          let isPlaying2 = activeVideos[id2]?.player.timeControlStatus != .paused
           if isPlaying1 != isPlaying2 {
             return isPlaying1
           }
@@ -388,14 +461,21 @@ final class VideoCoordinator {
         logger.debug("🎯 No visible videos")
       }
 
-      // Update players based on visibility
-      for (id, (model, player, lastPlaybackTime)) in activeVideos {
-        // Leave PiP-owned players alone; AVKit drives their playback and
-        // pausing/downgrading them here would kill the PiP session.
-        if pipActiveVideoIDs.contains(id) { continue }
+      // If previous playing video is no longer top, pause it and restore preview config
+      if let oldPlayingId = currentlyPlayingVideoId, oldPlayingId != topVideoId {
+        if !pipActiveVideoIDs.contains(oldPlayingId) && !fullscreenActiveVideoIDs.contains(oldPlayingId) {
+          pauseVideo(oldPlayingId)
+          activeVideos[oldPlayingId]?.player.configureForFeedPreview()
+        }
+      }
 
-        // Mirror model.isMuted onto the player. Forcing mute here regardless
-        // of intent re-silenced unmuted videos on every state change.
+      // Update visible players only
+      for id in visibleActiveIDs {
+        // Leave PiP and Fullscreen owned players alone
+        if pipActiveVideoIDs.contains(id) || fullscreenActiveVideoIDs.contains(id) { continue }
+        guard let (model, player, lastPlaybackTime) = activeVideos[id] else { continue }
+
+        // Mirror model.isMuted onto the player
         if model.isMuted {
           if player.isMuted == false { player.isMuted = true }
           if player.volume != 0 { player.volume = 0 }
@@ -405,8 +485,13 @@ final class VideoCoordinator {
         }
 
         if id == topVideoId {
-          // Elevate quality/buffering for the actively watched/top video
-          player.configureForEngagedPlayback(isUnmuted: !model.isMuted)
+          // Engaged playback config only when unmuted; capped bitrate/buffer for muted autoplay
+          if !model.isMuted {
+            player.configureForEngagedPlayback(isUnmuted: true)
+          } else {
+            player.configureForFeedPreview()
+          }
+
           // For GIFs, always autoplay regardless of autoplay setting since they're silent
           // For regular videos, respect the autoplay setting
           let shouldPlay = model.type.isGif || autoplayEnabled
@@ -422,16 +507,14 @@ final class VideoCoordinator {
             currentlyPlayingVideoId = id
           } else if !shouldPlay && model.isPlaying {
             // If autoplay is disabled for regular videos but video is playing, pause it
-            // Note: This won't affect GIFs since shouldPlay is always true for them
             logger.debug("⏸️ Pausing video due to autoplay disabled: \(id)")
             pauseVideo(id)
           }
         } else {
-          // Non-top videos should not play. Keep them lightweight.
+          // Non-top visible videos should not play. Keep them lightweight.
           player.configureForFeedPreview()
-          // Pause non-visible videos
           if model.isPlaying {
-            logger.debug("⏸️ Pausing non-visible \(model.type.isGif ? "GIF" : "video"): \(id)")
+            logger.debug("⏸️ Pausing non-top visible \(model.type.isGif ? "GIF" : "video"): \(id)")
             pauseVideo(id)
           }
         }
@@ -467,8 +550,8 @@ final class VideoCoordinator {
   func unregister(_ modelId: String) {
     // An active PiP session owns this player; tearing it down (pause +
     // replaceCurrentItem(nil)) would kill PiP. Teardown re-runs on PiP stop.
-    if pipActiveVideoIDs.contains(modelId) {
-      logger.debug("📺 Deferring unregister for PiP-active video \(modelId)")
+    if pipActiveVideoIDs.contains(modelId) || fullscreenActiveVideoIDs.contains(modelId) {
+      logger.debug("📺 Deferring unregister for PiP/Fullscreen-active video \(modelId)")
       return
     }
 
@@ -493,10 +576,9 @@ final class VideoCoordinator {
     statusObservers["\(modelId)-setup"]?.cancel()
     statusObservers.removeValue(forKey: "\(modelId)-setup")
 
-    // Remove any notification observers for this model's player item
-    if let (_, player, _) = activeVideos[modelId], let item = player.currentItem {
-      NotificationCenter.default.removeObserver(
-        self, name: .AVPlayerItemDidPlayToEndTime, object: item)
+    // P099: Remove any looping notification observer for this model
+    if let token = loopObserverTokens.removeValue(forKey: modelId) {
+      NotificationCenter.default.removeObserver(token)
     }
 
     // Pause and remove the video
@@ -515,9 +597,11 @@ final class VideoCoordinator {
     visibleVideoIDs.remove(modelId)
     markedForCleanup.remove(modelId)
     preservedStreams.removeValue(forKey: modelId)
+    lastVisibleTimes.removeValue(forKey: modelId)
     updateAudioSessionOwnership()
 
-    logger.debug("🧹 Fully unregistered video \(modelId)")
+    signposter.emitEvent("PlayerUnregistered", "count: \(self.activeVideos.count), visible: \(self.visibleVideoIDs.count)")
+    logger.debug("🧹 Fully unregistered video \(modelId). Total live players: \(self.activeVideos.count)")
     updatePlaybackStates()
   }
 
@@ -659,6 +743,7 @@ final class VideoCoordinator {
       if player.volume == 0 { player.volume = 1.0 }
       model.isMuted = false
       model.volume = 1.0
+      player.configureForEngagedPlayback(isUnmuted: true)
     } else {
       if model.isMuted == true && player.isMuted == true && player.volume == 0 {
         return
@@ -668,6 +753,7 @@ final class VideoCoordinator {
       if player.volume != 0 { player.volume = 0 }
       model.isMuted = true
       model.volume = 0
+      player.configureForFeedPreview()
     }
   }
 
@@ -704,6 +790,9 @@ final class VideoCoordinator {
     pipRetainedObjects[modelId] = objects
     markedForCleanup.remove(modelId)
     preservedStreams.removeValue(forKey: modelId)
+    if let (model, player, _) = activeVideos[modelId] {
+      player.configureForEngagedPlayback(isUnmuted: !model.isMuted)
+    }
     updateAudioSessionOwnership()
   }
 

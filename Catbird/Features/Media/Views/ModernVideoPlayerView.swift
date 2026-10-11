@@ -70,6 +70,7 @@ struct ModernVideoPlayerView: View {
   @State private var showFullscreen = false
   @State private var loadFailed = false
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.displayScale) private var displayScale
   @Environment(AppState.self) private var appState
   let postID: String
   private var preparePlayer: (@MainActor (VideoModel) async throws -> AVPlayer)?
@@ -167,20 +168,15 @@ struct ModernVideoPlayerView: View {
       ZStack {
         playerLayerView()
 
-        // Show thumbnail overlay if video is not playing and autoplay is disabled
-        if !model.isPlaying && !appState.appSettings.autoplayVideos && !loadFailed,
-           let thumbnailURL = model.thumbnailURL
-        {
-          ZStack {
-            VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
-            Image(systemName: "play.fill")
-              .font(.title2)
-              .foregroundStyle(.white)
-              .frame(width: 52, height: 52)
-              .background(.ultraThinMaterial, in: Circle())
-              .accessibilityHidden(true)
-          }
-          .allowsHitTesting(false)  // Let taps pass through to the player
+        // Show play glyph overlay if video is not playing and autoplay is disabled
+        if !model.isPlaying && !appState.appSettings.autoplayVideos && !loadFailed {
+          Image(systemName: "play.fill")
+            .font(.title2)
+            .foregroundStyle(.white)
+            .frame(width: 52, height: 52)
+            .background(.ultraThinMaterial, in: Circle())
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)  // Let taps pass through to the player
         }
       }
       .contentShape(Rectangle())
@@ -207,16 +203,17 @@ struct ModernVideoPlayerView: View {
       .frame(maxWidth: 800)
       #endif
       .task {
-        await setupPlayer()
+        if appState.appSettings.autoplayVideos || model.type.isGif {
+          await setupPlayer()
+        }
       }
       .onAppear {
         // Setup player if needed
-        
         if let player = player {
           VideoCoordinator.shared.appSettings = appState.appSettings
-          // The existing player may be owned by PiP with a native mute change
-          // still awaiting model synchronization. Let its guard run first.
           VideoCoordinator.shared.register(model, player: player)
+        } else if appState.appSettings.autoplayVideos || model.type.isGif {
+          Task { await setupPlayer() }
         }
       }
       .onDisappear {
@@ -243,19 +240,22 @@ struct ModernVideoPlayerView: View {
       .onChange(of: scenePhase) { oldPhase, newPhase in
         handleScenePhaseChange(from: oldPhase, to: newPhase)
       }
+      .onChange(of: showFullscreen) { _, isFullscreen in
+        VideoCoordinator.shared.setFullscreenActive(isFullscreen, for: model.id)
+      }
 
     if #available(iOS 18.0, *) {
       finalView
         .onScrollVisibilityChange(threshold: 0.5) { visible in
           isVisible = visible
-          VideoCoordinator.shared.updateVisibility(visible, for: model.id)
+          handleVisibilityChange(visible)
         }
     } else {
       finalView
         .background(
           VisibilityDetector(visibilityThreshold: 0.5) { isVisible in
             self.isVisible = isVisible
-            VideoCoordinator.shared.updateVisibility(isVisible, for: model.id)
+            handleVisibilityChange(isVisible)
           }
         )
     }
@@ -313,7 +313,18 @@ struct ModernVideoPlayerView: View {
       .clipShape(RoundedRectangle(cornerRadius: 10))
     } else {
       videoPoster
-        .overlay { ProgressView().tint(.white) }
+        .overlay {
+          if appState.appSettings.autoplayVideos || model.type.isGif {
+            ProgressView().tint(.white)
+          } else {
+            Image(systemName: "play.fill")
+              .font(.title2)
+              .foregroundStyle(.white)
+              .frame(width: 52, height: 52)
+              .background(.ultraThinMaterial, in: Circle())
+              .accessibilityHidden(true)
+          }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
   }
@@ -322,7 +333,14 @@ struct ModernVideoPlayerView: View {
   private var videoPoster: some View {
     Color.black.overlay {
       if let thumbnailURL = model.thumbnailURL {
-        LazyImage(url: thumbnailURL) { state in
+        let posterSize = CGSize(width: 600, height: 600 / max(model.aspectRatio, 0.5))
+        let request = ImageRequestFactory.image(
+          thumbnailURL,
+          pointSize: posterSize,
+          scale: displayScale,
+          contentMode: .aspectFit
+        )
+        LazyImage(request: request) { state in
           if let image = state.image {
             image.resizable().scaledToFit()
           }
@@ -386,8 +404,11 @@ struct ModernVideoPlayerView: View {
   // MARK: - Gesture Handling
 
   private func handleAccessibilityActivate() {
-    if loadFailed {
-      Task { await setupPlayer() }
+    if loadFailed || player == nil || player?.currentItem == nil || !VideoCoordinator.shared.isRegistered(model.id) {
+      Task {
+        await setupPlayer()
+        VideoCoordinator.shared.forcePlayVideo(model.id)
+      }
     } else if !model.isPlaying && !appState.appSettings.autoplayVideos {
       VideoCoordinator.shared.forcePlayVideo(model.id)
     } else if case .hlsStream = model.type, player != nil {
@@ -397,6 +418,14 @@ struct ModernVideoPlayerView: View {
 
   private func handleTap(location: CGPoint) {
     guard !muteButtonFrame.contains(location) else { return }
+
+    if player == nil || player?.currentItem == nil || !VideoCoordinator.shared.isRegistered(model.id) {
+      Task {
+        await setupPlayer()
+        VideoCoordinator.shared.forcePlayVideo(model.id)
+      }
+      return
+    }
 
     if !model.isPlaying && !appState.appSettings.autoplayVideos {
       VideoCoordinator.shared.forcePlayVideo(model.id)
@@ -420,12 +449,20 @@ struct ModernVideoPlayerView: View {
 
 
   private func setupPlayer() async {
-    // Check if we already have a player (from restoration or previous setup)
-    if player != nil {
-      logger.debug("📺 Player already exists for \(model.id), skipping setup")
-      return
+    // Check if we already have a working, registered player
+    if let player {
+      let isReady = player.currentItem != nil || preparePlayer != nil
+      if isReady && (registerPlayer != nil || VideoCoordinator.shared.isRegistered(model.id)) {
+        logger.debug("📺 Player already exists and is registered for \(model.id), skipping setup")
+        return
+      }
+
+      if isReady {
+        logger.debug("📺 Player exists with item but unregistered for \(model.id), re-registering")
+        registerPreparedPlayer(player)
+        return
+      }
     }
-    
     loadFailed = false
 
     // Create player
@@ -521,19 +558,30 @@ struct ModernVideoPlayerView: View {
   private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
     switch newPhase {
     case .active:
-      if isVisible, let player = player, model.isPlaying {
-        player.safePlay()
+      if !VideoCoordinator.shared.isPictureInPictureActive(model.id) {
+        handleVisibilityChange(isVisible)
       }
     case .background, .inactive:
       // Pausing here would end an active PiP session when the app backgrounds
       if !VideoCoordinator.shared.isPictureInPictureActive(model.id) {
-        player?.pause()
+        VideoCoordinator.shared.updateVisibility(false, for: model.id)
       }
     @unknown default:
       break
     }
   }
 
+
+  private func handleVisibilityChange(_ visible: Bool) {
+    VideoCoordinator.shared.updateVisibility(visible, for: model.id)
+    if visible {
+      if player == nil || player?.currentItem == nil || !VideoCoordinator.shared.isRegistered(model.id) {
+        Task { @MainActor in
+          await setupPlayer()
+        }
+      }
+    }
+  }
 
 }
 
@@ -543,16 +591,27 @@ struct ModernVideoPlayerView: View {
 struct VideoThumbnailView: View {
   let thumbnailURL: URL
   let aspectRatio: CGFloat
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
-    AsyncImage(url: thumbnailURL) { image in
-      image
-        .resizable()
-        .aspectRatio(contentMode: .fill)
-    } placeholder: {
-      Rectangle()
-        .fill(Color.gray.opacity(0.3))
+    let thumbSize = CGSize(width: 600, height: 600 / max(aspectRatio, 0.5))
+    let request = ImageRequestFactory.image(
+      thumbnailURL,
+      pointSize: thumbSize,
+      scale: displayScale,
+      contentMode: .aspectFill
+    )
+    LazyImage(request: request) { state in
+      if let image = state.image {
+        image
+          .resizable()
+          .aspectRatio(contentMode: .fill)
+      } else {
+        Rectangle()
+          .fill(Color.gray.opacity(0.3))
+      }
     }
+    .pipeline(ImageLoadingManager.shared.pipeline)
     .aspectRatio(aspectRatio, contentMode: .fit)
     .clipped()
   }

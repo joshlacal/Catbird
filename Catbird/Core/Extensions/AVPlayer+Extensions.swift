@@ -38,7 +38,7 @@ extension AVPlayer {
     
     /// Configure player/item for lightweight, muted preview in a scrolling feed
     /// Reduces decode/network pressure while keeping autoplay smooth
-    func configureForFeedPreview() {
+    func configureForFeedPreview(preferredMaximumResolution: CGSize? = nil) {
         guard let item = currentItem else { return }
         
         // Keep muted in preview to avoid audio session churn
@@ -56,7 +56,7 @@ extension AVPlayer {
         // Cap resolution when available (keeps decoder load down for feed tiles)
         #if os(iOS)
         if #available(iOS 15.0, *) {
-            item.preferredMaximumResolution = CGSize(width: 960, height: 540) // ~540p cap
+            item.preferredMaximumResolution = preferredMaximumResolution ?? CGSize(width: 960, height: 540) // ~540p cap
         }
         #endif
         
