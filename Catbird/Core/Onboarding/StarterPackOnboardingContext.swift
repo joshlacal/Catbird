@@ -66,9 +66,11 @@ struct StarterPackFinalizationResult: Sendable, Equatable {
     }
 }
 
-/// Manages pending starter pack onboarding context and post-auth finalization
+/// Manages pending starter pack onboarding context and post-auth finalization.
+/// Main-actor isolated: finalization and the auth observer both change its state.
+@MainActor
 @Observable
-final class StarterPackOnboardingManager: @unchecked Sendable {
+final class StarterPackOnboardingManager {
     static let shared = StarterPackOnboardingManager()
     
     private let logger = Logger(subsystem: "blue.catbird", category: "StarterPackOnboarding")
@@ -86,7 +88,7 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         }
     }
     
-    private var authObserverTask: Task<Void, Never>?
+    @ObservationIgnored private var authObserverTask: Task<Void, Never>?
     
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -151,10 +153,19 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         self.activeFinalizationTask = nil
     }
     
+    /// Resets the stored result and cancels a running finalization whenever the signed-in
+    /// account changes. `.shared` is often first used after launch has signed in, so the
+    /// observer starts from the account signed in now, not from nil: otherwise the first
+    /// sign-out (nil after nil) would keep the previous account's result and finalization.
+    /// The current state is read and the stream subscribed together on the main actor, where
+    /// AuthenticationManager.updateState runs, so no change falls between them.
     private func startAuthObservation() {
-        authObserverTask = Task { [weak self] in
-            var lastDID: String?
-            for await state in await AppStateManager.shared.authentication.stateChanges {
+        let authentication = AppStateManager.shared.authentication
+        let states = authentication.stateChanges
+        let initialDID = authentication.state.userDID
+        authObserverTask = Task { @MainActor [weak self] in
+            var lastDID = initialDID
+            for await state in states {
                 guard !Task.isCancelled, let self else { return }
                 let currentDID = state.userDID
                 if currentDID != lastDID {
