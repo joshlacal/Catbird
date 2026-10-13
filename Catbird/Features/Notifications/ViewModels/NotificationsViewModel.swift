@@ -354,7 +354,13 @@ private actor FollowRecordCreatedAtCacheActor {
     if !force {
       let hasUnreadInList = groupedNotifications.contains { $0.hasUnreadNotifications }
       let unreadCount = notificationManager?.unreadCount ?? 0
-      guard hasUnreadInList || unreadCount > 0 else { return }
+      guard hasUnreadInList || unreadCount > 0 else {
+        // Nothing to mark on the server, but still clear the app badge: a push
+        // can set it while the app is suspended after everything was read on
+        // another device, and unreadCount is already 0 then.
+        notificationManager?.updateUnreadCountAfterSeen()
+        return
+      }
     }
 
     do {
