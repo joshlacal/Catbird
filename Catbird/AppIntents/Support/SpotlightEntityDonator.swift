@@ -411,6 +411,28 @@ enum SpotlightDonationModeration {
     !policy.decide(post: post).ui(.contentList).filter
   }
 
+  /// What a rendered post row may seed into the on-screen resolution stores.
+  struct RowSeed: Equatable, Sendable {
+    /// Store the post in `PostEntityStore`.
+    let storesPost: Bool
+    /// Store the author in `ProfileEntityStore`.
+    let storesAuthor: Bool
+  }
+
+  /// What a rendered post row (`PostView`) may seed into the on-screen
+  /// resolution stores, which are persisted to the App Group. The post's entry
+  /// carries its text and the author avatar URL, so a post is stored only when
+  /// lists show it, its body and media are not gated, and its author's avatar
+  /// is not a placeholder. The author's profile is stored unless its avatar is
+  /// a placeholder, as `ProfileRowView` does.
+  static func rowSeed(_ post: AppBskyFeedDefs.PostView, policy: ModerationPolicy) -> RowSeed {
+    let moderation = PostModerationPresentation.make(post: post, policy: policy)
+    let storesAuthor = !moderation.concealsAvatar
+    let storesPost = storesAuthor && !moderation.isFilteredFromList
+      && !moderation.concealsBody && !moderation.concealsMedia
+    return RowSeed(storesPost: storesPost, storesAuthor: storesAuthor)
+  }
+
   /// Whether a post may be indexed: no list filter or blur, no media blur, and
   /// no blur on the author avatar the entry shows.
   static func allowsPost(_ post: AppBskyFeedDefs.PostView, policy: ModerationPolicy) -> Bool {

@@ -556,8 +556,22 @@ struct PostView: View, Identifiable {
       state.initialLoadComplete = true
       return
     }
-    // Note: P034 per-row App Intents entity store removed (coalesced export in SpotlightEntityDonator covers it).
-    
+    // Seed the on-screen resolution stores so Siri's "this post" resolves from
+    // memory on every surface that renders a row (search, profiles, hashtags,
+    // notifications, quotes), not only feeds and threads, and so it is ready as
+    // soon as the row renders. Not awaited (P034): a store is an in-memory
+    // update plus a coalesced App Group write (AppGroupEntityWriteBuffer).
+    // Moderation keeps gated posts and placeholder avatars out of the stores.
+    if #available(iOS 18.0, *), visibilityContext == .public {
+      let seed = SpotlightDonationModeration.rowSeed(post, policy: appState.moderationPolicy)
+      if seed.storesPost || seed.storesAuthor {
+        Task(priority: .utility) {
+          if seed.storesPost { await PostEntityStore.shared.store(post) }
+          if seed.storesAuthor { await ProfileEntityStore.shared.store(ProfileEntity(from: post.author)) }
+        }
+      }
+    }
+
     // Set up report callback
     menuVm.onReportPost = {
       state.showingReportView = true  // Use consolidated state
