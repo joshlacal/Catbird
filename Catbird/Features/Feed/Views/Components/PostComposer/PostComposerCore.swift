@@ -400,6 +400,12 @@ extension PostComposerViewModel {
             if item.hasItemConformingToTypeIdentifier("public.image") {
                 do {
                     if let data = try await item.loadItem(forTypeIdentifier: "public.image", options: nil) as? Data {
+                        // An animated GIF becomes a video; never decode or save it as a still.
+                        if isDataAnimatedGIF(data) {
+                            await processGIFAsVideoFromData(data)
+                            continue
+                        }
+
                         var mediaItem = MediaItem()
                         mediaItem.rawData = data
                         // One background task decodes the thumbnail and writes the draft file.
@@ -411,13 +417,24 @@ extension PostComposerViewModel {
                         }
                         mediaItem.isLoading = false
 
-                        if isDataAnimatedGIF(data) {
-                            await processGIFAsVideoFromData(data)
-                        } else {
-                            mediaItems.append(mediaItem)
-                            if let draftFileURLString {
-                                rememberDraftImageFile(draftFileURLString, for: mediaItem.id, data: data)
-                            }
+                        // The checks above ran before these awaits. A GIF from earlier in this
+                        // paste, a video or GIF picked meanwhile, or another paste or drop may
+                        // have changed what the post can hold.
+                        guard mediaItems.count < maxImagesAllowed else {
+                            alertItem = AlertItem(
+                                title: "Image Limit Reached",
+                                message: "A post can have up to \(maxImagesAllowed) images."
+                            )
+                            return
+                        }
+                        guard videoItem == nil, selectedGif == nil,
+                              !mediaItems.contains(where: { $0.isGifConversion }) else {
+                            alertItem = AlertItem(title: "Can’t Add Image", message: "Remove the video or GIF to add images.")
+                            return
+                        }
+                        mediaItems.append(mediaItem)
+                        if let draftFileURLString {
+                            rememberDraftImageFile(draftFileURLString, for: mediaItem.id, data: data)
                         }
                     }
                 } catch {

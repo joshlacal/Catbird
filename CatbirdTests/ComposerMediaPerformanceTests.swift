@@ -1,9 +1,11 @@
 import CryptoKit
 import Foundation
+import ImageIO
 import Petrel
 import SwiftUI
 import Testing
 import UIKit
+import UniformTypeIdentifiers
 @testable import Catbird
 
 @Suite("Composer media performance")
@@ -44,6 +46,28 @@ struct ComposerMediaPerformanceTests {
       rawVideoURLString: nil, rawImageURLString: urlString
     )
     return saved.toMediaItem()
+  }
+
+  /// A two-frame GIF, which the composer turns into a video.
+  private func animatedGIF() throws -> Data {
+    let output = NSMutableData()
+    let destination = try #require(
+      CGImageDestinationCreateWithData(output, UTType.gif.identifier as CFString, 2, nil)
+    )
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    for color in [UIColor.systemRed, UIColor.systemBlue] {
+      let frame = UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16), format: format).image { context in
+        color.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+      }
+      let properties = [
+        kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1]
+      ] as CFDictionary
+      CGImageDestinationAddImage(destination, try #require(frame.cgImage), properties)
+    }
+    #expect(CGImageDestinationFinalize(destination))
+    return output as Data
   }
 
   private func waitUntil(_ condition: () -> Bool) async throws {
@@ -293,5 +317,24 @@ struct ComposerMediaPerformanceTests {
     #expect(model.mediaItems.first?.rawData == original)
     #expect(model.mediaItems.first?.aspectRatio == CGSize(width: 1200, height: 800))
     #expect(model.alertItem == nil)
+  }
+
+  // MARK: - Paste
+
+  @Test("Pasting an animated GIF and a still together attaches only the GIF")
+  func pastedGIFThenStillAttachesOnlyTheGIF() async throws {
+    let model = await makeViewModel()
+    let gif = try animatedGIF()
+    try #require(model.isDataAnimatedGIF(gif))
+    let still = try jpeg(color: .systemGreen)
+    let providers = [gif, still].map { NSItemProvider(item: $0 as NSData, typeIdentifier: "public.image") }
+
+    await model.handleMediaPaste(providers)
+
+    // The GIF either became the video or stayed as a retryable GIF conversion; the still
+    // must not sit next to it, where posting would silently drop one of them.
+    #expect(!model.mediaItems.contains { !$0.isGifConversion })
+    #expect(model.videoItem != nil || model.mediaItems.contains { $0.isGifConversion })
+    #expect(model.alertItem != nil)
   }
 }
