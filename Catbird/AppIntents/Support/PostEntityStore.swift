@@ -14,11 +14,6 @@
 import Foundation
 import OSLog
 import Petrel
-#if canImport(UIKit)
-import UIKit
-#elseif canImport(AppKit)
-import AppKit
-#endif
 
 @available(iOS 18.0, *)
 actor PostEntityStore {
@@ -33,34 +28,8 @@ actor PostEntityStore {
   private let capacity = 500
   private let defaults: UserDefaults?
 
-  init(
-    defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
-  ) {
+  init(defaults: UserDefaults? = PostEntityCache.appGroupDefaults) {
     self.defaults = defaults
-    #if canImport(UIKit)
-    NotificationCenter.default.addObserver(
-      forName: UIApplication.willResignActiveNotification,
-      object: nil,
-      queue: nil
-    ) { [weak self] _ in
-      Task { [weak self] in await self?.flush() }
-    }
-    NotificationCenter.default.addObserver(
-      forName: UIApplication.didEnterBackgroundNotification,
-      object: nil,
-      queue: nil
-    ) { [weak self] _ in
-      Task { [weak self] in await self?.flush() }
-    }
-    #elseif canImport(AppKit)
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.willResignActiveNotification,
-      object: nil,
-      queue: nil
-    ) { [weak self] _ in
-      Task { [weak self] in await self?.flush() }
-    }
-    #endif
   }
 
   func store(_ view: AppBskyFeedDefs.PostView) {
@@ -82,19 +51,15 @@ actor PostEntityStore {
     for view in newViews {
       storeInMemory(view)
     }
-    // Write through to the shared app group so App Intents extension processes
+    // Mirror into the shared app group so App Intents extension processes
     // (Siri, Shortcuts) can resolve entities without a network round trip.
     PostEntityCache.upsert(newViews, defaults: defaults)
   }
-  /// Flushes any pending post entity writes to UserDefaults immediately.
-  func flush() {
-    PostEntityCache.flushSync(defaults: defaults)
-  }
 
+  /// Writes buffered App Group entries now instead of after the coalescing delay.
   func flushPendingWrites() {
-    flush()
+    PostEntityCache.flushPendingWrites(defaults: defaults)
   }
-
 
   /// Contract consumed by the generated PostEntityQuery (manifest
   /// `query.byIds.localStore`): identifiers with no cached view are simply

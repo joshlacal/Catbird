@@ -141,7 +141,8 @@ private enum Fixture {
     author: AppBskyActorDefs.ProfileViewBasic? = nil,
     text: String? = "Fixture post text",
     likeCount: Int? = nil,
-    indexedAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
+    indexedAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
+    rkey: String = "abc123"
   ) throws -> AppBskyFeedDefs.PostView {
     let record: ATProtocolValueContainer =
       text.map {
@@ -151,7 +152,7 @@ private enum Fixture {
           createdAt: ATProtocolDate(date: indexedAt)))
       } ?? .string("post-record-fixture")
     return AppBskyFeedDefs.PostView(
-      uri: try ATProtocolURI(uriString: "at://did:plc:author1234567890123456/app.bsky.feed.post/abc123"),
+      uri: try ATProtocolURI(uriString: "at://did:plc:author1234567890123456/app.bsky.feed.post/\(rkey)"),
       cid: CID.fromBlob(Data("post-fixture".utf8)),
       author: try author ?? profileViewBasic(),
       record: record,
@@ -505,10 +506,132 @@ struct GeneratedIntentsTests {
       await writer.store(view)
       await writer.flushPendingWrites()
 
-      let reader = PostEntityStore(defaults: defaults)
+      // A separate UserDefaults instance stands in for the extension process:
+      // it shares the suite's stored data but none of the writer's buffer.
+      let readerDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let reader = PostEntityStore(defaults: readerDefaults)
       let entities = await reader.entities(for: [view.uri.uriString()])
       #expect(entities.count == 1)
       #expect(entities.first?.text == "Persisted for Siri")
+    }
+
+    @Test("Stores buffer the App Group write instead of writing through")
+    func writesAreBuffered() async throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let view = try Fixture.postView(text: "Buffered for Siri")
+      let writer = PostEntityStore(defaults: defaults)
+      await writer.store(view)
+
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) == nil)
+      let otherProcessDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let otherProcess = PostEntityStore(defaults: otherProcessDefaults)
+      #expect(await otherProcess.entities(for: [view.uri.uriString()]).isEmpty)
+
+      await writer.flushPendingWrites()
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) != nil)
+      #expect(await otherProcess.entities(for: [view.uri.uriString()]).count == 1)
+    }
+
+    @Test("Persisted reads in the writing process include unflushed entries")
+    func persistedReadsMergePendingEntries() throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let view = try Fixture.postView(text: "Seeded by a thread snapshot")
+      PostEntityCache.upsert([view], defaults: defaults)
+
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) == nil)
+      let entities = PostEntityCache.entities(for: [view.uri.uriString()], defaults: defaults)
+      #expect(entities.map(\.text) == ["Seeded by a thread snapshot"])
+    }
+
+    @Test("A thread snapshot larger than the cache persists only its first entries")
+    func upsertKeepsNewestCapacityEntries() throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let views = try (0..<(PostEntityCache.capacity + 10)).map { index in
+        try Fixture.postView(text: "Row \(index)", rkey: "row\(index)")
+      }
+      PostEntityCache.upsert(views + [views[0]], defaults: defaults)
+      PostEntityCache.flushPendingWrites(defaults: defaults)
+
+      let otherProcess = try #require(UserDefaults(suiteName: suiteName))
+      let ids = views.map { $0.uri.uriString() }
+      let persisted = PostEntityCache.entities(for: ids, defaults: otherProcess)
+      #expect(persisted.map(\.id) == Array(ids.prefix(PostEntityCache.capacity)))
+    }
+  }
+
+  @Suite("AppGroupEntityWriteBuffer")
+  struct AppGroupEntityWriteBufferTests {
+    struct Entry: Codable, Equatable, Sendable {
+      let id: String
+      let value: Int
+    }
+
+    private func makeBuffer(
+      _ defaults: UserDefaults, flushDelay: TimeInterval = 60,
+      lifecycleNotifications: [Notification.Name] = []
+    ) -> AppGroupEntityWriteBuffer<Entry> {
+      AppGroupEntityWriteBuffer(
+        defaults: defaults, storageKey: "entries", capacity: 3, flushDelay: flushDelay,
+        lifecycleNotifications: lifecycleNotifications, id: { $0.id })
+    }
+
+    @Test("Batches merge newest first, de-duplicated and trimmed to capacity")
+    func mergeOrder() throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let buffer = makeBuffer(defaults)
+      buffer.enqueue([Entry(id: "a", value: 1), Entry(id: "b", value: 1)])
+      buffer.flush()
+      buffer.enqueue([Entry(id: "c", value: 1)])
+      buffer.enqueue([Entry(id: "a", value: 2), Entry(id: "c", value: 9), Entry(id: "c", value: 3)])
+
+      #expect(buffer.entries().map(\.id) == ["a", "c", "b"])
+      #expect(buffer.entries().map(\.value) == [2, 9, 1])
+      buffer.flush()
+      let stored = makeBuffer(try #require(UserDefaults(suiteName: suiteName))).entries()
+      #expect(stored == [Entry(id: "a", value: 2), Entry(id: "c", value: 9), Entry(id: "b", value: 1)])
+    }
+
+    @Test("Pending writes flush on their own after the delay")
+    func flushesAfterDelay() async throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let buffer = makeBuffer(defaults, flushDelay: 0.05)
+      buffer.enqueue([Entry(id: "a", value: 1)])
+      #expect(defaults.data(forKey: "entries") == nil)
+
+      for _ in 0..<40 where defaults.data(forKey: "entries") == nil {
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      #expect(defaults.data(forKey: "entries") != nil)
+    }
+
+    @Test("A lifecycle notification flushes synchronously")
+    func lifecycleNotificationFlushes() throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let notification = Notification.Name("test.app-intents.write-buffer.lifecycle.\(UUID().uuidString)")
+      let buffer = makeBuffer(defaults, lifecycleNotifications: [notification])
+      buffer.enqueue([Entry(id: "a", value: 1)])
+      #expect(defaults.data(forKey: "entries") == nil)
+
+      NotificationCenter.default.post(name: notification, object: nil)
+      #expect(defaults.data(forKey: "entries") != nil)
     }
   }
 
@@ -534,12 +657,32 @@ struct GeneratedIntentsTests {
       let profile = ProfileEntity(from: try Fixture.profileViewBasic())
       let writer = ProfileEntityStore(defaults: defaults)
       await writer.store(profile)
-
       await writer.flushPendingWrites()
-      let reader = ProfileEntityStore(defaults: defaults)
+
+      let readerDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let reader = ProfileEntityStore(defaults: readerDefaults)
       let entities = await reader.entities(for: [profile.id])
       #expect(entities.count == 1)
       #expect(entities.first?.handle == "author.bsky.social")
+    }
+
+    @Test("Profile stores buffer the App Group write instead of writing through")
+    func writesAreBuffered() async throws {
+      let suiteName = "test.app-intents.profile-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let profile = ProfileEntity(from: try Fixture.profileViewBasic())
+      let writer = ProfileEntityStore(defaults: defaults)
+      await writer.store(entities: [profile])
+
+      #expect(defaults.data(forKey: "recentProfileEntities.v1") == nil)
+      let otherProcessDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let otherProcess = ProfileEntityStore(defaults: otherProcessDefaults)
+      #expect(await otherProcess.entities(for: [profile.id]).isEmpty)
+
+      await writer.flushPendingWrites()
+      #expect(await otherProcess.entities(for: [profile.id]).map(\.handle) == ["author.bsky.social"])
     }
   }
 
