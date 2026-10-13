@@ -779,21 +779,36 @@ extension PostComposerViewModel {
 
     // MARK: - Thumbnail Management
 
-    /// Pre-upload thumbnails for all URL cards that don't have them yet
+    /// Starts uploading the selected link card's thumbnail as soon as the card and the
+    /// selection both exist, so submit only waits for an upload already in flight. Cards that
+    /// are not the embed are never uploaded.
     @MainActor
     func preUploadThumbnails() {
-        let urlCardsToProcess = urlCards.values.filter {
-            !$0.image.isEmpty && thumbnailCache[$0.resolvedURL] == nil && $0.thumbnailBlob == nil && inFlightThumbnailUploads[$0.resolvedURL] == nil
-        }
+        guard let embedURL = selectedEmbedURL, let urlCard = urlCards[embedURL] else { return }
+        _ = thumbnailUploadTask(for: urlCard)
+    }
 
-        for urlCard in urlCardsToProcess {
-            let key = urlCard.resolvedURL
-            inFlightThumbnailUploads[key] = Task { [weak self] () -> Blob? in
-                guard let self else { return nil }
-                await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-                return self.thumbnailCache[key]
-            }
+    /// Returns the in-flight upload for a card's thumbnail, starting one if the card has an
+    /// image that isn't uploaded yet.
+    @MainActor
+    private func thumbnailUploadTask(for urlCard: URLCardResponse) -> Task<Blob?, Never>? {
+        let cacheKey = urlCard.resolvedURL
+        guard !urlCard.image.isEmpty, urlCard.thumbnailBlob == nil, thumbnailCache[cacheKey] == nil else {
+            return nil
         }
+        if let inFlight = thumbnailUploadTasks[cacheKey] { return inFlight }
+        let task = Task { [weak self] () -> Blob? in
+            guard let self else { return nil }
+            let blob = await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+            // A failed upload is retried by the next request for this card. A cancelled task
+            // was already removed, and a newer one may hold its key.
+            if !Task.isCancelled {
+                self.thumbnailUploadTasks[cacheKey] = nil
+            }
+            return blob
+        }
+        thumbnailUploadTasks[cacheKey] = task
+        return task
     }
 
     /// Check if thumbnail is available for a URL
@@ -817,19 +832,7 @@ extension PostComposerViewModel {
         }
 
         logger.info("Retrying thumbnail upload for: \(url)")
-
-        // Use performance optimizer for retry if available
-        if #available(iOS 16.0, macOS 13.0, *), let optimizer = performanceOptimizer {
-            do {
-                try await optimizer.executeThumbnailUpload {
-                    await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-                }
-            } catch {
-                logger.error("Failed to retry thumbnail upload for \(url): \(error)")
-            }
-        } else {
-            await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-        }
+        _ = await thumbnailUploadTask(for: urlCard)?.value
     }
 
     // MARK: - Additional Helper Methods
@@ -1102,10 +1105,8 @@ extension PostComposerViewModel {
         )
 
         // Start async thumbnail upload if image is available and not cached
-        if !urlCard.image.isEmpty && thumbBlob == nil {
-            Task {
-                await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-            }
+        if thumbBlob == nil {
+            _ = thumbnailUploadTask(for: urlCard)
         }
 
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
@@ -1118,19 +1119,10 @@ extension PostComposerViewModel {
         let cacheKey = urlCard.resolvedURL
         var thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]
 
-        // If no thumbnail exists but image URL is available, await in-flight upload or start one
-        if thumbBlob == nil && !urlCard.image.isEmpty {
-            if let inFlight = inFlightThumbnailUploads[cacheKey] {
-                thumbBlob = await inFlight.value
-            } else {
-                let task = Task { [weak self] () -> Blob? in
-                    guard let self else { return nil }
-                    await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-                    return self.thumbnailCache[cacheKey]
-                }
-                inFlightThumbnailUploads[cacheKey] = task
-                thumbBlob = await task.value
-            }
+        // Wait for the upload started when the card was selected, or start it now. A failed
+        // earlier attempt is not cached, so this tries again.
+        if thumbBlob == nil, let upload = thumbnailUploadTask(for: urlCard) {
+            thumbBlob = await upload.value
         }
 
         let external = AppBskyEmbedExternal.External(
@@ -1145,11 +1137,12 @@ extension PostComposerViewModel {
     }
 
     /// Uploads thumbnail for external embed and caches the blob reference
-    func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async {
+    @MainActor
+    private func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async -> Blob? {
         guard let client = appState.atProtoClient,
               let url = URL(string: imageURL) else {
             logger.warning("Cannot upload thumbnail: invalid URL or missing client")
-            return
+            return nil
         }
 
         do {
@@ -1162,25 +1155,22 @@ extension PostComposerViewModel {
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
                 logger.warning("Failed to download thumbnail: invalid HTTP response")
-                return
+                return nil
             }
 
             // Validate it's an image
             guard data.count > 0 else {
                 logger.warning("Downloaded thumbnail is empty")
-                return
+                return nil
             }
 
-            // Determine MIME type from response or data
-            let mimeType = httpResponse.mimeType ?? "image/jpeg"
-
-            // Resize image if too large (max 1MB for thumbnails)
-            let processedData: Data
-            if data.count > 1_000_000 {
-                processedData = try await resizeImageData(data, maxSizeBytes: 1_000_000)
-            } else {
-                processedData = data
-            }
+            // Re-encode only images over the blob limit, off the main actor. The result is a
+            // JPEG, so its Content-Type must say so.
+            let reencoded = data.count > 1_000_000
+            let processedData = reencoded ? try await ComposerImagePreparation.prepareForUpload(data).data : data
+            let mimeType = Self.thumbnailUploadMIMEType(
+                declared: httpResponse.mimeType, data: processedData, reencoded: reencoded
+            )
 
             logger.debug("Uploading thumbnail (\(processedData.count) bytes) with MIME type: \(mimeType)")
 
@@ -1196,34 +1186,39 @@ extension PostComposerViewModel {
             guard uploadCode >= 200 && uploadCode < 300,
                   let blob = uploadResult?.blob else {
                 logger.error("Failed to upload thumbnail: HTTP \(uploadCode)")
-                return
+                return nil
             }
 
             logger.info("Successfully uploaded thumbnail for external embed: \(String(describing:blob.ref?.cid.string))")
 
             // Cache the blob reference for future use
-            await MainActor.run {
-                let cacheKey = urlCard.resolvedURL
-                self.thumbnailCache[cacheKey] = blob
+            let cacheKey = urlCard.resolvedURL
+            thumbnailCache[cacheKey] = blob
 
-                // Update the URL card if it still exists in current cards
-                if var existingCard = self.urlCards[cacheKey] {
-                    existingCard.thumbnailBlob = blob
-                    if existingCard.sourceURL == nil {
-                        existingCard.sourceURL = cacheKey
-                    }
-                    self.urlCards[cacheKey] = existingCard
+            // Update the URL card if it still exists in current cards
+            if var existingCard = urlCards[cacheKey] {
+                existingCard.thumbnailBlob = blob
+                if existingCard.sourceURL == nil {
+                    existingCard.sourceURL = cacheKey
                 }
+                urlCards[cacheKey] = existingCard
             }
-
+            return blob
         } catch {
             logger.error("Failed to upload thumbnail: \(error.localizedDescription)")
+            return nil
         }
     }
 
-    /// Resizes image data to fit within specified byte limit
-    private func resizeImageData(_ data: Data, maxSizeBytes: Int) async throws -> Data {
-        try await ComposerImagePreparation.prepareForUpload(data, maxPixelSize: 1000, maxBytes: maxSizeBytes).data
+    /// The Content-Type for a link-card thumbnail upload. Re-encoded bytes are JPEG. Otherwise
+    /// the server's type is used when it names an image; when it doesn't (for example a WebP
+    /// served as application/octet-stream), the type comes from the bytes. Petrel converts and
+    /// strips only `image/` uploads, so a mislabelled WebP would otherwise fail its metadata
+    /// strip and the card would lose its thumbnail.
+    nonisolated static func thumbnailUploadMIMEType(declared: String?, data: Data, reencoded: Bool) -> String {
+        if reencoded { return "image/jpeg" }
+        if let declared = declared?.lowercased(), declared.hasPrefix("image/") { return declared }
+        return ImageMetadataStripper.detectMIMEType(from: data)
     }
 
     // MARK: - Facet Processing
@@ -1376,24 +1371,5 @@ extension PostComposerViewModel {
         let bytesBefore = nsString.substring(to: range.location).data(using: .utf8)?.count ?? 0
         let bytesInRange = substring.data(using: .utf8)?.count ?? 0
         return NSRange(location: bytesBefore, length: bytesInRange)
-    }
-}
-
-// MARK: - Thumbnail Upload Error
-
-enum ThumbnailUploadError: LocalizedError {
-    case invalidImageData
-    case resizeFailed
-    case uploadFailed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidImageData:
-            return "Invalid image data provided"
-        case .resizeFailed:
-            return "Failed to resize image"
-        case .uploadFailed(let message):
-            return "Upload failed: \(message)"
-        }
     }
 }

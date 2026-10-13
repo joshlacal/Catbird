@@ -468,17 +468,8 @@ extension PostComposerViewModel {
             var cardResponse = try await URLCardService.fetchURLCard(for: urlString)
             cardResponse.sourceURL = urlString
             urlCards[urlString] = cardResponse
-
-            // Eagerly pre-upload thumbnail so submit doesn't wait (P176)
-            if !cardResponse.image.isEmpty && thumbnailCache[cardResponse.resolvedURL] == nil && inFlightThumbnailUploads[cardResponse.resolvedURL] == nil {
-                let card = cardResponse
-                let key = card.resolvedURL
-                inFlightThumbnailUploads[key] = Task { [weak self] () -> Blob? in
-                    guard let self else { return nil }
-                    await self.uploadAndCacheThumbnail(imageURL: card.image, urlCard: card)
-                    return self.thumbnailCache[key]
-                }
-            }
+            // Start the thumbnail upload now if this card is already the embed (P176).
+            preUploadThumbnails()
         } catch {
             logger.error("Failed to load URL card for \(urlString): \(error)")
         }

@@ -337,4 +337,60 @@ struct ComposerMediaPerformanceTests {
     #expect(model.videoItem != nil || model.mediaItems.contains { $0.isGifConversion })
     #expect(model.alertItem != nil)
   }
+
+  // MARK: - Link-card thumbnails
+
+  private func linkCard(_ url: String, image: String) -> URLCardResponse {
+    URLCardResponse(error: "", likelyType: "html", url: url, title: "Card", description: "", image: image)
+  }
+
+  @Test("A failed link-card thumbnail upload is dropped, so the next request tries again")
+  func failedThumbnailUploadIsRetried() async throws {
+    let model = await makeViewModel()
+    let url = "https://example.com/article"
+    // Nothing listens on port 1, so the thumbnail download fails at once.
+    let card = linkCard(url, image: "http://127.0.0.1:1/thumb.png")
+    model.urlCards[url] = card
+    model.selectedEmbedURL = url
+
+    let first = try #require(model.thumbnailUploadTasks[card.resolvedURL])
+    let blob = await first.value
+    #expect(blob == nil)
+    #expect(model.thumbnailUploadTasks.isEmpty)
+    #expect(model.thumbnailCache[card.resolvedURL] == nil)
+
+    model.preUploadThumbnails()
+    let second = try #require(model.thumbnailUploadTasks[card.resolvedURL])
+    _ = await second.value
+    #expect(model.thumbnailUploadTasks.isEmpty)
+  }
+
+  @Test("Only the selected link card's thumbnail uploads, and clearing the composer cancels it")
+  func onlySelectedCardThumbnailUploads() async throws {
+    let model = await makeViewModel()
+    let selected = linkCard("https://example.com/a", image: "http://127.0.0.1:1/a.png")
+    let other = linkCard("https://example.com/b", image: "http://127.0.0.1:1/b.png")
+    model.urlCards = [selected.url: selected, other.url: other]
+    #expect(model.thumbnailUploadTasks.isEmpty)
+
+    model.selectedEmbedURL = selected.url
+
+    #expect(Set(model.thumbnailUploadTasks.keys) == [selected.resolvedURL])
+    model.clearAll()
+    #expect(model.thumbnailUploadTasks.isEmpty)
+  }
+
+  @Test("Link-card thumbnails are labelled by their bytes when the server doesn't name an image type")
+  func thumbnailUploadMIMEType() {
+    let webp = Data([0x52, 0x49, 0x46, 0x46, 0x10, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20])
+    let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    let type = PostComposerViewModel.thumbnailUploadMIMEType(declared:data:reencoded:)
+
+    #expect(type("application/octet-stream", webp, false) == "image/webp")
+    #expect(type(nil, png, false) == "image/png")
+    #expect(type("Image/PNG", png, false) == "image/png")
+    #expect(type("image/webp", webp, false) == "image/webp")
+    // Bytes re-encoded to fit the blob limit are JPEG, whatever the server said.
+    #expect(type("image/png", png, true) == "image/jpeg")
+  }
 }

@@ -105,7 +105,12 @@ final class PostComposerViewModel {
   // MARK: - URL Embed Selection
   /// The first URL pasted/detected will be used as the embed (if no other embed type is set)
   /// This tracks which URL should be featured as the embed card
-  var selectedEmbedURL: String?
+  var selectedEmbedURL: String? {
+    didSet {
+      // Selecting a card starts its thumbnail upload, so submit only awaits it (P176).
+      if selectedEmbedURL != oldValue { preUploadThumbnails() }
+    }
+  }
   
   /// URLs that should be kept as embeds even when removed from text
   /// This allows users to paste a URL, generate preview, then delete the URL text
@@ -115,8 +120,10 @@ final class PostComposerViewModel {
   
   /// Cache for uploaded thumbnail blobs by URL
   var thumbnailCache: [String: Blob] = [:]
-  /// In-flight thumbnail upload tasks to avoid duplicate uploads
-  var inFlightThumbnailUploads: [String: Task<Blob?, Never>] = [:]
+  /// In-flight link-card thumbnail uploads keyed by resolved URL, so submit awaits an upload
+  /// that started when the card was selected instead of starting a second one. An entry is
+  /// removed when its upload finishes, so a failed upload is tried again.
+  @ObservationIgnored var thumbnailUploadTasks: [String: Task<Blob?, Never>] = [:]
   
   /// Text snapshot for the last language detection pass to prevent repeated NLP runs
   var lastDetectedLanguageText: String = ""
@@ -856,6 +863,8 @@ final class PostComposerViewModel {
     isThreadMode = false
     detectedURLs = []
     urlCards = [:]
+    thumbnailUploadTasks.values.forEach { $0.cancel() }
+    thumbnailUploadTasks.removeAll()
     selectedEmbedURL = nil
     urlsKeptForEmbed = []
     mentionSuggestions = []
@@ -1069,8 +1078,8 @@ final class PostComposerViewModel {
     parentRestorationTask = nil
     quoteRestorationTasks.removeAll()
     interactionDefaultsTask = nil
-    inFlightThumbnailUploads.values.forEach { $0.cancel() }
-    inFlightThumbnailUploads.removeAll()
+    thumbnailUploadTasks.values.forEach { $0.cancel() }
+    thumbnailUploadTasks.removeAll()
     if #available(iOS 16.0, macOS 13.0, *) {
       _performanceOptimizer?.cancelAll()
     }
