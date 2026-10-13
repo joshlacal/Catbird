@@ -163,6 +163,23 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
 
   // MARK: - Private
 
+  /// The shared posts getMessages returned fully hydrated
+  /// (`app.bsky.embed.record#view` holding a `#viewRecord`), keyed by post URI.
+  /// They seed ChatRecordEmbedStore so a shared post renders its card on the
+  /// first layout without a getPosts call. Posts the server could not hydrate
+  /// (not found, blocked, detached) are left out.
+  nonisolated static func hydratedSharedPosts<Messages: Sequence>(
+    in messages: Messages
+  ) -> [(uri: String, record: ChatRecordEmbedStore.Record)]
+  where Messages.Element == ChatBskyConvoDefs.MessageView {
+    messages.compactMap { messageView in
+      guard case .appBskyEmbedRecordView(let recordView)? = messageView.embed,
+        case .appBskyEmbedRecordViewRecord(let record) = recordView.record
+      else { return nil }
+      return (record.uri.uriString(), recordView.record)
+    }
+  }
+
   private func updateMessagesFromManager() {
     let existingIDs = Set(messages.map { $0.id })
     let maxExistingTimestamp = messages.map { $0.sentAt }.max() ?? .distantPast
@@ -175,12 +192,8 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
 
     // Seed ChatRecordEmbedStore from hydrated record embeds in getMessages (P135)
     if let state = appState ?? AppStateManager.shared.lifecycle.appState {
-      for messageView in originalMessages.values {
-        guard let embed = messageView.embed else { continue }
-        if case .appBskyEmbedRecordView(let recordView) = embed,
-           case .appBskyEmbedRecordViewRecord(let record) = recordView.record {
-          ChatRecordEmbedStore.shared.seed(recordView.record, uri: record.uri.uriString(), appState: state)
-        }
+      for shared in Self.hydratedSharedPosts(in: originalMessages.values) {
+        ChatRecordEmbedStore.shared.seed(shared.record, uri: shared.uri, appState: state)
       }
     }
     // Get member profiles from the conversation
