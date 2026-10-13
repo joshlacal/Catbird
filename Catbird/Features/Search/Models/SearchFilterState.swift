@@ -390,7 +390,7 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
       cursor: cursor,
       limit: limit,
       query: cleanQuery.isEmpty ? nil : cleanQuery,
-      sort: sort.rawValue,
+      sort: sort.searchPostsV2Value,
       authors: Self.identifierList(author),
       mentions: Self.identifierList(mentions),
       domains: Self.trimmedList(domain),
