@@ -425,6 +425,11 @@ enum SpotlightDonationModeration {
   /// lists show it, its body and media are not gated, and its author's avatar
   /// is not a placeholder. The author's profile is stored unless its avatar is
   /// a placeholder, as `ProfileRowView` does.
+  ///
+  /// This is the row path's rule, not a rule of the store: the thread screen's
+  /// `seedThreadEntityCache` stores every row it shows, and `donateFeed` stores
+  /// every post lists show (`isListed`), so the persisted store can still hold
+  /// a post with a blurred body, media or avatar that a row would not seed.
   static func rowSeed(_ post: AppBskyFeedDefs.PostView, policy: ModerationPolicy) -> RowSeed {
     let moderation = PostModerationPresentation.make(post: post, policy: policy)
     let storesAuthor = !moderation.concealsAvatar
