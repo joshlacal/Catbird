@@ -23,18 +23,7 @@ extension PostComposerViewModel {
     
     private func performUpdatePostContent() {
         logger.trace("PostComposerTextProcessing: updatePostContent start - length: \(self.postText.count), cursor: \(self.cursorPosition)")
-        
-        let trimmedText = postText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedText.count >= 20 && trimmedText != lastDetectedLanguageText {
-            lastDetectedLanguageText = trimmedText
-            let detected = detectLanguage()
-            if detected != suggestedLanguage {
-                suggestedLanguage = detected
-            }
-        } else if trimmedText.isEmpty && suggestedLanguage != nil {
-            suggestedLanguage = nil
-            lastDetectedLanguageText = ""
-        }
+        updateSuggestedLanguage()
         logger.trace("PostComposerTextProcessing: Detected language: \(self.suggestedLanguage?.lang.minimalIdentifier ?? "none")")
 
         // Parse the text content to get URLs and update mentions (skip duplicate language detection)
@@ -140,7 +129,7 @@ extension PostComposerViewModel {
         
         // Update language and mention suggestions. Do NOT generate URL cards from link facets
         // to avoid auto-creating external embeds when users add inline links.
-        suggestedLanguage = detectLanguage()
+        updateSuggestedLanguage()
         
         Task {
             await updateMentionSuggestions()
@@ -224,6 +213,21 @@ extension PostComposerViewModel {
     }
     
     // MARK: - Language Detection
+
+    /// NLLanguageRecognizer is unreliable on very short text. Bluesky's native composer waits
+    /// for 10 characters and drops its suggestion below that (social-app SuggestedLanguage.tsx,
+    /// MIN_TEXT_LENGTH).
+    static let minimumLanguageDetectionLength = 10
+
+    /// Suggests a language once the text is long enough, clears the suggestion when the text
+    /// gets shorter again, and writes only a changed value.
+    private func updateSuggestedLanguage() {
+        let trimmed = postText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detected = trimmed.count >= Self.minimumLanguageDetectionLength ? detectLanguage() : nil
+        if detected != suggestedLanguage {
+            suggestedLanguage = detected
+        }
+    }
     
     func detectLanguage() -> LanguageCodeContainer? {
         guard !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }

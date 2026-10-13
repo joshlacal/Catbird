@@ -356,6 +356,25 @@ struct ComposerMediaPerformanceTests {
     #expect(model.alertItem == nil)
   }
 
+  // MARK: - Text pass
+
+  @Test("Parsing without language detection keeps facets and skips the language")
+  func parserCanSkipLanguageDetection() {
+    let text = "Bonjour à tous, voici un lien https://example.com et un #tag"
+    let detected = PostParser.parsePostContent(text, resolvedProfiles: [:])
+    let skipped = PostParser.parsePostContent(text, resolvedProfiles: [:], detectLanguage: false)
+
+    // CreatePostIntent relies on the default detecting the language.
+    #expect(detected.detectedLanguage == "fr")
+    #expect(!detected.facets.isEmpty)
+    #expect(detected.urls == ["https://example.com"])
+    #expect(detected.hashtags == ["tag"])
+    #expect(skipped.detectedLanguage == nil)
+    #expect(skipped.facets == detected.facets)
+    #expect(skipped.urls == detected.urls)
+    #expect(skipped.hashtags == detected.hashtags)
+  }
+
   // MARK: - Paste
 
   @Test("Pasting an animated GIF and a still together attaches only the GIF")

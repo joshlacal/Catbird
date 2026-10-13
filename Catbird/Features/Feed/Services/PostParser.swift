@@ -89,8 +89,12 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
 }
 
 struct PostParser {
+  /// Building a data detector is expensive; matching on a shared one is thread-safe.
   private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
+  /// Pass `detectLanguage: false` when the caller doesn't read `detectedLanguage`; the
+  /// composer detects the language itself, once per text pass. Other callers, such as
+  /// CreatePostIntent, rely on the default.
   static func parsePostContent(
     _ content: String,
     resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:],

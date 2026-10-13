@@ -125,9 +125,6 @@ final class PostComposerViewModel {
   /// removed when its upload finishes, so a failed upload is tried again.
   @ObservationIgnored var thumbnailUploadTasks: [String: Task<Blob?, Never>] = [:]
   
-  /// Text snapshot for the last language detection pass to prevent repeated NLP runs
-  var lastDetectedLanguageText: String = ""
-  
   // MARK: - Mention Properties
   
   var mentionSuggestions: [AppBskyActorDefs.ProfileViewBasic] = []
