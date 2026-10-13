@@ -121,6 +121,11 @@ import AppKit
   @ObservationIgnored private var hasBegunOpenSignpost = false
   @ObservationIgnored private var hasMarkedOpenHeaderReady = false
 
+  /// Whether a successful header load has already chosen the opening tab. Only the first one
+  /// does: later loads (pull to refresh, the reload after a follow, the refresh of a stale header
+  /// on return, a mute or block) must not move a reader who chose Posts back to Labels.
+  @ObservationIgnored private var hasAppliedDefaultTab = false
+
   // Check if this is the current user's profile - comparing correctly
   var isCurrentUser: Bool {
     if let profile = profile {
@@ -317,10 +322,7 @@ import AppKit
           }
           logger.debug("ProfileViewModel[\(self.instanceId)]: Successfully loaded profile for \(profile.handle)")
           
-          // Set default tab based on profile type
-          if self.isLabeler && self.selectedProfileTab == .posts {
-            self.selectedProfileTab = .labelerInfo
-          }
+          self.applyDefaultTabForLoadedProfile()
         } else {
           // Petrel drops the XRPC error body, so map by status: getProfile answers 400 for
           // deactivated, suspended and unknown accounts.
@@ -356,6 +358,15 @@ import AppKit
         self.isLoading = false
         logger.error("ProfileViewModel[\(self.instanceId)]: Error loading profile: \(error.localizedDescription)")
       }
+    }
+  }
+
+  /// Opens a labeler on Labels instead of Posts, on the first successful header load only.
+  func applyDefaultTabForLoadedProfile() {
+    guard !hasAppliedDefaultTab else { return }
+    hasAppliedDefaultTab = true
+    if isLabeler && selectedProfileTab == .posts {
+      selectedProfileTab = .labelerInfo
     }
   }
 
