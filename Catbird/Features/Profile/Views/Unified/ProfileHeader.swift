@@ -25,7 +25,8 @@ struct ProfileHeader: View {
 
     private static let bioLinkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
     private static let bioHandleRegex = try? NSRegularExpression(pattern: "(?<![\\w@])@[A-Za-z0-9][A-Za-z0-9.-]*", options: [.caseInsensitive])
-    @State private var isFollowButtonLoading = false
+    /// What the Follow button shows. It flips on tap; `viewModel.followWrites` keeps it from
+    /// flipping back while the write and the AppView catch up.
     @State private var localIsFollowing = false
     @State private var localActivitySubscription: AppBskyNotificationDefs.ActivitySubscription?
     @State private var isActivitySubscriptionLoading = false
@@ -122,12 +123,15 @@ struct ProfileHeader: View {
             }
         }
         .onAppear {
-            localIsFollowing = profile.viewer?.following != nil
+            localIsFollowing = viewModel.followWrites.isFollowing(serverSays: profile.viewer?.following != nil)
             updateLocalActivitySubscription()
         }
         .onChange(of: profile) { _, newProfile in
-            localIsFollowing = newProfile.viewer?.following != nil
+            localIsFollowing = viewModel.followWrites.isFollowing(serverSays: newProfile.viewer?.following != nil)
             updateLocalActivitySubscription()
+        }
+        .onChange(of: viewModel.followWrites.revision) { _, _ in
+            localIsFollowing = viewModel.followWrites.isFollowing(serverSays: profile.viewer?.following != nil)
         }
         .onChange(of: activitySubscriptionSnapshot) { _, _ in
             updateLocalActivitySubscription()
@@ -338,43 +342,83 @@ struct ProfileHeader: View {
         }
     }
 
-    private func performUnfollow() {
+    /// Follows at once: the button shows Following on tap, suggestions load alongside the
+    /// write, and the header reloads its counts afterwards without holding the button.
+    private func performFollow() {
+        let writes = viewModel.followWrites
+        guard writes.begin(following: true) else { return }
+        localIsFollowing = true
+        let did = profile.did.didString()
+        let suggestions = Task { await fetchSuggestedFollows() }
+
         Task(priority: .userInitiated) {
-            isFollowButtonLoading = true
-            localIsFollowing = false
+            let success: Bool
             do {
-                let success: Bool
-                let did = profile.did.didString()
-                if let followingUri = appState.graphManager.followingCache[did] ?? profile.viewer?.following {
-                    success = try await appState.graphManager.unfollowByUri(followingUri: followingUri)
-                } else {
-                    success = try await appState.unfollow(did: did)
-                }
-                if !success {
-                    localIsFollowing = true
-                }
+                success = try await appState.follow(did: did)
             } catch {
-                logger.debug("Error unfollowing: \(error.localizedDescription)")
-                localIsFollowing = true
+                logger.debug("Error following: \(error.localizedDescription)")
+                success = false
             }
-            isFollowButtonLoading = false
+            writes.end(success: success)
+            localIsFollowing = success
+
+            guard success else {
+                suggestions.cancel()
+                return
+            }
+            viewModel.refreshHeaderAfterFollowWrite()
+
+            let found = await suggestions.value
+            if !found.isEmpty {
+                suggestedFollows = found
+                showingSuggestedFollows = true
+            }
         }
     }
 
-    /// Shows similar accounts after a follow, but only when there is something to suggest.
-    private func presentSuggestedFollowsIfAvailable() async {
-        guard let client = appState.atProtoClient else { return }
+    /// Unfollows at once. It deletes the follow record GraphManager last created for this
+    /// account when it has one (after Follow > Unfollow > Follow that is newer than the
+    /// profile's `viewer.following`), then the one the profile names, then looks it up.
+    private func performUnfollow() {
+        let writes = viewModel.followWrites
+        guard writes.begin(following: false) else { return }
+        localIsFollowing = false
+        let did = profile.did.didString()
+        let followURI = appState.graphManager.followingCache[did] ?? profile.viewer?.following
+
+        Task(priority: .userInitiated) {
+            let success: Bool
+            do {
+                if let followURI {
+                    success = try await appState.graphManager.unfollowByUri(followingUri: followURI)
+                } else {
+                    success = try await appState.unfollow(did: did)
+                }
+            } catch {
+                logger.debug("Error unfollowing: \(error.localizedDescription)")
+                success = false
+            }
+            writes.end(success: success)
+            localIsFollowing = !success
+
+            if success {
+                viewModel.refreshHeaderAfterFollowWrite()
+            }
+        }
+    }
+
+    /// Similar accounts to show after a follow; empty when there is nothing to suggest.
+    private func fetchSuggestedFollows() async -> [AppBskyActorDefs.ProfileView] {
+        guard let client = appState.atProtoClient else { return [] }
         do {
-            let suggestions = try await ContextualSuggestedFollowsSheet.fetchSuggestions(
+            return try await ContextualSuggestedFollowsSheet.fetchSuggestions(
                 client: client,
                 actorDID: profile.did.didString(),
                 currentUserDID: appState.userDID
             )
-            guard !suggestions.isEmpty else { return }
-            suggestedFollows = suggestions
-            showingSuggestedFollows = true
         } catch {
             logger.debug("Suggested follows unavailable: \(error.localizedDescription)")
+            return []
         }
     }
 
@@ -1004,11 +1048,7 @@ struct ProfileHeader: View {
 
     @ViewBuilder
     private var followButton: some View {
-        if isFollowButtonLoading {
-            ProgressView()
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-        } else if profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true {
+        if profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true {
             // Show blocked state instead of follow button. Neutral styling —
             // direction (you blocked them / they blocked you / mutual) is
             // carried by the block relationship banner's text, not this pill.
@@ -1058,25 +1098,7 @@ struct ProfileHeader: View {
             
         } else {
             Button(action: {
-                Task(priority: .userInitiated) {
-                    isFollowButtonLoading = true
-                    localIsFollowing = true
-                    
-                    do {
-                        let success = try await appState.follow(did: profile.did.didString())
-                        if success {
-                            Task(priority: .utility) {
-                                await presentSuggestedFollowsIfAvailable()
-                            }
-                        } else {
-                            localIsFollowing = false
-                        }
-                    } catch {
-                        logger.debug("Error following: \(error.localizedDescription)")
-                        localIsFollowing = false
-                    }
-                    isFollowButtonLoading = false
-                }
+                performFollow()
             }) {
                 HStack {
                     Image(systemName: "plus")

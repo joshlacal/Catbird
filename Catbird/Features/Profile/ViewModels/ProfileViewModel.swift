@@ -77,6 +77,10 @@ import AppKit
     return false
   }
 
+  /// The Follow button's write state, kept here because the header's own state resets when
+  /// its list cell is reused. See ProfileFollowWrites.
+  let followWrites = ProfileFollowWrites()
+
   // Pagination tracking. Each flag turns false once the server stops returning a cursor.
   private(set) var hasMoreStarterPacks = false
   private(set) var hasMorePosts = true
@@ -279,6 +283,14 @@ import AppKit
         self.isLoading = false
         logger.error("ProfileViewModel[\(self.instanceId)]: Error loading profile: \(error.localizedDescription)")
       }
+    }
+  }
+
+  /// Reloads the header once the AppView has had a moment to index a follow or unfollow, so
+  /// the counts and `viewer.following` catch up. A newer write replaces a reload still waiting.
+  func refreshHeaderAfterFollowWrite() {
+    followWrites.scheduleRefresh { [weak self] in
+      await self?.loadProfile()
     }
   }
 
