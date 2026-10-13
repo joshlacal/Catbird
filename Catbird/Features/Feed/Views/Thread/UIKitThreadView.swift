@@ -710,6 +710,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     if let threadOpenSignpost {
       PerformanceSignposts.threadOpenDataReady(id: threadOpenSignpost, loaded: manager.threadData != nil)
     }
+    // Where the reader has the tapped post, if they moved it while the thread loaded. Read
+    // before the loaded rows go in, since the parents land above it.
+    let heldAnchorScreenY = anchorIsPrefilled ? prefilledAnchorScreenYIfMoved() : nil
     let anchorBeforeLoad = mainPost
     let postNumberBeforeLoad = (index: mainPostIndex, count: mainPostCount)
     processThreadData()
@@ -755,6 +758,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // A failed load positions nothing, so the next successful load still places the anchor.
     if threadManager?.threadData != nil {
       hasScrolledToMainPost = true
+    }
+    // The reader dragged the tapped post while the thread loaded: keep it where they have
+    // it rather than snapping it to the usual place under their finger.
+    if let heldAnchorScreenY {
+      holdAnchorOnScreen(at: heldAnchorScreenY)
+      revealContent()
+      return
     }
     scrollToMainPostWithPartialParentVisibility { [weak self] in
       guard let self, self.loadGeneration == thisGeneration else { return }
@@ -1091,7 +1101,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   /// Shows the tapped post as the anchor while the thread loads (P080, Yellow decision
   /// 2026-10-13). Its row matches the loaded anchor's, so when the thread arrives the
-  /// cell stays and settleOnMainPost() moves it down by the parent sliver in one frame.
+  /// cell stays and settleOnMainPost() moves it down by the parent sliver in one frame,
+  /// or, if the reader has moved it meanwhile, holdAnchorOnScreen(at:) keeps it where it is.
   /// ThreadOpen still ends at the positioned thread, in revealContent().
   private func showPrefilledAnchor(_ post: AppBskyFeedDefs.PostView) {
     mainPost = post
@@ -1202,6 +1213,61 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
 
+  /// Whether the reader has moved the tapped post shown before the thread loaded: they are
+  /// touching or flinging the list, or it no longer sits at the top where it opened.
+  static func readerMovedPrefilledAnchor(
+    isTracking: Bool, isDragging: Bool, isDecelerating: Bool, offsetFromTop: CGFloat
+  ) -> Bool {
+    isTracking || isDragging || isDecelerating || abs(offsetFromTop) > 1
+  }
+
+  private var mainPostIndexPath: IndexPath? {
+    let snapshot = dataSource.snapshot()
+    guard let sectionIndex = snapshot.indexOfSection(.mainPost),
+          snapshot.numberOfItems(inSection: .mainPost) > 0
+    else { return nil }
+    return IndexPath(item: 0, section: sectionIndex)
+  }
+
+  /// The prefilled anchor's distance from the top of the screen when the reader has moved
+  /// it, and nil when it is still where it opened.
+  private func prefilledAnchorScreenYIfMoved() -> CGFloat? {
+    guard Self.readerMovedPrefilledAnchor(
+      isTracking: collectionView.isTracking,
+      isDragging: collectionView.isDragging,
+      isDecelerating: collectionView.isDecelerating,
+      offsetFromTop: collectionView.contentOffset.y + collectionView.adjustedContentInset.top
+    ),
+      let indexPath = mainPostIndexPath,
+      let attributes = collectionView.layoutAttributesForItem(at: indexPath)
+    else { return nil }
+    return attributes.frame.minY - collectionView.contentOffset.y
+  }
+
+  /// Keeps the anchor `screenY` points below the top of the screen. The parents land above
+  /// it, so the offset grows by their height and nothing moves under a finger that is still
+  /// dragging; a scroll in progress carries on from there. Cells above self-size during
+  /// layout, so it re-aims until the anchor holds still, in at most three layout passes.
+  /// With no parents the anchor has not moved and no pass runs.
+  private func holdAnchorOnScreen(at screenY: CGFloat) {
+    guard let indexPath = mainPostIndexPath else { return }
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+
+    for _ in 0..<3 {
+      if collectionView.layoutAttributesForItem(at: indexPath) == nil {
+        layoutForThreadOpen()
+      }
+      guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else { return }
+      let targetOffset = attributes.frame.minY - screenY
+      if abs(collectionView.contentOffset.y - targetOffset) <= 0.5 { return }
+      collectionView.setContentOffset(CGPoint(x: collectionView.contentOffset.x, y: targetOffset), animated: false)
+      layoutForThreadOpen()
+    }
+  }
+
   /// Puts the anchor just below the top bar with a sliver of its parent showing.
   ///
   /// The first aim uses estimated heights, so only the cells around the anchor are built.
@@ -1209,11 +1275,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   /// re-aimed until it holds still, in at most three layout passes. A post with no parents
   /// already starts at the top and needs no layout pass here.
   private func settleOnMainPost() {
-    let snapshot = dataSource.snapshot()
-    guard let sectionIndex = snapshot.indexOfSection(.mainPost),
-          snapshot.numberOfItems(inSection: .mainPost) > 0
-    else { return }
-    let indexPath = IndexPath(item: 0, section: sectionIndex)
+    guard let indexPath = mainPostIndexPath else { return }
 
     CATransaction.begin()
     CATransaction.setDisableActions(true)
