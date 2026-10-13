@@ -228,15 +228,42 @@ struct UnifiedProfileView: View {
   /// what the user just did.
   private func reloadRelationshipState() async {
     await viewModel.loadProfile()
-    if let viewer = viewModel.profile?.viewer {
-      isBlocking = viewer.blocking != nil
-      isMuting = viewer.muted == true
+    if let profile = viewModel.profile, profile.viewer != nil {
+      await applyRelationshipState(from: profile)
     }
     await viewModel.loadPosts()
     if viewModel.selectedProfileTab == .replies {
       await viewModel.loadReplies()
     } else if viewModel.selectedProfileTab == .media {
       await viewModel.loadMediaPosts()
+    }
+  }
+
+  /// Whether the Mute/Unmute item should say Unmute. `viewer.muted` is also true for a mute
+  /// that comes from a subscribed mute list (the AppView ORs the two), and unmuteActor cannot
+  /// remove that, so only list-muted profiles ask the graph's direct-mute cache. Every other
+  /// profile answers from its viewer state without a lookup.
+  static func directMuteState(
+    muted: Bool?, isListMuted: Bool, directMuteLookup: () async -> Bool
+  ) async -> Bool {
+    guard isListMuted else { return muted == true }
+    return await directMuteLookup()
+  }
+
+  /// Sets the toolbar menu's block and mute state from a loaded profile. A profile without
+  /// viewer state asks the graph for both.
+  private func applyRelationshipState(from profile: AppBskyActorDefs.ProfileViewDetailed) async {
+    let did = profile.did.didString()
+    if let viewer = profile.viewer {
+      isBlocking = viewer.blocking != nil
+      isMuting = await Self.directMuteState(
+        muted: viewer.muted, isListMuted: viewer.mutedByList != nil
+      ) {
+        await appState.isMuting(did: did)
+      }
+    } else {
+      isBlocking = await appState.isBlocking(did: did)
+      isMuting = await appState.isMuting(did: did)
     }
   }
 
@@ -324,16 +351,10 @@ struct UnifiedProfileView: View {
 
       _ = await (profileTask, followersTask, feedTask)
 
-      // Check muting and blocking status directly from viewer state to avoid scanning mute list
+      // Blocking and muting come from the profile's viewer state, so the mute list is
+      // scanned only for list-muted profiles (see directMuteState).
       if let profile = viewModel.profile, !viewModel.isCurrentUser {
-        let did = profile.did.didString()
-        if let viewer = profile.viewer {
-          self.isBlocking = viewer.blocking != nil
-          self.isMuting = viewer.muted == true
-        } else {
-          self.isBlocking = await appState.isBlocking(did: did)
-          self.isMuting = await appState.isMuting(did: did)
-        }
+        await applyRelationshipState(from: profile)
       }
     } catch {
       logger.error("Failed to load initial profile data: \(error.localizedDescription)")
