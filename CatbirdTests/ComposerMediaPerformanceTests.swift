@@ -76,6 +76,43 @@ struct ComposerMediaPerformanceTests {
     }
   }
 
+  // MARK: - Lifetime
+
+  @Test("A composer that processed text is released once its owner lets go")
+  func composerIsReleasedAfterTextProcessing() async throws {
+    weak var released: PostComposerViewModel?
+    do {
+      let model = await makeViewModel()
+      model.mediaItems = [imageItem(try jpeg(color: .systemTeal))]
+      model.postText = "Checking the composer for leaks"
+      released = model
+    }
+    // Let the 300 ms text debounce fire and any short-lived work finish.
+    for _ in 0..<40 where released != nil {
+      try await Task.sleep(for: .milliseconds(100))
+    }
+    #expect(released == nil)
+  }
+
+  @Test("A composer with a pending link-card debounce is released once its owner lets go")
+  func composerIsReleasedWithPendingLinkCardDebounce() async throws {
+    weak var released: PostComposerViewModel?
+    do {
+      let model = await makeViewModel()
+      model.mediaItems = [imageItem(try jpeg(color: .systemTeal))]
+      model.postText = "A link to check https://example.com/composer-lifetime"
+      // The text pass runs after 300 ms and schedules the 500 ms card debounce; let go before
+      // that fires, so no card request (which would hold the model) starts.
+      try await Task.sleep(for: .milliseconds(400))
+      #expect(model.urlCardDebounceTask != nil)
+      released = model
+    }
+    for _ in 0..<40 where released != nil {
+      try await Task.sleep(for: .milliseconds(100))
+    }
+    #expect(released == nil)
+  }
+
   // MARK: - Draft image files
 
   @Test("Repeated draft saves reuse each image's file until its bytes change")

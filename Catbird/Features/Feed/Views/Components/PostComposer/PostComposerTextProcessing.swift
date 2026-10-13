@@ -10,16 +10,14 @@ extension PostComposerViewModel {
     
     // MARK: - Real-time Text Parsing and Highlighting
     
+    /// Re-parses the text 300 ms after the last edit. The task holds the view model weakly, so
+    /// a pending pass never keeps a closed composer and its photos alive.
     func updatePostContent() {
-        // Use performance optimizer for debounced processing
-        if let optimizer = performanceOptimizer {
-            logger.trace("PostComposerTextProcessing: Using performance optimizer for debounced processing")
-            optimizer.debounceTextProcessing { [weak self] in
-                self?.performUpdatePostContent()
-            }
-        } else {
-            logger.trace("PostComposerTextProcessing: No optimizer, performing immediate update")
-            performUpdatePostContent()
+        textProcessingDebounceTask?.cancel()
+        textProcessingDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.performUpdatePostContent()
         }
     }
     
@@ -353,17 +351,13 @@ extension PostComposerViewModel {
                 Task {
                     await convertBskyPostURLToQuote(urlString: firstURL, handle: postInfo.handle, rkey: postInfo.rkey)
                 }
-            } else if let optimizer = performanceOptimizer {
-                // Use performance optimizer for debounced URL card loading
-                optimizer.debounceURLDetection(urls: [firstURL]) { [weak self] urlsToProcess in
-                    Task { [weak self] in
-                        await self?.loadURLCardsOptimized(urlsToProcess)
-                    }
-                }
             } else {
-                // Fallback to original behavior
-                Task {
-                    await loadURLCard(for: firstURL)
+                // Load the card 500 ms after the URL stops changing.
+                urlCardDebounceTask?.cancel()
+                urlCardDebounceTask = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled else { return }
+                    self?.startURLCardLoad(for: firstURL)
                 }
             }
         }
@@ -431,30 +425,15 @@ extension PostComposerViewModel {
         }
     }
     
+    /// Starts one card request per URL; later debounces for the same URL reuse it. The load
+    /// is not tied to the debounce, so further typing doesn't cancel a request in flight.
     @MainActor
-    private func loadURLCardsOptimized(_ urls: [String]) async {
-        for url in urls {
-            guard urlCards[url] == nil else { continue }
-            
-            if let optimizer = performanceOptimizer {
-                optimizer.coalesceURLCardRequest(for: url) {
-                    Task {
-                        await self.loadURLCardWithCoalescing(for: url)
-                    }
-                }
-            } else {
-                await loadURLCard(for: url)
-            }
+    private func startURLCardLoad(for urlString: String) {
+        guard urlCards[urlString] == nil, urlCardLoadsInFlight.insert(urlString).inserted else { return }
+        Task { [weak self] in
+            await self?.loadURLCard(for: urlString)
+            self?.urlCardLoadsInFlight.remove(urlString)
         }
-    }
-    
-    @MainActor
-    private func loadURLCardWithCoalescing(for urlString: String) async {
-        defer {
-            performanceOptimizer?.completeURLCardRequest(for: urlString)
-        }
-        
-        await loadURLCard(for: urlString)
     }
     
     @MainActor

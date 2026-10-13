@@ -200,18 +200,13 @@ final class PostComposerViewModel {
   }
   private var restoredInteractionSnapshot: DraftInteractionSnapshot?
   
-  // MARK: - Performance Optimization
-  
-  @available(iOS 16.0, macOS 13.0, *)
-  private var _performanceOptimizer: PostComposerPerformanceOptimizer?
-  
-  @available(iOS 16.0, macOS 13.0, *)
-  var performanceOptimizer: PostComposerPerformanceOptimizer? {
-    if _performanceOptimizer == nil {
-      _performanceOptimizer = PostComposerPerformanceOptimizer()
-    }
-    return _performanceOptimizer
-  }
+  // MARK: - Debounced Work
+
+  // Each task captures the view model weakly, so a pending debounce never keeps a closed
+  // composer, and the photos it holds, alive.
+  @ObservationIgnored var textProcessingDebounceTask: Task<Void, Never>?
+  @ObservationIgnored var urlCardDebounceTask: Task<Void, Never>?
+  @ObservationIgnored var urlCardLoadsInFlight: Set<String> = []
 
   // MARK: - Draft Image Files
 
@@ -310,12 +305,6 @@ final class PostComposerViewModel {
     
     // Initialize thread mode properly
     setupInitialState()
-    
-    // Initialize performance optimization
-    if #available(iOS 16.0, macOS 13.0, *) {
-      _ = performanceOptimizer // Initialize lazily
-      logger.debug("PostComposerViewModel: Performance optimizer initialized")
-    }
     
     logger.info("PostComposerViewModel: Initialization complete")
   }
@@ -834,11 +823,22 @@ final class PostComposerViewModel {
     }
   }
 
+  /// Cancels pending text and link-card passes and in-flight thumbnail uploads.
+  private func cancelDebouncedWork() {
+    textProcessingDebounceTask?.cancel()
+    textProcessingDebounceTask = nil
+    urlCardDebounceTask?.cancel()
+    urlCardDebounceTask = nil
+    thumbnailUploadTasks.values.forEach { $0.cancel() }
+    thumbnailUploadTasks.removeAll()
+  }
+
   func clearAll() {
     logger.info("PostComposerViewModel: Clearing all composer state")
     isUpdatingText = true
     defer { isUpdatingText = false }
     invalidateDraftRestoration()
+    cancelDebouncedWork()
     // Posted or discarded photos should not stay in memory until the next save.
     draftImageFiles.removeAll()
     parentPost = nil
@@ -863,8 +863,6 @@ final class PostComposerViewModel {
     isThreadMode = false
     detectedURLs = []
     urlCards = [:]
-    thumbnailUploadTasks.values.forEach { $0.cancel() }
-    thumbnailUploadTasks.removeAll()
     selectedEmbedURL = nil
     urlsKeptForEmbed = []
     mentionSuggestions = []
@@ -1078,11 +1076,7 @@ final class PostComposerViewModel {
     parentRestorationTask = nil
     quoteRestorationTasks.removeAll()
     interactionDefaultsTask = nil
-    thumbnailUploadTasks.values.forEach { $0.cancel() }
-    thumbnailUploadTasks.removeAll()
-    if #available(iOS 16.0, macOS 13.0, *) {
-      _performanceOptimizer?.cancelAll()
-    }
+    cancelDebouncedWork()
   }
 
   // MARK: - Post Interaction Settings Helper (G40)
