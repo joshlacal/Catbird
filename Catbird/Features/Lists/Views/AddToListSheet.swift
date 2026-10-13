@@ -55,18 +55,14 @@ final class AddToListSheetViewModel {
       
       let actorIdentifier = try ATIdentifier(string: userDID)
       var cursor: String? = nil
-      var accumulatedLists: [AppBskyGraphDefs.ListView] = []
-      var isFirstPage = true
+      var seenCursors = Set<String>()
       
       repeat {
+        // No `purposes`: the AppView already defaults to curate and mod lists.
         let input = AppBskyGraphGetListsWithMembership.Parameters(
           actor: actorIdentifier,
-          limit: 50,
-          cursor: cursor,
-          purposes: [
-            "app.bsky.graph.defs#curatelist",
-            "app.bsky.graph.defs#modlist"
-          ]
+          limit: 100,
+          cursor: cursor
         )
         
         let (responseCode, output) = try await client.app.bsky.graph.getListsWithMembership(input: input)
@@ -74,11 +70,17 @@ final class AddToListSheetViewModel {
           throw ListError.invalidResponse
         }
         
+        // Append rather than replace, so a list created from this sheet while
+        // later pages load (inserted in front by `syncCreatedLists`) stays, and a
+        // list already shown keeps the membership the user may have toggled.
+        var known = Set(userLists.map { $0.uri.description })
+        var pageLists: [AppBskyGraphDefs.ListView] = []
         for item in data.listsWithMembership {
           // Exclude reference lists (used in starter packs)
           guard item.list.purpose != .appbskygraphdefsreferencelist else { continue }
           let listURI = item.list.uri.description
-          accumulatedLists.append(item.list)
+          guard known.insert(listURI).inserted else { continue }
+          pageLists.append(item.list)
           membershipStatus[listURI] = (item.listItem != nil)
           if let itemURI = item.listItem?.uri {
             membershipItemURIs[listURI] = itemURI
@@ -86,25 +88,37 @@ final class AddToListSheetViewModel {
         }
         
         // Progressively fill membership and lists
-        userLists = accumulatedLists
+        userLists.append(contentsOf: pageLists)
         
-        if isFirstPage {
-          // Dismiss spinner as soon as first page arrives
+        if isLoading && !userLists.isEmpty {
+          // Dismiss the spinner as soon as there is a list to show; an empty
+          // first page shouldn't flash the "no lists" state while more load.
           isLoading = false
-          isFirstPage = false
         }
         
-        cursor = data.cursor
-      } while cursor != nil && !cursor!.isEmpty
+        // Keep paging through empty pages: the AppView filters list purposes
+        // after paging, so a page can be empty and still have a cursor. Stop on
+        // a missing cursor, or one already seen, so a repeating server can't
+        // loop forever.
+        guard let next = data.cursor, !next.isEmpty, seenCursors.insert(next).inserted else { break }
+        cursor = next
+      } while true
       
       logger.info("Loaded \(self.userLists.count) lists for add-to-list sheet")
     } catch {
-      logger.error("Failed to load lists: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
-      showingError = true
+      // Closing the sheet cancels the load; that isn't a failure to report.
+      if !Self.isCancellation(error) {
+        logger.error("Failed to load lists: \(error.localizedDescription)")
+        errorMessage = error.localizedDescription
+        showingError = true
+      }
     }
     
     isLoading = false
+  }
+  
+  private static func isCancellation(_ error: Error) -> Bool {
+    Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
   }
   
   /// Picks up lists created from this sheet, which `ListManager` adds to its cache.
@@ -224,11 +238,15 @@ struct AddToListSheet: View {
           }
       } else {
         ProgressView()
-          .task {
-            viewModel = AddToListSheetViewModel(userDID: userDID, appState: appState)
-            await viewModel?.loadData()
-          }
       }
+    }
+    // On the stack, not the placeholder ProgressView: setting `viewModel`
+    // removes that view, and SwiftUI would cancel its task mid-request.
+    .task {
+      guard viewModel == nil else { return }
+      let model = AddToListSheetViewModel(userDID: userDID, appState: appState)
+      viewModel = model
+      await model.loadData()
     }
   }
   
