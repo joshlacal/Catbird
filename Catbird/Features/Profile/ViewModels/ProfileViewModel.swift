@@ -212,12 +212,6 @@ import AppKit
         input: .init(actor: try ATIdentifier(string: userDID))
       )
 
-      if responseCode == 200, let profile = profileData {
-        Task(priority: .utility) {
-          await SpotlightEntityDonator.shared.donate(profiles: [profile])
-        }
-      }
-
       await MainActor.run {
         // A cancelled load keeps the profile already shown, but must not leave the screen
         // loading: empty tabs would show a spinner until some later load finished.
@@ -247,7 +241,14 @@ import AppKit
         }
         self.isLoading = false
       }
-      
+
+      // Donate after the header has its data, never ahead of it. Not awaited.
+      if responseCode == 200, let profile = profileData {
+        Task(priority: .utility) {
+          await SpotlightEntityDonator.shared.donate(profiles: [profile])
+        }
+      }
+
       // Load labeler details if this is a labeler profile
       if isLabeler {
         await loadLabelerDetails()
