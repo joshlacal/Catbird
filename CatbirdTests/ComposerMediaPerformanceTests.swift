@@ -187,6 +187,38 @@ struct ComposerMediaPerformanceTests {
     #expect(try Data(contentsOf: try #require(URL(string: saved))) == edited)
   }
 
+  /// Oct 11 seeded its draft-file cache on restore so the first save after reopening a draft did
+  /// not hash every photo again on the main actor; rememberRestoredDraftImageFiles carries that.
+  @Test("A restored draft's first save reuses the files it just read instead of hashing them again")
+  func restoredDraftSaveReusesItsFiles() async throws {
+    let template = await makeViewModel().saveDraftState()
+    let data = try jpeg(color: .systemIndigo, size: CGSize(width: 43, height: 31))
+    // A draft file whose name is not the hash of its bytes: only a save that reuses the restored
+    // file keeps this URL; hashing the bytes again would name a different file.
+    let hashed = try #require(CodableMediaItem.persistImageData(data).flatMap(URL.init(string:)))
+    let restoredFile = hashed.deletingLastPathComponent()
+      .appendingPathComponent("draft_image_restore-reuse-\(UUID().uuidString).jpg")
+    try data.write(to: restoredFile)
+    let attachment = CodableMediaItem(
+      altText: "", aspectRatio: nil, isLoading: false, isAudioVisualizerVideo: false,
+      rawVideoURLString: nil, rawImageURLString: restoredFile.absoluteString
+    )
+    let draft = PostComposerDraft(
+      postText: "Reopened", mediaItems: [attachment], videoItem: nil, selectedGif: nil,
+      selectedLanguages: [], selectedLabels: [], outlineTags: [], threadEntries: template.threadEntries,
+      isThreadMode: false, currentThreadIndex: 0, parentPostURI: nil, quotedPostURI: nil
+    )
+    let model = await makeViewModel()
+
+    model.restoreDraftState(draft)
+    #expect(model.mediaItems.first?.rawData == data)
+    let saved = model.saveDraftState().mediaItems.first?.rawImageURLString
+
+    #expect(saved == restoredFile.absoluteString)
+    #expect(saved != hashed.absoluteString)
+    #expect(try Data(contentsOf: restoredFile) == data)
+  }
+
   @Test("A composer that doesn't own a saved draft writes no draft file when a photo loads")
   func previewLoadWithoutDraftOwnershipWritesNoFile() async throws {
     let model = await makeViewModel()
