@@ -94,7 +94,6 @@ import AppKit
   private var listsCursor: String?
   private var starterPacksCursor: String?
   private var feedsCursor: String?
-  private var knownFollowersCursor: String?
 
   // Dependencies
   private let client: ATProtoClient?
@@ -362,7 +361,9 @@ import AppKit
     }
   }
 
-  /// Loads known followers - people who follow this profile and are also followed by the current user
+  /// Loads known followers: people who follow this profile and whom the current user follows.
+  /// The header shows only the first page, so a load replaces it. Without `reset`, a profile
+  /// that already has them keeps them.
   func loadKnownFollowers(reset: Bool = false) async {
     let actor = profile?.did.didString() ?? userDID
     guard let client = client, !actor.isEmpty, actor != "fallback", actor != "unknown", actor != currentUserDID, !self.isCurrentUser, !isLoadingKnownFollowers else { return }
@@ -371,46 +372,27 @@ import AppKit
       return
     }
 
+    // Cleared on every exit, cancellation included: a flag left set would refuse every later
+    // load of this screen, pull to refresh too.
     _isLoadingKnownFollowers = true
-    if reset {
-      knownFollowersCursor = nil
-    }
+    defer { _isLoadingKnownFollowers = false }
 
     do {
       let params = AppBskyGraphGetKnownFollowers.Parameters(
         actor: try ATIdentifier(string: actor),
-        limit: 20,
-        cursor: knownFollowersCursor
+        limit: 20
       )
 
       let (responseCode, output) = try await client.app.bsky.graph.getKnownFollowers(input: params)
 
-      if responseCode == 200, let followers = output?.followers {
-        await MainActor.run {
-          // Check if object is still valid to prevent crash during deallocation
-          guard !Task.isCancelled else { return }
-          
-          if self.knownFollowersCursor == nil {
-            self._knownFollowers = followers
-          } else {
-            self._knownFollowers.append(contentsOf: followers)
-          }
-          self.knownFollowersCursor = output?.cursor
-          self._isLoadingKnownFollowers = false
-        }
-      } else {
+      guard responseCode == 200, let followers = output?.followers else {
         logger.warning("Failed to load known followers: HTTP \(responseCode)")
-        await MainActor.run { 
-          guard !Task.isCancelled else { return }
-          self._isLoadingKnownFollowers = false 
-        }
+        return
       }
+      guard !Task.isCancelled else { return }
+      _knownFollowers = followers
     } catch {
       logger.error("Error loading known followers: \(error.localizedDescription)")
-      await MainActor.run { 
-        guard !Task.isCancelled else { return }
-        self._isLoadingKnownFollowers = false 
-      }
     }
   }
 
