@@ -94,7 +94,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.showsVerticalScrollIndicator = true
         collectionView.prefetchDataSource = self
-        // Lets UI tests (CatbirdPerfTests.testThreadOpen) wait for the revealed thread.
+        // Lets UI tests (CatbirdPerfTests.testThreadOpen) find the thread; revealContent()
+        // marks it revealed.
         collectionView.accessibilityIdentifier = "thread.collectionView"
         
         // Let automatic content inset adjustment handle safe areas since we're edge-to-edge
@@ -1147,6 +1148,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     loadingView.isHidden = true
     collectionView.alpha = 1
     CATransaction.commit()
+    // For UI tests: the tapped post can be on screen long before this (showPrefilledAnchor),
+    // so a visible cell does not mean the thread loaded. The list itself is not an
+    // accessibility element, so VoiceOver never reads this value.
+    collectionView.accessibilityValue = Self.revealedAccessibilityValue
 
     if UIAccessibility.isVoiceOverRunning, !hasMovedVoiceOverFocusToAnchor {
       hasMovedVoiceOverFocusToAnchor = focusVoiceOverOnMainPost()
@@ -1212,6 +1217,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       completion()
     }
   }
+
+  /// The thread list's accessibility value once revealContent() has shown the loaded thread
+  /// (or its load error). CatbirdPerfTests.testThreadOpen waits for it.
+  static let revealedAccessibilityValue = "revealed"
 
   /// Whether the reader has moved the tapped post shown before the thread loaded: they are
   /// touching or flinging the list, or it no longer sits at the top where it opened.

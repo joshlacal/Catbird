@@ -101,8 +101,7 @@ final class CatbirdPerfTests: XCTestCase {
       }
 
       // Wait until the thread is shown, not just pushed, so the ThreadOpen interval
-      // ends before the pop: a first cell becomes hittable at alpha 1, or the screen
-      // says the post can't be shown.
+      // ends ("outcome: visible") before the pop rather than being cancelled by it.
       XCTAssertTrue(waitForThreadReveal(in: app, timeout: 10), "The thread should be shown before popping")
 
       // Pop back to feed
@@ -202,8 +201,9 @@ final class CatbirdPerfTests: XCTestCase {
     Int(ProcessInfo.processInfo.environment["CATBIRD_PERF_ITERATIONS"] ?? "").map { max(1, $0) } ?? 5
   }
 
-  /// Whether the thread screen finished opening: its first cell is hittable (cells at
-  /// alpha 0 are not), or it shows that the post can't be loaded.
+  /// Whether the thread screen finished opening: ThreadViewController.revealContent() has
+  /// marked the list "revealed", or the screen says the post can't be loaded. A hittable cell
+  /// is not enough: a post tapped in a feed shows as the anchor while the thread still loads.
   @MainActor
   private func waitForThreadReveal(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
     let thread = app.collectionViews["thread.collectionView"]
@@ -212,7 +212,7 @@ final class CatbirdPerfTests: XCTestCase {
     ).firstMatch
     let deadline = Date().addingTimeInterval(timeout)
     repeat {
-      if thread.cells.firstMatch.exists && thread.cells.firstMatch.isHittable { return true }
+      if thread.exists, (thread.value as? String) == "revealed" { return true }
       if unavailable.exists { return true }
       RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     } while Date() < deadline
