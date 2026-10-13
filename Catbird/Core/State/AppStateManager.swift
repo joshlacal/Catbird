@@ -136,6 +136,11 @@ final class AppStateManager {
   /// Used to prevent operations during the transition window
   private(set) var isTransitioning: Bool = false
 
+  /// The account whose session ended without a logout (authenticationRequired, a catastrophic
+  /// auth failure). The auth observer moved to sign-in and kept its AppState cached so the same
+  /// account signing in again reuses it; a different account signing in retires it first.
+  @ObservationIgnored private var sessionEndedAccountDID: String?
+
   // MARK: - App Initialization State
   // These flags are stored here (instead of @State in CatbirdApp) because @State in App structs
   // does not persist reliably across background/foreground cycles - iOS can recreate the App struct
@@ -453,6 +458,9 @@ final class AppStateManager {
         case .unauthenticated:
           guard self.lifecycle != .unauthenticated else { continue }
           self.logger.info("🔔 Auth became unauthenticated - transitioning")
+          if let endedDID = self.lifecycle.userDID {
+            self.sessionEndedAccountDID = endedDID
+          }
           self.composerSwitchQueue.invalidate()
           if #available(iOS 17.0, macOS 14.0, *) {
             withAnimation(.snappy(duration: 0.32, extraBounce: 0.0)) {
@@ -593,6 +601,20 @@ final class AppStateManager {
       try checkSwitchTaskCancellation(composerSwitchAttemptID)
       guard case .authenticated(let retiredDID) = authManager.state, retiredDID == userDID else {
         throw AccountSwitchError.authenticatedAccountMismatch
+      }
+    }
+
+    // An account whose session ended without a logout stayed cached for its own sign-in.
+    // A different account signing in retires it, with logout's cleanups that need no session.
+    if let endedDID = sessionEndedAccountDID {
+      sessionEndedAccountDID = nil
+      if endedDID != userDID, endedDID != effectivePreviousDID {
+        await retireSessionEndedAccount(endedDID)
+        try validateSwitchAttempt(composerSwitchAttemptID)
+        try checkSwitchTaskCancellation(composerSwitchAttemptID)
+        guard case .authenticated(let currentDID) = authManager.state, currentDID == userDID else {
+          throw AccountSwitchError.authenticatedAccountMismatch
+        }
       }
     }
 
@@ -789,6 +811,23 @@ final class AppStateManager {
     }
 
     logger.info("✅ Logged out successfully")
+  }
+
+  /// What logout() does for the outgoing account that needs no session, for an account whose
+  /// session ended on its own and that another account is now replacing: stop its services,
+  /// drop it from the cache, and clear its widget data, labeler definitions and the Spotlight
+  /// index and App Intents stores, which would otherwise show it under the next account. Its
+  /// push registration cannot be removed without its session and stays on the server.
+  private func retireSessionEndedAccount(_ did: String) async {
+    logger.info("Retiring an account whose session ended, before another account signs in")
+    if let endedState = authenticatedStates.removeValue(forKey: did) {
+      endedState.cleanup()
+    }
+    accessOrder.removeAll { $0 == did }
+    LabelerDefinitionsDiskCache.remove(accountDID: did)
+    FeedWidgetDataProvider.shared.clearWidgetData(for: did)
+    ThreadManager.clearPrefillCache()
+    await SpotlightEntityDonator.shared.removeAll()
   }
 
   // MARK: - Account Restriction & Reactivation
