@@ -92,9 +92,13 @@ final class ComposerDraftManager {
     if ProcessInfo.processInfo.arguments.contains("--social-actions-ui-fixture") { return }
     #endif
     guard appState != nil else { return }
+    // Start from the current state: each subscription only sees later changes,
+    // and at launch the account is already authenticated when this runs, so the
+    // first remote draft sync would otherwise wait for the next auth change.
+    let authStates = AppStateManager.shared.authentication.currentAndFutureStates
     accountObservation = Task { [weak self] in
       var lastDID: String?
-      for await state in await AppStateManager.shared.authentication.stateChanges {
+      for await state in authStates {
         guard !Task.isCancelled, let self else { return }
         guard state.userDID != lastDID else { continue }
         lastDID = state.userDID

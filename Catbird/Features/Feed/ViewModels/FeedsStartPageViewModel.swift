@@ -79,8 +79,11 @@ final class FeedsStartPageViewModel {
 
   func startAuthObservation() {
     guard authObservationTask == nil else { return }
+    // Subscribe now rather than when the task first runs, so a logout in
+    // between isn't missed: each subscription only sees later changes.
+    let authStates = AppStateManager.shared.authentication.stateChanges
     authObservationTask = Task { [weak self] in
-      for await state in AppStateManager.shared.authentication.stateChanges {
+      for await state in authStates {
         guard !Task.isCancelled else { break }
         guard let self else { break }
         if case .unauthenticated = state {

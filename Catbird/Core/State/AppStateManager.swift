@@ -416,10 +416,13 @@ final class AppStateManager {
   private func startAuthStateObservationIfNeeded() {
     guard authStateObservationTask == nil else { return }
 
+    // Subscribe now rather than when the task first runs, so a change made in
+    // between isn't missed: each subscription only sees later changes.
+    let authStates = authManager.stateChanges
     authStateObservationTask = Task { @MainActor [weak self] in
       guard let self else { return }
 
-      for await state in self.authManager.stateChanges {
+      for await state in authStates {
         // Explicit switches own authentication and recovery until their outcome is final.
         guard state == self.authManager.state,
               !self.isTransitioning,
