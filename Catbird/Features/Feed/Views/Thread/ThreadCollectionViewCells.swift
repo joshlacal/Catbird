@@ -71,8 +71,13 @@ final class ThreadRowCell: UICollectionViewCell {
 
     // The configuration closure runs once, here: the policy it injects is a
     // snapshot, so the row tracks the live policy itself.
+    // A reused cell keeps its hosting view and updates it in place. The identity resets
+    // the row's own state, such as PostView's view models, when the cell shows another
+    // row or scene, and leaves the modifiers around it in place.
+    let rowIdentity = Self.contentIdentity(row: row, sceneContext: sceneContext)
     contentConfiguration = UIHostingConfiguration {
       content
+        .id(rowIdentity)
         .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
         .environment(sceneContext)
@@ -89,6 +94,12 @@ final class ThreadRowCell: UICollectionViewCell {
       appEntityIdentifier = nil
     }
 #endif
+  }
+
+  /// The SwiftUI identity of a row's content: the row and the scene showing it, in the
+  /// same form as MainPostCell's. Reconfiguring the same row keeps its state.
+  static func contentIdentity(row: ThreadRow, sceneContext: SceneNavigationContext) -> String {
+    "\(row.id)|\(ObjectIdentifier(sceneContext))"
   }
 }
 

@@ -660,6 +660,75 @@ struct ThreadReplyLayoutTests {
 #endif
   }
 
+  @MainActor
+  @Test("A thread row's content identity changes with the row or scene, not on a same-row reconfigure")
+  func threadRowContentIdentity() async throws {
+    guard #available(iOS 18.0, *) else { return }
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+    let otherScene = SceneNavigationContext(appState: appState, sceneID: UUID())
+    let rows = build([anchor, post("a", depth: 1, parent: "anchor"), post("b", depth: 1, parent: "anchor")], mode: .tree)
+    let first = try row("a", in: rows)
+    let second = try row("b", in: rows)
+
+    #expect(ThreadRowCell.contentIdentity(row: first, sceneContext: scene) == ThreadRowCell.contentIdentity(row: first, sceneContext: scene))
+    #expect(ThreadRowCell.contentIdentity(row: first, sceneContext: scene) != ThreadRowCell.contentIdentity(row: second, sceneContext: scene))
+    #expect(ThreadRowCell.contentIdentity(row: first, sceneContext: scene) != ThreadRowCell.contentIdentity(row: first, sceneContext: otherScene))
+  }
+
+  @MainActor
+  @Test("A reused ThreadRowCell lays out its new reply at once, not the reply it showed before")
+  func reusedThreadRowCellLaysOutTheNewReplyAtOnce() async throws {
+    guard #available(iOS 18.0, *) else { return }
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+
+    func reply(_ rkey: String, _ text: String) throws -> (row: ThreadRow, item: AppBskyUnspeccedGetPostThreadV2.ThreadItem) {
+      let postView = PublicPostTestFixtures.makePostView(
+        uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/\(rkey)"),
+        authorDID: try DID(didString: "did:plc:testuser"),
+        text: text
+      )
+      let item = AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: postView, depth: 1)
+      return (try #require(build([ThreadRowBuilder.Item(item)], mode: .tree).first), item)
+    }
+    func show(_ reply: (row: ThreadRow, item: AppBskyUnspeccedGetPostThreadV2.ThreadItem), in cell: ThreadRowCell) {
+      cell.configure(
+        row: reply.row, threadItem: reply.item, parentAuthor: nil, appState: appState,
+        sceneContext: scene, path: .constant(NavigationPath()))
+    }
+    // No await between configuring and measuring, so PostView's async post swap can't run first.
+    func height(of cell: ThreadRowCell) -> CGFloat {
+      cell.contentView.systemLayoutSizeFitting(
+        CGSize(width: 390, height: 0),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .fittingSizeLevel
+      ).height
+    }
+
+    let short = try reply("reuse-short", "One line.")
+    let long = try reply(
+      "reuse-long",
+      String(repeating: "A reply long enough to wrap across many lines of the thread. ", count: 10)
+    )
+
+    let fresh = ThreadRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 100))
+    show(long, in: fresh)
+    let longHeight = height(of: fresh)
+
+    let reused = ThreadRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 100))
+    show(short, in: reused)
+    let shortHeight = height(of: reused)
+    #expect(longHeight > shortHeight + 40, "fixture: the long reply must be much taller (\(longHeight) vs \(shortHeight))")
+
+    reused.prepareForReuse()
+    show(long, in: reused)
+    let reusedHeight = height(of: reused)
+    #expect(abs(reusedHeight - longHeight) < 1, "reused cell measured \(reusedHeight), fresh cell \(longHeight), previous row \(shortHeight)")
+  }
+
   private func descendants(of view: UIView) -> [UIView] {
     [view] + view.subviews.flatMap { descendants(of: $0) }
   }
