@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
-import os
 import Petrel
 import SwiftUI
+
 // MARK: - Tenor API Models (shared with GifPickerView)
 
 struct TenorGif: Codable, Identifiable, Hashable {
@@ -193,6 +193,26 @@ struct PostComposerDraft: Codable, Hashable {
 
 // MARK: - Codable Wrappers for Draft State
 
+/// The draft file written for one image attachment's bytes.
+struct DraftImageFile {
+  let data: Data
+  let urlString: String
+
+  /// A stat call, so a file removed from disk is written again on the next save.
+  var exists: Bool {
+    guard let url = URL(string: urlString) else { return false }
+    return FileManager.default.fileExists(atPath: url.path)
+  }
+
+  /// The file written for `item`'s current bytes, if any.
+  static func urlString(
+    for item: PostComposerViewModel.MediaItem, in files: [UUID: DraftImageFile]
+  ) -> String? {
+    guard let data = item.rawData, let file = files[item.id], file.data == data else { return nil }
+    return file.urlString
+  }
+}
+
 struct CodableMediaItem: Codable, Hashable {
   // Optional for compatibility with drafts saved before attachment IDs were persisted.
   var attachmentID: UUID? = nil
@@ -206,13 +226,13 @@ struct CodableMediaItem: Codable, Hashable {
   let rawImageURLString: String?
   let caption: VideoCaption?
 
-  private static let attachmentPersistedURLs = OSAllocatedUnfairLock(initialState: [UUID: String]())
-
-  static func recordPersistedURL(_ urlString: String, for id: UUID) {
-    attachmentPersistedURLs.withLock { $0[id] = urlString }
+  init(from mediaItem: PostComposerViewModel.MediaItem) {
+    self.init(from: mediaItem, persistedImageURLString: nil)
   }
 
-  init(from mediaItem: PostComposerViewModel.MediaItem) {
+  /// `persistedImageURLString` is a draft file already written for `mediaItem.rawData`.
+  /// Without one, the bytes are hashed and written here.
+  init(from mediaItem: PostComposerViewModel.MediaItem, persistedImageURLString: String?) {
     self.attachmentID = mediaItem.id
     self.altText = mediaItem.altText
     self.aspectRatio = mediaItem.aspectRatio
@@ -222,29 +242,20 @@ struct CodableMediaItem: Codable, Hashable {
     self.rawVideoURLString = mediaItem.rawVideoURL?.absoluteString
     self.caption = mediaItem.caption
     // Persist image data to a temp file so it survives draft serialization (e.g. account switch)
-    if let rawImageURLString = mediaItem.rawImageURL?.absoluteString {
-      self.rawImageURLString = rawImageURLString
-      CodableMediaItem.recordPersistedURL(rawImageURLString, for: mediaItem.id)
-    } else if let cached = CodableMediaItem.attachmentPersistedURLs.withLock({ $0[mediaItem.id] }) {
-      self.rawImageURLString = cached
-    } else if let rawData = mediaItem.rawData {
-      let persisted = CodableMediaItem.persistImageData(rawData) ?? mediaItem.rawImageURL?.absoluteString
-      if let persisted {
-        CodableMediaItem.recordPersistedURL(persisted, for: mediaItem.id)
-      }
-      self.rawImageURLString = persisted
+    if let rawData = mediaItem.rawData {
+      self.rawImageURLString = persistedImageURLString
+        ?? CodableMediaItem.persistImageData(rawData)
+        ?? mediaItem.rawImageURL?.absoluteString
     } else {
       self.rawImageURLString = mediaItem.rawImageURL?.absoluteString
     }
   }
+
   /// Write image data to a file in the shared drafts directory, returning the file URL string.
   /// Files are named by content, so autosaves and thread copies of the same image reuse one file.
+  /// Safe to call off the main actor.
   static func persistImageData(_ data: Data) -> String? {
-    guard let container = FileManager.default.containerURL(
-      forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
-    ) else { return nil }
-    let draftsDir = container.appendingPathComponent("SharedDrafts", isDirectory: true)
-    try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
+    guard let draftsDir = draftImagesDirectory else { return nil }
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     let filename = "draft_image_\(digest).jpg"
     let fileURL = draftsDir.appendingPathComponent(filename)
@@ -255,9 +266,21 @@ struct CodableMediaItem: Codable, Hashable {
       try data.write(to: fileURL, options: .atomic)
       return fileURL.absoluteString
     } catch {
-      return nil
+      // The directory may have been removed since it was created.
+      guard (try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)) != nil,
+            (try? data.write(to: fileURL, options: .atomic)) != nil else { return nil }
+      return fileURL.absoluteString
     }
   }
+
+  private static let draftImagesDirectory: URL? = {
+    guard let container = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
+    ) else { return nil }
+    let draftsDir = container.appendingPathComponent("SharedDrafts", isDirectory: true)
+    try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
+    return draftsDir
+  }()
   
   func toMediaItem() -> PostComposerViewModel.MediaItem {
     var item = PostComposerViewModel.MediaItem(id: attachmentID ?? UUID())
@@ -276,28 +299,10 @@ struct CodableMediaItem: Codable, Hashable {
       if isGifConversion && rawVideoURLString == nil {
         // Failed GIF preparation remains a retryable video source, never a still image post.
         item.rawData = data
-      } else {
+      } else if let preview = ComposerImagePreparation.makePreviewSynchronously(from: data) {
+        // Decode a thumbnail only; the full image is decoded at upload, off the main actor.
         item.rawData = data
-        item.rawImageURL = url
-        CodableMediaItem.recordPersistedURL(rawImageURLString, for: item.id)
-        if let (thumbnail, originalSize) = ComposerImageProcessor.syncPreview(from: data, maxPixel: 360) {
-          #if os(iOS)
-          item.image = Image(uiImage: UIImage(cgImage: thumbnail))
-          #elseif os(macOS)
-          let rep = NSBitmapImageRep(cgImage: thumbnail)
-          let nsImage = NSImage(size: NSSize(width: thumbnail.width, height: thumbnail.height))
-          nsImage.addRepresentation(rep)
-          item.image = Image(nsImage: nsImage)
-          #endif
-          item.aspectRatio = originalSize
-        } else if let platformImage = PlatformImage(data: data) {
-          #if os(iOS)
-          item.image = Image(uiImage: platformImage)
-          #elseif os(macOS)
-          item.image = Image(nsImage: platformImage)
-          #endif
-          item.aspectRatio = CGSize(width: platformImage.imageSize.width, height: platformImage.imageSize.height)
-        }
+        item.applyPreview(preview)
         item.isLoading = false
       }
     }
@@ -343,11 +348,15 @@ struct CodableThreadEntry: Codable, Hashable {
   var quotedPostCID: String? = nil
   var draftEntryID: UUID? = nil
   
-  init(from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?, parentPostURI: String? = nil) {
+  init(
+    from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?,
+    parentPostURI: String? = nil,
+    encodeMedia: (PostComposerViewModel.MediaItem) -> CodableMediaItem = CodableMediaItem.init(from:)
+  ) {
     self.draftEntryID = threadEntry.id
     self.text = threadEntry.text
-    self.mediaItems = threadEntry.mediaItems.map(CodableMediaItem.init)
-    self.videoItem = threadEntry.videoItem.map(CodableMediaItem.init)
+    self.mediaItems = threadEntry.mediaItems.map(encodeMedia)
+    self.videoItem = threadEntry.videoItem.map(encodeMedia)
     self.selectedGif = threadEntry.selectedGif
     self.detectedURLs = threadEntry.detectedURLs
     self.urlCards = threadEntry.urlCards

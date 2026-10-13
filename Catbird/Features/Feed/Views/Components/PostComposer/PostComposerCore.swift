@@ -402,35 +402,12 @@ extension PostComposerViewModel {
                     if let data = try await item.loadItem(forTypeIdentifier: "public.image", options: nil) as? Data {
                         var mediaItem = MediaItem()
                         mediaItem.rawData = data
-
-                        let itemID = mediaItem.id
-                        Task.detached(priority: .utility) {
-                            if let urlString = CodableMediaItem.persistImageData(data) {
-                                CodableMediaItem.recordPersistedURL(urlString, for: itemID)
-                            }
-                        }
-                        if let (thumbnail, originalSize) = await ComposerImageProcessor.makePreview(from: data, maxPixel: 360) {
-                            #if os(iOS)
-                            mediaItem.image = Image(uiImage: UIImage(cgImage: thumbnail))
-                            #elseif os(macOS)
-                            let rep = NSBitmapImageRep(cgImage: thumbnail)
-                            let nsImage = NSImage(size: NSSize(width: thumbnail.width, height: thumbnail.height))
-                            nsImage.addRepresentation(rep)
-                            mediaItem.image = Image(nsImage: nsImage)
-                            #endif
-                            mediaItem.aspectRatio = originalSize
-                        } else {
-                            #if os(iOS)
-                            if let platformImage = UIImage(data: data) {
-                                mediaItem.image = Image(uiImage: platformImage)
-                                mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
-                            }
-                            #elseif os(macOS)
-                            if let platformImage = NSImage(data: data) {
-                                mediaItem.image = Image(nsImage: platformImage)
-                                mediaItem.aspectRatio = platformImage.size
-                            }
-                            #endif
+                        // One background task decodes the thumbnail and writes the draft file.
+                        let (preview, draftFileURLString) = await Self.prepareImageAttachment(
+                            data, writesDraftFile: ownsEditingDraft
+                        )
+                        if let preview {
+                            mediaItem.applyPreview(preview)
                         }
                         mediaItem.isLoading = false
 
@@ -438,6 +415,9 @@ extension PostComposerViewModel {
                             await processGIFAsVideoFromData(data)
                         } else {
                             mediaItems.append(mediaItem)
+                            if let draftFileURLString {
+                                rememberDraftImageFile(draftFileURLString, for: mediaItem.id, data: data)
+                            }
                         }
                     }
                 } catch {
@@ -451,35 +431,11 @@ extension PostComposerViewModel {
     func processDetectedGenmoji(_ genmojiData: Data) async {
         var mediaItem = MediaItem()
         mediaItem.rawData = genmojiData
-
-        let itemID = mediaItem.id
-        Task.detached(priority: .utility) {
-            if let urlString = CodableMediaItem.persistImageData(genmojiData) {
-                CodableMediaItem.recordPersistedURL(urlString, for: itemID)
-            }
-        }
-        if let (thumbnail, originalSize) = await ComposerImageProcessor.makePreview(from: genmojiData, maxPixel: 360) {
-            #if os(iOS)
-            mediaItem.image = Image(uiImage: UIImage(cgImage: thumbnail))
-            #elseif os(macOS)
-            let rep = NSBitmapImageRep(cgImage: thumbnail)
-            let nsImage = NSImage(size: NSSize(width: thumbnail.width, height: thumbnail.height))
-            nsImage.addRepresentation(rep)
-            mediaItem.image = Image(nsImage: nsImage)
-            #endif
-            mediaItem.aspectRatio = originalSize
-        } else {
-            #if os(iOS)
-            if let platformImage = UIImage(data: genmojiData) {
-                mediaItem.image = Image(uiImage: platformImage)
-                mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
-            }
-            #elseif os(macOS)
-            if let platformImage = NSImage(data: genmojiData) {
-                mediaItem.image = Image(nsImage: platformImage)
-                mediaItem.aspectRatio = platformImage.size
-            }
-            #endif
+        let (preview, draftFileURLString) = await Self.prepareImageAttachment(
+            genmojiData, writesDraftFile: ownsEditingDraft
+        )
+        if let preview {
+            mediaItem.applyPreview(preview)
         }
         mediaItem.isLoading = false
 
@@ -489,6 +445,9 @@ extension PostComposerViewModel {
 
             if mediaItems.count < maxImagesAllowed {
                 mediaItems.append(mediaItem)
+                if let draftFileURLString {
+                    rememberDraftImageFile(draftFileURLString, for: mediaItem.id, data: genmojiData)
+                }
             }
         }
     }
@@ -1247,8 +1206,7 @@ extension PostComposerViewModel {
 
     /// Resizes image data to fit within specified byte limit
     private func resizeImageData(_ data: Data, maxSizeBytes: Int) async throws -> Data {
-        let (processed, _) = try await ComposerImageProcessor.prepareImageForUpload(data, maxPixelSize: 1000, maxBytes: maxSizeBytes)
-        return processed
+        try await ComposerImagePreparation.prepareForUpload(data, maxPixelSize: 1000, maxBytes: maxSizeBytes).data
     }
 
     // MARK: - Facet Processing

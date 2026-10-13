@@ -205,6 +205,12 @@ final class PostComposerViewModel {
     }
     return _performanceOptimizer
   }
+
+  // MARK: - Draft Image Files
+
+  /// The draft file written for each image attachment's current bytes. Autosaves reuse it
+  /// instead of hashing and writing every image again.
+  @ObservationIgnored private var draftImageFiles: [UUID: DraftImageFile] = [:]
   
   // MARK: - Constants
 
@@ -620,7 +626,7 @@ final class PostComposerViewModel {
     )
   }
 
-  private func ownsMediaLoadDraft(_ context: MediaLoadContext) -> Bool {
+  func ownsMediaLoadDraft(_ context: MediaLoadContext) -> Bool {
     context.generation == draftRestorationGeneration && context.claim == editingClaim
       && context.accountDID == appState.userDID
       && (editingSession == nil || ownsEditingDraft)
@@ -749,10 +755,14 @@ final class PostComposerViewModel {
     let rootQuoteURI = threadEntries.first?.draftQuotedPostURI ?? rootQuote?.uri.uriString()
     let rootQuoteCID = threadEntries.first?.draftQuotedPostCID ?? rootQuote?.cid.string
     let rules = effectiveDraftInteractionRules()
+    let imageFiles = persistDraftImageFiles()
+    let codableMedia: (MediaItem) -> CodableMediaItem = { item in
+      CodableMediaItem(from: item, persistedImageURLString: DraftImageFile.urlString(for: item, in: imageFiles))
+    }
     return PostComposerDraft(
       postText: postText,
-      mediaItems: mediaItems.map(CodableMediaItem.init),
-      videoItem: videoItem.map(CodableMediaItem.init),
+      mediaItems: mediaItems.map(codableMedia),
+      videoItem: videoItem.map(codableMedia),
       selectedGif: selectedGif,
       selectedLanguages: selectedLanguages,
       selectedLabels: selectedLabels,
@@ -760,7 +770,8 @@ final class PostComposerViewModel {
       threadEntries: threadEntries.enumerated().map { index, entry in
         CodableThreadEntry(from: entry, parentPost: index == 0 ? parentPost : nil,
                            quotedPost: index == 0 ? rootQuote : nil,
-                           parentPostURI: index == 0 ? pendingParentPostURI : nil)
+                           parentPostURI: index == 0 ? pendingParentPostURI : nil,
+                           encodeMedia: codableMedia)
       },
       isThreadMode: isThreadMode,
       currentThreadIndex: currentThreadIndex,
@@ -775,11 +786,54 @@ final class PostComposerViewModel {
     )
   }
   
+  /// Records a draft file written off the main actor for an attachment's bytes.
+  func rememberDraftImageFile(_ urlString: String, for id: UUID, data: Data) {
+    draftImageFiles[id] = DraftImageFile(data: data, urlString: urlString)
+  }
+
+  /// Returns the draft file for an image's current bytes, hashing and writing them only when
+  /// this attachment has no file yet or its bytes changed (crop or edit).
+  private func draftImageURLString(for item: MediaItem) -> String? {
+    guard let data = item.rawData else { return nil }
+    if let file = draftImageFiles[item.id], file.data == data, file.exists { return file.urlString }
+    guard let urlString = CodableMediaItem.persistImageData(data) else { return nil }
+    draftImageFiles[item.id] = DraftImageFile(data: data, urlString: urlString)
+    return urlString
+  }
+
+  /// Writes a file for each attachment whose current bytes have none, and drops entries for
+  /// removed attachments so their bytes are not kept alive.
+  private func persistDraftImageFiles() -> [UUID: DraftImageFile] {
+    var items = mediaItems + [videoItem].compactMap { $0 }
+    for entry in threadEntries {
+      items += entry.mediaItems + [entry.videoItem].compactMap { $0 }
+    }
+    let liveIDs = Set(items.map(\.id))
+    draftImageFiles = draftImageFiles.filter { liveIDs.contains($0.key) }
+    for item in items {
+      _ = draftImageURLString(for: item)
+    }
+    return draftImageFiles
+  }
+
+  /// A restored image was just read from its content-named draft file, so the first save
+  /// after a restore reuses that file instead of hashing the bytes again.
+  private func rememberRestoredDraftImageFiles() {
+    let restored = mediaItems + threadEntries.flatMap(\.mediaItems)
+    for item in restored {
+      guard let data = item.rawData, let url = item.rawImageURL, url.isFileURL,
+            url.lastPathComponent.hasPrefix("draft_image_") else { continue }
+      rememberDraftImageFile(url.absoluteString, for: item.id, data: data)
+    }
+  }
+
   func clearAll() {
     logger.info("PostComposerViewModel: Clearing all composer state")
     isUpdatingText = true
     defer { isUpdatingText = false }
     invalidateDraftRestoration()
+    // Posted or discarded photos should not stay in memory until the next save.
+    draftImageFiles.removeAll()
     parentPost = nil
     replyTo = nil
     quotedPost = nil
@@ -833,6 +887,7 @@ final class PostComposerViewModel {
     outlineTags = draft.outlineTags
     threadEntries = draft.threadEntries.map { $0.toThreadEntry() }
     if threadEntries.isEmpty { threadEntries = [ThreadEntry()] }
+    rememberRestoredDraftImageFiles()
     isThreadMode = draft.isThreadMode
     currentThreadIndex = min(max(0, draft.currentThreadIndex), threadEntries.count - 1)
     detectedURLs = threadEntries[currentThreadIndex].detectedURLs

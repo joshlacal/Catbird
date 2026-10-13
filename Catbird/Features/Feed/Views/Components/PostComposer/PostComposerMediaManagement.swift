@@ -117,18 +117,6 @@ extension PostComposerViewModel {
               let currentIndex = mediaItems.firstIndex(where: { $0.id == id }) else { return }
         // Keep the bytes even if decoding or conversion fails, so retry never loses the source.
         mediaItems[currentIndex].rawData = data
-        let attachmentUUID = id
-        Task.detached(priority: .utility) {
-          if let urlString = CodableMediaItem.persistImageData(data) {
-            CodableMediaItem.recordPersistedURL(urlString, for: attachmentUUID)
-            if let fileURL = URL(string: urlString) {
-              await MainActor.run { [weak self] in
-                guard let self, let idx = self.mediaItems.firstIndex(where: { $0.id == attachmentUUID }) else { return }
-                self.mediaItems[idx].rawImageURL = fileURL
-              }
-            }
-          }
-        }
         if isDataAnimatedGIF(data) {
           mediaItems[currentIndex].isGifConversion = true
           guard mediaItems.count == 1, videoItem == nil, selectedGif == nil else {
@@ -149,25 +137,16 @@ extension PostComposerViewModel {
           await loadVideoThumbnail(for: converted)
           return
         }
-        if let (previewCGImage, originalSize) = await ComposerImageProcessor.makePreview(from: data, maxPixel: 360) {
-          #if os(iOS)
-          mediaItems[currentIndex].image = Image(uiImage: UIImage(cgImage: previewCGImage))
-          #elseif os(macOS)
-          let rep = NSBitmapImageRep(cgImage: previewCGImage)
-          let nsImage = NSImage(size: NSSize(width: previewCGImage.width, height: previewCGImage.height))
-          nsImage.addRepresentation(rep)
-          mediaItems[currentIndex].image = Image(nsImage: nsImage)
-          #endif
-          mediaItems[currentIndex].aspectRatio = originalSize
-        } else if let platformImage = PlatformImage(data: data) {
-          #if os(iOS)
-          mediaItems[currentIndex].image = Image(uiImage: platformImage)
-          #elseif os(macOS)
-          mediaItems[currentIndex].image = Image(nsImage: platformImage)
-          #endif
-          mediaItems[currentIndex].aspectRatio = platformImage.imageSize
-        } else {
-          throw MediaPreviewImageError.unavailable
+        let (preview, draftFileURLString) = await Self.prepareImageAttachment(
+          data, writesDraftFile: ownsEditingDraft
+        )
+        guard let preview else { throw MediaPreviewImageError.unavailable }
+        guard ownsMediaPreviewLoad(attempt, for: id, context: context),
+              let previewIndex = mediaItems.firstIndex(where: { $0.id == id }),
+              mediaItems[previewIndex].rawData == data else { return }
+        mediaItems[previewIndex].applyPreview(preview)
+        if let draftFileURLString {
+          rememberDraftImageFile(draftFileURLString, for: id, data: data)
         }
       } catch is CancellationError {
         // The matching finalizer exposes Retry without removing the attachment.
@@ -179,6 +158,18 @@ extension PostComposerViewModel {
           : "Retry this attachment or remove it before posting."
         alertItem = AlertItem(title: "Couldn’t Load Image", message: message)
       }
+    }
+
+    /// Decodes the thumbnail and, when this composer saves drafts, writes the attachment's
+    /// draft file, both away from the main actor. The picker, paste and Genmoji paths use it.
+    static func prepareImageAttachment(
+      _ data: Data, writesDraftFile: Bool
+    ) async -> (ComposerImagePreparation.Preview?, String?) {
+      await Task.detached(priority: .userInitiated) {
+        let preview = ComposerImagePreparation.makePreviewSynchronously(from: data)
+        let draftFile = writesDraftFile && preview != nil ? CodableMediaItem.persistImageData(data) : nil
+        return (preview, draftFile)
+      }.value
     }
 
     // MARK: - Removing Media Items
@@ -230,37 +221,24 @@ extension PostComposerViewModel {
     }
 
     // MARK: - Crop Image to Square
+
+    /// Crops to the centred square of the upright photo off the main actor. The attachment
+    /// reads as preparing until then, so submit can't upload the uncropped bytes.
     @MainActor
     func cropMediaItemToSquare(id: UUID) {
-        guard let index = mediaItems.firstIndex(where: { $0.id == id }), let data = mediaItems[index].rawData else { return }
-        #if os(iOS)
-        if let image = UIImage(data: data) {
-            let size = min(image.size.width, image.size.height)
-            let originX = (image.size.width - size) / 2.0
-            let originY = (image.size.height - size) / 2.0
-            let cropRect = CGRect(x: originX, y: originY, width: size, height: size)
-            if let cg = image.cgImage?.cropping(to: cropRect) {
-                let squared = UIImage(cgImage: cg, scale: image.scale, orientation: image.imageOrientation)
-                if let jpeg = squared.jpegData(compressionQuality: 0.9) {
-                    mediaItems[index].rawData = jpeg
-                    mediaItems[index].aspectRatio = CGSize(width: squared.size.width, height: squared.size.height)
-                    if let (thumb, _) = ComposerImageProcessor.syncPreview(from: jpeg, maxPixel: 360) {
-                        mediaItems[index].image = Image(uiImage: UIImage(cgImage: thumb))
-                    } else {
-                        mediaItems[index].image = Image(uiImage: squared)
-                    }
-                    let itemID = id
-                    Task.detached(priority: .utility) {
-                        if let urlString = CodableMediaItem.persistImageData(jpeg) {
-                            CodableMediaItem.recordPersistedURL(urlString, for: itemID)
-                        }
-                    }
-                }
-            }
+        guard let index = mediaItems.firstIndex(where: { $0.id == id }),
+              let original = mediaItems[index].rawData, !mediaItems[index].isLoading else { return }
+        mediaItems[index].isLoading = true
+        let context = mediaLoadContext()
+        let writesDraftFile = ownsEditingDraft
+        Task { [weak self] in
+            let cropped = await ComposerImagePreparation.squareCropped(original)
+            let draftFile = await Self.writeDraftImageFile(for: cropped, if: writesDraftFile)
+            self?.finishImageEdit(
+                id: id, original: original, result: cropped, draftFileURLString: draftFile,
+                context: context, failureTitle: "Couldn’t Crop Photo"
+            )
         }
-        #elseif os(macOS)
-        // macOS crop not implemented
-        #endif
     }
 
     // MARK: - Reorder by index
@@ -314,6 +292,8 @@ extension PostComposerViewModel {
         isPhotoEditorPresented = true
     }
 
+    /// Encodes the editor's result off the main actor; the attachment reads as preparing
+    /// until the new bytes replace the old ones.
     func updateEditedImage(_ newImage: PlatformImage, at index: Int) {
         guard mediaItems.indices.contains(index) else {
             logger.warning("PostComposerMedia: Cannot update edited image - index \(index) out of bounds")
@@ -321,49 +301,86 @@ extension PostComposerViewModel {
         }
 
         logger.info("PostComposerMedia: Updating edited image at index \(index)")
+        let id = mediaItems[index].id
+        let original = mediaItems[index].rawData
+        mediaItems[index].isLoading = true
+        let context = mediaLoadContext()
+        let writesDraftFile = ownsEditingDraft
+        Task { [weak self] in
+            let edited = await ComposerImagePreparation.prepareEditedImage(newImage)
+            let draftFile = await Self.writeDraftImageFile(for: edited, if: writesDraftFile)
+            self?.finishImageEdit(
+                id: id, original: original, result: edited, draftFileURLString: draftFile,
+                context: context, failureTitle: "Couldn’t Save Edit"
+            )
+        }
+    }
 
-        #if os(iOS)
-        // Convert to JPEG data for upload and update thumbnail preview
-        if let jpegData = newImage.jpegData(compressionQuality: 0.9) {
-            mediaItems[index].rawData = jpegData
-            let itemID = mediaItems[index].id
-            Task.detached(priority: .utility) {
-                if let urlString = CodableMediaItem.persistImageData(jpegData) {
-                    CodableMediaItem.recordPersistedURL(urlString, for: itemID)
-                }
+    /// Writes the draft file for a crop or edit off the main actor, so the save that follows
+    /// reuses it instead of hashing and writing the full-size JPEG on the main actor.
+    private static func writeDraftImageFile(
+        for result: ComposerImagePreparation.EditedImage?, if writesDraftFile: Bool
+    ) async -> String? {
+        guard writesDraftFile, let data = result?.data else { return nil }
+        return await Task.detached(priority: .userInitiated) {
+            CodableMediaItem.persistImageData(data)
+        }.value
+    }
+
+    /// Applies a crop or edit to every copy of the attachment (the active post and its thread
+    /// entry) that still holds the bytes the work started from; newer bytes win.
+    ///
+    /// Work started for a draft that has since been cleared, replaced, re-claimed or moved to
+    /// another account changes nothing and saves nothing. It only stops copies that still hold
+    /// its starting bytes from reading as preparing. Switching thread entries mid-crop is fine.
+    @MainActor
+    private func finishImageEdit(
+        id: UUID, original: Data?, result: ComposerImagePreparation.EditedImage?,
+        draftFileURLString: String?, context: MediaLoadContext, failureTitle: String
+    ) {
+        guard ownsMediaLoadDraft(context) else {
+            func release(_ item: inout MediaItem) {
+                if item.rawData == original { item.isLoading = false }
             }
-            if let (thumb, _) = ComposerImageProcessor.syncPreview(from: jpegData, maxPixel: 360) {
-                mediaItems[index].image = Image(uiImage: UIImage(cgImage: thumb))
-            } else {
-                mediaItems[index].image = Image(uiImage: newImage)
+            if let index = mediaItems.firstIndex(where: { $0.id == id }) {
+                release(&mediaItems[index])
             }
-            logger.debug("PostComposerMedia: Converted edited image to JPEG - size: \(jpegData.count) bytes")
-        } else {
-            mediaItems[index].image = Image(uiImage: newImage)
+            for entryIndex in threadEntries.indices {
+                guard let index = threadEntries[entryIndex].mediaItems.firstIndex(where: { $0.id == id }) else { continue }
+                release(&threadEntries[entryIndex].mediaItems[index])
+            }
+            return
         }
 
-        // Update aspect ratio
-        mediaItems[index].aspectRatio = CGSize(
-            width: newImage.size.width,
-            height: newImage.size.height
-        )
-        #elseif os(macOS)
-        // Convert image to SwiftUI Image
-        mediaItems[index].image = Image(nsImage: newImage)
-
-        // Convert to JPEG data for upload
-        if let jpegData = newImage.jpegImageData(compressionQuality: 0.9) {
-            mediaItems[index].rawData = jpegData
-            logger.debug("PostComposerMedia: Converted edited image to JPEG - size: \(jpegData.count) bytes")
+        func finish(_ item: inout MediaItem) -> Bool {
+            item.isLoading = false
+            guard let result, item.rawData == original else { return false }
+            item.rawData = result.data
+            item.applyPreview(result.preview)
+            return true
         }
 
-        // Update aspect ratio
-        mediaItems[index].aspectRatio = newImage.size
-        #endif
+        var applied = false
+        var found = false
+        if let index = mediaItems.firstIndex(where: { $0.id == id }) {
+            found = true
+            applied = finish(&mediaItems[index]) || applied
+        }
+        for entryIndex in threadEntries.indices {
+            guard let index = threadEntries[entryIndex].mediaItems.firstIndex(where: { $0.id == id }) else { continue }
+            found = true
+            applied = finish(&threadEntries[entryIndex].mediaItems[index]) || applied
+        }
 
-        logger.info("PostComposerMedia: Image updated successfully at index \(index) - new size: \(self.mediaItems[index].aspectRatio?.width ?? 0)x\(self.mediaItems[index].aspectRatio?.height ?? 0)")
-
-        saveDraftIfNeeded()
+        if applied {
+            logger.info("PostComposerMedia: Photo updated - \(result?.data.count ?? 0) bytes")
+            if let result, let draftFileURLString {
+                rememberDraftImageFile(draftFileURLString, for: id, data: result.data)
+            }
+            saveDraftIfNeeded()
+        } else if result == nil, found {
+            alertItem = AlertItem(title: failureTitle, message: "The photo is unchanged. Try again.")
+        }
     }
 
     // MARK: - Video Thumbnail Loading
