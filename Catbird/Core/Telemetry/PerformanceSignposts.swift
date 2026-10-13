@@ -308,11 +308,17 @@ enum PerformanceSignposts {
 extension PerformanceSignposts {
   /// Shared contract for performance intervals across features.
   /// Backed by OSSignposter(subsystem: "blue.catbird.performance", category: "Intervals").
+  ///
+  /// Every interval gets its own signpost ID, carried in the returned state, so intervals of
+  /// the same name that overlap pair correctly: the two App Group entity buffers flush on their
+  /// own queues at the same moment (EntityExport), a link-card thumbnail is prepared while a
+  /// photo is (ComposerImageProcess), feed saves overlap (FeedPersist). With the signposter's
+  /// default `.exclusive` ID Instruments would join one's begin to the other's end.
   nonisolated static func beginInterval(_ name: StaticString) -> OSSignpostIntervalState {
     guard intervalsSignposter.isEnabled else {
       return OSSignpostIntervalState.beginState(id: .null)
     }
-    return intervalsSignposter.beginInterval(name)
+    return intervalsSignposter.beginInterval(name, id: intervalsSignposter.makeSignpostID())
   }
   
   nonisolated static func endInterval(_ name: StaticString, _ state: OSSignpostIntervalState) {
