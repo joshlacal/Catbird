@@ -219,10 +219,12 @@ import AppKit
       }
 
       await MainActor.run {
-        // Double-check that we're still valid and not cancelled
-        guard !Task.isCancelled else { 
+        // A cancelled load keeps the profile already shown, but must not leave the screen
+        // loading: empty tabs would show a spinner until some later load finished.
+        guard !Task.isCancelled else {
+          self.isLoading = false
           logger.debug("ProfileViewModel[\(self.instanceId)]: Task cancelled during profile load")
-          return 
+          return
         }
         
         if responseCode == 200, let profile = profileData {
@@ -252,10 +254,10 @@ import AppKit
       }
     } catch {
       await MainActor.run {
-        // Check if object is still valid to prevent crash during deallocation
-        guard !Task.isCancelled else { 
+        guard !Task.isCancelled else {
+          self.isLoading = false
           logger.debug("ProfileViewModel[\(self.instanceId)]: Task cancelled during error handling")
-          return 
+          return
         }
         
         self.error = error
