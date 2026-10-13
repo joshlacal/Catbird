@@ -41,8 +41,7 @@ extension PostComposerViewModel {
             let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
                 data: imageData,
                 mimeType: "image/jpeg",
-                stripMetadata: false,
-                skipImageProcessing: true
+                stripMetadata: true
             )
             guard responseCode == 200, let uploadedBlob = blobOutput?.blob else {
                 logger.error("PostComposerUploading: Blob upload failed - response code: \(responseCode)")
