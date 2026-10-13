@@ -5,13 +5,24 @@ import NukeUI
 
 /// A view that displays Tenor GIFs as looping MP4 videos for proper animation
 struct GifVideoView: View {
+    /// Which MP4 rendition to stream.
+    enum Rendition: Equatable {
+        /// The full-size rendition, for a GIF shown at composer width.
+        case full
+        /// The smallest rendition that still looks sharp at this pixel width, with a still
+        /// poster until the first frame. Grids show many of these at once.
+        case tile(pixelWidth: CGFloat)
+    }
+
     let gif: TenorGif
     let onTap: () -> Void
+    var rendition: Rendition = .full
     
     @Environment(\.scenePhase) private var scenePhase
     @State private var player: AVPlayer?
     @State private var hasError = false
     @State private var isVisibleOnScreen = false
+    /// Grid tiles start playing when about half visible, not at the first sliver (P179).
     private let visibilityThreshold: Double = 0.5
     @State private var observerToken: (any NSObjectProtocol)?
     
@@ -22,17 +33,18 @@ struct GifVideoView: View {
                     // Fallback to static image if video fails
                     fallbackImageView
                 } else if let player = player {
-                    // Use poster under PlayerLayerView for instant display (P179)
-                    ZStack {
-                        fallbackImageView
-                        PlayerLayerView(
-                            player: player,
-                            gravity: .resizeAspectFill,
-                            shouldLoop: true
-                        )
-                    }
+                    // Use existing PlayerLayerView for proper video rendering. It stays
+                    // transparent until its first frame, so the poster shows through.
+                    PlayerLayerView(
+                        player: player,
+                        gravity: .resizeAspectFill,
+                        shouldLoop: true
+                    )
                     .aspectRatio(aspectRatio, contentMode: .fit)
+                    .background { posterView }
                     .clipped()
+                } else if isTile {
+                    posterView
                 } else {
                     // Loading state
                     loadingView
@@ -89,6 +101,24 @@ struct GifVideoView: View {
         .cornerRadius(8)
     }
     
+    /// A still frame under the player until its first frame: a small one for tiles, the
+    /// full-size preview for a full view such as the selected GIF in the composer. Before a
+    /// full view has a player it keeps its spinner.
+    @ViewBuilder
+    private var posterView: some View {
+        if let posterURL {
+            LazyImage(url: posterURL) { state in
+                if let image = state.image {
+                    image
+                        .resizable()
+                        .aspectRatio(aspectRatio, contentMode: .fill)
+                } else {
+                    Color.systemGray6
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var loadingView: some View {
         RoundedRectangle(cornerRadius: 8)
@@ -186,27 +216,65 @@ struct GifVideoView: View {
         player = nil
     }
 
-    /// Get the best video URL for animation from Tenor's media formats
+    private var isTile: Bool {
+        if case .tile = rendition { return true }
+        return false
+    }
+
     private var bestVideoURL: URL? {
-        // Never use loopedmp4 in grid cells; PlayerLayerView already loops.
-        // Choose smallest adequate MP4 rendition whose pixel width fits the cell (P179)
-        func formatWidth(_ item: TenorMediaItem?) -> Int {
-            item?.dims.first ?? 0
+        Self.videoURL(for: gif, rendition: rendition)
+    }
+
+    static func videoURL(for gif: TenorGif, rendition: Rendition) -> URL? {
+        switch rendition {
+        case .full:
+            return fullVideoURL(for: gif)
+        case .tile(let pixelWidth):
+            return tileVideoURL(for: gif, pixelWidth: pixelWidth) ?? fullVideoURL(for: gif)
         }
-        
-        let targetWidth = 360
-        if let nanoMP4 = gif.media_formats.nanomp4, formatWidth(nanoMP4) >= targetWidth {
-            return URL(string: nanoMP4.url)
-        } else if let tinyMP4 = gif.media_formats.tinymp4, formatWidth(tinyMP4) >= targetWidth {
-            return URL(string: tinyMP4.url)
-        } else if let tinyMP4 = gif.media_formats.tinymp4 {
-            return URL(string: tinyMP4.url)
+    }
+
+    /// The smallest MP4 at least three quarters as wide as the tile, falling back to the
+    /// regular MP4. Tiles never stream `loopedmp4`, which repeats the clip to lengthen it;
+    /// the player loops by itself.
+    private static func tileVideoURL(for gif: TenorGif, pixelWidth: CGFloat) -> URL? {
+        let formats = gif.media_formats
+        let ascending = [formats.nanomp4, formats.tinymp4, formats.mp4].compactMap { $0 }
+        let minimumWidth = pixelWidth * 0.75
+        let chosen = ascending.first { format in
+            guard let width = format.dims.first else { return false }
+            return CGFloat(width) >= minimumWidth
+        } ?? formats.mp4 ?? ascending.last
+        return chosen.flatMap { URL(string: $0.url) }
+    }
+
+    private var posterURL: URL? {
+        Self.posterURL(for: gif, rendition: rendition)
+    }
+
+    static func posterURL(for gif: TenorGif, rendition: Rendition) -> URL? {
+        let formats = gif.media_formats
+        let poster: TenorMediaItem?
+        switch rendition {
+        case .tile:
+            poster = formats.tinygifpreview ?? formats.nanogifpreview ?? formats.gifpreview
+        case .full:
+            poster = formats.gifpreview ?? formats.tinygifpreview ?? formats.nanogifpreview
+        }
+        return poster.flatMap { URL(string: $0.url) }
+    }
+
+    /// Get the best video URL for animation from Tenor's media formats
+    private static func fullVideoURL(for gif: TenorGif) -> URL? {
+        // Priority: loopedmp4 > mp4 > tinymp4 > nanomp4
+        if let loopedMP4 = gif.media_formats.loopedmp4 {
+            return URL(string: loopedMP4.url)
         } else if let mp4 = gif.media_formats.mp4 {
             return URL(string: mp4.url)
+        } else if let tinyMP4 = gif.media_formats.tinymp4 {
+            return URL(string: tinyMP4.url)
         } else if let nanoMP4 = gif.media_formats.nanomp4 {
             return URL(string: nanoMP4.url)
-        } else if let loopedMP4 = gif.media_formats.loopedmp4 {
-            return URL(string: loopedMP4.url)
         }
         return nil
     }

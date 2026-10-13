@@ -394,6 +394,59 @@ struct ComposerMediaPerformanceTests {
     #expect(model.alertItem != nil)
   }
 
+  // MARK: - GIF picker
+
+  private func tenorGif(formats: TenorMediaFormats) -> TenorGif {
+    TenorGif(
+      id: "gif", title: "", content_description: "", itemurl: "", url: "https://example.com/gif",
+      tags: [], media_formats: formats, created: 0, flags: [], hasaudio: false,
+      content_description_source: ""
+    )
+  }
+
+  private func format(_ name: String, width: Int, ext: String = "mp4") -> TenorMediaItem {
+    TenorMediaItem(url: "https://media.example/\(name).\(ext)", dims: [width, width], duration: 1, preview: "", size: nil)
+  }
+
+  @Test("Grid tiles stream the smallest sharp rendition, never the looped one")
+  func tilesPickSmallestSharpRendition() {
+    let gif = tenorGif(formats: TenorMediaFormats(
+      gif: nil, mediumgif: nil, tinygif: nil, nanogif: nil,
+      mp4: format("mp4", width: 498), loopedmp4: format("loopedmp4", width: 498),
+      tinymp4: format("tinymp4", width: 220), nanomp4: format("nanomp4", width: 90),
+      webm: nil, tinywebm: nil, nanowebm: nil, webp: nil, gifpreview: nil, tinygifpreview: nil, nanogifpreview: nil
+    ))
+
+    #expect(GifVideoView.videoURL(for: gif, rendition: .tile(pixelWidth: 100))?.lastPathComponent == "nanomp4.mp4")
+    #expect(GifVideoView.videoURL(for: gif, rendition: .tile(pixelWidth: 280))?.lastPathComponent == "tinymp4.mp4")
+    #expect(GifVideoView.videoURL(for: gif, rendition: .tile(pixelWidth: 510))?.lastPathComponent == "mp4.mp4")
+    #expect(GifVideoView.videoURL(for: gif, rendition: .tile(pixelWidth: 2000))?.lastPathComponent == "mp4.mp4")
+    #expect(GifVideoView.videoURL(for: gif, rendition: .full)?.lastPathComponent == "loopedmp4.mp4")
+
+    // With no other MP4, a tile falls back to the full rendition rather than showing nothing.
+    let loopedOnly = tenorGif(formats: TenorMediaFormats(
+      gif: nil, mediumgif: nil, tinygif: nil, nanogif: nil,
+      mp4: nil, loopedmp4: format("loopedmp4", width: 498), tinymp4: nil, nanomp4: nil,
+      webm: nil, tinywebm: nil, nanowebm: nil, webp: nil, gifpreview: nil, tinygifpreview: nil, nanogifpreview: nil
+    ))
+    #expect(GifVideoView.videoURL(for: loopedOnly, rendition: .tile(pixelWidth: 300))?.lastPathComponent == "loopedmp4.mp4")
+  }
+
+  @Test("Tiles show the small poster and full views the full-size preview")
+  func posterMatchesRendition() {
+    let gif = tenorGif(formats: TenorMediaFormats(
+      gif: nil, mediumgif: nil, tinygif: nil, nanogif: nil,
+      mp4: format("mp4", width: 498), loopedmp4: nil, tinymp4: nil, nanomp4: nil,
+      webm: nil, tinywebm: nil, nanowebm: nil, webp: nil,
+      gifpreview: format("gifpreview", width: 498, ext: "png"),
+      tinygifpreview: format("tinygifpreview", width: 220, ext: "png"),
+      nanogifpreview: format("nanogifpreview", width: 90, ext: "png")
+    ))
+
+    #expect(GifVideoView.posterURL(for: gif, rendition: .tile(pixelWidth: 300))?.lastPathComponent == "tinygifpreview.png")
+    #expect(GifVideoView.posterURL(for: gif, rendition: .full)?.lastPathComponent == "gifpreview.png")
+  }
+
   // MARK: - Link-card thumbnails
 
   private func linkCard(_ url: String, image: String) -> URLCardResponse {

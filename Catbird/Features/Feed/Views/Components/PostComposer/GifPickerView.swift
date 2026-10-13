@@ -616,7 +616,8 @@ struct AnimatedCategoryGifView: View {
     let gif: TenorGif
     @State private var player: AVPlayer?
     @State private var hasError = false
-    @State private var observerTokens: [any NSObjectProtocol] = []
+    @State private var failureObserver: (any NSObjectProtocol)?
+    
     var body: some View {
         Group {
             if hasError {
@@ -651,6 +652,12 @@ struct AnimatedCategoryGifView: View {
     }
     
     private func setupVideoPlayer() {
+        // onAppear can fire again without onDisappear; a second player would orphan the
+        // first one's failure observer.
+        guard player == nil else {
+            player?.play()
+            return
+        }
         guard let videoURL = bestVideoURL else {
             hasError = true
             return
@@ -659,22 +666,13 @@ struct AnimatedCategoryGifView: View {
         let playerItem = AVPlayerItem(url: videoURL)
         let avPlayer = AVPlayer(playerItem: playerItem)
         
-        // Configure for GIF-like behavior
+        // Configure for GIF-like behavior (PlayerLayerView manages playback looping)
         avPlayer.isMuted = true // GIFs are silent
         avPlayer.actionAtItemEnd = .none
         
-        // Set up looping notification with weak capture to prevent leak (P099)
-        let loopToken = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: playerItem,
-            queue: .main
-        ) { [weak avPlayer] _ in
-            avPlayer?.seek(to: .zero)
-            avPlayer?.play()
-        }
-        
-        // Monitor for player errors
-        let errorToken = NotificationCenter.default.addObserver(
+        // Monitor for player errors. The token is removed in cleanupPlayer, so the
+        // observer can't outlive this tile.
+        failureObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: playerItem,
             queue: .main
@@ -682,7 +680,6 @@ struct AnimatedCategoryGifView: View {
             self.hasError = true
         }
         
-        self.observerTokens = [loopToken, errorToken]
         self.player = avPlayer
         
         // Start playing immediately
@@ -690,10 +687,10 @@ struct AnimatedCategoryGifView: View {
     }
     
     private func cleanupPlayer() {
-        for token in observerTokens {
-            NotificationCenter.default.removeObserver(token)
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+            self.failureObserver = nil
         }
-        observerTokens.removeAll()
         player?.pause()
         player = nil
     }
