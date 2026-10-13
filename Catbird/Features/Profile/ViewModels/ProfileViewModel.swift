@@ -181,6 +181,20 @@ import AppKit
     return combined
   }
 
+  /// Whether an author-feed item belongs on the Replies tab: a reply, not a repost, whose
+  /// parent is by someone else (or can't be shown). Without reposts every item is by the
+  /// profile, so the item's own author stands in for the profile's DID. That holds even when
+  /// the screen was opened by handle and the profile has not loaded yet.
+  nonisolated static func isReplyToOthers(_ post: AppBskyFeedDefs.FeedViewPost) -> Bool {
+    guard post.reason == nil, let reply = post.reply else { return false }
+    switch reply.parent {
+    case .appBskyFeedDefsPostView(let parentPost):
+      return parentPost.author.did != post.post.author.did
+    case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
+      return true
+    }
+  }
+
   // MARK: - Public Methods
 
   /// Loads the user profile with enhanced crash protection
@@ -568,16 +582,7 @@ import AppKit
           didReceivePage = true
           cursor = output?.cursor
 
-          // Filter to only include replies to other people
-          repliesToOthers.append(contentsOf: feed.filter { post in
-            guard post.reason == nil, let reply = post.reply else { return false }
-            switch reply.parent {
-            case .appBskyFeedDefsPostView(let parentPost):
-              return parentPost.author.did.didString() != actor
-            case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
-              return true
-            }
-          })
+          repliesToOthers.append(contentsOf: feed.filter(Self.isReplyToOthers))
         } while repliesToOthers.count < 10 && cursor != nil && requestCount < 5
 
         if didReceivePage {
