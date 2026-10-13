@@ -395,6 +395,10 @@ final class AppStateManager {
       logger.info("✅ Found authenticated session for: \(userDID)")
       // Wait for ModelContainer before building AppState, as AppState requires modelContext
       guard (await waitForModelContainerReady()) != nil else {
+        // No auth observation here on purpose: the app shows ErrorRecoveryView, whose retry
+        // reloads the container and runs initialize() again (initializeTask is cleared), and
+        // that run subscribes. Subscribing now would replay this authenticated state and
+        // build an AppState with no model container.
         logger.error("ModelContainer unavailable or failed; deferring AppState construction")
         initializeTask = nil
         return
@@ -416,9 +420,13 @@ final class AppStateManager {
   private func startAuthStateObservationIfNeeded() {
     guard authStateObservationTask == nil else { return }
 
-    // Subscribe now rather than when the task first runs, so a change made in
-    // between isn't missed: each subscription only sees later changes.
-    let authStates = authManager.stateChanges
+    // Subscribe now rather than when the task first runs, and start from the current state:
+    // launch only subscribes after initialize() and its own transition, so a sign-out that
+    // happened during those awaits (session expiry, a catastrophic auth failure) was already
+    // emitted. Replaying it moves the screen to sign-in. Replaying the state launch just
+    // published is a no-op (the lifecycle guards below). Both reads are main-actor isolated,
+    // like updateState, so no change can fall between them.
+    let authStates = authManager.currentAndFutureStates
     authStateObservationTask = Task { @MainActor [weak self] in
       guard let self else { return }
 
