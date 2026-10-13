@@ -9,8 +9,10 @@ import SwiftUI
 /// `EquatableBox` and renders each section (header, text, embed, stats and
 /// actions) in a small child view that holds the box rather than the post.
 struct ThreadViewMainPostView: View, Equatable {
+  /// Compares the whole post, so a newer copy of the same post (the thread's copy
+  /// replacing the tapped feed post, or fresh counts) re-renders the anchor in place.
   static func == (lhs: ThreadViewMainPostView, rhs: ThreadViewMainPostView) -> Bool {
-    lhs.post.value.uri == rhs.post.value.uri && lhs.post.value.indexedAt == rhs.post.value.indexedAt && lhs.viewModel.isBookmarked == rhs.viewModel.isBookmarked && lhs.opThreadPostIndex == rhs.opThreadPostIndex && lhs.opThreadPostCount == rhs.opThreadPostCount
+    lhs.post == rhs.post && lhs.viewModel.isBookmarked == rhs.viewModel.isBookmarked && lhs.opThreadPostIndex == rhs.opThreadPostIndex && lhs.opThreadPostCount == rhs.opThreadPostCount
   }
 
   let post: EquatableBox<AppBskyFeedDefs.PostView>

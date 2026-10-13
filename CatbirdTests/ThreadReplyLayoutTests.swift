@@ -462,6 +462,128 @@ struct ThreadReplyLayoutTests {
     #expect(linear != tree)
   }
 
+  // MARK: Prefilled anchor
+
+  /// A post as a feed hands it to the thread, replying to `parent` when given.
+  private func tappedPost(_ name: String, parent: String?) throws -> AppBskyFeedDefs.PostView {
+    let reply = parent.map { parentName in
+      let ref = ComAtprotoRepoStrongRef(uri: Self.uri(parentName), cid: CID.fromDAGCBOR(Data("\(parentName)-cid".utf8)))
+      return AppBskyFeedPost.ReplyRef(root: ref, parent: ref)
+    }
+    let record = AppBskyFeedPost(
+      text: name,
+      entities: nil,
+      facets: nil,
+      reply: reply,
+      embed: nil,
+      langs: nil,
+      labels: nil,
+      tags: nil,
+      createdAt: ATProtocolDate(date: Date())
+    )
+    return PublicPostTestFixtures.makePostView(
+      uri: Self.uri(name),
+      authorDID: try DID(didString: "did:plc:thread"),
+      text: name,
+      record: .knownType(record)
+    )
+  }
+
+  @Test(
+    "A prefilled anchor row equals the loaded anchor row, so the anchor keeps its cell",
+    arguments: [ThreadLayoutMode.linear, .tree]
+  )
+  func prefilledAnchorMatchesLoadedAnchor(mode: ThreadLayoutMode) throws {
+    let topLevel = try tappedPost("anchor", parent: nil)
+    let loadedTopLevel = try row("anchor", in: build([anchor, post("a", depth: 1, parent: "anchor")], mode: mode))
+    #expect(ThreadRowBuilder.prefilledAnchorRow(for: topLevel, mode: mode) == loadedTopLevel)
+    #expect(!loadedTopLevel.lineIn)
+
+    let reply = try tappedPost("anchor", parent: "p")
+    let loadedReply = try row(
+      "anchor",
+      in: build([post("p", depth: -1, parent: nil), post("anchor", depth: 0, parent: "p")], mode: mode)
+    )
+    #expect(ThreadRowBuilder.prefilledAnchorRow(for: reply, mode: mode) == loadedReply)
+    #expect(loadedReply.lineIn)
+  }
+
+  @Test("A parent that loads as a tombstone gives the anchor a different row")
+  func prefilledAnchorDiffersWhenTheParentIsATombstone() throws {
+    let reply = try tappedPost("anchor", parent: "p")
+    let loaded = try row("anchor", in: build([blocked("p", depth: -1), post("anchor", depth: 0, parent: "p")], mode: .linear))
+    #expect(ThreadRowBuilder.prefilledAnchorRow(for: reply, mode: .linear) != loaded)
+  }
+
+  /// The tapped post again as the thread returns it: same post, fresher counts.
+  private func threadCopy(of post: AppBskyFeedDefs.PostView, likes: Int) -> AppBskyFeedDefs.PostView {
+    AppBskyFeedDefs.PostView(
+      uri: post.uri,
+      cid: post.cid,
+      author: post.author,
+      record: post.record,
+      embed: post.embed,
+      bookmarkCount: post.bookmarkCount,
+      replyCount: 2,
+      repostCount: post.repostCount,
+      likeCount: likes,
+      quoteCount: post.quoteCount,
+      indexedAt: post.indexedAt,
+      viewer: post.viewer,
+      labels: post.labels,
+      threadgate: post.threadgate,
+      debug: post.debug
+    )
+  }
+
+  @MainActor
+  @Test("The anchor cell takes the thread's copy of the post and its post number in place")
+  func mainPostCellUpdatesInPlaceForANewCopyOfThePost() async throws {
+    guard #available(iOS 18.0, *) else { return }
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+    let tapped = try tappedPost("anchor", parent: nil)
+    let loaded = threadCopy(of: tapped, likes: 7)
+
+    func identity(_ post: AppBskyFeedDefs.PostView, index: Int? = nil, count: Int? = nil) -> String {
+      MainPostCell.configurationIdentity(
+        post: post, sceneContext: scene, opThreadPostIndex: index, opThreadPostCount: count, showsLineFromParent: false)
+    }
+    #expect(identity(tapped) == identity(tapped))
+    #expect(identity(loaded) != identity(tapped))
+    #expect(identity(tapped, index: 1, count: 3) != identity(tapped))
+
+    let cell = MainPostCell(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
+    cell.configure(post: tapped, appState: appState, sceneContext: scene, path: .constant(NavigationPath()))
+    let tappedIdentity = try #require(cell.configuredIdentity)
+    cell.layoutIfNeeded()
+    let initialHostingView = descendants(of: cell).first { String(describing: type(of: $0)).contains("Hosting") }
+    #expect(initialHostingView != nil)
+
+    cell.configure(
+      post: loaded, appState: appState, sceneContext: scene, path: .constant(NavigationPath()),
+      opThreadPostIndex: 1, opThreadPostCount: 3)
+    #expect(cell.configuredIdentity != tappedIdentity)
+    cell.layoutIfNeeded()
+    let updatedHostingView = descendants(of: cell).first { String(describing: type(of: $0)).contains("Hosting") }
+    #expect(updatedHostingView === initialHostingView)
+  }
+
+  @MainActor
+  @Test("The anchor view compares the whole post, so a fresher copy re-renders it")
+  func anchorViewComparesTheWholePost() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let tapped = try tappedPost("anchor", parent: nil)
+
+    func view(_ post: AppBskyFeedDefs.PostView) -> ThreadViewMainPostView {
+      ThreadViewMainPostView(post: post, showLine: false, path: .constant(NavigationPath()), appState: appState)
+    }
+    #expect(view(tapped) == view(tapped))
+    #expect(view(threadCopy(of: tapped, likes: 7)) != view(tapped))
+  }
+
   // MARK: Cell
 
   @MainActor

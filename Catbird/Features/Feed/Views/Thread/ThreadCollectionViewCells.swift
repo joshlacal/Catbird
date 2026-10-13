@@ -94,7 +94,7 @@ final class ThreadRowCell: UICollectionViewCell {
 
 @available(iOS 18.0, *)
 final class MainPostCell: UICollectionViewCell {
-  private var configuredIdentity: String?
+  private(set) var configuredIdentity: String?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -133,7 +133,13 @@ final class MainPostCell: UICollectionViewCell {
     showsLineFromParent: Bool = false
   ) {
     let postIdentity = post.uri.uriString()
-    let configurationIdentity = postIdentity + (showsLineFromParent ? "|line-in" : "") + "|\(ObjectIdentifier(sceneContext))"
+    let configurationIdentity = Self.configurationIdentity(
+      post: post,
+      sceneContext: sceneContext,
+      opThreadPostIndex: opThreadPostIndex,
+      opThreadPostCount: opThreadPostCount,
+      showsLineFromParent: showsLineFromParent
+    )
 
 #if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *),
@@ -163,7 +169,9 @@ final class MainPostCell: UICollectionViewCell {
       }
       .id(postIdentity)
 
-    // Only reconfigure if needed (using post URI as identity check)
+    // Only reconfigure when something shown changed. The content keeps `.id(postIdentity)`,
+    // so a new copy of the same post (the thread's copy replacing the tapped feed post, or
+    // fresh counts after a reload) updates the hosting view in place and keeps its state.
     if contentConfiguration == nil
       || configurationIdentity != configuredIdentity {
 
@@ -193,6 +201,28 @@ final class MainPostCell: UICollectionViewCell {
 #endif
     contentConfiguration = nil
     configuredIdentity = nil
+  }
+
+  /// What the anchor shows: the post, its line from the parent, the scene, the OP post
+  /// number and the parts of the post that change between copies of it (counts and the
+  /// viewer's like, repost and bookmark).
+  static func configurationIdentity(
+    post: AppBskyFeedDefs.PostView,
+    sceneContext: SceneNavigationContext,
+    opThreadPostIndex: Int?,
+    opThreadPostCount: Int?,
+    showsLineFromParent: Bool
+  ) -> String {
+    let lineIn = showsLineFromParent ? "|line-in" : ""
+    let number = "\(opThreadPostIndex.map(String.init) ?? "-")/\(opThreadPostCount.map(String.init) ?? "-")"
+    let counts = [post.replyCount, post.repostCount, post.likeCount, post.quoteCount, post.bookmarkCount]
+      .map { $0.map(String.init) ?? "-" }
+      .joined(separator: ",")
+    let viewer = [
+      post.viewer?.like != nil, post.viewer?.repost != nil, post.viewer?.bookmarked == true
+    ].map { $0 ? "1" : "0" }.joined()
+    return post.uri.uriString() + lineIn + "|\(ObjectIdentifier(sceneContext))"
+      + "|op:\(number)|\(post.cid.string)|\(counts)|\(viewer)"
   }
 }
 

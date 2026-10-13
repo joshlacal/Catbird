@@ -41,22 +41,26 @@ final class ThreadManager {
   private static var prefillEntries: [PrefillKey: PrefillEntry] = [:]
   private static let prefillTTL: TimeInterval = 10.0
 
-  public static func storePrefillPost(_ post: AppBskyFeedDefs.PostView, userDID: String?) {
+  /// Keeps a tapped post for the thread screen to show as its anchor before the thread
+  /// loads. Entries are per account, expire after `prefillTTL` and are pruned on store.
+  /// `now` is a test seam.
+  public static func storePrefillPost(_ post: AppBskyFeedDefs.PostView, userDID: String?, now: Date = Date()) {
     guard let userDID, !userDID.isEmpty else { return }
     let key = PrefillKey(userDID: userDID, uri: post.uri.uriString())
     prefillLock.withLock {
-      let now = Date()
       prefillEntries = prefillEntries.filter { now.timeIntervalSince($0.value.timestamp) < prefillTTL }
       prefillEntries[key] = PrefillEntry(post: post, timestamp: now)
     }
   }
 
-  public static func prefillPost(for uri: ATProtocolURI, userDID: String?) -> AppBskyFeedDefs.PostView? {
+  /// Takes the stored post for `uri`: a read removes it, and an expired entry returns nil.
+  /// `now` is a test seam.
+  public static func prefillPost(for uri: ATProtocolURI, userDID: String?, now: Date = Date()) -> AppBskyFeedDefs.PostView? {
     guard let userDID, !userDID.isEmpty else { return nil }
     let key = PrefillKey(userDID: userDID, uri: uri.uriString())
     return prefillLock.withLock {
       guard let entry = prefillEntries.removeValue(forKey: key) else { return nil }
-      if Date().timeIntervalSince(entry.timestamp) < prefillTTL {
+      if now.timeIntervalSince(entry.timestamp) < prefillTTL {
         return entry.post
       }
       return nil

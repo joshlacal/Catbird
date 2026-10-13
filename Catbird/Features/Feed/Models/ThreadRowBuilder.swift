@@ -438,6 +438,37 @@ enum ThreadRowBuilder {
   }
 }
 
+// MARK: - Prefilled anchor
+
+extension ThreadRowBuilder {
+  /// The anchor row for a post shown before its thread has loaded (P080).
+  ///
+  /// It matches the anchor row `build` makes for the same post once the thread arrives
+  /// with the post's parent as a post, so the diffable item keeps its identity and the
+  /// anchor cell is updated in place instead of being rebuilt. A parent that loads as a
+  /// tombstone ends the line differently and replaces the cell, which is rare.
+  static func prefilledAnchorRow(for post: AppBskyFeedDefs.PostView, mode: ThreadLayoutMode) -> ThreadRow {
+    var parentID: String?
+    if case .knownType(let record) = post.record,
+      let feedPost = record as? AppBskyFeedPost {
+      parentID = feedPost.reply?.parent.uri.uriString()
+    }
+    return ThreadRow(
+      id: post.uri.uriString(),
+      kind: .anchor,
+      depth: 0,
+      parentID: parentID,
+      indentLevel: 0,
+      continuingRails: [],
+      lineIn: parentID != nil,
+      lineOut: false,
+      isLastSibling: true,
+      startsBranch: false,
+      mode: mode
+    )
+  }
+}
+
 // MARK: - Petrel adapters
 
 extension ThreadRowBuilder.Item {

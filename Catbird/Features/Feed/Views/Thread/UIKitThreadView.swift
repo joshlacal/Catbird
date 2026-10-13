@@ -36,6 +36,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var threadOpenSignpost: OSSignpostID?
   /// VoiceOver focus moves to the anchor once, on the reveal that first shows it.
   private var hasMovedVoiceOverFocusToAnchor = false
+  /// The anchor on screen is the tapped post (P080), shown before the thread loaded.
+  private var anchorIsPrefilled = false
+  /// The anchor's post or post number changed, so its cell is updated in place.
+  private var anchorNeedsReconfigure = false
   private var parentsEstimatedHeight: CGFloat = 200
   private var mainPostEstimatedHeight: CGFloat = 400
   private let repliesEstimatedHeightFloor: CGFloat = 150
@@ -257,27 +261,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Prevent VoiceOver from auto-scrolling
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
-    // P080: Render tapped post as anchor immediately while thread loads
-    if mainPost == nil, let prefilled = ThreadManager.prefillPost(for: postURI, userDID: appState.userDID) {
-      mainPost = prefilled
-      let anchor = ThreadRow(
-        id: postURI.uriString(),
-        kind: .anchor,
-        depth: 0,
-        parentID: nil,
-        indentLevel: 0,
-        continuingRails: [],
-        lineIn: false,
-        lineOut: false,
-        isLastSibling: true,
-        startsBranch: false,
-        mode: ThreadLayoutMode(threadedReplies: appState.appSettings.threadedReplies)
-      )
-      self.anchorRow = anchor
-      self.rows = [anchor]
-      self.loadingView.isHidden = true
-      setupComposePrompt(with: prefilled)
-      updateDataSnapshot(animatingDifferences: false)
+    // P080: a post tapped in a feed shows as the anchor straight away. VoiceOver users
+    // keep the spinner, so focus moves once, to the positioned thread.
+    if let prefilled = ThreadManager.prefillPost(for: postURI, userDID: appState.userDID),
+      mainPost == nil, !UIAccessibility.isVoiceOverRunning {
+      showPrefilledAnchor(prefilled)
     }
 
     reloadThread()
@@ -387,6 +375,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       view.backgroundColor = .systemBackground
 
     // The loading view covers the thread until the anchor is in place; see revealContent().
+    // A tapped post can show first instead; see showPrefilledAnchor(_:).
     collectionView.alpha = 0
 
     composePromptContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -719,7 +708,26 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     if let threadOpenSignpost {
       PerformanceSignposts.threadOpenDataReady(id: threadOpenSignpost, loaded: manager.threadData != nil)
     }
+    let anchorBeforeLoad = mainPost
+    let postNumberBeforeLoad = (index: mainPostIndex, count: mainPostCount)
     processThreadData()
+
+    if anchorIsPrefilled {
+      anchorIsPrefilled = false
+      if manager.threadData == nil {
+        // The tapped post stood in for a thread that failed to load. Drop it, so the
+        // load error and Try Again show instead of a lone post with no replies.
+        clearPrefilledAnchor()
+      }
+    }
+    // The anchor shown before this load (a tapped post, or an earlier load) keeps its cell
+    // but takes the thread's copy of the post and its OP post number.
+    if let mainPost, let anchorBeforeLoad, mainPost.uri == anchorBeforeLoad.uri,
+      mainPost != anchorBeforeLoad
+        || mainPostIndex != postNumberBeforeLoad.index
+        || mainPostCount != postNumberBeforeLoad.count {
+      anchorNeedsReconfigure = true
+    }
 
     // Pre-calculate heights for main post and parents
     if let mainPost = self.mainPost {
@@ -1042,9 +1050,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     snapshot.appendItems(replyRows.map { Item.reply($0) }, toSection: .replies)
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
 
-    if !changedRowIDs.isEmpty {
+    if !changedRowIDs.isEmpty || anchorNeedsReconfigure {
       let current = dataSource.snapshot()
-      let changed = snapshot.itemIdentifiers.filter { item in
+      var changed = snapshot.itemIdentifiers.filter { item in
         switch item {
         case .parentPost(let row), .reply(let row):
           return changedRowIDs.contains(row.id) && current.indexOfItem(item) != nil
@@ -1052,10 +1060,15 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           return false
         }
       }
+      if anchorNeedsReconfigure, mainPost != nil, let anchorRow,
+        current.indexOfItem(.mainPost(anchorRow)) != nil {
+        changed.append(.mainPost(anchorRow))
+      }
       if !changed.isEmpty {
         snapshot.reconfigureItems(changed)
       }
       changedRowIDs = []
+      anchorNeedsReconfigure = false
     }
 
     return snapshot
@@ -1072,6 +1085,42 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     snapshot.reconfigureItems([loadMoreItem])
     applySnapshot(snapshot, animatingDifferences: false)
     controllerLogger.debug("⬆️ LOAD MORE PARENTS: Updated loading cell, isLoading = \(isLoading)")
+  }
+
+  /// Shows the tapped post as the anchor while the thread loads (P080, Yellow decision
+  /// 2026-10-13). Its row matches the loaded anchor's, so when the thread arrives the
+  /// cell stays and settleOnMainPost() moves it down by the parent sliver in one frame.
+  /// ThreadOpen still ends at the positioned thread, in revealContent().
+  private func showPrefilledAnchor(_ post: AppBskyFeedDefs.PostView) {
+    mainPost = post
+    let anchor = ThreadRowBuilder.prefilledAnchorRow(
+      for: post,
+      mode: ThreadLayoutMode(threadedReplies: appState.appSettings.threadedReplies)
+    )
+    anchorRow = anchor
+    rows = [anchor]
+    anchorIsPrefilled = true
+    updateDataSnapshot(animatingDifferences: false)
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    loadingView.isHidden = true
+    collectionView.alpha = 1
+    CATransaction.commit()
+
+    if let threadOpenSignpost {
+      PerformanceSignposts.threadOpenAnchorPrefilled(id: threadOpenSignpost)
+    }
+  }
+
+  private func clearPrefilledAnchor() {
+    mainPost = nil
+    mainPostIndex = nil
+    mainPostCount = nil
+    anchorRow = nil
+    rows = []
+    parentRows = []
+    replyRows = []
   }
 
   /// Swaps the loading view for the thread in a single frame, with no fade, once the
