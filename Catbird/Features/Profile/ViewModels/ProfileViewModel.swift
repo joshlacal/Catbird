@@ -17,16 +17,16 @@ import AppKit
   // CRITICAL: Reduced observable properties to prevent Swift metadata cache corruption
   // Only the most essential properties are observable
   private(set) var profile: AppBskyActorDefs.ProfileViewDetailed?
-  private(set) var posts: [AppBskyFeedDefs.FeedViewPost] = []
-  private(set) var replies: [AppBskyFeedDefs.FeedViewPost] = []
-  private(set) var postsWithMedia: [AppBskyFeedDefs.FeedViewPost] = []
+  // The post tabs render straight from these rows, each boxed once when its page arrives and
+  // kept only here. A row id appears at most once per tab (see `appendingUnique`).
   private(set) var boxedPosts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
   private(set) var boxedReplies: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
   private(set) var boxedPostsWithMedia: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
   private(set) var isLoading = false
   private(set) var error: Error?
   var selectedProfileTab: ProfileTab = .posts
-  private(set) var pinnedPost: AppBskyFeedDefs.FeedViewPost?
+  /// Boxed once per first page, so the list compares the pinned row by pointer.
+  private(set) var pinnedPost: EquatableBox<AppBskyFeedDefs.FeedViewPost>?
 
   // Non-observable properties to reduce metadata cache pressure
   private var _likes: [AppBskyFeedDefs.FeedViewPost] = []
@@ -103,9 +103,6 @@ import AppKit
   private let logger = Logger(subsystem: "blue.catbird", category: "ProfileViewModel")
   private weak var stateInvalidationBus: StateInvalidationBus?
   
-  // Content filtering service
-  private let contentFilterService = ContentFilterService()
-  
   // Task management to prevent crashes
   private var activeLoadTasks: Set<Task<Void, Never>> = []
   
@@ -165,29 +162,24 @@ import AppKit
     stateInvalidationBus?.unsubscribe(self)
   }
 
-  // MARK: - Content Filtering
-  
-  /// Apply content filtering to profile posts based on user preferences
-  func applyContentFiltering(filterSettings: FeedTunerSettings) async {
-    // Filter posts
-    let filteredPosts = await contentFilterService.filterFeedViewPosts(posts, settings: filterSettings)
-    
-    // Filter replies
-    let filteredReplies = await contentFilterService.filterFeedViewPosts(replies, settings: filterSettings)
-    
-    // Filter media posts
-    let filteredMediaPosts = await contentFilterService.filterFeedViewPosts(postsWithMedia, settings: filterSettings)
-    
-    await MainActor.run {
-      self.posts = filteredPosts
-      self.boxedPosts = filteredPosts.map { EquatableBox($0) }
-      self.replies = filteredReplies
-      self.boxedReplies = filteredReplies.map { EquatableBox($0) }
-      self.postsWithMedia = filteredMediaPosts
-      self.boxedPostsWithMedia = filteredMediaPosts.map { EquatableBox($0) }
+  // MARK: - Rows
+
+  /// `existing` followed by the rows of `page` whose id it does not already hold, in API order.
+  /// An author feed can return a post again on a later page, and the same post twice in one page.
+  /// A repost has its own id (Petrel `FeedViewPost.id`), so it stays next to its original. The
+  /// pinned post is not part of `existing`: on another account's profile the AppView also returns
+  /// it in time order, and that copy is kept.
+  nonisolated static func appendingUnique(
+    _ page: [EquatableBox<AppBskyFeedDefs.FeedViewPost>],
+    to existing: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]
+  ) -> [EquatableBox<AppBskyFeedDefs.FeedViewPost>] {
+    var seen = Set(existing.map { $0.value.id })
+    var combined = existing
+    combined.reserveCapacity(existing.count + page.count)
+    for box in page where seen.insert(box.value.id).inserted {
+      combined.append(box)
     }
-    
-      logger.debug("Applied content filtering to profile posts: \(self.posts.count) posts, \(self.replies.count) replies, \(self.postsWithMedia.count) media posts")
+    return combined
   }
 
   // MARK: - Public Methods
@@ -554,15 +546,14 @@ import AppKit
           }
           
           let boxedPage = regularPosts.map { EquatableBox($0) }
+          let boxedPinned = pinned.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
-              self.pinnedPost = pinned
-              self.posts = regularPosts
-              self.boxedPosts = boxedPage
+              self.pinnedPost = boxedPinned
+              self.boxedPosts = Self.appendingUnique(boxedPage, to: [])
             } else {
               // When paginating, don't update pinned post
-              self.posts.append(contentsOf: regularPosts)
-              self.boxedPosts.append(contentsOf: boxedPage)
+              self.boxedPosts = Self.appendingUnique(boxedPage, to: self.boxedPosts)
             }
             self.postsCursor = output?.cursor
             self.hasMorePosts = output?.cursor != nil
@@ -606,15 +597,12 @@ import AppKit
 
         if didReceivePage {
           let nextCursor = cursor
-          let pageReplies = repliesToOthers
-          let boxedPage = pageReplies.map { EquatableBox($0) }
+          let boxedPage = repliesToOthers.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
-              self.replies = pageReplies
-              self.boxedReplies = boxedPage
+              self.boxedReplies = Self.appendingUnique(boxedPage, to: [])
             } else {
-              self.replies.append(contentsOf: pageReplies)
-              self.boxedReplies.append(contentsOf: boxedPage)
+              self.boxedReplies = Self.appendingUnique(boxedPage, to: self.boxedReplies)
             }
             self.repliesCursor = nextCursor
             self.hasMoreReplies = nextCursor != nil
@@ -649,11 +637,9 @@ import AppKit
           let boxedPage = postsWithMedia.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
-              self.postsWithMedia = postsWithMedia
-              self.boxedPostsWithMedia = boxedPage
+              self.boxedPostsWithMedia = Self.appendingUnique(boxedPage, to: [])
             } else {
-              self.postsWithMedia.append(contentsOf: postsWithMedia)
-              self.boxedPostsWithMedia.append(contentsOf: boxedPage)
+              self.boxedPostsWithMedia = Self.appendingUnique(boxedPage, to: self.boxedPostsWithMedia)
             }
             self.mediaPostsCursor = output?.cursor
             self.hasMoreMedia = output?.cursor != nil
@@ -943,12 +929,10 @@ import AppKit
       // Clear all data when account is switched
       logger.debug("ProfileViewModel: Account switched, clearing profile data...")
       profile = nil
-      posts = []
       boxedPosts = []
-      replies = []
       boxedReplies = []
-      postsWithMedia = []
       boxedPostsWithMedia = []
+      pinnedPost = nil
       _likes = []
       _otherUserLikes = []
       _lists = []

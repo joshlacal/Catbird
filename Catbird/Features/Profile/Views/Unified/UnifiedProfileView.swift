@@ -121,13 +121,13 @@ struct UnifiedProfileView: View {
         }
       case .posts:
         hasAttemptedLoadPosts = true
-        if viewModel.posts.isEmpty { await viewModel.loadPosts() }
+        if viewModel.boxedPosts.isEmpty { await viewModel.loadPosts() }
       case .replies:
         hasAttemptedLoadReplies = true
-        if viewModel.replies.isEmpty { await viewModel.loadReplies() }
+        if viewModel.boxedReplies.isEmpty { await viewModel.loadReplies() }
       case .media:
         hasAttemptedLoadMedia = true
-        if viewModel.postsWithMedia.isEmpty { await viewModel.loadMediaPosts() }
+        if viewModel.boxedPostsWithMedia.isEmpty { await viewModel.loadMediaPosts() }
       case .more:
         break
       default:
@@ -344,17 +344,17 @@ struct UnifiedProfileView: View {
     switch viewModel.selectedProfileTab {
     case .posts:
       hasAttemptedLoadPosts = true
-      if viewModel.posts.isEmpty {
+      if viewModel.boxedPosts.isEmpty {
         await viewModel.loadPosts()
       }
     case .replies:
       hasAttemptedLoadReplies = true
-      if viewModel.replies.isEmpty {
+      if viewModel.boxedReplies.isEmpty {
         await viewModel.loadReplies()
       }
     case .media:
       hasAttemptedLoadMedia = true
-      if viewModel.postsWithMedia.isEmpty {
+      if viewModel.boxedPostsWithMedia.isEmpty {
         await viewModel.loadMediaPosts()
       }
     case .likes:

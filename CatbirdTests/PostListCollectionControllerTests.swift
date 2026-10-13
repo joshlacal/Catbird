@@ -95,6 +95,23 @@ struct PostListCollectionControllerTests {
     #expect(collection.visibleCells.count < entries.count)
   }
 
+  /// The profile list prepends the pinned post to rows the view model already de-duplicated,
+  /// and relies on the controller to drop any id it has already placed. That depends on
+  /// Petrel's `FeedViewPost.id` telling a repost apart from its original.
+  @Test("Repeated feed rows keep their first position and a repost keeps its own row")
+  func repeatedFeedRowsAreDroppedButRepostsKept() throws {
+    let original = try ProfilePostIdentityTests.makeFeedViewPost(rkey: "shared")
+    let repost = try ProfilePostIdentityTests.makeFeedViewPost(rkey: "shared", repostedBy: "did:plc:reposter")
+    let controller = PostListCollectionController()
+
+    controller.setEntries(
+      [original, repost, original].map { .feedPost(EquatableBox($0)) },
+      hasMore: false, isLoadingMore: false, footerState: .hidden
+    )
+
+    #expect(controller.entries.map(\.id) == [original.id, repost.id])
+  }
+
   private func expectOffset(_ expected: CGFloat, in controller: PostListCollectionController) async throws {
     let deadline = ContinuousClock.now + .seconds(2)
     var offset: CGFloat = .infinity

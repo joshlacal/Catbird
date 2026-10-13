@@ -84,7 +84,8 @@ struct UnifiedProfileContentView: View {
       }
       var posts = viewModel.boxedPosts
       if let pinned = viewModel.pinnedPost {
-        posts.insert(EquatableBox(pinned), at: 0)
+        // The view model boxes the pin once, so the list compares this row by pointer.
+        posts.insert(pinned, at: 0)
       }
       return posts
     case .replies:
@@ -599,7 +600,7 @@ private struct ProfilePostsTabView: View {
         if let pinnedPost = viewModel.pinnedPost {
           VStack(spacing: 0) {
             EnhancedFeedPost(
-              feedViewPost: pinnedPost,
+              boxedPost: pinnedPost,
               path: $navigationPath
             )
             .frame(maxWidth: contentMaxWidth, alignment: .center)
