@@ -94,6 +94,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.showsVerticalScrollIndicator = true
         collectionView.prefetchDataSource = self
+        // Lets UI tests (CatbirdPerfTests.testThreadOpen) wait for the revealed thread.
+        collectionView.accessibilityIdentifier = "thread.collectionView"
         
         // Let automatic content inset adjustment handle safe areas since we're edge-to-edge
         collectionView.contentInsetAdjustmentBehavior = .automatic

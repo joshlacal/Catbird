@@ -72,7 +72,8 @@ final class CatbirdPerfTests: XCTestCase {
 
   // MARK: - Thread Open Performance
 
-  /// Measures time and CPU to navigate into a post thread and return to feed.
+  /// Measures time, CPU and the app's ThreadOpen signpost to navigate into a post thread
+  /// and return to feed. Set `TEST_RUNNER_CATBIRD_PERF_ITERATIONS=1` for a smoke run.
   @MainActor
   func testThreadOpen() throws {
     let app = launchApp(runId: "perf-thread-open")
@@ -80,10 +81,12 @@ final class CatbirdPerfTests: XCTestCase {
 
     let metrics: [XCTMetric] = [
       XCTClockMetric(),
-      XCTCPUMetric(application: app)
+      XCTCPUMetric(application: app),
+      // From view load to the positioned thread (teardown L4); see UIKitThreadView.
+      XCTOSSignpostMetric(subsystem: "blue.catbird.performance", category: "Intervals", name: "ThreadOpen")
     ]
     let options = XCTMeasureOptions()
-    options.iterationCount = 5
+    options.iterationCount = Self.iterationCount
 
     measure(metrics: metrics, options: options) {
       let cell = app.cells.firstMatch
@@ -97,12 +100,14 @@ final class CatbirdPerfTests: XCTestCase {
         }
       }
 
-      // Wait for thread view to appear
-      let backButton = app.navigationBars.buttons.firstMatch
-      _ = backButton.waitForExistence(timeout: 5)
+      // Wait until the thread is shown, not just pushed, so the ThreadOpen interval
+      // ends before the pop: a first cell becomes hittable at alpha 1, or the screen
+      // says the post can't be shown.
+      XCTAssertTrue(waitForThreadReveal(in: app, timeout: 10), "The thread should be shown before popping")
 
       // Pop back to feed
-      if backButton.exists && backButton.isHittable {
+      let backButton = app.navigationBars.buttons.firstMatch
+      if backButton.waitForExistence(timeout: 5) && backButton.isHittable {
         backButton.tap()
       }
     }
@@ -191,6 +196,28 @@ final class CatbirdPerfTests: XCTestCase {
   }
 
   // MARK: - Helpers
+
+  /// Iterations per measure block; `TEST_RUNNER_CATBIRD_PERF_ITERATIONS` overrides the default 5.
+  private static var iterationCount: Int {
+    Int(ProcessInfo.processInfo.environment["CATBIRD_PERF_ITERATIONS"] ?? "").map { max(1, $0) } ?? 5
+  }
+
+  /// Whether the thread screen finished opening: its first cell is hittable (cells at
+  /// alpha 0 are not), or it shows that the post can't be loaded.
+  @MainActor
+  private func waitForThreadReveal(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+    let thread = app.collectionViews["thread.collectionView"]
+    let unavailable = app.staticTexts.matching(
+      NSPredicate(format: "label IN %@", ["Couldn’t Load Post", "Post Not Found", "Post Unavailable"])
+    ).firstMatch
+    let deadline = Date().addingTimeInterval(timeout)
+    repeat {
+      if thread.cells.firstMatch.exists && thread.cells.firstMatch.isHittable { return true }
+      if unavailable.exists { return true }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    } while Date() < deadline
+    return false
+  }
 
   @MainActor
   private func launchApp(runId: String) -> XCUIApplication {
