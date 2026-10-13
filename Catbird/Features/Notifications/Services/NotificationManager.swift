@@ -20,6 +20,39 @@ struct NotificationWidgetData: Codable {
   let lastUpdated: Date
 }
 
+/// Remembers what this process last wrote to the notification widget. Every
+/// account's NotificationManager writes the same App Group key, so this is
+/// process-wide: it describes what the widget currently holds.
+final class NotificationWidgetPublication: @unchecked Sendable {
+  static let shared = NotificationWidgetPublication()
+
+  /// An unchanged count is republished this often, matching the widget's own
+  /// 15-minute timeline so its "Updated …" label stays current.
+  static let refreshInterval: TimeInterval = 15 * 60
+
+  private let lock = NSLock()
+  private var last: (count: Int, publishedAt: Date)?
+
+  /// Returns whether `count` needs writing and reloading, and if so records it
+  /// as published at `now`.
+  func shouldPublish(_ count: Int, now: Date = Date()) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    if let last, last.count == count, now.timeIntervalSince(last.publishedAt) < Self.refreshInterval {
+      return false
+    }
+    last = (count, now)
+    return true
+  }
+
+  /// Forgets the last publication so the next count is always written.
+  func reset() {
+    lock.lock()
+    last = nil
+    lock.unlock()
+  }
+}
+
 /// Manages push notifications registration and handling for the Catbird app
 @Observable
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
@@ -477,9 +510,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   @ObservationIgnored private var foregroundCheckTask: Task<Void, Never>?
   @ObservationIgnored private var resumeUnreadChecking = false
   @ObservationIgnored private var lastUnreadCheckAt: Date?
-  @ObservationIgnored private var lastPublishedWidgetCount: Int?
-  @ObservationIgnored private var lastPublishedWidgetDate: Date?
-  private let widgetPublishLock = NSLock()
   @ObservationIgnored private var didRegisterGraphObservers = false
 
   @MainActor
@@ -1251,11 +1281,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
     #endif
 
-    // Update widget to clear count
-    widgetPublishLock.lock()
-    lastPublishedWidgetCount = nil
-    lastPublishedWidgetDate = nil
-    widgetPublishLock.unlock()
+    // Update widget to clear count; always write, since the account is changing
+    NotificationWidgetPublication.shared.reset()
     updateWidgetUnreadCount(0)
 
     notificationLogger.info("Notification cleanup completed")
@@ -1441,7 +1468,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       "Skipping legacy relationship upload; Nest now owns mute/block filtering server-side")
   }
 
-  /// Set up observers for graph changes
+  /// Set up observers for graph changes. `configure(with:)` runs more than once
+  /// per AppState, and a second registration would sync relationships twice.
   private func setupGraphObservers() {
     guard !didRegisterGraphObservers else { return }
     didRegisterGraphObservers = true
@@ -1960,24 +1988,20 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       defaults?.synchronize()  // Force an immediate write
       notificationLogger.info("🔧 DEBUG: Set initial widget test data with count=42")
     }
+    // The seed bypasses the publication record, which may already hold the
+    // real count (another account's manager published it). Forget it so the
+    // next real count replaces the 42 instead of being skipped for 15 minutes.
+    NotificationWidgetPublication.shared.reset()
   }
 
   // MARK: - Widget Support
 
-  /// Updates the widget with the current unread notification count
+  /// Updates the widget with the current unread notification count. An
+  /// unchanged count is skipped until `NotificationWidgetPublication.refreshInterval`
+  /// has passed, so repeated calls don't wake the widget extension.
   func updateWidgetUnreadCount(_ count: Int) {
     let now = Date()
-    widgetPublishLock.lock()
-    if let lastCount = lastPublishedWidgetCount,
-       lastCount == count,
-       let lastDate = lastPublishedWidgetDate,
-       now.timeIntervalSince(lastDate) < 15 * 60 {
-      widgetPublishLock.unlock()
-      return
-    }
-    lastPublishedWidgetCount = count
-    lastPublishedWidgetDate = now
-    widgetPublishLock.unlock()
+    guard NotificationWidgetPublication.shared.shouldPublish(count, now: now) else { return }
 
     // Create widget data
     let widgetData = NotificationWidgetData(count: count, lastUpdated: now)
