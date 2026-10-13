@@ -115,6 +115,12 @@ import AppKit
   // Serial queue for synchronized property access to prevent metadata cache corruption
   private let propertyQueue = DispatchQueue(label: "ProfileViewModel.properties", qos: .userInitiated)
 
+  /// The ProfileOpen interval, open from the first load until the first post row appears or
+  /// the screen shows that none will. Only the first load of a view model is measured.
+  @ObservationIgnored private var openSignpost: OSSignpostID?
+  @ObservationIgnored private var hasBegunOpenSignpost = false
+  @ObservationIgnored private var hasMarkedOpenHeaderReady = false
+
   // Check if this is the current user's profile - comparing correctly
   var isCurrentUser: Bool {
     if let profile = profile {
@@ -154,6 +160,7 @@ import AppKit
   
   isolated deinit {
     logger.debug("ProfileViewModel[\(self.instanceId)]: Deinitializing")
+    endOpenSignpost(.left)
     
     // Cancel all active tasks to prevent crashes
     for task in activeLoadTasks {
@@ -163,6 +170,68 @@ import AppKit
     
     // Unsubscribe from state invalidation events
     stateInvalidationBus?.unsubscribe(self)
+  }
+
+  // MARK: - Open Signpost
+
+  /// Starts the ProfileOpen interval. Only the first load of this view model is measured.
+  func beginOpenSignpost() {
+    guard !hasBegunOpenSignpost else { return }
+    hasBegunOpenSignpost = true
+    openSignpost = PerformanceSignposts.beginProfileOpen()
+  }
+
+  /// Whether a ProfileOpen interval is still open.
+  var isOpenSignpostActive: Bool { openSignpost != nil }
+
+  /// Ends ProfileOpen when the first post row, or the pinned post, appears. Every row calls
+  /// this as it appears; only the first call does anything.
+  func markFirstPostVisible() {
+    endOpenSignpost(.firstRow)
+  }
+
+  /// Called when the first load finishes. Ends ProfileOpen if the screen will show no post row;
+  /// a tab with rows waits for its first row to appear (it may be below a long header).
+  func endOpenSignpostIfNothingToShow() {
+    guard openSignpost != nil else { return }
+    let outcome = Self.openOutcomeWithoutRows(
+      hasProfile: profile != nil, tab: selectedProfileTab, tabIsEmpty: selectedTabIsEmpty
+    )
+    if let outcome { endOpenSignpost(outcome) }
+  }
+
+  /// Ends ProfileOpen when the user leaves before any row appeared.
+  func abandonOpenSignpost() {
+    endOpenSignpost(.left)
+  }
+
+  /// How ProfileOpen ends when its first load finishes, or nil while a row is still to appear.
+  nonisolated static func openOutcomeWithoutRows(
+    hasProfile: Bool, tab: ProfileTab, tabIsEmpty: Bool
+  ) -> ProfileOpenOutcome? {
+    // The error screen replaces the tabs, even when the first page did load.
+    guard hasProfile else { return .failed }
+    switch tab {
+    case .posts, .replies, .media:
+      return tabIsEmpty ? .noRows : nil
+    default:
+      return .nonPostTab
+    }
+  }
+
+  private var selectedTabIsEmpty: Bool {
+    switch selectedProfileTab {
+    case .posts: boxedPosts.isEmpty && pinnedPost == nil
+    case .replies: boxedReplies.isEmpty
+    case .media: boxedPostsWithMedia.isEmpty
+    default: true
+    }
+  }
+
+  private func endOpenSignpost(_ outcome: ProfileOpenOutcome) {
+    guard let openSignpost else { return }
+    self.openSignpost = nil
+    PerformanceSignposts.endProfileOpen(id: openSignpost, outcome: outcome)
   }
 
   // MARK: - Rows
@@ -242,6 +311,10 @@ import AppKit
         if responseCode == 200, let profile = profileData {
           self.profile = profile
           self.error = nil
+          if !self.hasMarkedOpenHeaderReady, let openSignpost = self.openSignpost {
+            self.hasMarkedOpenHeaderReady = true
+            PerformanceSignposts.profileOpenHeaderReady(id: openSignpost)
+          }
           logger.debug("ProfileViewModel[\(self.instanceId)]: Successfully loaded profile for \(profile.handle)")
           
           // Set default tab based on profile type
@@ -521,6 +594,20 @@ import AppKit
 
     _isLoadingMorePosts = true
 
+    // ProfilePage measures one "load more" request until its rows are applied, and only a
+    // request that really starts (past the shared in-flight guard above).
+    let pageSignpost = resetCursor ? nil : PerformanceSignposts.beginProfilePage()
+    let rowsBefore = rowCount(for: type)
+    var pageApplied = false
+    defer {
+      if let pageSignpost {
+        PerformanceSignposts.endProfilePage(
+          id: pageSignpost, tab: type.rawValue, added: rowCount(for: type) - rowsBefore,
+          success: pageApplied
+        )
+      }
+    }
+
     do {
       let actorIdentifier = try ATIdentifier(string: actor)
       switch type {
@@ -569,6 +656,7 @@ import AppKit
             self.postsCursor = output?.cursor
             self.hasMorePosts = output?.cursor != nil
           }
+          pageApplied = true
         }
 
       case .replies:
@@ -609,6 +697,7 @@ import AppKit
             self.repliesCursor = nextCursor
             self.hasMoreReplies = nextCursor != nil
           }
+          pageApplied = true
         }
       case .media:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
@@ -646,6 +735,7 @@ import AppKit
             self.mediaPostsCursor = output?.cursor
             self.hasMoreMedia = output?.cursor != nil
           }
+          pageApplied = true
         }
       }
 
@@ -664,8 +754,17 @@ import AppKit
 
   // MARK: - Helper Types
 
-  private enum FeedType {
+  /// The raw value names the tab in ProfilePage signposts.
+  private enum FeedType: String {
     case posts, replies, media
+  }
+
+  private func rowCount(for type: FeedType) -> Int {
+    switch type {
+    case .posts: boxedPosts.count
+    case .replies: boxedReplies.count
+    case .media: boxedPostsWithMedia.count
+    }
   }
 
 

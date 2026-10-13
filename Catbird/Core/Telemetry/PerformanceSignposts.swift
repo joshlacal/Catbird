@@ -374,6 +374,73 @@ extension PerformanceSignposts {
   }
 }
 
+// MARK: - Profile Open
+
+// ProfileOpen and ProfilePage are screen-open metrics of the performance teardown's
+// measurement protocol (L5, "How to measure"). Like ThreadOpen they sit on the Intervals
+// signposter and each open or page makes its own signpost ID, so stacked profile pushes pair
+// correctly. Payloads carry counts, flags, outcomes and fixed tab names only, never DIDs,
+// handles or URIs.
+
+/// How a ProfileOpen interval ended. Only `firstRow` measures the protocol's "until the first
+/// post row is visible"; the others close opens that never get a row, and are reported apart.
+enum ProfileOpenOutcome: String, Sendable {
+  /// The first post row (or the pinned post) appeared.
+  case firstRow
+  /// The open post tab finished loading with nothing to show.
+  case noRows
+  /// The screen opened on a tab without post rows, such as Labeler Info.
+  case nonPostTab
+  /// The profile itself did not load, so the error screen shows.
+  case failed
+  /// The user left the screen before any row appeared.
+  case left
+}
+
+extension PerformanceSignposts {
+  /// Begins when a profile screen starts its first load.
+  nonisolated static func beginProfileOpen() -> OSSignpostID {
+    guard intervalsSignposter.isEnabled else { return .null }
+    let id = intervalsSignposter.makeSignpostID()
+    _ = intervalsSignposter.beginInterval("ProfileOpen", id: id)
+    return id
+  }
+
+  /// Marks the profile header's data arriving, separating it from the first row.
+  nonisolated static func profileOpenHeaderReady(id: OSSignpostID) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.emitEvent("ProfileOpenHeaderReady", id: id)
+  }
+
+  nonisolated static func endProfileOpen(id: OSSignpostID, outcome: ProfileOpenOutcome) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.endInterval(
+      "ProfileOpen",
+      OSSignpostIntervalState.beginState(id: id),
+      "outcome: \(outcome.rawValue, privacy: .public)"
+    )
+  }
+
+  /// Begins when a profile tab requests its next page. First pages belong to ProfileOpen.
+  nonisolated static func beginProfilePage() -> OSSignpostID {
+    guard intervalsSignposter.isEnabled else { return .null }
+    let id = intervalsSignposter.makeSignpostID()
+    _ = intervalsSignposter.beginInterval("ProfilePage", id: id)
+    return id
+  }
+
+  /// Ends when the page's rows are applied to the view model (not when they are drawn).
+  /// `tab` is a fixed tab name; `added` counts rows the page added after de-duplication.
+  nonisolated static func endProfilePage(id: OSSignpostID, tab: String, added: Int, success: Bool) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.endInterval(
+      "ProfilePage",
+      OSSignpostIntervalState.beginState(id: id),
+      "tab: \(tab, privacy: .public), added: \(added), success: \(success ? 1 : 0)"
+    )
+  }
+}
+
 // MARK: - Convenience Extensions
 
 extension PerformanceSignposts {

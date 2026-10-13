@@ -340,6 +340,8 @@ struct UnifiedProfileContentView: View {
       Divider()
         .padding(.top, 8)
     }
+    // Ends ProfileOpen at the first row, the pinned post included (it is row 0).
+    .onAppear { viewModel.markFirstPostVisible() }
   }
   #endif
 
@@ -609,6 +611,7 @@ private struct ProfilePostsTabView: View {
             Divider()
               .padding(.top, 8)
           }
+          .onAppear { viewModel.markFirstPostVisible() }
         }
 
         ProfileBoxedPostsList(
@@ -617,7 +620,8 @@ private struct ProfilePostsTabView: View {
           isLoadingMore: viewModel.isLoadingMorePosts,
           hasMore: viewModel.hasMorePosts,
           loadMore: viewModel.loadMorePosts,
-          path: $navigationPath
+          path: $navigationPath,
+          onRowAppear: viewModel.markFirstPostVisible
         )
       }
     }
@@ -677,7 +681,8 @@ private struct ProfileFeedTabView: View {
           isLoadingMore: viewModel.isLoadingMorePosts,
           hasMore: hasMore,
           loadMore: loadAction,
-          path: $navigationPath
+          path: $navigationPath,
+          onRowAppear: viewModel.markFirstPostVisible
         )
       }
     }
@@ -692,6 +697,8 @@ struct ProfileBoxedPostsList: View {
   let hasMore: Bool
   let loadMore: @MainActor () async -> Void
   @Binding var path: NavigationPath
+  /// Called as each row appears; the macOS profile ends its ProfileOpen signpost on the first.
+  var onRowAppear: @MainActor () -> Void = {}
 
   var body: some View {
     let lastPostID = posts.last?.value.id
@@ -711,6 +718,7 @@ struct ProfileBoxedPostsList: View {
         }
         .contentShape(Rectangle())
         .onAppear {
+          onRowAppear()
           if hasMore && boxedPost.value.id == lastPostID && !isLoadingMore {
             Task { await loadMore() }
           }

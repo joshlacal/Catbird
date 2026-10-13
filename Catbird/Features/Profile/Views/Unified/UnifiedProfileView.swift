@@ -351,12 +351,8 @@ struct UnifiedProfileView: View {
 
   private func initialLoad() async {
     // The first read of `viewModel` builds it, with its initial tab, before anything below
-    // reads the tab or starts a load.
-    _ = viewModel
-    let signpost = PerformanceSignposts.beginInterval("ProfileOpen")
-    defer {
-      PerformanceSignposts.endInterval("ProfileOpen", signpost)
-    }
+    // reads the tab or starts a load. ProfileOpen runs from here to the first post row.
+    viewModel.beginOpenSignpost()
 
     hasAttemptedLoad = true
     async let profileTask: Void = viewModel.loadProfile()
@@ -370,6 +366,8 @@ struct UnifiedProfileView: View {
     if let profile = viewModel.profile, !viewModel.isCurrentUser {
       await applyRelationshipState(from: profile)
     }
+
+    viewModel.endOpenSignpostIfNothingToShow()
   }
 
   /// The quiet header refresh when the user comes back to a loaded profile. It also re-reads
@@ -816,7 +814,11 @@ struct UnifiedProfileView: View {
       .onChange(of: appState.userDID) { _, _ in clearGermAction() }
       .onChange(of: loadedProfile?.did) { _, _ in clearGermAction() }
       .onChange(of: AppStateManager.shared.settingsAccountContextRevision) { _, _ in clearGermAction() }
-      .onDisappear { clearGermAction() }
+      .onDisappear {
+        clearGermAction()
+        // Never builds a view model: a screen that never loaded has no open to end.
+        viewModelSlot.builtViewModel?.abandonOpenSignpost()
+      }
       .alert("Unblock User", isPresented: $isShowingUnblockConfirmation) {
         unblockAlertButtons
       } message: {
