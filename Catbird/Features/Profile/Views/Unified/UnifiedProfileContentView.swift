@@ -121,7 +121,20 @@ struct UnifiedProfileContentView: View {
   }
 
   private var currentFooterState: PostListFooterState {
-    currentHasMore && currentIsLoadingMore ? .loading : .hidden
+    ProfilePostsTabLoading.footerState(
+      hasMore: currentHasMore, isLoadingMore: currentIsLoadingMore, listIsEmpty: currentListIsEmpty
+    )
+  }
+
+  /// Whether the open tab has no rows yet. Checked without building `currentBoxedPosts`,
+  /// which copies the array.
+  private var currentListIsEmpty: Bool {
+    switch viewModel.selectedProfileTab {
+    case .posts: viewModel.boxedPosts.isEmpty && viewModel.pinnedPost == nil
+    case .replies: viewModel.boxedReplies.isEmpty
+    case .media: viewModel.boxedPostsWithMedia.isEmpty
+    default: true
+    }
   }
 
   private var currentLoadMoreAction: (@MainActor () async -> Void)? {
@@ -217,7 +230,11 @@ struct UnifiedProfileContentView: View {
         .frame(maxWidth: contentMaxWidth, alignment: .center)
         .frame(maxWidth: .infinity, alignment: .center)
     case .posts:
-      if !hasAttemptedLoadPosts || (viewModel.isLoading && viewModel.boxedPosts.isEmpty) {
+      if ProfilePostsTabLoading.showsSpinner(
+        hasAttempted: hasAttemptedLoadPosts, isLoading: viewModel.isLoading,
+        isLoadingMore: viewModel.isLoadingMorePosts, postsEmpty: viewModel.boxedPosts.isEmpty,
+        hasPinned: viewModel.pinnedPost != nil
+      ) {
         ProgressView("Loading…")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
@@ -559,7 +576,11 @@ private struct ProfilePostsTabView: View {
 
   var body: some View {
     LazyVStack(spacing: 0) {
-      if !hasAttemptedLoad || (viewModel.isLoading && viewModel.boxedPosts.isEmpty) {
+      if ProfilePostsTabLoading.showsSpinner(
+        hasAttempted: hasAttemptedLoad, isLoading: viewModel.isLoading,
+        isLoadingMore: viewModel.isLoadingMorePosts, postsEmpty: viewModel.boxedPosts.isEmpty,
+        hasPinned: viewModel.pinnedPost != nil
+      ) {
         ProgressView("Loading…")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
