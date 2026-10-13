@@ -18,7 +18,6 @@ import Testing
 @testable import Catbird
 
 #if os(iOS)
-import SwiftData
 import UIKit
 #endif
 
@@ -39,7 +38,8 @@ struct FeedRowViewSizeBudgetTests {
   @Test("Feed row view values stay small enough for -Onone stack temporaries")
   func viewValueSizesStayWithinBudget() {
     // Pre-fix Debug sizes: EnhancedFeedPost 7_737, EnhancedFeedPost.Body 20_352, PostView 8_136,
-    // PostView.Body 22_473, FeedPostRow.Body 8_168, ProfileBoxedPostsList.Body 400.
+    // PostView.Body 22_473, FeedPostRow.Body 8_168, ProfileCachedPostsList.Body 400
+    // (the SwiftData-backed list ProfileBoxedPostsList replaced).
     // Post-fix (Oct 7, iOS 27.1 simulator): every struct below is at most 336 B and every
     // Body at most 2_936 B (ThreadViewMainPostView), so the budgets leave about 40% headroom.
     let viewBudget = 512  // any feed row view struct
@@ -203,7 +203,6 @@ struct FeedRowStackBudgetTests {
   /// and laid out once. Everything is read before the run loop turns, so only that pass counts.
   private func measureLayoutPass<Rows: View>(
     _ fixture: Fixture,
-    modelContainer: ModelContainer? = nil,
     @ViewBuilder rows: (LayoutReceipt) -> Rows
   ) throws -> LayoutMeasurement {
     let receipt = LayoutReceipt()
@@ -219,12 +218,7 @@ struct FeedRowStackBudgetTests {
       }
       .applyAppStateEnvironment(fixture.appState)
       .environment(fixture.sceneContext)
-      let controller: UIViewController
-      if let modelContainer {
-        controller = UIHostingController(rootView: root.modelContainer(modelContainer))
-      } else {
-        controller = UIHostingController(rootView: root)
-      }
+      let controller = UIHostingController(rootView: root)
       let host = UIWindow(windowScene: fixture.scene)
       // Taller than a phone so every fixture row is realized in this one pass. Rows are
       // realized one after another, so the viewport height does not change the peak depth.
