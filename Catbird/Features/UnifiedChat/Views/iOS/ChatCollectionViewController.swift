@@ -435,33 +435,46 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private func setupObservation() {
     observationTask?.cancel()
     observationTask = Task { @MainActor [weak self] in
-      guard let initialSelf = self else { return }
-
       // Perform an initial snapshot so the UI is populated immediately.
-      await initialSelf.processObservationCycle()
+      await self?.processObservationCycle()
 
-      // Re-arm observation each time a tracked property changes.
+      // Re-arm observation each time a tracked property changes. `self` is
+      // re-bound weakly for each change, so the suspended loop never keeps
+      // the controller alive if a teardown path is missed; deinit, dismantle()
+      // and viewDidDisappear cancel the task, which wakes the wait below and
+      // ends the loop.
       while !Task.isCancelled {
-        var didResume = false
-        await withCheckedContinuation { continuation in
-          withObservationTracking { [weak self] in
-            // Touch the observable properties we care about so the
-            // tracking system knows to wake us when they change.
-            guard let self else { return }
-            _ = self.dataSource.messages
-            _ = self.dataSource.showsTypingIndicator
-            _ = self.dataSource.typingParticipantAvatarURL
-            _ = self.dataSource.scrollToBottomTrigger
-          } onChange: {
-            guard !didResume else { return }
-            didResume = true
-            continuation.resume()
-          }
-        }
-
-        guard !Task.isCancelled, let self else { break }
+        guard let dataSource = self?.dataSource else { return }
+        await Self.waitForTranscriptChange(in: dataSource)
+        guard !Task.isCancelled, let self else { return }
         await self.processObservationCycle()
       }
+    }
+  }
+
+  /// Suspends until a transcript property the controller renders changes, or
+  /// until the calling task is cancelled. (A cancelled continuation never
+  /// resumes on its own, so the cancellation handler wakes it.) Internal so
+  /// tests can exercise the cancellation paths.
+  static func waitForTranscriptChange(in dataSource: DataSource) async {
+    let wakeup = ObservationWakeup()
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        wakeup.arm(continuation)
+        // withObservationTracking calls `apply` synchronously to register
+        // which @Observable properties are read, then invokes `onChange`
+        // the NEXT time any of them mutates.
+        withObservationTracking {
+          _ = dataSource.messages
+          _ = dataSource.showsTypingIndicator
+          _ = dataSource.typingParticipantAvatarURL
+          _ = dataSource.scrollToBottomTrigger
+        } onChange: {
+          wakeup.fire()
+        }
+      }
+    } onCancel: {
+      wakeup.fire()
     }
   }
 
@@ -1423,6 +1436,34 @@ private struct TypingIndicatorView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.leading, 12)
     .onAppear { animate = true }
+  }
+}
+
+/// Resumes an observation wait exactly once, from whichever comes first: the
+/// observed change or the waiting task's cancellation.
+private final class ObservationWakeup: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Void, Never>?
+  private var hasFired = false
+
+  func arm(_ continuation: CheckedContinuation<Void, Never>) {
+    lock.lock()
+    if hasFired {
+      lock.unlock()
+      continuation.resume()
+      return
+    }
+    self.continuation = continuation
+    lock.unlock()
+  }
+
+  func fire() {
+    lock.lock()
+    hasFired = true
+    let continuation = self.continuation
+    self.continuation = nil
+    lock.unlock()
+    continuation?.resume()
   }
 }
 
