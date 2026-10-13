@@ -294,6 +294,7 @@ private struct FeedParentPostRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
           guard !isReadOnly else { return }
+          ThreadManager.storePrefillPost(postView, userDID: appState.userDID)
           path.append(NavigationDestination.post(postView.uri))
         }
       case .appBskyFeedDefsNotFoundPost(let notFound):
@@ -345,6 +346,7 @@ private struct FeedMainPostRow: View {
     .allowsHitTesting(true)
     .onTapGesture {
       guard !isReadOnly else { return }
+      ThreadManager.storePrefillPost(entry.value.post, userDID: appState.userDID)
       path.append(NavigationDestination.post(entry.value.post.uri))
     }
   }
@@ -392,6 +394,8 @@ private struct FeedExpandedThread: View {
           .contentShape(Rectangle())
           .onTapGesture {
             guard !isReadOnly else { return }
+            // Index into the array rather than capturing the item, which holds the post inline.
+            ThreadManager.storePrefillPost(sliceItems[index].post, userDID: appState.userDID)
             path.append(NavigationDestination.post(postURI))
           }
 
@@ -440,12 +444,14 @@ private struct FeedCollapsedThread: View {
         .contentShape(Rectangle())
         .onTapGesture {
           guard !isReadOnly else { return }
+          ThreadManager.storePrefillPost(sliceItems[0].post, userDID: appState.userDID)
           path.append(NavigationDestination.post(rootURI))
         }
 
         ThreadSeparatorView(hiddenPostCount: hiddenCount) {
           guard !isReadOnly else { return }
           if case let .appBskyFeedDefsPostView(parentReply)? = entry.value.reply?.root {
+            ThreadManager.storePrefillPost(parentReply, userDID: appState.userDID)
             path.append(NavigationDestination.post(parentReply.uri))
           }
         }
@@ -468,6 +474,7 @@ private struct FeedCollapsedThread: View {
           .contentShape(Rectangle())
           .onTapGesture {
             guard !isReadOnly else { return }
+            ThreadManager.storePrefillPost(lastTwoItems[index].post, userDID: appState.userDID)
             path.append(NavigationDestination.post(postURI))
           }
 
