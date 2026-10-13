@@ -34,6 +34,8 @@ struct LikesView: View {
     @State private var initialError: Error?
     @State private var pageError: Error?
     @State private var cursor: String?
+    /// Set once a load succeeds, so returning to the screen doesn't refetch page 1.
+    @State private var hasLoaded = false
     var body: some View {
         VStack {
             if loading && likes.isEmpty {
@@ -43,10 +45,14 @@ struct LikesView: View {
                 ListLoadFailureView(title: "Couldn’t Load Likes", error: initialError) {
                     Task { await loadLikes() }
                 }
-            } else if likes.isEmpty {
+            } else if likes.isEmpty, hasLoaded {
                 Text("No likes yet")
                     .padding()
                     .foregroundColor(.secondary)
+            } else if likes.isEmpty {
+                // A cancelled load leaves nothing loaded yet; `.task` reruns it.
+                ProgressView()
+                    .padding()
             } else {
                 List {
                     ForEach(likes, id: \.actor.did) { like in
@@ -83,7 +89,10 @@ struct LikesView: View {
         }
         .navigationTitle(resolvedTitle)
         .task {
-            guard likes.isEmpty else { return }
+            // `.task` restarts each time the screen reappears, such as on the way
+            // back from a liker's profile; keep the loaded pages and scroll position.
+            // Pull to refresh reloads.
+            guard !hasLoaded else { return }
             await loadLikes()
         }
     }
@@ -126,8 +135,12 @@ struct LikesView: View {
             }
             likes = uniqueLikes
             cursor = result.cursor
+            hasLoaded = true
         } catch {
-            self.initialError = error
+            // A load cancelled by leaving the screen isn't an error; it reruns on return.
+            if !Task.isCancelled {
+                self.initialError = error
+            }
         }
         
         loading = false

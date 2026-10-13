@@ -20,6 +20,8 @@ struct RepostsView: View {
     @State private var initialError: Error?
     @State private var pageError: Error?
     @State private var cursor: String?
+    /// Set once a load succeeds, so returning to the screen doesn't refetch page 1.
+    @State private var hasLoaded = false
 
     private let logger = Logger(subsystem: "blue.catbird", category: "RepostsView")
 
@@ -36,10 +38,14 @@ struct RepostsView: View {
                 ListLoadFailureView(title: "Couldn’t Load Reposts", error: initialError) {
                     Task { await loadReposts() }
                 }
-            } else if reposts.isEmpty {
+            } else if reposts.isEmpty, hasLoaded {
                 Text("No reposts yet")
                     .padding()
                     .foregroundColor(.secondary)
+            } else if reposts.isEmpty {
+                // A cancelled load leaves nothing loaded yet; `.task` reruns it.
+                ProgressView()
+                    .padding()
             } else {
                 List {
                     ForEach(reposts, id: \.did) { profile in
@@ -76,7 +82,10 @@ struct RepostsView: View {
         }
         .navigationTitle("Reposts")
         .task {
-            guard reposts.isEmpty else { return }
+            // `.task` restarts each time the screen reappears, such as on the way
+            // back from a reposter's profile; keep the loaded pages and scroll position.
+            // Pull to refresh reloads.
+            guard !hasLoaded else { return }
             await loadReposts()
         }
     }
@@ -102,12 +111,16 @@ struct RepostsView: View {
             var seen = Set<String>()
             reposts = result.repostedBy.filter { seen.insert($0.did.didString()).inserted }
             cursor = result.cursor
+            hasLoaded = true
         } catch {
             logger.error("Failed to load reposts: \(error.localizedDescription)")
-            if reposts.isEmpty {
-                initialError = error
-            } else {
-                pageError = error
+            // A load cancelled by leaving the screen isn't an error; it reruns on return.
+            if !Task.isCancelled {
+                if reposts.isEmpty {
+                    initialError = error
+                } else {
+                    pageError = error
+                }
             }
         }
         

@@ -24,6 +24,8 @@ struct QuotesView: View {
     @State private var initialError: Error?
     @State private var pageError: Error?
     @State private var cursor: String?
+    /// Set once a load succeeds, so returning to the screen doesn't refetch page 1.
+    @State private var hasLoaded = false
     @Binding var path: NavigationPath
 
     private let logger = Logger(subsystem: "blue.catbird", category: "QuotesView")
@@ -37,10 +39,14 @@ struct QuotesView: View {
                 ListLoadFailureView(title: "Couldn’t Load Quotes", error: initialError) {
                     Task { await loadQuotes() }
                 }
-            } else if quotes.isEmpty {
+            } else if quotes.isEmpty, hasLoaded {
                 Text("No quotes yet")
                     .padding()
                     .foregroundColor(.secondary)
+            } else if quotes.isEmpty {
+                // A cancelled load leaves nothing loaded yet; `.task` reruns it.
+                ProgressView()
+                    .padding()
             } else {
                 PostListCollectionView(
                     posts: quotes,
@@ -87,7 +93,10 @@ struct QuotesView: View {
         }
         .navigationTitle("Quotes")
         .task {
-            guard quotes.isEmpty else { return }
+            // `.task` restarts each time the screen reappears, such as on the way
+            // back from a quoting post; keep the loaded pages and scroll position.
+            // Pull to refresh reloads.
+            guard !hasLoaded else { return }
             await loadQuotes()
         }
     }
@@ -113,12 +122,16 @@ struct QuotesView: View {
             var seen = Set<String>()
             quotes = result.posts.filter { seen.insert($0.uri.uriString()).inserted }
             cursor = result.cursor
+            hasLoaded = true
         } catch {
             logger.error("Failed to load quotes: \(error.localizedDescription)")
-            if quotes.isEmpty {
-                initialError = error
-            } else {
-                pageError = error
+            // A load cancelled by leaving the screen isn't an error; it reruns on return.
+            if !Task.isCancelled {
+                if quotes.isEmpty {
+                    initialError = error
+                } else {
+                    pageError = error
+                }
             }
         }
         
@@ -155,7 +168,11 @@ struct QuotesView: View {
             }
         } catch {
             logger.error("Failed to load more quotes: \(error.localizedDescription)")
-            pageError = error
+            // Pull to refresh cancels a page load still in flight; the refresh
+            // replaces the pages, so that isn't a failed page.
+            if !Task.isCancelled {
+                pageError = error
+            }
         }
         
         isLoadingPage = false

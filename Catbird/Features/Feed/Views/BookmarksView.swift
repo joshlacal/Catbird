@@ -64,6 +64,9 @@ struct BookmarksView: View {
     .navigationBarTitleDisplayMode(.large)
     #endif
     .task {
+      // `.task` restarts each time the screen reappears, such as on the way back
+      // from a bookmarked post; keep the loaded pages and scroll position.
+      // Pull to refresh reloads.
       guard !hasLoaded, bookmarks.isEmpty else { return }
       await loadInitialBookmarks()
     }
@@ -191,7 +194,10 @@ struct BookmarksView: View {
       
     } catch {
       await MainActor.run {
-        self.loadError = UserFacingError.message(for: error, action: "load your bookmarks")
+        // A load cancelled by leaving the screen isn't an error; it reruns on return.
+        if !Task.isCancelled {
+          self.loadError = UserFacingError.message(for: error, action: "load your bookmarks")
+        }
         self.isLoading = false
       }
       logger.error("Failed to load initial bookmarks: \(error)")
