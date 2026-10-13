@@ -31,7 +31,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var isLoadingHiddenReplies = false  // Loading state for hidden replies
   private var hasLoadedHiddenReplies = false  // Whether hidden replies have been loaded
   
-  private var threadOpenSignpostState: OSSignpostIntervalState?
+  /// The open's ThreadOpen interval (teardown L4), from view load until the positioned
+  /// thread is on screen. Nil once it has ended.
+  private var threadOpenSignpost: OSSignpostID?
+  /// VoiceOver focus moves to the anchor once, on the reveal that first shows it.
+  private var hasMovedVoiceOverFocusToAnchor = false
   private var parentsEstimatedHeight: CGFloat = 200
   private var mainPostEstimatedHeight: CGFloat = 400
   private let repliesEstimatedHeightFloor: CGFloat = 150
@@ -228,7 +232,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     optimisticRetryTasks.removeAll()
 
-    endThreadOpenSignpost()
+    cancelThreadOpenSignpost()
     
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
@@ -236,6 +240,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // MARK: - Lifecycle Methods
   override func viewDidLoad() {
     super.viewDidLoad()
+    threadOpenSignpost = PerformanceSignposts.beginThreadOpen()
     setupUI()
     registerCells()
     collectionView.delegate = self
@@ -275,10 +280,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       updateDataSnapshot(animatingDifferences: false)
     }
 
-    
-    if threadOpenSignpostState == nil {
-      threadOpenSignpostState = PerformanceSignposts.beginInterval("ThreadOpen")
-    }
     reloadThread()
   }
   
@@ -321,7 +322,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
 
-    endThreadOpenSignpost()
+    // Leaving before the thread was shown ends the open as cancelled.
+    cancelThreadOpenSignpost()
   }
   
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -384,7 +386,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private func setupUI() {
       view.backgroundColor = .systemBackground
 
-    // Start collection view hidden, will fade in after layout settles
+    // The loading view covers the thread until the anchor is in place; see revealContent().
     collectionView.alpha = 0
 
     composePromptContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -714,6 +716,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     guard !Task.isCancelled && self.loadGeneration == thisGeneration else { return }
 
+    if let threadOpenSignpost {
+      PerformanceSignposts.threadOpenDataReady(id: threadOpenSignpost, loaded: manager.threadData != nil)
+    }
     processThreadData()
 
     // Pre-calculate heights for main post and parents
@@ -725,28 +730,25 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     updateHeightEstimates()
 
-    // Apply snapshot synchronously without animations
+    // Apply snapshot synchronously without animations. The loading view stays up
+    // until revealContent() swaps it for the positioned thread.
     updateDataSnapshot(animatingDifferences: false)
     updateUnavailableState()
 
     isLoading = false
 
-    if !parentPosts.isEmpty && mainPost != nil && !hasScrolledToMainPost {
-      self.collectionView.layoutIfNeeded()
-      self.scrollToMainPostWithPartialParentVisibility(animated: false) { [weak self] in
-        guard let self, !Task.isCancelled, self.loadGeneration == thisGeneration else { return }
-        self.runInitialRevealAnimation()
-        if UIAccessibility.isVoiceOverRunning {
-          self.focusVoiceOverOnMainPost()
-        }
-      }
-      self.hasScrolledToMainPost = true
-    } else {
-      self.collectionView.layoutIfNeeded()
-      self.runInitialRevealAnimation()
-      if UIAccessibility.isVoiceOverRunning {
-        self.focusVoiceOverOnMainPost()
-      }
+    // Later reloads keep the reader's offset; only the first loaded thread is positioned.
+    guard mainPost != nil, !hasScrolledToMainPost else {
+      revealContent()
+      return
+    }
+    // A failed load positions nothing, so the next successful load still places the anchor.
+    if threadManager?.threadData != nil {
+      hasScrolledToMainPost = true
+    }
+    scrollToMainPostWithPartialParentVisibility { [weak self] in
+      guard let self, self.loadGeneration == thisGeneration else { return }
+      self.revealContent()
     }
   }
 
@@ -1072,178 +1074,127 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     controllerLogger.debug("⬆️ LOAD MORE PARENTS: Updated loading cell, isLoading = \(isLoading)")
   }
 
-  private func runInitialRevealAnimation() {
-    loadingView.isHidden = true
-    if collectionView.alpha < 1 {
-      UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut]) {
-        self.collectionView.alpha = 1
-      }
+  /// Swaps the loading view for the thread in a single frame, with no fade, once the
+  /// anchor is in place.
+  private func revealContent() {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    CATransaction.setCompletionBlock { [weak self] in
+      self?.endThreadOpenSignpost()
     }
-    endThreadOpenSignpost()
+    loadingView.isHidden = true
+    collectionView.alpha = 1
+    CATransaction.commit()
+
+    if UIAccessibility.isVoiceOverRunning, !hasMovedVoiceOverFocusToAnchor {
+      hasMovedVoiceOverFocusToAnchor = focusVoiceOverOnMainPost()
+    }
   }
 
   private func endThreadOpenSignpost() {
-    if let state = threadOpenSignpostState {
-      PerformanceSignposts.endInterval("ThreadOpen", state)
-      threadOpenSignpostState = nil
+    guard let threadOpenSignpost else { return }
+    self.threadOpenSignpost = nil
+    PerformanceSignposts.endThreadOpen(
+      id: threadOpenSignpost,
+      parentCount: parentPosts.count,
+      replyCount: replyRows.count,
+      loaded: threadManager?.threadData != nil
+    )
+  }
+
+  private func cancelThreadOpenSignpost() {
+    guard let threadOpenSignpost else { return }
+    self.threadOpenSignpost = nil
+    PerformanceSignposts.cancelThreadOpen(id: threadOpenSignpost)
+  }
+
+  /// A forced layout pass, counted on the ThreadOpen interval while the open is measured.
+  private func layoutForThreadOpen() {
+    if let threadOpenSignpost {
+      PerformanceSignposts.threadOpenLayoutPass(id: threadOpenSignpost)
     }
+    collectionView.layoutIfNeeded()
   }
 
   // MARK: - Scrolling
-    private func focusVoiceOverOnMainPost() {
-        guard mainPost != nil else { return }
+    /// Moves VoiceOver focus to the anchor cell. Returns false when no anchor cell is on screen.
+    @discardableResult
+    private func focusVoiceOverOnMainPost() -> Bool {
+        guard mainPost != nil else { return false }
 
         let snapshot = dataSource.snapshot()
         
         guard let sectionIndex = snapshot.indexOfSection(.mainPost),
               snapshot.numberOfItems(inSection: .mainPost) > 0 else {
-            return
+            return false
         }
         
         let indexPath = IndexPath(item: 0, section: sectionIndex)
         
         // Get the cell and post accessibility focus to it
-        if let cell = collectionView.cellForItem(at: indexPath) {
-            UIAccessibility.post(notification: .screenChanged, argument: cell)
-        }
+        guard let cell = collectionView.cellForItem(at: indexPath) else { return false }
+        UIAccessibility.post(notification: .screenChanged, argument: cell)
+        return true
     }
     
-    private func scrollToMainPostWithPartialParentVisibility(animated: Bool, completion: (() -> Void)? = nil) {
-        guard mainPost != nil else {
-            completion?()
-            return
-        }
-        
-        // If VoiceOver is running and not animated, delay slightly
-        if UIAccessibility.isVoiceOverRunning && !animated {
-            // Give VoiceOver time to initialize before scrolling
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.performScrollToMainPost(animated: false, completion: completion)
-            }
-        } else {
-            performScrollToMainPost(animated: animated, completion: completion)
-        }
-    }
-    
-    private func performScrollToMainPost(animated: Bool, completion: (() -> Void)? = nil) {
-        guard mainPost != nil else {
-            completion?()
-            return
-        }
-
-        // Find the index path for the main post
-        let snapshot = dataSource.snapshot()
-        
-        guard let sectionIndex = snapshot.indexOfSection(.mainPost),
-              snapshot.numberOfItems(inSection: .mainPost) > 0
-        else {
-            completion?()
-            return
-        }
-        
-        let indexPath = IndexPath(item: 0, section: sectionIndex)
-        
-        // Check if we have parent posts
-        let hasParentPosts = !parentPosts.isEmpty
-        
-        let calculateAndApplyOffset = { (applyImmediately: Bool) -> CGFloat? in
-            // First, layout the collection view to ensure all sizes are calculated
-            self.collectionView.layoutIfNeeded()
-            
-            // Get the attributes for the main post
-            guard let attributes = self.collectionView.layoutAttributesForItem(at: indexPath) else {
-                // Fallback if we can't get attributes
-                if applyImmediately {
-                    self.collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
-                }
-                return nil
-            }
-            
-            // Calculate offset to show main post with partial parent visibility
-            let mainPostY = attributes.frame.origin.y
-            
-            let offset: CGFloat
-            let adjustedContentInset = self.collectionView.adjustedContentInset
-            let scrollTarget = ThreadMainPostScrollTarget(
-                mainPostY: mainPostY,
-                adjustedTopInset: adjustedContentInset.top,
-                hasParentPosts: hasParentPosts
-            )
-            
-            self.controllerLogger.debug("🔍 POSITIONING DEBUG:")
-            self.controllerLogger.debug("  - adjustedContentInset.top: \(adjustedContentInset.top)")
-            self.controllerLogger.debug("  - mainPostY: \(mainPostY)")
-            self.controllerLogger.debug("  - hasParentPosts: \(hasParentPosts)")
-            
-            offset = scrollTarget.offset
-            if hasParentPosts {
-                self.controllerLogger.debug("  - WITH parents offset: \(offset)")
-            } else {
-                self.controllerLogger.debug("  - NO parents offset: \(offset)")
-            }
-            
-            // Apply the offset if requested
-            if applyImmediately {
-                // Apply the offset without animation for smoother experience
-                self.collectionView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
-                
-                // Log the scroll position for debugging
-                self.controllerLogger.debug("Scrolled to main post. Position: \(offset), hasParents: \(hasParentPosts)")
-            }
-            
-            return offset
-        }
-
-      if animated {
-        // For animated scrolling, use UIView animation with completion
-        UIView.animate(
-          withDuration: 0.2,
-          animations: {
-            _ = calculateAndApplyOffset(true)
-          },
-          completion: { _ in
-            completion?()
-          })
-      } else {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-
-        var iteration = 0
-        let maxIterations = 3
-        while iteration < maxIterations {
-          iteration += 1
-          self.collectionView.layoutIfNeeded()
-
-          guard let attributes = self.collectionView.layoutAttributesForItem(at: indexPath) else {
-            self.collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
-            break
-          }
-
-          let mainPostY = attributes.frame.origin.y
-          let adjustedTop = self.collectionView.adjustedContentInset.top
-          let scrollTarget = ThreadMainPostScrollTarget(
-            mainPostY: mainPostY,
-            adjustedTopInset: adjustedTop,
-            hasParentPosts: hasParentPosts
-          )
-
-          self.collectionView.setContentOffset(CGPoint(x: 0, y: scrollTarget.offset), animated: false)
-          self.collectionView.layoutIfNeeded()
-
-          if let currentAttrs = self.collectionView.layoutAttributesForItem(at: indexPath) {
-            let visibleTop = currentAttrs.frame.origin.y - self.collectionView.contentOffset.y
-            if abs(visibleTop - scrollTarget.expectedVisibleTop) <= 2 {
-              break
-            }
-          } else {
-            break
-          }
-        }
-
-        CATransaction.commit()
-        completion?()
+  /// Positions the anchor, then calls `completion`. VoiceOver gets a moment to settle
+  /// first, as it did before the reveal stopped waiting on timers.
+  private func scrollToMainPostWithPartialParentVisibility(completion: @escaping () -> Void) {
+    if UIAccessibility.isVoiceOverRunning {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        self?.settleOnMainPost()
+        completion()
       }
+    } else {
+      settleOnMainPost()
+      completion()
     }
+  }
+
+  /// Puts the anchor just below the top bar with a sliver of its parent showing.
+  ///
+  /// The first aim uses estimated heights, so only the cells around the anchor are built.
+  /// Cells self-size inside `layoutIfNeeded`, which can move the anchor, so the offset is
+  /// re-aimed until it holds still, in at most three layout passes. A post with no parents
+  /// already starts at the top and needs no layout pass here.
+  private func settleOnMainPost() {
+    let snapshot = dataSource.snapshot()
+    guard let sectionIndex = snapshot.indexOfSection(.mainPost),
+          snapshot.numberOfItems(inSection: .mainPost) > 0
+    else { return }
+    let indexPath = IndexPath(item: 0, section: sectionIndex)
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+
+    guard !parentPosts.isEmpty else {
+      let topOffset = -collectionView.adjustedContentInset.top
+      if collectionView.contentOffset.y != topOffset {
+        collectionView.setContentOffset(CGPoint(x: collectionView.contentOffset.x, y: topOffset), animated: false)
+      }
+      return
+    }
+
+    for pass in 0..<3 {
+      if pass == 0, collectionView.layoutAttributesForItem(at: indexPath) == nil {
+        layoutForThreadOpen()
+      }
+      guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else {
+        collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+        layoutForThreadOpen()
+        return
+      }
+      let targetOffset = ThreadMainPostScrollTarget(
+        mainPostY: attributes.frame.origin.y,
+        adjustedTopInset: collectionView.adjustedContentInset.top,
+        hasParentPosts: true
+      ).offset
+      if pass > 0, abs(collectionView.contentOffset.y - targetOffset) <= 2 { return }
+      collectionView.setContentOffset(CGPoint(x: collectionView.contentOffset.x, y: targetOffset), animated: false)
+      layoutForThreadOpen()
+    }
+  }
 
   // MARK: - Load More Parents
   @MainActor
