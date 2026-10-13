@@ -180,18 +180,12 @@ extension PostComposerViewModel {
         removeMediaItem(withId: id)
     }
 
+    /// Removing an attachment never deletes its file: a saved draft row, a recovery envelope,
+    /// another scene or the source account of a handoff may still reference it. Draft media is
+    /// removed with its saved-draft row (DraftPersistence.deleteDraft).
     func removeMediaItem(withId id: UUID) {
         mediaPreviewLoads.cancel(for: id)
         if videoItem?.id == id {
-            if let videoURL = videoItem?.rawVideoURL {
-                Task.detached(priority: .utility) {
-                    if let store = try? CapturedVideoStore.applicationStore(), store.owns(videoURL) {
-                        try? await store.removeVideoIfOwned(videoURL)
-                    } else if videoURL.path.contains("SharedDrafts") || videoURL.path.contains("/tmp/") {
-                        try? FileManager.default.removeItem(at: videoURL)
-                    }
-                }
-            }
             videoItem = nil
         } else {
             mediaItems.removeAll(where: { $0.id == id })
