@@ -86,6 +86,13 @@ import AppKit
   private(set) var hasMorePosts = true
   private(set) var hasMoreReplies = true
   private(set) var hasMoreMedia = true
+  /// Post tabs whose first page has come back, even empty. A return to the screen loads again
+  /// only the others (a first page that failed or was cancelled): an account whose latest 150
+  /// items hold no reply to others ends with no replies and a cursor, and must not page five
+  /// times on every return.
+  @ObservationIgnored private var tabsWithFirstPage: Set<ProfileTab> = []
+  /// Whether getKnownFollowers has answered for this profile, even with nobody.
+  @ObservationIgnored private(set) var hasLoadedKnownFollowers = false
   private(set) var hasMoreLikes = true
   private(set) var hasMoreLists = true
   private(set) var hasMoreFeeds = true
@@ -504,6 +511,7 @@ import AppKit
       }
       guard !Task.isCancelled else { return }
       _knownFollowers = followers
+      hasLoadedKnownFollowers = true
     } catch {
       logger.error("Error loading known followers: \(error.localizedDescription)")
     }
@@ -750,6 +758,9 @@ import AppKit
         }
       }
 
+      if resetCursor, pageApplied {
+        tabsWithFirstPage.insert(type.tab)
+      }
       await MainActor.run {
         self._isLoadingMorePosts = false
       }
@@ -768,6 +779,26 @@ import AppKit
   /// The raw value names the tab in ProfilePage signposts.
   private enum FeedType: String {
     case posts, replies, media
+
+    var tab: ProfileTab {
+      switch self {
+      case .posts: .posts
+      case .replies: .replies
+      case .media: .media
+      }
+    }
+  }
+
+  /// Whether a return to the screen should load `tab`'s first page again: it shows nothing and
+  /// its first page never came back (it failed, or a push cancelled it).
+  func needsFirstPageRetry(for tab: ProfileTab) -> Bool {
+    guard !tabsWithFirstPage.contains(tab) else { return false }
+    switch tab {
+    case .posts: return boxedPosts.isEmpty && pinnedPost == nil
+    case .replies: return boxedReplies.isEmpty
+    case .media: return boxedPostsWithMedia.isEmpty
+    default: return false
+    }
   }
 
   private func rowCount(for type: FeedType) -> Int {
@@ -1051,6 +1082,8 @@ import AppKit
       _starterPacks = []
       _feeds = []
       _knownFollowers = []
+      hasLoadedKnownFollowers = false
+      tabsWithFirstPage = []
       error = nil
       
     default:

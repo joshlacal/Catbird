@@ -394,32 +394,34 @@ struct UnifiedProfileView: View {
     await viewModel.loadKnownFollowers(reset: reset)
   }
 
-  /// Loads the "Followed by" row again when the profile says it has some and none arrived.
+  /// Loads the "Followed by" row again when the profile says it has some and the last load
+  /// never answered (it failed, or a push cancelled it). An answer with nobody in it, such as
+  /// when getKnownFollowers leaves out muted or blocked accounts, is not asked again.
   private func retryKnownFollowersIfCutShort() async {
-    guard viewModel.knownFollowers.isEmpty,
+    guard viewModel.knownFollowers.isEmpty, !viewModel.hasLoadedKnownFollowers,
           (viewModel.profile?.viewer?.knownFollowers?.count ?? 0) > 0 else { return }
     await loadKnownFollowersIfOtherProfile()
   }
 
-  /// Like `refreshCurrentTabContent`, but a tab is loaded again only while its `hasMore` flag
-  /// is still at its initial true. A failed or cancelled first page leaves it there, while a
-  /// first page that came back empty with no cursor clears it, so a profile with no posts,
-  /// replies or media costs no request on every return.
+  /// Like `refreshCurrentTabContent`, but a tab is loaded again only when its first page never
+  /// came back (`needsFirstPageRetry`). A first page that came back empty counts as loaded, with
+  /// or without a cursor, so a profile with no posts, replies or media, or one whose recent
+  /// items hold no replies to others, costs no request on every return.
   private func retryUnloadedTabContent() async {
     switch viewModel.selectedProfileTab {
     case .posts:
       hasAttemptedLoadPosts = true
-      if viewModel.boxedPosts.isEmpty, viewModel.pinnedPost == nil, viewModel.hasMorePosts {
+      if viewModel.needsFirstPageRetry(for: .posts) {
         await viewModel.loadPosts()
       }
     case .replies:
       hasAttemptedLoadReplies = true
-      if viewModel.boxedReplies.isEmpty, viewModel.hasMoreReplies {
+      if viewModel.needsFirstPageRetry(for: .replies) {
         await viewModel.loadReplies()
       }
     case .media:
       hasAttemptedLoadMedia = true
-      if viewModel.boxedPostsWithMedia.isEmpty, viewModel.hasMoreMedia {
+      if viewModel.needsFirstPageRetry(for: .media) {
         await viewModel.loadMediaPosts()
       }
     case .labelerInfo:
