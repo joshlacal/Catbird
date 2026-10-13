@@ -367,7 +367,6 @@ struct LoginView: View {
                 loginProgress = .idle
                 // Clear any cancelled state from previous attempts - we succeeded
                 authenticationCancelled = false
-                authenticationCancelled = false
                 error = nil
                 // Cancel authentication task on success
                 authenticationTask?.cancel()
