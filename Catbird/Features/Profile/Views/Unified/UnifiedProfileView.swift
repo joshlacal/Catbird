@@ -19,7 +19,16 @@ struct UnifiedProfileView: View {
   #endif
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var currentColorScheme
-  @State private var viewModel: ProfileViewModel
+  /// Holds the one view model of this screen; see `ProfileViewModelSlot`.
+  @State private var viewModelSlot: ProfileViewModelSlot
+  /// Builds the view model on first use. The first use is the first line of `initialLoad()`,
+  /// which then sets `hasAttemptedLoad`, so code that runs while building the body before that
+  /// reads `loadedProfile` or `viewModelSlot` instead.
+  private var viewModel: ProfileViewModel { viewModelSlot.viewModel }
+  /// The profile, without building a view model to find it has none.
+  private var loadedProfile: AppBskyActorDefs.ProfileViewDetailed? {
+    viewModelSlot.builtViewModel?.profile
+  }
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
   @Binding private var navigationPath: NavigationPath
@@ -68,7 +77,7 @@ struct UnifiedProfileView: View {
     lastTappedTab: Binding<Int?>,
     path: Binding<NavigationPath>
   ) {
-    let viewModel = ProfileViewModel(
+    let viewModelSlot = ProfileViewModelSlot(
       client: appState.atProtoClient,
       userDID: appState.userDID,
       currentUserDID: appState.userDID,
@@ -78,25 +87,25 @@ struct UnifiedProfileView: View {
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
     _navigationPath = path
-    self._viewModel = State(initialValue: viewModel)
+    self._viewModelSlot = State(initialValue: viewModelSlot)
   }
 
   init(did: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>) {
-    let viewModel = ProfileViewModel(
+    // Labelers open on Labeler Info, chosen before the first load reads the tab.
+    let viewModelSlot = ProfileViewModelSlot(
       client: appState.atProtoClient,
       userDID: did,
       currentUserDID: appState.userDID,
-      stateInvalidationBus: appState.stateInvalidationBus
+      stateInvalidationBus: appState.stateInvalidationBus,
+      initialProfileTab: ProfileViewModelSlot.initialTab(
+        for: did, subscribedLabelerDIDs: appState.moderationPolicy.prefs.labelers.lazy.map(\.did)
+      )
     )
-    if did == ModerationPrefs.blueskyModerationDID
-      || appState.moderationPolicy.prefs.labelers.contains(where: { $0.did == did }) {
-      viewModel.selectedProfileTab = .labelerInfo
-    }
-    
+
     self._selectedTab = selectedTab
     self._lastTappedTab = Binding.constant(nil)
     _navigationPath = path
-    self._viewModel = State(initialValue: viewModel)
+    self._viewModelSlot = State(initialValue: viewModelSlot)
   }
 
   var body: some View {
@@ -191,7 +200,7 @@ struct UnifiedProfileView: View {
 
   @ViewBuilder
   private var unblockAlertMessage: some View {
-    if let profile = viewModel.profile {
+    if let profile = loadedProfile {
       Text(BlockConfirmation.unblockMessage(handle: profile.handle.description))
     }
   }
@@ -341,6 +350,9 @@ struct UnifiedProfileView: View {
   }
 
   private func initialLoad() async {
+    // The first read of `viewModel` builds it, with its initial tab, before anything below
+    // reads the tab or starts a load.
+    _ = viewModel
     let signpost = PerformanceSignposts.beginInterval("ProfileOpen")
     defer {
       PerformanceSignposts.endInterval("ProfileOpen", signpost)
@@ -616,7 +628,7 @@ struct UnifiedProfileView: View {
         errorView
       }
     }
-    .id(viewModel.userDID) // Use stable userDID instead of profile?.did
+    .id(viewModelSlot.userDID) // Use stable userDID instead of profile?.did
     .navigationTitle("")
     .ensureDeepNavigationFonts()
     #if os(iOS)
@@ -629,12 +641,14 @@ struct UnifiedProfileView: View {
       switch destination {
       case .section(let tab, let did):
         // SwiftUI can build this destination from a copy of the profile view whose @State
-        // never attached, handing it a fresh view model with no profile. Reuse this view
-        // model only when it has loaded the requested profile; otherwise the host loads it,
-        // so a More section never comes up empty until pull-to-refresh.
+        // never attached, so its slot has no view model. Reuse this view model only when it
+        // has loaded the requested profile; otherwise the host loads it, so a More section
+        // never comes up empty until pull-to-refresh. Reading `builtViewModel` never builds one.
         ProfileSectionHostView(
           did: did, tab: tab, appState: appState, path: $navigationPath,
-          loadedViewModel: viewModel.profile?.did.didString() == did ? viewModel : nil
+          loadedViewModel: viewModelSlot.builtViewModel.flatMap {
+            $0.profile?.did.didString() == did ? $0 : nil
+          }
         )
         .id("\(did)_\(tab.rawValue)")
       case .followers(let did):
@@ -763,7 +777,7 @@ struct UnifiedProfileView: View {
   private func profileViewConfiguration(contentMaxWidth: CGFloat) -> some View {
     profilePresentationConfiguration(contentMaxWidth: contentMaxWidth)
       .toolbar {
-        if let profile = viewModel.profile {
+        if let profile = loadedProfile {
           ToolbarItem(placement: .principal) {
             Text(profile.displayName.flatMap {
               $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
@@ -800,7 +814,7 @@ struct UnifiedProfileView: View {
         Text("Please try again. The Germ link opens the app when installed, or its website otherwise.")
       }
       .onChange(of: appState.userDID) { _, _ in clearGermAction() }
-      .onChange(of: viewModel.profile?.did) { _, _ in clearGermAction() }
+      .onChange(of: loadedProfile?.did) { _, _ in clearGermAction() }
       .onChange(of: AppStateManager.shared.settingsAccountContextRevision) { _, _ in clearGermAction() }
       .onDisappear { clearGermAction() }
       .alert("Unblock User", isPresented: $isShowingUnblockConfirmation) {
@@ -812,7 +826,7 @@ struct UnifiedProfileView: View {
         Button("Cancel", role: .cancel) { }
         Button("Mute", role: .destructive) { toggleMute() }
       } message: {
-        if let profile = viewModel.profile {
+        if let profile = loadedProfile {
           Text("Mute @\(profile.handle)? You won’t see their posts and replies in your feeds.")
         }
       }
@@ -894,7 +908,7 @@ struct UnifiedProfileView: View {
   }
 
   private var signOutConfirmationTitle: String {
-    if let handle = viewModel.profile?.handle.description {
+    if let handle = loadedProfile?.handle.description {
       return "Sign out of @\(handle)?"
     }
     return "Sign out?"
