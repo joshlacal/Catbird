@@ -119,6 +119,12 @@ enum PostEntityCache {
     buffers.buffer(for: defaults).flush()
   }
 
+  /// Drops buffered entries and the stored list (sign-out); see AppGroupEntityWriteBuffer.removeAll.
+  static func removeAll(defaults: UserDefaults? = appGroupDefaults) {
+    guard let defaults else { return }
+    buffers.buffer(for: defaults).removeAll()
+  }
+
   /// One write buffer per UserDefaults instance. Holding the instance keeps
   /// its ObjectIdentifier from being reused while its buffer is registered.
   private final class WriteBufferRegistry: @unchecked Sendable {

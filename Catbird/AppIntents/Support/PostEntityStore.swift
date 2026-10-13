@@ -61,6 +61,13 @@ actor PostEntityStore {
     PostEntityCache.flushPendingWrites(defaults: defaults)
   }
 
+  /// Forgets every post, in memory and in the App Group (sign-out, account removal).
+  func removeAll() {
+    views.removeAll()
+    order.removeAll()
+    PostEntityCache.removeAll(defaults: defaults)
+  }
+
   /// Contract consumed by the generated PostEntityQuery (manifest
   /// `query.byIds.localStore`): identifiers with no cached view are simply
   /// omitted — the query fetches only those over the network.

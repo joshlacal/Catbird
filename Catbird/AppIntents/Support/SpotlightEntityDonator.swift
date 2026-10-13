@@ -251,9 +251,14 @@ actor SpotlightEntityDonator {
 
   /// Removes every indexed post and profile so a signed-out or removed account's
   /// content stops appearing in Spotlight. Content is indexed again as it's viewed.
+  /// The on-screen resolution stores go too: they persist recent posts and profiles
+  /// to the App Group with no account on them, so the next account to sign in
+  /// would otherwise resolve the previous one's.
   func removeAll() async {
     exportGeneration &+= 1
     resetDonationMemory()
+    await PostEntityStore.shared.removeAll()
+    await ProfileEntityStore.shared.removeAll()
     let mutation = enqueueIndexMutation { [weak self] in
       await self?.removeIndexedEntities()
     }

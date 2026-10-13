@@ -69,6 +69,13 @@ actor ProfileEntityStore {
     persisted?.flush()
   }
 
+  /// Forgets every profile, in memory and in the App Group (sign-out, account removal).
+  func removeAll() {
+    entities.removeAll()
+    order.removeAll()
+    persisted?.removeAll()
+  }
+
   /// The App Group list, including entries this process hasn't flushed yet.
   private func persistedEntities() -> [String: PersistedProfileEntity] {
     guard let values = persisted?.entries() else { return [:] }

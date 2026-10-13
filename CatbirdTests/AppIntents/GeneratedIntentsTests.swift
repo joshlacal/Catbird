@@ -535,6 +535,30 @@ struct GeneratedIntentsTests {
       #expect(await otherProcess.entities(for: [view.uri.uriString()]).count == 1)
     }
 
+    @Test("removeAll forgets posts in memory, in the App Group and still buffered")
+    func removeAllForgetsPosts() async throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let flushed = try Fixture.postView(text: "Signed-out account's post", rkey: "flushed1")
+      let buffered = try Fixture.postView(text: "Signed-out account's unflushed post", rkey: "buffered1")
+      let writer = PostEntityStore(defaults: defaults)
+      await writer.store(flushed)
+      await writer.flushPendingWrites()
+      await writer.store(buffered)
+      let ids = [flushed.uri.uriString(), buffered.uri.uriString()]
+      #expect(await writer.entities(for: ids).count == 2)
+
+      await writer.removeAll()
+
+      #expect(await writer.entities(for: ids).isEmpty)
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) == nil)
+      await writer.flushPendingWrites()
+      let reader = PostEntityStore(defaults: try #require(UserDefaults(suiteName: suiteName)))
+      #expect(await reader.entities(for: ids).isEmpty)
+    }
+
     @Test("Persisted reads in the writing process include unflushed entries")
     func persistedReadsMergePendingEntries() throws {
       let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
@@ -633,6 +657,31 @@ struct GeneratedIntentsTests {
       NotificationCenter.default.post(name: notification, object: nil)
       #expect(defaults.data(forKey: "entries") != nil)
     }
+
+    @Test("removeAll drops stored and buffered entries, and a scheduled flush writes nothing back")
+    func removeAllClearsEverything() async throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let buffer = makeBuffer(defaults, flushDelay: 0.05)
+      buffer.enqueue([Entry(id: "a", value: 1)])
+      buffer.flush()
+      buffer.enqueue([Entry(id: "b", value: 1)])
+      #expect(defaults.data(forKey: "entries") != nil)
+
+      buffer.removeAll()
+
+      #expect(defaults.data(forKey: "entries") == nil)
+      #expect(buffer.entries().isEmpty)
+      // The flush "b" scheduled must not bring the signed-out entries back.
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(defaults.data(forKey: "entries") == nil)
+      buffer.enqueue([Entry(id: "c", value: 1)])
+      buffer.flush()
+      let stored = makeBuffer(try #require(UserDefaults(suiteName: suiteName))).entries()
+      #expect(stored == [Entry(id: "c", value: 1)])
+    }
   }
 
   @Suite("ProfileEntityStore")
@@ -664,6 +713,25 @@ struct GeneratedIntentsTests {
       let entities = await reader.entities(for: [profile.id])
       #expect(entities.count == 1)
       #expect(entities.first?.handle == "author.bsky.social")
+    }
+
+    @Test("removeAll forgets profiles in memory and in the App Group")
+    func removeAllForgetsProfiles() async throws {
+      let suiteName = "test.app-intents.profile-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let profile = ProfileEntity(from: try Fixture.profileViewBasic())
+      let writer = ProfileEntityStore(defaults: defaults)
+      await writer.store(profile)
+      await writer.flushPendingWrites()
+      #expect(await writer.entities(for: [profile.id]).count == 1)
+
+      await writer.removeAll()
+
+      #expect(await writer.entities(for: [profile.id]).isEmpty)
+      let reader = ProfileEntityStore(defaults: try #require(UserDefaults(suiteName: suiteName)))
+      #expect(await reader.entities(for: [profile.id]).isEmpty)
     }
 
     @Test("Profile stores buffer the App Group write instead of writing through")

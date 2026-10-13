@@ -144,6 +144,23 @@ final class AppGroupEntityWriteBuffer<Entry: Codable & Equatable & Sendable>: @u
     lock.unlock()
   }
 
+  /// Drops the buffered writes and the stored list, as when the account signs out: the list
+  /// names no account, so the next one would otherwise resolve these entries. A flush already
+  /// running finishes first, so it cannot write the old entries back afterwards, and a
+  /// scheduled one finds nothing to write.
+  func removeAll() {
+    flushLock.lock()
+    defer { flushLock.unlock() }
+
+    lock.lock()
+    scheduledFlush?.cancel()
+    scheduledFlush = nil
+    pending = []
+    inFlight = []
+    lock.unlock()
+    defaults.removeObject(forKey: storageKey)
+  }
+
   private func storedEntries() -> [Entry] {
     guard let data = defaults.data(forKey: storageKey) else { return [] }
     do {
