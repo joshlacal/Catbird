@@ -49,6 +49,11 @@ struct UnifiedProfileView: View {
   @State private var hasAttemptedLoadPosts = false
   @State private var hasAttemptedLoadReplies = false
   @State private var hasAttemptedLoadMedia = false
+  /// When the header last loaded, by appearing or by a refresh, so a quick return does not
+  /// fetch it again.
+  @State private var lastAppearanceLoad: Date?
+  /// How old the header must be before returning to the screen refreshes it.
+  private static let headerRefreshAge: TimeInterval = 60
   @State private var isHeaderScrolledPast = false
   @State private var scrollToTopRequestID = 0
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
@@ -138,6 +143,7 @@ struct UnifiedProfileView: View {
 
   // MARK: - New helper function for refreshing content
   private func refreshAllContent() async {
+    lastAppearanceLoad = Date()
     switch viewModel.selectedProfileTab {
     case .posts:
       hasAttemptedLoadPosts = true
@@ -150,25 +156,25 @@ struct UnifiedProfileView: View {
     }
 
     async let profileTask: Void = viewModel.loadProfile()
-    async let followersTask: Void = {
-      if !viewModel.isCurrentUser {
-        await viewModel.loadKnownFollowers(reset: true)
-      }
-    }()
-    async let feedTask: Void = {
-      switch viewModel.selectedProfileTab {
-      case .posts:
-        await viewModel.loadPosts()
-      case .replies:
-        await viewModel.loadReplies()
-      case .media:
-        await viewModel.loadMediaPosts()
-      case .more: break
-      default: break
-      }
-    }()
+    async let followersTask: Void = loadKnownFollowersIfOtherProfile(reset: true)
+    async let feedTask: Void = reloadSelectedTab()
 
     _ = await (profileTask, followersTask, feedTask)
+  }
+
+  /// Reloads the open post tab's first page. Its hasAttemptedLoad flag is set by the caller,
+  /// outside the concurrent loads.
+  private func reloadSelectedTab() async {
+    switch viewModel.selectedProfileTab {
+    case .posts:
+      await viewModel.loadPosts()
+    case .replies:
+      await viewModel.loadReplies()
+    case .media:
+      await viewModel.loadMediaPosts()
+    default:
+      break
+    }
   }
   
 
@@ -303,6 +309,7 @@ struct UnifiedProfileView: View {
     if newValue == 3 {
       // Double-tapped profile tab - refresh profile and scroll to top
       scrollToTopRequestID += 1
+      lastAppearanceLoad = Date()
       Task {
         await viewModel.loadProfile()
         // Send scroll to top command
@@ -340,24 +347,77 @@ struct UnifiedProfileView: View {
     }
 
     hasAttemptedLoad = true
-    do {
-      async let profileTask: Void = viewModel.loadProfile()
-      async let followersTask: Void = {
-        if !viewModel.isCurrentUser {
-          await viewModel.loadKnownFollowers()
-        }
-      }()
-      async let feedTask: Void = refreshCurrentTabContent()
+    async let profileTask: Void = viewModel.loadProfile()
+    async let followersTask: Void = loadKnownFollowersIfOtherProfile()
+    async let feedTask: Void = refreshCurrentTabContent()
 
-      _ = await (profileTask, followersTask, feedTask)
+    _ = await (profileTask, followersTask, feedTask)
 
-      // Blocking and muting come from the profile's viewer state, so the mute list is
-      // scanned only for list-muted profiles (see directMuteState).
-      if let profile = viewModel.profile, !viewModel.isCurrentUser {
-        await applyRelationshipState(from: profile)
+    // Blocking and muting come from the profile's viewer state, so the mute list is
+    // scanned only for list-muted profiles (see directMuteState).
+    if let profile = viewModel.profile, !viewModel.isCurrentUser {
+      await applyRelationshipState(from: profile)
+    }
+  }
+
+  /// The quiet header refresh when the user comes back to a loaded profile. It also re-reads
+  /// the menu's block and mute state, which a pushed thread may have changed, so the header
+  /// and the menu agree.
+  private func refreshHeaderAfterReturn() async {
+    await viewModel.loadProfile()
+    if let profile = viewModel.profile, !viewModel.isCurrentUser, profile.viewer != nil {
+      await applyRelationshipState(from: profile)
+    }
+  }
+
+  /// When the user comes back to a loaded profile, loads again only what never arrived: the
+  /// open tab's first page (failed, or cancelled by a push) and a "Followed by" row cut short.
+  private func retryUnloadedContent() async {
+    async let tabTask: Void = retryUnloadedTabContent()
+    async let followersTask: Void = retryKnownFollowersIfCutShort()
+    _ = await (tabTask, followersTask)
+  }
+
+  /// Known followers mean nothing on the user's own profile.
+  private func loadKnownFollowersIfOtherProfile(reset: Bool = false) async {
+    guard !viewModel.isCurrentUser else { return }
+    await viewModel.loadKnownFollowers(reset: reset)
+  }
+
+  /// Loads the "Followed by" row again when the profile says it has some and none arrived.
+  private func retryKnownFollowersIfCutShort() async {
+    guard viewModel.knownFollowers.isEmpty,
+          (viewModel.profile?.viewer?.knownFollowers?.count ?? 0) > 0 else { return }
+    await loadKnownFollowersIfOtherProfile()
+  }
+
+  /// Like `refreshCurrentTabContent`, but a tab is loaded again only while its `hasMore` flag
+  /// is still at its initial true. A failed or cancelled first page leaves it there, while a
+  /// first page that came back empty with no cursor clears it, so a profile with no posts,
+  /// replies or media costs no request on every return.
+  private func retryUnloadedTabContent() async {
+    switch viewModel.selectedProfileTab {
+    case .posts:
+      hasAttemptedLoadPosts = true
+      if viewModel.boxedPosts.isEmpty, viewModel.pinnedPost == nil, viewModel.hasMorePosts {
+        await viewModel.loadPosts()
       }
-    } catch {
-      logger.error("Failed to load initial profile data: \(error.localizedDescription)")
+    case .replies:
+      hasAttemptedLoadReplies = true
+      if viewModel.boxedReplies.isEmpty, viewModel.hasMoreReplies {
+        await viewModel.loadReplies()
+      }
+    case .media:
+      hasAttemptedLoadMedia = true
+      if viewModel.boxedPostsWithMedia.isEmpty, viewModel.hasMoreMedia {
+        await viewModel.loadMediaPosts()
+      }
+    case .labelerInfo:
+      if viewModel.isLabeler, viewModel.labelerDetails == nil {
+        await viewModel.loadLabelerDetails()
+      }
+    default:
+      break
     }
   }
   
@@ -784,12 +844,21 @@ struct UnifiedProfileView: View {
         }
       }
       .task {
-        // Skip initialLoad when already attempted and profile is present (Quick win 12 / P154)
-        guard !hasAttemptedLoad || viewModel.profile == nil else { return }
-        do {
+        // Coming back from a pushed screen runs this task again. A loaded profile keeps its
+        // rows (Quick win 12 / P154): only content that never arrived loads again, and the
+        // header refreshes quietly once it is over a minute old. `hasAttemptedLoad` is
+        // checked first, so this never reads the view model of a screen that has not loaded.
+        if hasAttemptedLoad, viewModel.profile != nil {
+          if let lastAppearanceLoad,
+             Date().timeIntervalSince(lastAppearanceLoad) > Self.headerRefreshAge {
+            self.lastAppearanceLoad = Date()
+            // Unstructured on purpose: leaving again must not cancel the refresh halfway.
+            Task { await refreshHeaderAfterReturn() }
+          }
+          await retryUnloadedContent()
+        } else {
+          lastAppearanceLoad = Date()
           await initialLoad()
-        } catch {
-          logger.error("Failed to load initial profile data: \(error.localizedDescription)")
         }
       }
   }
