@@ -512,20 +512,12 @@ final class AuthenticationManager: AuthProgressDelegate {
   private let handleStorageKey = "catbird_account_handles"
   private let accountOrderKey = "catbird_account_order"
   private let userDefaults: UserDefaults
-  // State change handling with multicast async streams (one continuation per subscriber)
+  // State change handling: one stream per subscriber (see AuthStateBroadcast)
   @ObservationIgnored
-  private let continuationsLock = NSLock()
-  @ObservationIgnored
-  private var stateContinuations: [UUID: AsyncStream<AuthState>.Continuation] = [:]
+  private let stateBroadcast = AuthStateBroadcast()
 
   deinit {
-    continuationsLock.lock()
-    let continuations = Array(stateContinuations.values)
-    stateContinuations.removeAll()
-    continuationsLock.unlock()
-    for continuation in continuations {
-      continuation.finish()
-    }
+    stateBroadcast.finishAll()
   }
   // The ATProtoClient used for authentication and API calls
   private(set) var client: ATProtoClient?
@@ -721,22 +713,18 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
   // MARK: - State Management
 
-  /// Access state changes as a multicast AsyncSequence.
-  /// Each caller receives an independent stream; terminations are cleaned up automatically.
+  /// State changes from this point on. Each access returns a stream of its own,
+  /// so every subscriber sees every change; stop iterating to unsubscribe.
   var stateChanges: AsyncStream<AuthState> {
-    let id = UUID()
-    return AsyncStream<AuthState> { continuation in
-      continuationsLock.lock()
-      stateContinuations[id] = continuation
-      continuationsLock.unlock()
+    stateBroadcast.subscribe()
+  }
 
-      continuation.onTermination = { [weak self] _ in
-        guard let self else { return }
-        self.continuationsLock.lock()
-        self.stateContinuations.removeValue(forKey: id)
-        self.continuationsLock.unlock()
-      }
-    }
+  /// The current state followed by every later change, for subscribers that
+  /// start after launch has already authenticated. Main-actor isolated because
+  /// `updateState` is: reading `state` and subscribing then can't straddle a change.
+  @MainActor
+  var currentAndFutureStates: AsyncStream<AuthState> {
+    stateBroadcast.subscribe(startingWith: state)
   }
   #if DEBUG
   nonisolated(unsafe) static var switchAccountOverride: (@Sendable (String) async throws -> (did: String, handle: String))?
@@ -1001,12 +989,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     }
     self.state = newState
     // Emit synchronously to all active subscribers - no Task wrapper to eliminate race windows
-    continuationsLock.lock()
-    let continuations = Array(stateContinuations.values)
-    continuationsLock.unlock()
-    for continuation in continuations {
-      continuation.yield(newState)
-    }
+    stateBroadcast.yield(newState)
   }
 
   #if DEBUG
