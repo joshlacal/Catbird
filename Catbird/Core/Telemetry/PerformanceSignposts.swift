@@ -321,6 +321,59 @@ extension PerformanceSignposts {
   }
 }
 
+// MARK: - Thread Open
+
+// ThreadOpen is a screen-open metric of the performance teardown's measurement protocol
+// (L4, "How to measure"). It sits on the Intervals signposter with the other screen-open
+// intervals. Each open makes its own signpost ID, so overlapping opens (stacked pushes,
+// several windows) pair correctly and its events attach to the right interval.
+// Payloads carry counts and flags only, never account or post IDs.
+
+extension PerformanceSignposts {
+  /// Begins when the thread screen loads its view.
+  nonisolated static func beginThreadOpen() -> OSSignpostID {
+    guard intervalsSignposter.isEnabled else { return .null }
+    let id = intervalsSignposter.makeSignpostID()
+    _ = intervalsSignposter.beginInterval("ThreadOpen", id: id)
+    return id
+  }
+
+  /// Marks the tapped post being shown as the anchor before the thread response arrives.
+  nonisolated static func threadOpenAnchorPrefilled(id: OSSignpostID) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.emitEvent("ThreadOpenAnchorPrefilled", id: id)
+  }
+
+  /// Marks the thread response arriving, separating network time from presentation time.
+  /// `loaded` is false when the load failed.
+  nonisolated static func threadOpenDataReady(id: OSSignpostID, loaded: Bool) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.emitEvent("ThreadOpenDataReady", id: id, "loaded: \(loaded ? 1 : 0)")
+  }
+
+  /// Marks one forced layout pass while the anchor is being positioned.
+  nonisolated static func threadOpenLayoutPass(id: OSSignpostID) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.emitEvent("ThreadOpenLayoutPass", id: id)
+  }
+
+  /// Ends when the positioned thread, or the message saying it can't be shown, is on screen.
+  nonisolated static func endThreadOpen(id: OSSignpostID, parentCount: Int, replyCount: Int, loaded: Bool) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.endInterval(
+      "ThreadOpen",
+      OSSignpostIntervalState.beginState(id: id),
+      "outcome: visible, loaded: \(loaded ? 1 : 0), parents: \(parentCount), replies: \(replyCount)"
+    )
+  }
+
+  /// Ends an open that was left before the thread was shown.
+  nonisolated static func cancelThreadOpen(id: OSSignpostID) {
+    guard intervalsSignposter.isEnabled, id != .null else { return }
+    intervalsSignposter.endInterval("ThreadOpen", OSSignpostIntervalState.beginState(id: id), "outcome: cancelled")
+  }
+}
+
 // MARK: - Convenience Extensions
 
 extension PerformanceSignposts {
