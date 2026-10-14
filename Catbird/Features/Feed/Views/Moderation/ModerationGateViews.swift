@@ -86,6 +86,8 @@ struct ModerationContentGate<Content: View>: View {
   let ui: ModerationUI
   @ViewBuilder let content: () -> Content
   @State private var reveal = ModerationRevealState()
+  @Environment(AppState.self) private var appState
+  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
   private var revealed: Bool { reveal.isRevealed(ui) }
 
@@ -121,12 +123,18 @@ struct ModerationContentGate<Content: View>: View {
           .accessibilityHint(ModerationGateText.explanation(for: ui))
       } else {
         Button(revealed ? "Hide" : "Show") {
-          if revealed { reveal.hide() } else { reveal.show(ui) }
+          withAnimation(PostRevealMotion.layoutAnimation(
+            reduceMotion: appState.appSettings.effectiveReduceMotion,
+            voiceOverEnabled: voiceOverEnabled
+          )) {
+            if revealed { reveal.hide() } else { reveal.show(ui) }
+          }
         }
         .appFont(AppTextRole.subheadline)
         .buttonStyle(.borderless)
         .frame(minWidth: 44, minHeight: 44)
         .accessibilityHint(revealed ? "Hides the content" : "Shows the content")
+        .accessibilityIdentifier("moderation.contentGate.toggle")
       }
     }
     .padding(.horizontal, 12)
@@ -154,6 +162,8 @@ struct ModerationMediaGate<Content: View>: View {
   var style: Style = .card
   @ViewBuilder let content: () -> Content
   @State private var reveal = ModerationRevealState()
+  @Environment(AppState.self) private var appState
+  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
   private var revealed: Bool { reveal.isRevealed(ui) }
 
@@ -162,6 +172,7 @@ struct ModerationMediaGate<Content: View>: View {
       content()
     } else if revealed {
       content()
+        .postRevealFade(isEnabled: true)
         .overlay(alignment: .topTrailing) { hideControl }
     } else {
       cover
@@ -192,11 +203,12 @@ struct ModerationMediaGate<Content: View>: View {
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
         if !ui.noOverride {
-          Button("Show") { reveal.show(ui) }
+          Button("Show", action: show)
             .appFont(AppTextRole.footnote)
             .buttonStyle(.bordered)
             .frame(minHeight: 44)
             .padding(.top, 2)
+            .accessibilityIdentifier("moderation.mediaGate.show")
         }
       }
       .padding(16)
@@ -221,10 +233,11 @@ struct ModerationMediaGate<Content: View>: View {
             .foregroundStyle(.secondary)
             .accessibilityHint(explanation)
         } else {
-          Button("Show") { reveal.show(ui) }
+          Button("Show", action: show)
             .appFont(AppTextRole.subheadline)
             .buttonStyle(.borderless)
             .frame(minWidth: 44, minHeight: 44)
+            .accessibilityIdentifier("moderation.mediaGate.show")
         }
       }
       .padding(.horizontal, 12)
@@ -237,7 +250,12 @@ struct ModerationMediaGate<Content: View>: View {
 
   private var hideControl: some View {
     Button {
-      reveal.hide()
+      withAnimation(PostRevealMotion.layoutAnimation(
+        reduceMotion: appState.appSettings.effectiveReduceMotion,
+        voiceOverEnabled: voiceOverEnabled
+      )) {
+        reveal.hide()
+      }
     } label: {
       Label("Hide", systemImage: "eye.slash")
         .appFont(AppTextRole.caption)
@@ -249,6 +267,16 @@ struct ModerationMediaGate<Content: View>: View {
     .buttonStyle(.plain)
     .padding(8)
     .accessibilityHint("Hides the media again")
+    .accessibilityIdentifier("moderation.mediaGate.hide")
+  }
+
+  private func show() {
+    withAnimation(PostRevealMotion.layoutAnimation(
+      reduceMotion: appState.appSettings.effectiveReduceMotion,
+      voiceOverEnabled: voiceOverEnabled
+    )) {
+      reveal.show(ui)
+    }
   }
 }
 

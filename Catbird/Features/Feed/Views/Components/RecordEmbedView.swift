@@ -14,10 +14,21 @@ struct RecordEmbedView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
     @Environment(\.moderationPolicy) private var moderationPolicy
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     // When true, render full post styling for quoted posts (used in thread main post view)
     var useFullPostStyle: Bool = false
     /// Quotes from muted accounts stay collapsed until the viewer asks to see them.
     @State private var revealedMutedQuote: [String]?
+    @State private var mutedQuoteMeasurement: MutedQuoteMeasurement?
+    @State private var quoteWidth: CGFloat = 0
+
+    private struct MutedQuoteMeasurement: Equatable {
+        let identity: [String]
+        let size: CGSize
+        let dynamicTypeSize: DynamicTypeSize
+        let fontGeneration: Int
+    }
 
     /// A quoted record carries its own labels, which the policy reads from the
     /// record; callers pass none.
@@ -35,6 +46,7 @@ struct RecordEmbedView: View {
         switch record {
         case .appBskyEmbedRecordViewRecord(let post):
             postView(post)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { quoteWidth = $0 }
         case .appBskyEmbedRecordViewNotFound:
             notFoundView
         case .appBskyEmbedRecordViewBlocked(let blocked):
@@ -80,6 +92,9 @@ struct RecordEmbedView: View {
                 quotedPostView(post, moderation: moderation)
                     .postRevealFade(isEnabled: showsMutedQuote(post))
             }
+            // A nested label warning can be shorter than the wrapping mute notice.
+            // Keep that reveal from shrinking the row and clamping a feed at its end.
+            .frame(minHeight: mutedQuoteMinimumHeight(post), alignment: .top)
         }
     }
 
@@ -89,6 +104,17 @@ struct RecordEmbedView: View {
 
     private func showsMutedQuote(_ post: AppBskyEmbedRecord.ViewRecord) -> Bool {
         revealedMutedQuote == mutedQuoteIdentity(post)
+    }
+
+    private func mutedQuoteMinimumHeight(_ post: AppBskyEmbedRecord.ViewRecord) -> CGFloat? {
+        guard showsMutedQuote(post),
+              let measurement = mutedQuoteMeasurement,
+              measurement.identity == mutedQuoteIdentity(post),
+              measurement.dynamicTypeSize == dynamicTypeSize,
+              measurement.fontGeneration == appState.fontManager.generation,
+              abs(measurement.size.width - quoteWidth) < 0.5
+        else { return nil }
+        return measurement.size.height
     }
 
     private func mutedQuoteView(for post: AppBskyEmbedRecord.ViewRecord) -> some View {
@@ -101,15 +127,26 @@ struct RecordEmbedView: View {
                 .foregroundStyle(Color.secondary)
             Spacer(minLength: 0)
             Button("Show") {
-                revealedMutedQuote = mutedQuoteIdentity(post)
+                withAnimation(PostRevealMotion.layoutAnimation(
+                    reduceMotion: appState.appSettings.effectiveReduceMotion,
+                    voiceOverEnabled: voiceOverEnabled
+                )) {
+                    revealedMutedQuote = mutedQuoteIdentity(post)
+                }
             }
             .appFont(AppTextRole.subheadline)
             .buttonStyle(.borderless)
+            .accessibilityIdentifier("moderation.mutedQuote.show")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .feedEmbedCardStyle()
         .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: MutedQuoteMeasurement.self) { geometry in
+            MutedQuoteMeasurement(
+                identity: mutedQuoteIdentity(post), size: geometry.size,
+                dynamicTypeSize: dynamicTypeSize, fontGeneration: appState.fontManager.generation)
+        } action: { mutedQuoteMeasurement = $0 }
     }
 
     @ViewBuilder

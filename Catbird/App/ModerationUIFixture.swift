@@ -62,7 +62,21 @@ struct ModerationUIFixture: View {
 
   @ViewBuilder
   private func content(_ world: ModerationFixtureWorld) -> some View {
-    if world.scene.isSettings {
+    if let feedStateManager = world.feedStateManager {
+      FeedCollectionViewWrapper(
+        stateManager: feedStateManager,
+        navigationPath: $path,
+        headerView: AnyView(fixtureBanner(world))
+      )
+      .overlay(alignment: .topLeading) {
+        if ProcessInfo.processInfo.arguments.contains("--moderation-layout-diagnostics"),
+          let targetPostID = world.diagnosticPostID {
+          ModerationFixtureViewportProbe(targetPostID: targetPostID)
+            .frame(width: 8, height: 8)
+            .allowsHitTesting(false)
+        }
+      }
+    } else if world.scene.isSettings {
       NavigationStack {
         ModerationSettingsView(initialFocus: world.scene.settingsFocus)
           .navigationDestination(for: SettingsTarget.self) { SettingsDestinationView(target: $0) }
@@ -70,12 +84,7 @@ struct ModerationUIFixture: View {
       .environment(\.settingsDraftGuard, draftGuard)
     } else {
       VStack(spacing: 0) {
-        Text(world.banner)
-          .font(.system(size: 11, weight: .medium, design: .monospaced))
-          .foregroundStyle(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 6)
+        fixtureBanner(world)
         ScrollView {
           VStack(spacing: 0) {
             ForEach(world.rows) { row in
@@ -85,6 +94,16 @@ struct ModerationUIFixture: View {
         }
       }
     }
+  }
+
+  private func fixtureBanner(_ world: ModerationFixtureWorld) -> some View {
+    Text(world.banner)
+      .font(.system(size: 11, weight: .medium, design: .monospaced))
+      .foregroundStyle(.secondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 6)
+      .accessibilityIdentifier("moderation.fixture.banner")
   }
 
   @ViewBuilder
@@ -131,6 +150,7 @@ private enum ModerationFixtureScene: String {
   case adultOnA = "adult-on-a"
   case adultOnB = "adult-on-b"
   case adultOnC = "adult-on-c"
+  case mutedQuote = "muted-quote"
   case adultOffA = "adult-off-a"
   case adultOffB = "adult-off-b"
   case threadAdultOff = "thread-adult-off"
@@ -149,7 +169,7 @@ private enum ModerationFixtureScene: String {
 
   var adultContentEnabled: Bool {
     switch self {
-    case .adultOnA, .adultOnB, .adultOnC, .settingsAdultOn, .imageControl: true
+    case .adultOnA, .adultOnB, .adultOnC, .mutedQuote, .settingsAdultOn, .imageControl: true
     case .adultOffA, .adultOffB, .threadAdultOff, .settingsAdultOff: false
     }
   }
@@ -177,6 +197,10 @@ private enum ModerationFixtureScene: String {
     case .adultOnA, .adultOffA: [.textSexual, .imageGraphic]
     case .adultOnB: [.imagePorn, .textWarn]
     case .adultOnC: [.quotedPorn, .accountPorn]
+    case .mutedQuote:
+      [.imagePlain, .imagePlainLeadInA, .imagePlainLeadInB, .mutedQuote]
+        + (ProcessInfo.processInfo.arguments.contains("--moderation-reveal-room-below")
+          ? [.imagePlainTrailA, .imagePlainTrailB] : [])
     case .adultOffB: [.imagePorn, .quotedPorn]
     case .threadAdultOff: [.imagePorn]
     case .settingsAdultOn, .settingsAdultOff: []
@@ -186,7 +210,9 @@ private enum ModerationFixtureScene: String {
 }
 
 private enum ModerationFixtureSample: Int {
-  case textSexual = 1, imageGraphic, imagePorn, textWarn, quotedPorn, accountPorn, imagePlain
+  case textSexual = 1, imageGraphic, imagePorn, textWarn, quotedPorn, accountPorn, imagePlain, mutedQuote
+  case imagePlainLeadInA, imagePlainLeadInB
+  case imagePlainTrailA, imagePlainTrailB
 
   var caption: String {
     switch self {
@@ -197,6 +223,11 @@ private enum ModerationFixtureSample: Int {
     case .quotedPorn: "(5) Text quoting porn-labelled image"
     case .accountPorn: "(6) Text · ACCOUNT labelled porn"
     case .imagePlain: "(7) Image · no labels (loading control)"
+    case .mutedQuote: "(8) Muted account quote · long text + labelled image"
+    case .imagePlainLeadInA: "(9) Synthetic scroll anchor lead-in A"
+    case .imagePlainLeadInB: "(10) Synthetic scroll anchor lead-in B"
+    case .imagePlainTrailA: "(11) Synthetic scroll range below quote A"
+    case .imagePlainTrailB: "(12) Synthetic scroll range below quote B"
     }
   }
 }
@@ -222,15 +253,20 @@ private final class ModerationFixtureWorld {
   /// PreferencesManager holds its client weakly, so the world keeps it alive.
   let client: ATProtoClient
   let rows: [ModerationFixtureRow]
+  let feedStateManager: FeedStateManager?
+  let diagnosticPostID: String?
 
   var banner: String {
-    "scene \(scene.rawValue) · adult content \(scene.adultContentEnabled ? "ON" : "OFF")"
+    "scene \(scene.rawValue) · adult content \(scene.adultContentEnabled ? "ON" : "OFF") · reduce motion \(appState.appSettings.effectiveReduceMotion ? "ON" : "OFF")"
   }
 
   private init(scene: ModerationFixtureScene, appState: AppState, context: SceneNavigationContext,
-    container: ModelContainer, client: ATProtoClient, rows: [ModerationFixtureRow]) {
+    container: ModelContainer, client: ATProtoClient, rows: [ModerationFixtureRow],
+    feedStateManager: FeedStateManager?, diagnosticPostID: String?) {
     self.scene = scene; self.appState = appState; self.context = context
     self.container = container; self.client = client; self.rows = rows
+    self.feedStateManager = feedStateManager
+    self.diagnosticPostID = diagnosticPostID
   }
 
   static let viewerDID = "did:plc:moderationfixtureviewer"
@@ -249,7 +285,9 @@ private final class ModerationFixtureWorld {
     let container = try ModelContainer(
       for: AppSettingsModel.self, Preferences.self, DraftPost.self,
       configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
-    container.mainContext.insert(AppSettingsModel(accountDID: viewerDID))
+    let appSettings = AppSettingsModel(accountDID: viewerDID)
+    appSettings.reduceMotion = ProcessInfo.processInfo.arguments.contains("--moderation-reduce-motion")
+    container.mainContext.insert(appSettings)
     container.mainContext.insert(Preferences(accountDID: viewerDID))
     try container.mainContext.save()
 
@@ -264,6 +302,8 @@ private final class ModerationFixtureWorld {
 
     let context = SceneNavigationContext(appState: state, sceneID: UUID())
     var rows: [ModerationFixtureRow] = []
+    var feedPosts: [CachedFeedViewPost] = []
+    var diagnosticPostID: String?
     for sample in scene.samples {
       let post = try ModerationFixtureData.post(sample, art: art)
       let caption = sample.caption + " · adult \(scene.adultContentEnabled ? "ON" : "OFF")"
@@ -275,13 +315,27 @@ private final class ModerationFixtureWorld {
         guard let cached = CachedFeedViewPost(from: feedItem, feedType: "timeline") else {
           throw FixtureError.cachedPost
         }
+        feedPosts.append(cached)
+        if sample == .mutedQuote { diagnosticPostID = cached.id }
         rows.append(ModerationFixtureRow(
           id: sample.rawValue, caption: caption,
           kind: .feed(FeedPostViewModel(post: cached, appState: state))))
       }
     }
+    let feedStateManager: FeedStateManager?
+    if scene == .mutedQuote {
+      let feedModel = FeedModel(
+        feedManager: FeedManager(client: nil, fetchType: .timeline), appState: state)
+      feedModel.posts = feedPosts
+      let manager = FeedStateManager(appState: state, feedModel: feedModel, feedType: .timeline)
+      manager.hasReachedEnd = true
+      feedStateManager = manager
+    } else {
+      feedStateManager = nil
+    }
     let world = ModerationFixtureWorld(scene: scene, appState: state, context: context,
-      container: container, client: client, rows: rows)
+      container: container, client: client, rows: rows, feedStateManager: feedStateManager,
+      diagnosticPostID: diagnosticPostID)
     world.publishReadyMarker()
     return world
   }
@@ -313,7 +367,7 @@ private final class ModerationFixtureWorld {
     case unknownScene, transport, cachedPost
     var errorDescription: String? {
       switch self {
-      case .unknownScene: "Pass --moderation-scene=<adult-on-a|adult-on-b|adult-on-c|adult-off-a|adult-off-b|thread-adult-off|settings-adult-on|settings-adult-off|image-loading-control>."
+      case .unknownScene: "Pass --moderation-scene=<adult-on-a|adult-on-b|adult-on-c|muted-quote|adult-off-a|adult-off-b|thread-adult-off|settings-adult-on|settings-adult-off|image-loading-control>."
       case .transport: "The fixture URLProtocol could not be registered."
       case .cachedPost: "The synthetic feed item could not be cached."
       }
@@ -347,7 +401,9 @@ private enum ModerationFixtureData {
     case .textSexual, .imagePorn: art.alice
     case .imageGraphic, .textWarn: art.ben
     case .quotedPorn: art.alice
-    case .accountPorn, .imagePlain: art.cara
+    case .mutedQuote: art.alice
+    case .accountPorn, .imagePlain, .imagePlainLeadInA, .imagePlainLeadInB,
+      .imagePlainTrailA, .imagePlainTrailB: art.cara
     }
   }
 
@@ -373,12 +429,17 @@ private enum ModerationFixtureData {
     return label
   }
 
-  private static func profile(_ author: Author, labels: [[String: Any]] = []) -> [String: Any] {
+  private static func profile(
+    _ author: Author,
+    labels: [[String: Any]] = [],
+    muted: Bool = false
+  ) -> [String: Any] {
     var profile: [String: Any] = [
       "did": author.did, "handle": author.handle, "displayName": author.name,
       "avatar": author.avatar.absoluteString, "createdAt": iso(minutesAgo: 90_000),
     ]
     if !labels.isEmpty { profile["labels"] = labels }
+    if muted { profile["viewer"] = ["muted": true] }
     return profile
   }
 
@@ -426,7 +487,10 @@ private enum ModerationFixtureData {
     case .quotedPorn:
       text = "Quoting an image post labelled porn."
       embed = quotedEmbed(art: art)
-    case .imagePlain:
+    case .mutedQuote:
+      text = "A synthetic outer post quotes an account the viewer muted. This body stays visible while the nested quote can expand."
+      embed = mutedQuoteEmbed(art: art)
+    case .imagePlain, .imagePlainLeadInA, .imagePlainLeadInB, .imagePlainTrailA, .imagePlainTrailB:
       text = "Unlabelled image post."
       embed = imagesView(art.photoControl)
     case .accountPorn:
@@ -455,6 +519,33 @@ private enum ModerationFixtureData {
         "value": record(text: "Quoted image post labelled porn.", minutesAgo: 30),
         "labels": [label("porn", subject: uri, cid: quotedCID)],
         "embeds": [imagesView(art.photoQuoted)],
+        "indexedAt": iso(minutesAgo: 30),
+      ] as [String: Any],
+    ]
+  }
+
+  private static func mutedQuoteEmbed(art: ModerationFixtureArt) -> [String: Any] {
+    let quotedAuthor = art.ben
+    let uri = "at://\(quotedAuthor.did)/app.bsky.feed.post/fixturemutedquote"
+    let quotedCID = cid("moderation-fixture-muted-quote")
+    let arguments = ProcessInfo.processInfo.arguments
+    let shortText = arguments.contains("--moderation-quote-short-text")
+    let unlabelled = arguments.contains("--moderation-quote-without-labels")
+    let text = shortText ? "Short synthetic quote." :
+      "Synthetic quote text with enough words to wrap across several lines at normal phone width. Showing this post should expand only the quote content while its outer post remains at the same reading position. The fixture contains no real account content."
+    return [
+      "$type": "app.bsky.embed.record#view",
+      "record": [
+        "$type": "app.bsky.embed.record#viewRecord",
+        "uri": uri, "cid": quotedCID, "author": profile(quotedAuthor, muted: true),
+        "value": record(
+          text: text,
+          minutesAgo: 30),
+        "labels": unlabelled ? [] : [
+          label("!warn", subject: uri, cid: quotedCID),
+          label("porn", subject: uri, cid: quotedCID),
+        ],
+        "embeds": arguments.contains("--moderation-quote-without-media") ? [] : [imagesView(art.photoQuoted)],
         "indexedAt": iso(minutesAgo: 30),
       ] as [String: Any],
     ]

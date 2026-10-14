@@ -396,6 +396,24 @@ struct ModerationRevealStateTests {
   }
 }
 
+@Suite("Moderation reveal motion")
+struct ModerationRevealMotionTests {
+  @Test("Layout reveal motion is available when accessibility settings allow it")
+  func ordinaryMotionIsEnabled() {
+    #expect(PostRevealMotion.isLayoutAnimationEnabled(reduceMotion: false, voiceOverEnabled: false))
+  }
+
+  @Test("Reduce Motion disables reveal layout animation")
+  func reduceMotionDisablesLayoutAnimation() {
+    #expect(!PostRevealMotion.isLayoutAnimationEnabled(reduceMotion: true, voiceOverEnabled: false))
+  }
+
+  @Test("VoiceOver disables reveal layout animation")
+  func voiceOverDisablesLayoutAnimation() {
+    #expect(!PostRevealMotion.isLayoutAnimationEnabled(reduceMotion: false, voiceOverEnabled: true))
+  }
+}
+
 // MARK: - Gate copy
 
 /// The hidden row and the locked bars name the actual reason content is

@@ -9,6 +9,19 @@ import SwiftUI
 import Petrel
 import Observation
 
+enum PostRevealMotion {
+    static func isLayoutAnimationEnabled(reduceMotion: Bool, voiceOverEnabled: Bool) -> Bool {
+        !reduceMotion && !voiceOverEnabled
+    }
+
+    static func layoutAnimation(reduceMotion: Bool, voiceOverEnabled: Bool) -> Animation? {
+        guard isLayoutAnimationEnabled(reduceMotion: reduceMotion, voiceOverEnabled: voiceOverEnabled) else {
+            return nil
+        }
+        return .easeInOut(duration: 0.22)
+    }
+}
+
 /// Visibility settings for different content categories
 enum ContentVisibility: String, Codable, Identifiable, CaseIterable {
     case show = "ignore"  // AT Protocol uses "ignore" for showing content
