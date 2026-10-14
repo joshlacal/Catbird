@@ -78,10 +78,18 @@ public enum ContentType: String, CaseIterable, Codable, Sendable {
   }
 }
 
-/// Enum for API-supported search result sorting options.
+/// UI sort modes for post search results.
 public enum SearchSort: String, CaseIterable, Codable, Sendable {
   case top
   case latest
+
+  /// Sort value accepted by `app.bsky.feed.searchPostsV2`.
+  public var searchPostsV2Value: String {
+    switch self {
+    case .top: return "top"
+    case .latest: return "recent"
+    }
+  }
 
   public var displayName: String {
     switch self {
