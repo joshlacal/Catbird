@@ -68,6 +68,17 @@ struct ViewImageGridView: View {
 //    }
   }
 
+  /// The rendered grid ratio, also used by moderation covers before images load.
+  static func layoutAspectRatio(for images: [AppBskyEmbedImages.ViewImage]) -> CGFloat {
+    guard images.count == 1, let image = images.first else { return 1.667 }
+    let rawRatio: CGFloat = image.aspectRatio.flatMap { ratio -> CGFloat? in
+      guard ratio.width > 0, ratio.height > 0 else { return nil }
+      return CGFloat(ratio.width) / CGFloat(ratio.height)
+    } ?? (16 / 9)
+    // Tall images center-crop to 3:4 so a single post cannot fill the screen.
+    return max(rawRatio, 0.75)
+  }
+
   var body: some View {
     VStack(spacing: 0) {  // Use VStack with zero spacing to better control dimensions
       if viewImages.count == 1 {
@@ -88,7 +99,7 @@ struct ViewImageGridView: View {
           }
         }
         // Force a max height for multi-image layouts to prevent large layout jumps
-        .aspectRatio(1.667, contentMode: .fit)
+        .aspectRatio(Self.layoutAspectRatio(for: viewImages), contentMode: .fit)
       }
     }
     // Use fixed sizing to prevent layout jumps
@@ -327,12 +338,7 @@ struct ViewImageGridView: View {
 
   @ViewBuilder
   private func singleImageLayout(_ viewImage: AppBskyEmbedImages.ViewImage) -> some View {
-    // Tall images center-crop to 3:4 so a single post cannot fill the screen
-    let rawRatio: CGFloat = viewImage.aspectRatio.flatMap { ratio -> CGFloat? in
-      guard ratio.width > 0, ratio.height > 0 else { return nil }
-      return CGFloat(ratio.width) / CGFloat(ratio.height)
-    } ?? (16 / 9)
-    let aspectRatio = max(rawRatio, 0.75)
+    let aspectRatio = Self.layoutAspectRatio(for: [viewImage])
 
     GeometryReader { geometry in
       let height = geometry.size.width / aspectRatio

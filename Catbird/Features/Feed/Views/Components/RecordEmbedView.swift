@@ -284,7 +284,10 @@ struct RecordEmbedView: View {
             ForEach(embeds.indices, id: \.self) { index in
                 switch embeds[index] {
                 case .appBskyEmbedImagesView(let imageView):
-                    ModerationMediaGate(ui: media) {
+                    ModerationMediaGate(
+                        ui: media,
+                        reservedAspectRatio: ViewImageGridView.layoutAspectRatio(for: imageView.images)
+                    ) {
                         ViewImageGridView(viewImages: imageView.images, shouldBlur: false)
                             .modifier(ReadOnlyPostMediaModifier())
                     }
@@ -369,7 +372,10 @@ struct RecordEmbedView: View {
                     VStack(spacing: 8) {
                         switch recordWithMediaView.media {
                         case .appBskyEmbedImagesView(let imagesView):
-                            ModerationMediaGate(ui: media) {
+                            ModerationMediaGate(
+                                ui: media,
+                                reservedAspectRatio: ViewImageGridView.layoutAspectRatio(for: imagesView.images)
+                            ) {
                                 ViewImageGridView(viewImages: imagesView.images, shouldBlur: false)
                                     .modifier(ReadOnlyPostMediaModifier())
                             }

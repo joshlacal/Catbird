@@ -6,7 +6,15 @@ final class ModerationMutedQuoteRevealUITests: XCTestCase {
   }
 
   func testMutedQuoteLabelAndMediaCanBeShownAndHiddenWithoutMovingOuterText() throws {
-    let app = launchFixture(["--moderation-layout-diagnostics", "--moderation-reveal-room-below"])
+    try verifyRepeatedLabelAndMediaReveals()
+  }
+
+  func testRepeatedMediaRevealWithReduceMotionKeepsViewportStable() throws {
+    try verifyRepeatedLabelAndMediaReveals(arguments: ["--moderation-reduce-motion"])
+  }
+
+  private func verifyRepeatedLabelAndMediaReveals(arguments: [String] = []) throws {
+    let app = launchFixture(["--moderation-layout-diagnostics", "--moderation-reveal-room-below"] + arguments)
     let feed = app.collectionViews.firstMatch
     XCTAssertTrue(feed.waitForExistence(timeout: 10))
     let outerText = app.descendants(matching: .any).matching(
@@ -42,15 +50,11 @@ final class ModerationMutedQuoteRevealUITests: XCTestCase {
     let mediaHide = app.buttons.matching(identifier: "moderation.mediaGate.hide")
       .matching(NSPredicate(format: "label == %@", "Hide")).firstMatch
     for cycle in 0..<2 {
-      mediaShow.tap()
+      try tapVisibleControlPreservingViewport(mediaShow, in: feed, cell: cell, probe: probe)
       XCTAssertTrue(mediaHide.waitForExistence(timeout: 5))
-      waitForDiagnosticLayout(cell)
-      try assertViewportStable(probe, since: baseline)
       if cycle == 0 { capture("Nested label and media gates revealed", app) }
-      mediaHide.tap()
+      try tapVisibleControlPreservingViewport(mediaHide, in: feed, cell: cell, probe: probe)
       XCTAssertTrue(mediaShow.waitForExistence(timeout: 5))
-      waitForDiagnosticLayout(cell)
-      try assertViewportStable(probe, since: baseline)
     }
 
     contentToggle.tap()
@@ -222,6 +226,33 @@ final class ModerationMutedQuoteRevealUITests: XCTestCase {
     let afterFrame = try XCTUnwrap(after["cellContentFrame"] as? [String: Any])
     XCTAssertEqual(try number(beforeFrame, "y"), try number(afterFrame, "y"), accuracy: 1)
     XCTAssertGreaterThanOrEqual(try number(afterFrame, "height"), try number(beforeFrame, "height") - 1)
+  }
+
+  /// Deliberate navigation must settle before the reveal measurement starts.
+  /// A normal XCUIElement.tap can silently scroll an off-screen media control.
+  private func tapVisibleControlPreservingViewport(
+    _ control: XCUIElement, in feed: XCUIElement, cell: XCUIElement, probe: XCUIElement
+  ) throws {
+    let viewport = feed.frame.insetBy(dx: 0, dy: 24)
+    for _ in 0..<4 where !viewport.contains(control.frame) {
+      let distance = min(max(control.frame.midY - viewport.midY, -viewport.height * 0.4), viewport.height * 0.4)
+      let start = feed.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      let end = start.withOffset(CGVector(dx: 0, dy: -distance))
+      start.press(forDuration: 0.05, thenDragTo: end)
+      waitForDiagnosticLayout(cell)
+    }
+    XCTAssertTrue(viewport.contains(control.frame), "Position the entire control before measuring its tap")
+    waitForDiagnosticLayout(cell)
+    let baseline = try lastGeometry(probe)
+    if let value = probe.value as? String {
+      attachDiagnosticJSON(Data(value.utf8), name: "Media gate before tap geometry.json")
+    }
+    control.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    waitForDiagnosticLayout(cell)
+    if let value = probe.value as? String {
+      attachDiagnosticJSON(Data(value.utf8), name: "Media gate after tap geometry.json")
+    }
+    try assertViewportStable(probe, since: baseline)
   }
 
   /// Inspect every changed display sample after the tap, including movement

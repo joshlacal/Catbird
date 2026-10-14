@@ -160,6 +160,8 @@ struct ModerationMediaGate<Content: View>: View {
 
   let ui: ModerationUI
   var style: Style = .card
+  /// Opt in when the media's display ratio is known without building it.
+  var reservedAspectRatio: CGFloat? = nil
   @ViewBuilder let content: () -> Content
   @State private var reveal = ModerationRevealState()
   @Environment(AppState.self) private var appState
@@ -170,7 +172,29 @@ struct ModerationMediaGate<Content: View>: View {
   var body: some View {
     if !ui.blur {
       content()
-    } else if revealed {
+    } else if case .card = style, let ratio = reservedAspectRatio, ratio.isFinite, ratio > 0 {
+      // Keep the larger of the image and the warning's intrinsic height on
+      // both sides of Show/Hide. Only lightweight warning UI is measured while
+      // concealed; the media closure is still built exclusively after Show.
+      ZStack {
+        Color.clear.aspectRatio(ratio, contentMode: .fit)
+        cover
+          .fixedSize(horizontal: false, vertical: true)
+          .hidden()
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
+      }
+      .overlay(alignment: .top) {
+        gatedContent.frame(maxHeight: revealed ? nil : .infinity)
+      }
+    } else {
+      gatedContent
+    }
+  }
+
+  @ViewBuilder
+  private var gatedContent: some View {
+    if revealed {
       content()
         .postRevealFade(isEnabled: true)
         .overlay(alignment: .topTrailing) { hideControl }
