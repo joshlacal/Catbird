@@ -116,7 +116,9 @@ extension PostComposerViewUIKit {
   }
 }
 
-private struct PostComposerUIKitVideoAttachmentView: View {
+/// The composer's video tile. Internal rather than private so ComposerAttachmentTileRefreshTests
+/// can host the real view.
+struct PostComposerUIKitVideoAttachmentView: View {
   let videoItem: PostComposerViewModel.MediaItem
   let vm: PostComposerViewModel
   @State private var showingCaptionEditor = false
