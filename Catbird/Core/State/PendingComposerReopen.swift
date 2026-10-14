@@ -147,6 +147,22 @@ extension ComposerAccountSwitchQueue: DraftMediaReferenceHolder {
   }
 }
 
+/// The handoff a window has claimed from the queue (SceneWindowState.reopenTransferredComposer)
+/// and holds until its editing session has begun the composition. Its draft names photos that
+/// draft photo cleanup must keep meanwhile, even across a failed attempt.
+@MainActor
+final class ClaimedComposerReopen {
+  var reopen: PendingComposerReopen?
+
+  init() {
+    LiveDraftMediaReferences.register(self)
+  }
+}
+
+extension ClaimedComposerReopen: DraftMediaReferenceHolder {
+  var heldDraftMediaURLStrings: [String] { reopen?.draft.referencedFileURLStrings ?? [] }
+}
+
 /// Logout waits for already-started authentication to settle before clearing credentials.
 /// This is a completion signal, not a timing-based readiness delay.
 @MainActor

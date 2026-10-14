@@ -22,7 +22,7 @@ final class SceneWindowState {
   @ObservationIgnored private var isPresentationAttached = false
   @ObservationIgnored private let feedActivity: SceneFeedActivityRegistration
   @ObservationIgnored private weak var accountState: AppState?
-  @ObservationIgnored private var pendingComposerReopen: PendingComposerReopen?
+  @ObservationIgnored private let claimedComposerReopen = ClaimedComposerReopen()
   private(set) var starterPackFlowID: UUID?
   @ObservationIgnored private var starterPackResolution: Task<Void, Never>?
   @ObservationIgnored private var lifetimeObservation: SceneWindowLifetimeObservation?
@@ -45,7 +45,7 @@ final class SceneWindowState {
     if let context, !context.isInvalidated, accountState === appState {
       return
     }
-    pendingComposerReopen = nil
+    claimedComposerReopen.reopen = nil
     accountState = appState
     guard let appState else {
       feedActivity.replace(with: nil, phase: phase)
@@ -120,20 +120,20 @@ final class SceneWindowState {
     guard !isDisconnected, let context, !context.isInvalidated,
           manager.lifecycle.isAuthenticated,
           manager.lifecycle.appState?.userDID == context.accountDID else { return }
-    if pendingComposerReopen == nil,
+    if claimedComposerReopen.reopen == nil,
        let envelope = manager.pendingComposerReopen(
          sourceSceneID: sceneID, accountDID: context.accountDID
        ) {
-      pendingComposerReopen = manager.claimComposerReopen(
+      claimedComposerReopen.reopen = manager.claimComposerReopen(
         id: envelope.id, sourceSceneID: sceneID, accountDID: context.accountDID
       )
     }
-    guard let envelope = pendingComposerReopen,
+    guard let envelope = claimedComposerReopen.reopen,
           envelope.sourceSceneID == sceneID, envelope.accountDID == context.accountDID else { return }
     do {
       let claim = try context.composerEditingSession.beginNew(draft: envelope.draft)
       context.postComposerRequest = ScenePostComposerRequest(editingClaim: claim)
-      pendingComposerReopen = nil
+      claimedComposerReopen.reopen = nil
     } catch {
       accountState?.toastManager.show(ToastItem(
         message: error.localizedDescription, icon: "exclamationmark.triangle.fill"
@@ -158,7 +158,7 @@ final class SceneWindowState {
     context?.invalidate()
     context = nil
     accountState = nil
-    pendingComposerReopen = nil
+    claimedComposerReopen.reopen = nil
     feedActivity.disconnect()
     lifetimeObservation = nil
   }

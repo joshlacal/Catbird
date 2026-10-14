@@ -125,7 +125,8 @@ extension DraftImageFileJanitor {
   /// - the App Group handoff slot the share extension and the Draft Post intent fill;
   /// - the composer outbox queue. It holds no media today; it is searched so that an outbox
   ///   that starts carrying photos keeps them without another change here;
-  /// - open editors, scene sessions and pending account handoffs (LiveDraftMediaReferences).
+  /// - open editors, scene sessions, and account handoffs both queued and claimed by a window
+  ///   that has not opened them yet (LiveDraftMediaReferences).
   static func standard(
     persistence: DraftPersistence?,
     recoveryDefaults: UserDefaults,
@@ -156,8 +157,8 @@ extension DraftImageFileJanitor {
 
 // MARK: - Drafts held in memory
 
-/// An object that holds draft media in memory: an open editor, a scene's editing session or a
-/// pending account handoff.
+/// An object that holds draft media in memory: an open editor, a scene's editing session, the
+/// account-switch queue's pending handoffs or a handoff a window has claimed.
 @MainActor
 protocol DraftMediaReferenceHolder: AnyObject {
   /// URL strings of the local files this object may still save, reopen or upload.

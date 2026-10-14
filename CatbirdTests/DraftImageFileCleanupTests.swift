@@ -253,6 +253,27 @@ struct DraftImageFileCleanupTests {
     withExtendedLifetime(queue) {}
   }
 
+  @Test("A handoff a window has claimed but not opened yet keeps a photo it names")
+  func claimedHandoffKeepsSharedFile() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let photo = try uniquePhoto()
+    let file = draftFile(for: photo)
+    defer { removeIfPresent(file) }
+    let editor = try fixture.newEditor()
+    await fixture.pick(photo, into: editor)
+    // SceneWindowState holds this between claiming the handoff from the queue and beginning
+    // the target account's composition; a failed beginNew leaves it there.
+    let claimed = ClaimedComposerReopen()
+    claimed.reopen = PendingComposerReopen(
+      id: UUID(), sourceSceneID: UUID(), accountDID: fixture.accountDID, draft: draft(naming: file)
+    )
+
+    #expect(editor.discardEditingDraft())
+    #expect(exists(file))
+    withExtendedLifetime(claimed) {}
+  }
+
   @Test("A cleanup that runs in a cancelled task still sees open editors")
   func cancelledCleanupSeesOpenEditors() async throws {
     let fixture = try await Fixture()
