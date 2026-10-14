@@ -73,6 +73,78 @@ struct DraftImageFileCleanupTests {
     #expect(exists(leftover))
   }
 
+  // MARK: Compositions that end empty without Discard
+
+  @Test("Closing an empty reply removes the photo files it picked and removed")
+  func emptyReplyCloseRemovesCreatedFiles() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let editor = PostComposerViewModel(appState: fixture.state, editingSession: fixture.session())
+    try editor.startEditing(restoring: replyDraft())
+    let photo = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: photo)) }
+    editor.removeMediaItem(withId: await fixture.pick(photo, into: editor))
+    #expect(exists(draftFile(for: photo)), "fixture: removing the photo keeps its file")
+
+    // X on an empty reply, and swiping it away, minimize it; an empty reply then simply ends.
+    #expect(editor.minimizeEditingDraft())
+    #expect(editor.editingSession?.currentDraft == nil, "fixture: the reply ended")
+
+    #expect(!exists(draftFile(for: photo)))
+  }
+
+  @Test("A new composition replacing one too empty to keep removes that one's photo files")
+  func emptyReplacedCompositionRemovesCreatedFiles() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let session = fixture.session()
+    let swipedAway = PostComposerViewModel(appState: fixture.state, editingSession: session)
+    try swipedAway.startEditing()
+    let photo = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: photo)) }
+    let photoID = await fixture.pick(photo, into: swipedAway)
+    // Minimizing and reopening stores the scene's recovery envelope with the photo in it.
+    #expect(swipedAway.minimizeEditingDraft())
+    #expect(session.resume(claim: try #require(swipedAway.editingClaim)))
+    let slot = SceneComposerEditingSession.persistenceKey(sceneID: session.sceneID, accountDID: fixture.accountDID)
+    let envelopeWithPhoto = try #require(fixture.defaults.data(forKey: slot))
+    #expect(envelopeWithPhoto.range(of: Data(draftFile(for: photo).lastPathComponent.utf8)) != nil,
+            "fixture: the scene's envelope names the photo")
+    swipedAway.removeMediaItem(withId: photoID)
+    // The editor goes away. Its last change reaches the envelope only after the autosave delay,
+    // so the slot still holds the body with the photo.
+    #expect(swipedAway.unregisterLiveDraftProvider())
+    fixture.defaults.set(envelopeWithPhoto, forKey: slot)
+
+    // A reply, a share or a reopened handoff starts a new composition in the same scene. Its
+    // envelope replaces the old one before the cleanup reads the stores.
+    let next = PostComposerViewModel(appState: fixture.state, editingSession: session)
+    try next.startEditing()
+
+    #expect(try fixture.persistence.allDrafts(for: fixture.accountDID).isEmpty, "fixture: nothing to archive")
+    #expect(!exists(draftFile(for: photo)))
+  }
+
+  @Test("A replaced composition with content becomes a recovery copy and keeps its photo files")
+  func replacedCompositionWithContentKeepsFiles() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let session = fixture.session()
+    let replaced = PostComposerViewModel(appState: fixture.state, editingSession: session)
+    try replaced.startEditing()
+    let kept = try uniquePhoto(), removed = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: kept)); removeIfPresent(draftFile(for: removed)) }
+    await fixture.pick(kept, into: replaced)
+    replaced.removeMediaItem(withId: await fixture.pick(removed, into: replaced))
+
+    let next = PostComposerViewModel(appState: fixture.state, editingSession: session)
+    try next.startEditing()
+
+    #expect(try fixture.persistence.allDrafts(for: fixture.accountDID).count == 1, "fixture: a recovery copy")
+    #expect(exists(draftFile(for: kept)))
+    #expect(exists(draftFile(for: removed)), "a composition kept as a recovery copy removes nothing")
+  }
+
   // MARK: Saved drafts
 
   @Test("Saving a draft keeps its photos, and discarding it after a restore removes nothing")
@@ -360,6 +432,16 @@ private func draft(naming file: URL?) -> PostComposerDraft {
     postText: "Draft photo cleanup", mediaItems: media, videoItem: nil, selectedGif: nil,
     selectedLanguages: [], selectedLabels: [], outlineTags: [], threadEntries: [],
     isThreadMode: false, currentThreadIndex: 0, parentPostURI: nil, quotedPostURI: nil
+  )
+}
+
+/// A reply with nothing written yet.
+private func replyDraft() -> PostComposerDraft {
+  PostComposerDraft(
+    postText: "", mediaItems: [], videoItem: nil, selectedGif: nil,
+    selectedLanguages: [], selectedLabels: [], outlineTags: [], threadEntries: [],
+    isThreadMode: false, currentThreadIndex: 0,
+    parentPostURI: "at://did:plc:draftphotocleanup/app.bsky.feed.post/parent", quotedPostURI: nil
   )
 }
 
