@@ -1254,13 +1254,19 @@ final class PostComposerViewModel {
   struct MediaItem: Identifiable {
     let id: UUID
     var pickerItem: PhotosPickerItem?
-    var image: Image?
+    /// `Image` is not Equatable, so every assignment advances `previewRevision`, which `==`
+    /// compares. SwiftUI and Observation then see a decoded or edited preview as a change.
+    var image: Image? { didSet { previewRevision &+= 1 } }
+    private(set) var previewRevision: UInt64 = 0
     var isLoading: Bool = true
     var altText: String = ""
     var aspectRatio: CGSize?
-    var rawData: Data?
+    /// Compared by revision rather than by bytes, so a diff never compares megabytes.
+    var rawData: Data? { didSet { rawDataRevision &+= 1 } }
+    private(set) var rawDataRevision: UInt64 = 0
     var rawImageURL: URL?
-    var videoData: Data?
+    var videoData: Data? { didSet { videoDataRevision &+= 1 } }
+    private(set) var videoDataRevision: UInt64 = 0
     var rawVideoURL: URL?
     var rawVideoAsset: AVAsset?
     var isAudioVisualizerVideo: Bool = false
@@ -1294,8 +1300,25 @@ final class PostComposerViewModel {
 // MARK: - MediaItem Hashable Conformance
 
 extension PostComposerViewModel.MediaItem: Hashable {
+    /// Compares everything an attachment tile, a draft or an upload reads. With an id-only `==`,
+    /// SwiftUI took a decoded photo for the placeholder it had already drawn and kept the
+    /// spinner, and @Observable skipped notifying when such an attachment was assigned.
+    /// `hash(into:)` stays id-only, which `==` still implies.
     static func == (lhs: PostComposerViewModel.MediaItem, rhs: PostComposerViewModel.MediaItem) -> Bool {
         lhs.id == rhs.id
+            && lhs.previewRevision == rhs.previewRevision
+            && lhs.isLoading == rhs.isLoading
+            && lhs.altText == rhs.altText
+            && lhs.aspectRatio == rhs.aspectRatio
+            && lhs.rawDataRevision == rhs.rawDataRevision
+            && lhs.rawImageURL == rhs.rawImageURL
+            && lhs.videoDataRevision == rhs.videoDataRevision
+            && lhs.rawVideoURL == rhs.rawVideoURL
+            && lhs.rawVideoAsset === rhs.rawVideoAsset
+            && lhs.isAudioVisualizerVideo == rhs.isAudioVisualizerVideo
+            && lhs.isGifConversion == rhs.isGifConversion
+            && lhs.caption == rhs.caption
+            && lhs.pickerItem == rhs.pickerItem
     }
     
     func hash(into hasher: inout Hasher) {
