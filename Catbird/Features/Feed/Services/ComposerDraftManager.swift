@@ -37,6 +37,11 @@ final class ComposerDraftManager {
   // window still owns the same account. Claims span those manager instances.
   private static var savedDraftClaims: [SavedDraftClaimKey: ComposerDraftClaim] = [:]
   @ObservationIgnored private var testingAccountDID: String?
+  #if DEBUG
+  /// Temporary stand-ins for the App Group handoff slot and the outbox queue that draft photo
+  /// cleanup reads, so tests do not depend on what the host app left there.
+  @ObservationIgnored private var testingDraftImageStores: (handoff: UserDefaults, outboxQueue: URL)?
+  #endif
   private var hasMigratedLegacyDrafts = false
   private let logger = Logger(subsystem: "blue.catbird", category: "ComposerDraftManager")
 
@@ -61,6 +66,10 @@ final class ComposerDraftManager {
     self.modelContext = modelContext
     draftPersistence = DraftPersistence(modelContext: modelContext)
     reloadSavedDrafts()
+  }
+
+  func useDraftImageStoresForTesting(handoffDefaults: UserDefaults, outboxQueueURL: URL) {
+    testingDraftImageStores = (handoffDefaults, outboxQueueURL)
   }
   #endif
 
@@ -240,6 +249,14 @@ final class ComposerDraftManager {
     recoveryDefaults: UserDefaults
   ) -> DraftImageFileJanitor.Outcome {
     guard !urlStrings.isEmpty else { return DraftImageFileJanitor.Outcome() }
+    #if DEBUG
+    if let stores = testingDraftImageStores {
+      return DraftImageFileJanitor.standard(
+        persistence: draftPersistence, recoveryDefaults: recoveryDefaults,
+        handoffDefaults: stores.handoff, outboxQueueURL: stores.outboxQueue
+      ).removeUnreferenced(urlStrings)
+    }
+    #endif
     return DraftImageFileJanitor
       .standard(persistence: draftPersistence, recoveryDefaults: recoveryDefaults)
       .removeUnreferenced(urlStrings)

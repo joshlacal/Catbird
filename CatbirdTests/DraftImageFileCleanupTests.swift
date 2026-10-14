@@ -14,8 +14,8 @@ import UIKit
 /// ever removed: files that were already there and saved drafts' media are kept here, and
 /// DraftImageFileJanitorTests covers each store, unmanaged names and videos on their own.
 ///
-/// These run against the real App Group folder. Every photo has random pixels, so its
-/// content-named file belongs to that test alone.
+/// These run against the real App Group folder, with the fixture's own handoff slot and outbox.
+/// Every photo has random pixels, so its content-named file belongs to that test alone.
 @Suite("Draft photo file cleanup", .serialized)
 @MainActor
 struct DraftImageFileCleanupTests {
@@ -71,6 +71,55 @@ struct DraftImageFileCleanupTests {
     #expect(editor.discardEditingDraft())
 
     #expect(exists(leftover))
+  }
+
+  // MARK: Discarding after minimize, from the bubble and from Clear Draft
+
+  @Test("A minimized composition reopened in a new editor removes its photo files on discard")
+  func minimizedThenReopenedDiscardRemovesFiles() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let session = fixture.session()
+    let first = PostComposerViewModel(appState: fixture.state, editingSession: session)
+    try first.startEditing()
+    let a = try uniquePhoto(), b = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: a)); removeIfPresent(draftFile(for: b)) }
+    await fixture.pick(a, into: first)
+    first.removeMediaItem(withId: await fixture.pick(b, into: first))
+    #expect(first.minimizeEditingDraft())
+    #expect(session.isMinimized)
+
+    // Compose reopens the minimized composition in a new editor (openComposerResumingDraft);
+    // the first editor is kept alive to show its stale view does not hold the files.
+    let reopened = PostComposerViewModel(appState: fixture.state, editingSession: session)
+    try reopened.startEditing(claim: try #require(first.editingClaim))
+    #expect(reopened.mediaItems.count == 1, "fixture: the reopened editor shows the kept photo")
+    #expect(reopened.discardEditingDraft())
+
+    #expect(!exists(draftFile(for: a)))
+    #expect(!exists(draftFile(for: b)), "a photo removed before minimizing is still the composition's")
+    withExtendedLifetime(first) {}
+  }
+
+  @Test("Dismissing the minimized bubble, or Clear Draft, removes the photo files after the editor is gone")
+  func sessionDiscardAfterEditorReleased() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let session = fixture.session()
+    let photo = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: photo)) }
+    do {
+      let editor = PostComposerViewModel(appState: fixture.state, editingSession: session)
+      try editor.startEditing()
+      await fixture.pick(photo, into: editor)
+      #expect(editor.minimizeEditingDraft())
+    }
+
+    // TabViewBottomAccessoryWrapper's dismiss button and ContentView's clearDraftAction.
+    let claim = try #require(session.activeClaim)
+    #expect(session.discard(claim: claim))
+
+    #expect(!exists(draftFile(for: photo)))
   }
 
   // MARK: Compositions that end empty without Discard
@@ -366,6 +415,9 @@ private struct Fixture {
   let container: ModelContainer
   let suiteName: String
   let defaults: UserDefaults
+  let handoffSuiteName: String
+  let handoffDefaults: UserDefaults
+  let outboxQueueURL: URL
   let manager: ComposerDraftManager
   let persistence: DraftPersistence
 
@@ -380,6 +432,12 @@ private struct Fixture {
     )
     persistence = DraftPersistence(modelContext: container.mainContext)
     manager = ComposerDraftManager(accountDID: accountDID, modelContext: container.mainContext, defaults: defaults)
+    // The handoff slot and the outbox are this fixture's own, not the host app's.
+    handoffSuiteName = "\(suiteName).handoff"
+    handoffDefaults = try #require(UserDefaults(suiteName: handoffSuiteName))
+    outboxQueueURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("draft-photo-cleanup-outbox-\(UUID().uuidString).json")
+    manager.useDraftImageStoresForTesting(handoffDefaults: handoffDefaults, outboxQueueURL: outboxQueueURL)
   }
 
   func session() -> SceneComposerEditingSession {
@@ -414,6 +472,8 @@ private struct Fixture {
 
   func cleanUp() {
     defaults.removePersistentDomain(forName: suiteName)
+    handoffDefaults.removePersistentDomain(forName: handoffSuiteName)
+    try? FileManager.default.removeItem(at: outboxQueueURL)
   }
 }
 
