@@ -151,11 +151,20 @@ final class DraftPersistence {
         for model in try modelContainer.mainContext.fetch(FetchDescriptor<DraftPost>()) {
             stored.append(model.draftData)
             guard let metadata = model.syncMetadata else { continue }
+            // The local baseline is plain JSON inside these bytes, so searching them covers it.
             stored.append(metadata)
-            let state = try JSONDecoder().decode(DraftSyncState.self, from: metadata)
-            stored += [state.baselineRemote, state.pendingCreate].compactMap { $0 }
+            let snapshots = try JSONDecoder().decode(EncodedRemoteSnapshots.self, from: metadata)
+            stored += [snapshots.baselineRemote, snapshots.pendingCreate].compactMap { $0 }
         }
         return stored
+    }
+
+    /// The two DraftSyncState fields whose bytes are base64 inside the stored JSON, so a search
+    /// of the raw metadata cannot see file names in them. Decoding only these keeps one row whose
+    /// local baseline no longer decodes as a PostComposerDraft from turning the cleanup off.
+    private struct EncodedRemoteSnapshots: Decodable {
+        var baselineRemote: Data?
+        var pendingCreate: Data?
     }
 
     @discardableResult

@@ -58,6 +58,52 @@ struct DraftImageFileJanitorTests {
     #expect(exists(file))
   }
 
+  @Test("A saved draft whose local sync baseline no longer decodes still lets the pass run")
+  func undecodableSyncBaselineDoesNotCancel() throws {
+    let sandbox = try Sandbox()
+    defer { sandbox.remove() }
+    let unnamed = try sandbox.managedFile()
+    let namedByBaseline = try sandbox.managedFile()
+    let namedByRemote = try sandbox.managedFile()
+    let persistence = DraftPersistence(modelContext: sandbox.container.mainContext)
+    let id = try persistence.saveDraft(textOnlyDraft(), accountDID: "did:plc:draftphotojanitor")
+    let model = try #require(try persistence.fetchDraftModel(id: id))
+    let remote = Data(#"{"posts":[{"embedImages":[{"localRef":{"path":"\#(namedByRemote.absoluteString)"}}]}]}"#.utf8)
+    // A local baseline that is no longer a PostComposerDraft (another app version wrote it),
+    // still naming a photo, next to a remote snapshot stored as base64.
+    model.syncMetadata = Data("""
+      {"baselineLocal":{"rawImageURLString":"\(namedByBaseline.absoluteString)"},\
+      "baselineRemote":"\(remote.base64EncodedString())"}
+      """.utf8)
+    #expect(throws: (any Error).self, "fixture: the full sync state no longer decodes") {
+      try persistence.syncState(for: model)
+    }
+
+    let outcome = sandbox.janitor().removeUnreferenced(
+      Set([unnamed, namedByBaseline, namedByRemote].map(\.absoluteString))
+    )
+
+    #expect(!outcome.cancelled)
+    #expect(!exists(unnamed), "the pass ran")
+    #expect(exists(namedByBaseline), "the raw metadata names it")
+    #expect(exists(namedByRemote), "the decoded remote snapshot names it")
+  }
+
+  @Test("Sync metadata that is not JSON still cancels the pass")
+  func unreadableSyncMetadataCancels() throws {
+    let sandbox = try Sandbox()
+    defer { sandbox.remove() }
+    let file = try sandbox.managedFile()
+    let persistence = DraftPersistence(modelContext: sandbox.container.mainContext)
+    let id = try persistence.saveDraft(textOnlyDraft(), accountDID: "did:plc:draftphotojanitor")
+    try #require(try persistence.fetchDraftModel(id: id)).syncMetadata = Data("not sync metadata".utf8)
+
+    let outcome = sandbox.janitor().removeUnreferenced([file.absoluteString])
+
+    #expect(outcome.cancelled)
+    #expect(exists(file))
+  }
+
   @Test("Videos, unmanaged names and files outside the draft folder are never touched")
   func unmanagedFilesAreIgnored() throws {
     let sandbox = try Sandbox()
@@ -144,6 +190,14 @@ private struct Sandbox {
     try? FileManager.default.removeItem(at: outboxQueue)
     suites.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) }
   }
+}
+
+private func textOnlyDraft() -> PostComposerDraft {
+  PostComposerDraft(
+    postText: "Draft photo janitor", mediaItems: [], videoItem: nil, selectedGif: nil,
+    selectedLanguages: [], selectedLabels: [], outlineTags: [], threadEntries: [],
+    isThreadMode: false, currentThreadIndex: 0, parentPostURI: nil, quotedPostURI: nil
+  )
 }
 
 private func randomHex() -> String {
