@@ -2,6 +2,9 @@ import Foundation
 import Petrel
 import SwiftData
 import Testing
+#if canImport(UIKit)
+import UIKit
+#endif
 @testable import Catbird
 
 @Suite("Composer scene editing call sites")
@@ -547,13 +550,59 @@ struct PostComposerSceneEditingTests {
     let content = model.editingContent()
     var earlierEntry = ThreadEntry()
     earlierEntry.videoItem = PostComposerViewModel.MediaItem()
-    // No transport is required to exercise the scratch-state ownership boundary.
+    // No transport is required to exercise the scratch-state ownership boundary: without an
+    // upload manager the earlier entry's upload stops at once (createVideoEmbed throws
+    // .noClientAvailable), and the selected entry's video must still be the editor's.
     model.mediaUploadManager = nil
-    _ = try await model.createVideoEmbedForEntry(earlierEntry)
+    await #expect(throws: VideoUploadError.self) {
+      _ = try await model.createVideoEmbedForEntry(earlierEntry)
+    }
     #expect(model.videoItem?.id == selectedVideo.id)
     #expect(model.completeEditingSubmission(captured, content: content))
     #expect(session.currentDraft == nil)
   }
+
+  #if canImport(UIKit)
+  /// ThreadEntry's `==` compares its MediaItems, which since the attachment tile fix includes
+  /// their preview revisions. A thread whose photo had decoded before the submission was captured
+  /// must still count as unchanged when the post succeeds, or the composer stays open and says
+  /// newer changes were kept.
+  @Test("A thread whose photo decoded before posting completes its submission")
+  func decodedPhotoThreadCompletes() async throws {
+    let (model, session, _, _) = try await makeModel()
+    let size = CGSize(width: 40, height: 30)
+    let bytes = try #require(UIGraphicsImageRenderer(size: size).image { context in
+      UIColor.systemIndigo.setFill()
+      context.fill(CGRect(origin: .zero, size: size))
+    }.jpegData(compressionQuality: 0.8))
+    let draftFile = try #require(CodableMediaItem.persistImageData(bytes).flatMap(URL.init(string:)))
+    defer { try? FileManager.default.removeItem(at: draftFile) }
+    var photo = PostComposerViewModel.MediaItem()
+    photo.rawData = bytes
+    photo.applyPreview(try #require(ComposerImagePreparation.makePreviewSynchronously(from: bytes)))
+    photo.isLoading = false
+    model.postText = "First post"
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    model.postText = "Second post, with a photo"
+    model.mediaItems = [photo]
+    model.updateCurrentThreadEntry()
+    try model.startEditing()
+
+    // createThread: update the entry, capture, then submit.
+    model.updateCurrentThreadEntry()
+    let captured = try #require(model.captureEditingSnapshot())
+    let content = model.editingContent()
+    #expect(content.threadEntries.last?.mediaItems.first?.image != nil, "fixture: the photo had decoded")
+    model.beginSubmission()
+    model.saveDraftIfNeeded()
+    model.updateCurrentThreadEntry()
+
+    #expect(model.completeEditingSubmission(captured, content: content))
+    model.endSubmission()
+    #expect(session.currentDraft == nil)
+  }
+  #endif
 
   @Test("Failed thread video preparation also restores the active editor video")
   func failedVideoPreparationPreservesActiveVideo() async throws {
