@@ -17,6 +17,9 @@ struct MediaGalleryView: View {
     let maxImagesAllowed: Int
     let onAddMore: () -> Void
     var onRetry: ((UUID) -> Void)? = nil
+    /// The composer's removal (PostComposerViewModel.removeMediaItem). Without it the gallery
+    /// only edits its binding.
+    var onRemove: ((UUID) -> Void)? = nil
     var onMoveLeft: ((UUID) -> Void)? = nil
     var onMoveRight: ((UUID) -> Void)? = nil
     var onCropSquare: ((UUID) -> Void)? = nil
@@ -176,9 +179,14 @@ struct MediaGalleryView: View {
         return mediaItems.count < maxImagesAllowed
     }
     
-    // Remove a media item with the specified ID
-    private func removeMediaItem(withId id: UUID) {
-        mediaItems.removeAll(where: { $0.id == id })
+    /// Removes through the composer when it supplies `onRemove`, so a load in flight for the
+    /// attachment is cancelled and the thread entry and recovery draft see the removal at once.
+    func removeMediaItem(withId id: UUID) {
+        if let onRemove {
+            onRemove(id)
+        } else {
+            mediaItems.removeAll(where: { $0.id == id })
+        }
     }
     
     // Begin editing alt text for a specific item
