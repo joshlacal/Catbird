@@ -210,6 +210,9 @@ final class PostComposerViewModel {
   /// The draft file written for each image attachment's current bytes. Autosaves reuse it
   /// instead of hashing and writing every image again.
   @ObservationIgnored private var draftImageFiles: [UUID: DraftImageFile] = [:]
+  /// Draft files this editor created before its composition had a claim (the first save of a
+  /// new editor). They join the composition's files once it is claimed.
+  @ObservationIgnored private var unclaimedDraftImageFiles: Set<String> = []
   
   // MARK: - Constants
 
@@ -302,6 +305,7 @@ final class PostComposerViewModel {
     
     // Initialize thread mode properly
     setupInitialState()
+    LiveDraftMediaReferences.register(self)
     
     logger.info("PostComposerViewModel: Initialization complete")
   }
@@ -332,6 +336,10 @@ final class PostComposerViewModel {
       let claim = try editingSession.beginNew(draft: body)
       guard editingSession.claimEditor(editingPresentationID, claim: claim) else { throw editingOwnershipError() }
       editingClaim = claim
+      for urlString in unclaimedDraftImageFiles {
+        editingSession.recordCreatedDraftImageFile(urlString, claim: claim)
+      }
+      unclaimedDraftImageFiles.removeAll()
       cacheSerializedDraft(body)
     }
     try registerLiveDraftProvider()
@@ -779,9 +787,36 @@ final class PostComposerViewModel {
     )
   }
   
-  /// Records a draft file written off the main actor for an attachment's bytes.
-  func rememberDraftImageFile(_ urlString: String, for id: UUID, data: Data) {
-    draftImageFiles[id] = DraftImageFile(data: data, urlString: urlString)
+  /// Records a draft file written off the main actor for an attachment's bytes. `claim` is the
+  /// composition the write was started for; a file the write created becomes one of its files.
+  func rememberDraftImageFile(_ file: DraftImageWrite, for id: UUID, data: Data, claim: ComposerDraftClaim?) {
+    draftImageFiles[id] = DraftImageFile(data: data, urlString: file.urlString)
+    noteCreatedDraftImageFile(file, claim: claim)
+  }
+
+  /// A draft file written for bytes that no attachment kept: the attachment was removed, an
+  /// edit was superseded, or the composition ended while the work ran. Nothing will save it, so
+  /// a file the write created is removed now unless something else names it.
+  func releaseUnusedDraftImageFile(_ file: DraftImageWrite?) {
+    Self.releaseUnusedDraftImageFile(file, session: editingSession)
+  }
+
+  /// The same, for work that finished after its editor was released.
+  static func releaseUnusedDraftImageFile(_ file: DraftImageWrite?, session: SceneComposerEditingSession?) {
+    guard let file, file.created, let session else { return }
+    session.removeUnreferencedDraftImageFiles([file.urlString])
+  }
+
+  private func noteCreatedDraftImageFile(_ file: DraftImageWrite, claim: ComposerDraftClaim?) {
+    guard file.created, let editingSession else { return }
+    guard let claim else {
+      unclaimedDraftImageFiles.insert(file.urlString)
+      return
+    }
+    if !editingSession.recordCreatedDraftImageFile(file.urlString, claim: claim) {
+      // The composition ended while the file was written; no one will save or discard it.
+      editingSession.removeUnreferencedDraftImageFiles([file.urlString])
+    }
   }
 
   /// Returns the draft file for an image's current bytes, hashing and writing them only when
@@ -789,9 +824,9 @@ final class PostComposerViewModel {
   private func draftImageURLString(for item: MediaItem) -> String? {
     guard let data = item.rawData else { return nil }
     if let file = draftImageFiles[item.id], file.data == data, file.exists { return file.urlString }
-    guard let urlString = CodableMediaItem.persistImageData(data) else { return nil }
-    draftImageFiles[item.id] = DraftImageFile(data: data, urlString: urlString)
-    return urlString
+    guard let file = CodableMediaItem.writeImageData(data) else { return nil }
+    rememberDraftImageFile(file, for: item.id, data: data, claim: editingClaim)
+    return file.urlString
   }
 
   /// Writes a file for each attachment whose current bytes have none, and drops entries for
@@ -816,7 +851,7 @@ final class PostComposerViewModel {
     for item in restored {
       guard let data = item.rawData, let url = item.rawImageURL, url.isFileURL,
             url.lastPathComponent.hasPrefix("draft_image_") else { continue }
-      rememberDraftImageFile(url.absoluteString, for: item.id, data: data)
+      draftImageFiles[item.id] = DraftImageFile(data: data, urlString: url.absoluteString)
     }
   }
 
@@ -838,6 +873,7 @@ final class PostComposerViewModel {
     cancelDebouncedWork()
     // Posted or discarded photos should not stay in memory until the next save.
     draftImageFiles.removeAll()
+    unclaimedDraftImageFiles.removeAll()
     parentPost = nil
     replyTo = nil
     quotedPost = nil
@@ -1294,6 +1330,32 @@ final class PostComposerViewModel {
       self.isAudioVisualizerVideo = isAudioVisualizerVideo
       self.rawVideoAsset = AVURLAsset(url: url)
     }
+  }
+}
+
+// MARK: - Draft Media Held in Memory
+
+extension PostComposerViewModel: DraftMediaReferenceHolder {
+  /// An editor whose composition has ended can no longer save, reopen or hand off what it
+  /// shows, so only an editor of a current composition (or one with no editing session) names
+  /// files. Cancellation is ignored here: a cleanup may run in a cancelled load task.
+  var heldDraftMediaURLStrings: [String] {
+    var isCurrent = true
+    if let editingSession {
+      isCurrent = editingClaim.map { editingSession.isCurrent($0) } ?? false
+    }
+    guard isCurrent || !unclaimedDraftImageFiles.isEmpty else { return [] }
+    var items = mediaItems + [videoItem].compactMap { $0 }
+    for entry in threadEntries {
+      items += entry.mediaItems + [entry.videoItem].compactMap { $0 }
+    }
+    var urls = draftImageFiles.values.map(\.urlString) + Array(unclaimedDraftImageFiles)
+    urls += items.flatMap { [$0.rawImageURL?.absoluteString, $0.rawVideoURL?.absoluteString].compactMap { $0 } }
+    urls += [pendingAudioURL?.absoluteString].compactMap { $0 }
+    for draft in [serializedEditingDraft, submissionRecoveryDraft].compactMap({ $0 }) {
+      urls += draft.referencedFileURLStrings
+    }
+    return urls
   }
 }
 

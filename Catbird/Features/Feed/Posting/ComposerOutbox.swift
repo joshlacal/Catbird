@@ -67,9 +67,15 @@ final class ComposerOutbox {
     !items.isEmpty
   }
 
-  private init() {
+  /// Where the queue is stored. Draft photo cleanup searches it, so an outbox that starts
+  /// carrying media keeps its files (DraftImageFileJanitor).
+  nonisolated static var queueFileURL: URL {
     let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-    queueURL = dir.appendingPathComponent("composer_outbox.json")
+    return dir.appendingPathComponent("composer_outbox.json")
+  }
+
+  private init() {
+    queueURL = Self.queueFileURL
     load()
   }
 

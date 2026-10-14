@@ -229,6 +229,22 @@ final class ComposerDraftManager {
     scheduleRemoteSync(accountDID: claim.accountDID)
   }
 
+  // MARK: - Draft photo files
+
+  /// Deletes draft photo files that a composition wrote and no longer uses, unless a saved
+  /// draft of any account, a recovery envelope in `recoveryDefaults`, the App Group handoff
+  /// slot, the outbox, an open editor or a pending account handoff still names them.
+  @discardableResult
+  func removeUnreferencedDraftImageFiles(
+    _ urlStrings: Set<String>,
+    recoveryDefaults: UserDefaults
+  ) -> DraftImageFileJanitor.Outcome {
+    guard !urlStrings.isEmpty else { return DraftImageFileJanitor.Outcome() }
+    return DraftImageFileJanitor
+      .standard(persistence: draftPersistence, recoveryDefaults: recoveryDefaults)
+      .removeUnreferenced(urlStrings)
+  }
+
   private func validateAccount(_ accountDID: String) throws {
     guard currentAccountDID == accountDID else { throw ComposerEditingError.wrongAccount }
   }

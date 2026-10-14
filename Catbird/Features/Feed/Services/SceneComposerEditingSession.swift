@@ -83,8 +83,12 @@ final class SceneComposerEditingSession {
   @ObservationIgnored private var isFlushingLiveDraft = false
   @ObservationIgnored private var savedDraftBaseline: PostComposerDraft?
   @ObservationIgnored private var isInvalidated = false
+  /// Draft photo files the active composition created (CodableMediaItem.writeImageData).
+  /// Discarding a composition that has no saved row removes the ones nothing else names.
+  @ObservationIgnored private var createdDraftImageFiles: Set<String> = []
 
   static let legacyRecoveryKey = "composerMinimizedDraft"
+  static let persistenceKeyPrefix = "composerEditingSession.v1."
 
   private struct LiveDraftProvider {
     let editorID: UUID
@@ -94,7 +98,21 @@ final class SceneComposerEditingSession {
 
   static func persistenceKey(sceneID: UUID, accountDID: String) -> String {
     let account = Data(accountDID.utf8).base64EncodedString()
-    return "composerEditingSession.v1.\(account).\(sceneID.uuidString)"
+    return "\(persistenceKeyPrefix)\(account).\(sceneID.uuidString)"
+  }
+
+  /// The recovery envelopes of every scene and account, and the legacy minimized draft, as
+  /// stored. Draft photo cleanup searches them for file names; a value that is not data throws.
+  static func storedRecoveryData(in defaults: UserDefaults) throws -> [Data] {
+    var stored: [Data] = []
+    for (key, value) in defaults.dictionaryRepresentation()
+    where key.hasPrefix(persistenceKeyPrefix) || key == legacyRecoveryKey {
+      guard let data = value as? Data else {
+        throw DraftImageFileJanitor.ReferenceStoreError.unreadable("A composer recovery envelope")
+      }
+      stored.append(data)
+    }
+    return stored
   }
 
   convenience init(appState: AppState, sceneID: UUID) {
@@ -119,6 +137,7 @@ final class SceneComposerEditingSession {
     self.defaults = defaults
     self.persistDelay = persistDelay
     restoreScopedRecovery()
+    LiveDraftMediaReferences.register(self)
   }
 
   var hasLegacyRecovery: Bool { defaults.data(forKey: Self.legacyRecoveryKey) != nil }
@@ -264,14 +283,24 @@ final class SceneComposerEditingSession {
     }
   }
 
+  /// Ends the composition. One with no saved row also removes the draft photo files it
+  /// created, except those a saved draft, another scene, a handoff or an open editor still
+  /// names. A restored, saved or recovered composition removes nothing: its row is only
+  /// tombstoned, and saved-draft media waits for the row's deletion
+  /// (SavedDraftMediaCleanupPolicy).
   @discardableResult
   func discard(claim: ComposerDraftClaim) -> Bool {
     guard owns(claim), !Task.isCancelled, let snapshot = snapshot() else { return false }
+    let createdFiles = createdDraftImageFiles
     do {
       if let id = snapshot.savedDraftID {
         try manager.deleteClaimedDraft(id: id, claim: claim, expectedSavedDraft: savedDraftBaseline)
       }
       finish(snapshot: snapshot)
+      // After finish, this session and the editor it served no longer name these files.
+      if SavedDraftMediaCleanupPolicy.allowsImmediateCleanup(hasPersistedRow: snapshot.savedDraftID != nil) {
+        removeUnreferencedDraftImageFiles(createdFiles)
+      }
       return true
     } catch {
       preserveEditorAfterSavedRowConflict(error)
@@ -347,6 +376,24 @@ final class SceneComposerEditingSession {
     isMinimized = false
   }
 
+  /// Whether `claim` still names this session's composition. Unlike `ownsEditor`, this ignores
+  /// task cancellation, so a cleanup running in a cancelled task still sees open editors.
+  func isCurrent(_ claim: ComposerDraftClaim) -> Bool { owns(claim) }
+
+  /// Records a draft photo file an editor created for the composition `claim` names.
+  /// Returns false when that composition has ended; the caller then disposes of the file.
+  @discardableResult
+  func recordCreatedDraftImageFile(_ urlString: String, claim: ComposerDraftClaim) -> Bool {
+    guard owns(claim) else { return false }
+    createdDraftImageFiles.insert(urlString)
+    return true
+  }
+
+  /// Removes draft photo files nothing names any more (DraftImageFileJanitor).
+  func removeUnreferencedDraftImageFiles(_ urlStrings: Set<String>) {
+    manager.removeUnreferencedDraftImageFiles(urlStrings, recoveryDefaults: defaults)
+  }
+
   /// Legacy minimized bytes have no provable owner. Claiming them requires a
   /// deliberate action and a successful account-owned durable library save.
   @discardableResult
@@ -390,6 +437,7 @@ final class SceneComposerEditingSession {
     revision = 0
     isMinimized = minimized
     lastIssue = nil
+    createdDraftImageFiles = []
   }
 
   private func owns(_ claim: ComposerDraftClaim) -> Bool {
@@ -427,8 +475,10 @@ final class SceneComposerEditingSession {
     savedDraftBaseline = nil
     revision &+= 1
     isMinimized = false
+    createdDraftImageFiles = []
     // Media can also be referenced by another scene, a source account row or
-    // recovery envelope. Editor teardown intentionally never unlinks files.
+    // recovery envelope. Teardown never unlinks files; only discard does, and
+    // only files it created that nothing else names.
   }
 
   private var persistenceKey: String { Self.persistenceKey(sceneID: sceneID, accountDID: accountDID) }
@@ -614,5 +664,11 @@ extension PostComposerDraft {
         !$0.text.isEmpty || !$0.mediaItems.isEmpty || $0.videoItem != nil
           || $0.selectedGif != nil || $0.parentPostURI != nil || $0.quotedPostURI != nil
       }
+  }
+}
+
+extension SceneComposerEditingSession: DraftMediaReferenceHolder {
+  var heldDraftMediaURLStrings: [String] {
+    (currentDraft?.referencedFileURLStrings ?? []) + (savedDraftBaseline?.referencedFileURLStrings ?? [])
   }
 }

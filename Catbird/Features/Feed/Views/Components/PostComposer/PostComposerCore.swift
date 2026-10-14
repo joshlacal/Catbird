@@ -409,7 +409,7 @@ extension PostComposerViewModel {
                         var mediaItem = MediaItem()
                         mediaItem.rawData = data
                         // One background task decodes the thumbnail and writes the draft file.
-                        let (preview, draftFileURLString) = await Self.prepareImageAttachment(
+                        let (preview, draftFile) = await Self.prepareImageAttachment(
                             data, writesDraftFile: ownsEditingDraft
                         )
                         if let preview {
@@ -421,6 +421,7 @@ extension PostComposerViewModel {
                         // paste, a video or GIF picked meanwhile, or another paste or drop may
                         // have changed what the post can hold.
                         guard mediaItems.count < maxImagesAllowed else {
+                            releaseUnusedDraftImageFile(draftFile)
                             alertItem = AlertItem(
                                 title: "Image Limit Reached",
                                 message: "A post can have up to \(maxImagesAllowed) images."
@@ -429,12 +430,13 @@ extension PostComposerViewModel {
                         }
                         guard videoItem == nil, selectedGif == nil,
                               !mediaItems.contains(where: { $0.isGifConversion }) else {
+                            releaseUnusedDraftImageFile(draftFile)
                             alertItem = AlertItem(title: "Can’t Add Image", message: "Remove the video or GIF to add images.")
                             return
                         }
                         mediaItems.append(mediaItem)
-                        if let draftFileURLString {
-                            rememberDraftImageFile(draftFileURLString, for: mediaItem.id, data: data)
+                        if let draftFile {
+                            rememberDraftImageFile(draftFile, for: mediaItem.id, data: data, claim: editingClaim)
                         }
                     }
                 } catch {
@@ -448,7 +450,7 @@ extension PostComposerViewModel {
     func processDetectedGenmoji(_ genmojiData: Data) async {
         var mediaItem = MediaItem()
         mediaItem.rawData = genmojiData
-        let (preview, draftFileURLString) = await Self.prepareImageAttachment(
+        let (preview, draftFile) = await Self.prepareImageAttachment(
             genmojiData, writesDraftFile: ownsEditingDraft
         )
         if let preview {
@@ -457,15 +459,18 @@ extension PostComposerViewModel {
         mediaItem.isLoading = false
 
         let source = MediaSource.genmojiConversion(genmojiData)
-        if !isMediaSourceAlreadyAdded(source) {
-            trackMediaSource(source)
-
-            if mediaItems.count < maxImagesAllowed {
-                mediaItems.append(mediaItem)
-                if let draftFileURLString {
-                    rememberDraftImageFile(draftFileURLString, for: mediaItem.id, data: genmojiData)
-                }
-            }
+        guard !isMediaSourceAlreadyAdded(source) else {
+            releaseUnusedDraftImageFile(draftFile)
+            return
+        }
+        trackMediaSource(source)
+        guard mediaItems.count < maxImagesAllowed else {
+            releaseUnusedDraftImageFile(draftFile)
+            return
+        }
+        mediaItems.append(mediaItem)
+        if let draftFile {
+            rememberDraftImageFile(draftFile, for: mediaItem.id, data: genmojiData, claim: editingClaim)
         }
     }
 

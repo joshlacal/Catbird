@@ -137,16 +137,20 @@ extension PostComposerViewModel {
           await loadVideoThumbnail(for: converted)
           return
         }
-        let (preview, draftFileURLString) = await Self.prepareImageAttachment(
+        let (preview, draftFile) = await Self.prepareImageAttachment(
           data, writesDraftFile: ownsEditingDraft
         )
         guard let preview else { throw MediaPreviewImageError.unavailable }
         guard ownsMediaPreviewLoad(attempt, for: id, context: context),
               let previewIndex = mediaItems.firstIndex(where: { $0.id == id }),
-              mediaItems[previewIndex].rawData == data else { return }
+              mediaItems[previewIndex].rawData == data else {
+          // Removed, replaced or discarded while the file was written.
+          releaseUnusedDraftImageFile(draftFile)
+          return
+        }
         mediaItems[previewIndex].applyPreview(preview)
-        if let draftFileURLString {
-          rememberDraftImageFile(draftFileURLString, for: id, data: data)
+        if let draftFile {
+          rememberDraftImageFile(draftFile, for: id, data: data, claim: context.claim)
         }
       } catch is CancellationError {
         // The matching finalizer exposes Retry without removing the attachment.
@@ -164,10 +168,10 @@ extension PostComposerViewModel {
     /// draft file, both away from the main actor. The picker, paste and Genmoji paths use it.
     static func prepareImageAttachment(
       _ data: Data, writesDraftFile: Bool
-    ) async -> (ComposerImagePreparation.Preview?, String?) {
+    ) async -> (ComposerImagePreparation.Preview?, DraftImageWrite?) {
       await Task.detached(priority: .userInitiated) {
         let preview = ComposerImagePreparation.makePreviewSynchronously(from: data)
-        let draftFile = writesDraftFile && preview != nil ? CodableMediaItem.persistImageData(data) : nil
+        let draftFile = writesDraftFile && preview != nil ? CodableMediaItem.writeImageData(data) : nil
         return (preview, draftFile)
       }.value
     }
@@ -182,7 +186,9 @@ extension PostComposerViewModel {
 
     /// Removing an attachment never deletes its file: a saved draft row, a recovery envelope,
     /// another scene or the source account of a handoff may still reference it. Draft media is
-    /// removed with its saved-draft row (DraftPersistence.deleteDraft).
+    /// removed with its saved-draft row (DraftPersistence.deleteDraft). A photo file this
+    /// composition created stays one of its files, so discarding the composition removes it
+    /// if nothing else names it (SceneComposerEditingSession.discard).
     func removeMediaItem(withId id: UUID) {
         mediaPreviewLoads.cancel(for: id)
         if videoItem?.id == id {
@@ -225,11 +231,15 @@ extension PostComposerViewModel {
         mediaItems[index].isLoading = true
         let context = mediaLoadContext()
         let writesDraftFile = ownsEditingDraft
-        Task { [weak self] in
+        Task { [weak self, weak session = editingSession] in
             let cropped = await ComposerImagePreparation.squareCropped(original)
             let draftFile = await Self.writeDraftImageFile(for: cropped, if: writesDraftFile)
-            self?.finishImageEdit(
-                id: id, original: original, result: cropped, draftFileURLString: draftFile,
+            guard let self else {
+                Self.releaseUnusedDraftImageFile(draftFile, session: session)
+                return
+            }
+            self.finishImageEdit(
+                id: id, original: original, result: cropped, draftFile: draftFile,
                 context: context, failureTitle: "Couldn’t Crop Photo"
             )
         }
@@ -300,11 +310,15 @@ extension PostComposerViewModel {
         mediaItems[index].isLoading = true
         let context = mediaLoadContext()
         let writesDraftFile = ownsEditingDraft
-        Task { [weak self] in
+        Task { [weak self, weak session = editingSession] in
             let edited = await ComposerImagePreparation.prepareEditedImage(newImage)
             let draftFile = await Self.writeDraftImageFile(for: edited, if: writesDraftFile)
-            self?.finishImageEdit(
-                id: id, original: original, result: edited, draftFileURLString: draftFile,
+            guard let self else {
+                Self.releaseUnusedDraftImageFile(draftFile, session: session)
+                return
+            }
+            self.finishImageEdit(
+                id: id, original: original, result: edited, draftFile: draftFile,
                 context: context, failureTitle: "Couldn’t Save Edit"
             )
         }
@@ -314,10 +328,10 @@ extension PostComposerViewModel {
     /// reuses it instead of hashing and writing the full-size JPEG on the main actor.
     private static func writeDraftImageFile(
         for result: ComposerImagePreparation.EditedImage?, if writesDraftFile: Bool
-    ) async -> String? {
+    ) async -> DraftImageWrite? {
         guard writesDraftFile, let data = result?.data else { return nil }
         return await Task.detached(priority: .userInitiated) {
-            CodableMediaItem.persistImageData(data)
+            CodableMediaItem.writeImageData(data)
         }.value
     }
 
@@ -330,9 +344,10 @@ extension PostComposerViewModel {
     @MainActor
     private func finishImageEdit(
         id: UUID, original: Data?, result: ComposerImagePreparation.EditedImage?,
-        draftFileURLString: String?, context: MediaLoadContext, failureTitle: String
+        draftFile: DraftImageWrite?, context: MediaLoadContext, failureTitle: String
     ) {
         guard ownsMediaLoadDraft(context) else {
+            releaseUnusedDraftImageFile(draftFile)
             func release(_ item: inout MediaItem) {
                 if item.rawData == original { item.isLoading = false }
             }
@@ -368,12 +383,16 @@ extension PostComposerViewModel {
 
         if applied {
             logger.info("PostComposerMedia: Photo updated - \(result?.data.count ?? 0) bytes")
-            if let result, let draftFileURLString {
-                rememberDraftImageFile(draftFileURLString, for: id, data: result.data)
+            if let result, let draftFile {
+                rememberDraftImageFile(draftFile, for: id, data: result.data, claim: context.claim)
             }
             saveDraftIfNeeded()
-        } else if result == nil, found {
-            alertItem = AlertItem(title: failureTitle, message: "The photo is unchanged. Try again.")
+        } else {
+            // Removed, or newer bytes won, while the edit ran.
+            releaseUnusedDraftImageFile(draftFile)
+            if result == nil, found {
+                alertItem = AlertItem(title: failureTitle, message: "The photo is unchanged. Try again.")
+            }
         }
     }
 

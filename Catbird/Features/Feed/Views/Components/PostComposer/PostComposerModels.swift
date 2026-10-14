@@ -193,6 +193,13 @@ struct PostComposerDraft: Codable, Hashable {
 
 // MARK: - Codable Wrappers for Draft State
 
+/// The result of writing a photo's draft file. `created` is false when a file with the same
+/// content was already on disk.
+struct DraftImageWrite: Sendable, Equatable {
+  let urlString: String
+  let created: Bool
+}
+
 /// The draft file written for one image attachment's bytes.
 struct DraftImageFile {
   let data: Data
@@ -255,25 +262,33 @@ struct CodableMediaItem: Codable, Hashable {
   /// Files are named by content, so autosaves and thread copies of the same image reuse one file.
   /// Safe to call off the main actor.
   static func persistImageData(_ data: Data) -> String? {
+    writeImageData(data)?.urlString
+  }
+
+  /// `persistImageData`, also reporting whether this call created the file. Only a composition
+  /// that created a file may later remove it (DraftImageFileJanitor); a file that was already
+  /// there belongs to whoever wrote it first.
+  static func writeImageData(_ data: Data) -> DraftImageWrite? {
     guard let draftsDir = draftImagesDirectory else { return nil }
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     let filename = "draft_image_\(digest).jpg"
     let fileURL = draftsDir.appendingPathComponent(filename)
     if FileManager.default.fileExists(atPath: fileURL.path) {
-      return fileURL.absoluteString
+      return DraftImageWrite(urlString: fileURL.absoluteString, created: false)
     }
     do {
       try data.write(to: fileURL, options: .atomic)
-      return fileURL.absoluteString
+      return DraftImageWrite(urlString: fileURL.absoluteString, created: true)
     } catch {
       // The directory may have been removed since it was created.
       guard (try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)) != nil,
             (try? data.write(to: fileURL, options: .atomic)) != nil else { return nil }
-      return fileURL.absoluteString
+      return DraftImageWrite(urlString: fileURL.absoluteString, created: true)
     }
   }
 
-  private static let draftImagesDirectory: URL? = {
+  /// The App Group folder draft photos are written to.
+  static let draftImagesDirectory: URL? = {
     guard let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
     ) else { return nil }

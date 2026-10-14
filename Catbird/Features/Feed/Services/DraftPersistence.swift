@@ -142,6 +142,22 @@ final class DraftPersistence {
         try saveSyncState(state, for: model)
     }
 
+    /// The stored bytes of every saved-draft row of every account, tombstones and recovery
+    /// copies included, plus the remote snapshots base64-encoded inside their sync metadata.
+    /// Draft photo cleanup searches them for file names; a row it cannot read throws, which
+    /// cancels the cleanup.
+    func storedMediaReferenceData() throws -> [Data] {
+        var stored: [Data] = []
+        for model in try modelContainer.mainContext.fetch(FetchDescriptor<DraftPost>()) {
+            stored.append(model.draftData)
+            guard let metadata = model.syncMetadata else { continue }
+            stored.append(metadata)
+            let state = try JSONDecoder().decode(DraftSyncState.self, from: metadata)
+            stored += [state.baselineRemote, state.pendingCreate].compactMap { $0 }
+        }
+        return stored
+    }
+
     @discardableResult
     func preserveRecoveryCopy(of model: DraftPost, reason: String) throws -> UUID {
         let copy = try DraftPost.create(from: model.decodeDraft(), accountDID: model.accountDID)

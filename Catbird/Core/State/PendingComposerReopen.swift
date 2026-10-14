@@ -41,6 +41,11 @@ final class ComposerAccountSwitchQueue {
   private var pending: [UUID: PendingComposerReopen] = [:]
   private(set) var revision: UInt64 = 0
 
+  init() {
+    // A handoff's draft names its photos until the target account claims it.
+    LiveDraftMediaReferences.register(self)
+  }
+
   var isSwitching: Bool { activeAttempt != nil }
 
   func isCurrent(id: UUID) -> Bool { activeAttempt?.id == id }
@@ -132,6 +137,13 @@ final class ComposerAccountSwitchQueue {
     pending.removeValue(forKey: id)
     revision &+= 1
     return reopen
+  }
+}
+
+extension ComposerAccountSwitchQueue: DraftMediaReferenceHolder {
+  var heldDraftMediaURLStrings: [String] {
+    let drafts = pending.values.map(\.draft) + [activeAttempt?.reopen?.draft].compactMap { $0 }
+    return drafts.flatMap(\.referencedFileURLStrings)
   }
 }
 
