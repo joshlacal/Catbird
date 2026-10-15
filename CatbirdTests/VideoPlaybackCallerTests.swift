@@ -233,6 +233,44 @@ struct VideoPlaybackCallerTests {
     #expect(model.volume == expectedVolume)
   }
 
+  /// `.task` and `.onAppear` both ask for a player when the view appears, and
+  /// production preparation suspends while the asset loads. The second caller
+  /// must share the first one's preparation instead of starting its own.
+  @Test("One appearance prepares and registers one player while preparation is suspended")
+  func appearanceSharesInFlightSetup() async throws {
+    let url = URL(fileURLWithPath: "/video-caller-fixture/asset")
+    let model = VideoModel(
+      id: UUID().uuidString, url: url, type: .tenorGif(URI(uriString: url.absoluteString)), aspectRatio: 1
+    )
+    let appState = try await fixtureAppState()
+    let gate = PreparationGate()
+    var preparedPlayers: [CallerFixturePlayer] = []
+    var registeredPlayers: [ObjectIdentifier] = []
+    let view = ModernVideoPlayerView(
+      model: model, postID: model.id,
+      preparePlayer: { _ in
+        await gate.wait()
+        let player = CallerFixturePlayer()
+        preparedPlayers.append(player)
+        return player
+      },
+      registerPlayer: { _, player in registeredPlayers.append(ObjectIdentifier(player)) }
+    )
+    let window = host(view.environment(appState).environment(\.scenePhase, .active))
+    defer { gate.open(); window.isHidden = true; window.rootViewController = nil }
+
+    // Hold the first preparation until every appearance callback has run.
+    try await eventually { gate.arrivals > 0 }
+    await settle(window)
+    gate.open()
+    try await eventually { !registeredPlayers.isEmpty }
+    await settle(window)
+    #expect(gate.arrivals == 1)
+    #expect(preparedPlayers.count == 1)
+    #expect(registeredPlayers.count == 1)
+    #expect(registeredPlayers == preparedPlayers.map { ObjectIdentifier($0) })
+  }
+
   private func fixtureAppState() async throws -> AppState {
     let client = await ATProtoClient(baseURL: try #require(URL(string: "https://video-caller.invalid")))
     return AppState(userDID: "did:plc:videocallerfixture", client: client)
@@ -278,12 +316,14 @@ struct VideoPlaybackCallerTests {
     }
   }
 
-  private func eventually(_ condition: () -> Bool) async throws {
+  private func eventually(
+    _ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation
+  ) async throws {
     for _ in 0..<1_000 {
       if condition() { return }
       try await Task.sleep(for: .milliseconds(1))
     }
-    Issue.record("The production video callback did not reach the expected state")
+    Issue.record("The production video callback did not reach the expected state", sourceLocation: sourceLocation)
     throw CallerFixtureError.timeout
   }
 }
@@ -320,6 +360,28 @@ private final class DelayedVideoFeedResponse {
   func complete(with posts: [AppBskyFeedDefs.FeedViewPost]) {
     continuation?.resume(returning: (posts, nil))
     continuation = nil
+  }
+}
+
+/// Suspends `preparePlayer` callers, as asset loading does in production,
+/// until the test opens it.
+@MainActor
+private final class PreparationGate {
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private var isOpen = false
+  private(set) var arrivals = 0
+
+  func wait() async {
+    arrivals += 1
+    guard !isOpen else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func open() {
+    isOpen = true
+    let pending = waiters
+    waiters.removeAll()
+    pending.forEach { $0.resume() }
   }
 }
 

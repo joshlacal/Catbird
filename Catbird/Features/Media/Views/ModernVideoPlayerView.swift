@@ -65,6 +65,7 @@ struct ModernVideoPlayerView: View {
   let model: VideoModel
   @State private var player: AVPlayer?
   @State private var timeObserverToken: Any?
+  @State private var setupFlight = PlayerSetupFlight()
   @State private var isVisible = false
   @State private var showControls = false
   @State private var showFullscreen = false
@@ -448,7 +449,15 @@ struct ModernVideoPlayerView: View {
   // MARK: - Private Methods
 
 
+  /// Appearance (`.task` and `.onAppear`), visibility, taps and Try Again can each ask for a
+  /// player while preparation is suspended on asset loading. They share one setup, so one
+  /// AVPlayer is prepared, and every caller resumes after that setup has finished, by which
+  /// point its player is registered or `loadFailed` is set.
   private func setupPlayer() async {
+    await setupFlight.run { await prepareAndRegisterPlayer() }
+  }
+
+  private func prepareAndRegisterPlayer() async {
     // Check if we already have a working, registered player
     if let player {
       let isReady = player.currentItem != nil || preparePlayer != nil
@@ -583,6 +592,32 @@ struct ModernVideoPlayerView: View {
     }
   }
 
+}
+
+// MARK: - Player Setup Flight
+
+/// Runs one player setup at a time for a `ModernVideoPlayerView`. A caller that arrives while a
+/// setup is running waits for it instead of starting another.
+@MainActor
+private final class PlayerSetupFlight {
+  private var inFlight: Task<Void, Never>?
+
+  /// Runs `setup`, or joins the setup already running, and returns when that setup finishes.
+  func run(_ setup: @escaping @MainActor () async -> Void) async {
+    if let inFlight {
+      await inFlight.value
+      return
+    }
+    let flight = Task { @MainActor in
+      await setup()
+      // The body starts only after `inFlight` is assigned below, because this caller holds the
+      // main actor until it awaits. Clearing here, not after the await, means a caller arriving
+      // once the setup has finished starts a new one rather than joining a finished run.
+      self.inFlight = nil
+    }
+    inFlight = flight
+    await flight.value
+  }
 }
 
 // MARK: - Helper Components
