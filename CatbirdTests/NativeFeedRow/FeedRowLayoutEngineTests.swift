@@ -138,6 +138,19 @@ struct FeedRowLayoutEngineTests {
     #expect(layout.height >= layout.dividerFrame.maxY)
   }
 
+  @Test("The divider is drawn as SwiftUI draws a half-point line, rounded out to whole pixels",
+    arguments: [(CGFloat(3), CGFloat(2)), (2, 1)])
+  func dividerCoversWholePixels(scale: CGFloat, pixels: CGFloat) throws {
+    let layout = FeedRowLayoutEngine.layout(try input(text: "hello", displayScale: scale))
+    let divider = layout.dividerFrame
+    #expect(abs(divider.height * scale - pixels) < 0.001)
+    let top = divider.minY * scale
+    #expect(abs(top - top.rounded()) < 0.001)
+    // The row is laid out with the nominal half point, as the hosted row is; the drawn line fits in it.
+    #expect(divider.maxY <= layout.height + 0.001)
+    #expect(divider.width == layout.width)
+  }
+
   @Test("A maximum content width centers the row's content and keeps a full-width divider")
   func maximumContentWidthCenters() throws {
     let full = FeedRowLayoutEngine.layout(try input(text: "hello", width: 600))

@@ -19,7 +19,9 @@ struct FeedRowTypographyTests {
   func metricsFromFontManager() {
     let fontManager = FontManager()
     let typography = FeedRowTypography.resolved(fontManager: fontManager, boldText: false)
-    #expect(typography.bodyLineSpacing == fontManager.getLineSpacing(for: typography.body.pointSize))
+    // `AppFontModifier`'s spacing, which the hosted row's text uses.
+    #expect(typography.bodyLineSpacing == max(
+      0, fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier))
     #expect(typography.kerning == fontManager.letterSpacingValue)
   }
 
@@ -38,7 +40,8 @@ struct FeedRowTypographyTests {
     fontManager.lineSpacing = "relaxed"
     let afterLine = FeedRowTypography.resolved(fontManager: fontManager, boldText: false)
     #expect(before.generationKey != afterLine.generationKey)
-    #expect(afterLine.bodyLineSpacing == fontManager.getLineSpacing(for: afterLine.body.pointSize))
+    #expect(afterLine.bodyLineSpacing
+      == fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
     fontManager.letterSpacing = "loose"
     let afterLetter = FeedRowTypography.resolved(fontManager: fontManager, boldText: false)
     #expect(afterLine.generationKey != afterLetter.generationKey)

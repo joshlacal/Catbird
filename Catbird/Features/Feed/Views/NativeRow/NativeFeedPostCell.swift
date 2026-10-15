@@ -34,6 +34,8 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
   private var post: AppBskyFeedDefs.PostView?
   private var actions: NativeFeedRowActions?
   private var barState: FeedActionBarState?
+  /// The options button's own height (`UIButton`'s intrinsic height); it does not change.
+  private lazy var optionsButtonIntrinsicHeight = optionsButton.intrinsicContentSize.height
   /// The last width reported through `layoutWidthChanged` for the current configuration.
   private var reportedMismatchWidth: CGFloat?
 
@@ -175,7 +177,11 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     textView.frame = layout.textFrame
     actionBar.frame = layout.actionBarFrame
     optionsGlyph.frame = layout.optionsButtonFrame
-    optionsButton.frame = layout.optionsButtonFrame
+    // The hosted row overlays the padded glyph with this button, which SwiftUI sizes to the glyph's
+    // width and the button's intrinsic height: the touch area reaches a few points above and below.
+    let glyph = layout.optionsButtonFrame
+    let buttonHeight = max(glyph.height, optionsButtonIntrinsicHeight)
+    optionsButton.frame = glyph.insetBy(dx: 0, dy: (glyph.height - buttonHeight) / 2)
     divider.frame = layout.dividerFrame
     checkLayoutWidth(contentView.bounds.width)
   }

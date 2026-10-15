@@ -19,7 +19,7 @@ enum FeedRowTestPosts {
     asRepost: Bool = false, asPin: Bool = false, tags: [String]? = nil, pronouns: String? = nil,
     selfDeclaredBot: Bool = false, pinned: Bool = false, authorBlockedViewer: Bool = false,
     authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil, postKey: String = "one",
-    authorDID: String = "did:plc:fixture"
+    authorDID: String = "did:plc:fixture", liked: Bool = false, reposted: Bool = false
   ) throws -> CachedFeedViewPost {
     let did = try DID(didString: authorDID)
     let viewer = authorBlockedViewer ? AppBskyActorDefs.ViewerState(blockedBy: true) : nil
@@ -39,7 +39,7 @@ enum FeedRowTestPosts {
       uri: "at://did:plc:fixture/app.bsky.feed.post/\(postKey)", text: text, likeCount: likeCount,
       author: author, langs: langs, tags: tags, facets: facets,
       embed: withImageEmbed ? imageEmbed : nil,
-      viewerState: pinned ? AppBskyFeedDefs.ViewerState(pinned: true) : nil)
+      viewerState: viewerState(liked: liked, reposted: reposted, pinned: pinned, postKey: postKey))
 
     var reply: AppBskyFeedDefs.ReplyRef?
     if asReply {
@@ -75,6 +75,17 @@ enum FeedRowTestPosts {
   }
 
   // MARK: - Builders
+
+  /// The viewer's state on the fixture post: liked and reposted with record URIs, pinned.
+  private static func viewerState(
+    liked: Bool, reposted: Bool, pinned: Bool, postKey: String
+  ) throws -> AppBskyFeedDefs.ViewerState? {
+    guard liked || reposted || pinned else { return nil }
+    return AppBskyFeedDefs.ViewerState(
+      repost: reposted ? try ATProtocolURI(uriString: "at://did:plc:viewer/app.bsky.feed.repost/\(postKey)") : nil,
+      like: liked ? try ATProtocolURI(uriString: "at://did:plc:viewer/app.bsky.feed.like/\(postKey)") : nil,
+      pinned: pinned ? true : nil)
+  }
 
   private static let imageEmbed: AppBskyFeedDefs.PostViewEmbedUnion = .appBskyEmbedImagesView(
     AppBskyEmbedImages.View(images: [

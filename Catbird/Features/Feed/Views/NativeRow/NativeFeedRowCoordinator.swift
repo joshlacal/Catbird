@@ -67,10 +67,16 @@ final class NativeFeedRowCoordinator {
   /// collection view's width (reported through `NativeFeedRowActions.layoutWidthChanged`).
   private var cellWidths: [CGFloat: CGFloat] = [:]
   private var pendingReconfigure: Set<String> = []
+  /// The width each post last asked to be reconfigured for (see `cellWidthChanged`).
+  private var requestedCellWidths: [String: CGFloat] = [:]
   private var preparations: [UUID: Task<Void, Never>] = [:]
   private var settingsObserver: UIKitStateObserver<AppState>?
   private var policyObserver: NSObjectProtocol?
   private var observedFingerprint: SettingsFingerprint?
+  /// The inputs the current settings were resolved from.
+  private var settingsInputs: SettingsInputs?
+  /// How many times the row settings were resolved; settings are rebuilt only when an input changed.
+  private(set) var settingsResolutionCount = 0
 
   /// The collection view native rows are laid out in.
   weak var collectionView: UICollectionView?
@@ -102,7 +108,7 @@ final class NativeFeedRowCoordinator {
     self.sceneContext = sceneContext
     self.feedInteractionTarget = feedInteractionTarget
     if accountChanged {
-      resolveSettings()
+      resolveSettingsIfNeeded()
       decisions.removeAll()
       mergedPosts.removeAll()
       postModels.values.forEach { $0.cancel() }
@@ -114,26 +120,46 @@ final class NativeFeedRowCoordinator {
 
   // MARK: - Snapshots
 
-  /// Captures the posts and row settings of the snapshot about to be applied. Decisions for posts
-  /// whose content or settings changed are recomputed on next use.
+  /// Captures the posts and row settings of the update about to be evaluated, on every update,
+  /// including those that end up applying no snapshot; it therefore only stores what the item
+  /// provider reads and rebuilds the settings only when one of their inputs changed. Decisions for
+  /// posts whose content or settings changed are recomputed on next use.
   func beginSnapshot(
     posts: [String: CachedFeedViewPost], signatures: [String: FeedPostContentSignature], traits: UITraitCollection
   ) {
     self.traits = traits
-    resolveSettings()
+    resolveSettingsIfNeeded()
     self.posts = posts
     self.signatures = signatures
+  }
+
+  /// Forgets what belonged to posts that left the feed, once a snapshot without them is applied:
+  /// their decisions, dequeue records, pending reconfigures, live counts and models. Live counts
+  /// and models are kept for the native rows still decided; reading their URIs decodes nothing.
+  func didApplySnapshot() {
     decisions = decisions.filter { posts[$0.key] != nil }
     dequeuedAsNative = dequeuedAsNative.filter { posts[$0.key] != nil }
     pendingReconfigure = pendingReconfigure.filter { posts[$0] != nil }
+    requestedCellWidths = requestedCellWidths.filter { posts[$0.key] != nil }
 
-    let uris = Set(posts.values.compactMap { try? $0.feedViewPost.post.uri.uriString() })
+    guard !mergedPosts.isEmpty || !postModels.isEmpty else { return }
+    let uris = Set(decisions.values.compactMap { entry -> String? in
+      if case .native(let row) = entry.decision { return row.post.uri.uriString() }
+      return nil
+    })
     mergedPosts = mergedPosts.filter { uris.contains($0.key) }
     for (uri, models) in postModels where !uris.contains(uri) {
       models.cancel()
       postModels[uri] = nil
     }
     presentationModel.deactivate { uris.contains($0.uri) }
+  }
+
+  /// The collection view's traits changed outside a snapshot (a size class or display scale
+  /// change). Returns whether the row settings changed, in which case visible rows need new layouts.
+  func updateTraits(_ traits: UITraitCollection) -> Bool {
+    self.traits = traits
+    return resolveSettingsIfNeeded()
   }
 
   /// How the post with `postID` renders in the current snapshot.
@@ -236,17 +262,22 @@ final class NativeFeedRowCoordinator {
   /// Drops every cached layout; fonts, text size or the width changed.
   func invalidateLayouts(includingCellWidths: Bool = false) {
     layoutStore.invalidateAll()
-    if includingCellWidths { cellWidths.removeAll() }
+    if includingCellWidths {
+      cellWidths.removeAll()
+      requestedCellWidths.removeAll()
+    }
   }
 
   /// A native cell is sized to a width its layout was not computed for. Records the width cells
-  /// have, so every later layout (prepared or configured) uses it, and schedules a reconfigure of
-  /// the item. The cell reports a width at most once per configuration and only when its layout
-  /// differs from it, so a reconfigure that applies a layout for the reported width ends the
-  /// exchange: insets that keep cells narrower than the collection view cannot cause a loop.
+  /// have, so every later layout (prepared or configured) uses it, and asks once per post and width
+  /// for a reconfigure of the item. A reconfigure that applies a layout for the reported width ends
+  /// the exchange; a post reporting the same width again is not asked for twice, so insets that
+  /// keep cells narrower than the collection view cannot cause a loop.
   private func cellWidthChanged(postID: String, to width: CGFloat) {
     guard let boundsWidth = collectionView?.bounds.width, boundsWidth > 0, width > 0 else { return }
     cellWidths[boundsWidth] = abs(width - boundsWidth) < 0.01 ? nil : width
+    guard requestedCellWidths[postID] != width else { return }
+    requestedCellWidths[postID] = width
     if pendingReconfigure.insert(postID).inserted { onNeedsReconfigure?() }
   }
 
@@ -292,7 +323,7 @@ final class NativeFeedRowCoordinator {
       toggleRepost: { [weak self] in
         guard let self else { return }
         PlatformHaptics.medium()
-        let models = self.models(for: self.displayedPost(uri: uri, fallback: post))
+        let models = self.postModels(for: post)
         let target = self.feedInteractionTarget
         Task { [weak self] in
           await models.reconciled()
@@ -314,7 +345,7 @@ final class NativeFeedRowCoordinator {
       toggleLike: { [weak self] in
         guard let self else { return }
         PlatformHaptics.medium()
-        let models = self.models(for: self.displayedPost(uri: uri, fallback: post))
+        let models = self.postModels(for: post)
         let target = self.feedInteractionTarget
         Task { [weak self] in
           await models.reconciled()
@@ -356,7 +387,7 @@ final class NativeFeedRowCoordinator {
   /// The options menu for `post`. Opening it makes the post's models the ones the presentation
   /// host presents for, so the menu's sheets and alerts belong to this post.
   private func optionsMenu(for post: AppBskyFeedDefs.PostView) -> [UIMenuElement] {
-    let models = models(for: displayedPost(uri: post.uri.uriString(), fallback: post))
+    let models = postModels(for: post)
     presentationModel.activate(models)
     let context = PostOptionsMenuContext(
       postState: models.postState, contextMenuViewModel: models.contextMenuViewModel,
@@ -370,15 +401,17 @@ final class NativeFeedRowCoordinator {
     return merged
   }
 
-  /// The post's models, created on first use and replaced when the post's record changed (a new
-  /// CID) while nothing is presented for it.
-  private func models(for post: AppBskyFeedDefs.PostView) -> NativeRowPostModels {
+  /// The models of the post a row shows, created on first use from the feed payload `post` the
+  /// row was configured with (never the shadow-merged copy; see `NativeRowPostModels`), and
+  /// replaced when the post's record changed (a new CID) while nothing is presented for it.
+  func postModels(for post: AppBskyFeedDefs.PostView) -> NativeRowPostModels {
     let uri = post.uri.uriString()
     if let existing = postModels[uri], existing.cid == post.cid || existing.postState.hasPresentation {
       return existing
     }
     postModels[uri]?.cancel()
-    let created = NativeRowPostModels(post: post, appState: appState)
+    let created = NativeRowPostModels(
+      post: post, displayed: displayedPost(uri: uri, fallback: post), appState: appState)
     postModels[uri] = created
     return created
   }
@@ -391,19 +424,30 @@ final class NativeFeedRowCoordinator {
     let manager = appState.postShadowManager
     let post = row.post
     return { [weak self] uri in
-      AsyncStream { continuation in
-        let task = Task {
-          for await _ in await manager.shadowUpdates(forUri: uri) {
-            guard !Task.isCancelled else { break }
-            let merged = await manager.mergeShadow(post: post)
-            guard !Task.isCancelled else { break }
-            await self?.record(merged: merged, uri: uri)
-            continuation.yield(merged)
-          }
-          continuation.finish()
+      Self.mergedPosts(
+        of: await manager.shadowUpdates(forUri: uri), merge: { await manager.mergeShadow(post: post) },
+        onMerged: { [weak self] merged in await self?.record(merged: merged, uri: uri) })
+    }
+  }
+
+  /// For each element of `source`, the post `merge` returns, after `onMerged` saw it. Finishes when
+  /// `source` finishes, and stops listening to `source` when the consumer stops listening.
+  nonisolated static func mergedPosts<Element: Sendable>(
+    of source: AsyncStream<Element>, merge: @escaping @Sendable () async -> AppBskyFeedDefs.PostView,
+    onMerged: @escaping @Sendable (AppBskyFeedDefs.PostView) async -> Void
+  ) -> AsyncStream<AppBskyFeedDefs.PostView> {
+    AsyncStream { continuation in
+      let task = Task {
+        for await _ in source {
+          guard !Task.isCancelled else { break }
+          let merged = await merge()
+          guard !Task.isCancelled else { break }
+          await onMerged(merged)
+          continuation.yield(merged)
         }
-        continuation.onTermination = { _ in task.cancel() }
+        continuation.finish()
       }
+      continuation.onTermination = { _ in task.cancel() }
     }
   }
 
@@ -477,18 +521,26 @@ final class NativeFeedRowCoordinator {
   /// Re-resolves the settings now, so cells configured before the next snapshot already use them,
   /// drops every decision and layout that depended on the old ones, and asks for a reconfigure.
   private func settingsDidChange() {
-    resolveSettings()
+    resolveSettingsIfNeeded()
     decisions.removeAll(keepingCapacity: true)
     layoutStore.invalidateAll()
     onSettingsChanged?()
   }
 
-  private func resolveSettings() {
-    guard let traits else { return }
+  /// Rebuilds the settings when one of their inputs changed since they were last resolved, and
+  /// returns whether the settings changed.
+  @discardableResult
+  private func resolveSettingsIfNeeded() -> Bool {
+    guard let traits else { return false }
+    let inputs = SettingsInputs(appState: appState, traits: traits)
+    guard inputs != settingsInputs || settings == nil else { return false }
+    settingsInputs = inputs
     let resolved = Settings.resolve(appState: appState, traits: traits)
-    guard resolved != settings else { return }
+    settingsResolutionCount += 1
+    guard resolved != settings else { return false }
     settings = resolved
     decisions.removeAll(keepingCapacity: true)
+    return true
   }
 
   // MARK: - Deciding
@@ -628,6 +680,41 @@ extension NativeFeedRowCoordinator {
     }
 
     static func == (lhs: RowColors, rhs: RowColors) -> Bool { lhs.key == rhs.key }
+  }
+
+  /// Everything `Settings.resolve` reads, in cheap-to-compare form: the settings are rebuilt (fonts,
+  /// colours) only when these change. Checked on every feed update, including skipped ones.
+  fileprivate struct SettingsInputs: Equatable {
+    let fingerprint: SettingsFingerprint
+    let isEnabled: Bool
+    let deviceLanguageCode: String
+    let policyGeneration: UInt64
+    let policyAccountDID: String?
+    let fontManager: ObjectIdentifier
+    let fontBoldText: Bool
+    let contentSize: UIContentSizeCategory
+    let horizontalSizeClass: UIUserInterfaceSizeClass
+    let displayScale: CGFloat
+    let legibilityWeight: UILegibilityWeight
+    let colorSchemeOverride: ColorScheme?
+    let darkThemeMode: ThemeManager.DarkThemeMode
+
+    @MainActor
+    init(appState: AppState, traits: UITraitCollection) {
+      fingerprint = SettingsFingerprint(appState: appState)
+      isEnabled = NativeFeedRows.isEnabled
+      deviceLanguageCode = Locale.current.language.baseLanguageCode?.lowercased() ?? "en"
+      policyGeneration = appState.moderationPolicy.generation
+      policyAccountDID = appState.moderationPolicy.accountDID
+      fontManager = ObjectIdentifier(appState.fontManager)
+      fontBoldText = appState.fontManager.effectiveBoldText
+      contentSize = UIApplication.shared.preferredContentSizeCategory
+      horizontalSizeClass = traits.horizontalSizeClass
+      displayScale = traits.displayScale
+      legibilityWeight = traits.legibilityWeight
+      colorSchemeOverride = appState.themeManager.colorSchemeOverride
+      darkThemeMode = appState.themeManager.darkThemeMode
+    }
   }
 
   /// The app settings `Settings.resolve` reads that can change while the feed is on screen. Dynamic

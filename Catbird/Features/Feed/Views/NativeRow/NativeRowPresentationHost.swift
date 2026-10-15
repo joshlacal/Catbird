@@ -26,10 +26,14 @@ final class NativeRowPostModels {
   var uri: String { postState.currentPostBox.value.uri.uriString() }
   var cid: CID { postState.currentPostBox.value.cid }
 
-  /// - Parameter post: The shadow-merged post, so the menu's bookmark item and the view model's
-  ///   like and repost state start from what the row shows.
-  init(post: AppBskyFeedDefs.PostView, appState: AppState) {
-    let state = PostState(postBox: EquatableBox(post), currentUserDid: appState.userDID)
+  /// - Parameters:
+  ///   - post: The feed payload the row was configured with. The view models and their
+  ///     reconciliation with the shadow start from it, as `PostView.setupPost` does: reconciling
+  ///     against a shadow-merged copy would read the shadow's own like or repost decision as the
+  ///     server having caught up, retire it, and bring back a like or repost undone elsewhere.
+  ///   - displayed: The shadow-merged copy the row shows; the menu's state starts from it.
+  init(post: AppBskyFeedDefs.PostView, displayed: AppBskyFeedDefs.PostView, appState: AppState) {
+    let state = PostState(postBox: EquatableBox(displayed), currentUserDid: appState.userDID)
     let viewModel = PostViewModel(post: post, appState: appState, visibilityContext: .public)
     let menuViewModel = PostContextMenuViewModel(
       appState: appState, post: post, allowsThreadSummary: false, visibilityContext: .public)

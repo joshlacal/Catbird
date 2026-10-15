@@ -151,10 +151,16 @@ enum FeedRowLayoutEngine {
     let actionBarFrame = CGRect(x: contentX, y: actionTop, width: contentWidth, height: m.actionBarHeight)
     let contentBottom = actionBarFrame.maxY + m.actionBarBottom
     let rowBottom = max(contentBottom, avatarFrame.maxY + m.avatarColumnInset)
-    let dividerFrame = CGRect(x: 0, y: rowBottom, width: rowWidth, height: m.dividerHeight)
-    // A self-sizing SwiftUI row reports its height rounded up to a whole pixel.
+    // The hosted row's divider is a half-point `Rectangle`; SwiftUI rounds its edges to the
+    // nearest pixel, so it covers two pixels at 3x and one at 2x. The row is still as tall as the
+    // nominal half point, rounded up to a whole pixel as a self-sizing SwiftUI row reports it.
+    let scale = input.displayScale
+    let height = pixelCeil(rowBottom + m.dividerHeight, scale: scale)
+    let thickness = max(1, (m.dividerHeight * scale).rounded()) / scale
+    let dividerTop = min((rowBottom * scale).rounded() / scale, height - thickness)
+    let dividerFrame = CGRect(x: 0, y: dividerTop, width: rowWidth, height: thickness)
     return FeedRowLayout(
-      width: rowWidth, height: pixelCeil(dividerFrame.maxY, scale: input.displayScale),
+      width: rowWidth, height: height,
       avatarFrame: avatarFrame, nameFrame: nameFrame,
       badgeFrame: badgeFrame, handleFrame: handleFrame, timeFrame: timeFrame,
       optionsButtonFrame: optionsFrame, textFrame: textFrame, actionBarFrame: actionBarFrame,

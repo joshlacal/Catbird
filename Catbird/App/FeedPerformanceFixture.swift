@@ -11,6 +11,7 @@
 //    --feed-perf-content=<kind>   mixed (default), text, images, links, quotes, threads or reposts
 //    --native-feed-rows=off       render every post with the hosted SwiftUI row instead of the native
 //                                 UIKit cell, to compare the two (read by `NativeFeedRows.isEnabled`)
+//    --feed-perf-line-spacing=<s> the "Line spacing" setting: tight, normal (default) or relaxed
 //
 //  The benchmark scrolls the production feed controller at a constant speed with a display
 //  link and records how far each frame overran its deadline. Results are printed as
@@ -115,6 +116,10 @@ private final class FeedPerformanceWorld {
     try await state.preferencesManager.fetchPreferences(forceRefresh: true)
     await state.postHidingManager.loadFromPreferences()
     try await state.preferencesManager.syncPreferencesWithAppSettings(state)
+    if let lineSpacing = FeedPerformanceArguments.string("--feed-perf-line-spacing="),
+       ["tight", "normal", "relaxed"].contains(lineSpacing) {
+      state.fontManager.lineSpacing = lineSpacing
+    }
 
     let count = FeedPerformanceArguments.integer("--feed-perf-count=", default: 400)
     var generator = FeedPerformanceData.Generator(art: art)
@@ -174,6 +179,10 @@ private final class FeedPerformanceWorld {
 }
 
 private enum FeedPerformanceArguments {
+  static func string(_ prefix: String) -> String? {
+    ProcessInfo.processInfo.arguments.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+  }
+
   static func integer(_ prefix: String, default value: Int) -> Int {
     ProcessInfo.processInfo.arguments.first { $0.hasPrefix(prefix) }
       .flatMap { Int($0.dropFirst(prefix.count)) }

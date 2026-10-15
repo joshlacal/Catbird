@@ -1076,6 +1076,7 @@ import os
         guard case .post(_, _, let id) = item else { return false }
         return nativeRows.cellKindChanges(postID: id)
       })
+      nativeRows.didApplySnapshot()
       prepareNativeLayouts(near: capturedPosts)
       var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
       snapshot.appendSections([.main])
@@ -1492,6 +1493,20 @@ import os
       }
       nativeRows.onSettingsChanged = { [weak self] in self?.forceCellReconfiguration() }
       nativeRows.startObservingSettings()
+      registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitDisplayScale.self]) {
+        (controller: FeedCollectionViewControllerIntegrated, _: UITraitCollection) in
+        controller.nativeRowTraitsDidChange()
+      }
+    }
+
+    /// A size class or display scale change re-resolves the row settings from the new traits and
+    /// relays out the visible native rows at once, so they move with the hosted rows (whose lane
+    /// follows the size class) instead of after the next snapshot. The reconfigure that follows
+    /// updates rows prepared but not on screen.
+    private func nativeRowTraitsDidChange() {
+      guard let collectionView, dataSource != nil, nativeRows.updateTraits(traitCollection) else { return }
+      relayoutVisibleNativeRows(boundsWidth: collectionView.bounds.width)
+      forceCellReconfiguration()
     }
 
     private func configureNativeCell(_ cell: NativeFeedPostCell, row: NativeFeedRowCoordinator.Row) {
@@ -1594,7 +1609,10 @@ import os
       // Native rows get layouts for the new width before the collection view resizes them, so a
       // rotation never draws a row with frames for the old width.
       coordinator.animate(alongsideTransition: { [weak self] _ in
-        self?.relayoutVisibleNativeRows(boundsWidth: size.width)
+        guard let self else { return }
+        // The new size can come with a new size class; lay out with the settings it implies.
+        _ = self.nativeRows.updateTraits(self.traitCollection)
+        self.relayoutVisibleNativeRows(boundsWidth: size.width)
       }) { [weak self] _ in
         // Rows carry the window size for embed media; refresh it once the new size is in place.
         self?.forceCellReconfiguration()

@@ -21,9 +21,18 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
   @MainActor
   static func resolved(fontManager: FontManager, boldText: Bool) -> FeedRowTypography {
     let contentSize = UIApplication.shared.preferredContentSizeCategory
+    // The settings themselves, not only the manager's identity and generation: a manager
+    // allocated where a released one lived starts at the same generation, and must not be served
+    // the released manager's fonts (for example after an account switch).
     var hasher = Hasher()
     hasher.combine(ObjectIdentifier(fontManager))
     hasher.combine(fontManager.generation)
+    hasher.combine(fontManager.sizeScale)
+    hasher.combine("\(fontManager.fontDesign)")
+    hasher.combine(fontManager.dynamicTypeEnabled)
+    hasher.combine(fontManager.dynamicTypeLimit?.uiContentSizeCategory.rawValue)
+    hasher.combine(fontManager.lineSpacingMultiplier)
+    hasher.combine(fontManager.letterSpacingValue)
     hasher.combine(boldText)
     hasher.combine(contentSize.rawValue)
     let key = hasher.finalize()
@@ -37,12 +46,21 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
         fontManager, size: Typography.Size.headline, weight: boldText ? .bold : .semibold, textStyle: .headline),
       metadata: AppUIFont.font(
         fontManager, size: Typography.Size.body, weight: boldText ? .semibold : .regular, textStyle: .body),
-      bodyLineSpacing: fontManager.getLineSpacing(for: body.pointSize),
+      bodyLineSpacing: bodyLineSpacing(fontManager: fontManager),
       kerning: fontManager.letterSpacingValue,
       optionsGlyphSize: optionsGlyphSize(contentSize: contentSize),
       generationKey: key)
     cache = resolved
     return resolved
+  }
+
+  /// The line spacing the hosted row's `Text` gets from `AppFontModifier`: the spacing of the app's
+  /// body size scaled by the line-spacing multiplier, the same at every Dynamic Type size. `Text`,
+  /// like `UILabel`, ignores a negative value, so "Tight" draws with no extra spacing; the layout
+  /// engine's measurement would honour a negative value and come out shorter than the drawn text.
+  @MainActor
+  static func bodyLineSpacing(fontManager: FontManager) -> CGFloat {
+    max(0, fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
   }
 
   /// The options glyph's symbol configuration: the system body style at `contentSize`.

@@ -142,5 +142,156 @@ struct NativeFeedRowCoordinatorTests {
     #expect(layout.avatarFrame.minX == 200 + FeedRowMetrics.rowHorizontal + FeedRowMetrics.avatarColumnInset + 3)
     #expect(layout.dividerFrame.width == 1000)
   }
+
+  // MARK: - Post Models
+
+  @Test("Row models reconcile against the feed payload, so a decision made elsewhere stays", arguments: [true, false])
+  func modelsKeepDecisionsMadeElsewhere(like: Bool) async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let post = try FeedRowTestPosts.cachedPost(
+      postKey: like ? "decidedunlike" : "decidedunrepost", liked: like, reposted: !like)
+    fixture.show([post])
+    let row = try #require(fixture.coordinator.nativeRow(forPostID: post.id))
+    let uri = row.post.uri.uriString()
+    let manager = fixture.appState.postShadowManager
+    // Unliked (or un-reposted) elsewhere; the feed still holds the old payload.
+    if like {
+      await manager.setLiked(postUri: uri, isLiked: false)
+    } else {
+      await manager.setReposted(postUri: uri, isReposted: false)
+    }
+    // The row's live stream delivers the shadow-merged post, as it does for a row on screen.
+    for await merged in await fixture.coordinator.shadowUpdates(for: row)(uri) {
+      #expect(like ? merged.viewer?.like == nil : merged.viewer?.repost == nil)
+      break
+    }
+
+    let models = fixture.coordinator.postModels(for: row.post)
+    await models.reconciled()
+    let merged = await manager.mergeShadow(post: row.post)
+    if like {
+      #expect(merged.viewer?.like == nil)
+      #expect(!models.postViewModel.isLiked)
+    } else {
+      #expect(merged.viewer?.repost == nil)
+      #expect(!models.postViewModel.isReposted)
+    }
+  }
+
+  // MARK: - Settings
+
+  @Test("A snapshot whose settings inputs did not change does not rebuild the settings")
+  func unchangedSettingsAreNotRebuilt() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let post = try FeedRowTestPosts.cachedPost()
+    fixture.show([post])
+    let resolved = fixture.coordinator.settingsResolutionCount
+    fixture.show([post])
+    fixture.show([post])
+    #expect(fixture.coordinator.settingsResolutionCount == resolved)
+    #expect(fixture.coordinator.nativeRow(forPostID: post.id) != nil)
+
+    fixture.appState.preferencesManager.hideVerificationBadges = true
+    fixture.show([post])
+    #expect(fixture.coordinator.settingsResolutionCount == resolved + 1)
+  }
+
+  // MARK: - Width
+
+  @Test("A reported cell width is used for later layouts and requests one reconfigure")
+  func reportedWidthRequestsOneReconfigure() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let post = try FeedRowTestPosts.cachedPost()
+    fixture.show([post])
+    let collectionView = UICollectionView(
+      frame: CGRect(x: 0, y: 0, width: 402, height: 800), collectionViewLayout: UICollectionViewFlowLayout())
+    fixture.coordinator.collectionView = collectionView
+    var requests = 0
+    fixture.coordinator.onNeedsReconfigure = { requests += 1 }
+    let row = try #require(fixture.coordinator.nativeRow(forPostID: post.id))
+    let actions = fixture.coordinator.actions(for: row)
+
+    actions.layoutWidthChanged(row.post, 390)
+    #expect(requests == 1)
+    #expect(fixture.coordinator.layoutWidth(forBoundsWidth: 402) == 390)
+    #expect(fixture.coordinator.takeReconfigureRequest(postID: post.id))
+
+    // The same report again (its reconfigure already asked for) is not a new request.
+    actions.layoutWidthChanged(row.post, 390)
+    #expect(requests == 1)
+    #expect(!fixture.coordinator.takeReconfigureRequest(postID: post.id))
+    #expect(fixture.coordinator.layoutWidth(forBoundsWidth: 402) == 390)
+  }
+
+  // MARK: - Presentation Host
+
+  @Test("The presentation host sits in the window at zero size, hidden from VoiceOver and touches")
+  func presentationHostIsInvisible() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 402, height: 800)
+    let controller = UIViewController()
+    window.rootViewController = controller
+    window.isHidden = false
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+    }
+    fixture.coordinator.installPresentationHost(in: controller)
+    window.layoutIfNeeded()
+
+    let host = try #require(controller.children.compactMap { $0 as? UIHostingController<AnyView> }.first)
+    #expect(host.view.window === window)
+    #expect(host.view.superview === controller.view)
+    #expect(host.view.frame.size == .zero)
+    #expect(host.view.accessibilityElementsHidden)
+    #expect(!host.view.isAccessibilityElement)
+    #expect(!host.view.isUserInteractionEnabled)
+  }
+
+  // MARK: - Live Counts
+
+  @Test("The merged post stream finishes when its source finishes")
+  func mergedStreamFinishesWithSource() async throws {
+    let post = try FeedRowTestPosts.cachedPost().feedViewPost.post
+    let (source, continuation) = AsyncStream<Int>.makeStream()
+    let merged = NativeFeedRowCoordinator.mergedPosts(of: source, merge: { post }, onMerged: { _ in })
+    continuation.yield(1)
+    continuation.yield(2)
+    continuation.finish()
+    var received = 0
+    for await element in merged {
+      #expect(element.uri == post.uri)
+      received += 1
+    }
+    #expect(received == 2)
+  }
+
+  @Test("The merged post stream stops listening to its source when the consumer stops")
+  func mergedStreamCancelsSource() async throws {
+    let post = try FeedRowTestPosts.cachedPost().feedViewPost.post
+    let (source, continuation) = AsyncStream<Int>.makeStream()
+    let (terminations, terminated) = AsyncStream<Void>.makeStream()
+    continuation.onTermination = { _ in
+      terminated.yield()
+      terminated.finish()
+    }
+    let merged = NativeFeedRowCoordinator.mergedPosts(of: source, merge: { post }, onMerged: { _ in })
+    let consumer = Task {
+      for await _ in merged {}
+    }
+    continuation.yield(1)
+    consumer.cancel()
+    var sourceTerminated = false
+    for await _ in terminations {
+      sourceTerminated = true
+    }
+    #expect(sourceTerminated)
+  }
 }
 #endif

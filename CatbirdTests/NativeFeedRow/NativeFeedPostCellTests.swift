@@ -25,8 +25,22 @@ struct NativeFeedPostCellTests {
     #expect(cell.textViewForTesting.frame == content.layout.textFrame)
     #expect(cell.avatarViewForTesting.frame == content.layout.avatarFrame)
     #expect(cell.actionBarForTesting.frame == content.layout.actionBarFrame)
-    #expect(cell.optionsButtonForTesting.frame == content.layout.optionsButtonFrame)
     #expect(cell.dividerForTesting.frame == content.layout.dividerFrame)
+  }
+
+  @Test("The options button covers its glyph's frame and is at least a button's height, centered on it")
+  func optionsButtonTouchArea() throws {
+    let (cell, content) = try NativeFeedRowTestFactory.configuredCell(text: "hello world")
+    cell.frame = CGRect(x: 0, y: 0, width: content.layout.width, height: content.layout.height)
+    cell.layoutIfNeeded()
+    let glyph = content.layout.optionsButtonFrame
+    let button = cell.optionsButtonForTesting.frame
+    // The hosted row's button is the size the overlay gives it: the padded glyph's width and the
+    // button's own intrinsic height.
+    #expect(button.width == glyph.width)
+    #expect(button.height == max(glyph.height, PostOptionsMenuButtonView().intrinsicContentSize.height))
+    #expect(abs(button.midY - glyph.midY) < 0.001)
+    #expect(button.minX == glyph.minX)
   }
 
   @Test("The header spans the content view, so its labels sit at the layout's own frames")

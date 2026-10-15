@@ -3,6 +3,7 @@ import Foundation
 import Testing
 @testable import Catbird
 
+@MainActor
 @Suite("Native feed rows switch", .serialized)
 struct NativeFeedRowsSwitchTests {
   @Test("The user default turns native rows off")

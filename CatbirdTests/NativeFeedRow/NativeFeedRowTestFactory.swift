@@ -37,7 +37,7 @@ enum NativeFeedRowTestFactory {
       body: body,
       name: scaled(Typography.Size.headline, weight: .semibold, style: .headline),
       metadata: scaled(Typography.Size.body, weight: .regular, style: .body),
-      bodyLineSpacing: fontManager.getLineSpacing(for: body.pointSize),
+      bodyLineSpacing: FeedRowTypography.bodyLineSpacing(fontManager: fontManager),
       kerning: fontManager.letterSpacingValue,
       optionsGlyphSize: FeedRowTypography.optionsGlyphSize(contentSize: contentSize),
       generationKey: hasher.finalize())
