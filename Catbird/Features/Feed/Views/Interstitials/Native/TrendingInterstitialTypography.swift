@@ -55,9 +55,18 @@ struct TrendingInterstitialTypography: Equatable, @unchecked Sendable {
   static func resolved(fontManager: FontManager, traits: UITraitCollection) -> TrendingInterstitialTypography {
     let category = traits.preferredContentSizeCategory
     let boldText = traits.legibilityWeight == .bold || fontManager.effectiveBoldText
+    // The settings themselves, not only the manager's identity and generation: a manager
+    // allocated where a released one lived starts at the same generation, and must not be served
+    // the released manager's fonts (for example after an account switch).
     var hasher = Hasher()
     hasher.combine(ObjectIdentifier(fontManager))
     hasher.combine(fontManager.generation)
+    hasher.combine(fontManager.sizeScale)
+    hasher.combine("\(fontManager.fontDesign)")
+    hasher.combine(fontManager.dynamicTypeEnabled)
+    hasher.combine(fontManager.dynamicTypeLimit?.uiContentSizeCategory.rawValue)
+    hasher.combine(fontManager.lineSpacingMultiplier)
+    hasher.combine(fontManager.letterSpacingValue)
     hasher.combine(boldText)
     hasher.combine(category.rawValue)
     hasher.combine(traits.displayScale)
