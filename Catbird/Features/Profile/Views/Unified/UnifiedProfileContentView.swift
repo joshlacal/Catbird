@@ -212,6 +212,7 @@ struct UnifiedProfileContentView: View {
       onTabChange: onTabChange,
       isLabeler: viewModel.isLabeler
     )
+    .profileTabPickerTrackBacking(appState)
     .padding(.top, 12)
     .padding(.bottom, 8)
     .padding(.horizontal, 16)
@@ -401,6 +402,27 @@ struct UnifiedProfileContentView: View {
   }
   #endif
 }
+
+#if os(iOS)
+private extension View {
+  /// The tab picker's track is translucent. Pinned, rows scroll behind it, and the soft scroll
+  /// edge blur fades out across it, so their text would read through its labels. This backs the
+  /// track (a capsule from iOS 26) with the list's own background, which it sits on at rest
+  /// anyway. Earlier systems put a bar material behind the whole pinned header instead.
+  @ViewBuilder
+  func profileTabPickerTrackBacking(_ appState: AppState) -> some View {
+    if #available(iOS 26.0, *) {
+      background {
+        Color.clear
+          .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+          .clipShape(Capsule())
+      }
+    } else {
+      self
+    }
+  }
+}
+#endif
 
 private struct ProfileBlockRelationshipView: View {
   let viewer: AppBskyActorDefs.ViewerState?
