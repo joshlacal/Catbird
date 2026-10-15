@@ -157,7 +157,7 @@ struct ConversationView: View {
       Task {
         await chatManager.markConversationAsRead(convoId: convoId)
       }
-      chatManager.startMessagePolling(for: convoId)
+      chatManager.conversationViewAppeared(convoId)
       appState.chatHeartbeatManager.viewAppeared()
     }
     .onChange(of: PendingChatShareStore.shared.revision) { _, _ in
@@ -190,7 +190,7 @@ struct ConversationView: View {
       consumePendingDraftIfNeeded()
     }
     .onDisappear {
-      chatManager.stopMessagePolling(for: convoId)
+      chatManager.conversationViewDisappeared(convoId)
       appState.chatHeartbeatManager.viewDisappeared()
     }
     .alert("Delete for Me?", isPresented: $showingDeleteAlert) {

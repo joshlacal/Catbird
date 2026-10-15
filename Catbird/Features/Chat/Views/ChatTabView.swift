@@ -96,6 +96,7 @@ struct ChatTabView: View {
   @State private var coordinatorAccountDID: String?
   // Eager-fetch coalescing: prevents redundant batches when mount + scene-active fire close together
   @State private var lastEagerRefreshAt: Date?
+  @State private var isTabVisible = false
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
   @State private var mlsConversationPrompt: MLSConversationPrompt?
 
@@ -155,6 +156,7 @@ struct ChatTabView: View {
     }
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
+      publishOpenConversation()
       preferredCompactColumn = newValue != nil ? .detail : .sidebar
       if !shouldUseSplitView {
         columnVisibility = newValue != nil ? .detailOnly : .doubleColumn
@@ -558,6 +560,7 @@ struct ChatTabView: View {
   // MARK: - Event Handlers
 
   private func handleOnAppear() {
+    isTabVisible = true
     appState.chatManager.setChatTabVisible(true)
     resetUnifiedListForCurrentAccountIfNeeded()
 
@@ -607,11 +610,22 @@ struct ChatTabView: View {
         }
       }
     }
+    publishOpenConversation()
   }
 
   private func handleOnDisappear() {
+    isTabVisible = false
     appState.chatManager.setChatTabVisible(false)
+    publishOpenConversation()
     stopMLSPolling()
+  }
+
+  /// Tells ChatManager which Bluesky conversation this tab shows. Its polling follows this
+  /// selection rather than ConversationView's appearance, which a split view can report out
+  /// of order. MLS conversations poll through their own detail view.
+  private func publishOpenConversation() {
+    let convoId = isTabVisible ? selectedConvoId.flatMap { isMLSConversation($0) ? nil : $0 } : nil
+    appState.chatManager.setChatTabConversation(convoId)
   }
 
   @MainActor

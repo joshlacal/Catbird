@@ -88,6 +88,41 @@ final class MessagesNavigationUITests: XCTestCase {
     assertConversationList()
   }
 
+  /// Regular width shows the list beside the conversation (landscape; the automatic portrait
+  /// split view collapses the list). The selected conversation stays active while the list
+  /// stays on screen, moves with the selection, stops when the tab is left, and a link from
+  /// another tab activates its conversation.
+  func testRegularWidthSplitViewKeepsSelectedConversationActive() throws {
+    XCUIDevice.shared.orientation = .landscapeLeft
+    defer { XCUIDevice.shared.orientation = .portrait }
+    launch()
+    try XCTSkipUnless(app.windows.firstMatch.horizontalSizeClass == .regular,
+      "The side-by-side split view needs a regular-width window")
+    app.staticTexts["Local Chat Partner"].firstMatch.tap()
+    waitForState { $0["activeConversation"] as? String == self.conversationID }
+    XCTAssertTrue(app.staticTexts["No Messages Yet"].firstMatch.waitForExistence(timeout: 10))
+    let otherRow = app.staticTexts["Another Local Chat"].firstMatch
+    XCTAssertTrue(otherRow.isHittable, "The list stays beside the conversation")
+    capture("12-regular-width-selected-conversation")
+
+    otherRow.tap()
+    waitForState { $0["activeConversation"] as? String == "messages-navigation-other" }
+
+    tapTab("home")
+    waitForState { $0["selectedTab"] as? Int == 0 && $0["activeConversation"] as? String == "" }
+    tapTab("messages")
+    waitForState { $0["activeConversation"] as? String == "messages-navigation-other" }
+
+    tapTab("home")
+    waitForState { $0["selectedTab"] as? Int == 0 && $0["activeConversation"] as? String == "" }
+    app.buttons["messages-navigation.conversation-link"].tap()
+    waitForState {
+      $0["selectedTab"] as? Int == 4 && $0["activeConversation"] as? String == self.conversationID
+        && $0["pendingConversation"] as? String == ""
+    }
+    capture("13-regular-width-link-from-other-tab")
+  }
+
   func testColdLaunchDoesNotRestorePreviouslySelectedConversation() throws {
     launch()
     openConversationFromList()
@@ -190,8 +225,10 @@ final class MessagesNavigationUITests: XCTestCase {
 
   private func tapTab(_ name: String) {
     let identified = app.buttons["tab_\(name)"].firstMatch
+    // A regular-width window shows the tabs as sidebar rows.
+    let sidebarRow = app.cells["tab_\(name)"].firstMatch
     let named = app.tabBars.buttons[name.capitalized].firstMatch
-    let tab = identified.exists ? identified : named
+    let tab = identified.exists ? identified : sidebarRow.exists ? sidebarRow : named
     XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected native \(name) tab")
     XCTAssertTrue(tab.isHittable)
     tab.tap()

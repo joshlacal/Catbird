@@ -568,6 +568,9 @@ final class ChatManager: StateInvalidationSubscriber {
     convoRevisions = [:]
     pausedPollingActiveConvoId = nil
     activeConversationId = nil
+    chatTabLoadTask?.cancel()
+    chatTabLoadTask = nil
+    chatTabConversationId = nil
     logger.debug("Chat data cleared")
   }
 
@@ -3012,6 +3015,52 @@ final class ChatManager: StateInvalidationSubscriber {
     logger.debug("Stopped conversations polling")
   }
   
+  // MARK: - Chat Tab Conversation
+
+  /// The conversation ChatTabView shows while its tab is on screen. A compact split view
+  /// hosts a programmatically opened detail twice and can send the shown ConversationView a
+  /// last onDisappear while it stays on screen, so the tab's selection, not the view's
+  /// appearance, keeps this conversation polling and owns its first load.
+  private(set) var chatTabConversationId: String?
+  @ObservationIgnored private var chatTabLoadTask: Task<Void, Never>?
+
+  /// ChatTabView's selection while its tab is on screen, or `nil` when the tab leaves or
+  /// the selection clears. The previous conversation stops polling.
+  @MainActor
+  func setChatTabConversation(_ convoId: String?) {
+    guard chatTabConversationId != convoId else { return }
+    let previous = chatTabConversationId
+    chatTabConversationId = convoId
+    chatTabLoadTask?.cancel()
+    chatTabLoadTask = nil
+    if let previous { stopMessagePolling(for: previous) }
+    guard let convoId else { return }
+    startMessagePolling(for: convoId)
+    // Loaded here rather than only in the view's task, which the spurious onDisappear
+    // cancels; the view's own load then finds this one in flight.
+    if messageLoadStates[convoId] == nil || messageLoadStates[convoId] == .idle
+      || messageLoadStates[convoId] == .interrupted {
+      chatTabLoadTask = Task { @MainActor [weak self] in
+        await self?.loadMessages(convoId: convoId, refresh: true)
+      }
+    }
+  }
+
+  /// ConversationView's onAppear. While ChatTabView shows a conversation, another
+  /// conversation's view appearing is one the split view is moving out, so it does not
+  /// take over polling.
+  func conversationViewAppeared(_ convoId: String) {
+    if let chatTabConversationId, chatTabConversationId != convoId { return }
+    startMessagePolling(for: convoId)
+  }
+
+  /// ConversationView's onDisappear. A conversation ChatTabView still shows keeps polling,
+  /// since SwiftUI can send this while the view stays on screen; any other stops.
+  func conversationViewDisappeared(_ convoId: String) {
+    guard convoId != chatTabConversationId else { return }
+    stopMessagePolling(for: convoId)
+  }
+
   /// Starts polling for messages in a specific conversation
   func startMessagePolling(for convoId: String) {
     guard !pollingBarrier.isSuspended else { return }
