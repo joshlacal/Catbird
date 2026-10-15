@@ -1909,7 +1909,11 @@ final class ChatManager: StateInvalidationSubscriber {
         return (nil, nil, .skipped)
       }
       logger.error("Error getting conversation log: \(error.localizedDescription)")
-      setErrorState(error)
+      // getLog only runs from background polls, which back off through `logPollPolicy`.
+      // Like a background conversation load, only a failure that needs sign-in is shown.
+      if UserFacingError.kind(of: error) == .signInRequired {
+        setErrorState(error)
+      }
       if case let Petrel.NetworkError.responseError(statusCode) = error {
         return (nil, nil, ChatLogPollPolicy.outcome(forStatusCode: statusCode))
       }
