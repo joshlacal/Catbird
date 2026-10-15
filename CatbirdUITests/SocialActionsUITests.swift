@@ -149,8 +149,20 @@ final class SocialActionsUITests: XCTestCase {
     // Under the bar, not behind it or the status bar, and no further down than its own padding.
     XCTAssertGreaterThanOrEqual(pinnedY, barBottom - 0.5)
     XCTAssertLessThanOrEqual(pinnedY, barBottom + 16)
-    app.swipeUp()
+    let row = lowestPostText(below: pinnedY + 60, in: app)
+    let rowY = row?.frame.minY ?? 0
+    // A third of the screen, held before release so that it doesn't fling the row away.
+    let window = app.windows.firstMatch
+    window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).press(
+      forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47)),
+      withVelocity: .slow, thenHoldForDuration: 0.3
+    )
     XCTAssertEqual(picker.frame.minY, pinnedY, accuracy: 1, "The rows scroll; the picker stays")
+    XCTAssertNotNil(row, "A post below the pinned picker")
+    if let row {
+      XCTAssertTrue(row.exists)
+      XCTAssertLessThan(row.frame.minY, rowY - 100, "The rows move up under the picker")
+    }
     XCTAssertTrue(picker.buttons["Replies"].isHittable, "Above the rows it floats over")
     attach(app, name: "profile-pinned")
 
@@ -170,6 +182,31 @@ final class SocialActionsUITests: XCTestCase {
       app.swipeDown()
     }
     XCTAssertEqual(picker.frame.minY, restingY, accuracy: 1, "Back at the top, under the profile information")
+  }
+
+  /// At an accessibility text size the profile information is much taller, and the picker still
+  /// pins under the bar with every segment usable.
+  func testProfileTabPickerPinsAtAccessibilityTextSize() {
+    let app = launch(largeText: true)
+    app.buttons["fixtureGermProfile"].tap()
+    let picker = app.segmentedControls["profileTabPicker"]
+    XCTAssertTrue(picker.waitForExistence(timeout: 10))
+    let barBottom = app.navigationBars.firstMatch.frame.maxY
+    for _ in 0..<10 where picker.frame.minY > barBottom + 16 {
+      app.swipeUp()
+    }
+    let pinnedY = picker.frame.minY
+    XCTAssertGreaterThanOrEqual(pinnedY, barBottom - 0.5)
+    XCTAssertLessThanOrEqual(pinnedY, barBottom + 16)
+    for segment in ["Posts", "Replies", "Media", "More"] {
+      XCTAssertTrue(picker.buttons[segment].isHittable, "\(segment) is usable while pinned")
+    }
+    attach(app, name: "profile-pinned-large-text")
+    picker.buttons["Replies"].tap()
+    let reply = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "(reply 1)")).firstMatch
+    XCTAssertTrue(reply.waitForExistence(timeout: 10))
+    XCTAssertTrue(picker.buttons["Replies"].isSelected)
+    XCTAssertEqual(picker.frame.minY, pinnedY, accuracy: 1)
   }
 
   func testLabelInspectorAtAccessibilityTextSize() {
@@ -223,6 +260,15 @@ final class SocialActionsUITests: XCTestCase {
     XCTAssertEqual(app.state, .runningForeground)
     app.terminate()
     return size
+  }
+
+  /// The lowest visible fixture post text ("… (n)") whose top is below `y`, so that a swipe up
+  /// leaves it on screen. Queried by its label, so it can be found again after scrolling.
+  private func lowestPostText(below y: CGFloat, in app: XCUIApplication) -> XCUIElement? {
+    let posts = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", ")"))
+    let visible = posts.allElementsBoundByIndex.filter { $0.frame.minY > y && $0.isHittable }
+    guard let text = visible.max(by: { $0.frame.minY < $1.frame.minY }) else { return nil }
+    return app.staticTexts[text.label]
   }
 
   private func attach(_ app: XCUIApplication, name: String) {
