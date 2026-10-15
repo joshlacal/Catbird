@@ -26,12 +26,30 @@ struct ProfileTabSelector: View {
                 }
             }
         }
-        .pickerStyle(.segmented)
+        .profileTabPickerStyle()
+        .accessibilityIdentifier("profileTabPicker")
         .onChange(of: selectedTab) { _, newValue in
             if newValue != .more {
                 onTabChange?(newValue)
             }
         }
+    }
+}
+
+private extension View {
+    /// The tabs picker style on iOS 27 and later; the segmented control before that,
+    /// and on macOS, whose profile is unchanged.
+    @ViewBuilder
+    func profileTabPickerStyle() -> some View {
+        #if os(iOS) && compiler(>=6.4)
+        if #available(iOS 27.0, *) {
+            pickerStyle(.tabs)
+        } else {
+            pickerStyle(.segmented)
+        }
+        #else
+        pickerStyle(.segmented)
+        #endif
     }
 }
 
