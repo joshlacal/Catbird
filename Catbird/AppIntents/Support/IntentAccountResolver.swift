@@ -12,11 +12,16 @@ import Foundation
 /// Resolves account identity for App Intents from the shared app group store.
 enum IntentAccountResolver {
   static let appGroupSuiteName = "group.blue.catbird.shared"
-  private static let activeAccountDIDKey = "activeAccountDID"
+  static let activeAccountDIDKey = "activeAccountDID"
+
+  /// The store the active account is read from: the shared app group. Tests bind a private store
+  /// for a task (`$store.withValue`) rather than writing the group the app, widgets and
+  /// extensions share.
+  @TaskLocal static var store: UserDefaults? = UserDefaults(suiteName: appGroupSuiteName)
 
   /// The DID of the currently active account, if any account has signed in
   /// and been synced to the app group store.
   static func activeDID() -> String? {
-    UserDefaults(suiteName: appGroupSuiteName)?.string(forKey: activeAccountDIDKey)
+    store?.string(forKey: activeAccountDIDKey)
   }
 }

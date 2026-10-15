@@ -28,6 +28,9 @@ import Foundation
 import Testing
 import AppIntents
 import Petrel
+#if canImport(UIKit)
+import UIKit
+#endif
 @testable import Catbird
 
 // MARK: - Fixture builders
@@ -169,6 +172,44 @@ private enum Fixture {
       debug: nil
     )
   }
+}
+
+// MARK: - Active account
+
+/// A passive age check with a fixed answer; it never prompts.
+private struct FixedAgeRequirement: AgeRegulatoryChecking {
+  let requirement: PlatformAgeSignal.Requirement
+  func preflight() async -> PlatformAgeSignal { PlatformAgeSignal(requirement: requirement) }
+  #if canImport(UIKit)
+  @MainActor
+  func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+  #endif
+}
+
+/// Runs `body` with an active account, as the app provides one to intent queries: the resolver
+/// reads its DID from a private store bound for the task (never the shared app group), and the
+/// account's `AppState` is the active one with a settled passive age check, whose decision
+/// `IntentClientProvider.requireCoveredUse` reuses.
+@MainActor
+private func withActiveAccount(
+  _ did: String, ageRequirement: PlatformAgeSignal.Requirement = .none,
+  _ body: () async throws -> Void
+) async throws {
+  let suiteName = "test.app-intents.active-account.\(UUID().uuidString)"
+  let store = try #require(UserDefaults(suiteName: suiteName))
+  defer { store.removePersistentDomain(forName: suiteName) }
+  store.set(did, forKey: IntentAccountResolver.activeAccountDIDKey)
+  let client = await ATProtoClient(baseURL: try #require(URL(string: "https://intents-fixture.invalid")))
+  let state = AppState(userDID: did, client: client, regulatoryChecker: FixedAgeRequirement(requirement: ageRequirement))
+  let previousLifecycle = AppStateManager.shared.lifecycle
+  AppStateManager.shared.setLifecycleForTesting(.authenticated(state))
+  defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+  defer { state.cleanup() }
+  for _ in 0..<200 where state.ageAccess.isCheckingRequirement || state.platformAgeSignal.requirement != ageRequirement {
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  try #require(!state.ageAccess.isCheckingRequirement && state.platformAgeSignal.requirement == ageRequirement)
+  try await IntentAccountResolver.$store.withValue(store) { try await body() }
 }
 
 // All suites below are nested inside a single top-level `GeneratedIntentsTests`
@@ -468,12 +509,32 @@ struct GeneratedIntentsTests {
     @Test("Cached posts resolve through the query without the network")
     func cacheHitResolution() async throws {
       let view = try Fixture.postView(text: "Cached for Siri")
-      await PostEntityStore.shared.store(view)
       // A full cache hit returns before the query ever bootstraps a client —
       // this would throw in the test environment if it fell through to XRPC.
-      let entities = try await PostEntityQuery().entities(for: [view.uri.uriString()])
-      #expect(entities.count == 1)
-      #expect(entities.first?.text == "Cached for Siri")
+      // The query still requires a signed-in account that passes the age check.
+      try await withActiveAccount("did:plc:intentpostcachefixture") {
+        await PostEntityStore.shared.store(view)
+        let entities = try await PostEntityQuery().entities(for: [view.uri.uriString()])
+        #expect(entities.count == 1)
+        #expect(entities.first?.text == "Cached for Siri")
+      }
+    }
+
+    @Test("A cached post is not returned to an account that requires an age check")
+    func cacheHitRequiresCoveredUse() async throws {
+      let view = try Fixture.postView(text: "Cached behind the age check")
+      try await withActiveAccount("did:plc:intentpostagefixture", ageRequirement: .ageCheckRequired) {
+        // Cached after the age decision settled (which purges exported posts), so the query's own
+        // gate is what withholds it.
+        await PostEntityStore.shared.store(view)
+        #expect(await PostEntityStore.shared.entities(for: [view.uri.uriString()]).count == 1)
+        do {
+          let entities = try await PostEntityQuery().entities(for: [view.uri.uriString()])
+          Issue.record("The query returned \(entities.count) cached post(s) without covered use")
+        } catch IntentError.serviceUnavailable {
+          // The covered-use gate withheld the cached post.
+        }
+      }
     }
 
     @Test("Unknown identifiers are omitted from store lookups")
@@ -690,11 +751,13 @@ struct GeneratedIntentsTests {
     @Test("Post-author (basic) profiles resolve through the query without the network")
     func cacheHitResolutionFromBasicView() async throws {
       let author = try Fixture.profileViewBasic()
-      await ProfileEntityStore.shared.store(ProfileEntity(from: author))
-      let entities = try await ProfileEntityQuery().entities(for: [author.did.didString()])
-      #expect(entities.count == 1)
-      #expect(entities.first?.handle == "author.bsky.social")
-      #expect(entities.first?.description == nil)  // basic views carry no bio
+      try await withActiveAccount("did:plc:intentprofilecachefixture") {
+        await ProfileEntityStore.shared.store(ProfileEntity(from: author))
+        let entities = try await ProfileEntityQuery().entities(for: [author.did.didString()])
+        #expect(entities.count == 1)
+        #expect(entities.first?.handle == "author.bsky.social")
+        #expect(entities.first?.description == nil)  // basic views carry no bio
+      }
     }
 
     @Test("A fresh store resolves profiles persisted by another process")
@@ -759,22 +822,19 @@ struct GeneratedIntentsTests {
   @Suite("IntentAccountResolver")
   struct IntentAccountResolverTests {
 
-    // `IntentAccountResolver.activeDID()` reads directly from
-    // `UserDefaults(suiteName: "group.blue.catbird.shared")` -- there is no
-    // injection seam (the suite name is a hardcoded `static let`, and the type
-    // has no initializer or protocol to substitute a test double). Unit tests
-    // run in-process inside the CatbirdTests host app, which shares the real
-    // app-group entitlement, so `UserDefaults(suiteName:)` for the real group
-    // *does* succeed here -- but mutating `activeAccountDID` in that live,
-    // shared app-group store to force the "absent" case would touch the same
-    // storage the main app, widgets, and NotificationServiceExtension read/
-    // write, with no safe way to snapshot/restore it around the test. That's
-    // an unacceptable side effect for an automated unit test, so per the task
-    // instructions this behavior is intentionally left uncovered here rather
-    // than exercised against production-shared state. Covering it properly
-    // would need `IntentAccountResolver` refactored to accept an injected
-    // `UserDefaults` (e.g. a suite name or store passed to `activeDID()`),
-    // which is a production-code change outside this test-only task.
+    // Each case binds a private store for its task, never the app group the app, widgets and
+    // extensions share.
+    @Test("The active account is read from the bound store, and an empty store has none")
+    func activeDIDFromStore() throws {
+      let suiteName = "test.app-intents.resolver.\(UUID().uuidString)"
+      let store = try #require(UserDefaults(suiteName: suiteName))
+      defer { store.removePersistentDomain(forName: suiteName) }
+      IntentAccountResolver.$store.withValue(store) {
+        #expect(IntentAccountResolver.activeDID() == nil)
+        store.set("did:plc:intentresolverfixture", forKey: IntentAccountResolver.activeAccountDIDKey)
+        #expect(IntentAccountResolver.activeDID() == "did:plc:intentresolverfixture")
+      }
+    }
   }
 
 } // GeneratedIntentsTests
