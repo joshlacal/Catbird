@@ -24,6 +24,9 @@ struct SearchTabReselectionFixture: View {
   static let hashtagArgument = "--search-visual-hashtag"
   static let moderatedHashtagArgument = "--search-visual-hashtag-moderated-page"
   static let profileArgument = "--search-visual-profile"
+  /// Adds a notification that another account reposted the viewer's post, for the repost
+  /// menu and notification tab-switch journeys.
+  static let repostNotificationArgument = "--repost-notification-fixture"
 
   @State private var account: AppState?
   @State private var context: SceneNavigationContext?
@@ -75,12 +78,13 @@ struct SearchTabReselectionFixture: View {
       let hashtag = arguments.contains(Self.hashtagArgument)
       let moderatedHashtag = arguments.contains(Self.moderatedHashtagArgument)
       let profile = arguments.contains(Self.profileArgument)
+      let repostNotification = arguments.contains(Self.repostNotificationArgument)
       // Each launch starts on the timeline; Home otherwise restores the previous run's feed.
       UserDefaults.standard.removeObject(forKey: "lastSelectedFeed_\(Self.accountDID)")
       preparationStage = "local transport"
       try SearchTabLocalProtocol.prepare(visual: visual, topics: topics,
                                          hashtag: hashtag, moderatedHashtag: moderatedHashtag,
-                                         profile: profile)
+                                         profile: profile, repostNotification: repostNotification)
       if visual {
         let queryCount = arguments.contains(Self.shortHistoryArgument) ? 1
           : arguments.contains(Self.overflowHistoryArgument) ? 10 : nil
@@ -194,7 +198,7 @@ private final class SearchTabLocalProtocol: URLProtocol, @unchecked Sendable {
   @MainActor
   static func prepare(visual: Bool = false, topics: Bool = false,
                       hashtag: Bool = false, moderatedHashtag: Bool = false,
-                      profile: Bool = false) throws {
+                      profile: Bool = false, repostNotification: Bool = false) throws {
     let timestamp = ISO8601DateFormatter().string(from: Date())
     func post(_ index: Int, text: String) -> [String: Any] {
       ["uri": "at://did:plc:searchtabfixtureauthor/app.bsky.feed.post/row\(index)",
@@ -229,6 +233,28 @@ private final class SearchTabLocalProtocol: URLProtocol, @unchecked Sendable {
       merged["app.bsky.graph.getMutes"] = [
         "mutes": moderatedHashtag ? [SearchHashtagPayloads.mutedProfile] : []
       ]
+    }
+    if repostNotification {
+      let viewerPostURI = "at://\(SearchTabReselectionFixture.accountDID)/app.bsky.feed.post/reposted"
+      let viewerPostCID = CID.fromDAGCBOR(Data("search-tab-viewer-post".utf8)).string
+      let viewerPost: [String: Any] = [
+        "uri": viewerPostURI, "cid": viewerPostCID,
+        "author": ["did": SearchTabReselectionFixture.accountDID, "handle": "search-viewer.test",
+                   "displayName": "Local Search Viewer"],
+        "record": ["$type": "app.bsky.feed.post", "text": "A post of mine that someone reposted.",
+                   "createdAt": timestamp],
+        "indexedAt": timestamp, "replyCount": 0, "repostCount": 1, "likeCount": 0]
+      merged["app.bsky.notification.listNotifications"] = ["notifications": [[
+        "uri": "at://did:plc:searchtabfixtureauthor/app.bsky.feed.repost/reposted",
+        "cid": CID.fromDAGCBOR(Data("search-tab-repost-record".utf8)).string,
+        "author": ["did": "did:plc:searchtabfixtureauthor", "handle": "search-author.test",
+                   "displayName": "Local Search Author"],
+        "reason": "repost", "reasonSubject": viewerPostURI,
+        "record": ["$type": "app.bsky.feed.repost",
+                   "subject": ["uri": viewerPostURI, "cid": viewerPostCID], "createdAt": timestamp],
+        "isRead": false, "indexedAt": timestamp
+      ]]]
+      merged["app.bsky.feed.getPosts"] = ["posts": [result, viewerPost]]
     }
     if profile {
       let detailedProfile: [String: Any] = [
