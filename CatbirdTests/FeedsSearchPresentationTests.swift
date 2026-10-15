@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 @testable import Petrel
+import SwiftData
 import SwiftUI
 import Testing
 import UIKit
@@ -145,7 +146,9 @@ struct FeedsSearchPresentationTests {
 
   @Test("Trending topics and complete counts fit the receiving timeline width")
   func trendingTimelineAcrossSizes() async throws {
-    let appState = try await makeAppState()
+    let (appState, settingsStore) = try await makeTrendingAppState()
+    // Flush the debounced settings save while its in-memory store still exists.
+    defer { withExtendedLifetime(settingsStore) { _ = appState.appSettings.persistPendingChanges() } }
     let content = TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()])
     for (name, width, scheme, typeSize, horizontalInset, direction) in [
       ("narrow-light", CGFloat(320), ColorScheme.light, DynamicTypeSize.large, CGFloat(0), LayoutDirection.leftToRight),
@@ -155,7 +158,7 @@ struct FeedsSearchPresentationTests {
       ("narrow-rtl", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1, CGFloat(0), LayoutDirection.rightToLeft),
     ] {
       try await withHost(
-        trending(content, topics: true, videos: true)
+        trending(content, topics: true, videos: true, appState: appState)
           .padding(.horizontal, horizontalInset)
           .environment(\.layoutDirection, direction), appState: appState,
         size: CGSize(width: width, height: 850), scheme: scheme, typeSize: typeSize
@@ -188,17 +191,20 @@ struct FeedsSearchPresentationTests {
 
   @Test("Timeline descriptions omit missing and markup-only text without a reserved gap")
   func trendingTimelineDescriptionAvailability() async throws {
-    let appState = try await makeAppState()
+    let (appState, settingsStore) = try await makeTrendingAppState()
+    // Flush the debounced settings save while its in-memory store still exists.
+    defer { withExtendedLifetime(settingsStore) { _ = appState.appSettings.persistPendingChanges() } }
     var emptyBottom: CGFloat?
     let cases: [(String, String?)] = [
       ("missing", nil), ("blank", "  "), ("markup", "<p> \n </p>"),
-      ("supplied", "<p>A brief garden summary.</p>")
+      ("supplied", "<p>A brief garden summary.</p>"),
+      ("long", "<p>A long garden summary about night-blooming plants, the moons that rise over them, and the astronomers who visit after dark to watch both through borrowed telescopes.</p>")
     ]
     for (name, description) in cases {
       let content = TrendingFeedContent(trends: [makeTopic(description: description)])
       try await withHost(
         VStack(alignment: .leading, spacing: 0) {
-          trending(content, topics: true, videos: false)
+          trending(content, topics: true, videos: false, appState: appState)
           Text("TIMELINE CONTINUES").padding(16)
         }, appState: appState, size: CGSize(width: 320, height: 900)
       ) { host in
@@ -209,7 +215,14 @@ struct FeedsSearchPresentationTests {
         if name == "missing" {
           emptyBottom = next.rect.minY
         } else if name == "supplied" {
-          #expect(next.rect.minY > (try #require(emptyBottom)), "Supplied text must occupy its own visible row")
+          // Two lines fit beside the 86pt media fan, so the card keeps its height.
+          let summary = try #require(receipt.lines.first { $0.text.contains("summary") })
+          #expect(summary.rect.maxY < next.rect.minY, "Supplied text must be visible above the next row")
+          #expect(abs(next.rect.minY - (try #require(emptyBottom))) <= 1,
+            "A description that fits beside the media fan must not grow the card")
+        } else if name == "long" {
+          #expect(next.rect.minY > (try #require(emptyBottom)) + 10,
+            "A description taller than the media fan must grow the card and move the next row")
         } else {
           #expect(abs(next.rect.minY - (try #require(emptyBottom))) <= 1,
             "Empty or markup-only descriptions must not reserve a phantom row")
@@ -276,7 +289,9 @@ struct FeedsSearchPresentationTests {
 
   @Test("Empty or hidden interstitials leave the next timeline row immediately available")
   func hiddenTrendingDoesNotReserveAVisibleCell() async throws {
-    let appState = try await makeAppState()
+    let (appState, settingsStore) = try await makeTrendingAppState()
+    // Flush the debounced settings save while its in-memory store still exists.
+    defer { withExtendedLifetime(settingsStore) { _ = appState.appSettings.persistPendingChanges() } }
     let loaded = TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()])
     for (name, content, topics, videos) in [
       ("empty", TrendingFeedContent(), true, true),
@@ -284,7 +299,7 @@ struct FeedsSearchPresentationTests {
     ] {
       try await withHost(
         VStack(alignment: .leading, spacing: 0) {
-          trending(content, topics: topics, videos: videos)
+          trending(content, topics: topics, videos: videos, appState: appState)
           Text("TIMELINE CONTINUES").padding(16)
           Spacer()
         }, appState: appState, size: CGSize(width: 320, height: 400)
@@ -691,11 +706,37 @@ struct FeedsSearchPresentationTests {
 }
 
 extension FeedsSearchPresentationTests {
-  private func trending(_ content: TrendingFeedContent, topics: Bool, videos: Bool) -> some View {
-    TrendingFeedPresentation(
-      content: content, showTopics: topics, showVideos: videos, onSelectTopic: { _ in },
-      onSelectPost: { _ in }, onOpenVideos: {}, onHideTopics: {}, onHideVideos: {}
-    )
+  /// The production timeline interstitial: the native cell the feed registers, sized by its layout.
+  private func trending(
+    _ content: TrendingFeedContent, topics: Bool, videos: Bool, appState: AppState
+  ) -> some View {
+    appState.appSettings.showTrendingTopics = topics
+    appState.appSettings.showTrendingVideos = videos
+    return NativeTrendingInterstitial(
+      content: content, appState: appState, sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()))
+  }
+
+  /// The timeline interstitial reads trending visibility from the account's persisted settings,
+  /// so its cases need an in-memory settings store that accepts changes.
+  private func makeTrendingAppState() async throws -> (AppState, ModelContainer) {
+    let accountDID = "did:plc:feedssearchpresentationfixture"
+    let container = try ModelContainer(
+      for: AppSettingsModel.self, Preferences.self,
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
+    container.mainContext.insert(AppSettingsModel(accountDID: accountDID))
+    try container.mainContext.save()
+    let appState = try await makeAppState()
+    appState.initializePreferencesManager(with: container.mainContext)
+    for _ in 0..<150 where !appState.appSettings.canEditPersistedSettings {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    try #require(appState.appSettings.canEditPersistedSettings)
+    // The cell draws the feed's themed background. Ink checks need a neutral backdrop, and the
+    // dim theme's gray is slightly blue, so these cases use the black dark theme.
+    appState.themeManager.applyTheme(
+      theme: appState.appSettings.theme, darkThemeMode: "black", accentColor: appState.appSettings.accentColor)
+    try #require(appState.themeManager.darkThemeMode == .black)
+    return (appState, container)
   }
 
   private func makeAppState(baseURL: String = "https://example.invalid") async throws -> AppState {
@@ -777,6 +818,28 @@ extension FeedsSearchPresentationTests {
       try await host.applySyntheticSafeAreaInsets(additionalSafeAreaInsets)
     }
     try await body(host)
+  }
+}
+
+/// Hosts `TrendingInterstitialCell` the way the feed sizes it: full width, layout height.
+private struct NativeTrendingInterstitial: UIViewRepresentable {
+  let content: TrendingFeedContent
+  let appState: AppState
+  let sceneContext: SceneNavigationContext
+
+  func makeUIView(context: Context) -> TrendingInterstitialCell {
+    TrendingInterstitialCell(frame: .zero)
+  }
+
+  func updateUIView(_ cell: TrendingInterstitialCell, context: Context) {
+    cell.configure(.init(content: content, appState: appState, sceneContext: sceneContext))
+  }
+
+  func sizeThatFits(_ proposal: ProposedViewSize, uiView: TrendingInterstitialCell, context: Context) -> CGSize? {
+    guard let width = proposal.width, width.isFinite else { return nil }
+    return uiView.systemLayoutSizeFitting(
+      CGSize(width: width, height: 0), withHorizontalFittingPriority: .required,
+      verticalFittingPriority: .fittingSizeLevel)
   }
 }
 

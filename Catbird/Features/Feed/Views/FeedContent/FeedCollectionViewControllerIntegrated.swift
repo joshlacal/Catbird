@@ -317,7 +317,21 @@ import os
       guard content != trendingContent else { return }
       trendingContent = content
       guard dataSource != nil else { return }
-      Task { @MainActor [weak self] in await self?.performUpdate() }
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        await self.performUpdate()
+        self.prepareTrendingInterstitial()
+      }
+    }
+
+    /// Content arrives while the reader is near the top of the feed; resolving the interstitial's
+    /// first-appearance work now keeps it out of the frame where the row scrolls in.
+    private func prepareTrendingInterstitial() {
+      guard !trendingContent.isEmpty, let collectionView else { return }
+      TrendingInterstitialCell.prepare(
+        TrendingInterstitialCell.Configuration(
+          content: trendingContent, appState: stateManager.appState, sceneContext: sceneContext),
+        width: collectionView.bounds.width, traits: collectionView.traitCollection)
     }
     
     // MARK: - Initialization
@@ -843,28 +857,14 @@ import os
         }
           .margins(.all, 0)
       }
-      // Registration for trending interstitial cell
-      let trendingInterstitialRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
+      // Registration for the trending interstitial: a native cell, since a hosted SwiftUI cell
+      // costs more than a 120 Hz frame allows each time it scrolls in.
+      let trendingInterstitialRegistration = UICollectionView.CellRegistration<TrendingInterstitialCell, Void> {
         [weak self] cell, indexPath, _ in
-        guard let self = self else {
-          cell.contentConfiguration = nil
-          return
-        }
+        guard let self = self else { return }
         self.updateDiagnostics?.trendingConfigurations += 1
-        let appState = self.stateManager.appState
-        cell.layoutMargins = .zero
-        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
-        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-        cell.selectedBackgroundView = nil
-
-        cell.contentConfiguration = UIHostingConfiguration {
-          TrendingFeedInterstitialView(content: self.trendingContent)
-            .trackingModerationPolicy(of: appState)
-            .applyAppStateEnvironment(appState)
-            .environment(\.fontManager, appState.fontManager)
-          .environment(self.sceneContext)
-        }
-        .margins(.all, 0)
+        cell.configure(TrendingInterstitialCell.Configuration(
+          content: self.trendingContent, appState: self.stateManager.appState, sceneContext: self.sceneContext))
       }
 
       // Registration for the pagination footer

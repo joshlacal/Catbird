@@ -9,6 +9,10 @@
 //    --feed-perf-speed=<pt/s>     scripted scroll speed (default 3000)
 //    --feed-perf-passes=<n>       down/up passes to run (default 3: down, up, down)
 //    --feed-perf-content=<kind>   mixed (default), text, images, links, quotes, threads or reposts
+//    --feed-perf-trending         serve trending topics, topic previews and trending videos, so the
+//                                 timeline shows its trending interstitial at index 6
+//    --feed-perf-navigation       host the feed in the app's NavigationStack and destinations, to
+//                                 exercise taps and transitions (adds a navigation bar; not for timing)
 //    --native-feed-rows=off       render every post with the hosted SwiftUI row instead of the native
 //                                 UIKit cell, to compare the two (read by `NativeFeedRows.isEnabled`)
 //    --feed-perf-line-spacing=<s> the "Line spacing" setting: tight, normal (default) or relaxed
@@ -19,6 +23,8 @@
 //
 
 #if DEBUG && os(iOS)
+import AVFoundation
+import Nuke
 import OSLog
 @testable import Petrel
 import QuartzCore
@@ -49,8 +55,7 @@ struct FeedPerformanceFixture: View {
           .accessibilityIdentifier("feedperf.fixture.failure")
       case .ready(let world):
         SceneNavigationHost(appState: world.appState, appStateManager: .shared, context: world.context) {
-          FeedCollectionViewWrapper(stateManager: world.feedStateManager, navigationPath: $path)
-            .accessibilityIdentifier("feedperf.feed")
+          FeedPerformanceFeedHost(world: world, path: $path)
         }
         .environment(\.fontManager, world.appState.fontManager)
         .modelContainer(world.container)
@@ -68,6 +73,32 @@ struct FeedPerformanceFixture: View {
       feedPerfLogger.error("fixture failed: \(error.localizedDescription, privacy: .public)")
       phase = .failed(error.localizedDescription)
     }
+  }
+}
+
+/// The feed alone for benchmarks, or inside the app's navigation stack for interaction checks.
+private struct FeedPerformanceFeedHost: View {
+  let world: FeedPerformanceWorld
+  @Binding var path: NavigationPath
+
+  var body: some View {
+    if ProcessInfo.processInfo.arguments.contains("--feed-perf-navigation") {
+      let tabPath = world.context.navigationManager.pathBinding(for: 0)
+      NavigationStack(path: tabPath) {
+        feed(tabPath)
+          .navigationDestination(for: NavigationDestination.self) { destination in
+            NavigationHandler.viewForDestination(
+              destination, path: tabPath, appState: world.appState, selectedTab: .constant(0))
+          }
+      }
+    } else {
+      feed($path)
+    }
+  }
+
+  private func feed(_ path: Binding<NavigationPath>) -> some View {
+    FeedCollectionViewWrapper(stateManager: world.feedStateManager, navigationPath: path)
+      .accessibilityIdentifier("feedperf.feed")
   }
 }
 
@@ -95,6 +126,11 @@ private final class FeedPerformanceWorld {
 
   static func make() async throws -> FeedPerformanceWorld {
     let art = try FeedPerformanceArt.render()
+    if FeedPerformanceTrending.isRequested {
+      let clip = try await FeedPerformanceTrending.writeClip()
+      FeedPerformanceProtocol.install(trending: try FeedPerformanceTrending.responses(art: art, clip: clip))
+      try FeedPerformanceTrending.seedImageData(art: art)
+    }
     guard URLProtocol.registerClass(FeedPerformanceProtocol.self) else { throw FixtureError.transport }
     NetworkService.setNetworkTestProtocolClasses([FeedPerformanceProtocol.self])
     // 127.0.0.1 is the only host Petrel's URL policy accepts without DNS.
@@ -205,6 +241,19 @@ private final class FeedScrollBenchmark {
     let p95FrameMs: Double
     /// Main-thread CPU time spent during the pass, divided by the rows scrolled through.
     let mainThreadCPUMsPerItem: Double
+    /// Main-thread CPU time between consecutive display-link callbacks.
+    let p95FrameCPUMs: Double
+    let maxFrameCPUMs: Double
+    /// The row at `probeItemIndex` (the trending interstitial with `--feed-perf-trending`, otherwise
+    /// a post) entering the viewport: the frames from three before to six after it first intersects.
+    let probeEntry: ProbeEntry?
+  }
+
+  struct ProbeEntry: Encodable {
+    let frames: Int
+    let worstFrameMs: Double
+    let peakFrameCPUMs: Double
+    let windowCPUMs: Double
   }
 
   struct Result: Encodable {
@@ -213,6 +262,8 @@ private final class FeedScrollBenchmark {
     let speedPointsPerSecond: Double
     let nominalFrameMs: Double
     let contentHeight: Double
+    let probeItemIndex: Int
+    let probeItemIsTrending: Bool
     let passes: [PassResult]
     let totalHitchRatioMsPerS: Double
 
@@ -235,6 +286,13 @@ private final class FeedScrollBenchmark {
   private var direction: CGFloat = 1
   private var lastTimestamp: CFTimeInterval?
   private var frameDeltas: [Double] = []
+  private var frameCPU: [Double] = []
+  private var lastFrameCPUMs: Double?
+  /// Index into `frameDeltas` of the first frame after the probe row became visible.
+  private var probeEntryFrame: Int?
+  private var probeWasVisible = false
+  /// The production controller inserts the trending interstitial at index 6 of a headerless feed.
+  static let probeItemIndex = 6
   private var passContinuation: CheckedContinuation<Void, Never>?
 
   init(collectionView: UICollectionView, speed: CGFloat, passes: Int, itemCount: Int) {
@@ -242,6 +300,11 @@ private final class FeedScrollBenchmark {
     self.speed = speed
     self.passes = passes
     self.itemCount = itemCount
+  }
+
+  private static func percentile(_ values: [Double], _ fraction: Double) -> Double {
+    let sorted = values.sorted()
+    return sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * fraction))]
   }
 
   /// User plus system CPU time of the calling thread, in milliseconds.
@@ -283,7 +346,11 @@ private final class FeedScrollBenchmark {
     for pass in 0..<passes {
       direction = pass.isMultiple(of: 2) ? 1 : -1
       frameDeltas = []
+      frameCPU = []
       lastTimestamp = nil
+      lastFrameCPUMs = nil
+      probeEntryFrame = nil
+      probeWasVisible = isProbeVisible()
       let cpuStart = Self.currentThreadCPUMs()
       await withCheckedContinuation { continuation in
         passContinuation = continuation
@@ -305,6 +372,8 @@ private final class FeedScrollBenchmark {
       speedPointsPerSecond: Double(speed),
       nominalFrameMs: nominal * 1000,
       contentHeight: Double(collectionView.contentSize.height),
+      probeItemIndex: Self.probeItemIndex,
+      probeItemIsTrending: FeedPerformanceTrending.isRequested,
       passes: results,
       totalHitchRatioMsPerS: totalDuration > 0 ? totalHitch / (totalDuration / 1000) : 0)
   }
@@ -312,8 +381,20 @@ private final class FeedScrollBenchmark {
   @objc private func step(_ link: CADisplayLink) {
     let now = link.timestamp
     let delta = lastTimestamp.map { now - $0 } ?? link.duration
-    if lastTimestamp != nil { frameDeltas.append(delta) }
+    let cpuNow = Self.currentThreadCPUMs()
+    if lastTimestamp != nil {
+      frameDeltas.append(delta)
+      frameCPU.append(cpuNow - (lastFrameCPUMs ?? cpuNow))
+    }
     lastTimestamp = now
+    lastFrameCPUMs = cpuNow
+    // The previous frame's layout ran after the last callback, so a row that is visible now was
+    // created during the frame just recorded.
+    let probeVisible = isProbeVisible()
+    if probeVisible && !probeWasVisible && probeEntryFrame == nil {
+      probeEntryFrame = max(0, frameDeltas.count - 1)
+    }
+    probeWasVisible = probeVisible
 
     let minY = -collectionView.adjustedContentInset.top
     let maxY = max(minY, collectionView.contentSize.height - collectionView.bounds.height
@@ -332,6 +413,24 @@ private final class FeedScrollBenchmark {
     }
   }
 
+  private func isProbeVisible() -> Bool {
+    let indexPath = IndexPath(item: Self.probeItemIndex, section: 0)
+    guard collectionView.numberOfSections > 0,
+          collectionView.numberOfItems(inSection: 0) > Self.probeItemIndex,
+          let attributes = collectionView.layoutAttributesForItem(at: indexPath) else { return false }
+    return attributes.frame.intersects(collectionView.bounds)
+  }
+
+  private func probeEntry() -> ProbeEntry? {
+    guard let entry = probeEntryFrame, !frameDeltas.isEmpty else { return nil }
+    let window = max(0, entry - 3)...min(frameDeltas.count - 1, entry + 6)
+    return ProbeEntry(
+      frames: window.count,
+      worstFrameMs: (frameDeltas[window].max() ?? 0) * 1000,
+      peakFrameCPUMs: frameCPU[window].max() ?? 0,
+      windowCPUMs: frameCPU[window].reduce(0, +))
+  }
+
   private func summarize(direction: String, nominal: Double, cpuMsPerItem: Double) -> PassResult {
     // A frame is a hitch once it overruns by more than half a frame; its hitch time is the overrun.
     let hitches = frameDeltas.filter { $0 > nominal * 1.5 }
@@ -348,7 +447,10 @@ private final class FeedScrollBenchmark {
       hitchRatioMsPerS: duration > 0 ? hitchTime / (duration / 1000) : 0,
       worstFrameMs: (sorted.last ?? 0) * 1000,
       p95FrameMs: p95,
-      mainThreadCPUMsPerItem: cpuMsPerItem)
+      mainThreadCPUMsPerItem: cpuMsPerItem,
+      p95FrameCPUMs: Self.percentile(frameCPU, 0.95),
+      maxFrameCPUMs: frameCPU.max() ?? 0,
+      probeEntry: probeEntry())
   }
 }
 
@@ -559,7 +661,15 @@ private enum FeedPerformanceData {
 // MARK: - Transport
 
 /// Serves the preference and labeler reads the app makes at startup and refuses everything else.
+/// With `--feed-perf-trending` it also serves the trending reads.
 private final class FeedPerformanceProtocol: URLProtocol, @unchecked Sendable {
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var trendingResponses: [String: Data] = [:]
+
+  static func install(trending: [String: Data]) {
+    lock.withLock { trendingResponses = trending }
+  }
+
   override class func canInit(with request: URLRequest) -> Bool {
     ["http", "https"].contains(request.url?.scheme?.lowercased() ?? "")
   }
@@ -567,7 +677,7 @@ private final class FeedPerformanceProtocol: URLProtocol, @unchecked Sendable {
 
   override func startLoading() {
     let isLocalGet = request.url?.host == "127.0.0.1" && (request.httpMethod ?? "GET").uppercased() == "GET"
-    guard isLocalGet, let url = request.url, let body = Self.body(for: url.path) else {
+    guard isLocalGet, let url = request.url, let body = Self.body(for: url) else {
       client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
       return
     }
@@ -579,9 +689,9 @@ private final class FeedPerformanceProtocol: URLProtocol, @unchecked Sendable {
   }
   override func stopLoading() {}
 
-  private static func body(for path: String) -> Data? {
+  private static func body(for url: URL) -> Data? {
     let object: [String: Any]
-    switch path {
+    switch url.path {
     case "/xrpc/app.bsky.actor.getPreferences":
       object = ["preferences": [
         ["$type": "app.bsky.actor.defs#adultContentPref", "enabled": false],
@@ -593,9 +703,170 @@ private final class FeedPerformanceProtocol: URLProtocol, @unchecked Sendable {
     case "/xrpc/app.bsky.labeler.getServices":
       object = ["views": []]
     default:
-      return nil
+      let feed = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+        .first { $0.name == "feed" }?.value
+      let key = FeedPerformanceTrending.responseKey(path: url.path, feed: feed)
+      return lock.withLock { trendingResponses[key] }
     }
     return try? JSONSerialization.data(withJSONObject: object)
+  }
+}
+
+// MARK: - Synthetic trending content
+
+/// Six trending topics (each with a preview feed of image posts and three participants) and ten
+/// trending videos, matching what `getTrends` and The Vids return. The JSON is served by
+/// `FeedPerformanceProtocol` through the production loading path. Trending art must use https
+/// URLs (the preview policy rejects anything else), so its bytes are seeded into the image
+/// pipeline's data cache under those URLs: images still go through disk read, decode and resize.
+private enum FeedPerformanceTrending {
+  static var isRequested: Bool { ProcessInfo.processInfo.arguments.contains("--feed-perf-trending") }
+
+  private static let artPathPrefix = "/feed-perf-art/"
+  private static let creatorDID = "did:plc:feedperftrends"
+
+  private static func artURL(_ file: URL) -> String {
+    "https://127.0.0.1\(artPathPrefix)\(file.lastPathComponent)"
+  }
+
+  @MainActor
+  static func seedImageData(art: FeedPerformanceArt) throws {
+    let cache = ImageLoadingManager.shared.pipeline.cache
+    for file in art.authors.map(\.avatar) + art.photos.map(\.url) {
+      guard let url = URL(string: artURL(file)) else { continue }
+      cache.storeCachedData(try Data(contentsOf: file), for: ImageRequest(url: url))
+    }
+  }
+
+  static func responseKey(path: String, feed: String?) -> String {
+    feed.map { "\(path)?feed=\($0)" } ?? path
+  }
+
+  private static let topics: [(name: String, category: String?, description: String?)] = [
+    ("Aurora Watch", "science", "Northern lights are visible much farther south than usual tonight."),
+    ("Cup Final", "sports", "Extra time, a goal-line save and a penalty shootout decide the cup."),
+    ("Budget Vote", "politics", "Lawmakers debate the spending bill ahead of the midnight deadline."),
+    ("Indie Game Fest", "video-games", nil),
+    ("Album Drop", "music", "Fans react to the surprise release and its closing track."),
+    ("Heat Dome", "weather", "Record temperatures stretch across the region for a fifth day."),
+  ]
+
+  /// A two-second H.264 clip every trending video plays, so The Vids opens on a playable item.
+  @MainActor
+  static func writeClip() async throws -> URL {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("feed-perf-fixture", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent("trending-clip.mp4")
+    if FileManager.default.fileExists(atPath: url.path) { return url }
+    let partial = directory.appendingPathComponent("trending-clip-partial.mp4")
+    try? FileManager.default.removeItem(at: partial)
+
+    let width = 360, height = 640, frames = 60
+    let writer = try AVAssetWriter(outputURL: partial, fileType: .mp4)
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+      AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+    ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+      kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+      kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+    ])
+    writer.add(input)
+    guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    writer.startSession(atSourceTime: .zero)
+    for frame in 0..<frames {
+      while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+      var buffer: CVPixelBuffer?
+      guard let pool = adaptor.pixelBufferPool,
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let buffer else {
+        throw CocoaError(.fileWriteUnknown)
+      }
+      CVPixelBufferLockBaseAddress(buffer, [])
+      if let base = CVPixelBufferGetBaseAddress(buffer) {
+        // BGRA: a solid color that shifts each frame, so playback is visible.
+        var pattern = UInt32(0xFF00_0000) | UInt32(40 + frame * 3) << 16 | UInt32(90) << 8 | UInt32(200 - frame * 2)
+        memset_pattern4(base, &pattern, CVPixelBufferGetBytesPerRow(buffer) * height)
+      }
+      CVPixelBufferUnlockBaseAddress(buffer, [])
+      guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30)) else {
+        throw writer.error ?? CocoaError(.fileWriteUnknown)
+      }
+    }
+    input.markAsFinished()
+    await writer.finishWriting()
+    guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    try FileManager.default.moveItem(at: partial, to: url)
+    return url
+  }
+
+  static func responses(art: FeedPerformanceArt, clip: URL) throws -> [String: Data] {
+    var random = FeedPerformanceData.Random(seed: 0x7E2D_1A9C)
+    func profile(_ author: FeedPerformanceArt.Author) -> [String: Any] {
+      ["did": author.did, "handle": author.handle, "displayName": author.name, "avatar": artURL(author.avatar),
+       "createdAt": FeedPerformanceData.iso(minutesAgo: 90_000)]
+    }
+    func post(uri: String, author: FeedPerformanceArt.Author, text: String, embed: [String: Any],
+      minutesAgo: Double) -> [String: Any] {
+      ["post": [
+        "uri": uri, "cid": FeedPerformanceData.cid(uri), "author": profile(author),
+        "record": ["$type": "app.bsky.feed.post", "text": text, "createdAt": FeedPerformanceData.iso(minutesAgo: minutesAgo),
+          "langs": ["en"]] as [String: Any],
+        "embed": embed, "replyCount": random.int(0..<40), "repostCount": random.int(0..<200),
+        "likeCount": random.int(0..<2000), "quoteCount": random.int(0..<20),
+        "indexedAt": FeedPerformanceData.iso(minutesAgo: minutesAgo),
+      ] as [String: Any]]
+    }
+
+    var result: [String: Data] = [:]
+    var trends: [[String: Any]] = []
+    for (index, topic) in topics.enumerated() {
+      let slug = "topic\(index)"
+      var trend: [String: Any] = [
+        "topic": slug, "displayName": topic.name, "link": "/profile/\(creatorDID)/feed/\(slug)",
+        "startedAt": FeedPerformanceData.iso(minutesAgo: Double(30 + index * 25)),
+        "postCount": [48_200, 12_900, 7_350, 2_100, 31_800, 960][index], "status": "hot",
+        "actors": (0..<3).map { profile(art.authors[(index * 3 + $0) % art.authors.count]) },
+      ]
+      if let category = topic.category { trend["category"] = category }
+      if let description = topic.description { trend["description"] = description }
+      trends.append(trend)
+
+      let previews = (0..<6).map { offset -> [String: Any] in
+        let author = art.authors[(index * 5 + offset) % art.authors.count]
+        let photo = art.photos[(index * 4 + offset) % art.photos.count]
+        let image: [String: Any] = [
+          "thumb": artURL(photo.url), "fullsize": artURL(photo.url), "alt": "",
+          "aspectRatio": ["width": photo.width, "height": photo.height],
+        ]
+        return post(uri: "at://\(author.did)/app.bsky.feed.post/trend\(index)-\(offset)", author: author,
+          text: "\(topic.name) preview \(offset + 1)",
+          embed: ["$type": "app.bsky.embed.images#view", "images": [image]], minutesAgo: Double(offset * 4 + 2))
+      }
+      let feedURI = "at://\(creatorDID)/app.bsky.feed.generator/\(slug)"
+      result[responseKey(path: "/xrpc/app.bsky.feed.getFeed", feed: feedURI)] =
+        try JSONSerialization.data(withJSONObject: ["feed": previews])
+    }
+    result[responseKey(path: "/xrpc/app.bsky.unspecced.getTrends", feed: nil)] =
+      try JSONSerialization.data(withJSONObject: ["trends": trends])
+
+    let videos = (0..<10).map { index -> [String: Any] in
+      let author = art.authors[(index * 7 + 3) % art.authors.count]
+      let photo = art.photos[(index * 5 + 1) % art.photos.count]
+      let uri = "at://\(author.did)/app.bsky.feed.post/vid\(index)"
+      let video: [String: Any] = [
+        "$type": "app.bsky.embed.video#view", "cid": FeedPerformanceData.cid("feed-perf-video-\(index)"),
+        "playlist": clip.absoluteString,
+        "thumbnail": artURL(photo.url), "aspectRatio": ["width": 9, "height": 16],
+      ]
+      if index.isMultiple(of: 3) {
+        return post(uri: uri, author: author, text: "Clip \(index + 1)", embed: video.merging(["alt": "Synthetic clip \(index + 1)"]) { $1 },
+          minutesAgo: Double(index * 9 + 5))
+      }
+      return post(uri: uri, author: author, text: "Clip \(index + 1)", embed: video, minutesAgo: Double(index * 9 + 5))
+    }
+    result[responseKey(path: "/xrpc/app.bsky.feed.getFeed", feed: TrendingVideosSection.thevidsURI)] =
+      try JSONSerialization.data(withJSONObject: ["feed": videos])
+    return result
   }
 }
 

@@ -1,36 +1,84 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 enum TrendingTopicCategoryStyle {
+  /// System tints shared by the SwiftUI and UIKit renderings of a category.
+  enum Tint {
+    case pink, purple, blue, red, orange, green, teal, mint, cyan, yellow, indigo, brown, gray
+
+    var color: Color {
+      switch self {
+      case .pink: .pink
+      case .purple: .purple
+      case .blue: .blue
+      case .red: .red
+      case .orange: .orange
+      case .green: .green
+      case .teal: .teal
+      case .mint: .mint
+      case .cyan: .cyan
+      case .yellow: .yellow
+      case .indigo: .indigo
+      case .brown: .brown
+      case .gray: .gray
+      }
+    }
+
+    #if os(iOS)
+    var uiColor: UIColor {
+      switch self {
+      case .pink: .systemPink
+      case .purple: .systemPurple
+      case .blue: .systemBlue
+      case .red: .systemRed
+      case .orange: .systemOrange
+      case .green: .systemGreen
+      case .teal: .systemTeal
+      case .mint: .systemMint
+      case .cyan: .systemCyan
+      case .yellow: .systemYellow
+      case .indigo: .systemIndigo
+      case .brown: .systemBrown
+      case .gray: .systemGray
+      }
+    }
+    #endif
+  }
+
   private struct Style {
     let symbol: String
-    let color: Color
+    let tint: Tint
     let name: String?
   }
 
   /// One distinct symbol and color per getTrends category, including legacy and alias values.
   private static func style(for category: String?) -> Style {
     switch category?.lowercased() {
-    case "culture": return Style(symbol: "theatermasks", color: .pink, name: nil)
-    case "entertainment", "pop-culture": return Style(symbol: "popcorn", color: .purple, name: "Entertainment")
-    case "politics": return Style(symbol: "building.columns", color: .blue, name: nil)
-    case "news", "world": return Style(symbol: "newspaper", color: .red, name: nil)
-    case "sports": return Style(symbol: "figure.basketball", color: .orange, name: nil)
-    case "video-games", "gaming": return Style(symbol: "gamecontroller", color: .green, name: "Video Games")
-    case "science-tech": return Style(symbol: "atom", color: .teal, name: "Science & Tech")
-    case "science": return Style(symbol: "atom", color: .mint, name: nil)
-    case "tech", "technology": return Style(symbol: "cpu", color: .cyan, name: "Tech")
-    case "business", "economy", "finance": return Style(symbol: "chart.line.uptrend.xyaxis", color: .yellow, name: nil)
-    case "health": return Style(symbol: "cross.case", color: .red, name: nil)
-    case "music": return Style(symbol: "music.note", color: .indigo, name: nil)
-    case "weather": return Style(symbol: "cloud.sun", color: .cyan, name: nil)
-    case "other": return Style(symbol: "sparkles", color: .brown, name: "Trending")
-    default: return Style(symbol: "number", color: .gray, name: nil)
+    case "culture": return Style(symbol: "theatermasks", tint: .pink, name: nil)
+    case "entertainment", "pop-culture": return Style(symbol: "popcorn", tint: .purple, name: "Entertainment")
+    case "politics": return Style(symbol: "building.columns", tint: .blue, name: nil)
+    case "news", "world": return Style(symbol: "newspaper", tint: .red, name: nil)
+    case "sports": return Style(symbol: "figure.basketball", tint: .orange, name: nil)
+    case "video-games", "gaming": return Style(symbol: "gamecontroller", tint: .green, name: "Video Games")
+    case "science-tech": return Style(symbol: "atom", tint: .teal, name: "Science & Tech")
+    case "science": return Style(symbol: "atom", tint: .mint, name: nil)
+    case "tech", "technology": return Style(symbol: "cpu", tint: .cyan, name: "Tech")
+    case "business", "economy", "finance": return Style(symbol: "chart.line.uptrend.xyaxis", tint: .yellow, name: nil)
+    case "health": return Style(symbol: "cross.case", tint: .red, name: nil)
+    case "music": return Style(symbol: "music.note", tint: .indigo, name: nil)
+    case "weather": return Style(symbol: "cloud.sun", tint: .cyan, name: nil)
+    case "other": return Style(symbol: "sparkles", tint: .brown, name: "Trending")
+    default: return Style(symbol: "number", tint: .gray, name: nil)
     }
   }
 
   static func symbol(for category: String?) -> String { style(for: category).symbol }
 
-  static func color(for category: String?) -> Color { style(for: category).color }
+  static func tint(for category: String?) -> Tint { style(for: category).tint }
+
+  static func color(for category: String?) -> Color { style(for: category).tint.color }
 
   static func name(for category: String) -> String {
     style(for: category).name ?? category.replacingOccurrences(of: "-", with: " ").capitalized
