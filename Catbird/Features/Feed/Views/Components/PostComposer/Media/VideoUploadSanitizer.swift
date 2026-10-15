@@ -2,7 +2,6 @@ import AVFoundation
 import CoreMedia
 import Foundation
 import OSLog
-import Petrel
 
 // MARK: - Sanitized Copy
 
@@ -48,34 +47,46 @@ enum VideoUploadSanitizationError: LocalizedError, Equatable {
 /// copied unchanged into a new movie that has no container or track metadata (QuickTime user
 /// data, `mdta` keys such as location, make, model, software and creation date), no timed
 /// metadata, text, timecode or other non-audio/video tracks, no boxes the parser does not
-/// report, and zeroed header times. The copy is read back before use and the upload fails
-/// closed if anything remains.
+/// report, zeroed header times, and no vendor or compressor name in its sample descriptions.
+/// The copy is read back before use and the upload fails closed if anything remains.
 ///
 /// Copies are stored under the attachment's SHA-256, the format version and the copy's own
-/// SHA-256, so every attempt for the same attachment bytes gets the identical file and a saved
-/// multipart session resumes.
+/// SHA-256. The remux is deterministic, so every attempt for the same attachment bytes gets the
+/// identical file, even after a copy is made again, and a saved multipart session resumes.
 actor VideoUploadSanitizer {
   static let shared: Result<VideoUploadSanitizer, Error> = Result { try VideoUploadSanitizer() }
 
   /// Raise whenever `remux`, `VideoUploadCopyStructure` or `verifyContainsOnlySamples` changes, so
-  /// no copy made under an older rule is uploaded again.
-  static let formatVersion = 1
+  /// no copy made under an older rule is uploaded again. Copies named with another version are
+  /// deleted when a sanitizer starts.
+  static let formatVersion = 2
 
   /// Free space required beyond the size of the attachment before a copy is made: the new movie
   /// box and file-system overhead.
   static let exportHeadroomBytes: Int64 = 16 * 1_048_576
 
-  private static let logger = Logger(subsystem: "blue.catbird", category: "VideoUploadSanitizer")
+  /// How long an export may run before it is treated as stuck and cancelled. A passthrough remux
+  /// only copies bytes; this allows the largest accepted attachment at 1 MB/s.
+  static let exportTimeLimit: Duration = .seconds(300)
+
+  static let logger = Logger(subsystem: "blue.catbird", category: "VideoUploadSanitizer")
   private let rootURL: URL
   private let partialDirectory: URL
   private let availableCapacity: @Sendable (URL) -> Int64?
+  private let exportDeadline: @Sendable () async throws -> Void
   private let fileManager = FileManager.default
+  /// Attachments and copies this process has already hashed or verified, by path, valid while
+  /// the file is unchanged. A retry then reads neither file again.
+  private var knownAttachments: [String: KnownAttachment] = [:]
+  private var knownCopies: [String: KnownCopy] = [:]
 
-  /// - Parameter availableCapacity: Free bytes on the volume of the given directory, or nil when
-  ///   unknown.
+  /// - Parameters:
+  ///   - availableCapacity: Free bytes on the volume of the given directory, or nil when unknown.
+  ///   - exportDeadline: Returns once an export has run for as long as it may.
   init(
     rootURL: URL? = nil,
-    availableCapacity: @escaping @Sendable (URL) -> Int64? = { VideoUploadSanitizer.availableCapacity(at: $0) }
+    availableCapacity: @escaping @Sendable (URL) -> Int64? = { VideoUploadSanitizer.availableCapacity(at: $0) },
+    exportDeadline: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: VideoUploadSanitizer.exportTimeLimit) }
   ) throws {
     if let rootURL {
       self.rootURL = rootURL
@@ -87,12 +98,14 @@ actor VideoUploadSanitizer {
     }
     partialDirectory = self.rootURL.appendingPathComponent("Partial", isDirectory: true)
     self.availableCapacity = availableCapacity
+    self.exportDeadline = exportDeadline
     try FileManager.default.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
     // Exports interrupted by a kill are never referenced again, and none runs before init.
     if FileManager.default.fileExists(atPath: partialDirectory.path) {
       try FileManager.default.removeItem(at: partialDirectory)
     }
     try FileManager.default.createDirectory(at: partialDirectory, withIntermediateDirectories: true)
+    try Self.removeCopies(madeUnderAnotherVersionIn: self.rootURL)
     var values = URLResourceValues()
     values.isExcludedFromBackup = true
     var root = self.rootURL
@@ -106,9 +119,13 @@ actor VideoUploadSanitizer {
     guard attachmentURL.isFileURL, let format = OutputFormat(attachmentURL) else {
       throw VideoUploadSanitizationError.unreadable
     }
-    let source = try VideoUploadCheckpointStore.fingerprint(attachmentURL)
+    let source = try attachmentFingerprint(attachmentURL)
     let prefix = "\(source.digest)-v\(Self.formatVersion)-"
-    if let cached = try await reusableCopy(prefix: prefix, format: format) { return cached }
+    if let known = knownCopy(prefix: prefix) { return known }
+    if let cached = try await reusableCopy(prefix: prefix, format: format) {
+      remember(cached, prefix: prefix)
+      return cached
+    }
     guard Self.hasRoom(forCopyOf: source.count, available: availableCapacity(rootURL)) else {
       throw VideoUploadSanitizationError.insufficientStorage
     }
@@ -118,11 +135,11 @@ actor VideoUploadSanitizer {
     defer { try? fileManager.removeItem(at: partial) }
     let clock = ContinuousClock()
     let started = clock.now
-    let remuxed = try await Self.remux(attachmentURL, to: partial, fileType: format.fileType)
-    try VideoUploadCopyStructure.scrubHeaderTimes(in: partial)
+    let remuxed = try await Self.remux(attachmentURL, to: partial, fileType: format.fileType, deadline: exportDeadline)
+    try VideoUploadCopyStructure.scrub(partial)
     try await Self.verifyContainsOnlySamples(partial)
     let written = try await Self.trackSignatures(of: partial)
-    guard written.sorted() == remuxed.kept.sorted() else {
+    guard Self.keepsEveryTrack(inserted: remuxed.kept, written: written) else {
       // Passthrough left out a track it was given (for example an audio codec the container
       // can't carry). Uploading would silently lose that track.
       Self.logger.error(
@@ -137,6 +154,7 @@ actor VideoUploadSanitizer {
     // No suspension point from here on: the directory check and the rename are one step.
     if let finished = finishedCopy(prefix: prefix, format: format) {
       // Another attempt for the same bytes finished first; its verified copy is used.
+      remember(finished, prefix: prefix)
       return finished
     }
     let destination = rootURL.appendingPathComponent(prefix + copy.digest)
@@ -147,7 +165,9 @@ actor VideoUploadSanitizer {
     Self.logger.info(
       "Prepared metadata-free upload copy: \(copy.count) bytes, \(remuxed.dropped) non-audio/video track(s) dropped, \(milliseconds) ms"
     )
-    return SanitizedVideo(url: destination, mimeType: format.mimeType, byteCount: copy.count)
+    let made = SanitizedVideo(url: destination, mimeType: format.mimeType, byteCount: copy.count)
+    remember(made, prefix: prefix)
+    return made
   }
 
   static func hasRoom(forCopyOf byteCount: Int, available: Int64?) -> Bool {
@@ -174,6 +194,89 @@ actor VideoUploadSanitizer {
     return .exportFailed
   }
 
+  /// The format version in a copy's name (`<attachment SHA-256>-v<version>-<copy SHA-256>.<ext>`),
+  /// or nil for any other name.
+  static func copyFormatVersion(of name: String) -> Int? {
+    let stem = (name as NSString).deletingPathExtension
+    let parts = stem.split(separator: "-", omittingEmptySubsequences: false)
+    guard parts.count == 3, parts[0].count == 64, parts[2].count == 64,
+      parts[0].allSatisfy(\.isHexDigit), parts[2].allSatisfy(\.isHexDigit),
+      parts[1].first == "v", let version = Int(parts[1].dropFirst())
+    else { return nil }
+    return version
+  }
+
+  /// Deletes copies an older (or newer) rule made; they are never uploaded again. No checkpoint
+  /// refers to a copy: the checkpoint store keeps its own snapshot.
+  private static func removeCopies(madeUnderAnotherVersionIn root: URL) throws {
+    for name in try FileManager.default.contentsOfDirectory(atPath: root.path) {
+      guard let version = copyFormatVersion(of: name), version != formatVersion else { continue }
+      try FileManager.default.removeItem(at: root.appendingPathComponent(name))
+    }
+  }
+
+  // MARK: - Known Files
+
+  /// What tells a file apart from one that replaced or rewrote it. Read with `stat`, which
+  /// caches nothing.
+  private struct FileIdentity: Equatable {
+    let device: UInt64
+    let fileNumber: UInt64
+    let size: UInt64
+    let modified: Date
+
+    init?(_ url: URL) {
+      guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+        attributes[.type] as? FileAttributeType == .typeRegular,
+        let device = (attributes[.systemNumber] as? NSNumber)?.uint64Value,
+        let fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+        let size = (attributes[.size] as? NSNumber)?.uint64Value,
+        let modified = attributes[.modificationDate] as? Date
+      else { return nil }
+      (self.device, self.fileNumber, self.size, self.modified) = (device, fileNumber, size, modified)
+    }
+  }
+
+  private struct KnownAttachment {
+    let identity: FileIdentity
+    let count: Int
+    let digest: String
+  }
+
+  private struct KnownCopy {
+    let identity: FileIdentity
+    let copy: SanitizedVideo
+  }
+
+  /// The attachment's size and SHA-256, hashed once per unchanged file.
+  private func attachmentFingerprint(_ url: URL) throws -> (count: Int, digest: String) {
+    let identity = FileIdentity(url)
+    if let identity, let known = knownAttachments[url.path], known.identity == identity {
+      return (known.count, known.digest)
+    }
+    let fingerprint = try VideoUploadCheckpointStore.fingerprint(url)
+    // Remembered only if nothing rewrote the file while it was hashed.
+    if let identity, FileIdentity(url) == identity {
+      knownAttachments[url.path] = KnownAttachment(identity: identity, count: fingerprint.count, digest: fingerprint.digest)
+    }
+    return fingerprint
+  }
+
+  /// A copy this process made or verified, if it is still the same file.
+  private func knownCopy(prefix: String) -> SanitizedVideo? {
+    guard let known = knownCopies[prefix] else { return nil }
+    guard FileIdentity(known.copy.url) == known.identity else {
+      knownCopies[prefix] = nil
+      return nil
+    }
+    return known.copy
+  }
+
+  private func remember(_ copy: SanitizedVideo, prefix: String) {
+    guard let identity = FileIdentity(copy.url) else { return }
+    knownCopies[prefix] = KnownCopy(identity: identity, copy: copy)
+  }
+
   // MARK: - Cached Copies
 
   private struct CachedCopy {
@@ -193,22 +296,44 @@ actor VideoUploadSanitizer {
   }
 
   /// A cached copy whose bytes still match the digest in its name and that still reads back
-  /// clean. Anything else is deleted so the copy is made again.
+  /// clean. A copy that is not is deleted so it is made again; the remux is deterministic, so the
+  /// new copy has the same bytes and name. A copy that could not be read at all (for example
+  /// while the device is locked) is kept, and the attempt fails so it can be retried.
   private func reusableCopy(prefix: String, format: OutputFormat) async throws -> SanitizedVideo? {
     for cached in try cachedCopies(prefix: prefix, format: format) {
+      let current: (count: Int, digest: String)
       do {
-        let current = try VideoUploadCheckpointStore.fingerprint(cached.url)
-        guard current.digest == cached.digest else { throw VideoUploadFileError.snapshotChanged }
+        current = try VideoUploadCheckpointStore.fingerprint(cached.url)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch is VideoUploadFileError {
+        // Empty, not a regular file, or changing while read: not a copy this sanitizer left.
+        discard(cached)
+        continue
+      } catch {
+        Self.logger.error("Couldn’t read cached upload copy: \((error as NSError).domain, privacy: .public) \((error as NSError).code)")
+        throw VideoUploadSanitizationError.exportFailed
+      }
+      guard current.digest == cached.digest else {
+        discard(cached)
+        continue
+      }
+      do {
         try await Self.verifyContainsOnlySamples(cached.url)
-        return SanitizedVideo(url: cached.url, mimeType: format.mimeType, byteCount: current.count)
       } catch is CancellationError {
         throw CancellationError()
       } catch {
-        Self.logger.error("Discarding cached upload copy that no longer reads back clean")
-        try? fileManager.removeItem(at: cached.url)
+        discard(cached)
+        continue
       }
+      return SanitizedVideo(url: cached.url, mimeType: format.mimeType, byteCount: current.count)
     }
     return nil
+  }
+
+  private func discard(_ cached: CachedCopy) {
+    Self.logger.error("Discarding cached upload copy that no longer reads back clean")
+    try? fileManager.removeItem(at: cached.url)
   }
 
   /// A copy moved into place by another attempt while this one was exporting. It was verified
@@ -223,7 +348,7 @@ actor VideoUploadSanitizer {
     return nil
   }
 
-  // MARK: - Remux
+  // MARK: - Output Format
 
   private struct OutputFormat {
     let fileType: AVFileType
@@ -242,136 +367,17 @@ actor VideoUploadSanitizer {
       }
     }
   }
-
-  private struct TrackSignature: Hashable, Comparable {
-    let mediaType: String
-    let isEnabled: Bool
-
-    static func < (lhs: Self, rhs: Self) -> Bool {
-      (lhs.mediaType, lhs.isEnabled ? 1 : 0) < (rhs.mediaType, rhs.isEnabled ? 1 : 0)
-    }
-  }
-
-  private struct RemuxResult {
-    let kept: [TrackSignature]
-    let dropped: Int
-  }
-
-  /// Copies only the audio and video tracks into a composition and exports it without
-  /// re-encoding. The composition carries no metadata of its own.
-  private static func remux(_ sourceURL: URL, to outputURL: URL, fileType: AVFileType) async throws -> RemuxResult {
-    let composition = AVMutableComposition()
-    let result = try await copyTracks(of: AVURLAsset(
-      url: sourceURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true]
-    ), into: composition)
-    guard result.kept.contains(where: { $0.mediaType == AVMediaType.video.rawValue }) else {
-      throw VideoUploadSanitizationError.unreadable
-    }
-    guard await AVAssetExportSession.compatibility(
-      ofExportPreset: AVAssetExportPresetPassthrough, with: composition, outputFileType: fileType
-    ), let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)
-    else { throw VideoUploadSanitizationError.unreadable }
-    session.metadata = []
-    // Defense in depth: the composition carries no metadata, and `.forSharing()` alone would
-    // keep copyright and commercial items and timed metadata tracks.
-    session.metadataItemFilter = .forSharing()
-    do {
-      try await session.export(to: outputURL, as: fileType)
-    } catch {
-      try Task.checkCancellation()
-      let nsError = error as NSError
-      logger.error("Passthrough export failed: \(nsError.domain, privacy: .public) \(nsError.code)")
-      throw exportFailure(error)
-    }
-    return result
-  }
-
-  private static func copyTracks(of asset: AVURLAsset, into composition: AVMutableComposition) async throws -> RemuxResult {
-    var kept: [TrackSignature] = []
-    var dropped = 0
-    do {
-      for track in try await asset.load(.tracks) {
-        // Timed metadata (still-image time, detected faces, timed location), text, subtitles,
-        // closed captions, timecode, haptics and depth are dropped. Captions are uploaded
-        // separately as WebVTT.
-        guard track.mediaType == .video || track.mediaType == .audio else {
-          dropped += 1
-          continue
-        }
-        let (timeRange, transform, isEnabled) = try await track.load(.timeRange, .preferredTransform, .isEnabled)
-        let (languageCode, extendedLanguageTag, naturalTimeScale, preferredVolume) = try await track.load(
-          .languageCode, .extendedLanguageTag, .naturalTimeScale, .preferredVolume
-        )
-        guard timeRange.duration.isNumeric, timeRange.duration > .zero else {
-          dropped += 1
-          continue
-        }
-        guard let copy = composition.addMutableTrack(
-          withMediaType: track.mediaType, preferredTrackID: kCMPersistentTrackID_Invalid
-        ) else { throw VideoUploadSanitizationError.unreadable }
-        try copy.insertTimeRange(timeRange, of: track, at: timeRange.start)
-        // Track metadata is never copied; composition tracks have none.
-        copy.preferredTransform = transform
-        copy.isEnabled = isEnabled
-        copy.languageCode = languageCode
-        copy.extendedLanguageTag = extendedLanguageTag
-        copy.naturalTimeScale = naturalTimeScale
-        copy.preferredVolume = preferredVolume
-        kept.append(TrackSignature(mediaType: track.mediaType.rawValue, isEnabled: isEnabled))
-      }
-    } catch let error as VideoUploadSanitizationError {
-      throw error
-    } catch {
-      try Task.checkCancellation()
-      throw VideoUploadSanitizationError.unreadable
-    }
-    return RemuxResult(kept: kept, dropped: dropped)
-  }
-
-  private static func trackSignatures(of url: URL) async throws -> [TrackSignature] {
-    do {
-      var signatures: [TrackSignature] = []
-      for track in try await AVURLAsset(url: url).load(.tracks) {
-        signatures.append(TrackSignature(mediaType: track.mediaType.rawValue, isEnabled: try await track.load(.isEnabled)))
-      }
-      return signatures
-    } catch {
-      try Task.checkCancellation()
-      throw VideoUploadSanitizationError.unreadable
-    }
-  }
 }
 
-// MARK: - Multipart Upload
+// MARK: - Upload Copies
 
-extension VideoMultipartUpload {
-  /// Uploads the metadata-free copy of the attachment; the attachment's own bytes are never read
-  /// by the transport. A retry finds the same copy, so the saved session resumes.
-  func run(
-    attachmentURL: URL,
-    sanitizer: VideoUploadSanitizer,
-    owner: VideoUploadOwner,
-    durationMilliseconds: Int? = nil,
-    allowNewSessionAfterTerminal: Bool = false,
-    progress: @escaping @Sendable (VideoMultipartProgress) async -> Void,
-    isOwnerCurrent: @escaping @Sendable () async -> Bool,
-    canAuthorizeCleanup: (@Sendable () async -> Bool)? = nil,
-    authorizeNewSession: @Sendable () async throws -> Void = {}
-  ) async throws -> Blob {
-    try Task.checkCancellation()
-    // A removed attachment or switched account never starts a full-file remux.
-    guard await isOwnerCurrent() else { throw VideoMultipartError.ownerChanged }
-    await progress(.init(phase: .preparing, fraction: 0))
-    let copy = try await sanitizer.sanitizedCopy(of: attachmentURL)
+extension VideoUploadSanitizer: VideoUploadCopyMaking {
+  /// The metadata-free copy the multipart engine uploads in place of the attachment.
+  func uploadCopy(of attachmentURL: URL) async throws -> VideoUploadCopy {
+    let copy = try await sanitizedCopy(of: attachmentURL)
     guard Int64(copy.byteCount) <= VideoUploadPolicy.maximumBytes else {
       throw VideoUploadSanitizationError.tooLarge
     }
-    return try await run(
-      sourceURL: copy.url, owner: owner, mimeType: copy.mimeType,
-      durationMilliseconds: durationMilliseconds,
-      allowNewSessionAfterTerminal: allowNewSessionAfterTerminal,
-      progress: progress, isOwnerCurrent: isOwnerCurrent,
-      canAuthorizeCleanup: canAuthorizeCleanup, authorizeNewSession: authorizeNewSession
-    )
+    return VideoUploadCopy(url: copy.url, mimeType: copy.mimeType)
   }
 }

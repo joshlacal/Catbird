@@ -1,6 +1,7 @@
 import AVFoundation
 import CryptoKit
 import Foundation
+import os
 import Petrel
 import Testing
 @testable import Catbird
@@ -9,12 +10,13 @@ import Testing
 struct VideoUploadSanitizerTests {
   typealias Fixture = VideoMetadataFixture
   typealias Container = VideoMetadataFixture.Container
+  typealias Codec = VideoMetadataFixture.Codec
 
   // MARK: - Positive Controls
 
-  @Test("The fixture carries identifying metadata at every level", arguments: Container.allCases)
-  func fixtureCarriesMetadataAtEveryLevel(container: Container) async throws {
-    let fixture = try await Fixture.make(container)
+  @Test("The fixture carries identifying metadata at every level", arguments: Container.allCases, Codec.allCases)
+  func fixtureCarriesMetadataAtEveryLevel(container: Container, codec: Codec) async throws {
+    let fixture = try await Fixture.make(container, codec: codec)
     let bytes = try Data(contentsOf: fixture)
     for marker in Fixture.markers(for: container) {
       #expect(bytes.range(of: Data(marker.utf8)) != nil, "fixture bytes hold \(marker)")
@@ -25,6 +27,15 @@ struct VideoUploadSanitizerTests {
     #expect(try await asset.load(.creationDate) != nil)
     let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
     #expect(try await !video.load(.metadata).isEmpty)
+    let description = try #require(try await video.load(.formatDescriptions).first)
+    #expect(CMFormatDescriptionGetMediaSubType(description) == codec.mediaSubType)
+    // AVFoundation reads the encoder name, so a passthrough export writes it again.
+    let name = CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_FormatName)
+    #expect(name as? String == Fixture.compressorName)
+    if codec == .hevcHLG {
+      let transfer = CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_TransferFunction)
+      #expect(transfer as? String == kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG as String)
+    }
     if container == .quickTime {
       #expect(try await !asset.loadTracks(withMediaType: .metadata).isEmpty)
     }
@@ -33,9 +44,9 @@ struct VideoUploadSanitizerTests {
 
   // MARK: - Uploaded Bytes
 
-  @Test("The bytes sent to the video service carry no identifying metadata", arguments: Container.allCases)
-  func uploadedPartsCarryNoIdentifyingMetadata(container: Container) async throws {
-    let fixture = try await Fixture.make(container)
+  @Test("The bytes sent to the video service carry no identifying metadata", arguments: Container.allCases, Codec.allCases)
+  func uploadedPartsCarryNoIdentifyingMetadata(container: Container, codec: Codec) async throws {
+    let fixture = try await Fixture.make(container, codec: codec)
     let original = try digest(of: fixture)
     let upload = try await uploadThroughComposerRoute(fixture)
     let uploaded = upload.bytes
@@ -72,15 +83,15 @@ struct VideoUploadSanitizerTests {
 
   // MARK: - Remux
 
-  @Test("The copy is a passthrough remux of the audio and video samples", arguments: Container.allCases)
-  func copyIsAPassthroughRemux(container: Container) async throws {
-    let fixture = try await Fixture.make(container)
+  @Test("The copy is a passthrough remux of the audio and video samples", arguments: Container.allCases, Codec.allCases)
+  func copyIsAPassthroughRemux(container: Container, codec: Codec) async throws {
+    let fixture = try await Fixture.make(container, codec: codec)
     let copy = try await sanitizer(for: fixture).sanitizedCopy(of: fixture)
     #expect(copy.mimeType == container.mimeType)
     #expect(copy.url.pathExtension == container.pathExtension)
     let source = AVURLAsset(url: fixture)
     let result = AVURLAsset(url: copy.url)
-    try await expectSameVideo(source, result)
+    try await expectSameVideo(source, result, codec: codec)
     try await expectSameAudio(source, result)
     let duration = try await result.load(.duration).seconds
     let sourceDuration = try await source.load(.duration).seconds
@@ -88,7 +99,7 @@ struct VideoUploadSanitizerTests {
     #expect(try await result.loadTracks(withMediaType: .metadata).isEmpty)
   }
 
-  private func expectSameVideo(_ source: AVURLAsset, _ result: AVURLAsset) async throws {
+  private func expectSameVideo(_ source: AVURLAsset, _ result: AVURLAsset, codec: Codec) async throws {
     let sourceVideo = try #require(try await source.loadTracks(withMediaType: .video).first)
     let videos = try await result.loadTracks(withMediaType: .video)
     #expect(videos.count == 1)
@@ -100,9 +111,15 @@ struct VideoUploadSanitizerTests {
     let size = try await video.load(.naturalSize)
     let sourceSize = try await sourceVideo.load(.naturalSize)
     #expect(size == sourceSize)
-    let subType = try await mediaSubType(video)
-    let sourceSubType = try await mediaSubType(sourceVideo)
-    #expect(subType == sourceSubType)
+    let description = try #require(try await video.load(.formatDescriptions).first)
+    let sourceDescription = try #require(try await sourceVideo.load(.formatDescriptions).first)
+    #expect(CMFormatDescriptionGetMediaSubType(description) == codec.mediaSubType)
+    // HDR video keeps the colour tagging that tells players how to show it.
+    for key in [kCMFormatDescriptionExtension_ColorPrimaries, kCMFormatDescriptionExtension_TransferFunction,
+                kCMFormatDescriptionExtension_YCbCrMatrix] {
+      let copied = CMFormatDescriptionGetExtension(description, extensionKey: key) as? String
+      #expect(copied == CMFormatDescriptionGetExtension(sourceDescription, extensionKey: key) as? String, "\(key)")
+    }
     let sourceSamples = try await compressedSamples(of: sourceVideo, in: source)
     let copiedSamples = try await compressedSamples(of: video, in: result)
     #expect(sourceSamples.count == Fixture.frameCount)
@@ -129,6 +146,25 @@ struct VideoUploadSanitizerTests {
     #expect(abs(duration - sourceDuration) <= 0.05)
   }
 
+  @Test("A rotation written only in the movie header survives", arguments: Container.allCases)
+  func movieHeaderRotationSurvives(container: Container) async throws {
+    let fixture = try await Fixture.make(container, rotationPlacement: .movieHeader)
+    let source = AVURLAsset(url: fixture)
+    let sourceVideo = try #require(try await source.loadTracks(withMediaType: .video).first)
+    #expect(try await sourceVideo.load(.preferredTransform) == .identity, "fixture: the track header has no rotation")
+    let expected = try await displayTransform(of: source)
+    #expect(expected != .identity, "fixture: the movie header rotates the picture")
+    let copy = try await sanitizer(for: fixture).sanitizedCopy(of: fixture)
+    #expect(try await displayTransform(of: AVURLAsset(url: copy.url)) == expected)
+  }
+
+  /// What a player applies to the video track: its own transform, then the movie's.
+  private func displayTransform(of asset: AVURLAsset) async throws -> CGAffineTransform {
+    let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+    let track = try await video.load(.preferredTransform)
+    return track.concatenating(try await asset.load(.preferredTransform))
+  }
+
   @Test("A disabled fallback audio track survives, still disabled", arguments: Container.allCases)
   func disabledFallbackAudioSurvives(container: Container) async throws {
     let fixture = try await Fixture.make(container, disabledFallbackAudio: true)
@@ -140,11 +176,35 @@ struct VideoUploadSanitizerTests {
     #expect(enabled == [true, false])
   }
 
+  @Test("A copy missing a track, or with a track's enabled flag changed, is refused")
+  func lostTracksAreRefused() {
+    typealias Track = VideoUploadSanitizer.TrackSignature
+    let video = Track(mediaType: AVMediaType.video.rawValue, isEnabled: true)
+    let audio = Track(mediaType: AVMediaType.audio.rawValue, isEnabled: true)
+    let fallback = Track(mediaType: AVMediaType.audio.rawValue, isEnabled: false)
+    #expect(VideoUploadSanitizer.keepsEveryTrack(inserted: [video, audio, fallback], written: [fallback, video, audio]))
+    #expect(!VideoUploadSanitizer.keepsEveryTrack(inserted: [video, audio, fallback], written: [video, audio]))
+    #expect(!VideoUploadSanitizer.keepsEveryTrack(inserted: [video, fallback], written: [video, audio]))
+    #expect(!VideoUploadSanitizer.keepsEveryTrack(inserted: [video, audio], written: [video, audio, audio]))
+  }
+
+  /// Regression guard for resuming after a copy is made again: a saved session is matched by
+  /// the copy's SHA-256.
+  @Test("Making a copy again gives identical bytes", arguments: Codec.allCases)
+  func remadeCopyIsIdentical(codec: Codec) async throws {
+    let fixture = try await Fixture.make(.quickTime, codec: codec)
+    let folder = fixture.deletingLastPathComponent()
+    let first = try await VideoUploadSanitizer(rootURL: folder.appendingPathComponent("copies-a")).sanitizedCopy(of: fixture)
+    let second = try await VideoUploadSanitizer(rootURL: folder.appendingPathComponent("copies-b")).sanitizedCopy(of: fixture)
+    #expect(first.url.lastPathComponent == second.url.lastPathComponent)
+    #expect(try Data(contentsOf: first.url) == Data(contentsOf: second.url))
+  }
+
   // MARK: - Read-Back Gate
 
-  @Test("The read-back gate rejects the dirty fixture and passes its copy", arguments: Container.allCases)
-  func readBackRejectsMetadata(container: Container) async throws {
-    let fixture = try await Fixture.make(container)
+  @Test("The read-back gate rejects the dirty fixture and passes its copy", arguments: Container.allCases, Codec.allCases)
+  func readBackRejectsMetadata(container: Container, codec: Codec) async throws {
+    let fixture = try await Fixture.make(container, codec: codec)
     await #expect(throws: VideoUploadSanitizationError.metadataRemained) {
       try await VideoUploadSanitizer.verifyContainsOnlySamples(fixture)
     }
@@ -162,6 +222,22 @@ struct VideoUploadSanitizerTests {
     let asset = AVURLAsset(url: tampered)
     #expect(try await asset.load(.isPlayable))
     #expect(try await asset.load(.metadata).isEmpty, "AVFoundation does not report the uuid or free box")
+    await #expect(throws: VideoUploadSanitizationError.metadataRemained) {
+      try await VideoUploadSanitizer.verifyContainsOnlySamples(tampered)
+    }
+  }
+
+  @Test("The read-back gate rejects sample descriptions that name a vendor or encoder")
+  func readBackRejectsNamedSampleDescriptions() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let copy = try await sanitizer(for: fixture).sanitizedCopy(of: fixture)
+    let tampered = fixture.deletingLastPathComponent().appendingPathComponent("named.mov")
+    var bytes = try Data(contentsOf: copy.url)
+    try Fixture.nameSampleDescriptions(&bytes)
+    try bytes.write(to: tampered)
+    let asset = AVURLAsset(url: tampered)
+    #expect(try await asset.load(.isPlayable))
+    #expect(try await asset.load(.metadata).isEmpty, "AVFoundation reports no metadata item for them")
     await #expect(throws: VideoUploadSanitizationError.metadataRemained) {
       try await VideoUploadSanitizer.verifyContainsOnlySamples(tampered)
     }
@@ -203,6 +279,29 @@ struct VideoUploadSanitizerTests {
     #expect(await transport.uploaded() == (try Data(contentsOf: firstCopy.url)))
   }
 
+  @Test("A retry in the same session hashes and verifies neither file again")
+  func retryReadsNeitherFileAgain() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let copies = fixture.deletingLastPathComponent().appendingPathComponent("copies")
+    let sanitizer = try VideoUploadSanitizer(rootURL: copies)
+    let copy = try await sanitizer.sanitizedCopy(of: fixture)
+    // Neither file can be read now; a retry only checks that both are the same files.
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fixture.path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: copy.url.path)
+    #expect(try await sanitizer.sanitizedCopy(of: fixture) == copy)
+    await #expect(throws: (any Error).self, "a new process hashes the attachment again") {
+      _ = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    }
+
+    // Rewritten attachment bytes are hashed again and get their own copy.
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: copy.url.path)
+    try Data(contentsOf: try await Fixture.make(.quickTime, seed: 0x80)).write(to: fixture)
+    let rewritten = try await sanitizer.sanitizedCopy(of: fixture)
+    #expect(rewritten.url != copy.url)
+    #expect(try copyFiles(in: copies).count == 2)
+  }
+
   /// Regression guard: changed attachment bytes never reuse another attachment's copy.
   @Test("Changed attachment bytes get a new copy")
   func changedBytesGetANewCopy() async throws {
@@ -215,15 +314,26 @@ struct VideoUploadSanitizerTests {
     #expect(try digest(of: firstCopy.url) != digest(of: secondCopy.url))
   }
 
-  @Test("Concurrent requests for the same bytes share one copy")
+  @Test("Two requests for the same bytes that both export share one copy")
   func concurrentCopiesShareOneFile() async throws {
-    let fixture = try await Fixture.make(.mpeg4)
-    let sanitizer = try sanitizer(for: fixture)
-    async let first = sanitizer.sanitizedCopy(of: fixture)
-    async let second = sanitizer.sanitizedCopy(of: fixture)
-    let (a, b) = try await (first, second)
-    #expect(a == b)
-    #expect(try copyFiles(in: fixture.deletingLastPathComponent().appendingPathComponent("copies")).count == 1)
+    let fixture = try await Fixture.make(.mpeg4, frames: 300)
+    let copies = fixture.deletingLastPathComponent().appendingPathComponent("copies")
+    let race = ExportRace()
+    let sanitizer = try VideoUploadSanitizer(rootURL: copies, availableCapacity: { _ in
+      race.exportStarting()
+      return nil
+    })
+    // The second request is queued on the sanitizer before the first starts exporting, so it
+    // runs while the first exports, finds no copy and exports too; the rename race decides
+    // which file both get.
+    race.startSecond { Task { try await sanitizer.sanitizedCopy(of: fixture) } }
+    let first = try await sanitizer.sanitizedCopy(of: fixture)
+    let secondRequest = try #require(race.second)
+    let second = try await secondRequest.value
+    #expect(race.exports == 2, "both requests exported")
+    #expect(first == second)
+    #expect(try copyFiles(in: copies).count == 1)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: copies.appendingPathComponent("Partial").path).isEmpty)
   }
 
   @Test("A cached copy that gained metadata is discarded and made again")
@@ -262,6 +372,46 @@ struct VideoUploadSanitizerTests {
     #expect(remade.url.lastPathComponent.hasSuffix("-\(try digest(of: remade.url)).mp4"), "name records the bytes")
     try await VideoUploadSanitizer.verifyContainsOnlySamples(remade.url)
     #expect(try copyFiles(in: copies).count == 1)
+  }
+
+  @Test("A cached copy that can't be read right now is kept, and a retry uses it")
+  func unreadableCachedCopyIsKept() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let copies = fixture.deletingLastPathComponent().appendingPathComponent("copies")
+    let copy = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    // Like a protected file while the device is locked: there, but not readable.
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: copy.url.path)
+    await #expect(throws: VideoUploadSanitizationError.exportFailed) {
+      _ = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    }
+    #expect(FileManager.default.fileExists(atPath: copy.url.path), "the copy is not deleted")
+    try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: copy.url.path)
+    #expect(try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture) == copy)
+  }
+
+  @Test("Copies made under another format version are deleted when a sanitizer starts")
+  func copiesFromOtherFormatVersionsAreDeleted() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let copies = fixture.deletingLastPathComponent().appendingPathComponent("copies")
+    let current = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    let hex = String(repeating: "ab", count: 32)
+    let older = copies.appendingPathComponent("\(hex)-v\(VideoUploadSanitizer.formatVersion - 1)-\(hex).mov")
+    let unrelated = copies.appendingPathComponent("unrelated.mov")
+    try Data("older rule".utf8).write(to: older)
+    try Data("not a copy".utf8).write(to: unrelated)
+    _ = try VideoUploadSanitizer(rootURL: copies)
+    #expect(!FileManager.default.fileExists(atPath: older.path))
+    #expect(FileManager.default.fileExists(atPath: current.url.path))
+    #expect(FileManager.default.fileExists(atPath: unrelated.path))
+  }
+
+  @Test("Copies are kept out of device backups")
+  func copiesAreExcludedFromBackup() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("video-copies-\(UUID().uuidString)")
+    _ = try VideoUploadSanitizer(rootURL: root)
+    var reread = root
+    reread.removeAllCachedResourceValues()
+    #expect(try reread.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
   }
 
   // MARK: - Failures Send Nothing
@@ -310,7 +460,21 @@ struct VideoUploadSanitizerTests {
     #expect(!VideoUploadSanitizer.hasRoom(forCopyOf: 11, available: 10 + VideoUploadSanitizer.exportHeadroomBytes))
   }
 
-  @Test("Cancelling while the copy is being made leaves no partial or cached file")
+  @Test("An export still running at its time limit fails, sends nothing and leaves no file")
+  func exportPastItsTimeLimitFails() async throws {
+    let fixture = try await Fixture.make(.quickTime, frames: 300)
+    let folder = fixture.deletingLastPathComponent()
+    let transport = try Self.recordingTransport()
+    let store = try VideoUploadCheckpointStore(rootURL: folder.appendingPathComponent("checkpoints"))
+    // The time limit is already up when the export starts.
+    let sanitizer = try VideoUploadSanitizer(rootURL: folder.appendingPathComponent("copies"), exportDeadline: {})
+    await #expect(throws: VideoUploadSanitizationError.exportFailed) {
+      _ = try await self.upload(fixture, transport: transport, sanitizer: sanitizer, store: store)
+    }
+    try await expectNothingSent(transport: transport, store: store, folder: folder)
+  }
+
+  @Test("Cancelling before the export starts leaves no partial or cached file")
   func cancellingWhilePreparingLeavesNoCopy() async throws {
     let fixture = try await Fixture.make(.quickTime)
     let folder = fixture.deletingLastPathComponent()
@@ -325,6 +489,32 @@ struct VideoUploadSanitizerTests {
     let attempt = Task { try await self.upload(fixture, transport: transport, sanitizer: sanitizer, store: store) }
     await #expect(throws: CancellationError.self) { _ = try await attempt.value }
     try await expectNothingSent(transport: transport, store: store, folder: folder)
+    #expect(try digest(of: fixture) == original)
+  }
+
+  @Test("Cancelling while the partial copy is being written leaves no partial or cached file")
+  func cancellingDuringExportLeavesNoCopy() async throws {
+    let fixture = try await Fixture.make(.quickTime, frames: 600)
+    let folder = fixture.deletingLastPathComponent()
+    let original = try digest(of: fixture)
+    var cancelledWhileWriting = 0
+    // The watcher cancels as soon as the export's partial file appears; an attempt whose copy
+    // finished first does not count, so try a few times.
+    for attempt in 1...5 where cancelledWhileWriting == 0 {
+      let copies = folder.appendingPathComponent("copies-\(attempt)")
+      let sanitizer = try VideoUploadSanitizer(rootURL: copies)
+      let partial = copies.appendingPathComponent("Partial")
+      let preparing = Task { try await sanitizer.sanitizedCopy(of: fixture) }
+      let watcher = FirstEntryWatcher(directory: partial) { preparing.cancel() }
+      let result = await preparing.result
+      let sawPartial = watcher.stop()
+      #expect(try FileManager.default.contentsOfDirectory(atPath: partial.path).isEmpty, "attempt \(attempt) left a partial file")
+      guard case .failure(let error) = result else { continue }
+      #expect(error is CancellationError, "attempt \(attempt) failed with \(error)")
+      #expect(try copyFiles(in: copies).isEmpty, "attempt \(attempt) left a copy")
+      if sawPartial { cancelledWhileWriting += 1 }
+    }
+    #expect(cancelledWhileWriting == 1, "a cancellation landed while the partial copy was on disk")
     #expect(try digest(of: fixture) == original)
   }
 
@@ -436,6 +626,13 @@ struct VideoUploadSanitizerTests {
       for format in try await track.load(.availableMetadataFormats) {
         #expect(try await track.loadMetadata(for: format).isEmpty, "track \(format.rawValue)")
       }
+      for description in try await track.load(.formatDescriptions) {
+        let name = CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_FormatName)
+        let vendor = CMFormatDescriptionGetExtension(description, extensionKey: kCMFormatDescriptionExtension_Vendor)
+        // With the compressor name cleared, AVFoundation reports the codec's four-character code.
+        #expect(name as? String != Fixture.compressorName, "track \(track.mediaType.rawValue) encoder name")
+        #expect(vendor == nil, "track \(track.mediaType.rawValue) vendor")
+      }
     }
     return url
   }
@@ -459,11 +656,6 @@ struct VideoUploadSanitizerTests {
     return samples
   }
 
-  private func mediaSubType(_ track: AVAssetTrack) async throws -> FourCharCode {
-    let description = try #require(try await track.load(.formatDescriptions).first)
-    return CMFormatDescriptionGetMediaSubType(description)
-  }
-
   private func audioFormat(_ track: AVAssetTrack) async throws -> AudioStreamBasicDescription {
     let description = try #require(try await track.load(.formatDescriptions).first)
     return try #require(CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee)
@@ -471,5 +663,67 @@ struct VideoUploadSanitizerTests {
 
   private func digest(of url: URL) throws -> String {
     SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+// MARK: - Concurrency Helpers
+
+/// Starts a second request for the same attachment the moment the first is about to export, and
+/// counts how many requests got that far. The sanitizer calls `exportStarting` through its
+/// free-space check, which runs on the sanitizer right before each export.
+final class ExportRace: Sendable {
+  private struct State: Sendable {
+    var exports = 0
+    var makeSecond: (@Sendable () -> Task<SanitizedVideo, any Error>)?
+    var second: Task<SanitizedVideo, any Error>?
+  }
+  private let state = OSAllocatedUnfairLock(initialState: State())
+
+  var exports: Int { state.withLock { $0.exports } }
+  var second: Task<SanitizedVideo, any Error>? { state.withLock { $0.second } }
+
+  func startSecond(_ make: @escaping @Sendable () -> Task<SanitizedVideo, any Error>) {
+    state.withLock { $0.makeSecond = make }
+  }
+
+  func exportStarting() {
+    let make = state.withLock { state -> (@Sendable () -> Task<SanitizedVideo, any Error>)? in
+      state.exports += 1
+      return state.exports == 1 ? state.makeSecond : nil
+    }
+    guard let make else { return }
+    let task = make()
+    state.withLock { $0.second = task }
+  }
+}
+
+/// Watches a directory from its own thread and calls `onFirstEntry` as soon as anything is in it.
+final class FirstEntryWatcher: Sendable {
+  private struct State: Sendable {
+    var stopped = false
+    var sawEntry = false
+  }
+  private let state = OSAllocatedUnfairLock(initialState: State())
+
+  init(directory: URL, onFirstEntry: @escaping @Sendable () -> Void) {
+    let state = self.state
+    Thread {
+      while !state.withLock({ $0.stopped }) {
+        if let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path), !entries.isEmpty {
+          state.withLock { $0.sawEntry = true }
+          onFirstEntry()
+          return
+        }
+        usleep(100)
+      }
+    }.start()
+  }
+
+  /// Stops watching and says whether an entry was seen.
+  func stop() -> Bool {
+    state.withLock { state in
+      state.stopped = true
+      return state.sawEntry
+    }
   }
 }

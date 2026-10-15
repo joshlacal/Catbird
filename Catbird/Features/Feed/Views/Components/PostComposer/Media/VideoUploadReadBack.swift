@@ -9,7 +9,9 @@ extension VideoUploadSanitizer {
   ///
   /// Checks what AVFoundation reports (asset, common and per-format metadata, creation date, and
   /// the same for every track) and walks the boxes themselves, which also catches boxes
-  /// AVFoundation does not report (`uuid`/XMP, unknown `meta`, non-empty `free` padding).
+  /// AVFoundation does not report (`uuid`/XMP, unknown `meta`, non-empty `free` padding) and
+  /// sample-description vendor and compressor names. The log names what was found, never a
+  /// value, so a rule a new OS trips can be recognized from the field.
   static func verifyContainsOnlySamples(_ url: URL) async throws {
     let hasVideo: Bool
     do {
@@ -21,31 +23,47 @@ extension VideoUploadSanitizer {
       throw VideoUploadSanitizationError.unreadable
     }
     guard hasVideo else { throw VideoUploadSanitizationError.unreadable }
-    guard try VideoUploadCopyStructure.holdsOnlySampleBoxes(url) else {
-      throw VideoUploadSanitizationError.metadataRemained
+    if let finding = try VideoUploadCopyStructure.firstUnexpectedContent(in: url) {
+      throw rejected(finding)
     }
   }
 
   /// Throws `.metadataRemained` if AVFoundation reports any metadata or a non-audio/video track;
   /// returns whether there is a video track.
   private static func reportsOnlySamples(_ asset: AVURLAsset) async throws -> Bool {
-    guard try await asset.load(.metadata).isEmpty, try await asset.load(.commonMetadata).isEmpty,
-      try await asset.load(.creationDate) == nil
-    else { throw VideoUploadSanitizationError.metadataRemained }
-    for format in try await asset.load(.availableMetadataFormats) {
-      guard try await asset.loadMetadata(for: format).isEmpty else { throw VideoUploadSanitizationError.metadataRemained }
-    }
+    try await rejectReportedItems(of: asset)
     var hasVideo = false
     for track in try await asset.load(.tracks) {
-      guard track.mediaType == .video || track.mediaType == .audio,
-        try await track.load(.metadata).isEmpty, try await track.load(.commonMetadata).isEmpty
-      else { throw VideoUploadSanitizationError.metadataRemained }
-      for format in try await track.load(.availableMetadataFormats) {
-        guard try await track.loadMetadata(for: format).isEmpty else { throw VideoUploadSanitizationError.metadataRemained }
+      guard track.mediaType == .video || track.mediaType == .audio else {
+        throw rejected("\(track.mediaType.rawValue) track")
       }
+      try await rejectReportedItems(of: track)
       hasVideo = hasVideo || track.mediaType == .video
     }
     return hasVideo
+  }
+
+  private static func rejectReportedItems(of asset: AVURLAsset) async throws {
+    if let item = try await asset.load(.metadata).first { throw rejected("asset item", item) }
+    if let item = try await asset.load(.commonMetadata).first { throw rejected("asset common item", item) }
+    if try await asset.load(.creationDate) != nil { throw rejected("asset creation date") }
+    for format in try await asset.load(.availableMetadataFormats) {
+      if let item = try await asset.loadMetadata(for: format).first { throw rejected("asset \(format.rawValue) item", item) }
+    }
+  }
+
+  private static func rejectReportedItems(of track: AVAssetTrack) async throws {
+    if let item = try await track.load(.metadata).first { throw rejected("track item", item) }
+    if let item = try await track.load(.commonMetadata).first { throw rejected("track common item", item) }
+    for format in try await track.load(.availableMetadataFormats) {
+      if let item = try await track.loadMetadata(for: format).first { throw rejected("track \(format.rawValue) item", item) }
+    }
+  }
+
+  private static func rejected(_ finding: String, _ item: AVMetadataItem? = nil) -> VideoUploadSanitizationError {
+    let key = item.map { " \($0.identifier?.rawValue ?? "unidentified")" } ?? ""
+    logger.error("Upload copy read-back found \(finding, privacy: .public)\(key, privacy: .public)")
+    return .metadataRemained
   }
 }
 
@@ -88,6 +106,11 @@ enum ContainerBoxReader {
       offset += box.size
     }
     return boxes
+  }
+
+  /// The first child of `container` with `type`.
+  static func child(_ type: String, of container: ContainerBox, in data: Data) -> ContainerBox? {
+    boxes(in: data, range: container.payloadRange)?.first { $0.type == type }
   }
 
   /// Top-level boxes of the file, read header by header so sample data is never loaded. Nil when
@@ -146,6 +169,44 @@ enum ContainerBoxReader {
     return collect(in: movie.payloadRange) ? fields : nil
   }
 
+  /// Byte ranges, relative to `movie.data`, of the vendor of every audio and video sample
+  /// description and the compressor name of every video one. Cameras name themselves there
+  /// ("GoPro AVC encoder", "DJI.AVC"), and a passthrough export copies both from the source. Nil
+  /// when the boxes are malformed.
+  static func sampleDescriptionFields(in movie: ContainerMovieBox) -> [Range<Int>]? {
+    let data = movie.data
+    guard let tracks = boxes(in: data, range: movie.payloadRange) else { return nil }
+    var fields: [Range<Int>] = []
+    for track in tracks where track.type == "trak" {
+      guard let media = child("mdia", of: track, in: data), let handler = child("hdlr", of: media, in: data),
+        handler.payloadRange.count >= 12
+      else { return nil }
+      // Version and flags, then the component type, then the handler type.
+      let handlerStart = handler.payloadRange.lowerBound + 8
+      let handlerType = String(bytes: data[handlerStart..<(handlerStart + 4)], encoding: .isoLatin1)
+      // Only audio and video tracks reach a copy, and their descriptions are laid out by type.
+      guard handlerType == "vide" || handlerType == "soun" else { continue }
+      let isVideo = handlerType == "vide"
+      guard let information = child("minf", of: media, in: data),
+        let table = child("stbl", of: information, in: data),
+        let descriptions = child("stsd", of: table, in: data), descriptions.payloadRange.count >= 8,
+        let entries = boxes(
+          in: data, range: (descriptions.payloadRange.lowerBound + 8)..<descriptions.payloadRange.upperBound
+        )
+      else { return nil }
+      for entry in entries {
+        // Reserved bytes, the data reference index, version and revision come before the vendor.
+        // A video description's 32-byte compressor name follows its dimensions, resolution, data
+        // size and frame count.
+        let start = entry.payloadRange.lowerBound
+        guard entry.payloadRange.count >= (isVideo ? 74 : 16) else { return nil }
+        fields.append((start + 12)..<(start + 16))
+        if isVideo { fields.append((start + 42)..<(start + 74)) }
+      }
+    }
+    return fields
+  }
+
   static func payloadIsZero(_ box: ContainerBox, in handle: FileHandle) throws -> Bool {
     try handle.seek(toOffset: UInt64(box.payloadRange.lowerBound))
     var remaining = box.payloadRange.count
@@ -201,61 +262,78 @@ enum VideoUploadCopyStructure {
   static let trackTypes: Set<String> = ["tkhd", "tapt", "edts", "mdia", "tref"]
   static let mediaTypes: Set<String> = ["mdhd", "hdlr", "minf", "elng"]
 
-  /// Zeroes the creation and modification times in every mvhd, tkhd and mdhd box, which an
-  /// export sets to when the copy was made.
-  static func scrubHeaderTimes(in url: URL) throws {
+  /// Zeroes, in place, the creation and modification times in every mvhd, tkhd and mdhd box
+  /// (an export sets them to when the copy was made) and the vendor and compressor name of every
+  /// sample description (an export copies them from the source). No size or offset changes.
+  static func scrub(_ url: URL) throws {
     let handle = try FileHandle(forUpdating: url)
     defer { try? handle.close() }
     guard let movie = try ContainerBoxReader.movieBox(of: handle),
-      let fields = ContainerBoxReader.headerTimeFields(in: movie)
+      let times = ContainerBoxReader.headerTimeFields(in: movie),
+      let descriptions = ContainerBoxReader.sampleDescriptionFields(in: movie)
     else { throw VideoUploadSanitizationError.metadataRemained }
-    for field in fields {
+    for field in times + descriptions {
       try handle.seek(toOffset: UInt64(movie.box.offset + field.lowerBound))
       try handle.write(contentsOf: Data(count: field.count))
     }
     try handle.synchronize()
   }
 
-  /// Whether the file is made only of the boxes above, with all-zero padding and user data and
-  /// zero header times. Sample data and sample tables are not inspected.
-  static func holdsOnlySampleBoxes(_ url: URL) throws -> Bool {
+  /// What, if anything, the file holds beyond the boxes above with all-zero padding and user
+  /// data, zero header times and unnamed sample descriptions. Sample data and the sample tables
+  /// themselves are not inspected. The answer names a box path or field, never a value.
+  static func firstUnexpectedContent(in url: URL) throws -> String? {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
-    guard let topLevel = try ContainerBoxReader.topLevelBoxes(of: handle) else { return false }
+    guard let topLevel = try ContainerBoxReader.topLevelBoxes(of: handle) else { return "malformed top-level box" }
     for box in topLevel {
-      guard topLevelTypes.contains(box.type) else { return false }
+      guard topLevelTypes.contains(box.type) else { return "top-level \(box.type) box" }
       if box.type == "free" || box.type == "skip" {
-        guard try ContainerBoxReader.payloadIsZero(box, in: handle) else { return false }
+        guard try ContainerBoxReader.payloadIsZero(box, in: handle) else { return "non-empty top-level \(box.type) box" }
       }
     }
-    guard let movie = try ContainerBoxReader.movieBox(of: handle),
-      let fields = ContainerBoxReader.headerTimeFields(in: movie),
-      fields.allSatisfy({ movie.data[$0].allSatisfy { $0 == 0 } })
-    else { return false }
-    return movieHoldsOnlySampleBoxes(movie)
+    guard let movie = try ContainerBoxReader.movieBox(of: handle) else { return "no single movie box" }
+    guard let times = ContainerBoxReader.headerTimeFields(in: movie) else { return "malformed movie header" }
+    guard times.allSatisfy({ isZero(movie.data[$0]) }) else { return "header creation or modification time" }
+    guard let descriptions = ContainerBoxReader.sampleDescriptionFields(in: movie) else {
+      return "malformed sample description"
+    }
+    guard descriptions.allSatisfy({ isZero(movie.data[$0]) }) else { return "sample description vendor or compressor name" }
+    return unexpectedMovieContent(movie)
   }
 
-  private static func movieHoldsOnlySampleBoxes(_ movie: ContainerMovieBox) -> Bool {
+  private static func unexpectedMovieContent(_ movie: ContainerMovieBox) -> String? {
     let data = movie.data
-    guard let children = ContainerBoxReader.boxes(in: data, range: movie.payloadRange),
-      children.contains(where: { $0.type == "trak" })
-    else { return false }
-    return children.allSatisfy { child in
+    guard let children = ContainerBoxReader.boxes(in: data, range: movie.payloadRange) else { return "malformed moov" }
+    guard children.contains(where: { $0.type == "trak" }) else { return "movie without tracks" }
+    for child in children {
       switch child.type {
       case "udta", "meta":
-        return data[child.payloadRange].allSatisfy { $0 == 0 }
+        guard isZero(data[child.payloadRange]) else { return "non-empty moov/\(child.type)" }
       case "trak":
-        return holdsOnly(trackTypes, in: child, of: data)
+        if let finding = unexpectedContent(in: child, of: data, allowed: trackTypes, path: "moov/trak") { return finding }
       default:
-        return movieTypes.contains(child.type)
+        guard movieTypes.contains(child.type) else { return "moov/\(child.type)" }
       }
     }
+    return nil
   }
 
-  private static func holdsOnly(_ allowed: Set<String>, in container: ContainerBox, of data: Data) -> Bool {
-    guard let children = ContainerBoxReader.boxes(in: data, range: container.payloadRange) else { return false }
-    return children.allSatisfy { child in
-      allowed.contains(child.type) && (child.type != "mdia" || holdsOnly(mediaTypes, in: child, of: data))
+  private static func unexpectedContent(
+    in container: ContainerBox, of data: Data, allowed: Set<String>, path: String
+  ) -> String? {
+    guard let children = ContainerBoxReader.boxes(in: data, range: container.payloadRange) else { return "malformed \(path)" }
+    for child in children {
+      guard allowed.contains(child.type) else { return "\(path)/\(child.type)" }
+      if child.type == "mdia",
+        let finding = unexpectedContent(in: child, of: data, allowed: mediaTypes, path: "\(path)/mdia") {
+        return finding
+      }
     }
+    return nil
+  }
+
+  private static func isZero(_ bytes: Data) -> Bool {
+    bytes.allSatisfy { $0 == 0 }
   }
 }

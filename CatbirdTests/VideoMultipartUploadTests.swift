@@ -124,7 +124,7 @@ enum VideoMultipartUploadChecks {
     var config = configuration()
     config.workerCount = 4
     let engine = VideoMultipartUpload(transport: transport, store: store, configuration: config)
-    let result = try await engine.run(sourceURL: source, owner: owner, mimeType: "video/mp4",
+    let result = try await engine.run(attachmentURL: source, copies: SyntheticVideoCopies.mp4, owner: owner,
       progress: { _ in }, isOwnerCurrent: { true })
     try check(result == completed, "parallel upload returns the canonical blob")
     try check(await probe.maximum == 4, "exactly four part requests run concurrently")
@@ -244,7 +244,7 @@ enum VideoMultipartUploadChecks {
     let changed = ScriptedVideoTransport(statuses: [.success(status("created"))], onPart: { await ownership.invalidate() })
     do {
       _ = try await VideoMultipartUpload(transport: changed, store: switched.store, configuration: configuration()).run(
-        sourceURL: switched.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { await ownership.current })
+        attachmentURL: switched.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { await ownership.current })
       throw CheckFailure("account change returned a blob")
     } catch VideoMultipartError.ownerChanged {}
     try check(await [changed.finishCount, changed.abortCount] == [0, 0], "changed account neither finalizes nor mints cleanup authority")
@@ -259,16 +259,16 @@ enum VideoMultipartUploadChecks {
       jobs: [.success(try job("canonical", state: "JOB_STATE_COMPLETED", blob: blob))])
     let engine = VideoMultipartUpload(transport: transport, store: fixture.store, configuration: configuration())
     do {
-      _ = try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
+      _ = try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
         await quota.record()
         throw VideoMultipartTransportError(statusCode: 403, code: "UploadForbidden")
       })
       throw CheckFailure("denied allowance created an upload")
     } catch let error as VideoMultipartTransportError { try check(error.code == "UploadForbidden", "grant denial propagated unchanged") }
     try check(await transport.startCount == 0, "denied allowance makes no start request")
-    _ = try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: { await quota.record() })
+    _ = try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: { await quota.record() })
     try check(await quota.count == 2, "fresh session checks existing account allowance")
-    _ = try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
+    _ = try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
       throw CheckFailure("processing resume must not ask to reserve new quota")
     })
     try check(await transport.startCount == 1, "completed processing retry does not reserve again")
@@ -281,7 +281,7 @@ enum VideoMultipartUploadChecks {
     await uploading.store.release(owner: owner, runID: saved.runID)
     let resumeTransport = ScriptedVideoTransport(statuses: [.success(status("completed", completedID: "canonical", job: try job("canonical", state: "JOB_STATE_COMPLETED", blob: blob)))])
     _ = try await VideoMultipartUpload(transport: resumeTransport, store: uploading.store, configuration: configuration()).run(
-      sourceURL: uploading.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
+      attachmentURL: uploading.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
         throw CheckFailure("upload resume must use existing reservation")
       })
     try check(await resumeTransport.startCount == 0, "uploading resume never allocates another session")
@@ -374,7 +374,7 @@ enum VideoMultipartUploadChecks {
       let transport = ScriptedVideoTransport(statuses: [.success(status("finishing")),
         .success(status("completed", completedID: "canonical", job: ready))], jobs: [.success(ready)])
       let result = try await VideoMultipartUpload(transport: transport, store: fixture.store, configuration: configuration()).run(
-        sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", allowNewSessionAfterTerminal: true,
+        attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, allowNewSessionAfterTerminal: true,
         progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
           throw CheckFailure("retry of canceled uncertain-finalization job must reconcile its existing reservation")
         })
@@ -495,7 +495,7 @@ enum VideoMultipartUploadChecks {
     .init(jobId: id, did: try DID(didString: did), state: state, progress: 20, blob: blob, failureCode: code)
   }
   static func run(_ engine: VideoMultipartUpload, fixture: Fixture, progress: @escaping @Sendable (VideoMultipartProgress) async -> Void = { _ in }) async throws -> Blob {
-    try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: progress, isOwnerCurrent: { true })
+    try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: progress, isOwnerCurrent: { true })
   }
   static func retained(_ fixture: Fixture) throws {
     try check(try Data(contentsOf: fixture.source) == Data(0..<10), "original source preserved byte for byte")
@@ -541,6 +541,15 @@ final class VideoTestClock: @unchecked Sendable {
   private var value = Date(timeIntervalSince1970: 1000)
   func now() -> Date { lock.withLock { value } }
   func advance(_ seconds: TimeInterval) { lock.withLock { value.addTimeInterval(seconds) } }
+}
+/// Hands the engine its synthetic few-byte source unchanged, so these checks can drive the
+/// engine's part math directly. The app's only conformer is `VideoUploadSanitizer`.
+struct SyntheticVideoCopies: VideoUploadCopyMaking {
+  static let mp4 = SyntheticVideoCopies(mimeType: "video/mp4")
+  let mimeType: String
+  func uploadCopy(of attachmentURL: URL) async throws -> VideoUploadCopy {
+    VideoUploadCopy(url: attachmentURL, mimeType: mimeType)
+  }
 }
 
 actor ScriptedVideoTransport: VideoMultipartTransporting {

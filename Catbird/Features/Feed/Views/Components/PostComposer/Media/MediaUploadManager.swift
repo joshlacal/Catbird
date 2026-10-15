@@ -479,7 +479,7 @@ final class MediaUploadManager {
   ) async throws -> Blob {
     let uploader = VideoMultipartUpload(transport: transport, store: store, configuration: configuration)
     return try await uploader.run(
-      attachmentURL: attachmentURL, sanitizer: sanitizer, owner: owner,
+      attachmentURL: attachmentURL, copies: sanitizer, owner: owner,
       durationMilliseconds: durationMilliseconds, allowNewSessionAfterTerminal: true,
       progress: progress, isOwnerCurrent: isOwnerCurrent,
       canAuthorizeCleanup: canAuthorizeCleanup, authorizeNewSession: authorizeNewSession
@@ -586,7 +586,13 @@ final class MediaUploadManager {
     let sanitized = try await (try VideoUploadSanitizer.shared.get()).sanitizedCopy(of: url)
     try Task.checkCancellation()
     guard sanitized.byteCount <= maxVideoSize else { throw VideoUploadError.legacyTooLarge }
+    return try await sendLegacyVideo(sanitized, uploadID: uploadID)
+  }
 
+  /// The legacy route's network half. It is handed only the sanitizer's copy, so the attachment
+  /// itself is out of reach of every request made here.
+  @MainActor
+  private func sendLegacyVideo(_ sanitized: SanitizedVideo, uploadID: UUID) async throws -> Blob {
     // Get authentication token
     let authToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getUploadLimits")
 

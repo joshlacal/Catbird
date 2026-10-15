@@ -223,6 +223,9 @@ actor VideoUploadCheckpointStore {
 
   /// Size and SHA-256 of a local, fully downloaded file. Uses no actor state.
   static func fingerprint(_ url: URL) throws -> (count: Int, digest: String) {
+    // A URL keeps the resource values it read; a file rewritten since must not report its old size.
+    var url = url
+    url.removeAllCachedResourceValues()
     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .ubiquitousItemDownloadingStatusKey])
     guard values.isRegularFile == true, let size = values.fileSize, size > 0,
       values.ubiquitousItemDownloadingStatus != .notDownloaded
