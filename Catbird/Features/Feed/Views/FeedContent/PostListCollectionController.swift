@@ -151,8 +151,9 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   private var needsScrollReport = false
   /// Whether the pinned header is at its pin line, under the bars.
   private(set) var isHeaderPinned = false
-  /// The pin offset at the end of the last layout pass.
+  /// The pin offset and the bounds size at the end of the last layout pass.
   private var laidOutPinOffset: CGFloat?
+  private var laidOutSize: CGSize = .zero
   /// The bars' height the pinned header views were last given.
   private var pinnedHeaderBarHeight: CGFloat = 0
   /// Lets the first row (a profile banner) sit under a transparent navigation
@@ -650,9 +651,10 @@ extension PostListCollectionController {
   private func updatePinnedHeaderState() {
     guard let layout = pinnedLayout, let collectionView else { return }
     let pinOffset = layout.pinOffset
-    // While a layout change moves the pin line, a scroll (an offset clamped to new content)
-    // says nothing about whether the header should stay pinned; the end of the pass decides.
-    guard pinOffset == laidOutPinOffset else { return }
+    // While a layout change moves the pin line or resizes the list, a scroll (an offset clamped
+    // to new content) says nothing about whether the header should stay pinned; the end of the
+    // pass decides.
+    guard pinOffset == laidOutPinOffset, collectionView.bounds.size == laidOutSize else { return }
     let offset = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
     let isPinned = pinOffset.map { offset >= $0 - PostListPinnedScrollRestoration.pinTolerance } ?? false
     // The bars' height matters for the backing before iOS 26, which reaches up behind them.
@@ -668,12 +670,17 @@ extension PostListCollectionController {
 
   /// Runs after each layout pass. A pass that moved the pin offset changed the height of the
   /// content above the header: more profile information, larger text, or rewrapping after a
-  /// rotation. A header that was pinned goes back to its pin line. Scrolling never moves the
-  /// pin offset, so this never works against someone scrolling, VoiceOver or scroll-to-top.
+  /// rotation. A pass that resized the list (a rotation, a resized iPad window) can leave a
+  /// short tab too short for its offset, which UIKit clamps. Either way, a header that was
+  /// pinned goes back to its pin line. Scrolling moves neither, so this never works against
+  /// someone scrolling, VoiceOver or scroll-to-top.
   private func pinnedHeaderDidLayout() {
+    guard let collectionView else { return }
     let pinOffset = pinnedLayout?.pinOffset
-    guard pinOffset != laidOutPinOffset, let collectionView else { return }
+    let size = collectionView.bounds.size
+    guard pinOffset != laidOutPinOffset || size != laidOutSize else { return }
     laidOutPinOffset = pinOffset
+    laidOutSize = size
     if isHeaderPinned, pendingScrollOffset == nil, let pinOffset {
       let inset = collectionView.adjustedContentInset.top
       if collectionView.contentOffset.y + inset < pinOffset - PostListPinnedScrollRestoration.pinTolerance {

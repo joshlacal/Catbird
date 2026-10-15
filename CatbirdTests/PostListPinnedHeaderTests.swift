@@ -203,8 +203,10 @@ struct PostListPinnedHeaderTests {
     defer { controller.cancelTasks() }
     controller.emptyView = AnyView(Color.clear.frame(height: 80))
     controller.setEntries([], hasMore: false, isLoadingMore: false, footerState: .hidden)
-    func resize(width: CGFloat, additionalBars: CGFloat) async throws -> (bars: CGFloat, restingY: CGFloat) {
-      list.window.frame.size.width = width
+    func resize(
+      width: CGFloat, height: CGFloat = 640, additionalBars: CGFloat
+    ) async throws -> (bars: CGFloat, restingY: CGFloat) {
+      list.window.frame.size = CGSize(width: width, height: height)
       controller.additionalSafeAreaInsets = UIEdgeInsets(top: additionalBars, left: 0, bottom: 0, right: 0)
       list.window.layoutIfNeeded()
       // The header is measured again once a pass has shown it, a turn or two later.
@@ -230,6 +232,16 @@ struct PostListPinnedHeaderTests {
     geometry = try await resize(width: 390, additionalBars: 100)
     try await PostListTestSupport.expectOffset(geometry.restingY - geometry.bars, in: controller)
     #expect(abs(try headerScreenY(in: collection) - geometry.bars) < 1)
+    #expect(controller.isHeaderPinned)
+
+    // Taller only, as an iPad rotating to portrait: the pin offset stays put, but the short tab
+    // no longer reaches the old offset, which UIKit clamps.
+    geometry = try await resize(width: 390, height: 1_000, additionalBars: 100)
+    try await PostListTestSupport.expectOffset(geometry.restingY - geometry.bars, in: controller)
+    #expect(abs(try headerScreenY(in: collection) - geometry.bars) < 1)
+    #expect(controller.isHeaderPinned)
+    geometry = try await resize(width: 390, additionalBars: 100)
+    try await PostListTestSupport.expectOffset(geometry.restingY - geometry.bars, in: controller)
     #expect(controller.isHeaderPinned)
 
     // A header in the content is left to the resize.
