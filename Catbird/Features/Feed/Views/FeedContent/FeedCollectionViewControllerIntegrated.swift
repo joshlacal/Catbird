@@ -272,6 +272,9 @@ import os
 
     /// App lifecycle tracking
     private var isAppInBackground = false
+    /// An update asked for in the background was skipped; it is applied on the return to the
+    /// foreground, since nothing else needs to ask again then.
+    private var hasSkippedBackgroundUpdate = false
     private var backgroundObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
 
@@ -998,7 +1001,14 @@ import os
     }
 
     private func applyCurrentState() async {
-      guard !isAppInBackground, let dataSource, let collectionView else { return }
+      guard !isAppInBackground else {
+        // A settings or moderation policy change can land in the background, for example a
+        // preferences read that finishes after the app left the foreground. Its reconfigure stays
+        // pending (`shouldReconfigureAllOnce`) until the foreground applies this update.
+        hasSkippedBackgroundUpdate = true
+        return
+      }
+      guard let dataSource, let collectionView else { return }
       let generation = feedGeneration
       let manager = stateManager
 
@@ -1417,6 +1427,9 @@ import os
     private func handleAppWillEnterForeground() {
       controllerLogger.debug("📱 App entering foreground")
       isAppInBackground = false
+      guard hasSkippedBackgroundUpdate else { return }
+      hasSkippedBackgroundUpdate = false
+      Task { @MainActor [weak self] in await self?.performUpdate() }
     }
 
     // MARK: - State Manager Updates

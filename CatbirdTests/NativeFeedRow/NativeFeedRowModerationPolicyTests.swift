@@ -46,6 +46,38 @@ struct NativeFeedRowModerationPolicyTests {
     _ = try await host.waitForPostCell(NativeFeedPostCell.self)
   }
 
+  /// The feed skips the updates it is asked for while the app is in the background. A policy
+  /// change landing then (a preferences read that finishes after the app left the foreground)
+  /// must still reach the rows on screen when the app returns, with no further update to carry it.
+  @Test("A policy change while the app is in the background reclassifies the row on return")
+  func backgroundPolicyChangeAppliesOnForeground() async throws {
+    let harness = try ModerationStateHarness()
+    defer { harness.tearDown() }
+    let account = try await harness.makeAccount(did: Fixtures.uniqueDID("nativerowbackground"))
+    let appState = account.appState
+    let labeler = Fixtures.customLabelerDID
+    account.server.publishLabeler(did: labeler)
+    try await Self.serverSubscribes(to: [], account: account)
+
+    let post = try Self.cachedPost(labeledBy: labeler)
+    let host = try NativeFeedRowControllerHost(appState: appState, posts: [post])
+    defer { host.tearDown() }
+    await host.controller.performUpdate()
+    _ = try await host.waitForPostCell(NativeFeedPostCell.self)
+
+    NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+    try await Self.serverSubscribes(to: [labeler], account: account)
+    let subscribed = Self.classification(of: post, appState: appState)
+    #expect(subscribed == .hosted(.moderation), "\(subscribed)")
+    // The reconfigure the change asked for waits for the foreground.
+    try await Task.sleep(for: .milliseconds(300))
+    host.window.layoutIfNeeded()
+    #expect(host.controller.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) is NativeFeedPostCell)
+
+    NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+    _ = try await host.waitForPostCell(FeedPostCollectionViewCell.self)
+  }
+
   // MARK: - Helpers
 
   /// The server changes the account's labeler subscriptions and the app reads them through the
