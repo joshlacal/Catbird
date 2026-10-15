@@ -2,10 +2,13 @@ import XCTest
 
 @MainActor
 final class SocialActionsUITests: XCTestCase {
-  private func launch(largeText: Bool = false) -> XCUIApplication {
+  private func launch(largeText: Bool = false, contentSizeCategory: String? = nil) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--social-actions-ui-fixture"]
     if largeText { app.launchArguments.append("--social-large-text") }
+    if let contentSizeCategory {
+      app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSizeCategory]
+    }
     app.launch()
     XCTAssertTrue(app.buttons["shareButton"].waitForExistence(timeout: 15))
     return app
@@ -116,6 +119,14 @@ final class SocialActionsUITests: XCTestCase {
     XCTAssertTrue(moreOptions.isHittable)
   }
 
+  /// The menu is UIKit-drawn, so it follows the system text size rather than the fixture's
+  /// SwiftUI `dynamicTypeSize`.
+  func testGermMenuActionResizesAtLargeText() {
+    let standard = openGermMenuAction(contentSizeCategory: "UICTContentSizeCategoryL")
+    let large = openGermMenuAction(contentSizeCategory: "UICTContentSizeCategoryAccessibilityXL")
+    XCTAssertGreaterThan(large.height, standard.height)
+  }
+
   func testLabelInspectorAtAccessibilityTextSize() {
     let app = launch(largeText: true)
     app.buttons["fixtureOtherLabels"].tap()
@@ -143,6 +154,30 @@ final class SocialActionsUITests: XCTestCase {
     XCTAssertTrue(app.staticTexts["A draft with a photo saved in another app."].exists)
     app.buttons["Close"].tap()
     XCTAssertTrue(app.buttons["fixtureSavedDrafts"].exists)
+  }
+
+  /// Opens the Germ profile's More Options menu at a system text size, checks the Germ DM item
+  /// is fully visible and opens the handoff confirmation, cancels it, and returns the item's size.
+  private func openGermMenuAction(contentSizeCategory: String) -> CGSize {
+    let app = launch(contentSizeCategory: contentSizeCategory)
+    app.buttons["fixtureGermProfile"].tap()
+    let moreOptions = app.buttons["More Options"]
+    XCTAssertTrue(moreOptions.waitForExistence(timeout: 5))
+    moreOptions.tap()
+    let germ = app.buttons["Germ DM"]
+    XCTAssertTrue(germ.waitForExistence(timeout: 5))
+    XCTAssertTrue(germ.isHittable)
+    XCTAssertTrue(app.windows.firstMatch.frame.contains(germ.frame))
+    attach(app, name: "germ-menu-\(contentSizeCategory)")
+    let size = germ.frame.size
+    germ.tap()
+    let confirmation = app.alerts["Open Germ DM?"]
+    XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+    confirmation.buttons["Cancel"].tap()
+    XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
+    XCTAssertEqual(app.state, .runningForeground)
+    app.terminate()
+    return size
   }
 
   private func attach(_ app: XCUIApplication, name: String) {
