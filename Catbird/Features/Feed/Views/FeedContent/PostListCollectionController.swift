@@ -152,6 +152,8 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   private(set) var isHeaderPinned = false
   /// The pin offset at the end of the last layout pass.
   private var laidOutPinOffset: CGFloat?
+  /// The bars' height the pinned header views were last given.
+  private var pinnedHeaderBarHeight: CGFloat = 0
   /// Lets the first row (a profile banner) sit under a transparent navigation
   /// bar instead of below it, where UIKit's automatic top inset would put it.
   var extendsUnderTopBar = false {
@@ -331,7 +333,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   }
 
   private func setupDataSource() {
-    let headerRegistration = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
+    let headerRegistration = UICollectionView.SupplementaryRegistration<PostListPinnedHeaderView>(
       elementKind: UICollectionView.elementKindSectionHeader
     ) { [weak self] view, _, _ in
       self?.configurePinnedHeader(view)
@@ -605,7 +607,7 @@ extension PostListCollectionController {
     return section
   }
 
-  private func configurePinnedHeader(_ view: UICollectionViewListCell) {
+  private func configurePinnedHeader(_ view: PostListPinnedHeaderView) {
     view.backgroundConfiguration = .clear()
     view.directionalLayoutMargins = .zero
     let root = hosted(pinnedHeaderView ?? AnyView(EmptyView()))
@@ -614,22 +616,23 @@ extension PostListCollectionController {
       root.id(accountID)
     }
     .margins(.all, 0)
-    updateScrollEdgeEffect(behind: view)
+    if let collectionView {
+      view.update(isPinned: isHeaderPinned, barHeight: pinnedLayout?.pinInset ?? 0, scrollView: collectionView)
+    }
   }
 
   /// Others are configured when dequeued.
   private func reconfigureVisiblePinnedHeaders() {
     guard pinnedHeaderView != nil, let collectionView else { return }
-    for case let view as UICollectionViewListCell in collectionView.visibleSupplementaryViews(
+    for case let view as PostListPinnedHeaderView in collectionView.visibleSupplementaryViews(
       ofKind: UICollectionView.elementKindSectionHeader
     ) {
       configurePinnedHeader(view)
     }
   }
 
-  /// Tracks whether the header sits at its pin line, and extends the top edge effect behind
-  /// it only then: the interaction carries the effect down to the header wherever it is, so
-  /// while the header is still in the content it would blur everything above it.
+  /// Tracks whether the header sits at its pin line, and gives it its backing only then
+  /// (`PostListPinnedHeaderView`): rows scroll behind it only while it is pinned.
   private func updatePinnedHeaderState() {
     guard let layout = pinnedLayout, let collectionView else { return }
     let pinOffset = layout.pinOffset
@@ -638,10 +641,14 @@ extension PostListCollectionController {
     guard pinOffset == laidOutPinOffset else { return }
     let offset = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
     let isPinned = pinOffset.map { offset >= $0 - PostListPinnedScrollRestoration.pinTolerance } ?? false
-    guard isPinned != isHeaderPinned else { return }
+    // The bars' height matters for the backing before iOS 26, which reaches up behind them.
+    guard isPinned != isHeaderPinned || layout.pinInset != pinnedHeaderBarHeight else { return }
     isHeaderPinned = isPinned
-    for view in collectionView.visibleSupplementaryViews(ofKind: UICollectionView.elementKindSectionHeader) {
-      updateScrollEdgeEffect(behind: view)
+    pinnedHeaderBarHeight = layout.pinInset
+    for case let view as PostListPinnedHeaderView in collectionView.visibleSupplementaryViews(
+      ofKind: UICollectionView.elementKindSectionHeader
+    ) {
+      view.update(isPinned: isPinned, barHeight: layout.pinInset, scrollView: collectionView)
     }
   }
 
@@ -662,26 +669,11 @@ extension PostListCollectionController {
     updatePinnedHeaderState()
   }
 
-  /// Carries the navigation bar's top edge effect down behind the pinned header, as on a
-  /// contact card, so rows fade out under the picker rather than at the bar.
-  private func updateScrollEdgeEffect(behind view: UIView) {
-    #if compiler(>=6.2)
-    if #available(iOS 26.0, *) {
-      let existing = view.interactions.filter { $0 is UIScrollEdgeElementContainerInteraction }
-      if isHeaderPinned, existing.isEmpty {
-        let interaction = UIScrollEdgeElementContainerInteraction()
-        interaction.scrollView = collectionView
-        interaction.edge = .top
-        view.addInteraction(interaction)
-      } else if !isHeaderPinned {
-        existing.forEach(view.removeInteraction)
-      }
-    }
-    #endif
-  }
-
   /// A list with a pinned header uses the soft top edge, so the blur behind the header fades
-  /// out instead of ending in a line; other lists keep the automatic style.
+  /// out instead of ending in a line; other lists keep the automatic style. Not the hard edge
+  /// while pinned: it would stay opaque down to the header, but it also takes the touches meant
+  /// for a header inside the scroll view, so the picker could not be used while pinned. The soft
+  /// edge fades out across the header, so the header backs its own translucent controls.
   private func applyPinnedHeaderEdgeStyle() {
     #if compiler(>=6.2)
     if #available(iOS 26.0, *), let collectionView {

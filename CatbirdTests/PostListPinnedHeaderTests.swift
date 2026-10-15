@@ -218,6 +218,38 @@ struct PostListPinnedHeaderTests {
     #expect(!controller.isHeaderPinned)
   }
 
+  #if compiler(>=6.2)
+  @Test("The edge effect reaches behind the header only while it is pinned; other lists keep their edge style")
+  func edgeEffectFollowsThePinnedHeader() async throws {
+    guard #available(iOS 26.0, *) else { return }
+    let list = try await makePinnedProfileList()
+    defer { list.controller.cancelTasks() }
+    let collection = list.collection
+    let bars = list.controller.view.safeAreaInsets.top
+    func headerHasEdgeContainer() throws -> Bool {
+      try #require(collection.supplementaryView(
+        forElementKind: UICollectionView.elementKindSectionHeader, at: IndexPath(item: 0, section: 1)
+      )).interactions.contains { $0 is UIScrollEdgeElementContainerInteraction }
+    }
+    #expect(collection.topEdgeEffect.style == .soft)
+    #expect(try !headerHasEdgeContainer())
+
+    try await scrollAndLayout(collection, to: 300 - bars + 200)
+    #expect(list.controller.isHeaderPinned)
+    // Soft while pinned too: the hard edge would take the touches meant for the header.
+    #expect(collection.topEdgeEffect.style == .soft)
+    #expect(try headerHasEdgeContainer())
+
+    try await scrollAndLayout(collection, to: 100)
+    #expect(!list.controller.isHeaderPinned)
+    #expect(try !headerHasEdgeContainer())
+
+    let plain = PostListCollectionController()
+    plain.loadViewIfNeeded()
+    #expect(try #require(plain.collectionView).topEdgeEffect.style == .automatic)
+  }
+  #endif
+
   @Test("Switching keys keeps a pinned header pinned and an unpinned header in place")
   func pinnedHeaderSurvivesKeySwitches() async throws {
     let list = try await makePinnedProfileList()
