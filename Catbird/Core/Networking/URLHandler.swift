@@ -10,6 +10,16 @@ import AppKit
 import Petrel
 import Observation
 
+/// What the app did with a URL, and what the caller should do next.
+enum URLHandlingOutcome: Equatable {
+    /// The app consumed the URL (navigated, presented, or started async routing).
+    case handled
+    /// The app did not consume the URL; the caller should open it with the system.
+    case openInSystem
+    /// The URL is unsupported and must be ignored.
+    case discarded
+}
+
 /// Handles URL navigation, deep links, and external intents throughout the app
 @Observable
 @MainActor
@@ -108,10 +118,21 @@ final class URLHandler {
     
     // MARK: - URL Handling
 
-    /// Process an incoming URL
-    /// Returns an OpenURLAction.Result to indicate if the URL was handled
+    /// Process an incoming URL for SwiftUI's `openURL`.
     @MainActor
     func handle(_ url: URL, tabIndex: Int? = nil) -> OpenURLAction.Result {
+        switch outcome(for: url, tabIndex: tabIndex) {
+        case .handled: .handled
+        case .openInSystem: .systemAction
+        case .discarded: .discarded
+        }
+    }
+
+    /// Process an incoming URL and report whether the app consumed it, the caller
+    /// should hand it to the system, or it is unsupported. UIKit callers act on this
+    /// directly; `handle(_:tabIndex:)` maps it to SwiftUI's `OpenURLAction.Result`.
+    @MainActor
+    func outcome(for url: URL, tabIndex: Int? = nil) -> URLHandlingOutcome {
         guard !isInvalidated else { return .discarded }
         let requestConfigurationID = configurationID
         // Keep this request's tab stable across asynchronous resolution.
@@ -154,11 +175,11 @@ final class URLHandler {
             if useInAppBrowser && openInAppBrowser(url) {
                 return .handled
             }
-            return .systemAction
+            return .openInSystem
         }
 
         if URLSchemePolicy.allowsSystemOpen(url) {
-            return .systemAction
+            return .openInSystem
         }
 
         logger.warning("❓ Unsupported URL scheme: \(url.scheme ?? "", privacy: .public)")
@@ -621,14 +642,14 @@ final class URLHandler {
     
     // MARK: - URL Type Handlers
     
-    private func handleMention(_ urlString: String, tabIndex: Int?) -> OpenURLAction.Result {
+    private func handleMention(_ urlString: String, tabIndex: Int?) -> URLHandlingOutcome {
         let encodedDID = String(urlString.dropFirst("mention://".count))
         let did = encodedDID.removingPercentEncoding ?? encodedDID
         navigateAction?(.profile(did), tabIndex)
         return .handled
     }
     
-    private func handleHashtag(_ urlString: String, tabIndex: Int?) -> OpenURLAction.Result {
+    private func handleHashtag(_ urlString: String, tabIndex: Int?) -> URLHandlingOutcome {
         let tag = String(urlString.dropFirst("tag://".count))
         let decodedTag = tag.removingPercentEncoding ?? tag
         navigateAction?(.hashtag(decodedTag), tabIndex)
