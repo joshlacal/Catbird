@@ -56,6 +56,7 @@ struct UnifiedProfileContentView: View {
         },
         scrollsToTop: true,
         scrollPositionKey: currentScrollPositionKey,
+        scrollPositionScope: scrollPositionScope,
         scrollToTopRequestID: scrollToTopRequestID,
         appState: appState,
         accessibilityIdentifier: "profile.posts"
@@ -67,6 +68,11 @@ struct UnifiedProfileContentView: View {
       .ignoresSafeArea(edges: .top)
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     }
+    // Loads a tab when it is chosen. Not from the picker's own onChange: the picker lives in a
+    // collection view supplementary view, and a tab switch can remove that view for a moment.
+    .onChange(of: viewModel.selectedProfileTab) { _, tab in
+      if tab != .more { onTabChange(tab) }
+    }
     .entityContext(
       EntityIdentifier(
         for: ProfileEntity.self,
@@ -76,7 +82,12 @@ struct UnifiedProfileContentView: View {
   }
 
   private var currentScrollPositionKey: String {
-    "\(appState.userDID):\(profile.did.didString()):\(viewModel.selectedProfileTab.rawValue)"
+    "\(scrollPositionScope):\(viewModel.selectedProfileTab.rawValue)"
+  }
+
+  /// This account's view of this profile: its tabs share the pinned picker's position.
+  private var scrollPositionScope: String {
+    "\(appState.userDID):\(profile.did.didString())"
   }
 
   private var currentBoxedPosts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] {
@@ -206,10 +217,10 @@ struct UnifiedProfileContentView: View {
   private var profileTabPicker: some View {
     @Bindable var viewModel = viewModel
 
+    // Tabs load from `iosBody`'s onChange, not from the picker.
     ProfileTabSelector(
       path: $navigationPath,
       selectedTab: $viewModel.selectedProfileTab,
-      onTabChange: onTabChange,
       isLabeler: viewModel.isLabeler
     )
     .profileTabPickerTrackBacking(appState)
