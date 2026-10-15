@@ -135,5 +135,36 @@ struct PostListCollectionControllerTests {
     collection.setContentOffset(CGPoint(x: 0, y: 300 - collection.adjustedContentInset.top), animated: false)
     #expect(reports.last.map { abs($0 - 300) < 1 } == true, "A user's scroll still reports at once")
   }
+
+  /// A report is held back for the controller's next layout pass. Code that lays the view out
+  /// later in the same update (a snapshot completion, say) used to use up that pass.
+  @Test("A scroll report held back during an update arrives even if the update lays the view out")
+  func heldBackScrollReportSurvivesLayoutDuringUpdate() async throws {
+    let controller = PostListCollectionController()
+    controller.rowViewBuilder = { _ in AnyView(Color.clear.frame(height: 100)) }
+    defer { controller.cancelTasks() }
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 640))
+    window.rootViewController = controller
+    window.isHidden = false
+    var reports: [CGFloat] = []
+    controller.onScrollOffsetChanged = { reports.append($0) }
+    controller.setEntries(try PostListTestSupport.bookmarkEntries(count: 60), hasMore: false, isLoadingMore: false, footerState: .hidden)
+    try await PostListTestSupport.expectOffset(0, in: controller)
+    let collection = try #require(controller.collectionView)
+    func reported250() -> Bool { reports.last.map { abs($0 - 250) < 1 } == true }
+
+    controller.applySwiftUIUpdate {
+      // As when new content clamps the offset during the update, and the view is then laid out.
+      collection.setContentOffset(CGPoint(x: 0, y: 250 - collection.adjustedContentInset.top), animated: false)
+      controller.view.layoutIfNeeded()
+    }
+    #expect(!reported250(), "Held back during the update")
+    let deadline = ContinuousClock.now + .seconds(1)
+    while !reported250(), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+      controller.view.layoutIfNeeded()
+    }
+    #expect(reported250(), "Delivered after the update")
+  }
 }
 #endif

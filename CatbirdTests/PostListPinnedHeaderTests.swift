@@ -46,6 +46,59 @@ struct PostListPinnedHeaderTests {
     #expect(collection.numberOfItems(inSection: 0) == 2)
   }
 
+  @Test("Without a pinned header the installed layout matches the plain list layout it replaced")
+  func layoutMatchesThePlainListLayout() async throws {
+    let controller = PostListCollectionController()
+    controller.headerView = AnyView(Color.clear.frame(height: 120))
+    controller.rowViewBuilder = { entry in
+      let index = Int(entry.id.split(separator: "/").last ?? "") ?? 0
+      return AnyView(Color.clear.frame(height: CGFloat(40 + index % 4 * 20)))
+    }
+    controller.onRemoveBookmark = { _ in true }
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 900))
+    window.rootViewController = controller
+    window.isHidden = false
+    defer { controller.cancelTasks() }
+    // Header, six rows and the footer all fit, so every item is measured in both layouts.
+    controller.setEntries(try PostListTestSupport.bookmarkEntries(count: 6), hasMore: true, isLoadingMore: true, footerState: .loading)
+    let collection = try #require(controller.collectionView)
+    func settle() async throws {
+      for _ in 0..<5 {
+        try await Task.sleep(for: .milliseconds(20))
+        collection.layoutIfNeeded()
+      }
+    }
+    func frames() -> [String: CGRect] {
+      let attributes = collection.collectionViewLayout.layoutAttributesForElements(
+        in: CGRect(x: 0, y: -1_000, width: 390, height: 10_000)
+      ) ?? []
+      return Dictionary(uniqueKeysWithValues: attributes.map {
+        ("\($0.representedElementCategory.rawValue) \($0.representedElementKind ?? "") \($0.indexPath)", $0.frame)
+      })
+    }
+    try await settle()
+    let installed = frames()
+    let installedSize = collection.contentSize
+    // Header, rows and footer cells, besides the list's decoration views.
+    #expect(installed.keys.filter { $0.hasPrefix("\(UICollectionView.ElementCategory.cell.rawValue) ") }.count == 8)
+
+    // The layout before the pinned header: one list layout for the whole collection view.
+    var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
+    configuration.backgroundColor = .clear
+    configuration.showsSeparators = false
+    configuration.trailingSwipeActionsConfigurationProvider = { _ in nil }
+    collection.setCollectionViewLayout(UICollectionViewCompositionalLayout.list(using: configuration), animated: false)
+    try await settle()
+    let reference = frames()
+    #expect(Set(reference.keys) == Set(installed.keys))
+    for (key, frame) in reference {
+      let other = try #require(installed[key])
+      #expect(abs(frame.minY - other.minY) < 0.5 && abs(frame.height - other.height) < 0.5, "\(key)")
+      #expect(abs(frame.minX - other.minX) < 0.5 && abs(frame.width - other.width) < 0.5, "\(key)")
+    }
+    #expect(abs(collection.contentSize.height - installedSize.height) < 0.5)
+  }
+
   @Test("A pinned header puts the rows in a second section that has the pinned section header")
   func pinnedHeaderAddsContentSection() throws {
     let controller = PostListCollectionController()
@@ -279,6 +332,12 @@ struct PostListPinnedHeaderTests {
     try await PostListTestSupport.expectOffset(pinOffset - 30, in: controller)
     show("profile/posts", entries)
     try await PostListTestSupport.expectOffset(pinOffset - 30, in: controller)
+
+    // Another scope (another profile or account) is not a tab switch: it gets its own place.
+    try await scrollAndLayout(collection, to: 900)
+    controller.updateScrollPosition(key: "other/posts", scope: "other", requestID: 0)
+    controller.setEntries(entries, hasMore: false, isLoadingMore: false, footerState: .hidden)
+    try await PostListTestSupport.expectOffset(0, in: controller)
   }
 
   /// Otherwise the collection view drops the header view, and the picker's SwiftUI state with it,
@@ -307,8 +366,10 @@ struct PostListPinnedHeaderTests {
     let current: CGFloat
     let pinOffset: CGFloat?
     let expected: CGFloat
+    var isSameScope = true
     var testDescription: String {
-      "saved \(saved.map { "\($0)" } ?? "none"), at \(current), pins at \(pinOffset.map { "\($0)" } ?? "none")"
+      let place = "saved \(saved.map { "\($0)" } ?? "none"), at \(current), pins at \(pinOffset.map { "\($0)" } ?? "none")"
+      return isSameScope ? place : place + ", another scope"
     }
   }
 
@@ -324,11 +385,14 @@ struct PostListPinnedHeaderTests {
     RestorationCase(saved: nil, current: 600, pinOffset: 200, expected: 200),
     RestorationCase(saved: 40, current: 600, pinOffset: 200, expected: 200),
     RestorationCase(saved: 900, current: 600, pinOffset: 200, expected: 900),
-    RestorationCase(saved: nil, current: 199.8, pinOffset: 200, expected: 200)
+    RestorationCase(saved: nil, current: 199.8, pinOffset: 200, expected: 200),
+    // Another scope: its own place, pinned or not.
+    RestorationCase(saved: nil, current: 600, pinOffset: 200, expected: 0, isSameScope: false),
+    RestorationCase(saved: 320, current: 120, pinOffset: 200, expected: 320, isSameScope: false)
   ])
   func restorationRule(_ rule: RestorationCase) {
     #expect(PostListPinnedScrollRestoration.offset(
-      saved: rule.saved, current: rule.current, pinOffset: rule.pinOffset
+      saved: rule.saved, current: rule.current, pinOffset: rule.pinOffset, isSameScope: rule.isSameScope
     ) == rule.expected)
   }
 

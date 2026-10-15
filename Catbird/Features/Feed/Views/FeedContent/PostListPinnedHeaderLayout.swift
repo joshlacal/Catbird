@@ -21,9 +21,11 @@ enum PostListPinnedScrollRestoration {
   ///   - current: the list's offset now, before the switch.
   ///   - pinOffset: the offset at which the pinned header reaches the bar, or nil for a
   ///     list without a pinned header.
-  static func offset(saved: CGFloat?, current: CGFloat, pinOffset: CGFloat?) -> CGFloat {
-    // No pinned header: each key keeps its own place, as before.
-    guard let pinOffset else { return saved ?? 0 }
+  ///   - isSameScope: whether the target key is another tab of the same screen, rather than
+  ///     another profile or account.
+  static func offset(saved: CGFloat?, current: CGFloat, pinOffset: CGFloat?, isSameScope: Bool = true) -> CGFloat {
+    // No pinned header, or not a tab switch: each key keeps its own place, as before.
+    guard let pinOffset, isSameScope else { return saved ?? 0 }
     // The header is still in view: leave it exactly where it is.
     guard current >= pinOffset - pinTolerance else { return max(0, current) }
     // Pinned: stay pinned, and go back to the target's own place if it was further down.
