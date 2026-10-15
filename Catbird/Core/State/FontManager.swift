@@ -137,10 +137,14 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     }
 
     /// Current line spacing setting
-    var lineSpacing: String = "normal"
+    var lineSpacing: String = "normal" {
+        didSet { invalidateFontCache() }
+    }
 
     /// Current letter spacing setting
-    var letterSpacing: String = "normal"
+    var letterSpacing: String = "normal" {
+        didSet { invalidateFontCache() }
+    }
 
     /// Whether Dynamic Type is enabled
     var dynamicTypeEnabled: Bool = true {
@@ -161,7 +165,8 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
 
     /// Identifies a resolved `Font` by every input that affects how it is built.
     /// Settings that only feed separate modifiers (`lineSpacing`, `letterSpacing`) are
-    /// deliberately excluded because they never change the `Font` value itself.
+    /// deliberately excluded because they never change the `Font` value itself, although
+    /// changing them still bumps `generation` so dependent layout caches are invalidated.
     private struct FontCacheKey: Hashable {
         let baseSize: CGFloat
         let weight: Font.Weight

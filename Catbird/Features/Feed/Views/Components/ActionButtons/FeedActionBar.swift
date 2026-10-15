@@ -64,7 +64,7 @@ struct FeedActionBarFonts: Equatable {
 
   @MainActor private static var cache: (key: CacheKey, fonts: FeedActionBarFonts)?
 
-  private init(fontManager: FontManager, boldText: Bool) {
+  @MainActor private init(fontManager: FontManager, boldText: Bool) {
     icon = Self.font(
       fontManager, size: Typography.Size.callout, weight: boldText ? .bold : .semibold,
       textStyle: .callout, monospacedDigits: false)
@@ -74,41 +74,11 @@ struct FeedActionBarFonts: Equatable {
     countKerning = fontManager.letterSpacingValue
   }
 
-  private static func font(
+  @MainActor private static func font(
     _ fontManager: FontManager, size: CGFloat, weight: UIFont.Weight,
     textStyle: UIFont.TextStyle, monospacedDigits: Bool
   ) -> UIFont {
-    let baseSize = size * fontManager.sizeScale
-    var descriptor = UIFont.systemFont(ofSize: baseSize, weight: weight).fontDescriptor
-    if let designed = descriptor.withDesign(systemDesign(fontManager.fontDesign)) {
-      descriptor = designed
-    }
-    if monospacedDigits {
-      descriptor = descriptor.addingAttributes([
-        .featureSettings: [[
-          UIFontDescriptor.FeatureKey.type: kNumberSpacingType,
-          UIFontDescriptor.FeatureKey.selector: kMonospacedNumbersSelector,
-        ]]
-      ])
-    }
-    let font = UIFont(descriptor: descriptor, size: baseSize)
-    guard fontManager.dynamicTypeEnabled else { return font }
-    let metrics = UIFontMetrics(forTextStyle: textStyle)
-    guard let limit = fontManager.dynamicTypeLimit else { return metrics.scaledFont(for: font) }
-    let maximum = UIFont.preferredFont(
-      forTextStyle: textStyle,
-      compatibleWith: UITraitCollection(preferredContentSizeCategory: limit.uiContentSizeCategory)
-    ).pointSize
-    return metrics.scaledFont(for: font, maximumPointSize: maximum)
-  }
-
-  private static func systemDesign(_ design: Font.Design) -> UIFontDescriptor.SystemDesign {
-    switch design {
-    case .serif: .serif
-    case .rounded: .rounded
-    case .monospaced: .monospaced
-    default: .default
-    }
+    AppUIFont.font(fontManager, size: size, weight: weight, textStyle: textStyle, monospacedDigits: monospacedDigits)
   }
 }
 
