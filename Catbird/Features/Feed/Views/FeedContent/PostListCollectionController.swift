@@ -149,7 +149,9 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   private var isApplyingSwiftUIUpdate = false
   private var needsScrollReport = false
   /// Whether the pinned header is at its pin line, under the bars.
-  private var isHeaderPinned = false
+  private(set) var isHeaderPinned = false
+  /// The pin offset at the end of the last layout pass.
+  private var laidOutPinOffset: CGFloat?
   /// Lets the first row (a profile banner) sit under a transparent navigation
   /// bar instead of below it, where UIKit's automatic top inset would put it.
   var extendsUnderTopBar = false {
@@ -271,7 +273,9 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     let layout = PostListPinnedHeaderLayout { [weak self] sectionIndex, environment in
       self?.layoutSection(at: sectionIndex, environment: environment)
     }
-    collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+    let collectionView = LayoutReportingCollectionView(frame: .zero, collectionViewLayout: layout)
+    collectionView.didLayoutSubviews = { [weak self] in self?.pinnedHeaderDidLayout() }
+    self.collectionView = collectionView
     collectionView.translatesAutoresizingMaskIntoConstraints = false
     collectionView.backgroundColor = .clear
     collectionView.delegate = self
@@ -585,6 +589,9 @@ extension PostListCollectionController {
   }
 
   private func layoutSection(at index: Int, environment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
+    if let layout = pinnedLayout, let pinnedSection = layout.pinnedSection, index < pinnedSection {
+      return layout.sectionAbovePinnedHeader()
+    }
     let hasPinnedHeader = dataSource?.sectionIdentifier(for: index) == .content
     let section = NSCollectionLayoutSection.list(
       using: listConfiguration(hasPinnedHeader: hasPinnedHeader), layoutEnvironment: environment
@@ -625,13 +632,34 @@ extension PostListCollectionController {
   /// while the header is still in the content it would blur everything above it.
   private func updatePinnedHeaderState() {
     guard let layout = pinnedLayout, let collectionView else { return }
+    let pinOffset = layout.pinOffset
+    // While a layout change moves the pin line, a scroll (an offset clamped to new content)
+    // says nothing about whether the header should stay pinned; the end of the pass decides.
+    guard pinOffset == laidOutPinOffset else { return }
     let offset = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
-    let isPinned = layout.pinOffset.map { offset >= $0 - PostListPinnedScrollRestoration.pinTolerance } ?? false
+    let isPinned = pinOffset.map { offset >= $0 - PostListPinnedScrollRestoration.pinTolerance } ?? false
     guard isPinned != isHeaderPinned else { return }
     isHeaderPinned = isPinned
     for view in collectionView.visibleSupplementaryViews(ofKind: UICollectionView.elementKindSectionHeader) {
       updateScrollEdgeEffect(behind: view)
     }
+  }
+
+  /// Runs after each layout pass. A pass that moved the pin offset changed the height of the
+  /// content above the header: more profile information, larger text, or rewrapping after a
+  /// rotation. A header that was pinned goes back to its pin line. Scrolling never moves the
+  /// pin offset, so this never works against someone scrolling, VoiceOver or scroll-to-top.
+  private func pinnedHeaderDidLayout() {
+    let pinOffset = pinnedLayout?.pinOffset
+    guard pinOffset != laidOutPinOffset, let collectionView else { return }
+    laidOutPinOffset = pinOffset
+    if isHeaderPinned, pendingScrollOffset == nil, let pinOffset {
+      let inset = collectionView.adjustedContentInset.top
+      if collectionView.contentOffset.y + inset < pinOffset - PostListPinnedScrollRestoration.pinTolerance {
+        collectionView.setContentOffset(CGPoint(x: 0, y: pinOffset - inset), animated: false)
+      }
+    }
+    updatePinnedHeaderState()
   }
 
   /// Carries the navigation bar's top edge effect down behind the pinned header, as on a

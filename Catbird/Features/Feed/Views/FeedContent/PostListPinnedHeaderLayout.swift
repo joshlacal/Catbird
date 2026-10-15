@@ -47,6 +47,8 @@ import UIKit
 final class PostListPinnedHeaderLayout: UICollectionViewCompositionalLayout {
   /// The section whose header pins, or nil for a list without one.
   var pinnedSection: Int?
+  /// The height the content above the pinned header was last laid out at.
+  private var heightAbovePinnedHeader: CGFloat?
 
   /// How far below the top of the bounds the header pins: the bottom of the top bars.
   var pinInset: CGFloat {
@@ -72,6 +74,23 @@ final class PostListPinnedHeaderLayout: UICollectionViewCompositionalLayout {
   var pinOffset: CGFloat? {
     guard let collectionView, let restingY = pinnedHeaderRestingY else { return nil }
     return max(0, restingY - pinInset + collectionView.adjustedContentInset.top)
+  }
+
+  /// The section above the pinned header, holding the one item over it (the profile
+  /// information). A list section would estimate that item at 44 pt each time a resize (a
+  /// rotation) lays it out again: until the item is in view and measured, the content above
+  /// the header collapses, and over a short tab the offset is clamped to the top. This one
+  /// starts from the height the item last had.
+  func sectionAbovePinnedHeader() -> NSCollectionLayoutSection {
+    let size = NSCollectionLayoutSize(
+      widthDimension: .fractionalWidth(1), heightDimension: .estimated(heightAbovePinnedHeader ?? 44)
+    )
+    return NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)]))
+  }
+
+  override func prepare() {
+    super.prepare()
+    if let restingY = pinnedHeaderRestingY, restingY > 0 { heightAbovePinnedHeader = restingY }
   }
 
   override var collectionViewContentSize: CGSize {
@@ -127,6 +146,17 @@ final class PostListPinnedHeaderLayout: UICollectionViewCompositionalLayout {
           let pinned = attributes.copy() as? UICollectionViewLayoutAttributes else { return attributes }
     pinned.frame.origin.y = pinLine
     return pinned
+  }
+}
+
+/// A collection view that says when it has finished a layout pass, so its controller can
+/// keep a pinned header pinned when a pass moves the pin line.
+final class LayoutReportingCollectionView: UICollectionView {
+  var didLayoutSubviews: (() -> Void)?
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    didLayoutSubviews?()
   }
 }
 #endif
