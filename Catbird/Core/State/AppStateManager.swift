@@ -282,7 +282,9 @@ final class AppStateManager {
       authManager.updateAccountOrder([fixtureDID, bobDID])
 
       setAppStateFactoryForTesting { did, cli in
-        let state = AppState(userDID: did, client: cli)
+        // Like the app's other fixtures, the e2e accounts take a fixed passive age decision, so
+        // the simulator's own age requirement cannot replace Home with the age notice.
+        let state = AppState(userDID: did, client: cli, regulatoryChecker: E2EFixtureAgeChecker())
         let isBob = (did == bobDID)
         let author = AppBskyActorDefs.ProfileViewBasic(
           did: try! DID(didString: did),
@@ -1552,6 +1554,15 @@ final class AppStateManager {
   }
 
 #if DEBUG
+  /// The e2e fixture's passive age check: no requirement, and it never prompts.
+  private struct E2EFixtureAgeChecker: AgeRegulatoryChecking {
+    func preflight() async -> PlatformAgeSignal { PlatformAgeSignal(requirement: .none) }
+    #if canImport(UIKit)
+    @MainActor
+    func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+    #endif
+  }
+
   @ObservationIgnored
   private var appStateFactoryForTesting: (@MainActor (String, ATProtoClient) -> AppState)?
 
