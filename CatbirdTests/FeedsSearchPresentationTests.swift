@@ -146,9 +146,7 @@ struct FeedsSearchPresentationTests {
 
   @Test("Trending topics and complete counts fit the receiving timeline width")
   func trendingTimelineAcrossSizes() async throws {
-    let (appState, settingsStore) = try await makeTrendingAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(settingsStore) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeTrendingAppState()
     let content = TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()])
     for (name, width, scheme, typeSize, horizontalInset, direction) in [
       ("narrow-light", CGFloat(320), ColorScheme.light, DynamicTypeSize.large, CGFloat(0), LayoutDirection.leftToRight),
@@ -191,9 +189,7 @@ struct FeedsSearchPresentationTests {
 
   @Test("Timeline descriptions omit missing and markup-only text without a reserved gap")
   func trendingTimelineDescriptionAvailability() async throws {
-    let (appState, settingsStore) = try await makeTrendingAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(settingsStore) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeTrendingAppState()
     var emptyBottom: CGFloat?
     let cases: [(String, String?)] = [
       ("missing", nil), ("blank", "  "), ("markup", "<p> \n </p>"),
@@ -289,9 +285,7 @@ struct FeedsSearchPresentationTests {
 
   @Test("Empty or hidden interstitials leave the next timeline row immediately available")
   func hiddenTrendingDoesNotReserveAVisibleCell() async throws {
-    let (appState, settingsStore) = try await makeTrendingAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(settingsStore) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeTrendingAppState()
     let loaded = TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()])
     for (name, content, topics, videos) in [
       ("empty", TrendingFeedContent(), true, true),
@@ -717,14 +711,16 @@ extension FeedsSearchPresentationTests {
   }
 
   /// The timeline interstitial reads trending visibility from the account's persisted settings,
-  /// so its cases need an in-memory settings store that accepts changes.
-  private func makeTrendingAppState() async throws -> (AppState, ModelContainer) {
+  /// so its cases need an in-memory settings store that accepts changes. The store outlives the
+  /// test (`TestSettingsStores`) because the app state's bootstrap work can run after it returns.
+  private func makeTrendingAppState() async throws -> AppState {
     let accountDID = "did:plc:feedssearchpresentationfixture"
     let container = try ModelContainer(
       for: AppSettingsModel.self, Preferences.self,
       configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
     container.mainContext.insert(AppSettingsModel(accountDID: accountDID))
     try container.mainContext.save()
+    TestSettingsStores.retain(container)
     let appState = try await makeAppState()
     appState.initializePreferencesManager(with: container.mainContext)
     for _ in 0..<150 where !appState.appSettings.canEditPersistedSettings {
@@ -736,7 +732,7 @@ extension FeedsSearchPresentationTests {
     appState.themeManager.applyTheme(
       theme: appState.appSettings.theme, darkThemeMode: "black", accentColor: appState.appSettings.accentColor)
     try #require(appState.themeManager.darkThemeMode == .black)
-    return (appState, container)
+    return appState
   }
 
   private func makeAppState(baseURL: String = "https://example.invalid") async throws -> AppState {

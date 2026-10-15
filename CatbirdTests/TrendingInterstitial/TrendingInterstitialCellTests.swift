@@ -15,13 +15,16 @@ struct TrendingInterstitialCellTests {
   }
 
   /// An account with in-memory persisted settings, so trending settings can change during a test.
-  private func makeAppState() async throws -> (AppState, ModelContainer) {
+  /// The store outlives the test: the preferences load `configure` schedules and debounced settings
+  /// saves can run after a test that never suspends has returned.
+  private func makeAppState() async throws -> AppState {
     let accountDID = "did:plc:trendingcellfixture"
     let container = try ModelContainer(
       for: AppSettingsModel.self, Preferences.self,
       configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
     container.mainContext.insert(AppSettingsModel(accountDID: accountDID))
     try container.mainContext.save()
+    TestSettingsStores.retain(container)
     // The reserved invalid domain keeps the fixture from reaching a real service.
     let client = await ATProtoClient(baseURL: try #require(URL(string: "https://trending-cell.invalid")))
     let appState = AppState(userDID: accountDID, client: client, regulatoryChecker: NoAgePrompt())
@@ -32,7 +35,7 @@ struct TrendingInterstitialCellTests {
     try #require(appState.appSettings.canEditPersistedSettings)
     appState.appSettings.showTrendingTopics = true
     appState.appSettings.showTrendingVideos = true
-    return (appState, container)
+    return appState
   }
 
   private func makeTopic(_ name: String = "Moon Garden", postCount: Int = 1200) -> AppBskyUnspeccedDefs.TrendView {
@@ -83,9 +86,7 @@ struct TrendingInterstitialCellTests {
 
   @Test("The cell is as tall as its layout and exposes the presentation's accessibility")
   func sizeAndAccessibility() async throws {
-    let (appState, container) = try await makeAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(container) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeAppState()
     let cell = TrendingInterstitialCell(frame: .zero)
     let height = layOut(cell, content: TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()]), appState: appState)
     #expect(height > 0)
@@ -113,9 +114,7 @@ struct TrendingInterstitialCellTests {
 
   @Test("Hidden or empty trending content collapses the row")
   func hiddenCollapses() async throws {
-    let (appState, container) = try await makeAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(container) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeAppState()
     let cell = TrendingInterstitialCell(frame: .zero)
     #expect(layOut(cell, content: TrendingFeedContent(), appState: appState) == 0)
 
@@ -126,9 +125,7 @@ struct TrendingInterstitialCellTests {
 
   @Test("Videos alone render without the topics carousel")
   func videosOnly() async throws {
-    let (appState, container) = try await makeAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(container) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeAppState()
     let cell = TrendingInterstitialCell(frame: .zero)
     let both = layOut(TrendingInterstitialCell(frame: .zero),
       content: TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()]), appState: appState)
@@ -140,9 +137,7 @@ struct TrendingInterstitialCellTests {
 
   @Test("A reused cell shows its new content, and identical content keeps its card views")
   func reuse() async throws {
-    let (appState, container) = try await makeAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(container) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeAppState()
     let cell = TrendingInterstitialCell(frame: .zero)
     let first = TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()])
     _ = layOut(cell, content: first, appState: appState)
@@ -165,9 +160,7 @@ struct TrendingInterstitialCellTests {
 
   @Test("Turning a section off in settings refreshes a configured cell")
   func observesSettings() async throws {
-    let (appState, container) = try await makeAppState()
-    // Flush the debounced settings save while its in-memory store still exists.
-    defer { withExtendedLifetime(container) { _ = appState.appSettings.persistPendingChanges() } }
+    let appState = try await makeAppState()
     let cell = TrendingInterstitialCell(frame: .zero)
     let content = TrendingFeedContent(trends: [makeTopic()], videos: [try makeVideo()])
     let both = layOut(cell, content: content, appState: appState)
@@ -189,6 +182,17 @@ private extension UICollectionViewLayoutAttributes {
   func with(width: CGFloat) -> UICollectionViewLayoutAttributes {
     size = CGSize(width: width, height: 44)
     return self
+  }
+}
+/// In-memory settings stores used by this test process. `AppState` schedules work against its
+/// store (the preferences load in `PreferencesManager.configure`, debounced `AppSettings` saves)
+/// that can run after a test returns, so the stores are never released mid-process.
+@MainActor
+enum TestSettingsStores {
+  private static var containers: [ModelContainer] = []
+
+  static func retain(_ container: ModelContainer) {
+    containers.append(container)
   }
 }
 #endif
