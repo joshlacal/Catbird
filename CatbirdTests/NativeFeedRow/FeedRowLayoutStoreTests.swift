@@ -97,12 +97,110 @@ struct FeedRowLayoutStoreTests {
     #expect(store.cachedCount == 4)
   }
 
+  @Test("A differing time text misses the cache")
+  func timeTextChangeMisses() throws {
+    let store = FeedRowLayoutStore()
+    let input = try NativeFeedRowTestFactory.layoutInput(text: "x")
+    let nineMinutes = Self.copy(of: input, timeText: "9m")
+    let tenMinutes = Self.copy(of: input, timeText: "10m")
+    _ = store.layout(for: nineMinutes)
+    let served = store.layout(for: tenMinutes)
+    #expect(store.cachedCount == 2)
+    #expect(served == FeedRowLayoutEngine.layout(tenMinutes))
+    #expect(served.timeFrame.width > FeedRowLayoutEngine.layout(nineMinutes).timeFrame.width)
+  }
+
+  @Test("A differing verification badge misses the cache")
+  func verificationChangeMisses() throws {
+    let store = FeedRowLayoutStore()
+    let input = try NativeFeedRowTestFactory.layoutInput(text: "x")
+    let plain = Self.copy(of: input, verificationSymbol: .some(nil))
+    let verified = Self.copy(of: input, verificationSymbol: "checkmark.seal.fill")
+    #expect(store.layout(for: plain).badgeFrame == nil)
+    let served = store.layout(for: verified)
+    #expect(store.cachedCount == 2)
+    #expect(served.badgeFrame != nil)
+    #expect(served == FeedRowLayoutEngine.layout(verified))
+  }
+
+  @Test("A differing display name or handle misses the cache")
+  func nameAndHandleChangeMiss() throws {
+    let store = FeedRowLayoutStore()
+    let input = try NativeFeedRowTestFactory.layoutInput(text: "x")
+    let renamed = Self.copy(of: input, displayName: "A much longer display name than before")
+    let rehandled = Self.copy(of: input, handle: "@a-much-longer-handle.example.com")
+    _ = store.layout(for: input)
+    #expect(store.layout(for: renamed) == FeedRowLayoutEngine.layout(renamed))
+    #expect(store.layout(for: rehandled) == FeedRowLayoutEngine.layout(rehandled))
+    #expect(store.cachedCount == 3)
+  }
+
+  @Test("Cancelling a prepare keeps only correct layouts")
+  func cancelledPrepareStoresCorrectLayouts() async throws {
+    let store = FeedRowLayoutStore()
+    let input = try NativeFeedRowTestFactory.layoutInput(text: "cancelled")
+    let inputs = (0..<200).map { Self.resized(input, to: CGFloat(300 + $0)) }
+    let task = Task { await store.prepare(inputs) }
+    task.cancel()
+    await task.value
+    #expect(store.cachedCount <= inputs.count)
+    for request in inputs {
+      #expect(store.layout(for: request) == FeedRowLayoutEngine.layout(request))
+    }
+    #expect(store.cachedCount == inputs.count)
+  }
+
+  @Test("Exceeding the capacity wipes the cache and still serves the new layout")
+  func evictionAtCapacity() throws {
+    let capacity = 4
+    let store = FeedRowLayoutStore(capacity: capacity)
+    let input = try NativeFeedRowTestFactory.layoutInput(text: "x")
+    for index in 0..<capacity {
+      _ = store.layout(for: Self.resized(input, to: CGFloat(300 + index)))
+    }
+    #expect(store.cachedCount == capacity)
+    let extra = Self.resized(input, to: 500)
+    let served = store.layout(for: extra)
+    #expect(store.cachedCount == 1)
+    #expect(served == FeedRowLayoutEngine.layout(extra))
+  }
+
+  @Test("Overwriting a cached key at capacity does not wipe the cache")
+  func overwriteAtCapacityKeepsEntries() async throws {
+    let store = FeedRowLayoutStore(capacity: 2)
+    let input = try NativeFeedRowTestFactory.layoutInput(text: "x")
+    let first = Self.resized(input, to: 320)
+    let second = Self.resized(input, to: 390)
+    // `first` is uncached when the prepare starts, so its result is stored after the store has
+    // already been filled to capacity by the main-actor calls below.
+    let task = Task { await store.prepare([first]) }
+    await Task.yield()
+    _ = store.layout(for: second)
+    _ = store.layout(for: first)
+    #expect(store.cachedCount == 2)
+    await task.value
+    #expect(store.cachedCount == 2)
+    #expect(store.layout(for: first) == FeedRowLayoutEngine.layout(first))
+    #expect(store.layout(for: second) == FeedRowLayoutEngine.layout(second))
+    #expect(store.cachedCount == 2)
+  }
+
   // MARK: - Helpers
 
   private static func resized(_ input: FeedRowLayoutInput, to width: CGFloat) -> FeedRowLayoutInput {
+    copy(of: input, width: width)
+  }
+
+  /// `input` with the given fields replaced. `verificationSymbol: .some(nil)` removes the badge.
+  private static func copy(
+    of input: FeedRowLayoutInput, width: CGFloat? = nil, displayName: String? = nil,
+    handle: String? = nil, timeText: String? = nil, verificationSymbol: String?? = nil
+  ) -> FeedRowLayoutInput {
     FeedRowLayoutInput(
-      postID: input.postID, width: width, typography: input.typography, displayName: input.displayName,
-      handle: input.handle, timeText: input.timeText, verificationSymbol: input.verificationSymbol,
+      postID: input.postID, width: width ?? input.width, typography: input.typography,
+      displayName: displayName ?? input.displayName, handle: handle ?? input.handle,
+      timeText: timeText ?? input.timeText,
+      verificationSymbol: verificationSymbol ?? input.verificationSymbol,
       text: input.text, contentSignature: input.contentSignature)
   }
 }

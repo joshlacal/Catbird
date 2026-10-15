@@ -5,9 +5,11 @@ import UIKit
 
 /// Caches `FeedRowLayout`s and computes them off the main actor ahead of display.
 ///
-/// A layout is only ever served for the exact width, typography generation and content signature
-/// it was computed for, so a stale entry can never give a cell a frame set that disagrees with
-/// what it draws (the gap/overlap bug class).
+/// A layout is only ever served for the exact inputs it was computed from. The key holds every
+/// input `FeedRowLayoutEngine` reads: the width, the typography generation, the header strings
+/// (display name, handle, time text), the badge symbol, and the content signature, which together
+/// with the typography determines the attributed text. A stale entry can therefore never give a
+/// cell a frame set that disagrees with what it draws (the gap/overlap bug class).
 @MainActor
 final class FeedRowLayoutStore {
   struct Key: Hashable, Sendable {
@@ -16,20 +18,36 @@ final class FeedRowLayoutStore {
     /// would not match the cell's bounds.
     let width: CGFloat
     let typographyKey: Int
+    let displayName: String
+    let handle: String
+    /// Changes with the clock ("9m", "10m", "1d") and sizes the name and handle.
+    let timeText: String
+    /// Follows the hide-verification-badges preference and decides whether a badge frame exists.
+    let verificationSymbol: String?
     let signature: FeedPostContentSignature
 
     nonisolated init(_ input: FeedRowLayoutInput) {
       postID = input.postID
       width = input.width
       typographyKey = input.typography.generationKey
+      displayName = input.displayName
+      handle = input.handle
+      timeText = input.timeText
+      verificationSymbol = input.verificationSymbol
       signature = input.contentSignature
     }
   }
 
+  static let defaultCapacity = 1000
+
   private var layouts: [Key: FeedRowLayout] = [:]
-  private let capacity = 1000
+  private let capacity: Int
 
   var cachedCount: Int { layouts.count }
+
+  init(capacity: Int = FeedRowLayoutStore.defaultCapacity) {
+    self.capacity = max(1, capacity)
+  }
 
   /// The cached layout for `input`, or one computed now on the calling thread.
   func layout(for input: FeedRowLayoutInput) -> FeedRowLayout {
@@ -74,7 +92,7 @@ final class FeedRowLayoutStore {
   // MARK: - Storage
 
   private func store(_ layout: FeedRowLayout, for key: Key) {
-    if layouts.count >= capacity { layouts.removeAll(keepingCapacity: true) }
+    if layouts[key] == nil, layouts.count >= capacity { layouts.removeAll(keepingCapacity: true) }
     layouts[key] = layout
   }
 }
