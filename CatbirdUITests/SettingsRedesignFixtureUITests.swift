@@ -293,19 +293,27 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       let viewport = receivingViewport(app)
       if element.exists && element.isHittable && viewport.insetBy(dx: -1, dy: -1).contains(element.frame) { return }
       guard attempt < 23 else { break }
-      // Move toward the control's actual position in momentum-free steps, so a
-      // fling cannot carry it past the viewport and away from a one-way search.
-      var moveContentUp = upward
-      if element.exists, !element.frame.isEmpty {
-        if element.frame.maxY > viewport.maxY { moveContentUp = true }
-        else if element.frame.minY < viewport.minY { moveContentUp = false }
-      }
       let origin = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
       let x = viewport.midX
+      if element.exists, !element.frame.isEmpty {
+        guard element.frame.height <= viewport.height else {
+          XCTFail("\(element.identifier) is \(element.frame.height) pt tall in a \(viewport.height) pt viewport")
+          throw FixtureError.controlNotReached
+        }
+        // Drag by the distance that centres the control. A fixed step can overshoot a
+        // short landscape viewport and leave the control alternating past either edge.
+        let shift = min(max(element.frame.midY - viewport.midY, -viewport.height * 0.8), viewport.height * 0.8)
+        origin.withOffset(CGVector(dx: x, dy: viewport.midY + shift / 2))
+          .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: viewport.midY - shift / 2)),
+                 withVelocity: .slow, thenHoldForDuration: 0.3)
+        continue
+      }
+      // Lazy rows are not in the tree until scrolled near. Move toward them in momentum-free
+      // steps, so a fling cannot carry the control past the viewport.
       let lower = viewport.minY + viewport.height * 0.7
       let upper = viewport.minY + viewport.height * 0.3
-      origin.withOffset(CGVector(dx: x, dy: moveContentUp ? lower : upper))
-        .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: moveContentUp ? upper : lower)),
+      origin.withOffset(CGVector(dx: x, dy: upward ? lower : upper))
+        .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: upward ? upper : lower)),
                withVelocity: .default, thenHoldForDuration: 0.2)
     }
     XCTFail("Expected a fully reachable native control: \(element.identifier)")
