@@ -1493,18 +1493,22 @@ import os
       }
       nativeRows.onSettingsChanged = { [weak self] in self?.forceCellReconfiguration() }
       nativeRows.startObservingSettings()
-      registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitDisplayScale.self]) {
-        (controller: FeedCollectionViewControllerIntegrated, _: UITraitCollection) in
-        controller.nativeRowTraitsDidChange()
+      // The collection view's traits are the ones every snapshot reads; registering on the
+      // controller would fire before the collection view's traits and bounds follow.
+      collectionView.registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitDisplayScale.self]) {
+        [weak self] (_: UICollectionView, _: UITraitCollection) in
+        self?.nativeRowTraitsDidChange()
       }
     }
 
-    /// A size class or display scale change re-resolves the row settings from the new traits and
-    /// relays out the visible native rows at once, so they move with the hosted rows (whose lane
-    /// follows the size class) instead of after the next snapshot. The reconfigure that follows
-    /// updates rows prepared but not on screen.
+    /// A size class or display scale change re-resolves the row settings from the collection
+    /// view's new traits and relays out the visible native rows at once, so they move with the
+    /// hosted rows (whose lane follows the size class) instead of after the next snapshot. The
+    /// reconfigure that follows updates rows prepared but not on screen.
     private func nativeRowTraitsDidChange() {
-      guard let collectionView, dataSource != nil, nativeRows.updateTraits(traitCollection) else { return }
+      guard let collectionView, dataSource != nil, nativeRows.updateTraits(collectionView.traitCollection) else {
+        return
+      }
       relayoutVisibleNativeRows(boundsWidth: collectionView.bounds.width)
       forceCellReconfiguration()
     }
@@ -1609,10 +1613,11 @@ import os
       // Native rows get layouts for the new width before the collection view resizes them, so a
       // rotation never draws a row with frames for the old width.
       coordinator.animate(alongsideTransition: { [weak self] _ in
-        guard let self else { return }
-        // The new size can come with a new size class; lay out with the settings it implies.
-        _ = self.nativeRows.updateTraits(self.traitCollection)
-        self.relayoutVisibleNativeRows(boundsWidth: size.width)
+        // By now the collection view has its new size and traits (a rotation that changes the size
+        // class included); `size` is the scene's, which can be wider than the feed's safe area.
+        guard let self, let collectionView = self.collectionView else { return }
+        _ = self.nativeRows.updateTraits(collectionView.traitCollection)
+        self.relayoutVisibleNativeRows(boundsWidth: collectionView.bounds.width)
       }) { [weak self] _ in
         // Rows carry the window size for embed media; refresh it once the new size is in place.
         self?.forceCellReconfiguration()

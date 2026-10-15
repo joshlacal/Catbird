@@ -21,7 +21,8 @@ struct FeedPostHeaderLineViewTests {
     verified: VerificationBadgeKind? = nil, width: CGFloat = 390, fontManager: FontManager = FontManager(),
     boldText: Bool = false
   ) throws -> Fixture {
-    let typography = FeedRowTypography.resolved(fontManager: fontManager, boldText: boldText)
+    let typography = FeedRowTypography.resolved(
+      fontManager: fontManager, boldText: boldText, contentSize: UIApplication.shared.preferredContentSizeCategory)
     let layout = FeedRowLayoutEngine.layout(
       FeedRowLayoutInput(
         postID: "p", width: width, typography: typography, displayName: displayName, handle: handle,

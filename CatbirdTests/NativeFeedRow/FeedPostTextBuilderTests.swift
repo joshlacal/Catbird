@@ -21,7 +21,8 @@ struct FeedPostTextBuilderTests {
   }
 
   private var typography: FeedRowTypography {
-    FeedRowTypography.resolved(fontManager: FontManager(), boldText: false)
+    FeedRowTypography.resolved(
+      fontManager: FontManager(), boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)
   }
 
   private func linkedText(in built: NSAttributedString) -> String {

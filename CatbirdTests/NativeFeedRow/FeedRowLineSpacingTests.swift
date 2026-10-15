@@ -22,7 +22,8 @@ struct FeedRowLineSpacingTests {
   func spacingMatchesHostedRow(setting: String) {
     let fontManager = FontManager()
     fontManager.lineSpacing = setting
-    let typography = FeedRowTypography.resolved(fontManager: fontManager, boldText: false)
+    let typography = FeedRowTypography.resolved(
+      fontManager: fontManager, boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)
     #expect(typography.bodyLineSpacing == max(0, Self.hostedSpacing(fontManager)))
   }
 
@@ -31,14 +32,15 @@ struct FeedRowLineSpacingTests {
   func textHeightMatchesHostedText(setting: String, contentSize: UIContentSizeCategory) throws {
     let fontManager = FontManager()
     fontManager.lineSpacing = setting
-    let spacing = FeedRowTypography.resolved(fontManager: fontManager, boldText: false).bodyLineSpacing
+    let spacing = FeedRowTypography.resolved(
+      fontManager: fontManager, boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory).bodyLineSpacing
     let body = UIFontMetrics(forTextStyle: .body).scaledFont(
       for: .systemFont(ofSize: Typography.Size.body),
       compatibleWith: UITraitCollection(preferredContentSizeCategory: contentSize))
     // Kerning 0 isolates line spacing; `Text`'s tracking and the native `.kern` are compared elsewhere.
     let typography = FeedRowTypography(
       body: body, name: body, metadata: body, bodyLineSpacing: spacing, kerning: 0,
-      optionsGlyphSize: .zero, generationKey: 0)
+      optionsGlyphSize: .zero, separatorLineHeight: 0, generationKey: 0)
     let text = String(repeating: "spacing between wrapped lines of a feed post ", count: 4)
     let record = AppBskyFeedPost(
       text: text, entities: nil, facets: nil, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil,

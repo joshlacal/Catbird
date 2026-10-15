@@ -61,14 +61,18 @@ final class NativeFeedRowCoordinator {
   private var dequeuedAsNative: [String: Bool] = [:]
   /// The latest shadow-merged post per URI, from the rows' live-count streams.
   private var mergedPosts: [String: AppBskyFeedDefs.PostView] = [:]
+  /// The feed items (post IDs) whose rows recorded live counts or created models for each URI;
+  /// both are kept while one of these items is in the snapshot.
+  private var rowPostIDsByURI: [String: Set<String>] = [:]
   /// Created the first time a row's menu or action bar needs them, per post URI.
   private var postModels: [String: NativeRowPostModels] = [:]
   /// The width cells actually have when it differs from the collection view's width, keyed by the
   /// collection view's width (reported through `NativeFeedRowActions.layoutWidthChanged`).
   private var cellWidths: [CGFloat: CGFloat] = [:]
   private var pendingReconfigure: Set<String> = []
-  /// The width each post last asked to be reconfigured for (see `cellWidthChanged`).
-  private var requestedCellWidths: [String: CGFloat] = [:]
+  /// The width each post last asked to be reconfigured for, per collection view width (see
+  /// `cellWidthChanged`).
+  private var requestedCellWidths: [WidthRequest: CGFloat] = [:]
   private var preparations: [UUID: Task<Void, Never>] = [:]
   private var settingsObserver: UIKitStateObserver<AppState>?
   private var policyObserver: NSObjectProtocol?
@@ -111,6 +115,7 @@ final class NativeFeedRowCoordinator {
       resolveSettingsIfNeeded()
       decisions.removeAll()
       mergedPosts.removeAll()
+      rowPostIDsByURI.removeAll()
       postModels.values.forEach { $0.cancel() }
       postModels.removeAll()
       startObservingSettings()
@@ -134,19 +139,21 @@ final class NativeFeedRowCoordinator {
   }
 
   /// Forgets what belonged to posts that left the feed, once a snapshot without them is applied:
-  /// their decisions, dequeue records, pending reconfigures, live counts and models. Live counts
-  /// and models are kept for the native rows still decided; reading their URIs decodes nothing.
+  /// their decisions, dequeue records, pending reconfigures, live counts, models and menu target.
+  /// Live counts and models are kept by the feed items that recorded them, so neither a cleared
+  /// decision cache nor a post that is not decoded affects them.
   func didApplySnapshot() {
     decisions = decisions.filter { posts[$0.key] != nil }
     dequeuedAsNative = dequeuedAsNative.filter { posts[$0.key] != nil }
     pendingReconfigure = pendingReconfigure.filter { posts[$0] != nil }
-    requestedCellWidths = requestedCellWidths.filter { posts[$0.key] != nil }
+    requestedCellWidths = requestedCellWidths.filter { posts[$0.key.postID] != nil }
 
-    guard !mergedPosts.isEmpty || !postModels.isEmpty else { return }
-    let uris = Set(decisions.values.compactMap { entry -> String? in
-      if case .native(let row) = entry.decision { return row.post.uri.uriString() }
-      return nil
-    })
+    guard !rowPostIDsByURI.isEmpty else { return }
+    rowPostIDsByURI = rowPostIDsByURI.compactMapValues { postIDs in
+      let remaining = postIDs.filter { posts[$0] != nil }
+      return remaining.isEmpty ? nil : remaining
+    }
+    let uris = Set(rowPostIDsByURI.keys)
     mergedPosts = mergedPosts.filter { uris.contains($0.key) }
     for (uri, models) in postModels where !uris.contains(uri) {
       models.cancel()
@@ -276,8 +283,9 @@ final class NativeFeedRowCoordinator {
   private func cellWidthChanged(postID: String, to width: CGFloat) {
     guard let boundsWidth = collectionView?.bounds.width, boundsWidth > 0, width > 0 else { return }
     cellWidths[boundsWidth] = abs(width - boundsWidth) < 0.01 ? nil : width
-    guard requestedCellWidths[postID] != width else { return }
-    requestedCellWidths[postID] = width
+    let request = WidthRequest(postID: postID, boundsWidth: boundsWidth)
+    guard requestedCellWidths[request] != width else { return }
+    requestedCellWidths[request] = width
     if pendingReconfigure.insert(postID).inserted { onNeedsReconfigure?() }
   }
 
@@ -289,8 +297,10 @@ final class NativeFeedRowCoordinator {
       openPost: { [weak self] post in self?.openPost(post) },
       openProfile: { [weak self] did in self?.navigationPath.wrappedValue.append(NavigationDestination.profile(did)) },
       openLink: { [weak self] url in self?.openLink(url) },
-      actionBar: { [weak self] post in self?.actionBarActions(for: post) ?? Self.inertActionBarActions },
-      optionsMenu: { [weak self] post in self?.optionsMenu(for: post) ?? [] },
+      actionBar: { [weak self] post in
+        self?.actionBarActions(for: post, postID: postID) ?? Self.inertActionBarActions
+      },
+      optionsMenu: { [weak self] post in self?.optionsMenu(for: post, postID: postID) ?? [] },
       layoutWidthChanged: { [weak self] _, width in self?.cellWidthChanged(postID: postID, to: width) })
   }
 
@@ -311,7 +321,7 @@ final class NativeFeedRowCoordinator {
   }
 
   /// The handlers `ActionButtonsView.actionBarActions` builds for the hosted row.
-  private func actionBarActions(for post: AppBskyFeedDefs.PostView) -> FeedActionBarActions {
+  private func actionBarActions(for post: AppBskyFeedDefs.PostView, postID: String) -> FeedActionBarActions {
     let uri = post.uri.uriString()
     return FeedActionBarActions(
       reply: { [weak self] in
@@ -323,7 +333,7 @@ final class NativeFeedRowCoordinator {
       toggleRepost: { [weak self] in
         guard let self else { return }
         PlatformHaptics.medium()
-        let models = self.postModels(for: post)
+        let models = self.postModels(for: post, postID: postID)
         let target = self.feedInteractionTarget
         Task { [weak self] in
           await models.reconciled()
@@ -345,7 +355,7 @@ final class NativeFeedRowCoordinator {
       toggleLike: { [weak self] in
         guard let self else { return }
         PlatformHaptics.medium()
-        let models = self.postModels(for: post)
+        let models = self.postModels(for: post, postID: postID)
         let target = self.feedInteractionTarget
         Task { [weak self] in
           await models.reconciled()
@@ -386,8 +396,8 @@ final class NativeFeedRowCoordinator {
 
   /// The options menu for `post`. Opening it makes the post's models the ones the presentation
   /// host presents for, so the menu's sheets and alerts belong to this post.
-  private func optionsMenu(for post: AppBskyFeedDefs.PostView) -> [UIMenuElement] {
-    let models = postModels(for: post)
+  private func optionsMenu(for post: AppBskyFeedDefs.PostView, postID: String) -> [UIMenuElement] {
+    let models = postModels(for: post, postID: postID)
     presentationModel.activate(models)
     let context = PostOptionsMenuContext(
       postState: models.postState, contextMenuViewModel: models.contextMenuViewModel,
@@ -404,8 +414,9 @@ final class NativeFeedRowCoordinator {
   /// The models of the post a row shows, created on first use from the feed payload `post` the
   /// row was configured with (never the shadow-merged copy; see `NativeRowPostModels`), and
   /// replaced when the post's record changed (a new CID) while nothing is presented for it.
-  func postModels(for post: AppBskyFeedDefs.PostView) -> NativeRowPostModels {
+  func postModels(for post: AppBskyFeedDefs.PostView, postID: String) -> NativeRowPostModels {
     let uri = post.uri.uriString()
+    rowPostIDsByURI[uri, default: []].insert(postID)
     if let existing = postModels[uri], existing.cid == post.cid || existing.postState.hasPresentation {
       return existing
     }
@@ -416,6 +427,14 @@ final class NativeFeedRowCoordinator {
     return created
   }
 
+  /// The models created for the post at `uri`, if any.
+  func existingPostModels(forURI uri: String) -> NativeRowPostModels? {
+    postModels[uri]
+  }
+
+  /// The models whose sheets and alerts the presentation host shows: the post whose menu opened last.
+  var activeMenuModels: NativeRowPostModels? { presentationModel.active }
+
   // MARK: - Live Counts
 
   /// For each shadow change of the post, its shadow-merged copy; finishes when the shadow stream
@@ -423,10 +442,11 @@ final class NativeFeedRowCoordinator {
   func shadowUpdates(for row: Row) -> @Sendable (String) async -> AsyncStream<AppBskyFeedDefs.PostView> {
     let manager = appState.postShadowManager
     let post = row.post
+    let postID = row.postID
     return { [weak self] uri in
       Self.mergedPosts(
         of: await manager.shadowUpdates(forUri: uri), merge: { await manager.mergeShadow(post: post) },
-        onMerged: { [weak self] merged in await self?.record(merged: merged, uri: uri) })
+        onMerged: { [weak self] merged in await self?.record(merged: merged, uri: uri, postID: postID) })
     }
   }
 
@@ -451,7 +471,13 @@ final class NativeFeedRowCoordinator {
     }
   }
 
-  private func record(merged: AppBskyFeedDefs.PostView, uri: String) {
+  /// The latest shadow-merged copy a row's live stream delivered for the post at `uri`.
+  func mergedPost(forURI uri: String) -> AppBskyFeedDefs.PostView? {
+    mergedPosts[uri]
+  }
+
+  private func record(merged: AppBskyFeedDefs.PostView, uri: String, postID: String) {
+    rowPostIDsByURI[uri, default: []].insert(postID)
     mergedPosts[uri] = merged
   }
 
@@ -573,6 +599,16 @@ final class NativeFeedRowCoordinator {
   }
 }
 
+// MARK: - Width Requests
+
+extension NativeFeedRowCoordinator {
+  /// A feed item's report of the width its cell has, under one collection view width.
+  fileprivate struct WidthRequest: Hashable {
+    let postID: String
+    let boundsWidth: CGFloat
+  }
+}
+
 // MARK: - Link Presentation
 
 extension NativeFeedRowCoordinator {
@@ -596,6 +632,8 @@ extension NativeFeedRowCoordinator {
 
 extension NativeFeedRowCoordinator {
   /// The app state native rows read, captured once per snapshot.
+  /// A new input must be read here, compared in `SettingsInputs`, and observed through
+  /// `SettingsFingerprint` (or a controller observer), or rows will not follow it.
   fileprivate struct Settings: Equatable {
     let support: NativeFeedRowSupport.Settings
     let policy: ModerationPolicy
@@ -624,7 +662,8 @@ extension NativeFeedRowCoordinator {
         policy: appState.moderationPolicy,
         // `AppFontModifier` bolds for the app's bold-text setting or the system's legibility weight.
         typography: FeedRowTypography.resolved(
-          fontManager: fontManager, boldText: fontManager.effectiveBoldText || legibilityBold),
+          fontManager: fontManager, boldText: fontManager.effectiveBoldText || legibilityBold,
+          contentSize: contentSize(of: traits)),
         linkStyle: PostLinkPresentationStyle.resolve(
           highlightLinks: appSettings.highlightLinks, linkStyle: appSettings.linkStyle),
         hideBadges: appState.preferencesManager.hideVerificationBadges,
@@ -633,6 +672,14 @@ extension NativeFeedRowCoordinator {
         colors: RowColors(themeManager: appState.themeManager, increaseContrast: appSettings.effectiveIncreaseContrast),
         actionBarFonts: .resolved(fontManager: fontManager, boldText: legibilityBold || appSettings.effectiveBoldText),
         reduceMotion: appSettings.effectiveReduceMotion)
+    }
+
+    /// The content size the hosted row's environment has: the trait collection's, which
+    /// `FontManager` caps at the app's Dynamic Type limit, or the system's before the collection
+    /// view has one.
+    static func contentSize(of traits: UITraitCollection) -> UIContentSizeCategory {
+      let category = traits.preferredContentSizeCategory
+      return category == .unspecified ? UIApplication.shared.preferredContentSizeCategory : category
     }
   }
 
@@ -684,6 +731,7 @@ extension NativeFeedRowCoordinator {
 
   /// Everything `Settings.resolve` reads, in cheap-to-compare form: the settings are rebuilt (fonts,
   /// colours) only when these change. Checked on every feed update, including skipped ones.
+  /// Keep in step with `Settings.resolve` and `SettingsFingerprint`.
   fileprivate struct SettingsInputs: Equatable {
     let fingerprint: SettingsFingerprint
     let isEnabled: Bool
@@ -708,7 +756,7 @@ extension NativeFeedRowCoordinator {
       policyAccountDID = appState.moderationPolicy.accountDID
       fontManager = ObjectIdentifier(appState.fontManager)
       fontBoldText = appState.fontManager.effectiveBoldText
-      contentSize = UIApplication.shared.preferredContentSizeCategory
+      contentSize = Settings.contentSize(of: traits)
       horizontalSizeClass = traits.horizontalSizeClass
       displayScale = traits.displayScale
       legibilityWeight = traits.legibilityWeight
@@ -719,6 +767,7 @@ extension NativeFeedRowCoordinator {
 
   /// The app settings `Settings.resolve` reads that can change while the feed is on screen. Dynamic
   /// Type and the theme reach the controller through its trait and theme observers.
+  /// Keep in step with `Settings.resolve` and `SettingsInputs`.
   fileprivate struct SettingsFingerprint: Equatable {
     let hideBadges: Bool
     let highlightLinks: Bool

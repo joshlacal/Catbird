@@ -40,6 +40,7 @@ enum NativeFeedRowTestFactory {
       bodyLineSpacing: FeedRowTypography.bodyLineSpacing(fontManager: fontManager),
       kerning: fontManager.letterSpacingValue,
       optionsGlyphSize: FeedRowTypography.optionsGlyphSize(contentSize: contentSize),
+      separatorLineHeight: FeedRowTypography.separatorLineHeight(contentSize: contentSize),
       generationKey: hasher.finalize())
   }
 

@@ -12,7 +12,8 @@ struct FeedRowLayoutEngineTests {
     text: String, width: CGFloat = 390, displayName: String = "Alice Rivera", maxContentWidth: CGFloat? = nil,
     displayScale: CGFloat = 1, fontManager: FontManager = FontManager()
   ) throws -> FeedRowLayoutInput {
-    let typography = FeedRowTypography.resolved(fontManager: fontManager, boldText: false)
+    let typography = FeedRowTypography.resolved(
+      fontManager: fontManager, boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)
     let post = AppBskyFeedPost(
       text: text, entities: nil, facets: nil, reply: nil, embed: nil, langs: nil, labels: nil,
       tags: nil, createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)))
@@ -149,6 +150,79 @@ struct FeedRowLayoutEngineTests {
     // The row is laid out with the nominal half point, as the hosted row is; the drawn line fits in it.
     #expect(divider.maxY <= layout.height + 0.001)
     #expect(divider.width == layout.width)
+  }
+
+  /// Header heights whose row bottoms fall a third, three quarters, a fifth and four fifths of a
+  /// pixel off the grid at the given scale (the header grows with the options glyph's height).
+  @Test("The divider's edges round to the nearest pixel like SwiftUI's when the row bottom is off the grid",
+    arguments: [(CGFloat(3), CGFloat(6.1)), (3, 6.25), (2, 6.1), (2, 6.4)])
+  func dividerEdgesRoundLikeSwiftUI(scale: CGFloat, glyphHeight: CGFloat) throws {
+    let base = try input(text: "hello", displayScale: scale)
+    let t = base.typography
+    let typography = FeedRowTypography(
+      body: t.body, name: t.name, metadata: t.metadata, bodyLineSpacing: t.bodyLineSpacing, kerning: t.kerning,
+      optionsGlyphSize: CGSize(width: t.optionsGlyphSize.width, height: glyphHeight),
+      separatorLineHeight: t.separatorLineHeight, generationKey: t.generationKey &+ 1)
+    let input = FeedRowLayoutInput(
+      postID: base.postID, width: base.width, typography: typography, displayName: base.displayName,
+      handle: base.handle, timeText: base.timeText, verificationSymbol: nil, text: base.text,
+      contentSignature: base.contentSignature, displayScale: scale)
+    let layout = FeedRowLayoutEngine.layout(input)
+    let rowBottom = layout.actionBarFrame.maxY + FeedRowMetrics.actionBarBottom
+    let pixels = rowBottom * scale
+    #expect(abs(pixels - pixels.rounded()) > 0.1, "the case must be off the pixel grid")
+
+    // SwiftUI rounds each edge of the half-point rectangle to the nearest pixel.
+    func nearestPixel(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+    #expect(abs(layout.dividerFrame.minY - nearestPixel(rowBottom)) < 0.001)
+    #expect(abs(layout.dividerFrame.maxY - nearestPixel(rowBottom + FeedRowMetrics.dividerHeight)) < 0.001)
+    // Row height (and so every row top) is unchanged: the nominal half point, rounded up.
+    #expect(abs(layout.height - ((rowBottom + FeedRowMetrics.dividerHeight) * scale - 0.0001).rounded(.up) / scale) < 0.001)
+    #expect(layout.dividerFrame.maxY <= layout.height + 0.001)
+  }
+
+  /// The SwiftUI header's texts are top-aligned, each as tall as its line rounded up to a whole
+  /// pixel. From Extra Extra Extra Large up the tallest is the "·" separator, which is drawn in the
+  /// system body style and outgrows both the app's fonts and the options button.
+  @Test("At large text sizes the header is as tall as the separator's line, rounded up to a whole pixel",
+    arguments: [UIContentSizeCategory.extraExtraExtraLarge, .accessibilityLarge])
+  func headerFitsSeparatorLine(contentSize: UIContentSizeCategory) throws {
+    let scale: CGFloat = 3
+    let base = try NativeFeedRowTestFactory.layoutInput(text: "hello", contentSize: contentSize)
+    let t = base.typography
+    let input = FeedRowLayoutInput(
+      postID: base.postID, width: base.width, typography: t, displayName: base.displayName,
+      handle: base.handle, timeText: base.timeText, verificationSymbol: nil, text: base.text,
+      contentSignature: base.contentSignature, displayScale: scale)
+    let layout = FeedRowLayoutEngine.layout(input)
+    let separator = t.separatorLineHeight
+    #expect(separator > layout.optionsButtonFrame.height)
+    #expect(separator > max(t.name.lineHeight, t.metadata.lineHeight))
+    let header = (separator * scale).rounded(.up) / scale
+    #expect(abs(layout.textFrame.minY - (Self.contentTop + header + FeedRowMetrics.textTop)) < 0.001)
+  }
+
+  @Test("A header line taller than the options button is rounded up to a whole pixel", arguments: [CGFloat(3), 2])
+  func headerLineRoundsUpToPixel(scale: CGFloat) throws {
+    let base = try input(text: "hello", displayScale: scale)
+    let t = base.typography
+    let name = UIFont.systemFont(ofSize: 30, weight: UIFont.Weight.semibold)
+    let typography = FeedRowTypography(
+      body: t.body, name: name, metadata: t.metadata, bodyLineSpacing: t.bodyLineSpacing, kerning: t.kerning,
+      optionsGlyphSize: t.optionsGlyphSize, separatorLineHeight: t.separatorLineHeight,
+      generationKey: t.generationKey &+ 2)
+    let input = FeedRowLayoutInput(
+      postID: base.postID, width: base.width, typography: typography, displayName: base.displayName,
+      handle: base.handle, timeText: base.timeText, verificationSymbol: nil, text: base.text,
+      contentSignature: base.contentSignature, displayScale: scale)
+    let layout = FeedRowLayoutEngine.layout(input)
+    let line = name.lineHeight
+    #expect(line > layout.optionsButtonFrame.height)
+    #expect(abs(line * scale - (line * scale).rounded()) > 0.1, "the line must be off the pixel grid")
+    let header = (line * scale).rounded(.up) / scale
+    #expect(abs(layout.textFrame.minY - (Self.contentTop + header + FeedRowMetrics.textTop)) < 0.001)
+    // The name keeps its own line height; only the header's extent is rounded.
+    #expect(abs(layout.nameFrame.height - line) < 0.001)
   }
 
   @Test("A maximum content width centers the row's content and keeps a full-width divider")

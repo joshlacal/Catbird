@@ -33,9 +33,11 @@ struct NativeFeedRowCoordinatorTests {
         navigationPath: .constant(NavigationPath()), appState: appState, sceneContext: sceneContext)
     }
 
+    /// Begins and applies a snapshot of `posts`, as the controller does for an update it applies.
     func show(_ posts: [CachedFeedViewPost]) {
       let byID = Dictionary(uniqueKeysWithValues: posts.map { ($0.id, $0) })
       coordinator.beginSnapshot(posts: byID, signatures: byID.mapValues(FeedPostContentSignature.init), traits: traits)
+      coordinator.didApplySnapshot()
     }
 
     func tearDown() {
@@ -143,9 +145,31 @@ struct NativeFeedRowCoordinatorTests {
     #expect(layout.dividerFrame.width == 1000)
   }
 
+  /// The hosted row's environment font follows the trait collection, which `FontManager` caps at
+  /// the app's Dynamic Type limit; the system's own setting can be larger.
+  @Test("Row typography follows the collection view's content size, not the system's")
+  func typographyFollowsTraitContentSize() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let post = try FeedRowTestPosts.cachedPost()
+    let capped = fixture.traits.modifyingTraits { $0.preferredContentSizeCategory = .accessibilityMedium }
+    let byID = [post.id: post]
+    fixture.coordinator.beginSnapshot(posts: byID, signatures: byID.mapValues(FeedPostContentSignature.init), traits: capped)
+    let typography = try #require(fixture.coordinator.typography)
+    #expect(typography.separatorLineHeight == FeedRowTypography.separatorLineHeight(contentSize: .accessibilityMedium))
+    #expect(typography.optionsGlyphSize == FeedRowTypography.optionsGlyphSize(contentSize: .accessibilityMedium))
+
+    let larger = capped.modifyingTraits { $0.preferredContentSizeCategory = .accessibilityExtraLarge }
+    #expect(fixture.coordinator.updateTraits(larger))
+    let updated = try #require(fixture.coordinator.typography)
+    #expect(updated.separatorLineHeight == FeedRowTypography.separatorLineHeight(contentSize: .accessibilityExtraLarge))
+    #expect(updated.optionsGlyphSize == FeedRowTypography.optionsGlyphSize(contentSize: .accessibilityExtraLarge))
+  }
+
   // MARK: - Post Models
 
-  @Test("Row models reconcile against the feed payload, so a decision made elsewhere stays", arguments: [true, false])
+  /// The options menu creates the models through its real call site.
+  @Test("Menu models reconcile against the feed payload, so a decision made elsewhere stays", arguments: [true, false])
   func modelsKeepDecisionsMadeElsewhere(like: Bool) async throws {
     let fixture = try await Fixture()
     defer { fixture.tearDown() }
@@ -167,7 +191,8 @@ struct NativeFeedRowCoordinatorTests {
       break
     }
 
-    let models = fixture.coordinator.postModels(for: row.post)
+    _ = fixture.coordinator.actions(for: row).optionsMenu(row.post)
+    let models = try #require(fixture.coordinator.activeMenuModels)
     await models.reconciled()
     let merged = await manager.mergeShadow(post: row.post)
     if like {
@@ -177,6 +202,62 @@ struct NativeFeedRowCoordinatorTests {
       #expect(merged.viewer?.repost == nil)
       #expect(!models.postViewModel.isReposted)
     }
+  }
+
+  @Test("The action bar's like reconciles against the feed payload, so an unlike made elsewhere stays")
+  func likeKeepsUnlikeMadeElsewhere() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let post = try FeedRowTestPosts.cachedPost(postKey: "actionbarunlike", liked: true)
+    fixture.show([post])
+    let row = try #require(fixture.coordinator.nativeRow(forPostID: post.id))
+    let uri = row.post.uri.uriString()
+    let manager = fixture.appState.postShadowManager
+    await manager.setLiked(postUri: uri, isLiked: false)
+    for await _ in await fixture.coordinator.shadowUpdates(for: row)(uri) { break }
+
+    // The tap likes the post again from the unliked state the viewer sees. This account cannot
+    // write, so the like is refused; the unlike made elsewhere must survive either way.
+    fixture.coordinator.actions(for: row).actionBar(row.post).toggleLike()
+    let models = try #require(fixture.coordinator.existingPostModels(forURI: uri))
+    // The tap's own write and its revert re-decide the shadow, so the outcome alone cannot tell
+    // which post the models started from: the feed payload (still liked), not the merged copy.
+    #expect(models.contextMenuViewModel.post.viewer?.like != nil)
+    await models.reconciled()
+    try await Task.sleep(for: .milliseconds(500))
+    let merged = await manager.mergeShadow(post: row.post)
+    #expect(merged.viewer?.like == nil)
+    #expect(!models.postViewModel.isLiked)
+  }
+
+  // MARK: - Pruning
+
+  @Test("Live counts, models and the menu target are kept while the post is in the snapshot")
+  func pruningFollowsSnapshotPosts() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let post = try FeedRowTestPosts.cachedPost(postKey: "pruning")
+    fixture.show([post])
+    let row = try #require(fixture.coordinator.nativeRow(forPostID: post.id))
+    let uri = row.post.uri.uriString()
+    for await _ in await fixture.coordinator.shadowUpdates(for: row)(uri) { break }
+    _ = fixture.coordinator.actions(for: row).optionsMenu(row.post)
+    let models = try #require(fixture.coordinator.existingPostModels(forURI: uri))
+    #expect(fixture.coordinator.activeMenuModels === models)
+    #expect(fixture.coordinator.mergedPost(forURI: uri) != nil)
+
+    // A settings change empties the decision cache; the next applied snapshot still holds the post.
+    fixture.appState.preferencesManager.hideVerificationBadges = true
+    fixture.show([post])
+    #expect(fixture.coordinator.mergedPost(forURI: uri) != nil)
+    #expect(fixture.coordinator.existingPostModels(forURI: uri) === models)
+    #expect(fixture.coordinator.activeMenuModels === models)
+
+    // Once the post leaves the snapshot, all three go.
+    fixture.show([])
+    #expect(fixture.coordinator.mergedPost(forURI: uri) == nil)
+    #expect(fixture.coordinator.existingPostModels(forURI: uri) == nil)
+    #expect(fixture.coordinator.activeMenuModels == nil)
   }
 
   // MARK: - Settings
@@ -224,6 +305,13 @@ struct NativeFeedRowCoordinatorTests {
     #expect(requests == 1)
     #expect(!fixture.coordinator.takeReconfigureRequest(postID: post.id))
     #expect(fixture.coordinator.layoutWidth(forBoundsWidth: 402) == 390)
+
+    // Under new bounds the same width is a new report, and is asked for again.
+    collectionView.frame.size.width = 500
+    actions.layoutWidthChanged(row.post, 390)
+    #expect(requests == 2)
+    #expect(fixture.coordinator.takeReconfigureRequest(postID: post.id))
+    #expect(fixture.coordinator.layoutWidth(forBoundsWidth: 500) == 390)
   }
 
   // MARK: - Presentation Host
@@ -264,10 +352,10 @@ struct NativeFeedRowCoordinatorTests {
     continuation.yield(1)
     continuation.yield(2)
     continuation.finish()
-    var received = 0
-    for await element in merged {
-      #expect(element.uri == post.uri)
-      received += 1
+    let received = await Self.withTimeout {
+      var count = 0
+      for await element in merged where element.uri == post.uri { count += 1 }
+      return count
     }
     #expect(received == 2)
   }
@@ -287,11 +375,28 @@ struct NativeFeedRowCoordinatorTests {
     }
     continuation.yield(1)
     consumer.cancel()
-    var sourceTerminated = false
-    for await _ in terminations {
-      sourceTerminated = true
+    let sourceTerminated = await Self.withTimeout {
+      for await _ in terminations { return true }
+      return false
     }
-    #expect(sourceTerminated)
+    #expect(sourceTerminated == true)
+  }
+
+  /// `operation`'s result, or `nil` if it has not finished within two seconds, so a stream that
+  /// never ends fails the test instead of hanging it.
+  private static func withTimeout<Result: Sendable>(
+    _ operation: @escaping @Sendable () async -> Result
+  ) async -> Result? {
+    await withTaskGroup(of: Result?.self) { group in
+      group.addTask { await operation() }
+      group.addTask {
+        try? await Task.sleep(for: .seconds(2))
+        return nil
+      }
+      let first = await group.next() ?? nil
+      group.cancelAll()
+      return first
+    }
   }
 }
 #endif

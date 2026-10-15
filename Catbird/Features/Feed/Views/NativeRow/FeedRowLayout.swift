@@ -73,6 +73,14 @@ enum FeedRowLayoutEngine {
     return rect.height
   }
 
+  /// `value` rounded to the nearest whole pixel; a value halfway between two pixels rounds up when
+  /// `tiesUp`, down otherwise.
+  private static func nearestPixel(_ value: CGFloat, scale: CGFloat, tiesUp: Bool) -> CGFloat {
+    let pixels = value * scale
+    let rounded = tiesUp ? (pixels + 0.5 + 0.0001).rounded(.down) : (pixels - 0.5 - 0.0001).rounded(.up)
+    return rounded / scale
+  }
+
   /// `value` rounded up to a whole pixel; the tolerance keeps a value already on a pixel boundary.
   private static func pixelCeil(_ value: CGFloat, scale: CGFloat) -> CGFloat {
     ceil(value * scale - 0.0001) / scale
@@ -106,9 +114,13 @@ enum FeedRowLayoutEngine {
     let optionsFrame = CGRect(
       x: contentX + contentWidth - m.headerHorizontal - optionsWidth, y: contentTop,
       width: optionsWidth, height: optionsHeight)
-    // The header's labels are as tall as its tallest line, unrounded, as in the SwiftUI header.
+    // The header's labels are as tall as its tallest line. The SwiftUI header top-aligns its
+    // texts, each as tall as its line rounded up to a whole pixel, the "·" separator (in the
+    // system body style) among them; the header is as tall as the tallest text or the options
+    // button.
     let lineHeight = max(t.name.lineHeight, t.metadata.lineHeight)
-    let headerHeight = max(lineHeight, optionsHeight)
+    let headerLineHeight = pixelCeil(max(lineHeight, t.separatorLineHeight), scale: input.displayScale)
+    let headerHeight = max(headerLineHeight, optionsHeight)
     let timeWidth = singleLineWidth("·  " + input.timeText, font: t.metadata, kerning: 0)
     // `PostHeaderView` spaces the time from the name and handle by its stack spacing, and the
     // header's `Spacer` keeps at least that much room before the options button. Both are part of
@@ -151,14 +163,18 @@ enum FeedRowLayoutEngine {
     let actionBarFrame = CGRect(x: contentX, y: actionTop, width: contentWidth, height: m.actionBarHeight)
     let contentBottom = actionBarFrame.maxY + m.actionBarBottom
     let rowBottom = max(contentBottom, avatarFrame.maxY + m.avatarColumnInset)
-    // The hosted row's divider is a half-point `Rectangle`; SwiftUI rounds its edges to the
-    // nearest pixel, so it covers two pixels at 3x and one at 2x. The row is still as tall as the
-    // nominal half point, rounded up to a whole pixel as a self-sizing SwiftUI row reports it.
+    // The hosted row's divider is a half-point `Rectangle`; SwiftUI rounds each of its edges to the
+    // nearest pixel, a tie rounding outwards (the top up the screen, the bottom down). On the pixel
+    // grid that covers two pixels at 3x and one at 2x; off the grid it can cover one pixel at 3x.
+    // The row is still as tall as the nominal half point, rounded up to a whole pixel as a
+    // self-sizing SwiftUI row reports it.
     let scale = input.displayScale
     let height = pixelCeil(rowBottom + m.dividerHeight, scale: scale)
-    let thickness = max(1, (m.dividerHeight * scale).rounded()) / scale
-    let dividerTop = min((rowBottom * scale).rounded() / scale, height - thickness)
-    let dividerFrame = CGRect(x: 0, y: dividerTop, width: rowWidth, height: thickness)
+    let dividerTop = nearestPixel(rowBottom, scale: scale, tiesUp: false)
+    let dividerBottom = min(
+      height,
+      max(dividerTop + 1 / scale, nearestPixel(rowBottom + m.dividerHeight, scale: scale, tiesUp: true)))
+    let dividerFrame = CGRect(x: 0, y: dividerTop, width: rowWidth, height: dividerBottom - dividerTop)
     return FeedRowLayout(
       width: rowWidth, height: height,
       avatarFrame: avatarFrame, nameFrame: nameFrame,
