@@ -82,7 +82,8 @@ struct ContentLabelView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityElement(children: .ignore)
+            // The button stays the accessibility element, so VoiceOver announces a button and
+            // activating it opens the details; a replacement element would drop both.
             .accessibilityLabel(Text("Post labels: \(names.joined(separator: ", "))"))
             .accessibilityHint("Shows label descriptions and who applied them")
             .accessibilityIdentifier("postLabelSummary")
