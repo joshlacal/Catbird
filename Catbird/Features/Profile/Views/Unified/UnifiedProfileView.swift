@@ -664,16 +664,13 @@ struct UnifiedProfileView: View {
     #endif
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
       switch destination {
-      case .section(let tab, let did):
-        // SwiftUI can build this destination from a copy of the profile view whose @State
-        // never attached, so its slot has no view model. Reuse this view model only when it
-        // has loaded the requested profile; otherwise the host loads it, so a More section
-        // never comes up empty until pull-to-refresh. Reading `builtViewModel` never builds one.
+      case .section(let tab, let did, let sectionViewModel):
+        // The view model comes from the value, not this screen's slot: SwiftUI first builds
+        // this destination from a short-lived copy of the profile screen whose slot is empty,
+        // and the host keeps the view model its first init gets.
         ProfileSectionHostView(
           did: did, tab: tab, appState: appState, path: $navigationPath,
-          loadedViewModel: viewModelSlot.builtViewModel.flatMap {
-            $0.profile?.did.didString() == did ? $0 : nil
-          }
+          profileViewModel: sectionViewModel
         )
         .id("\(did)_\(tab.rawValue)")
       case .followers(let did):

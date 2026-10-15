@@ -227,7 +227,7 @@ struct UnifiedProfileContentView: View {
           .padding()
       }
     case .more:
-      MoreView(profileDID: viewModel.profile?.did.didString() ?? viewModel.userDID, path: $navigationPath)
+      MoreView(viewModel: viewModel, path: $navigationPath)
         .frame(maxWidth: contentMaxWidth, alignment: .center)
         .frame(maxWidth: .infinity, alignment: .center)
     case .posts:
@@ -564,7 +564,7 @@ private struct ProfileCurrentTabView: View {
         navigationPath: $navigationPath
       )
     case .more:
-      MoreView(profileDID: viewModel.profile?.did.didString() ?? viewModel.userDID, path: $navigationPath)
+      MoreView(viewModel: viewModel, path: $navigationPath)
     default:
       EmptyView()
     }

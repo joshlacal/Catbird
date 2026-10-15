@@ -365,19 +365,36 @@ struct ProfileSectionHostView: View {
     @Binding var path: NavigationPath
     @State private var viewModel: ProfileViewModel
 
-    /// - Parameter loadedViewModel: The presenting profile's view model, reused only when
-    ///   its profile has already loaded; otherwise this view loads the profile itself.
+    /// - Parameter profileViewModel: The view model of the profile screen that opened this
+    ///   section, reused when it is for `did` and this account; otherwise this view loads the
+    ///   profile itself.
     init(
         did: String, tab: ProfileTab, appState: AppState, path: Binding<NavigationPath>,
-        loadedViewModel: ProfileViewModel? = nil
+        profileViewModel: ProfileViewModel? = nil
     ) {
         self.tab = tab
         self._path = path
-        self._viewModel = State(initialValue: loadedViewModel ?? ProfileViewModel(
-            client: appState.atProtoClient,
-            userDID: did,
-            currentUserDID: appState.userDID
-        ))
+        self._viewModel = State(
+            initialValue: Self.reusableViewModel(profileViewModel, for: did, viewer: appState.userDID)
+                ?? ProfileViewModel(
+                    client: appState.atProtoClient,
+                    userDID: did,
+                    currentUserDID: appState.userDID
+                ))
+    }
+
+    /// `candidate` when it is the view model of the profile `did` names, by DID or by the
+    /// identifier it was opened with, as seen by `viewer`, the signed-in account. One that has
+    /// not loaded yet loads in `.task`. The viewer check keeps a view model built for another
+    /// signed-in account, with that account's view of the profile, out of this one's section.
+    static func reusableViewModel(
+        _ candidate: ProfileViewModel?, for did: String, viewer: String?
+    ) -> ProfileViewModel? {
+        guard let candidate,
+              candidate.currentUserDID == viewer,
+              candidate.userDID == did || candidate.profile?.did.didString() == did
+        else { return nil }
+        return candidate
     }
 
     var body: some View {
