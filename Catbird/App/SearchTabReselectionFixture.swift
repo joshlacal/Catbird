@@ -102,8 +102,12 @@ struct SearchTabReselectionFixture: View {
         configuration: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
       PersistentFeedStateManager.initialize(with: memory)
       state.composerDraftManager.configureForTesting(modelContext: memory.mainContext)
-      if topics || hashtag || profile {
+      // The seeded library rows below belong to the fixture account; feed library actions refuse a
+      // row from any other account.
+      if visual || topics || hashtag || profile {
         state.preferencesManager.configure(accountDID: state.userDID)
+      }
+      if topics || hashtag || profile {
         state.preferencesManager.updateClient(client)
       }
       state.preferencesManager.setModelContext(memory.mainContext)
