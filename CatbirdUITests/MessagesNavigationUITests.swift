@@ -125,11 +125,12 @@ final class MessagesNavigationUITests: XCTestCase {
     XCTAssertTrue(retry.waitForExistence(timeout: 10))
     let readsBeforeRecovery = try XCTUnwrap(state()["messageReads"] as? Int)
     retry.tap()
-    // Text-only bubbles expose one VoiceOver label containing sender, text and
-    // localized time. Match its fixed prefix while leaving the time variable.
-    let recovered = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
-      "Local Chat Partner, Recovered local message after retry., ")).firstMatch
+    // Text-only bubbles expose one VoiceOver element, whatever its element type, labelled
+    // with sender, text and localized time. Match its fixed prefix, leaving the time variable.
+    let recovered = app.descendants(matching: .any)["chat.message.recovered-message"]
     XCTAssertTrue(recovered.waitForExistence(timeout: 15), "The production retry must render the recovered response")
+    XCTAssertTrue(recovered.label.hasPrefix("Local Chat Partner, Recovered local message after retry., "),
+      "Unexpected VoiceOver label: \(recovered.label)")
     XCTAssertTrue(recovered.isHittable, "The recovered message must be visible in the transcript")
     waitForState { ($0["messageReads"] as? Int ?? 0) > readsBeforeRecovery }
     XCTAssertFalse(failure.exists)
