@@ -2016,7 +2016,10 @@ final class PreferencesManager {
     }
   }
 
-  /// Refreshes server preferences if older than the given threshold (default 15 minutes)
+  /// Reads server preferences when the last server read is older than the given threshold (default
+  /// 15 minutes), so changes made elsewhere (adult content, moderation) arrive without a relaunch.
+  /// A fresh read makes no request. A stale one reads the server; refreshes that queue behind a
+  /// read on the edit gate share it, and pending edits ahead of it finish first.
   @MainActor
   func refreshIfStale(staleThreshold: TimeInterval = 900) async throws {
     let now = Date()
@@ -2026,7 +2029,7 @@ final class PreferencesManager {
        now.timeIntervalSince(lastServerRead.at) < staleThreshold {
       return
     }
-    try await fetchPreferences(forceRefresh: false)
+    try await fetchPreferences(forceRefresh: true, sharingQueuedRead: true)
   }
 
   /// Retained compatibility entry point. Language choices have no server serializer.

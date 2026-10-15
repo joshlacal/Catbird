@@ -355,6 +355,66 @@ struct ModerationPreferenceTests {
         #expect(local.contentLabelPrefs.first?.visibility == "warn")
     }
 
+    @Test("A stale refresh reads the server and picks up a change made elsewhere")
+    @MainActor
+    func staleRefreshReadsServer() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.fetchPreferences(forceRefresh: true)
+        fixture.items = [.contentLabelPref(.init(label: "graphic", visibility: "hide"))]
+        try await manager.refreshIfStale(staleThreshold: 0)
+        #expect(fixture.reads == 2)
+        #expect(local.contentLabelPrefs.first?.visibility == "hide")
+    }
+
+    @Test("A refresh while the last server read is fresh makes no request")
+    @MainActor
+    func freshRefreshMakesNoRequest() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.fetchPreferences(forceRefresh: true)
+        fixture.items = [.contentLabelPref(.init(label: "graphic", visibility: "hide"))]
+        try await manager.refreshIfStale(staleThreshold: 900)
+        #expect(fixture.reads == 1)
+        #expect(local.contentLabelPrefs.first?.visibility == "warn")
+    }
+
+    @Test("Two stale refreshes at once make one request")
+    @MainActor
+    func concurrentStaleRefreshesShareOneRead() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.fetchPreferences(forceRefresh: true)
+        fixture.items = [.contentLabelPref(.init(label: "graphic", visibility: "hide"))]
+        fixture.pauseNextRead = true
+        let refreshes = (0..<2).map { _ in Task { try await manager.refreshIfStale(staleThreshold: 0) } }
+        try await fixture.waitForPausedRead()
+        for _ in 0..<20 { await Task.yield() }
+        fixture.resumeRead()
+        for refresh in refreshes { try await refresh.value }
+        #expect(fixture.reads == 2)
+        #expect(local.contentLabelPrefs.first?.visibility == "hide")
+    }
+
+    @Test("A stale refresh queued behind an edit keeps the edit")
+    @MainActor
+    func staleRefreshBehindEditKeepsEdit() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.fetchPreferences(forceRefresh: true)
+        fixture.pauseNextRead = true
+        let edit = Task { try await manager.setContentLabelVisibility(label: "graphic", visibility: "hide") }
+        try await fixture.waitForPausedRead()
+        let refresh = Task { try await manager.refreshIfStale(staleThreshold: 0) }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(fixture.writes.isEmpty)
+        fixture.resumeRead()
+        try await edit.value
+        try await refresh.value
+        #expect(fixture.labels.first?.visibility == "hide")
+        #expect(local.contentLabelPrefs.first?.visibility == "hide")
+    }
+
     @Test("Generic unrelated writes retain fresh remote safety fields")
     @MainActor
     func genericSyncPreservesRemoteSafety() async throws {
