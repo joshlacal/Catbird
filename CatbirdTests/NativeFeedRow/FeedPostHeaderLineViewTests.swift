@@ -85,7 +85,7 @@ struct FeedPostHeaderLineViewTests {
     view.configure(
       roomy.layout, displayName: roomy.displayName, handle: roomy.handle, timeText: roomy.timeText,
       timeAccessibilityLabel: "3 minutes ago", verification: nil, typography: roomy.typography,
-      metadataColor: .secondaryLabel, originX: 0)
+      metadataColor: .secondaryLabel, originX: 0, hideVerificationBadges: false)
     #expect(!view.handleLabelForTesting.isHidden)
     #expect(view.handleLabelForTesting.frame == roomy.layout.handleFrame)
   }
@@ -148,7 +148,8 @@ struct FeedPostHeaderLineViewTests {
     let view = FeedPostHeaderLineView(frame: CGRect(x: 0, y: 0, width: 390, height: 60))
     view.configure(
       fixture.layout, displayName: "A", handle: "@a", timeText: "1h", timeAccessibilityLabel: "1 hour ago",
-      verification: nil, typography: fixture.typography, metadataColor: .systemPink, originX: 0)
+      verification: nil, typography: fixture.typography, metadataColor: .systemPink, originX: 0,
+      hideVerificationBadges: false)
     func color(_ label: UILabel) -> UIColor? {
       label.attributedText?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor
     }

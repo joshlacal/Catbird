@@ -56,7 +56,7 @@ final class FeedPostHeaderLineView: UIView {
   func configure(
     _ layout: FeedRowLayout, displayName: String, handle: String, timeText: String,
     timeAccessibilityLabel: String, verification: VerificationBadgeKind?, typography: FeedRowTypography,
-    metadataColor: UIColor, originX: CGFloat, hideVerificationBadges: Bool = false
+    metadataColor: UIColor, originX: CGFloat, hideVerificationBadges: Bool
   ) {
     func local(_ frame: CGRect) -> CGRect { frame.offsetBy(dx: -originX, dy: 0) }
 
