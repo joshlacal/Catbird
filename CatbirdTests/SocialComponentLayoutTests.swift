@@ -13,7 +13,11 @@ import XCTest
 @MainActor
 final class SocialComponentLayoutTests: XCTestCase {
   func testProfileLabelsAreEnumeratedAtLargeTextAndRTL() async throws {
-    try await withFixture { state, _ in
+    // The chips' issuers are asserted through their VoiceOver labels, which SwiftUI builds only
+    // while app accessibility is on.
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
+    try await withFixture { state, client in
       let original = try XCTUnwrap(SocialActionsFixtureData.labels(owned: false).first)
       let otherIssuer = try DID(didString: "did:plc:independentlabeler")
       let otherLabel = ComAtprotoLabelDefs.Label(
@@ -36,11 +40,21 @@ final class SocialComponentLayoutTests: XCTestCase {
         [original, otherLabel], subjectDID: original.uri.uriString(),
         subscribedIssuers: [original.src.didString(), otherIssuer.didString()]
       )
+      let labelers = [SocialActionsFixtureData.labeler, otherLabeler]
+      // Each label is one chip that shows its name; the issuer is in the chip's VoiceOver label and
+      // in the details sheet the chip opens.
+      let expectedChips = Dictionary(uniqueKeysWithValues: labels.map { label in
+        let info = AccountLabelPresentation(label: label, labeler: labelers.first { $0.creator.did == label.src })
+        return ("profileAccountLabel-\(label.id)", "\(info.name), \(info.attribution)")
+      })
+      XCTAssertTrue(expectedChips.values.contains(
+        "Community membership verified after participation, Issued by Independent Labels (@independent.labels.test)"))
+      let independentLabel = try XCTUnwrap(labels.first { $0.src == otherIssuer })
       var selections: [String] = []
       for direction in [LayoutDirection.leftToRight, .rightToLeft] {
         let rows = ProfileAccountLabelsView(
           labels: labels, viewerDID: state.userDID, isActiveViewer: { true },
-          labelers: [SocialActionsFixtureData.labeler, otherLabeler],
+          labelers: labelers,
           onSelectLabel: { selections.append($0.id) }
         )
         let content = ScrollView { rows.padding(.horizontal, 16) }
@@ -49,16 +63,67 @@ final class SocialComponentLayoutTests: XCTestCase {
           component: direction == .leftToRight ? "profile-label-list-ltr" : "profile-label-list-rtl",
           state: state, content: content,
           expectedText: { name in
-            name == "short" ? ["Joined May 23", "Issued by"]
-              : ["Joined May 23", "Community membership verified", "Issued by"]
+            name == "short" ? ["Joined May 23"] : ["Joined May 23", "Community membership verified"]
           },
-          validateState: { _ in
+          validateState: { view in
             XCTAssertEqual(labels.count, 2)
             XCTAssertEqual(Set(labels.map(\.id)).count, 2)
             XCTAssertTrue(selections.isEmpty, "Layout changes must not open an inspector")
             XCTAssertTrue(labels.allSatisfy { !ReportingService.canAppeal($0, viewerDID: state.userDID) })
+            let chips = AppAccessibility.elements(in: view)
+              .filter { ($0.identifier ?? "").hasPrefix("profileAccountLabel-") }
+            XCTAssertEqual(chips.count, labels.count, "Every label is its own chip")
+            let content = view.bounds.inset(by: view.safeAreaInsets).insetBy(dx: -1, dy: -1)
+            for chip in chips {
+              XCTAssertEqual(chip.label, chip.identifier.flatMap { expectedChips[$0] }, "VoiceOver names the label and its issuer")
+              XCTAssertTrue(chip.traits.contains(.button))
+              XCTAssertTrue(content.contains(chip.frame), "\(chip.identifier ?? "") lies inside the content: \(chip.frame)")
+            }
+            // Chips follow the label order in reading direction, wrapping to a new row when needed.
+            let ordered = labels.compactMap { label in chips.first { $0.identifier == "profileAccountLabel-\(label.id)" } }
+            if ordered.count == 2 {
+              let (first, second) = (ordered[0].frame, ordered[1].frame)
+              if abs(first.midY - second.midY) < 1 {
+                XCTAssertTrue(direction == .leftToRight ? first.maxX <= second.minX : first.minX >= second.maxX,
+                  "The first chip leads its row: \(first) then \(second)")
+              } else {
+                XCTAssertLessThan(first.maxY, second.minY, "A wrapped chip starts the next row")
+              }
+            }
           }
         )
+      }
+
+      // Activating a chip (as VoiceOver does) selects that label, and the details sheet the header
+      // opens for it names the issuer.
+      try await self.activateChip("profileAccountLabel-\(independentLabel.id)", in: ProfileAccountLabelsView(
+        labels: labels, viewerDID: state.userDID, isActiveViewer: { true },
+        labelers: labelers, onSelectLabel: { selections.append($0.id) }
+      ), state: state, performed: { !selections.isEmpty })
+      XCTAssertEqual(selections, [independentLabel.id])
+      let details = LabelsOnMeView(
+        labels: labels.filter { selections.contains($0.id) },
+        targetDescription: "A profile with informational account labels",
+        viewerDID: state.userDID,
+        reportingService: ReportingService(
+          client: client, reportTransport: { _, _ in false },
+          activeAccountDID: { SocialActionsFixtureData.viewerDID }
+        ),
+        labelers: labelers
+      )
+      try await self.captureSizes(
+        component: "profile-label-details", state: state, content: details,
+        // At accessibility sizes the sheet scrolls: the issuer line is on screen at the tall size, and
+        // every size that has room lists exactly the selected label.
+        expectedText: { name in
+          switch name {
+          case "tall": ["Active Labels (1)", "Community membership verified", "Issued by", "Independent Labels"]
+          case "short": ["Applied Labels"]
+          default: ["Active Labels (1)"]
+          }
+        }
+      ) { _ in
+        XCTAssertEqual(selections, [independentLabel.id], "Showing details must not select another label")
       }
     }
   }
@@ -277,7 +342,9 @@ final class SocialComponentLayoutTests: XCTestCase {
       try validateState(host.view)
 
       let format = UIGraphicsImageRendererFormat()
-      format.scale = 1
+      // At 1x, Vision runs short adjacent words together ("JoinedMay 23" for a chip that draws
+      // "Joined May 23"); 2x keeps word gaps legible.
+      format.scale = 2
       let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
         host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
       }
@@ -308,6 +375,32 @@ final class SocialComponentLayoutTests: XCTestCase {
     receipt.name = "\(component)-measured-component-layouts"
     receipt.lifetime = .keepAlways
     add(receipt)
+  }
+
+  /// Hosts `content`, finds the accessibility element with `identifier`, activates it, and keeps the
+  /// host alive until `performed` reports the action ran (SwiftUI runs it on a later turn).
+  private func activateChip<Content: View>(
+    _ identifier: String, in content: Content, state: AppState, performed: () -> Bool
+  ) async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 390, height: 640)
+    let host = UIHostingController(rootView: content.environment(state).dynamicTypeSize(.accessibility2))
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; previousKeyWindow?.makeKey() }
+    var chip: AppAccessibility.Element?
+    for _ in 0..<30 where chip == nil {
+      host.view.layoutIfNeeded()
+      try await Task.sleep(for: .milliseconds(50))
+      chip = AppAccessibility.elements(in: host.view).first { $0.identifier == identifier }
+    }
+    let element = try XCTUnwrap(chip, "\(identifier) must be reachable by VoiceOver")
+    XCTAssertTrue(element.object.accessibilityActivate(), "Activating \(identifier) must perform its action")
+    for _ in 0..<40 where !performed() {
+      try await Task.sleep(for: .milliseconds(25))
+    }
   }
 
   private func descendants(of view: UIView) -> [UIView] {
