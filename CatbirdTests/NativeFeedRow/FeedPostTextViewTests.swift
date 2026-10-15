@@ -237,6 +237,18 @@ struct FeedPostTextViewAccessibilityTests {
     #expect(view.accessibilityCustomRotors == nil)
   }
 
+  @Test("Row actions come before the link actions and are kept when the text changes")
+  func rowActionsFirst() {
+    let view = makeView(linkedText())
+    let openPost = UIAccessibilityCustomAction(name: "Open post") { _ in true }
+    view.rowAccessibilityActions = [openPost]
+    #expect(view.accessibilityCustomActions?.map(\.name) == ["Open post", "#swift", "@alice.test", "https://example.com/x"])
+    view.attributedText = NSAttributedString(string: "No links", attributes: [.font: Self.font])
+    #expect(view.accessibilityCustomActions?.map(\.name) == ["Open post"])
+    view.attributedText = nil
+    #expect(view.accessibilityCustomActions?.first === openPost)
+  }
+
   @Test("A link that spans formatting changes is one action")
   func linkAcrossAttributeRuns() {
     let text = NSMutableAttributedString(string: "see #swiftui now", attributes: [.font: Self.font])

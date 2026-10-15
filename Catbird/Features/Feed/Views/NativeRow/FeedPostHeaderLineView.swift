@@ -25,6 +25,12 @@ final class FeedPostHeaderLineView: UIView {
   var timeLabelForTesting: UILabel { timeLabel }
   var badgeViewForTesting: UIImageView { badgeView }
 
+  /// Custom actions VoiceOver offers on the name element, such as the row's "Open post".
+  var nameAccessibilityActions: [UIAccessibilityCustomAction] {
+    get { nameLabel.accessibilityCustomActions ?? [] }
+    set { nameLabel.accessibilityCustomActions = newValue.isEmpty ? nil : newValue }
+  }
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     for label in [nameLabel, handleLabel, timeLabel] {

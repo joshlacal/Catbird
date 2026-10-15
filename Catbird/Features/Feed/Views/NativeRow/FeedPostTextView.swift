@@ -11,14 +11,19 @@ import UIKit
 /// The view claims a tap only when it lands on a link; every other tap reaches the row, which
 /// opens the post.
 ///
-/// For VoiceOver the view is one static-text element. Each link is offered as a custom action and
-/// through the Links rotor, and double-tapping the element taps a point that is not on a link, so
-/// it opens the post like a tap on plain text. All accessibility objects are built on first use
-/// and discarded when the text changes, so configuring a cell does no accessibility work.
+/// For VoiceOver the view is one static-text element. It offers the row's own actions
+/// (`rowAccessibilityActions`, such as "Open post"), then each link as a custom action; links are
+/// also reachable through the Links rotor. Double-tapping the element taps a point that is not on
+/// a link, so it opens the post like a tap on plain text. The link accessibility objects are built
+/// on first use and discarded when the text changes, so configuring a cell does no accessibility
+/// work.
 final class FeedPostTextView: UIView, UIGestureRecognizerDelegate {
   private let label = UILabel()
   private lazy var linkTap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
   var onOpenLink: ((URL) -> Void)?
+  /// Actions VoiceOver offers before the link actions, such as the row's "Open post". They are
+  /// kept when the text changes.
+  var rowAccessibilityActions: [UIAccessibilityCustomAction] = []
 
   var attributedText: NSAttributedString? {
     didSet {
@@ -229,21 +234,26 @@ final class FeedPostTextView: UIView, UIGestureRecognizerDelegate {
     return runs
   }
 
-  /// One action per link, named after the link's text.
+  /// The row's actions, then one action per link, named after the link's text.
   override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
     get {
-      if let cachedLinkActions { return cachedLinkActions.isEmpty ? nil : cachedLinkActions }
-      let actions = linkRuns.map { run in
-        UIAccessibilityCustomAction(name: run.name) { [weak self] _ in
-          guard let onOpenLink = self?.onOpenLink else { return false }
-          onOpenLink(run.url)
-          return true
-        }
-      }
-      cachedLinkActions = actions
+      let actions = rowAccessibilityActions + linkActions
       return actions.isEmpty ? nil : actions
     }
     set {}
+  }
+
+  private var linkActions: [UIAccessibilityCustomAction] {
+    if let cachedLinkActions { return cachedLinkActions }
+    let actions = linkRuns.map { run in
+      UIAccessibilityCustomAction(name: run.name) { [weak self] _ in
+        guard let onOpenLink = self?.onOpenLink else { return false }
+        onOpenLink(run.url)
+        return true
+      }
+    }
+    cachedLinkActions = actions
+    return actions
   }
 
   /// The Links rotor steps through the post's links.

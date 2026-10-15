@@ -174,6 +174,22 @@ struct FeedPostHeaderLineViewTests {
     #expect(view.timeLabelForTesting.accessibilityLabel == "3 minutes ago")
   }
 
+  @Test("Name actions are offered on the name element and survive reconfiguration")
+  func nameAccessibilityActions() throws {
+    let fixture = try fixture()
+    let view = configured(fixture)
+    #expect(view.nameLabelForTesting.accessibilityCustomActions == nil)
+    let openPost = UIAccessibilityCustomAction(name: "Open post") { _ in true }
+    view.nameAccessibilityActions = [openPost]
+    view.configure(
+      fixture.layout, displayName: "Someone Else", handle: fixture.handle, timeText: fixture.timeText,
+      timeAccessibilityLabel: "3 minutes ago", verification: nil, typography: fixture.typography,
+      metadataColor: .secondaryLabel, originX: 0, hideVerificationBadges: false)
+    #expect(view.nameLabelForTesting.accessibilityCustomActions?.map(\.name) == ["Open post"])
+    view.nameAccessibilityActions = []
+    #expect(view.nameLabelForTesting.accessibilityCustomActions == nil)
+  }
+
   @Test("The header never takes touches meant for the row", arguments: [false, true])
   func nonInteractive(verified: Bool) throws {
     let view = configured(try fixture(verified: verified ? .regular : nil), verification: verified ? .regular : nil)

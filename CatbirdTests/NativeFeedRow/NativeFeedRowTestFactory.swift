@@ -87,7 +87,7 @@ enum NativeFeedRowTestFactory {
   static var noOpActions: NativeFeedRowActions {
     NativeFeedRowActions(
       openPost: { _ in }, openProfile: { _ in }, openLink: { _ in },
-      actionBar: { _ in noOpActionBarActions }, optionsMenu: { _ in [] })
+      actionBar: { _ in noOpActionBarActions }, optionsMenu: { _ in [] }, layoutWidthChanged: { _, _ in })
   }
 
   static var noOpActionBarActions: FeedActionBarActions {

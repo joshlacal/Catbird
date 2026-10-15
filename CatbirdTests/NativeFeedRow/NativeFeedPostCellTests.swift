@@ -86,6 +86,34 @@ struct NativeFeedPostCellTests {
     #expect(recorder.openedPosts.count == 1)
   }
 
+  @Test("VoiceOver offers Open post on the text and the author's name")
+  func openPostOnFocusableElements() throws {
+    let recorder = ActionRecorder()
+    let (cell, content) = try NativeFeedRowTestFactory.configuredCell(text: "hello", actions: recorder.actions)
+    let textAction = try #require(cell.textViewForTesting.accessibilityCustomActions?.first { $0.name == "Open post" })
+    let nameLabel = cell.headerViewForTesting.nameLabelForTesting
+    let nameAction = try #require(nameLabel.accessibilityCustomActions?.first { $0.name == "Open post" })
+    #expect(textAction.actionHandler?(textAction) == true)
+    #expect(nameAction.actionHandler?(nameAction) == true)
+    #expect(recorder.openedPosts == [content.post.uri.uriString(), content.post.uri.uriString()])
+  }
+
+  @Test("Open post comes before the text's link actions")
+  func openPostBeforeLinkActions() throws {
+    let base = try NativeFeedRowTestFactory.content(text: "read this")
+    let linked = NSMutableAttributedString(attributedString: base.text)
+    linked.addAttribute(.feedLink, value: try #require(URL(string: "https://example.test")), range: NSRange(location: 5, length: 4))
+    let content = NativeFeedRowContent(
+      post: base.post, layout: base.layout, text: linked, displayName: base.displayName, handle: base.handle,
+      timeText: base.timeText, timeAccessibilityLabel: base.timeAccessibilityLabel, verification: nil,
+      actionBarState: base.actionBarState)
+    let cell = NativeFeedPostCell(frame: .zero)
+    cell.configure(
+      content, typography: NativeFeedRowTestFactory.typography(contentSize: .large),
+      actions: NativeFeedRowTestFactory.noOpActions, shadowUpdates: NativeFeedRowTestFactory.finishedShadowUpdates)
+    #expect(cell.textViewForTesting.accessibilityCustomActions?.map(\.name) == ["Open post", "this"])
+  }
+
   @Test("Action bar buttons keep the identifiers UI tests use")
   func actionBarIdentifiers() throws {
     let (cell, _) = try NativeFeedRowTestFactory.configuredCell(text: "hello")
@@ -162,6 +190,46 @@ struct NativeFeedPostCellTests {
     #expect(verified.headerViewForTesting.badgeViewForTesting.isHidden == false)
     let (plain, _) = try NativeFeedRowTestFactory.configuredCell(text: "hello")
     #expect(plain.headerViewForTesting.badgeViewForTesting.isHidden)
+  }
+
+  // MARK: - Width
+
+  @Test("Laying out at the layout's width reports nothing")
+  func matchingWidthIsQuiet() throws {
+    let recorder = ActionRecorder()
+    let (cell, content) = try NativeFeedRowTestFactory.configuredCell(text: "hello", actions: recorder.actions)
+    layOut(cell, content)
+    #expect(content.layout.width == 390)
+    #expect(recorder.widthChanges.isEmpty)
+  }
+
+  @Test("Laying out at another width reports it once, and again after reconfiguration")
+  func widthMismatchIsReported() throws {
+    let recorder = ActionRecorder()
+    let (cell, content) = try NativeFeedRowTestFactory.configuredCell(text: "hello", actions: recorder.actions)
+    let uri = content.post.uri.uriString()
+    cell.frame = CGRect(x: 0, y: 0, width: 320, height: content.layout.height)
+    cell.layoutIfNeeded()
+    #expect(recorder.widthChanges == [ActionRecorder.WidthChange(postURI: uri, width: 320)])
+    cell.setNeedsLayout()
+    cell.layoutIfNeeded()
+    #expect(recorder.widthChanges.count == 1)
+
+    cell.configure(
+      content, typography: NativeFeedRowTestFactory.typography(contentSize: .large), actions: recorder.actions,
+      shadowUpdates: NativeFeedRowTestFactory.finishedShadowUpdates)
+    cell.layoutIfNeeded()
+    #expect(recorder.widthChanges.count == 2)
+  }
+
+  @Test("Self-sizing at another width reports it")
+  func selfSizingWidthMismatchIsReported() throws {
+    let recorder = ActionRecorder()
+    let (cell, content) = try NativeFeedRowTestFactory.configuredCell(text: "hello", actions: recorder.actions)
+    let attributes = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: 0, section: 0))
+    attributes.frame = CGRect(x: 0, y: 0, width: 600, height: 44)
+    _ = cell.preferredLayoutAttributesFitting(attributes)
+    #expect(recorder.widthChanges == [ActionRecorder.WidthChange(postURI: content.post.uri.uriString(), width: 600)])
   }
 
   // MARK: - Live Counts
@@ -250,6 +318,12 @@ private final class ActionRecorder {
   var openedPosts: [String] = []
   var openedProfiles: [String] = []
   var menuPosts: [String] = []
+  var widthChanges: [WidthChange] = []
+
+  struct WidthChange: Equatable {
+    let postURI: String
+    let width: CGFloat
+  }
 
   var actions: NativeFeedRowActions {
     NativeFeedRowActions(
@@ -260,6 +334,9 @@ private final class ActionRecorder {
       optionsMenu: { [weak self] post in
         self?.menuPosts.append(post.uri.uriString())
         return []
+      },
+      layoutWidthChanged: { [weak self] post, width in
+        self?.widthChanges.append(WidthChange(postURI: post.uri.uriString(), width: width))
       })
   }
 }

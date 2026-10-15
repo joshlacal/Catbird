@@ -1,7 +1,10 @@
 #if os(iOS)
+import OSLog
 import Petrel
 import Synchronization
 import UIKit
+
+private let nativeRowLogger = Logger(subsystem: "blue.catbird", category: "NativeFeedRow")
 
 // MARK: - Native Feed Post Cell
 
@@ -11,7 +14,12 @@ import UIKit
 ///
 /// Taps: the avatar opens the profile, a link run opens the link, the action bar and the options
 /// button handle their own taps, and a tap anywhere else opens the post. For VoiceOver the content
-/// view keeps the hosted row's `post.<uri>` identifier and offers an "Open post" action.
+/// view keeps the hosted row's `post.<uri>` identifier, and the content view, the post text and
+/// the author's name offer an "Open post" action.
+///
+/// When the cell is sized to a width its layout was not computed for, it logs a fault and asks
+/// the controller for a new layout through `NativeFeedRowActions.layoutWidthChanged`; until then it
+/// keeps drawing the old layout.
 final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDelegate {
   private let avatarView = FeedPostAvatarView()
   private let headerView = FeedPostHeaderLineView()
@@ -26,6 +34,8 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
   private var post: AppBskyFeedDefs.PostView?
   private var actions: NativeFeedRowActions?
   private var barState: FeedActionBarState?
+  /// The last width reported through `layoutWidthChanged` for the current configuration.
+  private var reportedMismatchWidth: CGFloat?
 
   var postURI: String? { post?.uri.uriString() }
   var textViewForTesting: FeedPostTextView { textView }
@@ -52,11 +62,14 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     divider.backgroundColor = .separator
     rowTap.delegate = self
     contentView.addGestureRecognizer(rowTap)
-    contentView.accessibilityCustomActions = [
-      UIAccessibilityCustomAction(name: "Open post") { [weak self] _ in
-        self?.performOpenPost() ?? false
-      }
-    ]
+    // Offered on the elements VoiceOver focuses (the text and the author's name) as well as on
+    // the content view, which is a container and not itself an element.
+    let openPostAction = UIAccessibilityCustomAction(name: "Open post") { [weak self] _ in
+      self?.performOpenPost() ?? false
+    }
+    contentView.accessibilityCustomActions = [openPostAction]
+    textView.rowAccessibilityActions = [openPostAction]
+    headerView.nameAccessibilityActions = [openPostAction]
   }
 
   @available(*, unavailable)
@@ -71,6 +84,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     layout = content.layout
     post = content.post
     self.actions = actions
+    reportedMismatchWidth = nil
     contentView.accessibilityIdentifier = "post.\(content.post.uri.uriString())"
 
     // Native rows only show posts whose avatar moderation does not conceal
@@ -123,6 +137,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     layout = nil
     actions = nil
     barState = nil
+    reportedMismatchWidth = nil
   }
 
   /// The name VoiceOver reads for the avatar, as `AuthorAvatarColumn` builds it: the display
@@ -138,6 +153,9 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     _ layoutAttributes: UICollectionViewLayoutAttributes
   ) -> UICollectionViewLayoutAttributes {
     guard let layout else { return super.preferredLayoutAttributesFitting(layoutAttributes) }
+    // A width the layout was not computed for is reported; the height stays the layout's until
+    // the controller reconfigures the item with a layout for the new width.
+    checkLayoutWidth(layoutAttributes.size.width)
     let attributes = layoutAttributes
     attributes.size.height = layout.height
     return attributes
@@ -153,6 +171,20 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     optionsGlyph.frame = layout.optionsButtonFrame
     optionsButton.frame = layout.optionsButtonFrame
     divider.frame = layout.dividerFrame
+    checkLayoutWidth(contentView.bounds.width)
+  }
+
+  /// Reports, once per width and configuration, that the cell is sized to a width its layout was
+  /// not computed for: its frames would run past a narrower cell or leave a wider one partly
+  /// empty. Zero widths (a cell not sized yet) are ignored.
+  private func checkLayoutWidth(_ width: CGFloat) {
+    guard let layout, let post, let actions, width > 0 else { return }
+    let tolerance = 1 / max(traitCollection.displayScale, 1)
+    guard abs(width - layout.width) > tolerance, reportedMismatchWidth != width else { return }
+    reportedMismatchWidth = width
+    nativeRowLogger.fault(
+      "Native feed row sized to \(Double(width), privacy: .public) pt with a layout for \(Double(layout.width), privacy: .public) pt")
+    actions.layoutWidthChanged(post, width)
   }
 
   // MARK: - Opening the Post

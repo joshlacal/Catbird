@@ -5,8 +5,9 @@ import UIKit
 
 // MARK: - Native Feed Row Actions
 
-/// What a native feed row does when the viewer interacts with it. The feed controller builds
-/// one value per row it configures; the cell keeps it only until it is reused.
+/// What a native feed row does when the viewer interacts with it, and how it asks for a new
+/// layout. The feed controller builds one value per row it configures; the cell keeps it only
+/// until it is reused.
 @MainActor
 struct NativeFeedRowActions {
   /// A tap on the row outside its controls and links, or VoiceOver's "Open post" action.
@@ -19,6 +20,12 @@ struct NativeFeedRowActions {
   let actionBar: (AppBskyFeedDefs.PostView) -> FeedActionBarActions
   /// The options menu's items, built each time the menu opens (`PostOptionsMenuBuilder`).
   let optionsMenu: (AppBskyFeedDefs.PostView) -> [UIMenuElement]
+  /// The cell is sized to a width (the second argument) its `FeedRowLayout` was not computed for,
+  /// for example after a rotation or a window resize. The controller computes a layout for that
+  /// width and reconfigures the item. Called at most once per width per configuration, from
+  /// layout or self-sizing, so the handler must schedule the reconfigure rather than lay out
+  /// synchronously.
+  let layoutWidthChanged: (AppBskyFeedDefs.PostView, CGFloat) -> Void
 }
 
 // MARK: - Native Feed Row Content
