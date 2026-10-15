@@ -301,6 +301,60 @@ struct ModerationPreferenceTests {
         #expect(fixture.labels.first?.visibility == "hide")
     }
 
+    @Test("A forced refresh asked for after a server read finished reads the server again")
+    @MainActor
+    func forcedRefreshAfterFinishedReadReadsAgain() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.fetchPreferences(forceRefresh: true)
+        #expect(fixture.reads == 1)
+        // The account changes the setting elsewhere; an explicit refresh right after must see it.
+        fixture.items = [.contentLabelPref(.init(label: "graphic", visibility: "hide"))]
+        try await manager.fetchPreferences(forceRefresh: true)
+        #expect(fixture.reads == 2)
+        #expect(local.contentLabelPrefs.first?.visibility == "hide")
+    }
+
+    @Test("A Settings refresh queued behind an in-flight server read still reads the server")
+    @MainActor
+    func settingsRefreshBehindInFlightReadReadsAgain() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, _) = try fixture.makeManager()
+        fixture.pauseNextRead = true
+        let launch = Task { try await manager.fetchPreferences(forceRefresh: true) }
+        try await fixture.waitForPausedRead()
+        // The account changes the setting elsewhere while that read is out, then opens Settings.
+        fixture.items = [.contentLabelPref(.init(label: "graphic", visibility: "hide"))]
+        let settings = Task { try await manager.refreshSettingsPreferences(expectedAccountDID: fixture.account) }
+        for _ in 0..<20 { await Task.yield() }
+        fixture.resumeRead()
+        try await launch.value
+        let preferences = try await settings.value
+        #expect(fixture.reads == 2)
+        #expect(preferences.contentLabelPrefs.first?.visibility == "hide")
+    }
+
+    @Test("Launch refreshes that wait behind an in-flight server read share it")
+    @MainActor
+    func queuedLaunchRefreshesShareInFlightRead() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, local) = try fixture.makeManager()
+        fixture.pauseNextRead = true
+        let first = Task { try await manager.fetchPreferences(forceRefresh: true, sharingQueuedRead: true) }
+        try await fixture.waitForPausedRead()
+        // Launch fires more forced refreshes while the first read is out; they queue on the edit gate.
+        let queued = [
+            Task { try await manager.fetchPreferences(forceRefresh: true, sharingQueuedRead: true) },
+            Task { _ = try await manager.refreshSettingsPreferences(expectedAccountDID: fixture.account, sharingQueuedRead: true) }
+        ]
+        for _ in 0..<20 { await Task.yield() }
+        fixture.resumeRead()
+        try await first.value
+        for task in queued { try await task.value }
+        #expect(fixture.reads == 1)
+        #expect(local.contentLabelPrefs.first?.visibility == "warn")
+    }
+
     @Test("Generic unrelated writes retain fresh remote safety fields")
     @MainActor
     func genericSyncPreservesRemoteSafety() async throws {
@@ -474,6 +528,8 @@ private final class SafetyPreferencesFixture {
     var failRead = false
     var writeStatus = 200
     var pauseNextRead = false
+    /// Server reads the manager started.
+    private(set) var reads = 0
     private var readContinuation: CheckedContinuation<Void, Never>?
 
     init(items: [AppBskyActorDefs.PreferencesForUnionArray]) { self.items = items }
@@ -482,12 +538,15 @@ private final class SafetyPreferencesFixture {
     }
     var transport: PreferencesManager.SpecificPreferencesTransport {
         .init(getPreferences: {
+            self.reads += 1
+            // A read reports the server as it was when the read began.
+            let items = self.items
             if self.pauseNextRead {
                 self.pauseNextRead = false
                 await withCheckedContinuation { self.readContinuation = $0 }
             }
             if self.failRead { throw NSError(domain: "SafetyFixture", code: 503) }
-            return self.items
+            return items
         }, putPreferences: { items in
             self.writes.append(items)
             if (200..<300).contains(self.writeStatus) { self.items = items }

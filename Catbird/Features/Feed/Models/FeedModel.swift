@@ -1359,7 +1359,7 @@ final class FeedModel: StateInvalidationSubscriber {
     do {
       if try appState.preferencesManager.confirmedFeedFilterPreferences() == nil {
         // A synthesized default empty row is not a confirmed empty mute policy.
-        _ = try await appState.preferencesManager.refreshSettingsPreferences()
+        _ = try await appState.preferencesManager.refreshSettingsPreferences(sharingQueuedRead: true)
         guard isCurrentRead() else { return appState.makeFilterSettings(snapshot: confirmedFilterPreferences) }
         _ = retainedFilterPreferenceSnapshot()
       }

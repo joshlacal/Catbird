@@ -64,11 +64,11 @@ final class PreferencesManager {
   }
   private let specificPreferencesTransport: SpecificPreferencesTransport?
   @MainActor private var preferenceSessionGeneration: UInt64 = 0
-  /// Launch fires several forced refreshes back to back (initialize, the refresh loop, feed loading);
-  /// they queue on the edit gate, so a server read this recent answers the ones behind it.
   @MainActor private var lastServerRead: (generation: UInt64, accountDID: String, at: Date)?
+  /// Completed server reads, so a forced refresh sharing queued reads can tell whether one finished
+  /// while it waited at the edit gate.
+  @MainActor private var completedServerReads: UInt64 = 0
   @ObservationIgnored private var localRowCache: Preferences?
-  private static let forcedRefreshReuseWindow: TimeInterval = 5
   @MainActor private var specificEditInProgress = false
   @MainActor private var specificEditWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -113,6 +113,12 @@ final class PreferencesManager {
     } else {
       specificEditWaiters.removeFirst().resume()
     }
+  }
+
+  @MainActor
+  private func recordServerRead(_ operation: PreferenceOperationContext) {
+    lastServerRead = (operation.generation, operation.accountDID, Date())
+    completedServerReads &+= 1
   }
 
   @MainActor
@@ -304,10 +310,17 @@ final class PreferencesManager {
 
   // MARK: - Preferences Management
 
-  /// Fetches preferences from server if needed
+  /// Fetches preferences from server if needed.
+  /// - Parameters:
+  ///   - forceRefresh: Read the server even when cached or complete local preferences exist.
+  ///   - sharingQueuedRead: Launch and account switches fire several forced refreshes back to back
+  ///     (initialize, feed loading); they queue on the edit gate, and with this set a server read
+  ///     that finishes while one waits answers it. Settings and explicit retries leave it off and
+  ///     always read the server.
   @MainActor
-  func fetchPreferences(forceRefresh: Bool = false) async throws {
+  func fetchPreferences(forceRefresh: Bool = false, sharingQueuedRead: Bool = false) async throws {
     let operation = PreferenceOperationContext(accountDID: accountDID, generation: preferenceSessionGeneration, client: client)
+    let serverReadsAtRequest = completedServerReads
     // Start with setting state
     state = .loading
 
@@ -337,10 +350,11 @@ final class PreferencesManager {
       try validatePreferenceOperation(operation)
 
       var forceRefresh = forceRefresh
-      if forceRefresh, cachedServerPreferences != nil, let lastServerRead,
-         lastServerRead.generation == operation.generation, lastServerRead.accountDID == operation.accountDID,
-         Date().timeIntervalSince(lastServerRead.at) < Self.forcedRefreshReuseWindow {
-        logger.info("Reusing preferences read from server \(Date().timeIntervalSince(lastServerRead.at), format: .fixed(precision: 2))s ago")
+      if forceRefresh, sharingQueuedRead, cachedServerPreferences != nil,
+         completedServerReads != serverReadsAtRequest,
+         let lastServerRead, lastServerRead.generation == operation.generation,
+         lastServerRead.accountDID == operation.accountDID {
+        logger.info("Reusing the preferences server read that finished while this refresh waited")
         forceRefresh = false
       }
 
@@ -547,14 +561,14 @@ final class PreferencesManager {
         logger.info("Preferences unchanged from server read; skipping SwiftData save")
         cachedServerPreferences = currentPrefs
         localRowCache = currentPrefs
-        lastServerRead = (operation.generation, operation.accountDID, Date())
+        recordServerRead(operation)
         state = .ready
         return
       }
 
       // IMPORTANT: Update the cache with the processed preferences
       cachedServerPreferences = currentPrefs
-      lastServerRead = (operation.generation, operation.accountDID, Date())
+      recordServerRead(operation)
       logger.debug("Updated cachedServerPreferences after processing server data.")
 
       // Apply accept-labelers header based on preferences
@@ -672,10 +686,14 @@ final class PreferencesManager {
   }
 
   /// Settings editing must not treat the generic offline fallback as a remote refresh.
+  /// `sharingQueuedRead` is for callers in the launch burst (see `fetchPreferences`); Settings
+  /// screens leave it off so they always read the server.
   @MainActor
-  func refreshSettingsPreferences(expectedAccountDID: String? = nil) async throws -> Preferences {
+  func refreshSettingsPreferences(
+    expectedAccountDID: String? = nil, sharingQueuedRead: Bool = false
+  ) async throws -> Preferences {
     let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
-    try await fetchPreferences(forceRefresh: true)
+    try await fetchPreferences(forceRefresh: true, sharingQueuedRead: sharingQueuedRead)
     try validatePreferenceOperation(operation)
     let preferences = try await getPreferences()
     try validatePreferenceOperation(operation)

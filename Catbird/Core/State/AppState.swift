@@ -779,7 +779,7 @@ final class AppState {
 
                 // Synchronize server preferences with app settings
                 do {
-                    try await preferencesManager.fetchPreferences(forceRefresh: true)
+                    try await preferencesManager.fetchPreferences(forceRefresh: true, sharingQueuedRead: true)
                     await postHidingManager.loadFromPreferences()
                     try await preferencesManager.syncPreferencesWithAppSettings(self)
                     logger.info("Successfully synchronized server preferences with app settings")
@@ -895,7 +895,7 @@ final class AppState {
         guard let operation = accountServiceWork.beginOperation() else { return }
         defer { accountServiceWork.endOperation(operation) }
         do {
-            try await preferencesManager.fetchPreferences(forceRefresh: true)
+            try await preferencesManager.fetchPreferences(forceRefresh: true, sharingQueuedRead: true)
             await postHidingManager.loadFromPreferences()
             logger.info("Successfully refreshed preferences after account switch")
 
