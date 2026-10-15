@@ -239,14 +239,32 @@ struct DebugGatewayTransportTests {
 
     // MARK: - Live Gateway Smoke Test
 
-    @Test("Live gateway smoke test on simulator")
+    /// The live smoke test's required input: the fixture launch config an external gateway run
+    /// writes, at the path the launch arguments or environment name, else the default run's.
+    static var liveGatewayConfigPath: String? {
+        #if DEBUG
+        DebugGatewayTransport.resolveConfigPath() ?? "/tmp/catbird-apple-gateway-run-001/config.json"
+        #else
+        nil
+        #endif
+    }
+
+    static var hasLiveGatewayConfig: Bool {
+        liveGatewayConfigPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
+    }
+
+    @Test(
+        "Live gateway smoke test on simulator",
+        .enabled(
+            if: DebugGatewayTransportTests.hasLiveGatewayConfig,
+            "Needs the fixture launch config written by an external gateway run"
+        )
+    )
     func liveGatewaySmokeTest() async throws {
         #if DEBUG
-        // The fixture launch config is a required input. A missing file fails the test instead of
-        // silently reporting success without running any assertion.
-        let configPath = try #require(
-            DebugGatewayTransport.resolveConfigPath() ?? "/tmp/catbird-apple-gateway-run-001/config.json"
-        )
+        // Without the config the trait reports this test as skipped, never as a pass without
+        // assertions; a config that is present but invalid fails it below.
+        let configPath = try #require(Self.liveGatewayConfigPath)
         let transport = DebugGatewayTransport()
         let config = try transport.loadLaunchConfig(from: configPath)
         try transport.activate(with: config)
