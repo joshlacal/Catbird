@@ -262,11 +262,11 @@ final class SocialActionsUITests: XCTestCase {
     return size
   }
 
-  /// The lowest visible fixture post text ("… (n)") whose top is below `y`, so that a swipe up
-  /// leaves it on screen. Queried by its label, so it can be found again after scrolling.
-  private func lowestPostText(below y: CGFloat, in app: XCUIApplication) -> XCUIElement? {
+  /// The lowest visible fixture post text ("… (n)") whose top is below `minimumY`, so that a
+  /// drag up leaves it on screen. Queried by its label, so it can be found again after scrolling.
+  private func lowestPostText(below minimumY: CGFloat, in app: XCUIApplication) -> XCUIElement? {
     let posts = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", ")"))
-    let visible = posts.allElementsBoundByIndex.filter { $0.frame.minY > y && $0.isHittable }
+    let visible = posts.allElementsBoundByIndex.filter { $0.frame.minY > minimumY && $0.isHittable }
     guard let text = visible.max(by: { $0.frame.minY < $1.frame.minY }) else { return nil }
     return app.staticTexts[text.label]
   }
