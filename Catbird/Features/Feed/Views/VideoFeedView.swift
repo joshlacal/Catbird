@@ -955,8 +955,7 @@ struct VideoFeedReactionControls: View {
   let onRepost: () -> Void
 
   var body: some View {
-    let layout = horizontal ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 8))
-    layout {
+    VideoFeedReactionLayout(horizontal: horizontal) {
       VideoFeedReactionButton(
         icon: "bubble.right.fill", count: replyCount, label: "Comments",
         color: .white, identifier: "videoComments", action: onComments
@@ -979,7 +978,57 @@ struct VideoFeedReactionControls: View {
       .disabled(!canAct)
       .opacity(canAct ? 1 : 0.45)
     }
-    .frame(maxWidth: horizontal ? .infinity : nil)
+  }
+}
+
+/// Centres the reaction buttons in a row (or a column) whose every slot starts on a whole point.
+/// Centring on the 3x pixel grid lands on thirds of a point, which are not exactly representable, so
+/// a 44 pt button placed on one reads back from accessibility, and from UI tests, as
+/// 43.999999999999986. Whole points are on every pixel grid. A row spans the width it is offered,
+/// as the full-width row it replaces did.
+private struct VideoFeedReactionLayout: Layout {
+  let horizontal: Bool
+  private var spacing: CGFloat { horizontal ? 12 : 8 }
+
+  /// Each button's slot: its ideal size rounded up to whole points.
+  private func slots(_ subviews: Subviews) -> [CGSize] {
+    subviews.map { subview in
+      let size = subview.sizeThatFits(.unspecified)
+      return CGSize(width: size.width.rounded(.up), height: size.height.rounded(.up))
+    }
+  }
+
+  private func length(of slots: [CGSize], along keyPath: KeyPath<CGSize, CGFloat>) -> CGFloat {
+    slots.reduce(0) { $0 + $1[keyPath: keyPath] } + spacing * CGFloat(max(0, slots.count - 1))
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let slots = slots(subviews)
+    guard horizontal else {
+      return CGSize(width: slots.map(\.width).max() ?? 0, height: length(of: slots, along: \.height))
+    }
+    let width = length(of: slots, along: \.width)
+    let offered = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? width
+    return CGSize(width: max(width, offered), height: slots.map(\.height).max() ?? 0)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    let slots = slots(subviews)
+    if horizontal {
+      var x = bounds.minX + ((bounds.width - length(of: slots, along: \.width)) / 2).rounded(.down)
+      for (subview, slot) in zip(subviews, slots) {
+        let y = bounds.minY + ((bounds.height - slot.height) / 2).rounded(.down)
+        subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(slot))
+        x += slot.width + spacing
+      }
+    } else {
+      var y = bounds.minY
+      for (subview, slot) in zip(subviews, slots) {
+        let x = bounds.minX + ((bounds.width - slot.width) / 2).rounded(.down)
+        subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(slot))
+        y += slot.height + spacing
+      }
+    }
   }
 }
 
