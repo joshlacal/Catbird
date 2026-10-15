@@ -541,6 +541,9 @@ private struct ChatMediaAspectLayout: Layout {
 
 // MARK: - Record Embed (Bluesky + MLS)
 
+/// A shared post. It renders only a record the store keeps under the labeler scope now in effect, so the
+/// viewer's labelers have been consulted and the policy can act on every label it carries. Until then
+/// the card shows its placeholder: no author, text or media.
 private struct RecordEmbedContainer: View {
   let uriString: String
   let accountDID: String
@@ -554,12 +557,27 @@ private struct RecordEmbedContainer: View {
   @Environment(\.chatPresentationFixtureRecords) private var fixtureRecords
   #endif
 
-  @State private var record: AppBskyEmbedRecord.ViewRecordUnion?
-  @State private var isLoading = false
-  @State private var loadFailed = false
-  @State private var isUnavailable = false
+  /// The record this card loaded and the scope it was confirmed under. It keeps the card on screen if
+  /// the store drops the entry at capacity, and is never shown under another scope.
+  @State private var loaded: LoadedRecord?
+  @State private var loadingScope: ChatRecordEmbedStore.Scope?
+  @State private var failedScope: ChatRecordEmbedStore.Scope?
+  @State private var isResolvingLabelScope = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedEmbed.Record")
+
+  private struct LoadedRecord {
+    let scope: ChatRecordEmbedStore.Scope
+    let record: AppBskyEmbedRecord.ViewRecordUnion
+  }
+
+  /// Loads run when the scope changes or the card has nothing to show under it.
+  private struct LoadTrigger: Equatable {
+    let scope: ChatRecordEmbedStore.Scope?
+    let needsRecord: Bool
+  }
+
+  private var store: ChatRecordEmbedStore { ChatRecordEmbedStore.shared }
 
   private var isActiveAccount: Bool {
     let lifecycle = AppStateManager.shared.lifecycle
@@ -575,52 +593,98 @@ private struct RecordEmbedContainer: View {
     #endif
   }
 
-  private var displayedRecord: AppBskyEmbedRecord.ViewRecordUnion? {
-    if let suppliedFixtureRecord { return suppliedFixtureRecord }
+  /// The scope the account's policy and its applied accept-labelers header agree on; nil until they do.
+  private var labelScope: ChatRecordEmbedStore.Scope? {
     guard isActiveAccount else { return nil }
-    return record ?? ChatRecordEmbedStore.shared.cachedRecord(uri: uriString, appState: appState)
+    return store.scope(for: appState)
+  }
+
+  private func confirmedRecord(under scope: ChatRecordEmbedStore.Scope) -> AppBskyEmbedRecord.ViewRecordUnion? {
+    if let record = store.cachedRecord(uri: uriString, scope: scope) { return record }
+    if let loaded, loaded.scope == scope { return loaded.record }
+    return nil
+  }
+
+  private func needsRecord(under scope: ChatRecordEmbedStore.Scope?) -> Bool {
+    guard suppliedFixtureRecord == nil, let scope else { return false }
+    return confirmedRecord(under: scope) == nil && !store.isUnavailable(uri: uriString, scope: scope)
+      && failedScope != scope
+  }
+
+  private var labelScopeFailed: Bool {
+    guard case .error = appState.preferencesManager.state else { return false }
+    return !isResolvingLabelScope
   }
 
   var body: some View {
-    Group {
-      // Render warm data on the first sizing pass, before the task starts.
-      if let record = displayedRecord {
-        switch record {
-        case .appBskyEmbedRecordViewNotFound, .appBskyEmbedRecordViewBlocked, .appBskyEmbedRecordViewDetached:
-          unavailableView
-        default:
-          RecordEmbedView(record: record, path: $navigationPath)
-            .environment(\.postID, uriString)
-            .foregroundStyle(.primary)
-        }
-      } else if !isActiveAccount {
-        EmptyView()
-      } else if isUnavailable {
+    let scope = labelScope
+    content(scope: scope)
+      .task(id: LoadTrigger(scope: scope, needsRecord: needsRecord(under: scope))) {
+        guard let scope, needsRecord(under: scope) else { return }
+        await loadRecord(scope: scope)
+      }
+  }
+
+  @ViewBuilder
+  private func content(scope: ChatRecordEmbedStore.Scope?) -> some View {
+    if let suppliedFixtureRecord {
+      recordView(suppliedFixtureRecord)
+    } else if !isActiveAccount {
+      EmptyView()
+    } else if let scope {
+      if store.isUnavailable(uri: uriString, scope: scope) {
         unavailableView
-      } else if loadFailed {
-        errorView
+      } else if let record = confirmedRecord(under: scope) {
+        if ChatRecordEmbedStore.awaitsLabelDefinitions(
+          record, policy: appState.moderationPolicy,
+          definitionsLoading: appState.isLoadingModerationDefinitions) {
+          placeholderView(showsProgress: true, action: nil)
+        } else {
+          recordView(record)
+            // Gate with exactly the policy the scope was checked against.
+            .trackingModerationPolicy(of: appState)
+        }
+      } else if failedScope == scope {
+        errorView(message: "Couldn’t load post") { await loadRecord(scope: scope) }
+      } else if loadingScope == scope {
+        placeholderView(showsProgress: true, action: nil)
       } else {
-        placeholderView
+        placeholderView(showsProgress: false) { await loadRecord(scope: scope) }
       }
-    }
-    .task {
-      if record == nil, suppliedFixtureRecord == nil {
-        await loadRecord()
-      }
+    } else if labelScopeFailed {
+      errorView(message: "Couldn’t check this post’s labels") { await resolveLabelScope() }
+    } else if isResolvingLabelScope {
+      placeholderView(showsProgress: true, action: nil)
+    } else {
+      // Waiting on the header or the policy, which normally settle on their own; a tap re-applies them.
+      placeholderView(showsProgress: true) { await resolveLabelScope() }
     }
   }
 
   @ViewBuilder
-  private var placeholderView: some View {
+  private func recordView(_ record: AppBskyEmbedRecord.ViewRecordUnion) -> some View {
+    switch record {
+    case .appBskyEmbedRecordViewNotFound, .appBskyEmbedRecordViewBlocked, .appBskyEmbedRecordViewDetached:
+      unavailableView
+    default:
+      RecordEmbedView(record: record, path: $navigationPath)
+        .environment(\.postID, uriString)
+        .foregroundStyle(.primary)
+    }
+  }
+
+  @ViewBuilder
+  private func placeholderView(showsProgress: Bool, action: (@MainActor () async -> Void)?) -> some View {
     Button {
-      Task { await loadRecord() }
+      guard let action else { return }
+      Task { await action() }
     } label: {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
           Image(systemName: "quote.bubble")
             .foregroundStyle(.secondary)
-            .opacity(isLoading ? 0 : 1)
-            .overlay { if isLoading { ProgressView().controlSize(.mini) } }
+            .opacity(showsProgress ? 0 : 1)
+            .overlay { if showsProgress { ProgressView().controlSize(.mini) } }
           Text(title)
             .font(.caption)
             .fontWeight(.medium)
@@ -645,7 +709,7 @@ private struct RecordEmbedContainer: View {
       .embedCardStyle(colorScheme: colorScheme)
     }
     .buttonStyle(.plain)
-    .disabled(isLoading)
+    .disabled(action == nil)
   }
 
   private var unavailableView: some View {
@@ -658,12 +722,12 @@ private struct RecordEmbedContainer: View {
   }
 
   @ViewBuilder
-  private var errorView: some View {
+  private func errorView(message: LocalizedStringKey, retry: @escaping @MainActor () async -> Void) -> some View {
     Button {
-      Task { await loadRecord() }
+      Task { await retry() }
     } label: {
       VStack(alignment: .leading, spacing: 6) {
-        Label("Couldn’t load post", systemImage: "exclamationmark.triangle")
+        Label(message, systemImage: "exclamationmark.triangle")
           .font(.caption)
           .foregroundStyle(.orange)
 
@@ -680,28 +744,35 @@ private struct RecordEmbedContainer: View {
   }
 
   @MainActor
-  private func loadRecord() async {
-    guard !isLoading, !Task.isCancelled, isActiveAccount else { return }
-    isLoading = true
-    loadFailed = false
-    defer { isLoading = false }
+  private func loadRecord(scope: ChatRecordEmbedStore.Scope) async {
+    guard !Task.isCancelled, isActiveAccount else { return }
+    loadingScope = scope
+    failedScope = nil
+    defer { if loadingScope == scope { loadingScope = nil } }
     do {
-      let loaded = try await ChatRecordEmbedStore.shared.load(uri: uriString, appState: appState)
+      let record = try await store.load(uri: uriString, appState: appState)
       try Task.checkCancellation()
-      guard isActiveAccount else { return }
-      record = loaded
+      guard isActiveAccount, labelScope == scope else { return }
+      loaded = LoadedRecord(scope: scope, record: record)
     } catch is CancellationError {
-      // Reuse, interrupted presentation and account changes are not load errors.
+      // Reuse, interrupted presentation, header and account changes are not load errors.
     } catch is ChatRecordEmbedUnavailableError {
-      guard !Task.isCancelled, isActiveAccount else { return }
-      isUnavailable = true
+      // The store keeps the post as unavailable under this scope.
     } catch {
       guard !Task.isCancelled, isActiveAccount else { return }
-      loadFailed = true
+      failedScope = scope
       logger.error("Failed to load record embed: \(error.localizedDescription)")
     }
   }
 
+  /// The card waits on the accept-labelers header and the policy; this brings them back into agreement.
+  @MainActor
+  private func resolveLabelScope() async {
+    guard !isResolvingLabelScope, isActiveAccount else { return }
+    isResolvingLabelScope = true
+    defer { isResolvingLabelScope = false }
+    await store.resolveLabelScope(appState: appState)
+  }
 }
 
 // MARK: - Embed Card Style

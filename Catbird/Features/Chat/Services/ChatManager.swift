@@ -163,6 +163,25 @@ final class ChatManager: StateInvalidationSubscriber {
     ATProtoClient, ChatBskyConvoGetMessages.Parameters
   ) async throws -> (Int, ChatBskyConvoGetMessages.Output?)
   @ObservationIgnored private let messagePageLoader: MessagePageLoader
+
+  /// A shared post a getMessages page returned, with the accept-labelers DIDs (sorted) the page was
+  /// hydrated under.
+  struct SharedPostHydration: Equatable, Sendable {
+    let labelerDIDs: [String]
+    let record: AppBskyEmbedRecord.ViewRecordUnion
+  }
+
+  /// Shared posts of getMessages pages whose `atproto-accept-labelers` header stayed applied from
+  /// request to response: [convoId: [postURI: SharedPostHydration]]. A page sent without the header, or
+  /// whose header changed while it was in flight, records nothing; getLog and send responses never do.
+  @ObservationIgnored private var sharedPostHydrationsMap: [String: [String: SharedPostHydration]] = [:]
+  /// Reads the applied accept-labelers DIDs in place of the account's PreferencesManager.
+  @ObservationIgnored private let appliedAcceptLabelersReader: (@MainActor () -> [String]?)?
+
+  func sharedPostHydrations(for convoId: String) -> [String: SharedPostHydration] {
+    sharedPostHydrationsMap[convoId] ?? [:]
+  }
+
   var errorState: ChatError?
 
   // Search-related state
@@ -315,9 +334,11 @@ final class ChatManager: StateInvalidationSubscriber {
     appState: AppState? = nil,
     messagePageLoader: @escaping MessagePageLoader = { client, parameters in
       try await client.chat.bsky.convo.getMessages(input: parameters)
-    }
+    },
+    appliedAcceptLabelers: (@MainActor () -> [String]?)? = nil
   ) {
     self.messagePageLoader = messagePageLoader
+    self.appliedAcceptLabelersReader = appliedAcceptLabelers
     self.client = client
     self.appState = appState
     logger.debug("ChatManager initialized")
@@ -541,6 +562,7 @@ final class ChatManager: StateInvalidationSubscriber {
     conversationLoadID = nil
     messageLoadIDs.removeAll()
     originalMessagesMap = [:]
+    sharedPostHydrationsMap = [:]
     systemMessagesMap = [:]
     relatedProfilesMap = [:]
     conversationsCursor = nil
@@ -726,6 +748,27 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // MARK: - Messages Loading
 
+  @MainActor
+  private func appliedAcceptLabelerDIDs() -> [String]? {
+    if let appliedAcceptLabelersReader { return appliedAcceptLabelersReader() }
+    return appState?.preferencesManager.appliedAcceptLabelerDIDs
+  }
+
+  /// Records the shared posts of a page hydrated under `labelerDIDs` (sorted).
+  @MainActor
+  private func recordSharedPostHydrations<Messages: Sequence>(
+    _ messages: Messages, convoId: String, labelerDIDs: [String]
+  ) where Messages.Element == ChatBskyConvoDefs.MessageView {
+    var hydrations = sharedPostHydrationsMap[convoId] ?? [:]
+    for message in messages {
+      guard case .appBskyEmbedRecordView(let view)? = message.embed,
+        case .appBskyEmbedRecordViewRecord(let record) = view.record
+      else { continue }
+      hydrations[record.uri.uriString()] = SharedPostHydration(labelerDIDs: labelerDIDs, record: view.record)
+    }
+    sharedPostHydrationsMap[convoId] = hydrations
+  }
+
   /// Loads a page of messages. The 5-second conversation poll passes
   /// `userInitiated: false` (the default) so a degraded chat service backs off
   /// quietly. Conversation views render failures through `messageLoadStates`.
@@ -804,8 +847,12 @@ final class ChatManager: StateInvalidationSubscriber {
         historyDiagnosticLogger.notice("\(line, privacy: .public)")
       }
       diagnostic.phase = .finished
-   
+
+      // The header in effect when the page was requested and when it arrived; only an unchanged one
+      // is known to have hydrated its shared posts.
+      let labelersAtRequest = appliedAcceptLabelerDIDs()
       let (responseCode, response) = try await messagePageLoader(client, params)
+      let labelersAtResponse = appliedAcceptLabelerDIDs()
       diagnostic.httpStatus = responseCode
       guard isCurrentPollingOperation(ticket, client: client) else {
         diagnostic.outcome = Task.isCancelled ? .cancelled : .staleAccount
@@ -878,6 +925,10 @@ final class ChatManager: StateInvalidationSubscriber {
       if originalMessagesMap[convoId] != existingOriginals {
         originalMessagesMap[convoId] = existingOriginals
         bumpConversationRevision(for: convoId)
+      }
+      if let labelersAtRequest, labelersAtRequest == labelersAtResponse {
+        recordSharedPostHydrations(
+          originalMessages.values, convoId: convoId, labelerDIDs: labelersAtRequest.sorted())
       }
 
       // Upsert system messages and remove deleted messages without erasing paginated history
@@ -1014,6 +1065,7 @@ final class ChatManager: StateInvalidationSubscriber {
       if let index = conversations.firstIndex(where: { $0.id == convoId }) {
         conversations.remove(at: index)
         originalMessagesMap[convoId] = nil  // Clear original messages for this convo
+        sharedPostHydrationsMap[convoId] = nil
         systemMessagesMap[convoId] = nil
         relatedProfilesMap[convoId] = nil
         updateConversationsByStatus()
