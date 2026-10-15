@@ -439,12 +439,12 @@ extension VideoFeedPlayerPool {
     }
     refreshProgress()
 
-    let newState: PlaybackState
     if item.status == .failed || failedSlots.contains(slot) {
-      wantsPlayback = false
-      player.pause()
-      newState = .failed
-    } else if !wantsPlayback {
+      stopFailedPlayback(player)
+      return
+    }
+    let newState: PlaybackState
+    if !wantsPlayback {
       newState = .paused
     } else if item.status != .readyToPlay || player.timeControlStatus != .playing {
       newState = .loading
@@ -454,6 +454,17 @@ extension VideoFeedPlayerPool {
     if playbackState != newState {
       playbackState = newState
     }
+  }
+
+  /// Stops the active player once when its item fails. `AVPlayer.pause()` reports
+  /// `timeControlStatus` synchronously (even when already paused), and that observer calls back
+  /// into `refreshPlaybackState()`. Recording the failure before pausing lets the re-entrant
+  /// refresh find it handled; pausing on every refresh recursed until the stack overflowed.
+  private func stopFailedPlayback(_ player: AVPlayer) {
+    if wantsPlayback { wantsPlayback = false }
+    guard playbackState != .failed else { return }
+    playbackState = .failed
+    player.pause()
   }
 
   private func resetProgress() {

@@ -311,6 +311,49 @@ struct VideoFeedPlayerPoolTests {
     #expect(audio.releases == 1)
   }
 
+  @Test("A failed item stops its player once instead of re-entering on the pause it causes")
+  func failedItemDoesNotReenterRefresh() {
+    let fixture = fixture()
+    let pool = fixture.pool
+    let player = fixture.players[0]
+    player.notifiesPauseLikeAVPlayer = true
+    pool.prewarm(activeIndex: 0, items: sources([0, 1]))
+    pool.play(feedIndex: 0)
+    player.updateTimeControlStatus(.playing)
+    #expect(pool.isPlaying)
+    let pausesBeforeFailure = player.pauseCount
+    fixture.items[0].updateStatus(.failed)
+    #expect(player.deepestPause == 1, "Pausing a failed item must not re-enter the pause through its own KVO")
+    #expect(player.pauseCount == pausesBeforeFailure + 1)
+    #expect(pool.playbackState == .failed)
+    #expect(!pool.wantsPlayback)
+    // Later notifications for the failed item leave it stopped without pausing again.
+    player.updateTimeControlStatus(.paused)
+    #expect(player.pauseCount == pausesBeforeFailure + 1)
+    #expect(pool.playbackState == .failed)
+    pool.cleanup()
+  }
+
+  @Test("An AVPlayer whose item cannot load reports failure without recursing")
+  func avPlayerFailedItemReportsFailure() async throws {
+    let players = (0..<3).map { _ in AVPlayer() }
+    let pool = VideoFeedPlayerPool(players: players, audioSession: FixtureVideoAudioSession()) {
+      AVPlayerItem(url: $0)
+    }
+    let missing = FileManager.default.temporaryDirectory
+      .appendingPathComponent("missing-video-\(UUID().uuidString).mp4")
+    pool.prewarm(activeIndex: 0, items: [(0, missing)])
+    pool.play(feedIndex: 0)
+    let deadline = ContinuousClock.now + .seconds(10)
+    while pool.playbackState != .failed, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(pool.playbackState == .failed)
+    #expect(!pool.wantsPlayback)
+    #expect(players[0].timeControlStatus == .paused)
+    pool.cleanup()
+  }
+
   @Test("Deallocation releases only the pool's audio owner")
   func deallocationReleasesAudio() {
     let audio = FixtureVideoAudioSession()
@@ -373,6 +416,13 @@ private final class FixtureVideoPlayer: AVPlayer, @unchecked Sendable {
   var fixtureTimeControlStatus: AVPlayer.TimeControlStatus = .paused
   var playCount = 0
   var pauseCount = 0
+  /// AVPlayer notifies `timeControlStatus` synchronously from inside `pause()`, even when it is
+  /// already paused. Off by default: most lifecycle tests drive status changes explicitly.
+  var notifiesPauseLikeAVPlayer = false
+  private(set) var deepestPause = 0
+  private var pauseDepth = 0
+  /// Bounds re-entrant pauses, so a recursion regression fails its test instead of the process.
+  private static let reentrancyLimit = 32
   var seekCompletions: [(Bool) -> Void] = []
   var periodicObserver: ((CMTime) -> Void)?
   override var currentItem: AVPlayerItem? { fixtureItem }
@@ -386,7 +436,17 @@ private final class FixtureVideoPlayer: AVPlayer, @unchecked Sendable {
 
   override func replaceCurrentItem(with item: AVPlayerItem?) { fixtureItem = item }
   override func play() { playCount += 1 }
-  override func pause() { pauseCount += 1; fixtureTimeControlStatus = .paused }
+  override func pause() {
+    pauseCount += 1
+    pauseDepth += 1
+    deepestPause = max(deepestPause, pauseDepth)
+    defer { pauseDepth -= 1 }
+    guard notifiesPauseLikeAVPlayer, pauseDepth <= Self.reentrancyLimit else {
+      fixtureTimeControlStatus = .paused
+      return
+    }
+    updateTimeControlStatus(.paused)
+  }
   override func currentTime() -> CMTime { .zero }
   override func seek(
     to time: CMTime, toleranceBefore: CMTime, toleranceAfter: CMTime,
