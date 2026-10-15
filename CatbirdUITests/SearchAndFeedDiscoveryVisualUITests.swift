@@ -220,7 +220,11 @@ final class SearchAndFeedDiscoveryVisualUITests: XCTestCase {
   }
 
   private func dragRecentQuery(upward: Bool) throws {
-    let keyboardTop = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame.minY : app.frame.maxY
+    // XCUITest's keyboard frame leaves out the input assistant bar above the keys, which can cover
+    // the lowest "visible" row on a tall screen; the app reports the full keyboard frame.
+    let reportedKeyboardTop = (nativeState()["keyboardTop"] as? Double).flatMap { $0 >= 0 ? CGFloat($0) : nil }
+    let keyboardTop = app.keyboards.firstMatch.exists
+      ? min(app.keyboards.firstMatch.frame.minY, reportedKeyboardTop ?? .infinity) : app.frame.maxY
     let contentTop = max(app.navigationBars.firstMatch.frame.maxY,
                          app.searchFields.firstMatch.frame.maxY, app.frame.minY + 60)
     let queries = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Scroll fixture query '"))

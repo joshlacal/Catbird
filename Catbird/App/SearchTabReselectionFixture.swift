@@ -570,6 +570,9 @@ private struct SearchTabNativeProbe: UIViewRepresentable {
     private var maximumSearchVerticalPan: CGFloat = 0
     private var maximumSearchOffsetAdvance: CGFloat = 0
     private var lastActiveSearchScroll: [String: Any] = [:]
+    /// The keyboard's top in window coordinates, including the input assistant bar above the keys
+    /// (XCUITest's keyboard element frame leaves that bar out).
+    private var keyboardTop: CGFloat?
 
     override func didMoveToWindow() {
       super.didMoveToWindow()
@@ -586,10 +589,26 @@ private struct SearchTabNativeProbe: UIViewRepresentable {
       timer = observationTimer
       // Observe while UIKit is tracking a drag as well as while the UI is idle.
       RunLoop.main.add(observationTimer, forMode: .common)
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(keyboardFrameWillChange(_:)),
+        name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
       publish()
     }
 
-    func stop() { timer?.invalidate(); timer = nil }
+    func stop() {
+      timer?.invalidate()
+      timer = nil
+      NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    }
+
+    @objc private func keyboardFrameWillChange(_ notification: Notification) {
+      guard let window, let screen = window.windowScene?.screen,
+            let end = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+      else { return }
+      let frame = window.convert(end, from: screen.coordinateSpace)
+      keyboardTop = frame.minY < window.bounds.maxY ? frame.minY : nil
+      publish()
+    }
 
     func publish() {
       guard let window, let surface = window.rootViewController?.view, let scene else { return }
@@ -651,6 +670,7 @@ private struct SearchTabNativeProbe: UIViewRepresentable {
         "searchVerticalPanDistance": maximumSearchVerticalPan,
         "searchScrollOffsetAdvance": maximumSearchOffsetAdvance,
         "activeSearchScroll": lastActiveSearchScroll,
+        "keyboardTop": keyboardTop ?? -1,
         "windowContentSizeCategory": window.traitCollection.preferredContentSizeCategory.rawValue,
         "contentSizeCategory": field?.traitCollection.preferredContentSizeCategory.rawValue
           ?? traitCollection.preferredContentSizeCategory.rawValue,
