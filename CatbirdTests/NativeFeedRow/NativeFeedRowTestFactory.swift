@@ -39,6 +39,7 @@ enum NativeFeedRowTestFactory {
       metadata: scaled(Typography.Size.body, weight: .regular, style: .body),
       bodyLineSpacing: fontManager.getLineSpacing(for: body.pointSize),
       kerning: fontManager.letterSpacingValue,
+      optionsGlyphSize: FeedRowTypography.optionsGlyphSize(contentSize: contentSize),
       generationKey: hasher.finalize())
   }
 
@@ -57,7 +58,7 @@ enum NativeFeedRowTestFactory {
       post: parts.post, layout: FeedRowLayoutEngine.layout(parts.input), text: parts.input.text,
       displayName: displayName, handle: handle, timeText: timeText,
       timeAccessibilityLabel: timeAccessibilityLabel, verification: verification,
-      actionBarState: actionBarState(for: parts.post))
+      actionBarState: actionBarState(for: parts.post), metadataColor: .secondaryLabel)
   }
 
   static func actionBarState(for post: AppBskyFeedDefs.PostView) -> FeedActionBarState {

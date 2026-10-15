@@ -2,6 +2,18 @@
 import Foundation
 import Petrel
 
+// MARK: - Native Feed Rows Switch
+
+/// The kill switch for native feed rows, for A/B comparison and support. Native rows are on
+/// unless the app was launched with `--native-feed-rows=off` or the `nativeFeedRowsDisabled`
+/// user default is set; every post then keeps the hosted SwiftUI row.
+enum NativeFeedRows {
+  static var isEnabled: Bool {
+    !ProcessInfo.processInfo.arguments.contains("--native-feed-rows=off")
+      && !UserDefaults.standard.bool(forKey: "nativeFeedRowsDisabled")
+  }
+}
+
 // MARK: - Native Feed Row Support
 
 /// Whether a feed post renders in a native UIKit cell or keeps the SwiftUI

@@ -11,6 +11,10 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
   let metadata: UIFont
   let bodyLineSpacing: CGFloat
   let kerning: CGFloat
+  /// The size of the options ellipsis glyph. The SwiftUI row draws it as an `Image` in the
+  /// environment's font, the system body style, so its size follows Dynamic Type but not the
+  /// app's own font settings.
+  let optionsGlyphSize: CGSize
   /// Changes whenever any input above changes; part of every layout cache key.
   let generationKey: Int
 
@@ -35,9 +39,23 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
         fontManager, size: Typography.Size.body, weight: boldText ? .semibold : .regular, textStyle: .body),
       bodyLineSpacing: fontManager.getLineSpacing(for: body.pointSize),
       kerning: fontManager.letterSpacingValue,
+      optionsGlyphSize: optionsGlyphSize(contentSize: contentSize),
       generationKey: key)
     cache = resolved
     return resolved
+  }
+
+  /// The options glyph's symbol configuration: the system body style at `contentSize`.
+  static func optionsGlyphConfiguration(contentSize: UIContentSizeCategory) -> UIImage.SymbolConfiguration {
+    UIImage.SymbolConfiguration(
+      font: UIFont.preferredFont(
+        forTextStyle: .body, compatibleWith: UITraitCollection(preferredContentSizeCategory: contentSize)))
+  }
+
+  /// The size of the ellipsis glyph drawn with `optionsGlyphConfiguration(contentSize:)`.
+  static func optionsGlyphSize(contentSize: UIContentSizeCategory) -> CGSize {
+    UIImage(systemName: "ellipsis", withConfiguration: optionsGlyphConfiguration(contentSize: contentSize))?.size
+      ?? .zero
   }
 
   @MainActor private static var cache: FeedRowTypography?

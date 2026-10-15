@@ -66,7 +66,10 @@ final class FeedPostTextView: UIView, UIGestureRecognizerDelegate {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    label.frame = bounds
+    // `UILabel` measures in whole pixels of this screen; a frame computed at a coarser or finer
+    // rounding is rounded up to the next pixel so the label never drops its last line.
+    let scale = max(traitCollection.displayScale, 1)
+    label.frame = CGRect(x: 0, y: 0, width: bounds.width, height: ceil(bounds.height * scale) / scale)
   }
 
   // MARK: - Link Hit Testing

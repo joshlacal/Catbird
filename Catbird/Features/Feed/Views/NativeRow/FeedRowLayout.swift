@@ -11,12 +11,38 @@ struct FeedRowLayoutInput: @unchecked Sendable {
   let postID: String
   let width: CGFloat
   let typography: FeedRowTypography
+  /// The name the header shows; empty when the author's display name is blank, in which case
+  /// the handle starts the line with no gap before it (`PostHeaderView`).
   let displayName: String
   let handle: String            // "@handle"
   let timeText: String          // shortTimeAgoString(from:)
   let verificationSymbol: String?   // VerificationBadgeKind.symbolName
   let text: NSAttributedString
   let contentSignature: FeedPostContentSignature
+  /// The widest the row's content may be, centered in `width`
+  /// (`FeedRowMetrics.maxRegularWidthContent` in a regular horizontal size class); `nil` for no limit.
+  let maxContentWidth: CGFloat?
+  /// Pixels per point of the screen the row is drawn on. The text's height is rounded up to a
+  /// whole pixel, as SwiftUI and `UILabel` size text; `1` rounds to whole points.
+  let displayScale: CGFloat
+
+  init(
+    postID: String, width: CGFloat, typography: FeedRowTypography, displayName: String, handle: String,
+    timeText: String, verificationSymbol: String?, text: NSAttributedString,
+    contentSignature: FeedPostContentSignature, maxContentWidth: CGFloat? = nil, displayScale: CGFloat = 1
+  ) {
+    self.postID = postID
+    self.width = width
+    self.typography = typography
+    self.displayName = displayName
+    self.handle = handle
+    self.timeText = timeText
+    self.verificationSymbol = verificationSymbol
+    self.text = text
+    self.contentSignature = contentSignature
+    self.maxContentWidth = maxContentWidth
+    self.displayScale = max(displayScale, 1)
+  }
 }
 
 struct FeedRowLayout: Equatable, Sendable {
@@ -36,14 +62,20 @@ struct FeedRowLayout: Equatable, Sendable {
 // MARK: - Feed Row Layout Engine
 
 enum FeedRowLayoutEngine {
-  /// Uses NSString drawing measurement, which is thread-safe and matches how `UILabel` lays out
-  /// the same attributed string.
+  /// The text's exact typographic height. Uses NSString drawing measurement, which is thread-safe
+  /// and matches how `UILabel` lays out the same attributed string. The layout rounds it up to a
+  /// whole pixel of the input's display scale, as `UILabel` and SwiftUI's `Text` report it.
   static func textHeight(_ text: NSAttributedString, width: CGFloat) -> CGFloat {
     guard text.length > 0, width > 0 else { return 0 }
     let rect = text.boundingRect(
       with: CGSize(width: width, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-    return ceil(rect.height)
+    return rect.height
+  }
+
+  /// `value` rounded up to a whole pixel; the tolerance keeps a value already on a pixel boundary.
+  private static func pixelCeil(_ value: CGFloat, scale: CGFloat) -> CGFloat {
+    ceil(value * scale - 0.0001) / scale
   }
 
   private static func singleLineWidth(_ string: String, font: UIFont, kerning: CGFloat) -> CGFloat {
@@ -54,23 +86,35 @@ enum FeedRowLayoutEngine {
     let m = FeedRowMetrics.self
     let t = input.typography
     let rowWidth = input.width
-    let avatarX = m.rowHorizontal + m.avatarColumnInset
+    // The lane the row's content occupies: the full width, or at most `maxContentWidth` centered
+    // in it. Only the divider spans the whole row.
+    let laneWidth = min(rowWidth, input.maxContentWidth ?? rowWidth)
+    let laneX = (rowWidth - laneWidth) / 2
+    // The avatar is centered in its column, which sits inside the column's padding.
+    let avatarX = laneX + m.rowHorizontal + m.avatarColumnInset + (m.avatarColumnWidth - m.avatarSize) / 2
     let avatarFrame = CGRect(x: avatarX, y: m.rowTop + m.avatarColumnInset, width: m.avatarSize, height: m.avatarSize)
-    let contentX = m.rowHorizontal + m.avatarColumnInset * 2 + m.avatarColumnWidth + m.columnSpacing
-    let contentWidth = max(0, rowWidth - contentX - m.rowHorizontal)
+    let contentX = laneX + m.rowHorizontal + m.avatarColumnInset * 2 + m.avatarColumnWidth + m.columnSpacing
+    let contentWidth = max(0, laneX + laneWidth - m.rowHorizontal - contentX)
     let contentTop = m.rowTop + m.contentTop
 
     // Header line: name [badge] [handle] · time ............ [options]
+    // The line and the options button (the ellipsis glyph and its padding) are top-aligned inside
+    // the header's horizontal padding; the header is as tall as the taller of the two.
     let headerX = contentX + m.headerHorizontal
+    let optionsWidth = t.optionsGlyphSize.width + m.optionsGlyphPadding * 2
+    let optionsHeight = t.optionsGlyphSize.height + m.optionsGlyphPadding * 2
     let optionsFrame = CGRect(
-      x: contentX + contentWidth - m.optionsButtonSide, y: contentTop - (m.optionsButtonSide - t.name.lineHeight) / 2,
-      width: m.optionsButtonSide, height: m.optionsButtonSide)
-    let lineHeight = ceil(max(t.name.lineHeight, t.metadata.lineHeight))
+      x: contentX + contentWidth - m.headerHorizontal - optionsWidth, y: contentTop,
+      width: optionsWidth, height: optionsHeight)
+    // The header's labels are as tall as its tallest line, unrounded, as in the SwiftUI header.
+    let lineHeight = max(t.name.lineHeight, t.metadata.lineHeight)
+    let headerHeight = max(lineHeight, optionsHeight)
     let timeWidth = singleLineWidth("·  " + input.timeText, font: t.metadata, kerning: 0)
-    // The gap before the time is part of what the name and handle cannot use, so the time never
-    // reaches the options button.
-    let timeGap = m.headerSpacing / 2
-    let available = max(0, optionsFrame.minX - headerX - timeWidth - timeGap)
+    // `PostHeaderView` spaces the time from the name and handle by its stack spacing, and the
+    // header's `Spacer` keeps at least that much room before the options button. Both are part of
+    // what the name and handle cannot use, so the time never reaches the options button.
+    let timeGap = m.headerSpacing
+    let available = max(0, optionsFrame.minX - m.headerSpacing - headerX - timeWidth - timeGap)
     let badgeSide = input.verificationSymbol == nil ? 0 : ceil(t.metadata.pointSize * 0.85)
     let badgeSpace = badgeSide > 0 ? badgeSide + 4 : 0
     let nameWidth = min(singleLineWidth(input.displayName, font: t.name, kerning: 0), max(0, available - badgeSpace))
@@ -84,26 +128,34 @@ enum FeedRowLayoutEngine {
     }
     // HandleFitLayout rule: full width if it fits, truncated if ≥ minimum, else hidden.
     let handleIdeal = singleLineWidth(input.handle, font: t.metadata, kerning: t.kerning)
-    let handleRoom = available - (cursor - headerX) - m.headerSpacing
+    // Without a display name the handle starts the line, with no gap before it.
+    let handleGap = input.displayName.isEmpty ? 0 : m.headerSpacing
+    let handleRoom = available - (cursor - headerX) - handleGap
     var handleFrame: CGRect?
     if handleRoom >= min(handleIdeal, m.minimumTruncatedHandleWidth) {
-      let handle = CGRect(x: cursor + m.headerSpacing, y: contentTop, width: min(handleIdeal, handleRoom), height: lineHeight)
+      let handle = CGRect(x: cursor + handleGap, y: contentTop, width: min(handleIdeal, handleRoom), height: lineHeight)
       handleFrame = handle
       cursor = handle.maxX
     }
     let timeFrame = CGRect(x: cursor + timeGap, y: contentTop, width: timeWidth, height: lineHeight)
 
     let textWidth = max(0, contentWidth - m.textHorizontal * 2)
-    let textHeight = textHeight(input.text, width: textWidth)
+    let textHeight = pixelCeil(textHeight(input.text, width: textWidth), scale: input.displayScale)
+    // A post without text has no text view: its padding is absent above and below the empty frame,
+    // while the record text's own padding and the column spacing remain, as in the SwiftUI row.
+    let missingTextInset = input.text.length > 0 ? 0 : m.textHorizontal
     let textFrame = CGRect(
-      x: contentX + m.textHorizontal, y: nameFrame.maxY + m.textTop, width: textWidth, height: textHeight)
-    let actionTop = textFrame.maxY + (textHeight > 0 ? m.textBottom : 0)
+      x: contentX + m.textHorizontal, y: contentTop + headerHeight + m.textTop - missingTextInset,
+      width: textWidth, height: textHeight)
+    let actionTop = textFrame.maxY + m.textBottom - missingTextInset
     let actionBarFrame = CGRect(x: contentX, y: actionTop, width: contentWidth, height: m.actionBarHeight)
     let contentBottom = actionBarFrame.maxY + m.actionBarBottom
     let rowBottom = max(contentBottom, avatarFrame.maxY + m.avatarColumnInset)
     let dividerFrame = CGRect(x: 0, y: rowBottom, width: rowWidth, height: m.dividerHeight)
+    // A self-sizing SwiftUI row reports its height rounded up to a whole pixel.
     return FeedRowLayout(
-      width: rowWidth, height: dividerFrame.maxY, avatarFrame: avatarFrame, nameFrame: nameFrame,
+      width: rowWidth, height: pixelCeil(dividerFrame.maxY, scale: input.displayScale),
+      avatarFrame: avatarFrame, nameFrame: nameFrame,
       badgeFrame: badgeFrame, handleFrame: handleFrame, timeFrame: timeFrame,
       optionsButtonFrame: optionsFrame, textFrame: textFrame, actionBarFrame: actionBarFrame,
       dividerFrame: dividerFrame)

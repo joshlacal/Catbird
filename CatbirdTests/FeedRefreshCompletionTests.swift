@@ -161,7 +161,8 @@ struct FeedRefreshCompletionTests {
       controller.collectionView.layoutIfNeeded()
       let cell = try #require(controller.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
       #expect(cell.window === window)
-      #expect(cell.contentConfiguration != nil)
+      // A post row is a native cell showing its post, or hosted SwiftUI content.
+      #expect(cell.contentConfiguration != nil || (cell as? NativeFeedPostCell)?.postURI != nil)
       #expect(cell.bounds.width > 0 && cell.bounds.height > 0)
       let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
       var drewHierarchy = false

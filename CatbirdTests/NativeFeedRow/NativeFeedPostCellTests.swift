@@ -67,10 +67,29 @@ struct NativeFeedPostCellTests {
     label.numberOfLines = 0
     label.attributedText = content.text
     let fitted = label.sizeThatFits(CGSize(width: content.layout.textFrame.width, height: .greatestFiniteMagnitude))
-    #expect(abs(ceil(fitted.height) - content.layout.textFrame.height) <= 0.5)
+    // Never shorter than the label needs, and less than a point taller (the text is rounded up
+    // to a whole pixel of the input's display scale).
+    #expect(content.layout.textFrame.height >= fitted.height - 0.001)
+    #expect(content.layout.textFrame.height - fitted.height < 1)
   }
 
   // MARK: - Accessibility
+
+  @Test("VoiceOver reads the row in the hosted row's order")
+  func accessibilityReadingOrder() throws {
+    let (cell, _) = try NativeFeedRowTestFactory.configuredCell(text: "hello", verification: .regular)
+    let elements = try #require(cell.contentView.accessibilityElements as? [UIView])
+    #expect(elements == [
+      cell.avatarViewForTesting, cell.headerViewForTesting, cell.optionsButtonForTesting,
+      cell.textViewForTesting, cell.actionBarForTesting,
+    ])
+    let header = cell.headerViewForTesting
+    let headerElements = try #require(header.accessibilityElements as? [UIView])
+    #expect(headerElements == [
+      header.nameLabelForTesting, header.badgeViewForTesting, header.handleLabelForTesting,
+      header.timeLabelForTesting,
+    ])
+  }
 
   @Test("VoiceOver can open the post from the row")
   func openPostAccessibilityAction() throws {
@@ -106,7 +125,7 @@ struct NativeFeedPostCellTests {
     let content = NativeFeedRowContent(
       post: base.post, layout: base.layout, text: linked, displayName: base.displayName, handle: base.handle,
       timeText: base.timeText, timeAccessibilityLabel: base.timeAccessibilityLabel, verification: nil,
-      actionBarState: base.actionBarState)
+      actionBarState: base.actionBarState, metadataColor: base.metadataColor)
     let cell = NativeFeedPostCell(frame: .zero)
     cell.configure(
       content, typography: NativeFeedRowTestFactory.typography(contentSize: .large),
@@ -148,7 +167,7 @@ struct NativeFeedPostCellTests {
     let content = NativeFeedRowContent(
       post: base.post, layout: base.layout, text: linked, displayName: base.displayName, handle: base.handle,
       timeText: base.timeText, timeAccessibilityLabel: base.timeAccessibilityLabel, verification: nil,
-      actionBarState: base.actionBarState)
+      actionBarState: base.actionBarState, metadataColor: base.metadataColor)
     let cell = NativeFeedPostCell(frame: .zero)
     cell.configure(
       content, typography: NativeFeedRowTestFactory.typography(contentSize: .large),

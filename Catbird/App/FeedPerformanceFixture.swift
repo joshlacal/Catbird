@@ -9,6 +9,8 @@
 //    --feed-perf-speed=<pt/s>     scripted scroll speed (default 3000)
 //    --feed-perf-passes=<n>       down/up passes to run (default 3: down, up, down)
 //    --feed-perf-content=<kind>   mixed (default), text, images, links, quotes, threads or reposts
+//    --native-feed-rows=off       render every post with the hosted SwiftUI row instead of the native
+//                                 UIKit cell, to compare the two (read by `NativeFeedRows.isEnabled`)
 //
 //  The benchmark scrolls the production feed controller at a constant speed with a display
 //  link and records how far each frame overran its deadline. Results are printed as

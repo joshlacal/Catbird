@@ -25,6 +25,8 @@ final class FeedRowLayoutStore {
     /// Follows the hide-verification-badges preference and decides whether a badge frame exists.
     let verificationSymbol: String?
     let signature: FeedPostContentSignature
+    let maxContentWidth: CGFloat?
+    let displayScale: CGFloat
 
     nonisolated init(_ input: FeedRowLayoutInput) {
       postID = input.postID
@@ -35,10 +37,13 @@ final class FeedRowLayoutStore {
       timeText = input.timeText
       verificationSymbol = input.verificationSymbol
       signature = input.contentSignature
+      maxContentWidth = input.maxContentWidth
+      displayScale = input.displayScale
     }
   }
 
-  static let defaultCapacity = 1000
+  /// `nonisolated` so `init`'s default argument, evaluated outside the main actor, can read it.
+  nonisolated static let defaultCapacity = 1000
 
   private var layouts: [Key: FeedRowLayout] = [:]
   private let capacity: Int

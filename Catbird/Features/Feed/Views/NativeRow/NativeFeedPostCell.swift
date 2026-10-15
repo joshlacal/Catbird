@@ -53,6 +53,8 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
       contentView.addSubview(view)
     }
     optionsGlyph.contentMode = .center
+    // The hosted row draws the glyph in the environment's font, the system body style.
+    optionsGlyph.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
     optionsGlyph.tintColor = .secondaryLabel
     optionsGlyph.isAccessibilityElement = false
     optionsButton.accessibilityLabel = "Post Options"
@@ -70,6 +72,9 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     contentView.accessibilityCustomActions = [openPostAction]
     textView.rowAccessibilityActions = [openPostAction]
     headerView.nameAccessibilityActions = [openPostAction]
+    // VoiceOver reads the row in the hosted row's order: the avatar, the header line, the options
+    // button that ends it, the text, then the action bar.
+    contentView.accessibilityElements = [avatarView, headerView, optionsButton, textView, actionBar]
   }
 
   @available(*, unavailable)
@@ -98,7 +103,8 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     headerView.configure(
       content.layout, displayName: content.displayName, handle: content.handle, timeText: content.timeText,
       timeAccessibilityLabel: content.timeAccessibilityLabel, verification: content.verification,
-      typography: typography, metadataColor: .secondaryLabel, originX: 0, hideVerificationBadges: false)
+      typography: typography, metadataColor: content.metadataColor, originX: 0, hideVerificationBadges: false)
+    optionsGlyph.tintColor = content.metadataColor
     textView.attributedText = content.text
     textView.onOpenLink = actions.openLink
     actionBar.actions = actions.actionBar(content.post)

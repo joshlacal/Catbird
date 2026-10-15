@@ -18,9 +18,10 @@ enum FeedRowTestPosts {
     langs: [String]? = nil, withImageEmbed: Bool = false, asReply: Bool = false,
     asRepost: Bool = false, asPin: Bool = false, tags: [String]? = nil, pronouns: String? = nil,
     selfDeclaredBot: Bool = false, pinned: Bool = false, authorBlockedViewer: Bool = false,
-    authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil, postKey: String = "one"
+    authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil, postKey: String = "one",
+    authorDID: String = "did:plc:fixture"
   ) throws -> CachedFeedViewPost {
-    let did = try DID(didString: "did:plc:fixture")
+    let did = try DID(didString: authorDID)
     let viewer = authorBlockedViewer ? AppBskyActorDefs.ViewerState(blockedBy: true) : nil
     let labels = selfDeclaredBot
       ? [ComAtprotoLabelDefs.Label(

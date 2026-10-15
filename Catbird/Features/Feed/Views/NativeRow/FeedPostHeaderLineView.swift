@@ -49,6 +49,8 @@ final class FeedPostHeaderLineView: UIView {
     handleLabel.isHidden = true
     addSubview(badgeView)
     isUserInteractionEnabled = false
+    // `PostHeaderView` reads the badge right after the name. Hidden elements are skipped.
+    accessibilityElements = [nameLabel, badgeView, handleLabel, timeLabel]
   }
 
   @available(*, unavailable)

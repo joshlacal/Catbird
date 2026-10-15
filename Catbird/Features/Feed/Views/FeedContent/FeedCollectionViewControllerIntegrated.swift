@@ -307,6 +307,8 @@ import os
     private var feedGeneration = 0
     private var appliedSnapshotGeneration: Int?
     private let scrollRestoration: FeedViewportRestoration
+    /// Native UIKit rows for the posts they support (`NativeFeedRowSupport`).
+    private let nativeRows: NativeFeedRowCoordinator
     #if DEBUG
     private var lastLayoutGeometry: FeedLayoutGeometry?
     #endif
@@ -334,6 +336,8 @@ import os
       self.onScrollOffsetChanged = onScrollOffsetChanged
       self.scrollRestoration = FeedViewportRestoration(anchor: viewportState.getScrollAnchor()?.viewportAnchor)
       self.firstFeedContentSignpostState = PerformanceSignposts.beginInterval("FirstFeedContent")
+      self.nativeRows = NativeFeedRowCoordinator(
+        navigationPath: navigationPath, appState: stateManager.appState, sceneContext: sceneContext)
 
       super.init(nibName: nil, bundle: nil)
     }
@@ -371,6 +375,7 @@ import os
 
     @objc private func handleFontChangeNotification() {
       rowHeightCache.removeAll()
+      nativeRows.invalidateLayouts()
       forceCellReconfiguration()
     }
 
@@ -469,6 +474,7 @@ import os
 
       updateThemeColors()
       setupCollectionView()
+      setupNativeRows()
       setupDataSource()
       setupRefreshControl()
       // Apply header if it was set before the view loaded
@@ -562,6 +568,7 @@ import os
       #if os(iOS)
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
           rowHeightCache.removeAll()
+          nativeRows.invalidateLayouts()
           forceCellReconfiguration()
         }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
@@ -809,6 +816,11 @@ import os
         // Remove cell state handler to reduce memory overhead
         cell.configurationUpdateHandler = nil
       }
+      // Registration for posts the native cell supports
+      let nativePostRegistration = UICollectionView.CellRegistration<NativeFeedPostCell, NativeFeedRowCoordinator.Row> {
+        [weak self] cell, _, row in
+        self?.configureNativeCell(cell, row: row)
+      }
       // Registration for header cell
       let headerRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
         [weak self] cell, indexPath, _ in
@@ -884,7 +896,7 @@ import os
 
       dataSource = UICollectionViewDiffableDataSource<Section, Item>(
         collectionView: collectionView
-      ) { collectionView, indexPath, item in
+      ) { [weak self] collectionView, indexPath, item in
         switch item {
         case .header:
           return collectionView.dequeueConfiguredReusableCell(
@@ -893,6 +905,12 @@ import os
           return collectionView.dequeueConfiguredReusableCell(
             using: trendingInterstitialRegistration, for: indexPath, item: ())
         case .post(_, _, let id):
+          if let row = self?.nativeRows.nativeRow(forPostID: id) {
+            self?.nativeRows.recordDequeue(postID: id, native: true)
+            return collectionView.dequeueConfiguredReusableCell(
+              using: nativePostRegistration, for: indexPath, item: row)
+          }
+          self?.nativeRows.recordDequeue(postID: id, native: false)
           return collectionView.dequeueConfiguredReusableCell(
             using: postRegistration, for: indexPath, item: id)
         case .footer:
@@ -993,6 +1011,10 @@ import os
       let capturedPostsByID = Dictionary(
         capturedPosts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
       let capturedSignatures = capturedPostsByID.mapValues(FeedPostContentSignature.init)
+      nativeRows.update(
+        appState: manager.appState, sceneContext: sceneContext, feedInteractionTarget: manager.feedInteractionTarget)
+      nativeRows.beginSnapshot(
+        posts: capturedPostsByID, signatures: capturedSignatures, traits: collectionView.traitCollection)
       let capturedTrendingContent = trendingContent
       let capturedFooterState = currentFooterState
       let capturedHeaderPresent = FeedDiscoveryHeaderVisibility.shouldShowHeader(
@@ -1025,7 +1047,8 @@ import os
           if changed {
             rowHeightCache.invalidate(postID: id)
           }
-          return changed
+          let requestedByNativeRow = nativeRows.takeReconfigureRequest(postID: id)
+          return changed || requestedByNativeRow
         case .trendingInterstitial:
           return appliedTrendingContent != capturedTrendingContent
         case .footer:
@@ -1047,6 +1070,13 @@ import os
       }
 
       updateDiagnostics?.snapshotConstructions += 1
+      // A reconfigure must dequeue the cell kind the item already has; items moving between the
+      // native and the hosted row are reloaded.
+      let reloadedItems = Set(reconfiguredItems.filter { item in
+        guard case .post(_, _, let id) = item else { return false }
+        return nativeRows.cellKindChanges(postID: id)
+      })
+      prepareNativeLayouts(near: capturedPosts)
       var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
       snapshot.appendSections([.main])
       snapshot.appendItems(items, toSection: .main)
@@ -1076,7 +1106,8 @@ import os
         await dataSource.applySnapshotUsingReloadData(snapshot)
       } else {
         updateDiagnostics?.reconfiguredItems += reconfiguredItems.count
-        snapshot.reconfigureItems(reconfiguredItems)
+        snapshot.reconfigureItems(reconfiguredItems.filter { !reloadedItems.contains($0) })
+        snapshot.reloadItems(Array(reloadedItems))
         await dataSource.apply(snapshot, animatingDifferences: false)
       }
       if let state = firstFeedContentSignpostState, !capturedPosts.isEmpty {
@@ -1412,6 +1443,7 @@ import os
       cancelPendingLoadMoreRequest()
       prefetchTasks.values.forEach { $0.task.cancel() }
       prefetchTasks.removeAll()
+      nativeRows.cancelPreparation()
       initialLoadTask?.cancel()
       initialLoadTask = nil
       stateObserver?.stopObserving()
@@ -1444,6 +1476,78 @@ import os
         } else {
           await self.performUpdate()
         }
+      }
+    }
+  }
+
+  // MARK: - Native Rows
+
+  @available(iOS 16.0, *)
+  extension FeedCollectionViewControllerIntegrated {
+    private func setupNativeRows() {
+      nativeRows.collectionView = collectionView
+      nativeRows.installPresentationHost(in: self)
+      nativeRows.onNeedsReconfigure = { [weak self] in
+        Task { @MainActor [weak self] in await self?.performUpdate() }
+      }
+      nativeRows.onSettingsChanged = { [weak self] in self?.forceCellReconfiguration() }
+      nativeRows.startObservingSettings()
+    }
+
+    private func configureNativeCell(_ cell: NativeFeedPostCell, row: NativeFeedRowCoordinator.Row) {
+      let signpostId = PerformanceSignposts.beginCellConfiguration(postId: row.postID)
+      defer { PerformanceSignposts.endCellConfiguration(id: signpostId) }
+      let width = nativeRows.layoutWidth(forBoundsWidth: collectionView.bounds.width)
+      // A row is only native once a snapshot resolved the row settings, so both exist here.
+      guard let typography = nativeRows.typography, let content = nativeRows.content(for: row, width: width) else {
+        controllerLogger.fault("Native feed row \(row.postID, privacy: .public) configured without row settings")
+        return
+      }
+      updateDiagnostics?.postConfigurations += 1
+      cell.selectedBackgroundView = nil
+      cell.configure(
+        content, typography: typography, actions: nativeRows.actions(for: row),
+        shadowUpdates: nativeRows.shadowUpdates(for: row))
+
+      // Annotate the cell so Siri's 'View AppIntents Payload' walk can collect
+      // onscreen PostEntity references, as the hosted registration does.
+#if compiler(>=6.4)
+      if #available(anyAppleOS 26.0, *) {
+        if let post = postsByID[row.postID], let entityURI = AppEntityAnnotationIdentifiers.postURI(for: post) {
+          cell.appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
+        } else {
+          cell.appEntityIdentifier = nil
+        }
+      }
+#endif
+      cell.configurationUpdateHandler = nil
+    }
+
+    /// Prepares the layouts of native rows from the first visible post through the next screens,
+    /// off the main actor, so cells that scroll in find them cached.
+    private func prepareNativeLayouts(near posts: [CachedFeedViewPost]) {
+      let firstVisibleID = collectionView.indexPathsForVisibleItems.sorted().compactMap { postIDAt($0) }.first
+      let start = firstVisibleID.flatMap { id in posts.firstIndex { $0.id == id } } ?? 0
+      let window = posts[start..<min(posts.count, start + Self.nativeLayoutPreparationWindow)]
+      nativeRows.prepareLayouts(forPostIDs: window.map(\.id), boundsWidth: collectionView.bounds.width)
+    }
+
+    /// Posts ahead of the first visible one whose native layouts each snapshot prepares.
+    private static let nativeLayoutPreparationWindow = 24
+
+    /// Configures the visible native cells with layouts for `boundsWidth` right away, during a size
+    /// transition, instead of waiting for the reconfigure that follows it.
+    private func relayoutVisibleNativeRows(boundsWidth: CGFloat) {
+      guard let collectionView, boundsWidth > 0 else { return }
+      for indexPath in collectionView.indexPathsForVisibleItems {
+        guard let cell = collectionView.cellForItem(at: indexPath) as? NativeFeedPostCell,
+          let id = postIDAt(indexPath), let row = nativeRows.nativeRow(forPostID: id),
+          let typography = nativeRows.typography,
+          let content = nativeRows.content(for: row, width: nativeRows.layoutWidth(forBoundsWidth: boundsWidth))
+        else { continue }
+        cell.configure(
+          content, typography: typography, actions: nativeRows.actions(for: row),
+          shadowUpdates: nativeRows.shadowUpdates(for: row))
       }
     }
   }
@@ -1486,8 +1590,13 @@ import os
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
       super.viewWillTransition(to: size, with: coordinator)
       rowHeightCache.removeAll()
-      // Rows carry the window size for embed media; refresh it once the new size is in place.
-      coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+      nativeRows.invalidateLayouts(includingCellWidths: true)
+      // Native rows get layouts for the new width before the collection view resizes them, so a
+      // rotation never draws a row with frames for the old width.
+      coordinator.animate(alongsideTransition: { [weak self] _ in
+        self?.relayoutVisibleNativeRows(boundsWidth: size.width)
+      }) { [weak self] _ in
+        // Rows carry the window size for embed media; refresh it once the new size is in place.
         self?.forceCellReconfiguration()
       }
     }
@@ -1499,6 +1608,8 @@ import os
   extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath])
     {
+      nativeRows.prepareLayouts(
+        forPostIDs: indexPaths.compactMap { postIDAt($0) }, boundsWidth: collectionView.bounds.width)
       let appState = stateManager.appState
       guard let client = appState.atProtoClient else { return }
       let autoplayVideos = appState.appSettings.autoplayVideos

@@ -54,5 +54,8 @@ struct NativeFeedRowContent {
   /// applied here.
   let verification: VerificationBadgeKind?
   let actionBarState: FeedActionBarState
+  /// The handle, time and options glyph colour: the theme's secondary text colour, as the hosted
+  /// row's header uses (`Color.adaptiveText(style: .secondary)`).
+  let metadataColor: UIColor
 }
 #endif

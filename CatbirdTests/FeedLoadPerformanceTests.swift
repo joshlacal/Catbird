@@ -390,7 +390,12 @@ final class FeedLoadPerformanceTests: XCTestCase {
     XCTAssertEqual(afterMutation.reconfiguredItems - after.reconfiguredItems, 1)
     XCTAssertEqual(afterMutation.trendingConfigurations - after.trendingConfigurations, 0)
     XCTAssertTrue(fixture.state.posts[5] === post)
-    XCTAssertEqual(retained.displayText, "IN PLACE UPDATED FIXTURE TEXT")
+    // A native row draws the post's new text itself; a hosted row refreshes its retained view model.
+    let uri = try post.feedViewPost.post.uri.uriString()
+    let nativeText = fixture.controller.collectionView.visibleCells
+      .compactMap { $0 as? NativeFeedPostCell }
+      .first { $0.postURI == uri }?.textViewForTesting.attributedText?.string
+    XCTAssertEqual(nativeText ?? retained.displayText, "IN PLACE UPDATED FIXTURE TEXT")
     try attachScreenshot(fixture, named: "no-op-then-in-place-update", requireTrending: true,
       requiredText: "in place updated fixture text")
     XCTAssertTrue(retained === fixture.state.viewModel(for: post))
