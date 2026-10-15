@@ -135,6 +135,11 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   private var scrollToTopRequestID = 0
   private var pendingScrollOffset: CGFloat?
   private var animatePendingScroll = false
+  /// Set while SwiftUI updates this controller. A scroll report made then (a restored
+  /// offset, or UIKit clamping the offset to new content) would write SwiftUI state during
+  /// its view update, so it waits for this controller's next layout pass instead.
+  private var isApplyingSwiftUIUpdate = false
+  private var needsScrollReport = false
   /// Lets the first row (a profile banner) sit under a transparent navigation
   /// bar instead of below it, where UIKit's automatic top inset would put it.
   var extendsUnderTopBar = false {
@@ -150,6 +155,13 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     setupCollectionView()
     setupDataSource()
     applySnapshot()
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    guard needsScrollReport, !isApplyingSwiftUIUpdate, let collectionView else { return }
+    needsScrollReport = false
+    onScrollOffsetChanged?(collectionView.contentOffset.y + collectionView.adjustedContentInset.top)
   }
 
   override func viewSafeAreaInsetsDidChange() {
@@ -388,7 +400,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
         let target = min(maximum, max(-inset.top, offset - inset.top))
         self.pendingScrollOffset = nil
         self.collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: self.animatePendingScroll)
-        self.onScrollOffsetChanged?(target + inset.top)
+        self.reportScrollOffset(target + inset.top)
       }
       self.triggerLoadMoreForVisibleRows()
     }
@@ -400,7 +412,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
 
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
     guard pendingScrollOffset == nil else { return }
-    onScrollOffsetChanged?(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
+    reportScrollOffset(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
   }
 
   private func triggerLoadMoreIfNeeded(at indexPath: IndexPath) {
@@ -485,6 +497,26 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   }
 }
 
+// MARK: - Scroll reports
+
+extension PostListCollectionController {
+  /// Runs SwiftUI's changes to this controller, holding back scroll reports they cause.
+  func applySwiftUIUpdate(_ update: () -> Void) {
+    isApplyingSwiftUIUpdate = true
+    update()
+    isApplyingSwiftUIUpdate = false
+  }
+
+  private func reportScrollOffset(_ offset: CGFloat) {
+    guard isApplyingSwiftUIUpdate else {
+      onScrollOffsetChanged?(offset)
+      return
+    }
+    needsScrollReport = true
+    viewIfLoaded?.setNeedsLayout()
+  }
+}
+
 private struct PostListCollectionRepresentable: UIViewControllerRepresentable {
   let list: PostListCollectionView
 
@@ -495,20 +527,22 @@ private struct PostListCollectionRepresentable: UIViewControllerRepresentable {
   }
 
   func updateUIViewController(_ controller: PostListCollectionController, context: Context) {
-    controller.updateScrollPosition(key: list.scrollPositionKey, requestID: list.scrollToTopRequestID)
-    controller.hostingEnvironment = context.environment
-    controller.appState = list.appState
-    controller.headerView = list.headerView
-    controller.rowViewBuilder = list.rowView
-    controller.emptyView = list.emptyView
-    controller.onLoadMore = list.onLoadMore
-    controller.onRefresh = list.onRefresh
-    controller.onRemoveBookmark = list.onRemoveBookmark
-    controller.onScrollOffsetChanged = list.onScrollOffsetChanged
-    controller.isScrollsToTop = list.scrollsToTop
-    controller.extendsUnderTopBar = list.extendsUnderTopBar
-    controller.setEntries(list.entries, hasMore: list.hasMore, isLoadingMore: list.isLoadingMore, footerState: list.footerState)
-    controller.view.accessibilityIdentifier = list.accessibilityIdentifier
+    controller.applySwiftUIUpdate {
+      controller.updateScrollPosition(key: list.scrollPositionKey, requestID: list.scrollToTopRequestID)
+      controller.hostingEnvironment = context.environment
+      controller.appState = list.appState
+      controller.headerView = list.headerView
+      controller.rowViewBuilder = list.rowView
+      controller.emptyView = list.emptyView
+      controller.onLoadMore = list.onLoadMore
+      controller.onRefresh = list.onRefresh
+      controller.onRemoveBookmark = list.onRemoveBookmark
+      controller.onScrollOffsetChanged = list.onScrollOffsetChanged
+      controller.isScrollsToTop = list.scrollsToTop
+      controller.extendsUnderTopBar = list.extendsUnderTopBar
+      controller.setEntries(list.entries, hasMore: list.hasMore, isLoadingMore: list.isLoadingMore, footerState: list.footerState)
+      controller.view.accessibilityIdentifier = list.accessibilityIdentifier
+    }
   }
 
   static func dismantleUIViewController(_ controller: PostListCollectionController, coordinator: ()) {

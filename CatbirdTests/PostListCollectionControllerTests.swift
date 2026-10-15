@@ -45,14 +45,7 @@ struct PostListCollectionControllerTests {
     controller.onScrollOffsetChanged = { reportedOffset = $0 }
     defer { controller.cancelTasks() }
 
-    let entries = try (0..<60).map { index -> PostListEntry in
-      let uri = try ATProtocolURI(uriString: "at://did:plc:scrollfixture/app.bsky.feed.post/\(index)")
-      let bookmark = AppBskyBookmarkDefs.BookmarkView(
-        subject: .init(uri: uri, cid: CID.fromDAGCBOR(Data("post-\(index)".utf8))),
-        item: .appBskyFeedDefsNotFoundPost(.init(uri: uri, notFound: true))
-      )
-      return .bookmark(EquatableBox(bookmark))
-    }
+    let entries = try PostListTestSupport.bookmarkEntries(count: 60)
     func apply(_ key: String, requestID: Int = 0) {
       controller.updateScrollPosition(key: key, requestID: requestID)
       controller.setEntries(entries, hasMore: false, isLoadingMore: false, footerState: .hidden)
@@ -64,7 +57,7 @@ struct PostListCollectionControllerTests {
     }
 
     apply("account-a/profile-a/posts")
-    try await expectOffset(0, in: controller)
+    try await PostListTestSupport.expectOffset(0, in: controller)
     scroll(320)
     #expect(abs((reportedOffset ?? -1) - 320) < 1)
 
@@ -72,24 +65,24 @@ struct PostListCollectionControllerTests {
     controller.updateScrollPosition(key: "account-a/profile-a/replies", requestID: 0)
     collection.contentInset.top = 88
     controller.setEntries(entries, hasMore: false, isLoadingMore: false, footerState: .hidden)
-    try await expectOffset(0, in: controller)
+    try await PostListTestSupport.expectOffset(0, in: controller)
     scroll(180)
 
     apply("account-a/profile-a/posts")
-    try await expectOffset(320, in: controller)
+    try await PostListTestSupport.expectOffset(320, in: controller)
     apply("account-b/profile-a/posts")
-    try await expectOffset(0, in: controller)
+    try await PostListTestSupport.expectOffset(0, in: controller)
     scroll(120)
     apply("account-a/profile-b/posts")
-    try await expectOffset(0, in: controller)
+    try await PostListTestSupport.expectOffset(0, in: controller)
     scroll(80)
     apply("account-a/profile-a/replies")
-    try await expectOffset(180, in: controller)
+    try await PostListTestSupport.expectOffset(180, in: controller)
     apply("account-a/profile-a/posts")
-    try await expectOffset(320, in: controller)
+    try await PostListTestSupport.expectOffset(320, in: controller)
 
     apply("account-a/profile-a/posts", requestID: 1)
-    try await expectOffset(0, in: controller)
+    try await PostListTestSupport.expectOffset(0, in: controller)
     #expect(abs(reportedOffset ?? -1) < 1)
     #expect(collection.numberOfItems(inSection: 0) == 60)
     #expect(collection.visibleCells.count < entries.count)
@@ -112,16 +105,35 @@ struct PostListCollectionControllerTests {
     #expect(controller.entries.map(\.id) == [original.id, repost.id])
   }
 
-  private func expectOffset(_ expected: CGFloat, in controller: PostListCollectionController) async throws {
-    let deadline = ContinuousClock.now + .seconds(2)
-    var offset: CGFloat = .infinity
-    repeat {
-      try await Task.sleep(for: .milliseconds(20))
-      controller.view.layoutIfNeeded()
-      controller.collectionView.layoutIfNeeded()
-      offset = controller.collectionView.contentOffset.y + controller.collectionView.adjustedContentInset.top
-    } while abs(offset - expected) >= 1 && ContinuousClock.now < deadline
-    #expect(abs(offset - expected) < 1, "Expected normalized offset \(expected), got \(offset)")
+  /// The profile writes these reports into SwiftUI state, which SwiftUI forbids during its own
+  /// update ("Modifying state during view update").
+  @Test("Scroll reports caused by a SwiftUI update wait for the controller's next layout pass")
+  func scrollReportsWaitForSwiftUIUpdateToEnd() async throws {
+    let controller = PostListCollectionController()
+    controller.rowViewBuilder = { _ in AnyView(Color.clear.frame(height: 100)) }
+    defer { controller.cancelTasks() }
+    let entries = try PostListTestSupport.bookmarkEntries(count: 60)
+    var reports: [CGFloat] = []
+    var reportsDuringUpdate: [CGFloat] = [-1]
+    // As when SwiftUI makes the controller: the first update sets a key and then loads the
+    // view, whose first snapshot finishes, and restores the key's offset, straight away.
+    controller.applySwiftUIUpdate {
+      controller.onScrollOffsetChanged = { reports.append($0) }
+      controller.updateScrollPosition(key: "posts", requestID: 0)
+      controller.setEntries(entries, hasMore: false, isLoadingMore: false, footerState: .hidden)
+      controller.view.accessibilityIdentifier = "post-list"
+      reportsDuringUpdate = reports
+    }
+    #expect(reportsDuringUpdate.isEmpty)
+
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 640))
+    window.rootViewController = controller
+    window.isHidden = false
+    try await PostListTestSupport.expectOffset(0, in: controller)
+    #expect(reports.last.map { abs($0) < 1 } == true, "The restored offset is reported after the update")
+    let collection = try #require(controller.collectionView)
+    collection.setContentOffset(CGPoint(x: 0, y: 300 - collection.adjustedContentInset.top), animated: false)
+    #expect(reports.last.map { abs($0 - 300) < 1 } == true, "A user's scroll still reports at once")
   }
 }
 #endif
