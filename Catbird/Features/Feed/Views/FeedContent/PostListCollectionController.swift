@@ -80,7 +80,12 @@ struct PostListPaginationFooterView: View {
 
 @MainActor
 final class PostListCollectionController: UIViewController, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
-  private enum Section { case main }
+  private enum Section: Hashable {
+    /// The only section; with a pinned header, the one above it, holding `headerView`.
+    case main
+    /// With a pinned header: the section under it, holding rows, `emptyView` and the footer.
+    case content
+  }
   private enum Item: Hashable {
     case header
     case row(String)
@@ -99,6 +104,9 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   private var snapshotRevision = 0
 
   var headerView: AnyView?
+  /// A header that scrolls with the content until it reaches the navigation bar, then
+  /// stays pinned under it (the profile tab picker). Lists without one keep one section.
+  var pinnedHeaderView: AnyView?
   var rowViewBuilder: ((PostListEntry) -> AnyView)?
   var emptyView: AnyView?
   var hostingEnvironment = EnvironmentValues() {
@@ -140,6 +148,8 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   /// its view update, so it waits for this controller's next layout pass instead.
   private var isApplyingSwiftUIUpdate = false
   private var needsScrollReport = false
+  /// Whether the pinned header is at its pin line, under the bars.
+  private var isHeaderPinned = false
   /// Lets the first row (a profile banner) sit under a transparent navigation
   /// bar instead of below it, where UIKit's automatic top inset would put it.
   var extendsUnderTopBar = false {
@@ -167,6 +177,8 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   override func viewSafeAreaInsetsDidChange() {
     super.viewSafeAreaInsetsDidChange()
     if extendsUnderTopBar { applyContentInsetBehavior() }
+    // The pin line and the minimum content height follow the bars.
+    if pinnedLayout?.pinnedSection != nil { collectionView.collectionViewLayout.invalidateLayout() }
   }
 
   /// Keeps UIKit's automatic insets and cancels only the top one, so the header
@@ -203,13 +215,18 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
 
   func updateScrollPosition(key: String?, requestID: Int) {
     if key != scrollPositionKey {
-      if let oldKey = scrollPositionKey, let collectionView {
-        savedOffsets[oldKey] = max(0, collectionView.contentOffset.y + collectionView.adjustedContentInset.top)
+      let currentOffset = collectionView.map { max(0, $0.contentOffset.y + $0.adjustedContentInset.top) }
+      if let oldKey = scrollPositionKey, let currentOffset {
+        savedOffsets[oldKey] = currentOffset
       }
       cancelTasks()
       scrollPositionKey = key
       needsRowReconfiguration = true
-      pendingScrollOffset = key.flatMap { savedOffsets[$0] } ?? 0
+      pendingScrollOffset = PostListPinnedScrollRestoration.offset(
+        saved: key.flatMap { savedOffsets[$0] },
+        current: currentOffset ?? 0,
+        pinOffset: pinnedLayout?.pinOffset
+      )
       animatePendingScroll = false
     }
     if requestID != scrollToTopRequestID {
@@ -251,22 +268,9 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   }
 
   private func setupCollectionView() {
-    var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
-    configuration.backgroundColor = .clear
-    configuration.showsSeparators = false
-    configuration.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
-      guard let self, let onRemoveBookmark = self.onRemoveBookmark,
-            case .row(let id)? = self.dataSource.itemIdentifier(for: indexPath),
-            case .bookmark(let box)? = self.entriesByID[id] else { return nil }
-      let action = UIContextualAction(style: .destructive, title: "Remove Bookmark") { _, _, completion in
-        Task { @MainActor in
-          completion(await onRemoveBookmark(box.value))
-        }
-      }
-      action.image = UIImage(systemName: "bookmark.slash")
-      return UISwipeActionsConfiguration(actions: [action])
+    let layout = PostListPinnedHeaderLayout { [weak self] sectionIndex, environment in
+      self?.layoutSection(at: sectionIndex, environment: environment)
     }
-    let layout = UICollectionViewCompositionalLayout.list(using: configuration)
     collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
     collectionView.translatesAutoresizingMaskIntoConstraints = false
     collectionView.backgroundColor = .clear
@@ -323,6 +327,11 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   }
 
   private func setupDataSource() {
+    let headerRegistration = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
+      elementKind: UICollectionView.elementKindSectionHeader
+    ) { [weak self] view, _, _ in
+      self?.configurePinnedHeader(view)
+    }
     let registration = UICollectionView.CellRegistration<UICollectionViewListCell, Item> {
       [weak self] cell, _, item in
       guard let self else { return }
@@ -358,17 +367,17 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
       collectionView, indexPath, item in
       collectionView.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
     }
+    // Only the section under a pinned header has a header, so this is the only kind asked for.
+    dataSource.supplementaryViewProvider = { collectionView, _, indexPath in
+      collectionView.dequeueConfiguredReusableSupplementary(using: headerRegistration, for: indexPath)
+    }
   }
 
   private func applySnapshot(animated: Bool = false) {
     guard let dataSource else { return }
     let previous = dataSource.snapshot()
-    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-    snapshot.appendSections([.main])
-    if headerView != nil { snapshot.appendItems([.header]) }
-    snapshot.appendItems(entries.map { .row($0.id) })
-    if entries.isEmpty, emptyView != nil { snapshot.appendItems([.empty]) }
-    if footerState != .hidden, footerState != .end { snapshot.appendItems([.footer]) }
+    var snapshot = makeSnapshot()
+    preparePinnedHeader(for: snapshot)
 
     var changed: [Item] = []
     for entry in entries {
@@ -402,6 +411,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
         self.collectionView.setContentOffset(CGPoint(x: 0, y: target), animated: self.animatePendingScroll)
         self.reportScrollOffset(target + inset.top)
       }
+      self.updatePinnedHeaderState()
       self.triggerLoadMoreForVisibleRows()
     }
   }
@@ -411,6 +421,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   }
 
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    updatePinnedHeaderState()
     guard pendingScrollOffset == nil else { return }
     reportScrollOffset(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
   }
@@ -517,6 +528,142 @@ extension PostListCollectionController {
   }
 }
 
+// MARK: - Layout and pinned header
+
+extension PostListCollectionController {
+  private var pinnedLayout: PostListPinnedHeaderLayout? {
+    collectionView?.collectionViewLayout as? PostListPinnedHeaderLayout
+  }
+
+  /// One section, or with a pinned header two: the header item above it, everything else under it.
+  private func makeSnapshot() -> NSDiffableDataSourceSnapshot<Section, Item> {
+    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+    snapshot.appendSections([.main])
+    if headerView != nil { snapshot.appendItems([.header]) }
+    if pinnedHeaderView != nil { snapshot.appendSections([.content]) }
+    snapshot.appendItems(entries.map { .row($0.id) })
+    if entries.isEmpty, emptyView != nil { snapshot.appendItems([.empty]) }
+    if footerState != .hidden, footerState != .end { snapshot.appendItems([.footer]) }
+    return snapshot
+  }
+
+  /// Points the layout at the snapshot's pinned section, sets the matching edge style, and
+  /// refreshes the visible header, which the snapshot's reconfigured items don't include.
+  private func preparePinnedHeader(for snapshot: NSDiffableDataSourceSnapshot<Section, Item>) {
+    pinnedLayout?.pinnedSection = snapshot.indexOfSection(.content)
+    applyPinnedHeaderEdgeStyle()
+    reconfigureVisiblePinnedHeaders()
+  }
+
+  /// The plain, separator-free list every section uses. Only the section under a pinned
+  /// header has a (supplementary) header; rows keep the bookmark swipe action either way.
+  func listConfiguration(hasPinnedHeader: Bool) -> UICollectionLayoutListConfiguration {
+    var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
+    configuration.backgroundColor = .clear
+    configuration.showsSeparators = false
+    if hasPinnedHeader {
+      configuration.headerMode = .supplementary
+      configuration.headerTopPadding = 0
+    }
+    configuration.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
+      self?.trailingSwipeActions(for: indexPath)
+    }
+    return configuration
+  }
+
+  func trailingSwipeActions(for indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+    guard let onRemoveBookmark,
+          case .row(let id)? = dataSource.itemIdentifier(for: indexPath),
+          case .bookmark(let box)? = entriesByID[id] else { return nil }
+    let action = UIContextualAction(style: .destructive, title: "Remove Bookmark") { _, _, completion in
+      Task { @MainActor in
+        completion(await onRemoveBookmark(box.value))
+      }
+    }
+    action.image = UIImage(systemName: "bookmark.slash")
+    return UISwipeActionsConfiguration(actions: [action])
+  }
+
+  private func layoutSection(at index: Int, environment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
+    let hasPinnedHeader = dataSource?.sectionIdentifier(for: index) == .content
+    let section = NSCollectionLayoutSection.list(
+      using: listConfiguration(hasPinnedHeader: hasPinnedHeader), layoutEnvironment: environment
+    )
+    for header in section.boundarySupplementaryItems
+    where header.elementKind == UICollectionView.elementKindSectionHeader {
+      header.pinToVisibleBounds = true
+      // Rows scroll underneath it.
+      header.zIndex = 10
+    }
+    return section
+  }
+
+  private func configurePinnedHeader(_ view: UICollectionViewListCell) {
+    view.backgroundConfiguration = .clear()
+    view.directionalLayoutMargins = .zero
+    let root = hosted(pinnedHeaderView ?? AnyView(EmptyView()))
+    let accountID = appState?.userDID
+    view.contentConfiguration = UIHostingConfiguration {
+      root.id(accountID)
+    }
+    .margins(.all, 0)
+    updateScrollEdgeEffect(behind: view)
+  }
+
+  /// Others are configured when dequeued.
+  private func reconfigureVisiblePinnedHeaders() {
+    guard pinnedHeaderView != nil, let collectionView else { return }
+    for case let view as UICollectionViewListCell in collectionView.visibleSupplementaryViews(
+      ofKind: UICollectionView.elementKindSectionHeader
+    ) {
+      configurePinnedHeader(view)
+    }
+  }
+
+  /// Tracks whether the header sits at its pin line, and extends the top edge effect behind
+  /// it only then: the interaction carries the effect down to the header wherever it is, so
+  /// while the header is still in the content it would blur everything above it.
+  private func updatePinnedHeaderState() {
+    guard let layout = pinnedLayout, let collectionView else { return }
+    let offset = collectionView.contentOffset.y + collectionView.adjustedContentInset.top
+    let isPinned = layout.pinOffset.map { offset >= $0 - PostListPinnedScrollRestoration.pinTolerance } ?? false
+    guard isPinned != isHeaderPinned else { return }
+    isHeaderPinned = isPinned
+    for view in collectionView.visibleSupplementaryViews(ofKind: UICollectionView.elementKindSectionHeader) {
+      updateScrollEdgeEffect(behind: view)
+    }
+  }
+
+  /// Carries the navigation bar's top edge effect down behind the pinned header, as on a
+  /// contact card, so rows fade out under the picker rather than at the bar.
+  private func updateScrollEdgeEffect(behind view: UIView) {
+    #if compiler(>=6.2)
+    if #available(iOS 26.0, *) {
+      let existing = view.interactions.filter { $0 is UIScrollEdgeElementContainerInteraction }
+      if isHeaderPinned, existing.isEmpty {
+        let interaction = UIScrollEdgeElementContainerInteraction()
+        interaction.scrollView = collectionView
+        interaction.edge = .top
+        view.addInteraction(interaction)
+      } else if !isHeaderPinned {
+        existing.forEach(view.removeInteraction)
+      }
+    }
+    #endif
+  }
+
+  /// A list with a pinned header uses the soft top edge, so the blur behind the header fades
+  /// out instead of ending in a line; other lists keep the automatic style.
+  private func applyPinnedHeaderEdgeStyle() {
+    #if compiler(>=6.2)
+    if #available(iOS 26.0, *), let collectionView {
+      let style: UIScrollEdgeEffect.Style = pinnedLayout?.pinnedSection != nil ? .soft : .automatic
+      if collectionView.topEdgeEffect.style != style { collectionView.topEdgeEffect.style = style }
+    }
+    #endif
+  }
+}
+
 private struct PostListCollectionRepresentable: UIViewControllerRepresentable {
   let list: PostListCollectionView
 
@@ -532,6 +679,7 @@ private struct PostListCollectionRepresentable: UIViewControllerRepresentable {
       controller.hostingEnvironment = context.environment
       controller.appState = list.appState
       controller.headerView = list.headerView
+      controller.pinnedHeaderView = list.pinnedHeaderView
       controller.rowViewBuilder = list.rowView
       controller.emptyView = list.emptyView
       controller.onLoadMore = list.onLoadMore
@@ -555,6 +703,8 @@ private struct PostListCollectionRepresentable: UIViewControllerRepresentable {
 struct PostListCollectionView: View {
   var entries: [PostListEntry]
   var headerView: AnyView?
+  /// Sits under `headerView` and pins below the navigation bar once scrolled up to it (iOS).
+  var pinnedHeaderView: AnyView?
   var rowView: (PostListEntry) -> AnyView
   var emptyView: AnyView?
   var hasMore: Bool
@@ -582,6 +732,7 @@ struct PostListCollectionView: View {
   init(
     entries: [PostListEntry],
     headerView: AnyView? = nil,
+    pinnedHeaderView: AnyView? = nil,
     rowView: @escaping (PostListEntry) -> AnyView,
     emptyView: AnyView? = nil,
     hasMore: Bool = false,
@@ -599,6 +750,7 @@ struct PostListCollectionView: View {
   ) {
     self.entries = entries
     self.headerView = headerView
+    self.pinnedHeaderView = pinnedHeaderView
     self.rowView = rowView
     self.emptyView = emptyView
     self.hasMore = hasMore
@@ -650,6 +802,7 @@ struct PostListCollectionView: View {
   init(
     boxedPosts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>],
     headerView: AnyView? = nil,
+    pinnedHeaderView: AnyView? = nil,
     emptyView: AnyView? = nil,
     hasMore: Bool = false,
     isLoadingMore: Bool = false,
@@ -667,6 +820,7 @@ struct PostListCollectionView: View {
     self.init(
       entries: boxedPosts.map { .feedPost($0) },
       headerView: headerView,
+      pinnedHeaderView: pinnedHeaderView,
       rowView: { entry in
         if case .feedPost(let box) = entry { return AnyView(rowView(box)) }
         return AnyView(EmptyView())
@@ -722,6 +876,7 @@ struct PostListCollectionView: View {
         Color.clear.frame(height: 0).id("post-list-top")
           .listRowInsets(EdgeInsets())
         if let headerView { headerView.listRowSeparator(.hidden) }
+        if let pinnedHeaderView { pinnedHeaderView.listRowSeparator(.hidden) }
         if entries.isEmpty, let emptyView { emptyView.listRowSeparator(.hidden) }
         ForEach(entries) { entry in
           rowView(entry)
