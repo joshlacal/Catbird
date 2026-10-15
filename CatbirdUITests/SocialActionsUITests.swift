@@ -91,21 +91,29 @@ final class SocialActionsUITests: XCTestCase {
   func testGermHandoffCanBeCancelled() {
     let app = launch()
     app.buttons["fixtureGermProfile"].tap()
-    let accountLabels = app.buttons["1 account label"]
-    XCTAssertTrue(accountLabels.waitForExistence(timeout: 5))
-    accountLabels.tap()
+    let accountLabel = app.buttons
+      .matching(NSPredicate(format: "identifier BEGINSWITH %@", "profileAccountLabel-"))
+      .firstMatch
+    XCTAssertTrue(accountLabel.waitForExistence(timeout: 5))
+    accountLabel.tap()
     XCTAssertTrue(app.navigationBars["Applied Labels"].waitForExistence(timeout: 5))
     XCTAssertFalse(app.buttons["Appeal Label"].exists)
     attach(app, name: "profile-label-entry")
     app.buttons["Done"].tap()
-    let germ = app.buttons["Open Germ DM"]
+    let moreOptions = app.buttons["More Options"]
+    XCTAssertTrue(moreOptions.waitForExistence(timeout: 5))
+    moreOptions.tap()
+    let germ = app.buttons["Germ DM"]
     XCTAssertTrue(germ.waitForExistence(timeout: 5))
     attach(app, name: "profile-germ-action")
     germ.tap()
-    XCTAssertTrue(app.alerts["Open Germ DM?"].waitForExistence(timeout: 5))
+    let confirmation = app.alerts["Open Germ DM?"]
+    XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
     attach(app, name: "germ-handoff-confirmation")
-    app.alerts.buttons["Cancel"].tap()
-    XCTAssertTrue(germ.exists)
+    confirmation.buttons["Cancel"].tap()
+    XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
+    XCTAssertEqual(app.state, .runningForeground)
+    XCTAssertTrue(moreOptions.isHittable)
   }
 
   func testLabelInspectorAtAccessibilityTextSize() {
