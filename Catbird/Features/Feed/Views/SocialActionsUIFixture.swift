@@ -192,10 +192,25 @@ private struct SocialFixtureProfile: View {
 private final class SocialFixtureProtocol: URLProtocol, @unchecked Sendable {
   private static let responses: [String: Data] = [
     "app.bsky.actor.getProfile": SocialActionsFixtureData.profileJSON,
-    "app.bsky.feed.getAuthorFeed": Data(#"{"feed":[]}"#.utf8),
     "app.bsky.graph.getKnownFollowers": Data(
       #"{"subject":{"did":"did:plc:socialfixtureauthor","handle":"river.test"},"followers":[]}"#.utf8)
   ]
+
+  /// Enough posts and replies to scroll the profile past its tab picker; no media posts,
+  /// so the Media tab is a short one.
+  private static let authorFeeds: [String: Data] = [
+    "posts_and_author_threads": SocialActionsFixtureData.authorFeed(SocialActionsFixtureData.profilePosts),
+    "posts_with_replies": SocialActionsFixtureData.authorFeed(SocialActionsFixtureData.profileReplies),
+    "posts_with_media": SocialActionsFixtureData.authorFeed([])
+  ].compactMapValues { $0 }
+
+  private static func body(for url: URL) -> Data? {
+    let method = String(url.path.dropFirst("/xrpc/".count))
+    guard method == "app.bsky.feed.getAuthorFeed" else { return responses[method] }
+    let filter = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+      .queryItems?.first { $0.name == "filter" }?.value
+    return authorFeeds[filter ?? "posts_with_replies"]
+  }
 
   override class func canInit(with request: URLRequest) -> Bool {
     ["http", "https"].contains(request.url?.scheme?.lowercased() ?? "")
@@ -205,7 +220,7 @@ private final class SocialFixtureProtocol: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     guard let url = request.url, url.scheme == "https", url.host == "127.0.0.1",
           request.httpMethod == "GET", url.path.hasPrefix("/xrpc/"),
-          let body = Self.responses[String(url.path.dropFirst("/xrpc/".count))] else {
+          let body = Self.body(for: url) else {
       client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
       return
     }
@@ -273,5 +288,70 @@ enum SocialActionsFixtureData {
       labels: nil, threadgate: nil, debug: nil
     )
   }()
+
+  // MARK: Profile feeds
+
+  private static let sentences = [
+    "Fog lifted off the river just after nine.",
+    "Trying a new bread recipe. Third attempt, and the crust is finally right.",
+    "Two herons on the far bank, standing perfectly still for the better part of an hour.",
+    "Short walk today.",
+    "Reading on the porch until the light goes. Recommendations welcome for something long and slow."
+  ]
+
+  /// The Posts tab: 30 of River's own posts, newest first.
+  static let profilePosts: [AppBskyFeedDefs.FeedViewPost] = (try? (0..<30).map { index in
+    AppBskyFeedDefs.FeedViewPost(post: try makePost(
+      rkey: "3fixturepost\(index)", text: "\(sentences[index % sentences.count]) (\(index + 1))",
+      author: post.author, age: index
+    ))
+  }) ?? []
+
+  /// The Replies tab: 12 of River's replies to Brook.
+  static let profileReplies: [AppBskyFeedDefs.FeedViewPost] = (try? makeReplies()) ?? []
+
+  /// A getAuthorFeed response body with no further pages.
+  static func authorFeed(_ feed: [AppBskyFeedDefs.FeedViewPost]) -> Data? {
+    try? JSONEncoder().encode(AppBskyFeedGetAuthorFeed.Output(cursor: nil, feed: feed))
+  }
+
+  private static func makeReplies() throws -> [AppBskyFeedDefs.FeedViewPost] {
+    let friend = try JSONDecoder().decode(AppBskyActorDefs.ProfileViewBasic.self, from: Data(
+      #"{"did":"did:plc:socialfixturefriend","handle":"brook.test","displayName":"Brook"}"#.utf8
+    ))
+    return try (0..<12).map { index in
+      let parent = try makePost(
+        rkey: "3fixtureparent\(index)", text: "What are you reading this week? (\(index + 1))",
+        author: friend, age: index + 1
+      )
+      return AppBskyFeedDefs.FeedViewPost(
+        post: try makePost(
+          rkey: "3fixturereply\(index)", text: "\(sentences[(index + 2) % sentences.count]) (reply \(index + 1))",
+          author: post.author, age: index
+        ),
+        reply: .init(root: .appBskyFeedDefsPostView(parent), parent: .appBskyFeedDefsPostView(parent))
+      )
+    }
+  }
+
+  /// A text post `age` hours older than the fixture's reference date.
+  private static func makePost(
+    rkey: String, text: String, author: AppBskyActorDefs.ProfileViewBasic, age: Int
+  ) throws -> AppBskyFeedDefs.PostView {
+    let date = ATProtocolDate(date: Date(timeIntervalSince1970: 1_780_000_000 - Double(age) * 3_600))
+    return AppBskyFeedDefs.PostView(
+      uri: try ATProtocolURI(uriString: "at://\(author.did.didString())/app.bsky.feed.post/\(rkey)"),
+      cid: CID.fromDAGCBOR(Data(rkey.utf8)),
+      author: author,
+      record: .knownType(AppBskyFeedPost(
+        text: text,
+        entities: nil, facets: nil, reply: nil, embed: nil, langs: nil,
+        labels: nil, tags: nil, createdAt: date
+      )),
+      embed: nil, bookmarkCount: nil, replyCount: 0, repostCount: 0,
+      likeCount: 0, quoteCount: nil, indexedAt: date, viewer: nil,
+      labels: nil, threadgate: nil, debug: nil
+    )
+  }
 }
 #endif

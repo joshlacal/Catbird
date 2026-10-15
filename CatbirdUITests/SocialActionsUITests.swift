@@ -127,6 +127,51 @@ final class SocialActionsUITests: XCTestCase {
     XCTAssertGreaterThan(large.height, standard.height)
   }
 
+  /// The profile's tab picker starts under the profile information, pins directly below
+  /// the navigation bar once scrolled up to it, and stays pinned when switching tabs there,
+  /// including to a tab too short to scroll on its own.
+  func testProfileTabPickerPinsBelowNavigationBar() {
+    let app = launch()
+    app.buttons["fixtureGermProfile"].tap()
+    XCTAssertTrue(app.staticTexts["Fog lifted off the river just after nine. (1)"].waitForExistence(timeout: 10))
+    let picker = app.segmentedControls["profileTabPicker"]
+    XCTAssertTrue(picker.waitForExistence(timeout: 5))
+    let barBottom = app.navigationBars.firstMatch.frame.maxY
+    let restingY = picker.frame.minY
+    XCTAssertGreaterThan(restingY, barBottom + 100, "At the top, the picker sits under the profile information")
+    XCTAssertTrue(picker.buttons["Posts"].isSelected)
+    attach(app, name: "profile-top")
+
+    for _ in 0..<5 where picker.frame.minY > barBottom + 16 {
+      app.swipeUp()
+    }
+    let pinnedY = picker.frame.minY
+    // Under the bar, not behind it or the status bar, and no further down than its own padding.
+    XCTAssertGreaterThanOrEqual(pinnedY, barBottom - 0.5)
+    XCTAssertLessThanOrEqual(pinnedY, barBottom + 16)
+    app.swipeUp()
+    XCTAssertEqual(picker.frame.minY, pinnedY, accuracy: 1, "The rows scroll; the picker stays")
+    XCTAssertTrue(picker.buttons["Replies"].isHittable, "Above the rows it floats over")
+    attach(app, name: "profile-pinned")
+
+    picker.buttons["Replies"].tap()
+    let reply = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "(reply 1)")).firstMatch
+    XCTAssertTrue(reply.waitForExistence(timeout: 10))
+    XCTAssertTrue(picker.buttons["Replies"].isSelected)
+    XCTAssertEqual(picker.frame.minY, pinnedY, accuracy: 1)
+    attach(app, name: "profile-pinned-replies")
+
+    picker.buttons["Media"].tap()
+    XCTAssertTrue(app.staticTexts["No Media Posts"].waitForExistence(timeout: 10))
+    XCTAssertEqual(picker.frame.minY, pinnedY, accuracy: 1)
+    attach(app, name: "profile-pinned-short-tab")
+
+    for _ in 0..<5 where picker.frame.minY < restingY - 1 {
+      app.swipeDown()
+    }
+    XCTAssertEqual(picker.frame.minY, restingY, accuracy: 1, "Back at the top, under the profile information")
+  }
+
   func testLabelInspectorAtAccessibilityTextSize() {
     let app = launch(largeText: true)
     app.buttons["fixtureOtherLabels"].tap()
