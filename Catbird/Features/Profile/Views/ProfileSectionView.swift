@@ -193,7 +193,7 @@ struct ProfileSectionView: View {
 
   @ViewBuilder
   private var listsList: some View {
-    if viewModel.isLoadingSection && viewModel.lists.isEmpty {
+    if viewModel.isLoadingLists && viewModel.lists.isEmpty {
       ProgressView("Loading…")
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
@@ -213,7 +213,7 @@ struct ProfileSectionView: View {
 
       // Pagination trigger & loading indicator
       if viewModel.hasMoreLists {
-        if viewModel.isLoadingSection {
+        if viewModel.isLoadingLists {
           ProgressView()
             .padding()
             .frame(maxWidth: .infinity)
@@ -229,7 +229,7 @@ struct ProfileSectionView: View {
 
   @ViewBuilder
   private var starterPacksList: some View {
-    if viewModel.isLoadingSection && viewModel.starterPacks.isEmpty {
+    if viewModel.isLoadingStarterPacks && viewModel.starterPacks.isEmpty {
       ProgressView("Loading…")
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
@@ -286,7 +286,7 @@ struct ProfileSectionView: View {
 
       // Pagination trigger & loading indicator
       if viewModel.hasMoreStarterPacks {
-        if viewModel.isLoadingSection {
+        if viewModel.isLoadingStarterPacks {
           ProgressView()
             .padding()
             .frame(maxWidth: .infinity)
@@ -301,7 +301,7 @@ struct ProfileSectionView: View {
   }
   @ViewBuilder
   private var feedsList: some View {
-    if viewModel.isLoadingSection && viewModel.feeds.isEmpty {
+    if viewModel.isLoadingFeeds && viewModel.feeds.isEmpty {
       ProgressView("Loading…")
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
@@ -319,7 +319,7 @@ struct ProfileSectionView: View {
 
       // Pagination trigger & loading indicator
       if viewModel.hasMoreFeeds {
-        if viewModel.isLoadingSection {
+        if viewModel.isLoadingFeeds {
           ProgressView()
             .padding()
             .frame(maxWidth: .infinity)

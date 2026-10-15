@@ -37,7 +37,12 @@ import AppKit
   private var _knownFollowers: [AppBskyActorDefs.ProfileView] = []
   private var _isLoadingMorePosts = false
   private var _isLoadingLikes = false
-  private var _isLoadingSection = false
+  // One flag per More section: the sections share the profile screen's view model, and a
+  // page still loading in one (the next page of Lists after the reader went back) must not
+  // turn away another section's first load.
+  private var _isLoadingLists = false
+  private var _isLoadingStarterPacks = false
+  private var _isLoadingFeeds = false
   private var _isLoadingKnownFollowers = false
   
   // Labeler-specific properties
@@ -56,8 +61,9 @@ import AppKit
   var knownFollowers: [AppBskyActorDefs.ProfileView] { _knownFollowers }
   var isLoadingMorePosts: Bool { _isLoadingMorePosts }
   var isLoadingLikes: Bool { _isLoadingLikes }
-  /// True while lists, starter packs or feeds are loading.
-  var isLoadingSection: Bool { _isLoadingSection }
+  var isLoadingLists: Bool { _isLoadingLists }
+  var isLoadingStarterPacks: Bool { _isLoadingStarterPacks }
+  var isLoadingFeeds: Bool { _isLoadingFeeds }
   var isLoadingKnownFollowers: Bool { _isLoadingKnownFollowers }
   
   /// Check if this profile is a labeler
@@ -533,9 +539,9 @@ import AppKit
   }
 
   private func fetchStarterPacks(reset: Bool) async throws {
-    guard let client = client, let profile = profile, !_isLoadingSection else { return }
-    _isLoadingSection = true
-    defer { _isLoadingSection = false }
+    guard let client = client, let profile = profile, !_isLoadingStarterPacks else { return }
+    _isLoadingStarterPacks = true
+    defer { _isLoadingStarterPacks = false }
 
     let params = AppBskyGraphGetActorStarterPacks.Parameters(
       actor: try ATIdentifier(string: profile.did.didString()),
@@ -577,9 +583,9 @@ import AppKit
   }
 
   private func fetchLists(reset: Bool) async throws {
-    guard let client = client, let profile = profile, !_isLoadingSection else { return }
-    _isLoadingSection = true
-    defer { _isLoadingSection = false }
+    guard let client = client, let profile = profile, !_isLoadingLists else { return }
+    _isLoadingLists = true
+    defer { _isLoadingLists = false }
 
     let params = AppBskyGraphGetLists.Parameters(
       actor: try ATIdentifier(string: profile.did.didString()),
@@ -826,9 +832,9 @@ import AppKit
   }
 
   private func fetchFeeds(reset: Bool) async throws {
-    guard let client = client, let profile = profile, !_isLoadingSection else { return }
-    _isLoadingSection = true
-    defer { _isLoadingSection = false }
+    guard let client = client, let profile = profile, !_isLoadingFeeds else { return }
+    _isLoadingFeeds = true
+    defer { _isLoadingFeeds = false }
 
     let params = AppBskyFeedGetActorFeeds.Parameters(
       actor: try ATIdentifier(string: profile.did.didString()),
