@@ -164,7 +164,7 @@ struct FeedsSearchPresentationTests {
         let receipt = try await host.capture(
           "trending-timeline-\(name)",
           requiring: ["Trending on Bluesky", "Moon Garden", "astronomy", "1.2K posts", "Trending Videos", "Open The Vids", "River Films"],
-          measuringWord: "posts", measuringInkForText: "1.2K posts"
+          measuringWord: "posts", measuringInkFor: .init(readings: ["1.2K posts"], foreground: .neutral)
         )
         // The constrained title may wrap; order from its final rendered line.
         let topic = try #require(receipt.lines.last { $0.text.contains("Garden") })
@@ -467,6 +467,10 @@ struct FeedsSearchPresentationTests {
   @Test("Saved searches and interests keep their content and actions reachable across widths")
   func savedSearchesAndInterestsAcrossSizes() async throws {
     let appState = try await makeAppState()
+    // The native walk below reads SwiftUI's accessibility tree, which the hosting view vends only
+    // while app accessibility is on.
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
     let searches = [
       SavedSearch(name: "Garden Journal", query: "gardening", filters: SearchFilterState(hasMedia: true)),
       SavedSearch(name: "Night Sky", query: "astronomy", filters: SearchFilterState()),
@@ -488,8 +492,12 @@ struct FeedsSearchPresentationTests {
         }, appState: appState, size: CGSize(width: width, height: 800), scheme: .dark,
         additionalSafeAreaInsets: .zero
       ) { host in
+        // The link draws its chevron after the title (DisclosureLinkLabelStyle), which Vision
+        // reads as ">" or "›".
+        let allSavedReadings = ["All Saved >", "All Saved ›"]
         let top = try await host.capture("saved-interests-\(name)-top",
-          requiring: ["Saved Searches", "Garden Journal"])
+          requiring: ["Saved Searches", "Garden Journal"],
+          measuringInkFor: .init(readings: allSavedReadings, foreground: .tinted))
         struct NativeSavedButton {
           let traits: UIAccessibilityTraits
           let frame: CGRect
@@ -642,12 +650,14 @@ struct FeedsSearchPresentationTests {
           $0.traits.contains(.button) && !$0.traits.contains(.notEnabled)
             && finite($0.frame) && viewport.contains($0.frame) && safeArea.contains($0.frame)
         } ?? false)
-        // Native semantics and geometry must succeed before the observed OCR variant is accepted.
+        // Native semantics and geometry must succeed before the observed OCR reading is accepted.
+        // Vision's inferred box can extend past the painted glyphs, so the reading's measured ink
+        // must lie inside the button's frame.
         let associatedLines = top.lines.filter { line in
-          guard nativePrerequisite, let button = uniqueButton,
-            ["> All Saved", "> AIl Saved"].contains(line.text), finite(line.rect),
+          guard nativePrerequisite, let button = uniqueButton, let ink = top.measuredTextInk,
+            allSavedReadings.contains(line.text), finite(line.rect),
             viewport.contains(line.rect), safeArea.contains(line.rect) else { return false }
-          return button.frame.insetBy(dx: -1, dy: -1).contains(line.rect)
+          return button.frame.insetBy(dx: -1, dy: -1).contains(ink.rect)
         }
         let corroborated = nativePrerequisite && associatedLines.count == 1
         let attachment: [String: Any] = [
@@ -658,6 +668,8 @@ struct FeedsSearchPresentationTests {
           "safeArea": NSCoder.string(for: safeArea), "nativeRecords": records,
           "ocrLines": top.lines.map { ["text": $0.text, "rect": NSCoder.string(for: $0.rect)] },
           "associatedLines": associatedLines.map { ["text": $0.text, "rect": NSCoder.string(for: $0.rect)] },
+          "measuredInk": top.measuredTextInk.map { NSCoder.string(for: $0.rect) as Any } ?? NSNull(),
+          "measuredInkEvidence": top.measuredTextInk.map { $0.evidence as Any } ?? NSNull(),
           "associationTolerancePoints": 1, "corroborated": corroborated
         ]
         do {
@@ -974,14 +986,32 @@ private final class PresentationHost {
     var description: String { evidence }
   }
 
+  /// How ink is told apart from a uniform neutral backdrop.
+  enum InkForeground {
+    /// A neutral caption; a colored pixel means other content shares the region.
+    case neutral
+    /// Text in an accent color, such as a link. Any contrasting pixel counts as ink: other content in
+    /// the region can only widen the measured bounds, never shrink them.
+    case tinted
+  }
+
+  /// One rendered line whose painted ink a capture measures: Vision reads it as one of `readings`
+  /// (compared normalized), drawn in `foreground`.
+  struct InkTarget {
+    let readings: [String]
+    let foreground: InkForeground
+  }
+
   private struct InkFailure: Error, CustomStringConvertible {
     let description: String
     init(_ description: String) { self.description = description }
   }
 
-  /// Count-only oracle for this fixture's neutral caption on a uniform card fill.
-  /// Vision locates the whole count; it does not determine its painted edges.
-  private static func measureNeutralTextInk(image: UIImage, text: String, seed: CGRect) throws -> TextInkMeasurement {
+  /// Painted-ink oracle for one line of text on a uniform neutral fill (the trending count, the All
+  /// Saved link). Vision locates the whole line; it does not determine its painted edges.
+  private static func measureTextInk(
+    image: UIImage, text: String, seed: CGRect, foreground: InkForeground
+  ) throws -> TextInkMeasurement {
     guard image.imageOrientation == .up, let cg = image.cgImage,
           cg.colorSpace?.model == .rgb, cg.bitsPerComponent == 8,
           image.size.width > 0, image.size.height > 0,
@@ -1026,7 +1056,7 @@ private final class PresentationHost {
     let y0 = Int(floor(expanded.minY * scaleY)), y1 = Int(ceil(expanded.maxY * scaleY))
     // Do not intersect with the expected content bounds: that would hide overflow.
     guard x0 > 0, y0 > 0, x1 < cg.width, y1 < cg.height, x1 > x0, y1 > y0 else {
-      throw InkFailure("Expanded count ROI touches or crosses the rendered viewport")
+      throw InkFailure("Expanded text ROI touches or crosses the rendered viewport")
     }
     var histogram: [Int: Int] = [:]
     for y in y0..<y1 { for x in x0..<x1 {
@@ -1034,11 +1064,11 @@ private final class PresentationHost {
       histogram[(r << 16) | (g << 8) | b, default: 0] += 1
     } }
     guard let modal = histogram.max(by: { $0.value < $1.value }), modal.value > (x1 - x0) * (y1 - y0) / 2 else {
-      throw InkFailure("Count ROI has no unambiguous uniform backdrop")
+      throw InkFailure("Text ROI has no unambiguous uniform backdrop")
     }
     let background = ((modal.key >> 16) & 255, (modal.key >> 8) & 255, modal.key & 255)
     guard max(background.0, background.1, background.2) - min(background.0, background.1, background.2) <= 2 else {
-      throw InkFailure("Count backdrop is not neutral")
+      throw InkFailure("Text backdrop is not neutral")
     }
     // Independent contrast cutoffs must agree on horizontal ink edges. This
     // rejects threshold-sensitive noise instead of tuning a passing tolerance.
@@ -1049,23 +1079,25 @@ private final class PresentationHost {
       for y in y0..<y1 { for x in x0..<x1 {
         let (r, g, b) = rgb(x, y)
         guard max(abs(r - background.0), abs(g - background.1), abs(b - background.2)) > threshold else { continue }
-        guard max(r, g, b) - min(r, g, b) <= 20 else { throw InkFailure("Colored foreground makes the count ROI ambiguous") }
+        if foreground == .neutral, max(r, g, b) - min(r, g, b) > 20 {
+          throw InkFailure("Colored foreground makes the neutral text ROI ambiguous")
+        }
         minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
       } }
-      guard maxX >= minX, maxY >= minY else { throw InkFailure("No count ink at contrast \(threshold)") }
+      guard maxX >= minX, maxY >= minY else { throw InkFailure("No text ink at contrast \(threshold)") }
       guard minX > x0, minY > y0, maxX < x1 - 1, maxY < y1 - 1 else {
-        throw InkFailure("Count ink reaches the ROI edge at contrast \(threshold)")
+        throw InkFailure("Text ink reaches the ROI edge at contrast \(threshold)")
       }
       pixelBounds.append(CGRect(x: CGFloat(minX), y: CGFloat(minY),
         width: CGFloat(maxX - minX + 1), height: CGFloat(maxY - minY + 1)))
     }
     let ink = pixelBounds[0]
     guard pixelBounds.allSatisfy({ $0.minX == ink.minX && $0.maxX == ink.maxX }) else {
-      throw InkFailure("Count horizontal ink bounds disagree across contrasts \(thresholds): \(pixelBounds)")
+      throw InkFailure("Text horizontal ink bounds disagree across contrasts \(thresholds): \(pixelBounds)")
     }
     let rect = CGRect(x: ink.minX / scaleX, y: ink.minY / scaleY, width: ink.width / scaleX, height: ink.height / scaleY)
     return TextInkMeasurement(rect: rect, evidence:
-      "text=\(text); pointSize=\(image.size); pixelSize=\(cg.width)x\(cg.height); scale=\(scaleX),\(scaleY); "
+      "text=\(text); foreground=\(foreground); pointSize=\(image.size); pixelSize=\(cg.width)x\(cg.height); scale=\(scaleX),\(scaleY); "
       + "seed=\(seed); roiPixels=[\(x0),\(y0),\(x1),\(y1)); backgroundRGB=\(background); "
       + "thresholds=\(thresholds); inkPixelRects=\(pixelBounds); inkPoints=\(rect); edges=max-exclusive; "
       + "bitmapInfo=\(cg.bitmapInfo.rawValue); bitsPerPixel=\(cg.bitsPerPixel); bytesPerRow=\(cg.bytesPerRow)")
@@ -1137,7 +1169,7 @@ private final class PresentationHost {
   }
 
   func capture(_ name: String, requiring expected: [String] = [], measuringWord: String? = nil,
-               measuringInkForText: String? = nil) async throws -> Receipt {
+               measuringInkFor inkTarget: InkTarget? = nil) async throws -> Receipt {
     let deadline = ContinuousClock.now + .seconds(3)
     var png = Data()
     var receipt = Receipt(lines: [])
@@ -1151,7 +1183,7 @@ private final class PresentationHost {
       let format = UIGraphicsImageRendererFormat()
       format.scale = 3
       format.opaque = true
-      if measuringInkForText != nil { format.preferredRange = .standard }
+      if inkTarget != nil { format.preferredRange = .standard }
       let image = UIGraphicsImageRenderer(bounds: controller.view.bounds, format: format).image { context in
         (window.overrideUserInterfaceStyle == .dark ? UIColor.black : UIColor.white).setFill()
         context.fill(controller.view.bounds)
@@ -1165,16 +1197,16 @@ private final class PresentationHost {
         request.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: try #require(image.cgImage), options: [:]).perform([request])
         var measuredWordRect: CGRect?
-        var inkSeeds: [CGRect] = []
+        var inkSeeds: [(text: String, rect: CGRect)] = []
         receipt = Receipt(lines: (request.results ?? []).compactMap { observation in
           guard let candidate = observation.topCandidates(1).first else { return nil }
           let text = candidate.string
-          if let measuringInkForText, Self.normalized(text) == Self.normalized(measuringInkForText) {
-            // This fixture renders the entire count on one otherwise empty line.
+          if let inkTarget, inkTarget.readings.contains(where: { Self.normalized($0) == Self.normalized(text) }) {
+            // Each target renders on one otherwise empty line.
             // Do not accept an observation that also includes unrelated content.
             let bounds = observation.boundingBox
-            inkSeeds.append(CGRect(x: bounds.minX * image.size.width, y: (1 - bounds.maxY) * image.size.height,
-              width: bounds.width * image.size.width, height: bounds.height * image.size.height))
+            inkSeeds.append((text, CGRect(x: bounds.minX * image.size.width, y: (1 - bounds.maxY) * image.size.height,
+              width: bounds.width * image.size.width, height: bounds.height * image.size.height)))
           }
           if let measuringWord, let range = text.range(of: measuringWord),
             let word = try? candidate.boundingBox(for: range) {
@@ -1187,12 +1219,12 @@ private final class PresentationHost {
             y: (1 - bounds.maxY) * image.size.height, width: bounds.width * image.size.width, height: bounds.height * image.size.height))
         })
         receipt.measuredWordRect = measuredWordRect
-        if let measuringInkForText {
+        if let inkTarget {
           inkError = ""
           if inkSeeds.count == 1 {
             do {
-              receipt.measuredTextInk = try Self.measureNeutralTextInk(
-                image: image, text: measuringInkForText, seed: inkSeeds[0])
+              receipt.measuredTextInk = try Self.measureTextInk(
+                image: image, text: inkSeeds[0].text, seed: inkSeeds[0].rect, foreground: inkTarget.foreground)
             } catch { inkError = String(describing: error) }
           } else {
             inkError = "Expected one complete text observation; found \(inkSeeds.count)"
@@ -1201,7 +1233,7 @@ private final class PresentationHost {
       } catch { errorText = String(describing: error) }
       if didDraw && expected.allSatisfy({ receipt.contains($0) })
         && (measuringWord == nil || receipt.measuredWordRect != nil)
-        && (measuringInkForText == nil || receipt.measuredTextInk != nil) { break }
+        && (inkTarget == nil || receipt.measuredTextInk != nil) { break }
     } while ContinuousClock.now < deadline
 
     Attachment.record(Array(png), named: "\(name).png")
@@ -1211,7 +1243,7 @@ private final class PresentationHost {
       + "syntheticAdditionalInsets=\(String(describing: requestedAdditionalSafeAreaInsets)), baselineInsets=\(baselineSafeAreaInsets), actualInsets=\(controller.view.safeAreaInsets), actualSafeAreaFrame=\(actualSafeAreaFrame)\n"
       + "typography=\(typographyText)\n"
       + "measuringWord=\(measuringWord ?? "none"), measuredWordRect=\(String(describing: receipt.measuredWordRect))\n"
-      + "measuringInkForText=\(measuringInkForText ?? "none"), measuredTextInk=\(String(describing: receipt.measuredTextInk)), inkError=\(inkError)\n"
+      + "measuringInkFor=\(inkTarget.map { "\($0.readings) (\($0.foreground))" } ?? "none"), measuredTextInk=\(String(describing: receipt.measuredTextInk)), inkError=\(inkError)\n"
       + "error=\(errorText)\n" + receipt.lines.map { "\($0.rect): \($0.text)" }.joined(separator: "\n")
     Attachment.record(Array(details.utf8), named: "\(name)-geometry-ocr.txt")
     #expect(!png.isEmpty && didDraw, "UIKit must produce a real rendered image")

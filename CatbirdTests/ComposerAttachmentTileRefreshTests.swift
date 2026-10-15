@@ -313,26 +313,6 @@ struct ComposerAttachmentTileRefreshTests {
   }
 }
 
-/// SwiftUI builds its accessibility tree only while app accessibility is on, which it is not in a
-/// test host. Tests that read the hosted tiles' labels switch it on the way snapshot-testing
-/// libraries do (libAccessibility's _AXSApplicationAccessibilitySetEnabled) and restore it.
-@MainActor
-private enum AppAccessibility {
-  static func enable() -> () -> Void {
-    guard let library = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
-          let getter = dlsym(library, "_AXSApplicationAccessibilityEnabled"),
-          let setter = dlsym(library, "_AXSApplicationAccessibilitySetEnabled") else {
-      Issue.record("libAccessibility is unavailable")
-      return {}
-    }
-    let isEnabled = unsafeBitCast(getter, to: (@convention(c) () -> Bool).self)
-    let setEnabled = unsafeBitCast(setter, to: (@convention(c) (Bool) -> Void).self)
-    let previous = isEnabled()
-    setEnabled(true)
-    return { setEnabled(previous) }
-  }
-}
-
 /// The composer's attachment strip (PostComposerViewUIKit+MediaAttachments): the real tile in a
 /// horizontal ScrollView, HStack and ForEach over the view model's attachments.
 private struct AttachmentStrip: View {
