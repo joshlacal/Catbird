@@ -273,6 +273,12 @@ final class AppStateManager {
     if isE2EMode, ProcessInfo.processInfo.arguments.contains("--e2e-fixture-account") {
       let fixtureDID = "did:plc:alicee2efixture"
       let bobDID = "did:plc:bobe2efixture"
+      // The synthetic accounts' own profiles are served on device; every other request still
+      // uses the network.
+      E2EFixtureProfileProtocol.install(serving: [
+        .init(did: fixtureDID, handle: "alice.test", displayName: "Alice"),
+        .init(did: bobDID, handle: "bob.test", displayName: "Bob"),
+      ])
       let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
       authManager.setClientForTesting(client)
       authManager.storeHandle("alice.test", for: fixtureDID)
