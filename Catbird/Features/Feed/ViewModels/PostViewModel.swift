@@ -15,10 +15,10 @@ final class PostViewModel {
     // MARK: - Properties
     
     /// The unique identifier for the post
-    let postId: String
+    private(set) var postId: String
     
     /// The content identifier (CID) for the post
-    let postCid: CID
+    private(set) var postCid: CID
     
     /// Reference to the app state
     private(set) var appState: AppState
@@ -43,7 +43,7 @@ final class PostViewModel {
 
     /// Visibility context for the post
     var visibilityContext: PostVisibilityContext = .public
-    private let authorDid: String?
+    private(set) var authorDid: String?
 
     /// Logger for debugging
     let logger = Logger(subsystem: "blue.catbird", category: "PostViewModel")
@@ -99,44 +99,65 @@ final class PostViewModel {
     
     // MARK: - State Management
     
+    /// Reconfigures the view model in-place when a feed cell is reused for a new post.
+    @MainActor
+    func configure(
+        post: AppBskyFeedDefs.PostView,
+        appState: AppState,
+        visibilityContext: PostVisibilityContext = .public
+    ) {
+        self.postId = post.uri.uriString()
+        self.postCid = post.cid
+        self.appState = appState
+        self.authorDid = post.author.did.didString()
+        self.visibilityContext = visibilityContext
+        self.isLiked = post.viewer?.like != nil
+        self.isReposted = post.viewer?.repost != nil
+        self.isBookmarked = post.viewer?.bookmarked == true
+        self.likeCount = post.likeCount ?? 0
+        self.repostCount = post.repostCount ?? 0
+        self.replyCount = post.replyCount ?? 0
+        self.likeUri = post.viewer?.like
+        self.repostUri = post.viewer?.repost
+    }
+
     /// Starts deterministic async initialization of the view model, reconciling shadow and server state
     @MainActor
-    func start(post: AppBskyFeedDefs.PostView? = nil) async {
+    @discardableResult
+    func start(post: AppBskyFeedDefs.PostView? = nil) async -> AppBskyFeedDefs.PostView? {
         if let post {
-            await initializeFromServerState(post: post)
-            guard !Task.isCancelled else { return }
+            return await initializeFromServerState(post: post)
         }
         await checkInteractionState()
+        return nil
     }
     
     /// Initialize the shadow state when a post is loaded
     @MainActor
-    func initializeFromServerState(post: AppBskyFeedDefs.PostView) async {
-        guard !Task.isCancelled else { return }
+    @discardableResult
+    func initializeFromServerState(post: AppBskyFeedDefs.PostView) async -> AppBskyFeedDefs.PostView? {
+        guard !Task.isCancelled else { return nil }
         
-        // Reconcile shadow with server state
-        await appState.postShadowManager.updateShadow(forUri: post.uri.uriString()) { shadow in
-            shadow.hydrateFromServer(likeUri: post.viewer?.like, repostUri: post.viewer?.repost)
-        }
-        guard !Task.isCancelled else { return }
+        // Reconcile shadow with server state and derive merged post in a single actor hop
+        let merged = await appState.postShadowManager.reconcileAndMergeShadow(post: post)
+        guard !Task.isCancelled, post.uri.uriString() == postId else { return nil }
 
-        // Derive local state from the merged post so the shadow remains the single
-        // source of truth. Reading the raw payload directly would let a stale page
-        // (one fetched before the AppView indexed the interaction) revert state
-        // that the shadow already knows about.
-        let merged = await appState.postShadowManager.mergeShadow(post: post)
-        guard !Task.isCancelled else { return }
+        // Assign only changed values: every observable write invalidates the views reading
+        // it, and this runs for each row right after its first render.
+        let liked = merged.viewer?.like != nil
+        if isLiked != liked { isLiked = liked }
+        if likeUri != merged.viewer?.like { likeUri = merged.viewer?.like }
+        if likeCount != merged.likeCount ?? 0 { likeCount = merged.likeCount ?? 0 }
 
-        isLiked = merged.viewer?.like != nil
-        likeUri = merged.viewer?.like
-        likeCount = merged.likeCount ?? 0
+        let reposted = merged.viewer?.repost != nil
+        if isReposted != reposted { isReposted = reposted }
+        if repostUri != merged.viewer?.repost { repostUri = merged.viewer?.repost }
+        if repostCount != merged.repostCount ?? 0 { repostCount = merged.repostCount ?? 0 }
 
-        isReposted = merged.viewer?.repost != nil
-        repostUri = merged.viewer?.repost
-        repostCount = merged.repostCount ?? 0
-
-        isBookmarked = merged.viewer?.bookmarked == true
-        replyCount = merged.replyCount ?? 0
+        let bookmarked = merged.viewer?.bookmarked == true
+        if isBookmarked != bookmarked { isBookmarked = bookmarked }
+        if replyCount != merged.replyCount ?? 0 { replyCount = merged.replyCount ?? 0 }
+        return merged
     }
     
     /// Updates the interaction state from the shadow manager

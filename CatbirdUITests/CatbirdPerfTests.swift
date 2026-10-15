@@ -70,6 +70,29 @@ final class CatbirdPerfTests: XCTestCase {
     }
   }
 
+  // MARK: - Synthetic Feed Scroll Performance
+
+  /// Measures scroll hitches over the offline feed performance fixture: 400 deterministic rows
+  /// mixing text, images, link cards, quotes, threads and reposts, served without network.
+  /// The production feed controller renders it, so cell creation cost dominates as it does on
+  /// a real timeline. Run on a device for absolute hitch ratios; the simulator suits A/B runs.
+  @MainActor
+  func testSyntheticFeedScroll() throws {
+    let app = XCUIApplication()
+    app.launchArguments = ["--feed-perf-fixture", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+    app.launch()
+    let feed = app.collectionViews.firstMatch
+    XCTAssertTrue(feed.waitForExistence(timeout: 20), "The synthetic feed should load")
+
+    let options = XCTMeasureOptions()
+    options.iterationCount = Self.iterationCount
+    measure(metrics: [XCTOSSignpostMetric.scrollingAndDecelerationMetric], options: options) {
+      for _ in 0..<8 {
+        feed.swipeUp(velocity: .fast)
+      }
+    }
+  }
+
   // MARK: - Thread Open Performance
 
   /// Measures time, CPU and the app's ThreadOpen signpost to navigate into a post thread

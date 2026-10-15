@@ -337,6 +337,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
       let root = self.hosted(content)
       let accountID = self.appState?.userDID
       cell.contentConfiguration = UIHostingConfiguration {
+        // Per-item identity: a reused cell must not carry the previous row's SwiftUI state.
         root.id(accountID).id(item)
       }
       .margins(.all, 0)

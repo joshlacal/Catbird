@@ -37,6 +37,7 @@ struct Post: View, Equatable {
     @Environment(\.legibilityWeight) private var legibilityWeight
     @Environment(AppState.self) private var appState
     @Environment(\.adultContentEnabled) private var adultContentEnabled
+    @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
     @State private var bluemojiEnriched: AttributedString?
     // Base styled text is cached in PostStyledTextCache.shared avoiding @State writes and re-renders
     @State private var showLanguageSelection = false
@@ -208,9 +209,20 @@ struct Post: View, Equatable {
                 }
             }
         .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
+        .onChange(of: post) { _, _ in
+            showTranslation = false
+            translatedText = nil
+            translationConfig = nil
+            translationError = nil
+            isTranslating = false
+            shouldPrepareTranslation = false
+            showTranslationPopover = false
+            showLanguageSelection = false
+            bluemojiEnriched = nil
+        }
         .task(id: BluemojiTaskKey(styledTextKey: key, adultContentEnabled: adultContentEnabled)) {
             let base = PostStyledTextCache.shared.get(for: key) ?? baseForBody
-            bluemojiEnriched = nil
+            if bluemojiEnriched != nil { bluemojiEnriched = nil }
             guard !post.text.isEmpty, let facets = post.facets, !facets.isEmpty else { return }
             let enriched = await appState.bluemojiRenderer.enrich(
                 base, text: post.text, facets: facets, allowAdult: adultContentEnabled)
@@ -223,18 +235,21 @@ struct Post: View, Equatable {
                 await performTranslation(session: translationSession)
             }
         })
-        .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
-            ForEach(sourceLanguages, id: \.languageCode) { language in
-                Button(languageName(for: language)) {
-                    Task {
-                        await setupTranslation(sourceLanguage: language)
+        .deferredPresentations(when: showLanguageSelection) { anchor in
+            anchor
+                .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
+                    ForEach(sourceLanguages, id: \.languageCode) { language in
+                        Button(languageName(for: language)) {
+                            Task {
+                                await setupTranslation(sourceLanguage: language)
+                            }
+                        }
                     }
+
+                    Button("Cancel", role: .cancel) { }
+                } message: {
+                    Text("Choose the language to translate from")
                 }
-            }
-            
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Choose the language to translate from")
         }
 
             // Translation error with enhanced styling
@@ -401,6 +416,7 @@ struct Post: View, Equatable {
         
         if showTranslation {
             // Hide translation and reset state
+            invalidateFeedRowHeight?()
             withAnimation {
                 showTranslation = false
                 translatedText = nil
@@ -534,6 +550,7 @@ struct Post: View, Equatable {
 
         do {
             let target = try await attemptTranslate()
+            invalidateFeedRowHeight?()
             withAnimation {
                 translatedText = target
                 showTranslation = true
@@ -548,6 +565,7 @@ struct Post: View, Equatable {
                 do {
                     try await session.prepareTranslation()
                     let target = try await attemptTranslate()
+                    invalidateFeedRowHeight?()
                     withAnimation {
                         translatedText = target
                         showTranslation = true
@@ -738,7 +756,10 @@ private struct TranslationPresentationIfAvailable: ViewModifier {
         content
         #else
         if #available(iOS 17.4, *) {
-            content.translationPresentation(isPresented: $isPresented, text: text)
+            // Anchored to a background sharing the text's frame, installed only while shown.
+            content.deferredPresentations(when: isPresented) { anchor in
+                anchor.translationPresentation(isPresented: $isPresented, text: text)
+            }
         } else {
             content
         }

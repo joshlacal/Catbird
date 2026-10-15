@@ -209,14 +209,10 @@ struct ViewImageGridView: View {
       }
     }
 #endif
-    .onChange(of: selectedImage) { _, _ in
-//      logger.debug("✅ selectedImage onChange: was \(String(describing: oldValue?.id)), now \(String(describing: newValue?.id))")
-    }
-    .onChange(of: currentIndex) { _, _ in
-//      logger.debug("✅ currentIndex onChange: was \(oldValue), now \(newValue)")
-    }
-    .popover(item: $altTextPreviewImage) { image in
-      AltTextPreviewView(altText: image.alt)
+    .deferredPresentations(when: altTextPreviewImage != nil) { anchor in
+      anchor.popover(item: $altTextPreviewImage) { image in
+        AltTextPreviewView(altText: image.alt)
+      }
     }
   }
 

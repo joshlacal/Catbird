@@ -142,8 +142,11 @@ struct ActionButtonsView: View {
       await refreshState()
       guard !Task.isCancelled else { return }
 
-      // Mark initial load complete after brief delay
+      // Mark initial load complete after brief delay. Only the SwiftUI row reads it, so the
+      // UIKit feed row skips the write and the second render it would cause.
+      let readsInitialLoad = !usesUIKitRow
       async let markInitialLoad: Void = {
+        guard readsInitialLoad else { return }
         try? await Task.sleep(for: .milliseconds(500))
         guard !Task.isCancelled else { return }
         initialLoadComplete = true
@@ -686,19 +689,22 @@ private struct PostShareSheetModifier: ViewModifier {
   let appState: AppState
 
   func body(content: Content) -> some View {
-    content
-      .sheet(item: $destination) { destination in
-        shareDestination(destination)
-      }
-      .onChange(of: destination?.sceneContext.isInvalidated) { _, isInvalidated in
-        if isInvalidated == true { destination = nil }
-      }
-      .onChange(of: sceneContext.accountDID) { _, _ in
-        destination = nil
-      }
-      .onChange(of: sceneContext.sceneID) { _, _ in
-        destination = nil
-      }
+    // The sheet and its invalidation observers only matter while a destination is set.
+    content.deferredPresentations(when: destination != nil) { anchor in
+      anchor
+        .sheet(item: $destination) { destination in
+          shareDestination(destination)
+        }
+        .onChange(of: destination?.sceneContext.isInvalidated) { _, isInvalidated in
+          if isInvalidated == true { destination = nil }
+        }
+        .onChange(of: sceneContext.accountDID) { _, _ in
+          destination = nil
+        }
+        .onChange(of: sceneContext.sceneID) { _, _ in
+          destination = nil
+        }
+    }
   }
 
   @ViewBuilder

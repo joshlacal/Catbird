@@ -12,25 +12,27 @@ import OSLog
 
 @Observable
 final class PostContextMenuViewModel {
-    let appState: AppState
-    let post: AppBskyFeedDefs.PostView
-    let allowsThreadSummary: Bool
-    let visibilityContext: PostVisibilityContext
+    private(set) var appState: AppState
+    private(set) var post: AppBskyFeedDefs.PostView
+    private(set) var allowsThreadSummary: Bool
+    private(set) var visibilityContext: PostVisibilityContext
     
     private let logger = Logger(subsystem: "blue.catbird", category: "PostContextMenu")
     
-    // Reporting callback - will be set by PostView
-    var onReportPost: (() -> Void)?
-    
-    // Add to list callback - will be set by PostView
-    var onAddAuthorToList: (() -> Void)?
-    
-    // Bookmark callback - will be set by PostView
-    var onToggleBookmark: (() -> Void)?
-    
+    // Callbacks wired by PostView each time a row appears. Nothing renders from them, so
+    // they are not observed: assigning them would otherwise re-render the row.
 
-    // Thread summarization callback - wired by PostView when supported
-    var onSummarizeThread: (() -> Void)?
+    // Reporting callback
+    @ObservationIgnored var onReportPost: (() -> Void)?
+
+    // Add to list callback
+    @ObservationIgnored var onAddAuthorToList: (() -> Void)?
+
+    // Bookmark callback
+    @ObservationIgnored var onToggleBookmark: (() -> Void)?
+
+    // Thread summarization callback, when supported
+    @ObservationIgnored var onSummarizeThread: (() -> Void)?
 
     // Thread moderation and context
     var rootPostURI: ATProtocolURI?
@@ -91,6 +93,26 @@ final class PostContextMenuViewModel {
         self.rootPostURI = rootPostURI
         self.rootAuthorDID = rootAuthorDID
         self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
+    }
+
+    func configure(
+        appState: AppState,
+        post: AppBskyFeedDefs.PostView,
+        allowsThreadSummary: Bool = false,
+        visibilityContext: PostVisibilityContext = .public,
+        rootPostURI: ATProtocolURI? = nil,
+        rootAuthorDID: String? = nil,
+        isReplyHiddenByThreadgate: Bool = false
+    ) {
+        self.appState = appState
+        self.post = post
+        self.allowsThreadSummary = allowsThreadSummary
+        self.visibilityContext = visibilityContext
+        self.rootPostURI = rootPostURI
+        self.rootAuthorDID = rootAuthorDID
+        self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
+        self.isPinnedOverride = nil
+        self.isQuoteDetachedOverride = nil
     }
 
     func deletePost(visibilityContext: PostVisibilityContext? = nil) async {

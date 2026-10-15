@@ -290,7 +290,6 @@ private struct FeedParentPostRow: View {
           appState: appState
         )
         .environment(\.feedPostID, entry.value.id)
-        .id("\(entry.value.id)-parent-\(postView.uri.uriString())")
         .contentShape(Rectangle())
         .onTapGesture {
           guard !isReadOnly else { return }
@@ -341,7 +340,6 @@ private struct FeedMainPostRow: View {
       appState: appState
     )
     .environment(\.feedPostID, entry.value.id)
-    .id("\(entry.value.id)-main-\(entry.value.post.uri.uriString())")
     .contentShape(Rectangle())
     .allowsHitTesting(true)
     .onTapGesture {
@@ -440,7 +438,6 @@ private struct FeedCollapsedThread: View {
           hasVisibleThreadContext: true
         )
         .environment(\.feedPostID, id)
-        .id("\(id)-root-\(rootURI.uriString())")
         .contentShape(Rectangle())
         .onTapGesture {
           guard !isReadOnly else { return }

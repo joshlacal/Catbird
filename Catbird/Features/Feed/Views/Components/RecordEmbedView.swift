@@ -11,6 +11,7 @@ struct RecordEmbedView: View {
     let record: AppBskyEmbedRecord.ViewRecordUnion
     @Binding var path: NavigationPath
     @Environment(\.postID) var postID
+    @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
     @Environment(AppState.self) private var appState
     @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
     @Environment(\.moderationPolicy) private var moderationPolicy
@@ -76,25 +77,31 @@ struct RecordEmbedView: View {
 
     @ViewBuilder
     private func postView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
-        if isReadOnlyPreview && BlockRelationship(viewer: post.author.viewer).direction != .unknown {
-            BlockedContentCard(
-                relationship: BlockRelationship(viewer: post.author.viewer),
-                authorDid: post.author.did.didString(),
-                postUri: post.uri,
-                variant: .embedCompact,
-                path: $path
-            )
-        } else if post.author.viewer?.muted == true && !showsMutedQuote(post) {
-            mutedQuoteView(for: post)
-        } else {
-            let moderation = PostModerationPresentation.make(quoted: post, policy: moderationPolicy)
-            ModerationContentGate(ui: moderation.body) {
-                quotedPostView(post, moderation: moderation)
-                    .postRevealFade(isEnabled: showsMutedQuote(post))
+        Group {
+            if isReadOnlyPreview && BlockRelationship(viewer: post.author.viewer).direction != .unknown {
+                BlockedContentCard(
+                    relationship: BlockRelationship(viewer: post.author.viewer),
+                    authorDid: post.author.did.didString(),
+                    postUri: post.uri,
+                    variant: .embedCompact,
+                    path: $path
+                )
+            } else if post.author.viewer?.muted == true && !showsMutedQuote(post) {
+                mutedQuoteView(for: post)
+            } else {
+                let moderation = PostModerationPresentation.make(quoted: post, policy: moderationPolicy)
+                ModerationContentGate(ui: moderation.body) {
+                    quotedPostView(post, moderation: moderation)
+                        .postRevealFade(isEnabled: showsMutedQuote(post))
+                }
+                // A nested label warning can be shorter than the wrapping mute notice.
+                // Keep that reveal from shrinking the row and clamping a feed at its end.
+                .frame(minHeight: mutedQuoteMinimumHeight(post), alignment: .top)
             }
-            // A nested label warning can be shorter than the wrapping mute notice.
-            // Keep that reveal from shrinking the row and clamping a feed at its end.
-            .frame(minHeight: mutedQuoteMinimumHeight(post), alignment: .top)
+        }
+        .onChange(of: postID) { _, _ in
+            revealedMutedQuote = nil
+            mutedQuoteMeasurement = nil
         }
     }
 
@@ -127,6 +134,7 @@ struct RecordEmbedView: View {
                 .foregroundStyle(Color.secondary)
             Spacer(minLength: 0)
             Button("Show") {
+                invalidateFeedRowHeight?()
                 withAnimation(PostRevealMotion.layoutAnimation(
                     reduceMotion: appState.appSettings.effectiveReduceMotion,
                     voiceOverEnabled: voiceOverEnabled

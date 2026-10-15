@@ -87,21 +87,28 @@ struct ModerationContentGate<Content: View>: View {
   @ViewBuilder let content: () -> Content
   @State private var reveal = ModerationRevealState()
   @Environment(AppState.self) private var appState
+  @Environment(\.postID) private var postID
+  @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
   @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
   private var revealed: Bool { reveal.isRevealed(ui) }
 
   var body: some View {
-    if ui.blur {
-      VStack(alignment: .leading, spacing: 6) {
-        gateBar
-        if revealed {
-          content()
-            .postRevealFade(isEnabled: true)
+    Group {
+      if ui.blur {
+        VStack(alignment: .leading, spacing: 6) {
+          gateBar
+          if revealed {
+            content()
+              .postRevealFade(isEnabled: true)
+          }
         }
+      } else {
+        content()
       }
-    } else {
-      content()
+    }
+    .onChange(of: postID) { _, _ in
+      reveal.hide()
     }
   }
 
@@ -123,6 +130,7 @@ struct ModerationContentGate<Content: View>: View {
           .accessibilityHint(ModerationGateText.explanation(for: ui))
       } else {
         Button(revealed ? "Hide" : "Show") {
+          invalidateFeedRowHeight?()
           withAnimation(PostRevealMotion.layoutAnimation(
             reduceMotion: appState.appSettings.effectiveReduceMotion,
             voiceOverEnabled: voiceOverEnabled
@@ -165,30 +173,37 @@ struct ModerationMediaGate<Content: View>: View {
   @ViewBuilder let content: () -> Content
   @State private var reveal = ModerationRevealState()
   @Environment(AppState.self) private var appState
+  @Environment(\.postID) private var postID
+  @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
   @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
   private var revealed: Bool { reveal.isRevealed(ui) }
 
   var body: some View {
-    if !ui.blur {
-      content()
-    } else if case .card = style, let ratio = reservedAspectRatio, ratio.isFinite, ratio > 0 {
-      // Keep the larger of the image and the warning's intrinsic height on
-      // both sides of Show/Hide. Only lightweight warning UI is measured while
-      // concealed; the media closure is still built exclusively after Show.
-      ZStack {
-        Color.clear.aspectRatio(ratio, contentMode: .fit)
-        cover
-          .fixedSize(horizontal: false, vertical: true)
-          .hidden()
-          .allowsHitTesting(false)
-          .accessibilityHidden(true)
+    Group {
+      if !ui.blur {
+        content()
+      } else if case .card = style, let ratio = reservedAspectRatio, ratio.isFinite, ratio > 0 {
+        // Keep the larger of the image and the warning's intrinsic height on
+        // both sides of Show/Hide. Only lightweight warning UI is measured while
+        // concealed; the media closure is still built exclusively after Show.
+        ZStack {
+          Color.clear.aspectRatio(ratio, contentMode: .fit)
+          cover
+            .fixedSize(horizontal: false, vertical: true)
+            .hidden()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        .overlay(alignment: .top) {
+          gatedContent.frame(maxHeight: revealed ? nil : .infinity)
+        }
+      } else {
+        gatedContent
       }
-      .overlay(alignment: .top) {
-        gatedContent.frame(maxHeight: revealed ? nil : .infinity)
-      }
-    } else {
-      gatedContent
+    }
+    .onChange(of: postID) { _, _ in
+      reveal.hide()
     }
   }
 
@@ -274,6 +289,7 @@ struct ModerationMediaGate<Content: View>: View {
 
   private var hideControl: some View {
     Button {
+      invalidateFeedRowHeight?()
       withAnimation(PostRevealMotion.layoutAnimation(
         reduceMotion: appState.appSettings.effectiveReduceMotion,
         voiceOverEnabled: voiceOverEnabled
@@ -295,6 +311,7 @@ struct ModerationMediaGate<Content: View>: View {
   }
 
   private func show() {
+    invalidateFeedRowHeight?()
     withAnimation(PostRevealMotion.layoutAnimation(
       reduceMotion: appState.appSettings.effectiveReduceMotion,
       voiceOverEnabled: voiceOverEnabled

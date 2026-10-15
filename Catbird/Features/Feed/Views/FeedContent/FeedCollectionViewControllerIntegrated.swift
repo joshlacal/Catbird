@@ -134,36 +134,69 @@ import os
     var contentSignature: FeedPostContentSignature?
     weak var heightCache: FeedRowHeightCache?
     var isFreshlyConfigured: Bool = false
+    /// Set once the row toggles per-cell UI state (reveals, translation, gates). That state
+    /// resets when the cell is reused, so heights measured with it must never be cached.
+    private var hasTransientLayoutState = false
+
+    func markConfigured() {
+      isFreshlyConfigured = true
+      hasTransientLayoutState = false
+    }
+
+    func markHeightNeedsRecalculation() {
+      isFreshlyConfigured = false
+      hasTransientLayoutState = true
+      if let postID {
+        heightCache?.invalidate(postID: postID)
+      }
+    }
 
     override func prepareForReuse() {
       super.prepareForReuse()
       postID = nil
       contentSignature = nil
       isFreshlyConfigured = false
+      hasTransientLayoutState = false
     }
 
     override func preferredLayoutAttributesFitting(
       _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
       let width = Int(layoutAttributes.size.width)
-      // Serve cached height ONLY for the first measurement of a freshly configured cell;
-      // any re-measure (self-sizing invalidation from in-row height changes: moderation,
-      // gates, muted-quote, translation, link hydration, etc.) must fall through to real fitting.
-      if isFreshlyConfigured, let postID, let contentSignature, width > 0,
-         let cached = heightCache?.height(for: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature) {
+      // Serve a cached height only for the first measurement after configuration. Every later
+      // self-sizing pass is a real fit: the hosted SwiftUI content may have changed size since
+      // (async text styling, reveals, link hydration), and masking that pass with a cached value
+      // leaves the row at a stale height, which shows as blank gaps or rows drawing over each other.
+      if isFreshlyConfigured {
         isFreshlyConfigured = false
-        let attrs = layoutAttributes
-        attrs.size.height = cached
-        return attrs
+        if let postID, let contentSignature, width > 0,
+           let cached = heightCache?.height(
+             for: postID,
+             width: width,
+             fontGeneration: fontGeneration,
+             contentSizeCategory: contentSizeCategory,
+             contentSignature: contentSignature
+           ) {
+          let attrs = layoutAttributes
+          attrs.size.height = cached
+          return attrs
+        }
       }
-      // Invalidate on ANY self-sizing re-measure (falls through when isFreshlyConfigured is false)
-      if !isFreshlyConfigured, let postID {
-        heightCache?.invalidate(postID: postID)
-      }
-      isFreshlyConfigured = false
+
       let attrs = super.preferredLayoutAttributesFitting(layoutAttributes)
-      if let postID, let contentSignature, width > 0 {
-        heightCache?.store(height: attrs.size.height, for: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature)
+      if let postID {
+        if hasTransientLayoutState {
+          heightCache?.invalidate(postID: postID)
+        } else if let contentSignature, width > 0 {
+          heightCache?.store(
+            height: attrs.size.height,
+            for: postID,
+            width: width,
+            fontGeneration: fontGeneration,
+            contentSizeCategory: contentSizeCategory,
+            contentSignature: contentSignature
+          )
+        }
       }
       return attrs
     }
@@ -265,14 +298,11 @@ import os
     /// FirstFeedContent signpost interval state
     private var firstFeedContentSignpostState: OSSignpostIntervalState?
     /// Track fling velocity and throttle row building during fast flings (feed-perf step 3)
-    private var currentScrollVelocity: CGFloat = 0
-    private var frameConfigCount = 0
-    private var lastFrameTime: CFTimeInterval = 0
-    private var deferredPlaceholderPostIDs: Set<String> = []
     private var trendingContent = TrendingFeedContent()
     private var appliedTrendingContent = TrendingFeedContent()
     private var appliedFooterState: FeedPaginationFooterState?
     private var appliedPostSignatures: [String: FeedPostContentSignature] = [:]
+    private var prefetchTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
     private var viewportInteractionGeneration = 0
     private var feedGeneration = 0
     private var appliedSnapshotGeneration: Int?
@@ -357,6 +387,13 @@ import os
       view.backgroundColor = .clear
 
       // Avoid resetting the layout here to prevent supplementary assertions during transitions
+    }
+
+    /// The window size embeds size their media against. Supplying it through the environment
+    /// spares every link card a `WindowViewportReader` and the re-render once it reports.
+    private var embedViewportSize: CGSize? {
+      guard let size = view.window?.bounds.size, size.width > 0, size.height > 0 else { return nil }
+      return size
     }
 
     private func forceCellReconfiguration() {
@@ -504,6 +541,8 @@ import os
     isolated deinit {
       viewportState.unregisterScrollToTopHandler(ownerID: viewportOwnerID)
       cancelPendingLoadMoreRequest()
+      prefetchTasks.values.forEach { $0.task.cancel() }
+      prefetchTasks.removeAll()
       updateScheduler.cancel()
       initialLoadTask?.cancel()
 
@@ -715,54 +754,30 @@ import os
         cell.fontGeneration = appState.fontManager.generation
         cell.contentSizeCategory = self.traitCollection.preferredContentSizeCategory
 
-        // Throttle row building during fast flings: cap new cell configurations per frame (feed-perf step 3)
-        let now = CACurrentMediaTime()
-        if now - self.lastFrameTime > 0.016 {
-          self.lastFrameTime = now
-          self.frameConfigCount = 0
-        }
-        self.frameConfigCount += 1
-        let postSignature = FeedPostContentSignature(post)
-        let isFastFling = abs(self.currentScrollVelocity) > 3500
-        if isFastFling && self.frameConfigCount > 3 {
-          self.deferredPlaceholderPostIDs.insert(postId)
-          let estimatedHeight = self.rowHeightCache.height(
-            for: postId,
-            width: Int(self.collectionView.bounds.width),
-            fontGeneration: cell.fontGeneration,
-            contentSizeCategory: cell.contentSizeCategory,
-            contentSignature: postSignature
-          ) ?? 120
-          cell.postID = nil
-          cell.contentSignature = nil
-          cell.isFreshlyConfigured = false
-          cell.contentConfiguration = UIHostingConfiguration {
-            Color.clear
-              .frame(height: estimatedHeight)
-          }
-          .margins(.all, 0)
-          cell.configurationUpdateHandler = nil
-          return
-        }
-
-        self.deferredPlaceholderPostIDs.remove(postId)
-        cell.postID = postId
-        cell.contentSignature = postSignature
-        cell.isFreshlyConfigured = true
+        // The view model's signature reflects the post being configured; appliedPostSignatures
+        // still holds the previous snapshot's values while a reconfigure is being applied.
         let viewModel = self.stateManager.viewModel(for: post)
+        cell.postID = postId
+        cell.contentSignature = viewModel.contentSignature
+        cell.markConfigured()
 
-        // Configure cell with UIHostingConfiguration and inject required environment
+        // Configure cell with UIHostingConfiguration and inject required environment.
+        // The identity must include the post: a reused cell otherwise keeps the previous post's
+        // SwiftUI state (reveals, blur, translation, measured sizes) for its first layout pass,
+        // and that pass is the one that gets measured and cached.
         let accountID = appState.userDID ?? "unknown-account"
         let feedID = self.stateManager.currentFeedType.identifier
-        let hostingIdentity = "\(accountID)-\(feedID)-\(post.id)"
+        let hostingIdentity = "\(accountID)-\(feedID)-\(postId)"
+        let viewportSize = self.embedViewportSize
         cell.contentConfiguration = UIHostingConfiguration {
           FeedPostRow(
             viewModel: viewModel,
             navigationPath: self.navigationPath,
             feedTypeIdentifier: self.stateManager.currentFeedType.identifier,
             tracksVisibilityForFeedback: false,
-            onHeightInvalidated: { [weak self] in
+            onHeightInvalidated: { [weak self, weak cell] in
               self?.rowHeightCache.invalidate(postID: postId)
+              cell?.markHeightNeedsRecalculation()
             }
           )
           .trackingModerationPolicy(of: appState)
@@ -770,6 +785,7 @@ import os
           .environment(self.sceneContext)
           .environment(\.fontManager, appState.fontManager)
           .environment(\.feedInteractionTarget, self.stateManager.feedInteractionTarget)
+          .environment(\.containerViewportSize, viewportSize)
           .id(hostingIdentity)
           .padding(0)
           .background(Color.clear)
@@ -1394,6 +1410,8 @@ import os
         isRefreshing = false
       }
       cancelPendingLoadMoreRequest()
+      prefetchTasks.values.forEach { $0.task.cancel() }
+      prefetchTasks.removeAll()
       initialLoadTask?.cancel()
       initialLoadTask = nil
       stateObserver?.stopObserving()
@@ -1440,9 +1458,6 @@ import os
     ) {
       trackPostSeenIfNeeded(at: indexPath)
       triggerLoadMoreIfNeeded(at: indexPath)
-
-      // Notify scroll offset callback
-      onScrollOffsetChanged?(collectionView.contentOffset.y)
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -1452,16 +1467,12 @@ import os
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
       if !decelerate {
-        currentScrollVelocity = 0
         captureCurrentScrollPosition()
-        reconfigureDeferredPlaceholdersIfNeeded()
       }
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-      currentScrollVelocity = 0
       captureCurrentScrollPosition()
-      reconfigureDeferredPlaceholdersIfNeeded()
     }
 
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
@@ -1469,26 +1480,16 @@ import os
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-      currentScrollVelocity = scrollView.panGestureRecognizer.velocity(in: view).y
       onScrollOffsetChanged?(scrollView.contentOffset.y)
-    }
-
-    private func reconfigureDeferredPlaceholdersIfNeeded() {
-      guard !deferredPlaceholderPostIDs.isEmpty, let dataSource else { return }
-      let accountID = stateManager.appState.userDID ?? "unknown-account"
-      let feedID = stateManager.currentFeedType.identifier
-      let itemsToReconfigure = deferredPlaceholderPostIDs.map {
-        Item.post(account: accountID, feed: feedID, id: $0)
-      }
-      deferredPlaceholderPostIDs.removeAll()
-      var snapshot = dataSource.snapshot()
-      snapshot.reconfigureItems(itemsToReconfigure.filter { snapshot.indexOfItem($0) != nil })
-      dataSource.apply(snapshot, animatingDifferences: false)
     }
 
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
       super.viewWillTransition(to: size, with: coordinator)
       rowHeightCache.removeAll()
+      // Rows carry the window size for embed media; refresh it once the new size is in place.
+      coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+        self?.forceCellReconfiguration()
+      }
     }
   }
 
@@ -1498,36 +1499,55 @@ import os
   extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath])
     {
-      let posts = indexPaths.compactMap { indexPath -> CachedFeedViewPost? in
-        guard let item = dataSource.itemIdentifier(for: indexPath),
-              case .post(_, _, let id) = item else { return nil }
-        return self.postsByID[id]
+      let appState = stateManager.appState
+      guard let client = appState.atProtoClient else { return }
+      let autoplayVideos = appState.appSettings.autoplayVideos
+      let policy = appState.moderationPolicy
+
+      for indexPath in indexPaths {
+        guard prefetchTasks.count < 6,
+              let item = dataSource.itemIdentifier(for: indexPath),
+              case .post(_, _, let id) = item,
+              prefetchTasks[id] == nil,
+              let cached = postsByID[id],
+              let feedViewPost = try? cached.feedViewPost else { continue }
+
+        // A cancelled prefetch can finish after a new one for the same post was scheduled;
+        // the token keeps it from removing its replacement.
+        let token = UUID()
+        let task = Task { [weak self] in
+          defer {
+            if self?.prefetchTasks[id]?.token == token {
+              self?.prefetchTasks[id] = nil
+            }
+          }
+          guard !Task.isCancelled else { return }
+          await FeedPrefetchingManager.shared.prefetchPostData(post: feedViewPost, client: client)
+          guard !Task.isCancelled, autoplayVideos else { return }
+          if case .appBskyEmbedVideoView(let video)? = feedViewPost.post.embed,
+             let url = video.playlist.url {
+            let media = policy.decide(post: feedViewPost.post).ui(.contentMedia)
+            if !media.filter, !media.blur {
+              let model = VideoModel(
+                id: url.absoluteString, url: url,
+                type: .hlsStream(playlistURL: url, cid: video.cid, aspectRatio: nil),
+                aspectRatio: 16.0 / 9.0)
+              await VideoAssetManager.shared.prewarm(model)
+            }
+          }
+        }
+        prefetchTasks[id] = (token, task)
       }
-      
-      guard !posts.isEmpty else { return }
-      
-      Task {
-        await FeedPrefetchingManager.shared.prefetchAssets(for: posts)
-      }
-      prewarmVideos(in: posts)
     }
 
-    /// Buffers autoplaying videos a few cells ahead so their first frame is ready on arrival.
-    /// Media the user hides behind moderation is never fetched.
-    private func prewarmVideos(in posts: [CachedFeedViewPost]) {
-      let appState = stateManager.appState
-      guard appState.appSettings.autoplayVideos else { return }
-      for cached in posts {
-        guard let post = try? cached.feedViewPost.post,
-              case .appBskyEmbedVideoView(let video)? = post.embed,
-              let url = video.playlist.url else { continue }
-        let media = appState.moderationPolicy.decide(post: post).ui(.contentMedia)
-        guard !media.filter, !media.blur else { continue }
-        let model = VideoModel(
-          id: url.absoluteString, url: url,
-          type: .hlsStream(playlistURL: url, cid: video.cid, aspectRatio: nil),
-          aspectRatio: 16.0 / 9.0)
-        Task { await VideoAssetManager.shared.prewarm(model) }
+    func collectionView(
+      _ collectionView: UICollectionView,
+      cancelPrefetchingForItemsAt indexPaths: [IndexPath]
+    ) {
+      for indexPath in indexPaths {
+        guard let item = dataSource.itemIdentifier(for: indexPath),
+              case .post(_, _, let id) = item else { continue }
+        prefetchTasks.removeValue(forKey: id)?.task.cancel()
       }
     }
   }

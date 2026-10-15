@@ -9,27 +9,40 @@ struct ExternalEmbedLabelGate<Content: View>: View {
   @ViewBuilder var content: () -> Content
   @State private var revealed = false
   @Environment(\.moderationPolicy) private var moderationPolicy
+  @Environment(\.postID) private var postID
+  @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
 
   var body: some View {
-    switch ExternalEmbedSystemLabelVisibility.resolve(labels) {
-    case .hide:
-      Label("Link hidden by moderation", systemImage: "eye.slash")
+    Group {
+      switch ExternalEmbedSystemLabelVisibility.resolve(labels) {
+      case .hide:
+        Label("Link hidden by moderation", systemImage: "eye.slash")
+          .appFont(AppTextRole.subheadline)
+          .padding(16)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      case .warn where !revealed:
+        VStack(alignment: .leading, spacing: 8) {
+          Label("Link warning", systemImage: "exclamationmark.triangle")
+          Button("Show link preview") {
+            revealed = true
+            invalidateFeedRowHeight?()
+          }
+          .frame(minHeight: 44)
+        }
         .appFont(AppTextRole.subheadline)
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-    case .warn where !revealed:
-      VStack(alignment: .leading, spacing: 8) {
-        Label("Link warning", systemImage: "exclamationmark.triangle")
-        Button("Show link preview") { revealed = true }
-          .frame(minHeight: 44)
+      default:
+        ModerationMediaGate(ui: ExternalLinkModeration.mediaUI(labels: labels, policy: moderationPolicy)) {
+          content()
+        }
       }
-      .appFont(AppTextRole.subheadline)
-      .padding(16)
-      .frame(maxWidth: .infinity, alignment: .leading)
-    default:
-      ModerationMediaGate(ui: ExternalLinkModeration.mediaUI(labels: labels, policy: moderationPolicy)) {
-        content()
-      }
+    }
+    .onChange(of: postID) { _, _ in
+      if revealed { revealed = false }
+    }
+    .onChange(of: labels) { _, _ in
+      if revealed { revealed = false }
     }
   }
 }

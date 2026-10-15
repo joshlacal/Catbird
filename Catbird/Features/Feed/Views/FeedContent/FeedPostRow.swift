@@ -11,6 +11,17 @@ import SwiftUI
 import Petrel
 import os
 
+private struct InvalidateFeedRowHeightKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var invalidateFeedRowHeight: (() -> Void)? {
+        get { self[InvalidateFeedRowHeightKey.self] }
+        set { self[InvalidateFeedRowHeightKey.self] = newValue }
+    }
+}
+
 /// A feed post row that works with FeedPostViewModel for persistent state management
 struct FeedPostRow: View, Identifiable {
     var id: String {
@@ -95,6 +106,7 @@ struct FeedPostRow: View, Identifiable {
                     cachedPost: viewModel.post,
                     path: $navigationPath
                 )
+                .environment(\.invalidateFeedRowHeight, onHeightInvalidated)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     if let fvp = try? viewModel.post.feedViewPost {

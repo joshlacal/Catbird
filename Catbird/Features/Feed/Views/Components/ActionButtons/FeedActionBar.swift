@@ -132,7 +132,11 @@ struct FeedActionBar: UIViewRepresentable {
   static let height: CGFloat = 45
 
   func makeUIView(context: Context) -> FeedActionBarView {
-    FeedActionBarView()
+    FeedActionBarView.dequeueReusable()
+  }
+
+  static func dismantleUIView(_ uiView: FeedActionBarView, coordinator: ()) {
+    FeedActionBarView.enqueueForReuse(uiView)
   }
 
   func updateUIView(_ view: FeedActionBarView, context: Context) {
@@ -194,6 +198,27 @@ final class FeedActionBarView: UIView {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  // MARK: Reuse
+
+  /// Feed rows get a new SwiftUI identity per post, so every row that scrolls in would
+  /// otherwise build (and every row that leaves would free) a bar of buttons, labels and
+  /// menus. Bars from dismantled rows are kept here and handed to the next row instead.
+  private static var reusePool: [FeedActionBarView] = []
+  private static let reusePoolLimit = 24
+
+  static func dequeueReusable() -> FeedActionBarView {
+    reusePool.popLast() ?? FeedActionBarView()
+  }
+
+  static func enqueueForReuse(_ view: FeedActionBarView) {
+    view.removeFromSuperview()
+    // Forget the previous post so the next `apply` is a full, unanimated fill.
+    view.actions = nil
+    view.state = nil
+    guard reusePool.count < reusePoolLimit else { return }
+    reusePool.append(view)
+  }
 
   func apply(_ new: FeedActionBarState) {
     let old = state
@@ -309,6 +334,7 @@ final class FeedActionBarButton: UIButton {
   private let icon = UIImageView()
   private let countLabel = UILabel()
   private var iconName: String
+  private var iconFont: UIFont?
   private var color: UIColor = .secondaryLabel
   private var hasCount = false
 
@@ -349,8 +375,8 @@ final class FeedActionBarButton: UIButton {
   }
 
   func configure(iconName: String, count: Int?, color: UIColor, fonts: FeedActionBarFonts, animated: Bool) {
-    let configuration = UIImage.SymbolConfiguration(font: fonts.icon, scale: .medium)
-    if let image = UIImage(systemName: iconName, withConfiguration: configuration) {
+    if iconName != self.iconName || fonts.icon != iconFont || icon.image == nil,
+       let image = Self.symbolImage(iconName, font: fonts.icon) {
       if animated, iconName != self.iconName {
         icon.setSymbolImage(image, contentTransition: .replace)
       } else {
@@ -358,6 +384,7 @@ final class FeedActionBarButton: UIButton {
       }
     }
     self.iconName = iconName
+    iconFont = fonts.icon
 
     if let count, count > 0 {
       hasCount = true
@@ -373,6 +400,24 @@ final class FeedActionBarButton: UIButton {
     self.color = color
     applyColor()
     setNeedsLayout()
+  }
+
+  private struct SymbolKey: Hashable {
+    let name: String
+    let font: UIFont
+  }
+
+  /// Every row shows the same handful of symbols at one font, so resolve each once.
+  @MainActor private static var symbolImages: [SymbolKey: UIImage] = [:]
+
+  private static func symbolImage(_ name: String, font: UIFont) -> UIImage? {
+    let key = SymbolKey(name: name, font: font)
+    if let cached = symbolImages[key] { return cached }
+    let configuration = UIImage.SymbolConfiguration(font: font, scale: .medium)
+    guard let image = UIImage(systemName: name, withConfiguration: configuration) else { return nil }
+    if symbolImages.count > 64 { symbolImages.removeAll() }
+    symbolImages[key] = image
+    return image
   }
 
   func bounceIcon() {

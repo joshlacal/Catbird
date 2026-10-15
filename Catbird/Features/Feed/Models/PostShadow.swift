@@ -294,6 +294,15 @@ actor PostShadowManager {
     
     // MARK: - Shadow Application
     
+    /// Reconciles server viewer state into the shadow and returns the merged post
+    /// in a single actor hop.
+    func reconcileAndMergeShadow(post: AppBskyFeedDefs.PostView) -> AppBskyFeedDefs.PostView {
+        updateShadow(forUri: post.uri.uriString()) { shadow in
+            shadow.hydrateFromServer(likeUri: post.viewer?.like, repostUri: post.viewer?.repost)
+        }
+        return mergeShadow(post: post)
+    }
+
     /// Merges shadow state with a post to create an updated post view
     /// - Parameter post: The original post view from the API
     /// - Returns: A new post view with shadow state applied

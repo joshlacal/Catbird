@@ -195,38 +195,57 @@ struct ExternalEmbedView: View {
                 blockedExternalMediaView
             }
         }
-        .id(ExternalModerationIdentity(uri: external.uri, labels: external.labels ?? [], account: appState.userDID))
-        .background(viewportReader)
-        .confirmationDialog(
-            "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
-            isPresented: $showingConsentDialog,
-            titleVisibility: .visible,
-            presenting: pendingConsentProvider
-        ) { provider in
-            Button("Allow \(provider.displayName)") {
-                guard appState.appSettings.applyExternalMediaConsent(.allow, providers: [provider]) else {
-                    consentSaveFailed = true
-                    return
-                }
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    userTappedToShowEmbed = true
-                }
-                retryAttempt += 1
+        .onChange(of: ExternalModerationIdentity(uri: external.uri, labels: external.labels ?? [], account: appState.userDID)) { _, _ in
+            isBlurred = shouldBlur
+            userTappedToShowEmbed = false
+            showingConsentDialog = false
+            pendingConsentProvider = nil
+            consentSaveFailed = false
+            videoModel = nil
+            gifError = nil
+            isLoadingGif = false
+            inlineImageURL = nil
+            retryAttempt = 0
+            if isGifURL, let url = destinationURL {
+                gifAspectRatio = Self.tenorAspectRatioHint(from: url) ?? 1.0
+            } else {
+                gifAspectRatio = 1.0
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { provider in
-            Text("Playing embeds connects directly to third-party servers and may share your IP address or tracking data with \(provider.displayName).")
         }
-        .alert("Permission Wasn’t Saved", isPresented: $consentSaveFailed) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("The player remains blocked. Open External Media Permissions in Settings to retry saving this choice.")
+        .background(viewportReader)
+        .deferredPresentations(when: showingConsentDialog || consentSaveFailed) { anchor in
+            anchor
+                .confirmationDialog(
+                    "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
+                    isPresented: $showingConsentDialog,
+                    titleVisibility: .visible,
+                    presenting: pendingConsentProvider
+                ) { provider in
+                    Button("Allow \(provider.displayName)") {
+                        guard appState.appSettings.applyExternalMediaConsent(.allow, providers: [provider]) else {
+                            consentSaveFailed = true
+                            return
+                        }
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            userTappedToShowEmbed = true
+                        }
+                        retryAttempt += 1
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { provider in
+                    Text("Playing embeds connects directly to third-party servers and may share your IP address or tracking data with \(provider.displayName).")
+                }
+                .alert("Permission Wasn’t Saved", isPresented: $consentSaveFailed) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text("The player remains blocked. Open External Media Permissions in Settings to retry saving this choice.")
+                }
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        if let card = StandardSiteCard(external) {
+        if let card = standardSiteCard {
             StandardSiteEmbedView(card: card)
         } else if let videoModel = videoModel {
             videoPlayerContent(videoModel: videoModel)

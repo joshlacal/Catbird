@@ -92,7 +92,15 @@ private var isMessagesNavigationUIFixture: Bool {
 
 /// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture
+  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
+}
+
+private var isFeedPerformanceFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains("--feed-perf-fixture")
+  #else
+  false
+  #endif
 }
 
 private var isModerationUIFixture: Bool {
@@ -971,6 +979,12 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           } else if isModerationUIFixture {
             #if os(iOS)
             ModerationUIFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isFeedPerformanceFixture {
+            #if os(iOS)
+            FeedPerformanceFixture()
             #else
             EmptyView()
             #endif

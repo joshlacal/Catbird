@@ -30,22 +30,78 @@ struct FeedPostContentSignature: Hashable {
     let isSmartFilterPending: Bool
     let intentHiddenRuleText: String?
     let isIntentDemoted: Bool
+    private let precomputedHash: Int
 
     init(_ post: CachedFeedViewPost) {
-        serializedPost = post.serializedPost
-        serializedSliceItems = post.serializedSliceItems
-        threadDisplayMode = post.threadDisplayMode
-        threadPostCount = post.threadPostCount
-        threadHiddenCount = post.threadHiddenCount
-        isPartOfThread = post.isPartOfThread
-        isIncompleteThread = post.isIncompleteThread
-        isTemporary = post.isTemporary
-        isRepost = post.isRepost
-        repostIndexedAt = post.repostIndexedAt
-        smartFilterCollapseRuleID = post.smartFilterCollapseRuleID
-        isSmartFilterPending = post.isSmartFilterPending
-        intentHiddenRuleText = post.intentHiddenRuleText
-        isIntentDemoted = post.isIntentDemoted
+        let serializedPost = post.serializedPost
+        let serializedSliceItems = post.serializedSliceItems
+        let threadDisplayMode = post.threadDisplayMode
+        let threadPostCount = post.threadPostCount
+        let threadHiddenCount = post.threadHiddenCount
+        let isPartOfThread = post.isPartOfThread
+        let isIncompleteThread = post.isIncompleteThread
+        let isTemporary = post.isTemporary
+        let isRepost = post.isRepost
+        let repostIndexedAt = post.repostIndexedAt
+        let smartFilterCollapseRuleID = post.smartFilterCollapseRuleID
+        let isSmartFilterPending = post.isSmartFilterPending
+        let intentHiddenRuleText = post.intentHiddenRuleText
+        let isIntentDemoted = post.isIntentDemoted
+
+        self.serializedPost = serializedPost
+        self.serializedSliceItems = serializedSliceItems
+        self.threadDisplayMode = threadDisplayMode
+        self.threadPostCount = threadPostCount
+        self.threadHiddenCount = threadHiddenCount
+        self.isPartOfThread = isPartOfThread
+        self.isIncompleteThread = isIncompleteThread
+        self.isTemporary = isTemporary
+        self.isRepost = isRepost
+        self.repostIndexedAt = repostIndexedAt
+        self.smartFilterCollapseRuleID = smartFilterCollapseRuleID
+        self.isSmartFilterPending = isSmartFilterPending
+        self.intentHiddenRuleText = intentHiddenRuleText
+        self.isIntentDemoted = isIntentDemoted
+
+        var hasher = Hasher()
+        hasher.combine(serializedPost)
+        hasher.combine(serializedSliceItems)
+        hasher.combine(threadDisplayMode)
+        hasher.combine(threadPostCount)
+        hasher.combine(threadHiddenCount)
+        hasher.combine(isPartOfThread)
+        hasher.combine(isIncompleteThread)
+        hasher.combine(isTemporary)
+        hasher.combine(isRepost)
+        hasher.combine(repostIndexedAt)
+        hasher.combine(smartFilterCollapseRuleID)
+        hasher.combine(isSmartFilterPending)
+        hasher.combine(intentHiddenRuleText)
+        hasher.combine(isIntentDemoted)
+        self.precomputedHash = hasher.finalize()
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(precomputedHash)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.precomputedHash == rhs.precomputedHash
+            && lhs.serializedPost.count == rhs.serializedPost.count
+            && lhs.isPartOfThread == rhs.isPartOfThread
+            && lhs.isIncompleteThread == rhs.isIncompleteThread
+            && lhs.isTemporary == rhs.isTemporary
+            && lhs.isRepost == rhs.isRepost
+            && lhs.isSmartFilterPending == rhs.isSmartFilterPending
+            && lhs.isIntentDemoted == rhs.isIntentDemoted
+            && lhs.threadPostCount == rhs.threadPostCount
+            && lhs.threadHiddenCount == rhs.threadHiddenCount
+            && lhs.repostIndexedAt == rhs.repostIndexedAt
+            && lhs.threadDisplayMode == rhs.threadDisplayMode
+            && lhs.smartFilterCollapseRuleID == rhs.smartFilterCollapseRuleID
+            && lhs.intentHiddenRuleText == rhs.intentHiddenRuleText
+            && lhs.serializedSliceItems == rhs.serializedSliceItems
+            && lhs.serializedPost == rhs.serializedPost
     }
 }
 
@@ -55,7 +111,7 @@ final class FeedPostViewModel {
     
     /// The current post data
     private(set) var post: CachedFeedViewPost
-    private var contentSignature: FeedPostContentSignature
+    @ObservationIgnored private(set) var contentSignature: FeedPostContentSignature
     
     /// UI state that persists across cell reuse
     var isBookmarked = false
@@ -572,12 +628,15 @@ final class FeedPostViewModel {
         (try? post.feedViewPostBox)?.value.post.viewer?.bookmarked ?? false
     }
 
-    /// Formats date as time ago string
-    private func formatTimeAgo(from iso8601String: String) -> String {
+    private static let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        guard let date = formatter.date(from: iso8601String) else {
+        return formatter
+    }()
+
+    /// Formats date as time ago string
+    private func formatTimeAgo(from iso8601String: String) -> String {
+        guard let date = Self.iso8601Formatter.date(from: iso8601String) else {
             return "now"
         }
         

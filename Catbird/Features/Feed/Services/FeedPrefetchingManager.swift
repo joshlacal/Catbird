@@ -43,33 +43,43 @@ actor FeedPrefetchingManager {
   /// Cached display scale for image request building
   private var cachedDisplayScale: CGFloat?
 
-  private func currentDisplayScale() async -> CGFloat {
-    if let scale = cachedDisplayScale { return scale }
-    let scale = await MainActor.run {
+  private func currentPrefetchContext() async -> (policy: ModerationPolicy?, scale: CGFloat) {
+    let cachedScale = cachedDisplayScale
+    let (policy, scale) = await MainActor.run { () -> (ModerationPolicy?, CGFloat) in
+      let policy = AppStateManager.shared.lifecycle.appState?.moderationPolicy
+      if let cachedScale {
+        return (policy, cachedScale)
+      }
       #if os(iOS)
-      return UIScreen.main.scale
+      let resolvedScale = UIScreen.main.scale
       #elseif os(macOS)
-      return NSScreen.main?.backingScaleFactor ?? 2.0
+      let resolvedScale = NSScreen.main?.backingScaleFactor ?? 2.0
       #else
-      return 2.0
+      let resolvedScale = 2.0
       #endif
+      return (policy, resolvedScale)
     }
-    cachedDisplayScale = scale
-    return scale
+    if cachedDisplayScale == nil {
+      cachedDisplayScale = scale
+    }
+    return (policy, scale)
   }
 
-  private func shouldConcealAvatar(did: String?, labels: [ComAtprotoLabelDefs.Label]?) async -> Bool {
-    await MainActor.run {
-      AppStateManager.shared.lifecycle.appState?.moderationPolicy.concealsAvatar(did: did, labels: labels) ?? false
-    }
+  nonisolated private func shouldConcealAvatar(
+    did: String?,
+    labels: [ComAtprotoLabelDefs.Label]?,
+    policy: ModerationPolicy?
+  ) -> Bool {
+    policy?.concealsAvatar(did: did, labels: labels) ?? false
   }
 
-  private func isMediaFilteredOrBlurred(post: AppBskyFeedDefs.PostView) async -> Bool {
-    await MainActor.run {
-      guard let policy = AppStateManager.shared.lifecycle.appState?.moderationPolicy else { return false }
-      let media = policy.decide(post: post).ui(.contentMedia)
-      return media.filter || media.blur
-    }
+  nonisolated private func isMediaFilteredOrBlurred(
+    post: AppBskyFeedDefs.PostView,
+    policy: ModerationPolicy?
+  ) -> Bool {
+    guard let policy else { return false }
+    let media = policy.decide(post: post).ui(.contentMedia)
+    return media.filter || media.blur
   }
   // Initialize as private for singleton pattern
   private init() {}
@@ -134,20 +144,41 @@ actor FeedPrefetchingManager {
   /// Prefetch assets for cached feed view posts (used by collection view prefetching)
   /// - Parameter posts: Array of cached posts to prefetch assets for
   func prefetchAssets(for posts: [CachedFeedViewPost]) async {
-    for post in posts {
-      guard let feedViewPost = try? post.feedViewPost else { continue }
-      
+    guard !posts.isEmpty, !Task.isCancelled else { return }
+    let (decodedPosts, policy, scale) = await MainActor.run { () -> ([AppBskyFeedDefs.FeedViewPost], ModerationPolicy?, CGFloat) in
+      let decoded = posts.compactMap { try? $0.feedViewPost }
+      let policy = AppStateManager.shared.lifecycle.appState?.moderationPolicy
+      #if os(iOS)
+      let scale = UIScreen.main.scale
+      #elseif os(macOS)
+      let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+      #else
+      let scale = 2.0
+      #endif
+      return (decoded, policy, scale)
+    }
+    if cachedDisplayScale == nil {
+      cachedDisplayScale = scale
+    }
+
+    for feedViewPost in decodedPosts {
+      guard !Task.isCancelled else { return }
+
       // Prefetch avatar the row actually displays (ImageRequestFactory.avatar at 48pt)
-      await prefetchAvatarImageOptimized(for: feedViewPost.post.author)
-      
+      await prefetchAvatarImageOptimized(
+        for: feedViewPost.post.author,
+        policy: policy,
+        scale: scale
+      )
+
       // Skip embed images if media is blurred or filtered by moderation
-      if await isMediaFilteredOrBlurred(post: feedViewPost.post) {
+      if isMediaFilteredOrBlurred(post: feedViewPost.post, policy: policy) {
         continue
       }
-      
+
       // Prefetch embed images
       if let embed = feedViewPost.post.embed {
-        await prefetchEmbedContentOptimized(embed: embed)
+        await prefetchEmbedContentOptimized(embed: embed, policy: policy, scale: scale)
       }
     }
   }
@@ -157,16 +188,19 @@ actor FeedPrefetchingManager {
   ///   - post: The post to prefetch data for
   ///   - client: The ATProto client for making requests
   func prefetchPostData(post: AppBskyFeedDefs.FeedViewPost, client: ATProtoClient) async {
-    await prefetchAvatarImageOptimized(for: post.post.author)
+    guard !Task.isCancelled else { return }
+    let (policy, scale) = await currentPrefetchContext()
+    await prefetchAvatarImageOptimized(for: post.post.author, policy: policy, scale: scale)
 
-    if let embed = post.post.embed {
-      await prefetchEmbedContentOptimized(embed: embed)
+    if !isMediaFilteredOrBlurred(post: post.post, policy: policy),
+       let embed = post.post.embed {
+      await prefetchEmbedContentOptimized(embed: embed, policy: policy, scale: scale)
     }
 
     if let reply = post.reply {
       switch reply.parent {
       case .appBskyFeedDefsPostView(let parentPost):
-        await prefetchAvatarImageOptimized(for: parentPost.author)
+        await prefetchAvatarImageOptimized(for: parentPost.author, policy: policy, scale: scale)
       default:
         break
       }
@@ -174,19 +208,25 @@ actor FeedPrefetchingManager {
   }
 
   func prefetchPostData(post: AppBskyFeedDefs.PostView, client: ATProtoClient) async {
-    await prefetchAvatarImageOptimized(for: post.author)
+    guard !Task.isCancelled else { return }
+    let (policy, scale) = await currentPrefetchContext()
+    await prefetchAvatarImageOptimized(for: post.author, policy: policy, scale: scale)
     
-    if let embed = post.embed {
-      await prefetchEmbedContentOptimized(embed: embed)
+    if !isMediaFilteredOrBlurred(post: post, policy: policy),
+       let embed = post.embed {
+      await prefetchEmbedContentOptimized(embed: embed, policy: policy, scale: scale)
     }
   }
 
   func prefetchPostData(post: AppBskyEmbedRecord.ViewRecord, client: ATProtoClient) async {
-    await prefetchAvatarImageOptimized(for: post.author)
+    guard !Task.isCancelled else { return }
+    let (policy, scale) = await currentPrefetchContext()
+    await prefetchAvatarImageOptimized(for: post.author, policy: policy, scale: scale)
     
     if let embeds = post.embeds {
       for embed in embeds {
-        await prefetchRecordEmbed(embed)
+        guard !Task.isCancelled else { return }
+        await prefetchRecordEmbed(embed, policy: policy, scale: scale)
       }
     }
   }
@@ -201,6 +241,8 @@ actor FeedPrefetchingManager {
   
   /// Prefetch assets with priority-based scheduling
   private func prefetchAssetsWithPriority(for posts: [AppBskyFeedDefs.FeedViewPost], priority: Int) async {
+    guard !posts.isEmpty, !Task.isCancelled else { return }
+    let (policy, scale) = await currentPrefetchContext()
     // Limit concurrent tasks based on priority
     let maxConcurrentTasks = min(priority * 3, 10) // Higher priority = more concurrent tasks
     
@@ -208,6 +250,7 @@ actor FeedPrefetchingManager {
       var activeTasks = 0
       
       for post in posts {
+        guard !Task.isCancelled else { break }
         // Rate limiting: don't overwhelm the system
         if activeTasks >= maxConcurrentTasks {
           await group.next() // Wait for a task to complete
@@ -215,12 +258,14 @@ actor FeedPrefetchingManager {
         }
         
         group.addTask {
+          guard !Task.isCancelled else { return }
           // Prefetch avatar image if not already cached
-          await self.prefetchAvatarImageOptimized(for: post.post.author)
+          await self.prefetchAvatarImageOptimized(for: post.post.author, policy: policy, scale: scale)
 
           // Prefetch embedded content if present
-          if let embed = post.post.embed {
-            await self.prefetchEmbedContentOptimized(embed: embed)
+          if !self.isMediaFilteredOrBlurred(post: post.post, policy: policy),
+             let embed = post.post.embed {
+            await self.prefetchEmbedContentOptimized(embed: embed, policy: policy, scale: scale)
           }
         }
         activeTasks += 1
@@ -230,20 +275,25 @@ actor FeedPrefetchingManager {
 
   /// Prefetch avatar image for a user profile
   private func prefetchAvatarImage(for profile: AppBskyActorDefs.ProfileViewBasic) async {
-    await prefetchAvatarImageOptimized(for: profile)
+    let (policy, scale) = await currentPrefetchContext()
+    await prefetchAvatarImageOptimized(for: profile, policy: policy, scale: scale)
   }
   
   /// Optimized avatar image prefetching with display-size request and moderation gating
-  private func prefetchAvatarImageOptimized(for profile: AppBskyActorDefs.ProfileViewBasic) async {
+  private func prefetchAvatarImageOptimized(
+    for profile: AppBskyActorDefs.ProfileViewBasic,
+    policy: ModerationPolicy?,
+    scale: CGFloat
+  ) async {
+    guard !Task.isCancelled else { return }
     // P224: Gate on moderation policy so blurred avatars are not downloaded
-    if await shouldConcealAvatar(did: profile.did.didString(), labels: profile.labels) {
+    if shouldConcealAvatar(did: profile.did.didString(), labels: profile.labels, policy: policy) {
       return
     }
 
     let rawURL = profile.finalAvatarURL() ?? profile.avatar.flatMap { URL(string: $0.uriString()) }
     guard let rawURL else { return }
 
-    let scale = await currentDisplayScale()
     guard let request = ImageRequestFactory.avatar(rawURL, pointSize: Self.feedRowAvatarSize, scale: scale) else {
       return
     }
@@ -266,7 +316,12 @@ actor FeedPrefetchingManager {
     }
   }
 
-  private func prefetchRecordEmbed(_ embed: AppBskyEmbedRecord.ViewRecordEmbedsUnion) async {
+  private func prefetchRecordEmbed(
+    _ embed: AppBskyEmbedRecord.ViewRecordEmbedsUnion,
+    policy: ModerationPolicy?,
+    scale: CGFloat
+  ) async {
+    guard !Task.isCancelled else { return }
     switch embed {
     case .appBskyEmbedImagesView(let imagesView):
       let imageURLs = imagesView.images.compactMap { URL(string: $0.thumb.uriString()) }
@@ -285,7 +340,7 @@ actor FeedPrefetchingManager {
     case .appBskyEmbedRecordView(let recordView):
       switch recordView.record {
       case .appBskyEmbedRecordViewRecord(let record):
-        await prefetchAvatarImageOptimized(for: record.author)
+        await prefetchAvatarImageOptimized(for: record.author, policy: policy, scale: scale)
       default:
         break
       }
@@ -314,12 +369,18 @@ actor FeedPrefetchingManager {
   }
   /// Prefetch content for post embeds
   private func prefetchEmbedContent(embed: AppBskyFeedDefs.PostViewEmbedUnion) async {
-    await prefetchEmbedContentOptimized(embed: embed)
+    let (policy, scale) = await currentPrefetchContext()
+    await prefetchEmbedContentOptimized(embed: embed, policy: policy, scale: scale)
   }
   
   
   /// Optimized embed content prefetching with deduplication
-  private func prefetchEmbedContentOptimized(embed: AppBskyFeedDefs.PostViewEmbedUnion) async {
+  private func prefetchEmbedContentOptimized(
+    embed: AppBskyFeedDefs.PostViewEmbedUnion,
+    policy: ModerationPolicy?,
+    scale: CGFloat
+  ) async {
+    guard !Task.isCancelled else { return }
     switch embed {
     case .appBskyEmbedImagesView(let imagesView):
       let imageURLs = imagesView.images.compactMap { URL(string: $0.thumb.uriString()) }
@@ -341,7 +402,7 @@ actor FeedPrefetchingManager {
     case .appBskyEmbedRecordView(let recordView):
       switch recordView.record {
       case .appBskyEmbedRecordViewRecord(let record):
-        await prefetchAvatarImageOptimized(for: record.author)
+        await prefetchAvatarImageOptimized(for: record.author, policy: policy, scale: scale)
       default:
         break
       }
