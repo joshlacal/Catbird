@@ -12,12 +12,13 @@ import Testing
 enum FeedRowTestPosts {
   /// A timeline entry for one text post. The optional parameters switch on the
   /// features the native-row classifier looks at; every default is a plain post.
+  /// `postKey` is the record key of the post's URI, so tests can tell two fixture posts apart.
   static func cachedPost(
     text: String = "Feed fixture", likeCount: Int = 0, displayName: String = "Fixture",
     langs: [String]? = nil, withImageEmbed: Bool = false, asReply: Bool = false,
     asRepost: Bool = false, asPin: Bool = false, tags: [String]? = nil, pronouns: String? = nil,
     selfDeclaredBot: Bool = false, pinned: Bool = false, authorBlockedViewer: Bool = false,
-    authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil
+    authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil, postKey: String = "one"
   ) throws -> CachedFeedViewPost {
     let did = try DID(didString: "did:plc:fixture")
     let viewer = authorBlockedViewer ? AppBskyActorDefs.ViewerState(blockedBy: true) : nil
@@ -34,7 +35,7 @@ enum FeedRowTestPosts {
       pronouns: pronouns, avatar: nil, associated: nil, viewer: viewer, labels: labels,
       createdAt: nil, verification: nil, status: status, debug: nil)
     let post = try postView(
-      uri: "at://did:plc:fixture/app.bsky.feed.post/one", text: text, likeCount: likeCount,
+      uri: "at://did:plc:fixture/app.bsky.feed.post/\(postKey)", text: text, likeCount: likeCount,
       author: author, langs: langs, tags: tags, facets: facets,
       embed: withImageEmbed ? imageEmbed : nil,
       viewerState: pinned ? AppBskyFeedDefs.ViewerState(pinned: true) : nil)
