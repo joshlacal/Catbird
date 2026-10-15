@@ -41,7 +41,10 @@ struct UnifiedProfileContentView: View {
       PostListCollectionView(
         boxedPosts: currentBoxedPosts,
         headerView: AnyView(profileHeaderView),
-        emptyView: nil,
+        pinnedHeaderView: AnyView(profileTabPicker),
+        // Labeler info, More, and the loading and empty states. Each shows only while the
+        // tab has no rows, so it sits under the picker in the rows' place.
+        emptyView: AnyView(VStack(spacing: 0) { tabContent }),
         hasMore: currentHasMore,
         isLoadingMore: currentIsLoadingMore,
         footerState: currentFooterState,
@@ -149,8 +152,6 @@ struct UnifiedProfileContentView: View {
 
   @ViewBuilder
   private var profileHeaderView: some View {
-    @Bindable var viewModel = viewModel
-
     VStack(spacing: 0) {
       ProfileBannerHeader(
         bannerURL: profile.banner.flatMap { URL(string: $0.uriString()) },
@@ -195,26 +196,31 @@ struct UnifiedProfileContentView: View {
         .frame(maxWidth: contentMaxWidth, alignment: .center)
         .frame(maxWidth: .infinity, alignment: .center)
       }
-
-      ProfileTabSelector(
-        path: $navigationPath,
-        selectedTab: $viewModel.selectedProfileTab,
-        onTabChange: onTabChange,
-        isLabeler: viewModel.isLabeler
-      )
-      .padding(.top, 12)
-      .padding(.horizontal, 16)
-      .frame(maxWidth: contentMaxWidth, alignment: .center)
-      .frame(maxWidth: .infinity, alignment: .center)
-
-      tabContentInHeader
     }
     .frame(maxWidth: .infinity, alignment: .center)
     .environment(headerGeometry)
   }
 
+  /// Under the profile information, and pinned below the navigation bar once scrolled up to it.
   @ViewBuilder
-  private var tabContentInHeader: some View {
+  private var profileTabPicker: some View {
+    @Bindable var viewModel = viewModel
+
+    ProfileTabSelector(
+      path: $navigationPath,
+      selectedTab: $viewModel.selectedProfileTab,
+      onTabChange: onTabChange,
+      isLabeler: viewModel.isLabeler
+    )
+    .padding(.top, 12)
+    .padding(.bottom, 8)
+    .padding(.horizontal, 16)
+    .frame(maxWidth: contentMaxWidth, alignment: .center)
+    .frame(maxWidth: .infinity, alignment: .center)
+  }
+
+  @ViewBuilder
+  private var tabContent: some View {
     switch viewModel.selectedProfileTab {
     case .labelerInfo:
       if let labelerDetails = viewModel.labelerDetails {

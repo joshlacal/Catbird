@@ -15,7 +15,7 @@ enum ProfilePostsTabLoading {
   }
 
   /// The list footer under a profile post tab. An empty tab already shows its spinner in the
-  /// header, so the footer stays hidden until there is a row to page after.
+  /// rows' place, so the footer stays hidden until there is a row to page after.
   static func footerState(hasMore: Bool, isLoadingMore: Bool, listIsEmpty: Bool) -> PostListFooterState {
     hasMore && isLoadingMore && !listIsEmpty ? .loading : .hidden
   }
