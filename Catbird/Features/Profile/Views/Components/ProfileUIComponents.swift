@@ -16,7 +16,8 @@ struct ProfileTabSelector: View {
     }
     
     var body: some View {
-        Picker("", selection: $selectedTab) {
+        // Named for VoiceOver; the segments are the visible labels.
+        Picker("Profile sections", selection: $selectedTab) {
             ForEach(sections, id: \.self) { section in
                 if section == .more {
                     Text("More")
@@ -26,6 +27,9 @@ struct ProfileTabSelector: View {
                 }
             }
         }
+        .labelsHidden()
+        // labelsHidden() also takes the name off the segmented control's accessibility element.
+        .accessibilityLabel("Profile sections")
         .profileTabPickerStyle()
         .accessibilityIdentifier("profileTabPicker")
         .onChange(of: selectedTab) { _, newValue in
