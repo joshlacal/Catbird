@@ -554,8 +554,13 @@ actor ScriptedVideoTransport: VideoMultipartTransporting {
   private var onJob: (@Sendable () async throws -> Void)?
   private let onAbort: (@Sendable () async throws -> Void)?
   private let abortResult: AppBskyVideoAbortUpload.Output
-  private let partCount: Int
+  private let partSizeBytes: Int
+  private let partCount: Int?
+  private let reportsReceivedParts: Bool
+  private var plannedPartCount = 0
+  private var receivedBytes: [Int: Data] = [:]
   private(set) var startCount = 0
+  private(set) var starts: [AppBskyVideoStartUpload.Input] = []
   private(set) var statusCount = 0
   private(set) var finishCount = 0
   private(set) var abortCount = 0
@@ -567,29 +572,45 @@ actor ScriptedVideoTransport: VideoMultipartTransporting {
        onPart: (@Sendable () async throws -> Void)? = nil,
        onJob: (@Sendable () async throws -> Void)? = nil,
        onAbort: (@Sendable () async throws -> Void)? = nil,
-       abortResult: AppBskyVideoAbortUpload.Output = .init(state: "aborted"), partCount: Int = 3) {
+       abortResult: AppBskyVideoAbortUpload.Output = .init(state: "aborted"),
+       partSizeBytes: Int = 4, partCount: Int? = 3, reportsReceivedParts: Bool = false) {
     self.statuses = statuses; self.finishes = finishes; self.jobs = jobs
     self.startFailure = startFailure; self.onPart = onPart; self.onJob = onJob
     self.onAbort = onAbort; self.abortResult = abortResult
+    self.partSizeBytes = partSizeBytes
     self.partCount = partCount
+    self.reportsReceivedParts = reportsReceivedParts
+  }
+  /// Parts the service acknowledged, in part order: the bytes a real upload would store.
+  func uploaded() -> Data {
+    receivedBytes.keys.sorted().reduce(into: Data()) { $0.append(receivedBytes[$1]!) }
   }
   func failPart(_ number: Int, with errors: [Error]) { partFailures[number] = errors }
   func replaceJobs(_ values: [Result<AppBskyVideoDefs.JobStatus, Error>]) { jobs = values }
   func replaceJobHook(_ hook: (@Sendable () async throws -> Void)?) { onJob = hook }
   func start(input: AppBskyVideoStartUpload.Input) async throws -> AppBskyVideoStartUpload.Output {
     startCount += 1
+    starts.append(input)
     if let startFailure { throw startFailure }
-    return .init(jobId: "upload", partSizeBytes: 4, partCount: partCount, expiresAt: ATProtocolDate(date: VideoMultipartUploadChecks.expiry))
+    // nil plans the parts the started size needs, as the service does.
+    plannedPartCount = partCount ?? 1 + (input.sizeBytes - 1) / partSizeBytes
+    return .init(jobId: "upload", partSizeBytes: partSizeBytes, partCount: plannedPartCount, expiresAt: ATProtocolDate(date: VideoMultipartUploadChecks.expiry))
   }
   func uploadPart(jobID: String, partNumber: Int, fileURL: URL, byteCount: Int, onProgress: (@Sendable (Int64) -> Void)?) async throws -> AppBskyVideoUploadPart.Output {
     let bytes = try Data(contentsOf: fileURL)
     parts.append(SentPart(number: partNumber, bytes: bytes))
     try await onPart?()
     if partFailures[partNumber]?.isEmpty == false { throw partFailures[partNumber]!.removeFirst() }
+    receivedBytes[partNumber] = bytes
     return .init(partNumber: partNumber, sizeBytes: bytes.count)
   }
   func status(jobID: String) async throws -> AppBskyVideoGetUploadStatus.Output {
     statusCount += 1
+    if statuses.isEmpty, reportsReceivedParts {
+      return .init(jobId: "upload", partSizeBytes: partSizeBytes, partCount: plannedPartCount,
+                   receivedParts: receivedBytes.keys.sorted(),
+                   expiresAt: ATProtocolDate(date: VideoMultipartUploadChecks.expiry), state: "created")
+    }
     guard let first = statuses.first else { throw CheckFailure("Unexpected upload status request") }
     if statuses.count > 1 { statuses.removeFirst() }
     return try first.get()

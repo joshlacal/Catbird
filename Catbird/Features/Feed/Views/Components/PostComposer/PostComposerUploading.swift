@@ -1,4 +1,3 @@
-import AVFoundation
 import Foundation
 import os
 import Petrel
@@ -191,22 +190,6 @@ extension PostComposerViewModel {
                     url: videoURL, alt: videoItem.altText, owner: owner,
                     isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
                 )
-            } else if let videoAsset = videoItem.rawVideoAsset {
-                logger.debug("DEBUG: Using AVAsset for video upload")
-
-                let tempDir = FileManager.default.temporaryDirectory
-                let tempFileName = "export_video_\(UUID().uuidString).mp4"
-                let tempFileURL = tempDir.appendingPathComponent(tempFileName)
-
-                logger.debug("DEBUG: Exporting asset to temporary file: \(tempFileURL.path)")
-                let _ = try await exportAsset(videoAsset, to: tempFileURL)
-                guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
-
-                logger.debug("DEBUG: Asset export successful, uploading from: \(tempFileURL.path)")
-                blob = try await mediaUploadManager.uploadVideo(
-                    url: tempFileURL, alt: videoItem.altText, owner: owner,
-                    isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
-                )
             } else if let videoData = videoItem.videoData {
                 logger.debug("DEBUG: Using Data for video upload, size: \(videoData.count) bytes")
 
@@ -258,36 +241,6 @@ extension PostComposerViewModel {
         )
     }
 
-    private func exportAsset(_ asset: AVAsset, to outputURL: URL) async throws -> AVAssetExportSession {
-        logger.debug("DEBUG: Creating export session")
-        guard let exportSession = AVAssetExportSession(
-            asset: asset,
-            presetName: AVAssetExportPresetHighestQuality
-        ) else {
-            logger.error("ERROR: Could not create export session")
-            throw NSError(
-                domain: "VideoExportError",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Could not create export session for video"]
-            )
-        }
-
-        logger.debug("DEBUG: Starting export operation")
-        let preparation = MediaPreviewLoadAttempt(timeout: .seconds(120))
-        defer { preparation.cancel() }
-        do {
-            try await preparation.value {
-                try await exportSession.export(to: outputURL, as: .mp4)
-            }
-            logger.debug("DEBUG: Export completed successfully")
-        } catch {
-            logger.debug("DEBUG: Export failed with error: \(error)")
-            throw error
-        }
-
-        return exportSession
-    }
-    
     private static func startImagePreparation(
         _ data: Data
     ) -> Task<ComposerImagePreparation.PreparedUpload, Error> {

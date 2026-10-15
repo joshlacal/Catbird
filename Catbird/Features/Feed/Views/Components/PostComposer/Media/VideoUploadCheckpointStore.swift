@@ -77,11 +77,11 @@ actor VideoUploadCheckpointStore {
     else { throw VideoUploadFileError.invalidSource }
     let directory = try directory(for: owner)
     let existing = try load(owner: owner)
-    let original = try fingerprint(sourceURL)
+    let original = try Self.fingerprint(sourceURL)
     if var existing {
       guard existing.owner == owner else { throw VideoUploadFileError.ownerChanged }
       if existing.sizeBytes == original.count, existing.sha256 == original.digest, existing.mimeType == mimeType {
-        let snapshot = try fingerprint(try snapshotURL(for: existing))
+        let snapshot = try Self.fingerprint(try snapshotURL(for: existing))
         guard snapshot.count == existing.sizeBytes, snapshot.digest == existing.sha256
         else { throw VideoUploadFileError.snapshotChanged }
         try Task.checkCancellation()
@@ -100,7 +100,7 @@ actor VideoUploadCheckpointStore {
     let destination = directory.appendingPathComponent(snapshotName)
     // APFS copy-on-write clonefile avoids duplicating disk space and memory (P177)
     try fileManager.copyItem(at: sourceURL, to: destination)
-    let copied = try fingerprint(destination)
+    let copied = try Self.fingerprint(destination)
     guard copied.digest == original.digest, copied.count == original.count
     else { throw VideoUploadFileError.sourceChanged }
     try fileManager.setAttributes([.posixPermissions: 0o400], ofItemAtPath: destination.path)
@@ -221,7 +221,8 @@ actor VideoUploadCheckpointStore {
     return try directory(for: checkpoint.owner).appendingPathComponent(checkpoint.snapshotName)
   }
 
-  private func fingerprint(_ url: URL) throws -> (count: Int, digest: String) {
+  /// Size and SHA-256 of a local, fully downloaded file. Uses no actor state.
+  static func fingerprint(_ url: URL) throws -> (count: Int, digest: String) {
     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .ubiquitousItemDownloadingStatusKey])
     guard values.isRegularFile == true, let size = values.fileSize, size > 0,
       values.ubiquitousItemDownloadingStatus != .notDownloaded
