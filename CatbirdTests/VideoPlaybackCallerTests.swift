@@ -218,16 +218,28 @@ struct VideoPlaybackCallerTests {
 
     let window = host(makeView())
     defer { window.isHidden = true; window.rootViewController = nil }
-    try await eventually { registeredPlayers.count == 1 }
+    // Each appearance prepares and registers exactly one player. The counts are checked after the
+    // view settles rather than waited for, so an extra setup fails here with the counts it reached.
+    try await eventually(observing: "\(preparedPlayers.count) prepared, \(registeredPlayers.count) registered") {
+      !registeredPlayers.isEmpty
+    }
+    await settle(window)
+    #expect(preparedPlayers.count == 1, "the first appearance prepares one player")
+    #expect(registeredPlayers.count == 1, "the first appearance registers one player")
     window.rootViewController = UIHostingController(rootView: Color.clear)
     await settle(window)
+    #expect(preparedPlayers.count == 1, "the removed view prepares no further player")
     #expect(model.isMuted == isMuted)
     #expect(model.volume == expectedVolume)
 
     window.rootViewController = UIHostingController(rootView: makeView())
     await settle(window)
-    try await eventually { registeredPlayers.count == 2 }
-    #expect(preparedPlayers.count == 2)
+    try await eventually(observing: "\(preparedPlayers.count) prepared, \(registeredPlayers.count) registered") {
+      registeredPlayers.count >= 2
+    }
+    await settle(window)
+    #expect(preparedPlayers.count == 2, "the recreated view prepares one new player")
+    #expect(registeredPlayers.count == 2, "the recreated view registers its new player")
     #expect(preparedPlayers[0] !== preparedPlayers[1])
     #expect(model.isMuted == isMuted)
     #expect(model.volume == expectedVolume)
@@ -316,15 +328,26 @@ struct VideoPlaybackCallerTests {
     }
   }
 
+  /// Waits for a production callback, bounded by wall time so the budget does not depend on how
+  /// fast a loaded host polls. A timeout reports the caller's line and the state it observed.
   private func eventually(
-    _ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation
+    timeout: Duration = .seconds(10),
+    observing state: @autoclosure () -> String = "",
+    sourceLocation: SourceLocation = #_sourceLocation,
+    _ condition: () -> Bool
   ) async throws {
-    for _ in 0..<1_000 {
-      if condition() { return }
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while !condition() {
+      guard clock.now < deadline else {
+        let observed = state()
+        let message = "The production video callback did not reach the expected state within \(timeout)"
+          + (observed.isEmpty ? "" : "; observed \(observed)")
+        Issue.record(Comment(rawValue: message), sourceLocation: sourceLocation)
+        throw CallerFixtureError.timeout
+      }
       try await Task.sleep(for: .milliseconds(1))
     }
-    Issue.record("The production video callback did not reach the expected state", sourceLocation: sourceLocation)
-    throw CallerFixtureError.timeout
   }
 }
 
