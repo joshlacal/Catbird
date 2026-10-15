@@ -48,12 +48,10 @@ struct NativeFeedRowModerationPolicyTests {
 
   // MARK: - Helpers
 
-  /// The server changes the account's labeler subscriptions and the app fetches them, as the
-  /// preferences poll does. A forced fetch within a few seconds of the last one reuses that read
-  /// unless the preference session changed, so the fetch starts a new session with the same client.
+  /// The server changes the account's labeler subscriptions and the app reads them through the
+  /// forced preferences refresh, which always reads the server.
   private static func serverSubscribes(to labelers: [String], account: ModerationStateAccount) async throws {
     account.server.setPreferences(adultContentEnabled: false, labelerDIDs: labelers)
-    account.appState.preferencesManager.updateClient(account.client)
     try await account.appState.preferencesManager.fetchPreferences(forceRefresh: true)
     await account.appState.awaitModerationDefinitionsLoad()
   }
