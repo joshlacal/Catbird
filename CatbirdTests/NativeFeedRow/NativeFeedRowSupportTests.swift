@@ -195,7 +195,7 @@ struct NativeFeedRowSupportTests {
   @Test("An author who blocked the viewer shows the blocked card, so the post is hosted")
   func blockedByAuthorHosts() throws {
     let post = try FeedRowTestPosts.cachedPost(text: "x", langs: ["en"], authorBlockedViewer: true)
-    #expect(classify(post) == .hosted(.moderation))
+    #expect(classify(post) == .hosted(.blockedAuthor))
   }
 
   @Test("A concealed avatar is hosted")
@@ -212,7 +212,52 @@ struct NativeFeedRowSupportTests {
   @Test("An author who is live shows the avatar ring, so the post is hosted")
   func liveAuthorHosts() throws {
     let post = try FeedRowTestPosts.cachedPost(text: "x", langs: ["en"], authorIsLive: true)
-    #expect(classify(post) == .hosted(.avatarConcealment))
+    #expect(classify(post) == .hosted(.liveStatus))
+  }
+
+  // MARK: - Custom facets
+
+  /// A `blue.moji.richtext.facet` over `:cat:`, a feature Petrel decodes as `.unexpected`.
+  private func bluemojiFacet() -> AppBskyRichtextFacet {
+    AppBskyRichtextFacet(
+      index: AppBskyRichtextFacet.ByteSlice(byteStart: 3, byteEnd: 8),
+      features: [
+        .unexpected(.object([
+          "$type": .string("blue.moji.richtext.facet"),
+          "name": .string(":cat:"),
+          "formats": .object(["png_128": .string("bafkreifixture")]),
+        ]))
+      ])
+  }
+
+  @Test("A Bluemoji facet is hosted, since the native text would show its alias")
+  func customFacetHosts() throws {
+    let post = try FeedRowTestPosts.cachedPost(text: "hi :cat:", langs: ["en"], facets: [bluemojiFacet()])
+    #expect(classify(post) == .hosted(.customFacet))
+  }
+
+  @Test("A custom facet next to a link facet is still hosted")
+  func customFacetBesideLinkHosts() throws {
+    let link = AppBskyRichtextFacet(
+      index: AppBskyRichtextFacet.ByteSlice(byteStart: 0, byteEnd: 2),
+      features: [.appBskyRichtextFacetLink(AppBskyRichtextFacet.Link(uri: URI(uriString: "https://example.test")))])
+    let post = try FeedRowTestPosts.cachedPost(text: "hi :cat:", langs: ["en"], facets: [link, bluemojiFacet()])
+    #expect(classify(post) == .hosted(.customFacet))
+  }
+
+  @Test("Link, mention and tag facets stay native")
+  func standardFacetsAreNative() throws {
+    let slice = AppBskyRichtextFacet.ByteSlice(byteStart: 0, byteEnd: 2)
+    let features: [AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion] = [
+      .appBskyRichtextFacetLink(AppBskyRichtextFacet.Link(uri: URI(uriString: "https://example.test"))),
+      .appBskyRichtextFacetMention(AppBskyRichtextFacet.Mention(did: try DID(didString: "did:plc:mention"))),
+      .appBskyRichtextFacetTag(AppBskyRichtextFacet.Tag(tag: "swift")),
+    ]
+    for feature in features {
+      let facet = AppBskyRichtextFacet(index: slice, features: [feature])
+      let post = try FeedRowTestPosts.cachedPost(text: "hi there", langs: ["en"], facets: [facet])
+      #expect(classify(post) == .native)
+    }
   }
 
   // MARK: - Language

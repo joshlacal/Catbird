@@ -16,15 +16,19 @@ enum NativeFeedRowSupport: Equatable {
   enum Reason: String, Equatable {
     case disabled, decodeFailed, recordNotPost, embed, replyContext, reason, threadSlice, rowFilter,
       pendingClassification, moderation, avatarConcealment, translationOffered, languageIndicator,
-      readingTime, tags, pronouns, automated, pinned
+      readingTime, tags, pronouns, automated, pinned, customFacet, liveStatus, blockedAuthor
   }
 
   /// The inputs the classifier cannot read from the post. The device language is
-  /// passed in, never read from `Locale.current`, so a classification is a pure
-  /// function of its arguments.
+  /// passed in, never read from `Locale.current`. A classification is still not a
+  /// pure function of its arguments: the live-status check compares the status
+  /// expiry with the current date, so the same post can classify differently
+  /// once its live status lapses.
   struct Settings: Equatable, Sendable {
     let isEnabled: Bool
-    /// Base language code of the device (`Locale.current.language.languageCode`).
+    /// Base language code of the device, computed as
+    /// `Locale.current.language.baseLanguageCode?.lowercased() ?? "en"`, which is how
+    /// `Post.swift` derives its translation target.
     let deviceLanguageCode: String
     /// The account's content languages (`appSettings.contentLanguages`).
     let preferredContentLanguages: Set<String>
@@ -42,7 +46,8 @@ extension NativeFeedRowSupport {
   ///   `FeedEntryContent.isRepost` and `showsPinnedBadge`)
   /// - Smart Filter and intent states: `FeedPostRow`
   /// - moderation gates, chips, the hidden row and avatar placeholder: `PostContentLayout`
-  /// - translation button, language indicator and tags: `Post`
+  /// - translation button, language indicator, tags and custom facets (Bluemoji): `Post`
+  /// - blocked-content card: `PostView.detectPostError`; live ring: `AuthorAvatarColumn`
   /// - reading time, pronouns and the automated badge: `PostContentLayout.postHeader`
   static func classify(
     _ cached: CachedFeedViewPost, moderation: PostModerationPresentation, settings: Settings
@@ -62,14 +67,14 @@ extension NativeFeedRowSupport {
       return .hosted(.rowFilter)
     }
     if cached.isSmartFilterPending { return .hosted(.pendingClassification) }
-    if showsBlockedCard(for: item.post.author) { return .hosted(.moderation) }
+    if showsBlockedCard(for: item.post.author) { return .hosted(.blockedAuthor) }
     if moderation.hidesRow || moderation.concealsBody || !moderation.chips.isEmpty {
       return .hosted(.moderation)
     }
-    if moderation.concealsAvatar || item.post.author.status?.isLiveNow == true {
-      return .hosted(.avatarConcealment)
-    }
+    if moderation.concealsAvatar { return .hosted(.avatarConcealment) }
+    if item.post.author.status?.isLiveNow == true { return .hosted(.liveStatus) }
     if item.post.viewer?.pinned == true { return .hosted(.pinned) }
+    if hasCustomFacet(post) { return .hosted(.customFacet) }
 
     let languages = (post.langs ?? []).map { $0.lang.baseLanguageCode?.lowercased() }
     if offersTranslation(text: post.text, languages: languages, settings: settings) {
@@ -88,6 +93,18 @@ extension NativeFeedRowSupport {
   }
 
   // MARK: - Conditions
+
+  /// `Post` enriches facet features Petrel does not model (`blue.moji.richtext.facet`)
+  /// into inline emoji images. `FeedPostTextBuilder` copies only link runs, so a
+  /// post carrying any such feature would show its `:alias:` text instead.
+  private static func hasCustomFacet(_ post: AppBskyFeedPost) -> Bool {
+    post.facets?.contains { facet in
+      facet.features.contains { feature in
+        if case .unexpected = feature { return true }
+        return false
+      }
+    } ?? false
+  }
 
   /// `PostView.detectPostError` replaces the post with the blocked-content card
   /// when the author blocked the viewer. The viewer's own blocks are never

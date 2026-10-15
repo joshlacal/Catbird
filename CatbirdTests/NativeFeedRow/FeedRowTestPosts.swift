@@ -17,7 +17,7 @@ enum FeedRowTestPosts {
     langs: [String]? = nil, withImageEmbed: Bool = false, asReply: Bool = false,
     asRepost: Bool = false, asPin: Bool = false, tags: [String]? = nil, pronouns: String? = nil,
     selfDeclaredBot: Bool = false, pinned: Bool = false, authorBlockedViewer: Bool = false,
-    authorIsLive: Bool = false
+    authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil
   ) throws -> CachedFeedViewPost {
     let did = try DID(didString: "did:plc:fixture")
     let viewer = authorBlockedViewer ? AppBskyActorDefs.ViewerState(blockedBy: true) : nil
@@ -35,14 +35,15 @@ enum FeedRowTestPosts {
       createdAt: nil, verification: nil, status: status, debug: nil)
     let post = try postView(
       uri: "at://did:plc:fixture/app.bsky.feed.post/one", text: text, likeCount: likeCount,
-      author: author, langs: langs, tags: tags, embed: withImageEmbed ? imageEmbed : nil,
+      author: author, langs: langs, tags: tags, facets: facets,
+      embed: withImageEmbed ? imageEmbed : nil,
       viewerState: pinned ? AppBskyFeedDefs.ViewerState(pinned: true) : nil)
 
     var reply: AppBskyFeedDefs.ReplyRef?
     if asReply {
       let parent = try postView(
         uri: "at://did:plc:fixture/app.bsky.feed.post/parent", text: "Parent", likeCount: 0,
-        author: author, langs: nil, tags: nil, embed: nil, viewerState: nil)
+        author: author, langs: nil, tags: nil, facets: nil, embed: nil, viewerState: nil)
       reply = AppBskyFeedDefs.ReplyRef(root: .appBskyFeedDefsPostView(parent), parent: .appBskyFeedDefsPostView(parent))
     }
     var reason: AppBskyFeedDefs.FeedViewPostReasonUnion?
@@ -83,11 +84,11 @@ enum FeedRowTestPosts {
 
   private static func postView(
     uri: String, text: String, likeCount: Int, author: AppBskyActorDefs.ProfileViewBasic,
-    langs: [String]?, tags: [String]?, embed: AppBskyFeedDefs.PostViewEmbedUnion?,
+    langs: [String]?, tags: [String]?, facets: [AppBskyRichtextFacet]?, embed: AppBskyFeedDefs.PostViewEmbedUnion?,
     viewerState: AppBskyFeedDefs.ViewerState?
   ) throws -> AppBskyFeedDefs.PostView {
     let record = AppBskyFeedPost(
-      text: text, entities: nil, facets: nil, reply: nil, embed: nil,
+      text: text, entities: nil, facets: facets, reply: nil, embed: nil,
       langs: langs?.map { LanguageCodeContainer(languageCode: $0) }, labels: nil, tags: tags,
       createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)))
     return AppBskyFeedDefs.PostView(
