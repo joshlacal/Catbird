@@ -1,4 +1,3 @@
-import CoreFoundation
 import Foundation
 @testable import Petrel
 import Testing
@@ -10,6 +9,11 @@ import Testing
 /// next page of Lists, or the starter-pack refresh after creating one) used to make the next
 /// section's first load return without loading, and that section showed "No Feeds" until pull
 /// to refresh.
+///
+/// Two copies of one section share it too. A copy whose first load finds that section's first
+/// load in flight waits for it, and loads itself only if that load failed or was cancelled; it
+/// used to return at once and, when that load then failed, stay empty until its next
+/// appearance. A first load that finds a next page in flight stops it and loads the first page.
 @Suite("Profile section loading", .serialized)
 @MainActor
 struct ProfileSectionLoadingTests {
@@ -43,22 +47,252 @@ struct ProfileSectionLoadingTests {
     #expect(Self.count(of: paging, in: viewModel) == 2)
   }
 
-  // MARK: - Helpers
+  // MARK: - Two copies of one section
 
-  private static func makeLoadedViewModel(server: ProfileSectionStubServer) async throws -> ProfileViewModel {
+  @Test("A copy that finds its section loading waits for that load and shows its content", arguments: Section.allCases)
+  func copyWaitsForTheLoadInFlight(section: Section) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    server.holdNextFirstPage(of: section, answering: 200)
+
+    let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
+    let second = try await Self.startWaitingCopy(of: section, on: viewModel)
+
+    server.releaseHeldPages()
+    try await first.value
+    // The section's content was there when the second copy's load returned, from one request.
+    #expect(try await second.value == 1)
+    #expect(server.requestCount(section) == 1)
+  }
+
+  @Test("Copies that waited for a load that failed load the section themselves", arguments: Section.allCases)
+  func copiesLoadWhenTheLoadTheyWaitedForFails(section: Section) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    server.holdNextFirstPage(of: section, answering: 400)
+
+    let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
+    let second = try await Self.startWaitingCopy(of: section, on: viewModel)
+    let third = try await Self.startWaitingCopy(of: section, on: viewModel)
+
+    server.releaseHeldPages()
+    await #expect(throws: (any Error).self) { try await first.value }
+    #expect(try await second.value == 1)
+    #expect(try await third.value == 1)
+    // The retry succeeds, so one more request in total: the copy that resumes second waits for
+    // the load the other one started.
+    #expect(server.requestCount(section) == 2)
+  }
+
+  @Test("Each waiting copy loads at most once when the failure persists", arguments: Section.allCases)
+  func eachWaitingCopyLoadsAtMostOnce(section: Section) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    server.holdNextFirstPage(of: section, answering: 400)
+    server.failNextFirstPages(of: section, count: 2)
+
+    let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
+    let second = try await Self.startWaitingCopy(of: section, on: viewModel)
+    let third = try await Self.startWaitingCopy(of: section, on: viewModel)
+
+    server.releaseHeldPages()
+    await #expect(throws: (any Error).self) { try await first.value }
+    // Each copy ends with the error of its own attempt.
+    await #expect(throws: (any Error).self) { try await second.value }
+    await #expect(throws: (any Error).self) { try await third.value }
+    // One more request per waiting copy, one after another, and no more.
+    #expect(server.requestCount(section) == 3)
+  }
+
+  @Test("A copy that waited for a load that was cancelled loads the section itself", arguments: Section.allCases)
+  func copyLoadsWhenTheLoadItWaitedForIsCancelled(section: Section) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    server.holdNextFirstPage(of: section, answering: 200)
+
+    let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
+    let second = try await Self.startWaitingCopy(of: section, on: viewModel)
+
+    // The first copy's view goes away, which cancels its request.
+    first.cancel()
+    try await Self.waitUntil("the cancelled request to stop") { server.cancelledHeldRequestCount == 1 }
+    await #expect(throws: (any Error).self) { try await first.value }
+    #expect(try await second.value == 1)
+    #expect(server.requestCount(section) == 2)
+  }
+
+  @Test(
+    "A copy cancelled while it waits throws CancellationError and does not load",
+    arguments: Section.allCases, [200, 400]
+  )
+  func cancelledCopyDoesNotLoad(section: Section, awaitedStatus: Int) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    server.holdNextFirstPage(of: section, answering: awaitedStatus)
+
+    let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
+    let second = try await Self.startWaitingCopy(of: section, on: viewModel)
+
+    second.cancel()
+    server.releaseHeldPages()
+    if awaitedStatus == 200 {
+      try await first.value
+    } else {
+      await #expect(throws: (any Error).self) { try await first.value }
+    }
+    // Whether the load it waited for succeeded or failed.
+    await #expect(throws: CancellationError.self) { try await second.value }
+    #expect(server.requestCount(section) == 1)
+    #expect(Self.count(of: section, in: viewModel) == (awaitedStatus == 200 ? 1 : 0))
+  }
+
+  // MARK: - First and next pages of one section
+
+  @Test("A next page returns at once while its section's first page is loading", arguments: Section.allCases)
+  func nextPageReturnsWhileTheFirstPageLoads(section: Section) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    // A first page gives the section a cursor, so a next page gets past its own guard.
+    try await Self.refresh(section, on: viewModel)
+    server.holdNextFirstPage(of: section, answering: 200)
+    let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
+
+    let nextPage = Self.start { await Self.loadNextPage(of: section, on: viewModel) }
+    try await Self.waitUntil("the next page to return while the first page is held") { nextPage.hasEnded }
+    #expect(server.requestCount(section) == 2)
+
+    server.releaseHeldPages()
+    try await first.value
+    #expect(Self.count(of: section, in: viewModel) == 1)
+    #expect(server.requestCount(section) == 2)
+  }
+
+  @Test("A first load stops its section's next page and loads the first page itself", arguments: Section.allCases)
+  func firstLoadReplacesTheNextPageInFlight(section: Section) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    try await Self.refresh(section, on: viewModel)
+    // The server holds every next page, so this one stays in flight until released.
+    let nextPage = Task { await Self.loadNextPage(of: section, on: viewModel) }
+    try await Self.waitUntil { server.heldRequestCount == 1 }
+
+    // Another copy opens, or the section is pulled to refresh. Its first load neither waits for
+    // that page nor takes it as its own content.
+    let copy = Self.start { try await Self.refresh(section, on: viewModel) }
+    try await Self.waitUntil("the first load to return while the next page is held") { copy.hasEnded }
+    #expect(copy.error == nil)
+    #expect(server.cancelledHeldRequestCount == 1)
+    #expect(server.requestCount(section) == 3)
+    await nextPage.value
+    #expect(Self.count(of: section, in: viewModel) == 1)
+  }
+
+  @Test("An account switch stops a section's load in flight and forgets its next page", arguments: Section.allCases)
+  func accountSwitchStopsTheLoadInFlight(section: Section) async throws {
+    let server = ProfileSectionStubProtocol.makeServer()
+    defer { ProfileSectionStubProtocol.release(server) }
+    defer { server.releaseHeldPages() }
+    let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
+    try await Self.refresh(section, on: viewModel)
+    server.holdNextFirstPage(of: section, answering: 200)
+    let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
+
+    await viewModel.handleStateInvalidation(.accountSwitched)
+    try await Self.waitUntil("the held request to stop") { server.cancelledHeldRequestCount == 1 }
+    await #expect(throws: (any Error).self) { try await first.value }
+    #expect(Self.count(of: section, in: viewModel) == 0)
+
+    // Loaded again, the profile has no cursor from before the switch, so no next page loads.
+    await viewModel.loadProfile()
+    let nextPage = Self.start { await Self.loadNextPage(of: section, on: viewModel) }
+    try await Self.waitUntil("the next page to return") { nextPage.hasEnded }
+    #expect(server.requestCount(section) == 2)
+  }
+
+}
+
+// MARK: - Helpers
+
+@MainActor
+extension ProfileSectionLoadingTests {
+  /// A view model for the stub's profile, seen by `viewer`. The owner sees their own Likes,
+  /// which load through getActorLikes.
+  private static func makeLoadedViewModel(
+    server: ProfileSectionStubServer, viewer: String = "did:plc:sectionviewer"
+  ) async throws -> ProfileViewModel {
     let client = try await ModerationStateNetworkHook.withProtocol(ProfileSectionStubProtocol.self) {
       await ATProtoClient(baseURL: server.baseURL)
     }
     let viewModel = ProfileViewModel(
-      client: client, userDID: ProfileSectionStubServer.ownerDID, currentUserDID: "did:plc:sectionviewer"
+      client: client, userDID: ProfileSectionStubServer.ownerDID, currentUserDID: viewer
     )
     await viewModel.loadProfile()
     try #require(viewModel.profile != nil, "getProfile stub did not load: \(String(describing: viewModel.error))")
     return viewModel
   }
 
+  /// Starts a copy's first load of `section` and returns once the server holds its request.
+  private static func startHeldFirstLoad(
+    of section: Section, on viewModel: ProfileViewModel, server: ProfileSectionStubServer
+  ) async throws -> Task<Void, Error> {
+    let heldBefore = server.heldRequestCount
+    let load = Task { try await Self.refresh(section, on: viewModel) }
+    try await waitUntil("the first copy's request to reach the stub server") {
+      server.heldRequestCount == heldBefore + 1
+    }
+    return load
+  }
+
+  /// Starts another copy's first load of `section`, which returns the section's item count when
+  /// it ends, and returns once that copy waits for the load in flight.
+  private static func startWaitingCopy(
+    of section: Section, on viewModel: ProfileViewModel
+  ) async throws -> Task<Int, Error> {
+    let waitersBefore = waiters(of: section, in: viewModel)
+    let load = Task {
+      try await Self.refresh(section, on: viewModel)
+      return Self.count(of: section, in: viewModel)
+    }
+    try await waitUntil("the copy to wait for the load in flight") {
+      waiters(of: section, in: viewModel) == waitersBefore + 1
+    }
+    return load
+  }
+
+  /// A load the test checks on without awaiting it, so a load that wrongly waits for a held page
+  /// fails the test instead of hanging it until the page is released.
+  @MainActor
+  final class StartedLoad {
+    fileprivate(set) var hasEnded = false
+    fileprivate(set) var error: (any Error)?
+  }
+
+  private static func start(_ body: @escaping @MainActor () async throws -> Void) -> StartedLoad {
+    let load = StartedLoad()
+    Task {
+      do { try await body() } catch { load.error = error }
+      load.hasEnded = true
+    }
+    return load
+  }
+
   private static func refresh(_ section: Section, on viewModel: ProfileViewModel) async throws {
     switch section {
+    case .likes: try await viewModel.refreshLikes()
     case .lists: try await viewModel.refreshLists()
     case .starterPacks: try await viewModel.refreshStarterPacks()
     case .feeds: try await viewModel.refreshFeeds()
@@ -67,6 +301,7 @@ struct ProfileSectionLoadingTests {
 
   private static func loadNextPage(of section: Section, on viewModel: ProfileViewModel) async {
     switch section {
+    case .likes: await viewModel.loadMoreLikes()
     case .lists: await viewModel.loadMoreLists()
     case .starterPacks: await viewModel.loadStarterPacks()
     case .feeds: await viewModel.loadMoreFeeds()
@@ -75,158 +310,34 @@ struct ProfileSectionLoadingTests {
 
   private static func count(of section: Section, in viewModel: ProfileViewModel) -> Int {
     switch section {
+    case .likes: viewModel.likes.count
     case .lists: viewModel.lists.count
     case .starterPacks: viewModel.starterPacks.count
     case .feeds: viewModel.feeds.count
     }
   }
 
+  private static func waiters(of section: Section, in viewModel: ProfileViewModel) -> Int {
+    let moreSection: ProfileViewModel.MoreSection =
+      switch section {
+      case .likes: .likes
+      case .lists: .lists
+      case .starterPacks: .starterPacks
+      case .feeds: .feeds
+      }
+    return viewModel.sectionLoadWaiters[moreSection, default: 0]
+  }
+
   private struct TimedOut: Error {}
 
-  private static func waitUntil(_ condition: () -> Bool) async throws {
+  private static func waitUntil(
+    _ what: String = "the next page to reach the stub server", _ condition: () -> Bool
+  ) async throws {
     for _ in 0..<500 {
       if condition() { return }
       try await Task.sleep(for: .milliseconds(10))
     }
-    Issue.record("Timed out waiting for the next page to reach the stub server")
+    Issue.record("Timed out waiting for \(what)")
     throw TimedOut()
-  }
-}
-
-/// A fake AppView for one profile. Each section's first page holds one item and a cursor; the
-/// next page (any request with a cursor) holds one more item and is answered only once
-/// `releaseHeldPages()` is called.
-final class ProfileSectionStubServer: @unchecked Sendable {
-  enum Section: String, Sendable, CustomTestStringConvertible {
-    case lists, starterPacks, feeds
-    var testDescription: String { rawValue }
-  }
-
-  static let ownerDID = "did:plc:sectionowner"
-  private static let cid = "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
-  private static let indexedAt = "2026-10-15T00:00:00.000Z"
-  private static let creator = #"{"did":"\#(ownerDID)","handle":"owner.section.test"}"#
-
-  let port: Int
-  private let lock = NSLock()
-  private var requests: [Section: Int] = [:]
-  private var heldReplies: [@Sendable () -> Void] = []
-  private var heldRequests = 0
-
-  init(port: Int) { self.port = port }
-
-  var baseURL: URL { URL(string: "https://127.0.0.1:\(port)")! }
-  var heldRequestCount: Int { lock.withLock { heldRequests } }
-  func requestCount(_ section: Section) -> Int { lock.withLock { requests[section, default: 0] } }
-
-  struct Reply {
-    let status: Int
-    let body: Data
-    /// Answered only once `releaseHeldPages()` is called.
-    let isHeld: Bool
-  }
-
-  /// The answer to `url`.
-  func reply(for url: URL) -> Reply {
-    let isNextPage = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-      .queryItems?.contains { $0.name == "cursor" } ?? false
-    let item = isNextPage ? "2" : "1"
-    let cursor = isNextPage ? "" : #","cursor":"page-2""#
-    let section: Section
-    let body: String
-    switch url.path {
-    case "/xrpc/app.bsky.actor.getProfile":
-      return Reply(status: 200, body: Data(Self.creator.utf8), isHeld: false)
-    case "/xrpc/app.bsky.graph.getLists":
-      section = .lists
-      body = #"{"lists":[{"uri":"at://\#(Self.ownerDID)/app.bsky.graph.list/l\#(item)","cid":"\#(Self.cid)","creator":\#(Self.creator),"name":"List \#(item)","purpose":"app.bsky.graph.defs#curatelist","indexedAt":"\#(Self.indexedAt)"}]\#(cursor)}"#
-    case "/xrpc/app.bsky.graph.getActorStarterPacks":
-      section = .starterPacks
-      body = #"{"starterPacks":[{"uri":"at://\#(Self.ownerDID)/app.bsky.graph.starterpack/s\#(item)","cid":"\#(Self.cid)","record":{"$type":"app.bsky.graph.starterpack","name":"Pack \#(item)","list":"at://\#(Self.ownerDID)/app.bsky.graph.list/l1","createdAt":"\#(Self.indexedAt)"},"creator":\#(Self.creator),"indexedAt":"\#(Self.indexedAt)"}]\#(cursor)}"#
-    case "/xrpc/app.bsky.feed.getActorFeeds":
-      section = .feeds
-      body = #"{"feeds":[{"uri":"at://\#(Self.ownerDID)/app.bsky.feed.generator/f\#(item)","cid":"\#(Self.cid)","did":"did:web:feed.section.test","creator":\#(Self.creator),"displayName":"Feed \#(item)","indexedAt":"\#(Self.indexedAt)"}]\#(cursor)}"#
-    default:
-      return Reply(status: 404, body: Data(#"{"error":"NotFound"}"#.utf8), isHeld: false)
-    }
-    lock.withLock { requests[section, default: 0] += 1 }
-    return Reply(status: 200, body: Data(body.utf8), isHeld: isNextPage)
-  }
-
-  func hold(_ answer: @escaping @Sendable () -> Void) {
-    lock.withLock {
-      heldRequests += 1
-      heldReplies.append(answer)
-    }
-  }
-
-  func releaseHeldPages() {
-    let replies = lock.withLock {
-      defer { heldReplies.removeAll() }
-      return heldReplies
-    }
-    replies.forEach { $0() }
-  }
-}
-
-/// Routes each request to the server registered for its loopback port.
-final class ProfileSectionStubProtocol: URLProtocol, @unchecked Sendable {
-  private static let lock = NSLock()
-  nonisolated(unsafe) private static var servers: [Int: ProfileSectionStubServer] = [:]
-  nonisolated(unsafe) private static var nextPort = 44_000
-
-  static func makeServer() -> ProfileSectionStubServer {
-    lock.withLock {
-      nextPort += 1
-      let server = ProfileSectionStubServer(port: nextPort)
-      servers[nextPort] = server
-      return server
-    }
-  }
-
-  static func release(_ server: ProfileSectionStubServer) {
-    lock.withLock { _ = servers.removeValue(forKey: server.port) }
-  }
-
-  override static func canInit(with request: URLRequest) -> Bool {
-    ["http", "https"].contains(request.url?.scheme?.lowercased() ?? "")
-  }
-
-  override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-  override func startLoading() {
-    guard let url = request.url, url.host == "127.0.0.1", let port = url.port,
-      let server = Self.lock.withLock({ Self.servers[port] })
-    else {
-      client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
-      return
-    }
-    let reply = server.reply(for: url)
-    guard reply.isHeld else {
-      answer(url: url, status: reply.status, body: reply.body)
-      return
-    }
-    // Answer later on this loader thread's run loop, where URLProtocol expects its callbacks.
-    nonisolated(unsafe) let runLoop = CFRunLoopGetCurrent()
-    server.hold { [self] in
-      CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
-        self.answer(url: url, status: reply.status, body: reply.body)
-      }
-      CFRunLoopWakeUp(runLoop)
-    }
-  }
-
-  override func stopLoading() {}
-
-  private func answer(url: URL, status: Int, body: Data) {
-    guard let response = HTTPURLResponse(
-      url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])
-    else {
-      client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-      return
-    }
-    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-    client?.urlProtocol(self, didLoad: body)
-    client?.urlProtocolDidFinishLoading(self)
   }
 }

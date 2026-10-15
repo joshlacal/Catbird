@@ -43,6 +43,13 @@ import AppKit
   private var _isLoadingLists = false
   private var _isLoadingStarterPacks = false
   private var _isLoadingFeeds = false
+  /// Each More section's load in flight, run by `loadSection(_:reset:)` and mirrored by the
+  /// section's flag above. Two copies of one section share this view model too, so a copy's
+  /// first load can find the other copy's load here and wait for it.
+  @ObservationIgnored private var sectionLoads: [MoreSection: SectionLoad] = [:]
+  /// How many first loads wait for each section's load in flight. Tests read it to know that
+  /// a copy is waiting before they let that load end.
+  @ObservationIgnored private(set) var sectionLoadWaiters: [MoreSection: Int] = [:]
   private var _isLoadingKnownFollowers = false
   
   // Labeler-specific properties
@@ -426,23 +433,21 @@ import AppKit
 
   /// Loads the first page of liked posts, replacing anything already loaded.
   func refreshLikes() async throws {
-    try await fetchLikes(reset: true)
+    try await loadSection(.likes, reset: true)
   }
 
   /// Appends the next page of liked posts, if there is one.
   func loadMoreLikes() async {
     guard hasMoreLikes, likesCursor != nil else { return }
     do {
-      try await fetchLikes(reset: false)
+      try await loadSection(.likes, reset: false)
     } catch {
       logger.error("Error loading more likes: \(error.localizedDescription)")
     }
   }
 
   private func fetchLikes(reset: Bool) async throws {
-    guard let client = client, let profile = profile, !_isLoadingLikes else { return }
-    _isLoadingLikes = true
-    defer { _isLoadingLikes = false }
+    guard let client = client, let profile = profile else { return }
     let cursor = reset ? nil : likesCursor
 
     if isCurrentUser {
@@ -525,23 +530,21 @@ import AppKit
 
   /// Loads the first page of starter packs, replacing anything already loaded.
   func refreshStarterPacks() async throws {
-    try await fetchStarterPacks(reset: true)
+    try await loadSection(.starterPacks, reset: true)
   }
 
   /// Appends the next page of starter packs, if there is one.
   func loadStarterPacks() async {
     guard hasMoreStarterPacks, starterPacksCursor != nil else { return }
     do {
-      try await fetchStarterPacks(reset: false)
+      try await loadSection(.starterPacks, reset: false)
     } catch {
       logger.error("Error loading more starter packs: \(error.localizedDescription)")
     }
   }
 
   private func fetchStarterPacks(reset: Bool) async throws {
-    guard let client = client, let profile = profile, !_isLoadingStarterPacks else { return }
-    _isLoadingStarterPacks = true
-    defer { _isLoadingStarterPacks = false }
+    guard let client = client, let profile = profile else { return }
 
     let params = AppBskyGraphGetActorStarterPacks.Parameters(
       actor: try ATIdentifier(string: profile.did.didString()),
@@ -569,23 +572,21 @@ import AppKit
 
   /// Loads the first page of lists, replacing anything already loaded.
   func refreshLists() async throws {
-    try await fetchLists(reset: true)
+    try await loadSection(.lists, reset: true)
   }
 
   /// Appends the next page of lists, if there is one.
   func loadMoreLists() async {
     guard hasMoreLists, listsCursor != nil else { return }
     do {
-      try await fetchLists(reset: false)
+      try await loadSection(.lists, reset: false)
     } catch {
       logger.error("Error loading more lists: \(error.localizedDescription)")
     }
   }
 
   private func fetchLists(reset: Bool) async throws {
-    guard let client = client, let profile = profile, !_isLoadingLists else { return }
-    _isLoadingLists = true
-    defer { _isLoadingLists = false }
+    guard let client = client, let profile = profile else { return }
 
     let params = AppBskyGraphGetLists.Parameters(
       actor: try ATIdentifier(string: profile.did.didString()),
@@ -818,23 +819,21 @@ import AppKit
 
   /// Loads the first page of feeds, replacing anything already loaded.
   func refreshFeeds() async throws {
-    try await fetchFeeds(reset: true)
+    try await loadSection(.feeds, reset: true)
   }
 
   /// Appends the next page of feeds, if there is one.
   func loadMoreFeeds() async {
     guard hasMoreFeeds, feedsCursor != nil else { return }
     do {
-      try await fetchFeeds(reset: false)
+      try await loadSection(.feeds, reset: false)
     } catch {
       logger.error("Error loading more feeds: \(error.localizedDescription)")
     }
   }
 
   private func fetchFeeds(reset: Bool) async throws {
-    guard let client = client, let profile = profile, !_isLoadingFeeds else { return }
-    _isLoadingFeeds = true
-    defer { _isLoadingFeeds = false }
+    guard let client = client, let profile = profile else { return }
 
     let params = AppBskyFeedGetActorFeeds.Parameters(
       actor: try ATIdentifier(string: profile.did.didString()),
@@ -856,6 +855,85 @@ import AppKit
       }
       self.feedsCursor = output?.cursor
       self.hasMoreFeeds = output?.cursor != nil
+    }
+  }
+
+  // MARK: - More Section Loads
+
+  /// A More section whose pages load through `loadSection(_:reset:)`.
+  enum MoreSection { case likes, lists, starterPacks, feeds }
+
+  /// A section's load in flight, and whether it loads the first page or the next.
+  private struct SectionLoad {
+    let task: Task<Void, Error>
+    let isFirstPage: Bool
+  }
+
+  /// Loads a page of `section`, its first when `reset` and otherwise its next, one load at a
+  /// time per section.
+  ///
+  /// The More sections share the profile screen's view model, and so do two copies of one
+  /// section. When `section` already has a load in flight:
+  /// - A next page returns at once, as before: its trigger comes back when that load ends.
+  /// - A first page that finds a next page stops it, since the first page replaces whatever it
+  ///   would add, waits for it to end, and loads the first page.
+  /// - A first page that finds a first page waits for it, and loads the first page itself only
+  ///   if that load failed or was cancelled. So a copy opened while another copy was loading
+  ///   ends with the content, or with the error or empty state of its own attempt.
+  ///
+  /// Each caller starts at most one load: a waiter that finds, once the load it waited for has
+  /// failed, another waiter's load in flight waits for that one instead. A failure that persists
+  /// therefore costs at most one more request per waiting caller, one after another.
+  ///
+  /// Cancelling a caller cancels the load it started (the request of a section the reader
+  /// left), not one it waits for. A caller cancelled while it waits does not load, and throws
+  /// `CancellationError` once that load ends, whether it succeeded or failed.
+  private func loadSection(_ section: MoreSection, reset: Bool) async throws {
+    guard client != nil, profile != nil else { return }
+    while let inFlight = sectionLoads[section] {
+      guard reset else { return }
+      try Task.checkCancellation()
+      if !inFlight.isFirstPage { inFlight.task.cancel() }
+      sectionLoadWaiters[section, default: 0] += 1
+      let result = await inFlight.task.result
+      sectionLoadWaiters[section, default: 0] -= 1
+      try Task.checkCancellation()
+      if inFlight.isFirstPage, case .success = result { return }
+    }
+    try Task.checkCancellation()
+
+    let load = Task { @MainActor [self] in
+      // Cleared inside the task, so a caller resumed by its end never finds it in flight.
+      defer {
+        sectionLoads[section] = nil
+        setLoadingFlag(of: section, to: false)
+      }
+      try await fetchPage(of: section, reset: reset)
+    }
+    sectionLoads[section] = SectionLoad(task: load, isFirstPage: reset)
+    setLoadingFlag(of: section, to: true)
+    try await withTaskCancellationHandler {
+      try await load.value
+    } onCancel: {
+      load.cancel()
+    }
+  }
+
+  private func fetchPage(of section: MoreSection, reset: Bool) async throws {
+    switch section {
+    case .likes: try await fetchLikes(reset: reset)
+    case .lists: try await fetchLists(reset: reset)
+    case .starterPacks: try await fetchStarterPacks(reset: reset)
+    case .feeds: try await fetchFeeds(reset: reset)
+    }
+  }
+
+  private func setLoadingFlag(of section: MoreSection, to isLoading: Bool) {
+    switch section {
+    case .likes: _isLoadingLikes = isLoading
+    case .lists: _isLoadingLists = isLoading
+    case .starterPacks: _isLoadingStarterPacks = isLoading
+    case .feeds: _isLoadingFeeds = isLoading
     }
   }
 
@@ -1091,6 +1169,14 @@ import AppKit
       hasLoadedKnownFollowers = false
       tabsWithFirstPage = []
       error = nil
+      // A More section's load from before the switch must not end in the cleared view model,
+      // or be taken by a later first load as its own; each clears its own slot as it ends.
+      // The cursors go with the content, so no next page loads before a first page.
+      sectionLoads.values.forEach { $0.task.cancel() }
+      likesCursor = nil
+      listsCursor = nil
+      starterPacksCursor = nil
+      feedsCursor = nil
       
     default:
       break
