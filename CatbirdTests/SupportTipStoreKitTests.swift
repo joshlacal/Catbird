@@ -9,12 +9,20 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct SupportTipStoreKitTests {
-  @Test(.timeLimit(.minutes(1)))
+  /// The local StoreKit lane launches the host with this flag, which configures local StoreKit
+  /// before the app starts its transaction listener.
+  nonisolated static var isLocalStoreKitLane: Bool {
+    ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test")
+  }
+
+  @Test(
+    .enabled(
+      if: SupportTipStoreKitTests.isLocalStoreKitLane,
+      "Runs in the local StoreKit lane, which launches with --support-tip-storekit-test"
+    ),
+    .timeLimit(.minutes(1))
+  )
   func localCatalogAndPurchaseLifecycle() async throws {
-    try #require(
-      ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test"),
-      "Launch with --support-tip-storekit-test to configure local StoreKit before starting its listener."
-    )
     try #require(
       ProcessInfo.processInfo.arguments.contains("--scene-runtime-ui-fixture"),
       "Use the offline scene fixture so About cannot load products before the local session is ready."
