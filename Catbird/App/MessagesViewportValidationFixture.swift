@@ -1020,6 +1020,10 @@ private struct ChatPresentationNativeProbe: UIViewRepresentable {
     let source: MessagesViewportFixtureSource
     private var timer: Timer?
     private let initialPasteboardChangeCount = UIPasteboard.general.changeCount
+    /// The pasteboard change already compared, and whether it held the synthetic text.
+    private var comparedPasteboardChangeCount: Int?
+    private var pasteboardReadChangeCount: Int?
+    private var copiedSyntheticText = false
     private var handledAccessibleRequest = 0
     var navigationDepth = 0
     init(source: MessagesViewportFixtureSource) {
@@ -1080,11 +1084,7 @@ private struct ChatPresentationNativeProbe: UIViewRepresentable {
         }
         responder = current.next
       }
-      // Only compare after a clipboard change in this disposable local fixture.
-      // Never expose or retain arbitrary clipboard contents in diagnostics.
-      let copiedSyntheticText = source.presentationScenario?.hasPrefix("menu-") == true
-        && UIPasteboard.general.changeCount != initialPasteboardChangeCount
-        && UIPasteboard.general.string == "Local menu message"
+      comparePasteboardIfChanged()
       let value: [String: Any] = ["scenario": source.presentationScenario ?? "",
         "actions": source.presentationActions, "recordRevision": source.presentationRecordRevision,
         "appliedRecordRevision": source.presentationAppliedRecordRevision,
@@ -1098,6 +1098,27 @@ private struct ChatPresentationNativeProbe: UIViewRepresentable {
         "rows": rows, "collectionIdentity": String(describing: ObjectIdentifier(collection))]
       if let data = try? JSONSerialization.data(withJSONObject: value, options: .sortedKeys) {
         accessibilityValue = String(decoding: data, as: UTF8.self)
+      }
+    }
+
+    /// Only compares after a clipboard change in this disposable local fixture, once per
+    /// change. The read runs off the main actor: a pasteboard item from outside the app,
+    /// such as one synced from the host, can block its reader. Arbitrary clipboard
+    /// contents are never exposed or retained in diagnostics.
+    private func comparePasteboardIfChanged() {
+      guard source.presentationScenario?.hasPrefix("menu-") == true else { return }
+      let changeCount = UIPasteboard.general.changeCount
+      guard changeCount != initialPasteboardChangeCount, changeCount != comparedPasteboardChangeCount,
+            changeCount != pasteboardReadChangeCount else { return }
+      pasteboardReadChangeCount = changeCount
+      Task.detached { [weak self] in
+        let matches = UIPasteboard.general.string == "Local menu message"
+        await MainActor.run {
+          guard let self, self.pasteboardReadChangeCount == changeCount else { return }
+          self.pasteboardReadChangeCount = nil
+          self.comparedPasteboardChangeCount = changeCount
+          self.copiedSyntheticText = matches
+        }
       }
     }
   }
