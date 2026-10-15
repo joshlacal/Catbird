@@ -277,6 +277,7 @@ private final class FeedScrollBenchmark {
       await withCheckedContinuation { continuation in
         passContinuation = continuation
         let link = CADisplayLink(target: self, selector: #selector(step(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
         link.add(to: .main, forMode: .common)
         displayLink = link
       }
