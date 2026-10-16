@@ -87,7 +87,12 @@ struct NotificationServiceRequestPreviewTests {
 
   func deliver(_ request: UNNotificationRequest) async -> UNNotificationContent {
     MLSCoreContext.clearSuspensionFlag()
-    let extensionInstance = NotificationService()
+    // The host app publishes its own push presence (signed out on a test device) to the real
+    // App Group, so presence comes from an empty suite: the fixture account counts as signed in.
+    let presenceSuite = "NotificationServiceRequestPreview-\(UUID().uuidString)"
+    let presenceDefaults = UserDefaults(suiteName: presenceSuite)
+    defer { presenceDefaults?.removePersistentDomain(forName: presenceSuite) }
+    let extensionInstance = NotificationService(appGroupDefaults: presenceDefaults)
     return await withCheckedContinuation { continuation in
       extensionInstance.didReceive(request) { continuation.resume(returning: $0) }
     }

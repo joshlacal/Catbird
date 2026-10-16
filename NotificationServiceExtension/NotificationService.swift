@@ -36,6 +36,23 @@ class NotificationService: UNNotificationServiceExtension {
   private static let mlsServiceNamespace = "blue.catbird.mls"
   private static let mlsChatNamespace = "blue.catbird.chat"
 
+  /// App Group keys the main app publishes for push presence (`SignedOutPushSuppression`).
+  static let signedOutKey = "signedOutForPush"
+  static let activeAccountDIDKey = "activeAccountDID"
+  static let sessionEndedAccountDIDsKey = "sessionEndedPushAccountDIDs"
+
+  private let appGroupDefaults: UserDefaults?
+
+  override init() {
+    appGroupDefaults = UserDefaults(suiteName: Self.appGroupSuite)
+    super.init()
+  }
+
+  init(appGroupDefaults: UserDefaults?) {
+    self.appGroupDefaults = appGroupDefaults
+    super.init()
+  }
+
   deinit {
     stopObservingAppStop()
   }
@@ -112,6 +129,57 @@ class NotificationService: UNNotificationServiceExtension {
     return false
   }
 
+  /// Whether a push is for an account that is not signed in on this device: every account signed
+  /// out, or a recipient whose session ended while another account is active. A recipient that
+  /// cannot be resolved is never guessed, so it keeps its delivery.
+  static func isAddressedToSignedOutAccount(recipientDID: String?, defaults: UserDefaults?) -> Bool {
+    guard let defaults else { return false }
+    if defaults.bool(forKey: signedOutKey) {
+      return true
+    }
+    guard let activeAccountDID = defaults.string(forKey: activeAccountDIDKey), !activeAccountDID.isEmpty else {
+      return false
+    }
+    let endedDIDs = defaults.stringArray(forKey: sessionEndedAccountDIDsKey) ?? []
+    guard let recipientDID else {
+      return false
+    }
+    return recipientDID != activeAccountDID && endedDIDs.contains(recipientDID)
+  }
+
+  /// Replaces all displayable content with a neutralized alert marked with
+  /// `suppressedForSignedOutAccount = true`. Strips all private fields,
+  /// media attachments, sounds, badges, and routing data.
+  private static func neutralizedForSignedOutAccount(_ original: UNMutableNotificationContent)
+    -> UNMutableNotificationContent
+  {
+    let content = UNMutableNotificationContent()
+    content.title = "Catbird"
+    content.subtitle = ""
+    content.body = "New activity"
+    content.sound = nil
+    content.badge = nil
+    content.interruptionLevel = .passive
+    content.relevanceScore = 0
+    content.attachments = []
+    content.threadIdentifier = "catbird-suppressed"
+    content.categoryIdentifier = ""
+    content.targetContentIdentifier = nil
+    content.launchImageName = ""
+
+    var userInfo: [AnyHashable: Any] = [
+      "suppressedForSignedOutAccount": true
+    ]
+    if let type = original.userInfo["type"] as? String {
+      userInfo["type"] = type
+    }
+    if let kind = original.userInfo["kind"] as? String {
+      userInfo["kind"] = kind
+    }
+    content.userInfo = userInfo
+    return content
+  }
+
   /// Replaces a push's content with a quiet, generic alert that carries no message data.
   private static func neutralized(_ original: UNMutableNotificationContent)
     -> UNMutableNotificationContent
@@ -171,6 +239,16 @@ class NotificationService: UNNotificationServiceExtension {
     if Self.isGatedOff(pushType: pushType, kind: userInfo["kind"] as? String) {
       logger.info("[NSE] Push for a feature this build doesn't ship (type=\(pushType ?? "nil", privacy: .public)) - neutralizing content")
       contentHandler(Self.neutralized(bestAttemptContent))
+      return
+    }
+
+    // A signed-out account shows no banners for any push kind, encrypted chat included, and
+    // the extension opens no MLS storage for it. Signed-in recipients continue below unchanged.
+    if Self.isAddressedToSignedOutAccount(
+      recipientDID: resolveChatRecipientDID(from: userInfo), defaults: appGroupDefaults
+    ) {
+      logger.info("[NSE] Push addressed to signed-out or ended account - neutralizing content")
+      contentHandler(Self.neutralizedForSignedOutAccount(bestAttemptContent))
       return
     }
 
@@ -1902,7 +1980,7 @@ class NotificationService: UNNotificationServiceExtension {
       return did
     }
     if let hash = userInfo["recipient_account"] as? String {
-      return resolveRecipientDID(fromHash: hash)
+      return resolveRecipientDID(fromHash: hash) ?? resolvePublishedAccountDID(fromHash: hash)
     }
     return nil
   }
@@ -1910,7 +1988,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// Resolves any locally stored account DID for creating a standalone client.
   /// Used when the push payload doesn't include the recipient DID.
   private func resolveAnyLocalAccountDID() -> String? {
-    guard let defaults = UserDefaults(suiteName: Self.appGroupSuite) else { return nil }
+    guard let defaults = appGroupDefaults else { return nil }
 
     // Try to find any stored account DID from the shared defaults
     // The main app stores account hashes; we need the actual DID.
@@ -2210,6 +2288,32 @@ class NotificationService: UNNotificationServiceExtension {
       logger.error("❌ [NSE] Failed to resolve recipient_account hash: \(error.localizedDescription)")
       return nil
     }
+  }
+
+  /// Matches a `recipient_account` hash against the account DIDs the main app publishes: signed-in
+  /// accounts (`knownAccountDIDs`) and accounts whose session ended, which leave the known list but
+  /// must still resolve so their pushes stay hidden. Accounts without MLS storage have no
+  /// database-owner mapping, so `resolveRecipientDID(fromHash:)` cannot match them.
+  private func resolvePublishedAccountDID(fromHash hash: String) -> String? {
+    let normalizedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard normalizedHash.count == 64 else { return nil }
+    for did in candidateAccountDIDsForHashMatching() {
+      let candidates = [did, did.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()]
+      for candidate in candidates where Self.sha256Hex(candidate) == normalizedHash {
+        return did
+      }
+    }
+    return nil
+  }
+
+  private func candidateAccountDIDsForHashMatching() -> [String] {
+    var dids = appGroupDefaults?.stringArray(forKey: "knownAccountDIDs") ?? []
+    if let ended = appGroupDefaults?.stringArray(forKey: Self.sessionEndedAccountDIDsKey) {
+      for did in ended where !dids.contains(did) {
+        dids.append(did)
+      }
+    }
+    return dids
   }
 
   private static func sha256Hex(_ value: String) -> String {

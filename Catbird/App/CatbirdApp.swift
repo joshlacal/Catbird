@@ -4947,8 +4947,19 @@ extension CatbirdApp.AppDelegate {
       appState.notificationManager.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
       return
     }
-    
-    // 3. Fallback: Show standard notifications normally
+
+    // 3. Nothing for a push the extension hid, or while every account is signed out
+    if (userInfo["suppressedForSignedOutAccount"] as? Bool) == true {
+      completionHandler([])
+      return
+    }
+
+    if SignedOutPushSuppression.presence(for: AppStateManager.shared.lifecycle) == .signedOut {
+      completionHandler([])
+      return
+    }
+
+    // 4. Fallback: Show standard notifications normally
     completionHandler([.banner, .sound, .badge])
   }
 }

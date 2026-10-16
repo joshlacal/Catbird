@@ -114,8 +114,16 @@ final class AppStateManager {
       Self.activeUserDIDBox.withLock { $0 = newDID }
       MLSCoordinationStore.shared.setActiveUserDID(newDID)
       MLSNotificationCoordinator.updateActiveUserDID(newDID)
+      let oldPresence = SignedOutPushSuppression.presence(for: oldValue)
+      let newPresence = SignedOutPushSuppression.presence(for: lifecycle)
+      if oldPresence != newPresence {
+        SignedOutPushSuppression.publish(from: oldPresence, to: newPresence, in: pushPresenceDefaults)
+      }
     }
   }
+
+  @ObservationIgnored
+  private var pushPresenceDefaults: UserDefaults? = UserDefaults(suiteName: SignedOutPushSuppression.appGroupSuiteName)
 
   #if DEBUG
   func setLifecycleForTesting(_ newLifecycle: AppLifecycle) {
@@ -124,6 +132,10 @@ final class AppStateManager {
   #if DEBUG
   nonisolated(unsafe) static var databaseDrainOverride: (@Sendable (String, TimeInterval) async -> Bool)?
   #endif
+
+  func setPushPresenceDefaultsForTesting(_ defaults: UserDefaults?) {
+    self.pushPresenceDefaults = defaults
+  }
   #endif
 
   /// Observes auth state changes and keeps lifecycle in sync (e.g. session expiry → login/reauth)
@@ -924,8 +936,8 @@ final class AppStateManager {
   /// What logout() does for the outgoing account that needs no session, for an account whose
   /// session ended on its own and that another account is now replacing: stop its services,
   /// drop it from the cache, and clear its widget data, labeler definitions and the Spotlight
-  /// index and App Intents stores, which would otherwise show it under the next account. Its
-  /// push registration cannot be removed without its session and stays on the server.
+  /// index and App Intents stores, which would otherwise show it under the next account. Nest stops
+  /// delivery when it rejects the session, and SignedOutPushSuppression hides its pushes until then.
   private func retireSessionEndedAccount(_ did: String) async {
     logger.info("Retiring an account whose session ended, before another account signs in")
     if let endedState = authenticatedStates.removeValue(forKey: did) {
@@ -1553,6 +1565,8 @@ final class AppStateManager {
       object: self,
       userInfo: ["did": userDID]
     )
+    SignedOutPushSuppression.recordSessionEndedAccount(userDID, in: pushPresenceDefaults)
+
     // Update widget account list after removal
     writeAccountsToAppGroup()
     // Stop showing the removed account's posts in widgets and Spotlight
@@ -1758,8 +1772,6 @@ final class AppStateManager {
 
     if let activeDID = lifecycle.userDID {
       defaults?.set(activeDID, forKey: "activeAccountDID")
-    } else {
-      defaults?.removeObject(forKey: "activeAccountDID")
     }
   }
 
