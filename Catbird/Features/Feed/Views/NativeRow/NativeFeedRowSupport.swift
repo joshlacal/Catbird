@@ -25,7 +25,7 @@ enum NativeFeedRowSupport: Equatable {
   case hosted(Reason)
 
   /// The first unsupported feature found, in the order `classify` checks them.
-  enum Reason: String, Equatable {
+  enum Reason: String, Equatable, CaseIterable, Sendable {
     case disabled, decodeFailed, recordNotPost, embed, replyContext, reason, threadSlice, rowFilter,
       pendingClassification, moderation, avatarConcealment, translationOffered, languageIndicator,
       readingTime, tags, pronouns, automated, pinned, customFacet, liveStatus, blockedAuthor
@@ -49,6 +49,30 @@ enum NativeFeedRowSupport: Equatable {
   }
 }
 
+// MARK: - Classification Input
+
+extension NativeFeedRowSupport {
+  /// What `classify` reads from a feed entry, as values: the decoded entry and its thread and
+  /// filter state. Captured on the main actor, where the SwiftData model is read, so the entry
+  /// can be classified off it.
+  struct Entry: Sendable {
+    /// The decoded feed entry; `nil` when it does not decode.
+    let item: AppBskyFeedDefs.FeedViewPost?
+    let threadDisplayMode: String?
+    let intentHiddenRuleText: String?
+    let smartFilterCollapseRuleID: String?
+    let isSmartFilterPending: Bool
+
+    init(_ cached: CachedFeedViewPost) {
+      item = try? cached.feedViewPost
+      threadDisplayMode = cached.threadDisplayMode
+      intentHiddenRuleText = cached.intentHiddenRuleText
+      smartFilterCollapseRuleID = cached.smartFilterCollapseRuleID
+      isSmartFilterPending = cached.isSmartFilterPending
+    }
+  }
+}
+
 // MARK: - Classification
 
 extension NativeFeedRowSupport {
@@ -65,20 +89,29 @@ extension NativeFeedRowSupport {
     _ cached: CachedFeedViewPost, moderation: PostModerationPresentation, settings: Settings
   ) -> NativeFeedRowSupport {
     guard settings.isEnabled else { return .hosted(.disabled) }
-    guard let item = try? cached.feedViewPost else { return .hosted(.decodeFailed) }
+    return classify(Entry(cached), moderation: moderation, settings: settings)
+  }
+
+  /// `classify` for an entry captured as values, which can run off the main actor. It gives the
+  /// same result as classifying the cached post the entry was captured from.
+  static func classify(
+    _ entry: Entry, moderation: PostModerationPresentation, settings: Settings
+  ) -> NativeFeedRowSupport {
+    guard settings.isEnabled else { return .hosted(.disabled) }
+    guard let item = entry.item else { return .hosted(.decodeFailed) }
     guard case .knownType(let record) = item.post.record, let post = record as? AppBskyFeedPost else {
       return .hosted(.recordNotPost)
     }
     if item.post.embed != nil { return .hosted(.embed) }
     if item.reason != nil { return .hosted(.reason) }
     if item.reply != nil { return .hosted(.replyContext) }
-    if let mode = cached.threadDisplayMode, mode == "expanded" || mode == "collapsed" {
+    if let mode = entry.threadDisplayMode, mode == "expanded" || mode == "collapsed" {
       return .hosted(.threadSlice)
     }
-    if cached.intentHiddenRuleText != nil || cached.smartFilterCollapseRuleID != nil {
+    if entry.intentHiddenRuleText != nil || entry.smartFilterCollapseRuleID != nil {
       return .hosted(.rowFilter)
     }
-    if cached.isSmartFilterPending { return .hosted(.pendingClassification) }
+    if entry.isSmartFilterPending { return .hosted(.pendingClassification) }
     if showsBlockedCard(for: item.post.author) { return .hosted(.blockedAuthor) }
     if moderation.hidesRow || moderation.concealsBody || !moderation.chips.isEmpty {
       return .hosted(.moderation)

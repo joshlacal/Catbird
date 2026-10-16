@@ -9,24 +9,36 @@ private let coordinatorLogger = Logger(subsystem: "blue.catbird", category: "Nat
 // MARK: - Native Feed Row Coordinator
 
 /// The feed controller's half of native rows: decides which posts render natively, builds what a
-/// `NativeFeedPostCell` draws and does, prepares layouts ahead of display, and hosts the sheets and
+/// `NativeFeedPostCell` draws and does, prepares rows ahead of display, and hosts the sheets and
 /// alerts the rows' menus present. One per feed controller.
 ///
 /// Decisions and prepared rows are computed once per post and kept while the post's content
 /// signature and the row settings (moderation policy, fonts, link style, badge preference, theme
 /// colours, size class) stay the same. The controller calls `beginSnapshot` before every snapshot it
 /// applies, so cells configured between snapshots read the settings that snapshot captured.
+///
+/// Rows about to scroll in are prepared off the main actor (`prepareRows`): their decisions, the
+/// attributed text, header and count strings, layouts and time strings. Configuring a prepared
+/// row then only looks these up. What stays on the main actor, and why:
+/// - reading the SwiftData post and its decoded entry (`NativeFeedRowSupport.Entry`), since the
+///   model belongs to the main actor;
+/// - the relative time text, computed again at configuration so a row whose minute ticked over
+///   since it was prepared shows the new time (it then gets a layout for the new text);
+/// - the action bar's state, which reads live counts, the share origin and the signed-in account.
 @MainActor
 final class NativeFeedRowCoordinator {
   /// How one post renders.
-  enum Decision {
+  enum Decision: Sendable {
     case native(Row)
     case hosted(NativeFeedRowSupport.Reason)
   }
 
   /// A post the native cell supports, with everything that does not change with the clock or the
   /// width already resolved.
-  struct Row {
+  /// `@unchecked Sendable`: an immutable value; the attributed text, with its fonts and colours,
+  /// is never mutated after `decide` builds it, so a row decided off the main actor can be handed
+  /// to it.
+  struct Row: @unchecked Sendable {
     let postID: String
     let post: AppBskyFeedDefs.PostView
     let createdAt: Date
@@ -37,6 +49,13 @@ final class NativeFeedRowCoordinator {
     let verification: VerificationBadgeKind?
     let text: NSAttributedString
     let signature: FeedPostContentSignature
+    /// The post's reply, repost and like counts as the action bar draws them.
+    let counts: FeedActionBarCounts
+    /// Whether the post has a share link (`ActionButtonViewModel.shareURL`); its author and URI
+    /// do not change with live counts.
+    let canCopyLink: Bool
+    /// The author's avatar (`finalAvatarURL()`).
+    let avatarURL: URL?
   }
 
   // MARK: - State
@@ -73,7 +92,6 @@ final class NativeFeedRowCoordinator {
   /// The width each post last asked to be reconfigured for, per collection view width (see
   /// `cellWidthChanged`).
   private var requestedCellWidths: [WidthRequest: CGFloat] = [:]
-  private var preparations: [UUID: Task<Void, Never>] = [:]
   private var settingsObserver: UIKitStateObserver<AppState>?
   private var policyObserver: NSObjectProtocol?
   private var observedFingerprint: SettingsFingerprint?
@@ -81,6 +99,33 @@ final class NativeFeedRowCoordinator {
   private var settingsInputs: SettingsInputs?
   /// How many times the row settings were resolved; settings are rebuilt only when an input changed.
   private(set) var settingsResolutionCount = 0
+
+  // MARK: - Preparation State
+
+  /// Posts waiting to be prepared, in the order they were asked for.
+  private var preparationQueue: [String] = []
+  private var queuedPostIDs: Set<String> = []
+  /// Posts in the batch being prepared.
+  private var preparingPostIDs: Set<String> = []
+  private var preparationTask: Task<Void, Never>?
+  private var preparationTaskID: UUID?
+  /// Changes whenever prepared results stop applying: the settings, the typography or the layout
+  /// width changed, or the feed was replaced. A batch of an earlier generation is discarded.
+  private(set) var preparationGeneration = 0
+  /// The layout width preparations are for.
+  private var preparationWidth: CGFloat?
+  /// What each post was last prepared for. A post with a stamp for its current signature, the
+  /// current generation and the width asked for is not prepared again.
+  private var preparedStamps: [String: PreparedStamp] = [:]
+  /// Each native post's time strings as last computed, by preparation or configuration.
+  private var rowTimes: [String: NativeFeedRowPreparation.RowTime] = [:]
+  /// How many decisions were made on the main actor, because no preparation had made them yet.
+  private(set) var mainActorDecisionCount = 0
+  /// How the current feed's posts render, for the device's reason distribution.
+  let decisionCounter = NativeFeedRowDecisionCounter()
+
+  /// Whether a batch is being prepared off the main actor.
+  var hasPreparationInFlight: Bool { !preparingPostIDs.isEmpty }
 
   /// The collection view native rows are laid out in.
   weak var collectionView: UICollectionView?
@@ -97,7 +142,7 @@ final class NativeFeedRowCoordinator {
   }
 
   isolated deinit {
-    preparations.values.forEach { $0.cancel() }
+    preparationTask?.cancel()
     postModels.values.forEach { $0.cancel() }
     if let policyObserver { NotificationCenter.default.removeObserver(policyObserver) }
   }
@@ -113,7 +158,10 @@ final class NativeFeedRowCoordinator {
     self.feedInteractionTarget = feedInteractionTarget
     if accountChanged {
       resolveSettingsIfNeeded()
+      discardPreparations()
+      decisionCounter.reset()
       decisions.removeAll()
+      rowTimes.removeAll()
       mergedPosts.removeAll()
       rowPostIDsByURI.removeAll()
       postModels.values.forEach { $0.cancel() }
@@ -147,6 +195,9 @@ final class NativeFeedRowCoordinator {
     dequeuedAsNative = dequeuedAsNative.filter { posts[$0.key] != nil }
     pendingReconfigure = pendingReconfigure.filter { posts[$0] != nil }
     requestedCellWidths = requestedCellWidths.filter { posts[$0.key.postID] != nil }
+    preparedStamps = preparedStamps.filter { posts[$0.key] != nil }
+    rowTimes = rowTimes.filter { posts[$0.key] != nil }
+    dropPreparations { posts[$0] == nil }
 
     guard !rowPostIDsByURI.isEmpty else { return }
     rowPostIDsByURI = rowPostIDsByURI.compactMapValues { postIDs in
@@ -173,9 +224,16 @@ final class NativeFeedRowCoordinator {
   func decision(forPostID postID: String) -> Decision? {
     guard let cached = posts[postID], let signature = signatures[postID], let settings else { return nil }
     if let entry = decisions[postID], entry.signature == signature { return entry.decision }
-    let decision = Self.decide(postID: postID, cached: cached, signature: signature, settings: settings)
-    decisions[postID] = (signature, decision)
+    let decision = Self.decide(
+      postID: postID, entry: NativeFeedRowSupport.Entry(cached), signature: signature, settings: settings)
+    mainActorDecisionCount += 1
+    record(decision, forPostID: postID, signature: signature)
     return decision
+  }
+
+  private func record(_ decision: Decision, forPostID postID: String, signature: FeedPostContentSignature) {
+    decisions[postID] = (signature, decision)
+    decisionCounter.record(NativeFeedRowDecisionCounter.Outcome(decision))
   }
 
   /// The prepared row for `postID`, if it renders natively.
@@ -210,19 +268,39 @@ final class NativeFeedRowCoordinator {
 
   var typography: FeedRowTypography? { settings?.typography }
 
+  /// What a native cell shows for `row` at `width`. For a prepared row this only looks up what the
+  /// preparation computed; the time text is computed again, so a minute that ticked over since
+  /// shows (with a layout for the new text).
   func content(for row: Row, width: CGFloat) -> NativeFeedRowContent? {
     guard let settings else { return nil }
-    let timeText = shortTimeAgoString(from: row.createdAt)
-    let layout = layoutStore.layout(for: layoutInput(for: row, width: width, timeText: timeText, settings: settings))
+    let time = currentTime(for: row)
+    let layout = layoutStore.layout(
+      for: Self.layoutInput(for: row, width: width, timeText: time.text, settings: settings))
+    preparedStamps[row.postID] = PreparedStamp(
+      signature: row.signature, width: width, generation: preparationGeneration)
     let displayed = mergedPosts[row.post.uri.uriString()] ?? row.post
     return NativeFeedRowContent(
       post: row.post, layout: layout, text: row.text, displayName: row.displayName, handle: row.handle,
-      timeText: timeText, timeAccessibilityLabel: formatTimeAgo(from: row.createdAt, forAccessibility: true),
-      verification: row.verification, actionBarState: actionBarState(for: displayed, settings: settings),
-      metadataColor: settings.colors.metadata)
+      timeText: time.text, timeAccessibilityLabel: time.accessibilityLabel,
+      verification: row.verification, actionBarState: actionBarState(for: displayed, row: row, settings: settings),
+      metadataColor: settings.colors.metadata, actionBarCounts: row.counts, avatarURL: row.avatarURL)
   }
 
-  private func layoutInput(
+  /// The row's time strings now: the last ones computed for it while they still hold, new ones
+  /// otherwise.
+  private func currentTime(for row: Row) -> NativeFeedRowPreparation.RowTime {
+    let timeText = shortTimeAgoString(from: row.createdAt)
+    if let known = rowTimes[row.postID], known.isCurrent(createdAt: row.createdAt, timeText: timeText) {
+      return known
+    }
+    let time = NativeFeedRowPreparation.RowTime(
+      createdAt: row.createdAt, text: timeText,
+      accessibilityLabel: formatTimeAgo(from: row.createdAt, forAccessibility: true))
+    rowTimes[row.postID] = time
+    return time
+  }
+
+  nonisolated static func layoutInput(
     for row: Row, width: CGFloat, timeText: String, settings: Settings
   ) -> FeedRowLayoutInput {
     FeedRowLayoutInput(
@@ -232,47 +310,174 @@ final class NativeFeedRowCoordinator {
       displayScale: settings.displayScale)
   }
 
-  private func actionBarState(for post: AppBskyFeedDefs.PostView, settings: Settings) -> FeedActionBarState {
+  /// The action bar's state for `post`, the row's post or its shadow-merged copy (same author and
+  /// URI, so the row's share link applies).
+  private func actionBarState(for post: AppBskyFeedDefs.PostView, row: Row, settings: Settings) -> FeedActionBarState {
     FeedActionBarState(
       postURI: post.uri.uriString(), replyCount: post.replyCount ?? 0,
       isReplyDisabled: post.viewer?.replyDisabled ?? false, repostCount: post.repostCount ?? 0,
       isReposted: post.viewer?.repost != nil, isQuoteDisabled: post.viewer?.embeddingDisabled ?? false,
       likeCount: post.likeCount ?? 0, isLiked: post.viewer?.like != nil, isShareEnabled: isValidShareOrigin,
-      canSendViaChat: appState.isAuthenticated, canCopyLink: ActionButtonViewModel.shareURL(for: post) != nil,
+      canSendViaChat: appState.isAuthenticated, canCopyLink: row.canCopyLink,
       reduceMotion: settings.reduceMotion, fonts: settings.actionBarFonts)
   }
 
-  // MARK: - Layout Preparation
+  // MARK: - Preparation
 
-  /// Computes layouts for the native rows among `postIDs` off the main actor, so their cells find
-  /// them cached when they are configured.
-  func prepareLayouts(forPostIDs postIDs: [String], boundsWidth: CGFloat) {
-    guard let settings, boundsWidth > 0 else { return }
+  /// Prepares the rows of `postIDs` off the main actor for a collection view `boundsWidth` wide:
+  /// decisions, attributed text, header and count strings, layouts and time strings, so the cells
+  /// that show them only look them up. Posts already prepared for their content, the current
+  /// settings and this width are skipped. The main actor never waits for the work: a cell
+  /// configured before its row is prepared builds the row itself, and the preparation's result for
+  /// it is then not needed.
+  func prepareRows(forPostIDs postIDs: [String], boundsWidth: CGFloat) {
+    guard settings != nil, boundsWidth > 0 else { return }
     let width = layoutWidth(forBoundsWidth: boundsWidth)
-    let inputs = postIDs.compactMap { nativeRow(forPostID: $0) }.map { row in
-      layoutInput(for: row, width: width, timeText: shortTimeAgoString(from: row.createdAt), settings: settings)
+    if let preparationWidth, preparationWidth != width { discardPreparations() }
+    preparationWidth = width
+    var added = false
+    for postID in postIDs where needsPreparation(postID, width: width) && queuedPostIDs.insert(postID).inserted {
+      preparationQueue.append(postID)
+      added = true
     }
-    guard !inputs.isEmpty else { return }
-    let id = UUID()
-    preparations[id] = Task { [weak self, layoutStore] in
-      await layoutStore.prepare(inputs)
-      self?.preparations[id] = nil
+    guard added else { return }
+    // Bounded: posts asked for long ago are behind the reader by now.
+    let excess = preparationQueue.count - Self.maximumQueuedPreparations
+    if excess > 0 {
+      preparationQueue.prefix(excess).forEach { queuedPostIDs.remove($0) }
+      preparationQueue.removeFirst(excess)
+    }
+    startPreparing()
+  }
+
+  /// Posts that may wait to be prepared at once.
+  static let maximumQueuedPreparations = NativeFeedRowPreparation.batchSize * 2
+
+  /// Waits until every row asked for is prepared, or its preparation was discarded.
+  func waitForPreparation() async {
+    while let task = preparationTask {
+      await task.value
     }
   }
 
-  /// Cancels layout preparation, for example when the feed is replaced.
-  func cancelPreparation() {
-    preparations.values.forEach { $0.cancel() }
-    preparations.removeAll()
+  /// The controller shows another feed: preparation stops, what was prepared is forgotten and the
+  /// decision counts start over. Cached decisions and layouts stay; they are keyed by everything
+  /// they depend on.
+  func feedDidReset() {
+    discardPreparations()
+    decisionCounter.reset()
   }
 
-  /// Drops every cached layout; fonts, text size or the width changed.
+  /// Drops every cached layout and what was prepared; fonts, text size or the width changed.
   func invalidateLayouts(includingCellWidths: Bool = false) {
+    discardPreparations()
     layoutStore.invalidateAll()
     if includingCellWidths {
       cellWidths.removeAll()
       requestedCellWidths.removeAll()
     }
+  }
+
+  private func needsPreparation(_ postID: String, width: CGFloat) -> Bool {
+    guard posts[postID] != nil, let signature = signatures[postID], !preparingPostIDs.contains(postID) else {
+      return false
+    }
+    if preparedStamps[postID] == PreparedStamp(signature: signature, width: width, generation: preparationGeneration) {
+      return false
+    }
+    if let entry = decisions[postID], entry.signature == signature, case .hosted = entry.decision { return false }
+    return true
+  }
+
+  private func startPreparing() {
+    guard preparationTask == nil, !preparationQueue.isEmpty else { return }
+    let id = UUID()
+    preparationTaskID = id
+    preparationTask = Task { [weak self] in
+      while !Task.isCancelled, let batch = self?.nextPreparationBatch() {
+        let prepared = await NativeFeedRowPreparation.run(batch)
+        guard !Task.isCancelled, let self else { return }
+        self.finish(batch, prepared: prepared)
+      }
+      self?.preparationDidFinish(id)
+    }
+  }
+
+  private func preparationDidFinish(_ id: UUID) {
+    guard preparationTaskID == id else { return }
+    preparationTask = nil
+    preparationTaskID = nil
+  }
+
+  /// The next posts to prepare, captured from the snapshot: their classification input, or the
+  /// decision already made for their content.
+  private func nextPreparationBatch() -> NativeFeedRowPreparation.Batch? {
+    guard let settings, let width = preparationWidth else {
+      preparationQueue.removeAll()
+      queuedPostIDs.removeAll()
+      return nil
+    }
+    var entries: [NativeFeedRowPreparation.Entry] = []
+    while !preparationQueue.isEmpty, entries.count < NativeFeedRowPreparation.batchSize {
+      let postID = preparationQueue.removeFirst()
+      queuedPostIDs.remove(postID)
+      guard needsPreparation(postID, width: width), let cached = posts[postID], let signature = signatures[postID]
+      else { continue }
+      let existing = decisions[postID].flatMap { $0.signature == signature ? $0.decision : nil }
+      entries.append(NativeFeedRowPreparation.Entry(
+        postID: postID, signature: signature,
+        source: existing == nil ? NativeFeedRowSupport.Entry(cached) : nil, decision: existing))
+      preparingPostIDs.insert(postID)
+    }
+    guard !entries.isEmpty else { return nil }
+    return NativeFeedRowPreparation.Batch(
+      generation: preparationGeneration, width: width, settings: settings, entries: entries)
+  }
+
+  /// Stores a finished batch's results, unless the batch is stale: from an earlier generation, or
+  /// for a post whose content changed or that left the feed meanwhile.
+  private func finish(_ batch: NativeFeedRowPreparation.Batch, prepared: [NativeFeedRowPreparation.Prepared]) {
+    batch.entries.forEach { preparingPostIDs.remove($0.postID) }
+    guard batch.generation == preparationGeneration, batch.width == preparationWidth else { return }
+    for result in prepared {
+      guard posts[result.postID] != nil, signatures[result.postID] == result.signature else { continue }
+      if decisions[result.postID]?.signature != result.signature {
+        record(result.decision, forPostID: result.postID, signature: result.signature)
+      }
+      if let layout = result.layout { layoutStore.insert(layout) }
+      if let time = result.time { rowTimes[result.postID] = time }
+      preparedStamps[result.postID] = PreparedStamp(
+        signature: result.signature, width: batch.width, generation: batch.generation)
+    }
+  }
+
+  /// Cancels the batch being prepared and drops waiting posts that `isStale`. The batch's other
+  /// posts are not prepared until asked for again.
+  private func dropPreparations(where isStale: (String) -> Bool) {
+    let staleQueued = preparationQueue.filter(isStale)
+    if !staleQueued.isEmpty {
+      preparationQueue.removeAll(where: isStale)
+      staleQueued.forEach { queuedPostIDs.remove($0) }
+    }
+    guard preparingPostIDs.contains(where: isStale) else { return }
+    preparationTask?.cancel()
+    preparationTask = nil
+    preparationTaskID = nil
+    preparingPostIDs.removeAll()
+    startPreparing()
+  }
+
+  /// Cancels all preparation and forgets what was prepared: nothing prepared before this applies
+  /// any more.
+  private func discardPreparations() {
+    preparationTask?.cancel()
+    preparationTask = nil
+    preparationTaskID = nil
+    preparationQueue.removeAll()
+    queuedPostIDs.removeAll()
+    preparingPostIDs.removeAll()
+    preparedStamps.removeAll(keepingCapacity: true)
+    preparationGeneration &+= 1
   }
 
   /// A native cell is sized to a width its layout was not computed for. Records the width cells
@@ -545,9 +750,11 @@ final class NativeFeedRowCoordinator {
   }
 
   /// Re-resolves the settings now, so cells configured before the next snapshot already use them,
-  /// drops every decision and layout that depended on the old ones, and asks for a reconfigure.
+  /// drops every decision, layout and preparation that depended on the old ones, and asks for a
+  /// reconfigure.
   private func settingsDidChange() {
     resolveSettingsIfNeeded()
+    discardPreparations()
     decisions.removeAll(keepingCapacity: true)
     layoutStore.invalidateAll()
     onSettingsChanged?()
@@ -565,19 +772,22 @@ final class NativeFeedRowCoordinator {
     settingsResolutionCount += 1
     guard resolved != settings else { return false }
     settings = resolved
+    discardPreparations()
     decisions.removeAll(keepingCapacity: true)
     return true
   }
 
   // MARK: - Deciding
 
-  private static func decide(
-    postID: String, cached: CachedFeedViewPost, signature: FeedPostContentSignature, settings: Settings
+  /// How the post renders under `settings`, with everything its native row draws. A pure function
+  /// of its arguments, run on the main actor or by a preparation.
+  nonisolated static func decide(
+    postID: String, entry: NativeFeedRowSupport.Entry, signature: FeedPostContentSignature, settings: Settings
   ) -> Decision {
-    guard let item = try? cached.feedViewPost else { return .hosted(.decodeFailed) }
+    guard let item = entry.item else { return .hosted(.decodeFailed) }
     let moderation = PostModerationPresentation.make(
       post: item.post, policy: settings.policy, surface: .contentList, listFilterExemptDID: nil)
-    if case .hosted(let reason) = NativeFeedRowSupport.classify(cached, moderation: moderation, settings: settings.support) {
+    if case .hosted(let reason) = NativeFeedRowSupport.classify(entry, moderation: moderation, settings: settings.support) {
       return .hosted(reason)
     }
     guard case .knownType(let record) = item.post.record, let feedPost = record as? AppBskyFeedPost else {
@@ -590,12 +800,28 @@ final class NativeFeedRowCoordinator {
     let text = FeedPostTextBuilder.build(
       post: feedPost, typography: settings.typography, linkStyle: link.style,
       textColor: settings.colors.text, linkColor: link.color)
+    let post = item.post
     return .native(Row(
-      postID: postID, post: item.post, createdAt: feedPost.createdAt.date, displayName: isBlank ? "" : name,
+      postID: postID, post: post, createdAt: feedPost.createdAt.date, displayName: isBlank ? "" : name,
       handle: "@\(author.handle.description)",
       verification: isBlank
         ? nil : VerificationBadge.kind(for: author.verification, did: author.did, hideBadges: settings.hideBadges),
-      text: text, signature: signature))
+      text: text, signature: signature,
+      counts: FeedActionBarCounts(
+        replyCount: post.replyCount ?? 0, repostCount: post.repostCount ?? 0, likeCount: post.likeCount ?? 0,
+        fonts: settings.actionBarFonts),
+      canCopyLink: ActionButtonViewModel.shareURL(for: post) != nil, avatarURL: author.finalAvatarURL()))
+  }
+}
+
+// MARK: - Preparation Stamps
+
+extension NativeFeedRowCoordinator {
+  /// What a post was prepared for: its content, the preparation generation and the layout width.
+  fileprivate struct PreparedStamp: Equatable {
+    let signature: FeedPostContentSignature
+    let width: CGFloat
+    let generation: Int
   }
 }
 
@@ -634,7 +860,9 @@ extension NativeFeedRowCoordinator {
   /// The app state native rows read, captured once per snapshot.
   /// A new input must be read here, compared in `SettingsInputs`, and observed through
   /// `SettingsFingerprint` (or a controller observer), or rows will not follow it.
-  fileprivate struct Settings: Equatable {
+  /// `@unchecked Sendable`: an immutable value whose fonts and colours are immutable and
+  /// thread-safe, so rows can be prepared with it off the main actor.
+  struct Settings: Equatable, @unchecked Sendable {
     let support: NativeFeedRowSupport.Settings
     let policy: ModerationPolicy
     let typography: FeedRowTypography
@@ -677,6 +905,7 @@ extension NativeFeedRowCoordinator {
     /// The content size the hosted row's environment has: the trait collection's, which
     /// `FontManager` caps at the app's Dynamic Type limit, or the system's before the collection
     /// view has one.
+    @MainActor
     static func contentSize(of traits: UITraitCollection) -> UIContentSizeCategory {
       let category = traits.preferredContentSizeCategory
       return category == .unspecified ? UIApplication.shared.preferredContentSizeCategory : category
@@ -686,7 +915,8 @@ extension NativeFeedRowCoordinator {
   /// The row's text colours, resolved from the theme as the hosted row resolves them: body text in
   /// the theme's primary text colour, metadata in the theme's secondary text colour. Light and dark
   /// variants are captured, and the trait collection picks one.
-  fileprivate struct RowColors: Equatable {
+  /// `@unchecked Sendable`: an immutable value; its `UIColor`s are immutable and thread-safe.
+  struct RowColors: Equatable, @unchecked Sendable {
     let key: Key
     let text: UIColor
     let metadata: UIColor

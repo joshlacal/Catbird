@@ -295,6 +295,10 @@ import os
     private var postsByID: [String: CachedFeedViewPost] = [:]
     /// O(1) index lookup used during willDisplay / triggerLoadMore (P064)
     private var postIndicesByID: [String: Int] = [:]
+    /// The posts of `postIndicesByID` in feed order, for the native row preparation window.
+    private var postIDsInOrder: [String] = []
+    /// Which native rows to prepare next as the feed scrolls.
+    private var nativeRowPreparationWindow = NativeFeedRowPreparationWindow()
     /// Measured row height cache
     private let rowHeightCache = FeedRowHeightCache()
     private var lastLayoutWidth: CGFloat = 0
@@ -312,6 +316,7 @@ import os
     private let scrollRestoration: FeedViewportRestoration
     /// Native UIKit rows for the posts they support (`NativeFeedRowSupport`).
     private let nativeRows: NativeFeedRowCoordinator
+    var nativeRowsForTesting: NativeFeedRowCoordinator { nativeRows }
     #if DEBUG
     private var lastLayoutGeometry: FeedLayoutGeometry?
     #endif
@@ -838,41 +843,16 @@ import os
         [weak self] cell, _, row in
         self?.configureNativeCell(cell, row: row)
       }
-      // Registration for header cell
-      let headerRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
-        [weak self] cell, indexPath, _ in
-        guard let self = self, let header = self.headerView else {
-          cell.contentConfiguration = nil
-          return
-        }
-        // Ensure full-width content and no default list/background drawing
-        cell.layoutMargins = .zero
-        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
-        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-        cell.selectedBackgroundView = nil
-
-        cell.contentConfiguration = UIHostingConfiguration {
-          header
-            .trackingModerationPolicy(of: self.stateManager.appState)
-            .applyAppStateEnvironment(self.stateManager.appState)
-            .environment(\.fontManager, self.stateManager.appState.fontManager)
-            .environment(self.sceneContext)
-        }
-          .margins(.all, 0)
-      }
-      // Registration for the trending interstitial: a native cell, since a hosted SwiftUI cell
-      // costs more than a 120 Hz frame allows each time it scrolls in.
-      let trendingInterstitialRegistration = UICollectionView.CellRegistration<TrendingInterstitialCell, Void> {
-        [weak self] cell, indexPath, _ in
-        guard let self = self else { return }
-        self.updateDiagnostics?.trendingConfigurations += 1
-        cell.configure(TrendingInterstitialCell.Configuration(
-          content: self.trendingContent, appState: self.stateManager.appState, sceneContext: self.sceneContext))
-      }
-
+      // The header, the trending interstitial and the pagination footer are registered by reuse
+      // identifier: a `CellRegistration` bridges its item to Objective-C on every dequeue, and the
+      // first bridge of a `Void` item costs about 5 ms (`FeedPaginationFooterCell.reuseIdentifier`).
+      collectionView.register(UICollectionViewListCell.self, forCellWithReuseIdentifier: Self.headerReuseIdentifier)
+      // The trending interstitial is a native cell, since a hosted SwiftUI cell costs more than a
+      // 120 Hz frame allows each time it scrolls in.
+      collectionView.register(
+        TrendingInterstitialCell.self, forCellWithReuseIdentifier: TrendingInterstitialCell.reuseIdentifier)
       // The pagination footer: a native cell, since a hosted SwiftUI footer costs more than a 120 Hz
-      // frame the first time it scrolls in, at every pagination boundary. It is registered by reuse
-      // identifier (`FeedPaginationFooterCell.reuseIdentifier` explains why).
+      // frame the first time it scrolls in, at every pagination boundary.
       collectionView.register(
         FeedPaginationFooterCell.self, forCellWithReuseIdentifier: FeedPaginationFooterCell.reuseIdentifier)
 
@@ -881,11 +861,21 @@ import os
       ) { [weak self] collectionView, indexPath, item in
         switch item {
         case .header:
-          return collectionView.dequeueConfiguredReusableCell(
-            using: headerRegistration, for: indexPath, item: ())
+          let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: Self.headerReuseIdentifier, for: indexPath)
+          if let header = cell as? UICollectionViewListCell {
+            self?.configureHeaderCell(header)
+          }
+          return cell
         case .trendingInterstitial:
-          return collectionView.dequeueConfiguredReusableCell(
-            using: trendingInterstitialRegistration, for: indexPath, item: ())
+          let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: TrendingInterstitialCell.reuseIdentifier, for: indexPath)
+          if let trending = cell as? TrendingInterstitialCell, let self {
+            self.updateDiagnostics?.trendingConfigurations += 1
+            trending.configure(TrendingInterstitialCell.Configuration(
+              content: self.trendingContent, appState: self.stateManager.appState, sceneContext: self.sceneContext))
+          }
+          return cell
         case .post(_, _, let id):
           if let row = self?.nativeRows.nativeRow(forPostID: id) {
             self?.nativeRows.recordDequeue(postID: id, native: true)
@@ -924,6 +914,31 @@ import os
           return nil
         }
       }
+    }
+
+    /// The reuse identifier of the cell that hosts `headerView`.
+    static let headerReuseIdentifier = "FeedHeaderCell"
+
+    /// Hosts the SwiftUI header full width, with no list margins or background.
+    private func configureHeaderCell(_ cell: UICollectionViewListCell) {
+      guard let header = headerView else {
+        cell.contentConfiguration = nil
+        return
+      }
+      cell.layoutMargins = .zero
+      cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
+      cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+      cell.selectedBackgroundView = nil
+      let appState = stateManager.appState
+      let sceneContext = sceneContext
+      cell.contentConfiguration = UIHostingConfiguration {
+        header
+          .trackingModerationPolicy(of: appState)
+          .applyAppStateEnvironment(appState)
+          .environment(\.fontManager, appState.fontManager)
+          .environment(sceneContext)
+      }
+        .margins(.all, 0)
     }
 
     private func setupRefreshControl() {
@@ -1055,6 +1070,7 @@ import os
         capturedPosts.enumerated().map { ($1.id, $0) },
         uniquingKeysWith: { first, _ in first }
       )
+      postIDsInOrder = capturedPosts.map(\.id)
       guard shouldReloadDataOnce || currentItems != items || !reconfiguredItems.isEmpty else {
         updateDiagnostics?.skippedSnapshots += 1
         restoreScrollPositionIfReady()
@@ -1070,7 +1086,7 @@ import os
         return nativeRows.cellKindChanges(postID: id)
       })
       nativeRows.didApplySnapshot()
-      prepareNativeLayouts(near: capturedPosts)
+      prepareNativeRows(near: capturedPosts)
       var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
       snapshot.appendSections([.main])
       snapshot.appendItems(items, toSection: .main)
@@ -1440,7 +1456,7 @@ import os
       cancelPendingLoadMoreRequest()
       prefetchTasks.values.forEach { $0.task.cancel() }
       prefetchTasks.removeAll()
-      nativeRows.cancelPreparation()
+      nativeRows.feedDidReset()
       initialLoadTask?.cancel()
       initialLoadTask = nil
       stateObserver?.stopObserving()
@@ -1516,6 +1532,7 @@ import os
       // A row is only native once a snapshot resolved the row settings, so both exist here.
       guard let typography = nativeRows.typography, let content = nativeRows.content(for: row, width: width) else {
         controllerLogger.fault("Native feed row \(row.postID, privacy: .public) configured without row settings")
+        cell.clearContent()
         return
       }
       updateDiagnostics?.postConfigurations += 1
@@ -1538,17 +1555,23 @@ import os
       cell.configurationUpdateHandler = nil
     }
 
-    /// Prepares the layouts of native rows from the first visible post through the next screens,
-    /// off the main actor, so cells that scroll in find them cached.
-    private func prepareNativeLayouts(near posts: [CachedFeedViewPost]) {
+    /// Prepares the native rows around the first visible post, off the main actor, so cells that
+    /// scroll in find them ready, and starts the preparation window over for the new snapshot.
+    private func prepareNativeRows(near posts: [CachedFeedViewPost]) {
       let firstVisibleID = collectionView.indexPathsForVisibleItems.sorted().compactMap { postIDAt($0) }.first
       let start = firstVisibleID.flatMap { id in posts.firstIndex { $0.id == id } } ?? 0
-      let window = posts[start..<min(posts.count, start + Self.nativeLayoutPreparationWindow)]
-      nativeRows.prepareLayouts(forPostIDs: window.map(\.id), boundsWidth: collectionView.bounds.width)
+      let window = nativeRowPreparationWindow.reset(at: start, count: posts.count)
+      nativeRows.prepareRows(forPostIDs: posts[window].map(\.id), boundsWidth: collectionView.bounds.width)
     }
 
-    /// Posts ahead of the first visible one whose native layouts each snapshot prepares.
-    private static let nativeLayoutPreparationWindow = 24
+    /// The post at `indexPath` is about to show: prepares the next window of native rows in the
+    /// direction of travel once the prepared ones ahead run low. No snapshot is needed for this.
+    private func advanceNativeRowPreparation(to indexPath: IndexPath) {
+      guard let index = postIndexForRow(at: indexPath), postIDsInOrder.indices.contains(index),
+        let window = nativeRowPreparationWindow.advance(to: index, count: postIDsInOrder.count)
+      else { return }
+      nativeRows.prepareRows(forPostIDs: Array(postIDsInOrder[window]), boundsWidth: collectionView.bounds.width)
+    }
 
     /// Configures the visible native cells with layouts for `boundsWidth` right away, during a size
     /// transition, instead of waiting for the reconfigure that follows it.
@@ -1577,6 +1600,7 @@ import os
     ) {
       trackPostSeenIfNeeded(at: indexPath)
       triggerLoadMoreIfNeeded(at: indexPath)
+      advanceNativeRowPreparation(to: indexPath)
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -1627,7 +1651,7 @@ import os
   extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath])
     {
-      nativeRows.prepareLayouts(
+      nativeRows.prepareRows(
         forPostIDs: indexPaths.compactMap { postIDAt($0) }, boundsWidth: collectionView.bounds.width)
       let appState = stateManager.appState
       guard let client = appState.atProtoClient else { return }

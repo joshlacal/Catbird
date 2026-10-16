@@ -57,5 +57,10 @@ struct NativeFeedRowContent {
   /// The handle, time and options glyph colour: the theme's secondary text colour, as the hosted
   /// row's header uses (`Color.adaptiveText(style: .secondary)`).
   let metadataColor: UIColor
+  /// The post's counts measured ahead of display, which the action bar uses while they are still
+  /// `actionBarState`'s counts; `nil` measures them when the bar shows them.
+  let actionBarCounts: FeedActionBarCounts?
+  /// The author's avatar, `post.author.finalAvatarURL()`.
+  let avatarURL: URL?
 }
 #endif

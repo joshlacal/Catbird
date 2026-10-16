@@ -54,13 +54,30 @@ struct NativeFeedPostCellTests {
     #expect(header.isUserInteractionEnabled == false)
   }
 
-  @Test("Reuse clears the previous post")
+  @Test("Reuse clears the previous post, and leaves the text for the next configuration to replace")
   func reuseClears() throws {
-    let (cell, _) = try NativeFeedRowTestFactory.configuredCell(text: "first")
+    let (cell, first) = try NativeFeedRowTestFactory.configuredCell(text: "first")
     cell.prepareForReuse()
     #expect(cell.postURI == nil)
-    #expect(cell.textViewForTesting.attributedText == nil)
     #expect(cell.hasOptionsMenuForTesting == false)
+    // `configure` always sets the text, so reuse does not pay for clearing it.
+    #expect(cell.textViewForTesting.attributedText === first.text)
+
+    let second = try NativeFeedRowTestFactory.content(text: "second", postKey: "b")
+    cell.configure(
+      second, typography: NativeFeedRowTestFactory.typography(contentSize: .large),
+      actions: NativeFeedRowTestFactory.noOpActions, shadowUpdates: NativeFeedRowTestFactory.finishedShadowUpdates)
+    #expect(cell.textViewForTesting.attributedText === second.text)
+    #expect(cell.textViewForTesting.accessibilityLabel == "second")
+  }
+
+  @Test("A reused cell that is not configured shows none of the previous post's text")
+  func unconfiguredReuseShowsNoText() throws {
+    let (cell, _) = try NativeFeedRowTestFactory.configuredCell(text: "first")
+    cell.prepareForReuse()
+    cell.clearContent()
+    #expect(cell.textViewForTesting.attributedText == nil)
+    #expect(cell.textViewForTesting.accessibilityLabel == nil)
   }
 
   @Test("Accessibility matches the hosted row")
@@ -139,7 +156,8 @@ struct NativeFeedPostCellTests {
     let content = NativeFeedRowContent(
       post: base.post, layout: base.layout, text: linked, displayName: base.displayName, handle: base.handle,
       timeText: base.timeText, timeAccessibilityLabel: base.timeAccessibilityLabel, verification: nil,
-      actionBarState: base.actionBarState, metadataColor: base.metadataColor)
+      actionBarState: base.actionBarState, metadataColor: base.metadataColor, actionBarCounts: base.actionBarCounts,
+      avatarURL: base.avatarURL)
     let cell = NativeFeedPostCell(frame: .zero)
     cell.configure(
       content, typography: NativeFeedRowTestFactory.typography(contentSize: .large),
@@ -181,7 +199,8 @@ struct NativeFeedPostCellTests {
     let content = NativeFeedRowContent(
       post: base.post, layout: base.layout, text: linked, displayName: base.displayName, handle: base.handle,
       timeText: base.timeText, timeAccessibilityLabel: base.timeAccessibilityLabel, verification: nil,
-      actionBarState: base.actionBarState, metadataColor: base.metadataColor)
+      actionBarState: base.actionBarState, metadataColor: base.metadataColor, actionBarCounts: base.actionBarCounts,
+      avatarURL: base.avatarURL)
     let cell = NativeFeedPostCell(frame: .zero)
     cell.configure(
       content, typography: NativeFeedRowTestFactory.typography(contentSize: .large),

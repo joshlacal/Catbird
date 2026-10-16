@@ -34,6 +34,9 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
   private var post: AppBskyFeedDefs.PostView?
   private var actions: NativeFeedRowActions?
   private var barState: FeedActionBarState?
+  /// The post's counts measured ahead of display, kept for live count updates that leave a count
+  /// unchanged.
+  private var barCounts: FeedActionBarCounts?
   /// The options button's own height (`UIButton`'s intrinsic height); it does not change.
   private lazy var optionsButtonIntrinsicHeight = optionsButton.intrinsicContentSize.height
   /// The last width reported through `layoutWidthChanged` for the current configuration.
@@ -97,7 +100,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     // Native rows only show posts whose avatar moderation does not conceal
     // (`NativeFeedRowSupport.classify`), so the author's avatar may be requested.
     avatarView.configure(
-      url: content.post.author.finalAvatarURL(), pointSize: FeedRowMetrics.avatarSize,
+      url: content.avatarURL, pointSize: FeedRowMetrics.avatarSize,
       scale: traitCollection.displayScale, accessibilityName: Self.avatarAccessibilityName(for: content.post.author))
     let did = content.post.author.did.didString()
     avatarView.onTap = { actions.openProfile(did) }
@@ -111,7 +114,8 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     textView.onOpenLink = actions.openLink
     actionBar.actions = actions.actionBar(content.post)
     barState = content.actionBarState
-    actionBar.apply(content.actionBarState)
+    barCounts = content.actionBarCounts
+    actionBar.apply(content.actionBarState, counts: content.actionBarCounts)
     let menuPost = content.post
     optionsButton.makeItems = { actions.optionsMenu(menuPost) }
 
@@ -126,17 +130,19 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
         state.isReposted = merged.viewer?.repost != nil
         state.replyCount = merged.replyCount ?? 0
         self.barState = state
-        self.actionBar.apply(state)
+        self.actionBar.apply(state, counts: self.barCounts)
       }
     })
     setNeedsLayout()
   }
 
+  /// The next `configure` replaces everything the previous post showed; the text in particular
+  /// is not cleared here, since `configure` always sets it. A cell that is not configured after
+  /// reuse is cleared with `clearContent()`.
   override func prepareForReuse() {
     super.prepareForReuse()
     shadowObservation.replace(with: nil)
     avatarView.prepareForReuse()
-    textView.attributedText = nil
     textView.onOpenLink = nil
     actionBar.actions = nil
     optionsButton.makeItems = nil
@@ -145,7 +151,14 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     layout = nil
     actions = nil
     barState = nil
+    barCounts = nil
     reportedMismatchWidth = nil
+  }
+
+  /// Removes the previous post's text from a reused cell that cannot be configured, so it never
+  /// shows a post it no longer belongs to.
+  func clearContent() {
+    textView.attributedText = nil
   }
 
   /// The name VoiceOver reads for the avatar, as `AuthorAvatarColumn` builds it: the display

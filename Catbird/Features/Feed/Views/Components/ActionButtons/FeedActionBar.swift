@@ -33,15 +33,19 @@ struct FeedActionBarState: Equatable {
 }
 
 /// The row's fonts, resolved from the app's font settings the same way `appFont` does.
-struct FeedActionBarFonts: Equatable {
+/// `@unchecked Sendable`: an immutable value whose `UIFont`s are immutable and thread-safe, so
+/// counts can be measured with them off the main actor.
+struct FeedActionBarFonts: Equatable, @unchecked Sendable {
   let icon: UIFont
   let count: UIFont
   let countKerning: CGFloat
 
   /// Fonts for the current settings, cached because every visible row asks on every update.
+  /// The design is keyed by its UIKit value: describing the SwiftUI `Font.Design` as a string
+  /// goes through runtime reflection.
   @MainActor static func resolved(fontManager: FontManager, boldText: Bool) -> FeedActionBarFonts {
     let key = CacheKey(
-      sizeScale: fontManager.sizeScale, design: "\(fontManager.fontDesign)",
+      sizeScale: fontManager.sizeScale, design: AppUIFont.systemDesign(fontManager.fontDesign).rawValue,
       dynamicType: fontManager.dynamicTypeEnabled,
       limit: fontManager.dynamicTypeLimit?.uiContentSizeCategory.rawValue,
       contentSize: UIApplication.shared.preferredContentSizeCategory.rawValue,
@@ -79,6 +83,59 @@ struct FeedActionBarFonts: Equatable {
     textStyle: UIFont.TextStyle, monospacedDigits: Bool
   ) -> UIFont {
     AppUIFont.font(fontManager, size: size, weight: weight, textStyle: textStyle, monospacedDigits: monospacedDigits)
+  }
+}
+
+/// A count as a button of the row draws it: the label's text and its measured size. Measuring
+/// once, possibly off the main actor ahead of display, keeps text measurement out of layout.
+/// `@unchecked Sendable`: an immutable value; the attributed string and its font are never
+/// mutated after `init` builds them.
+struct FeedActionBarCountText: @unchecked Sendable {
+  let count: Int
+  let text: NSAttributedString
+  /// `text`'s typographic size, before rounding. A `UILabel` reports its intrinsic size as this
+  /// size rounded up to its screen's pixels, which `size(scale:)` does.
+  let measuredSize: CGSize
+  private let font: UIFont
+  private let kerning: CGFloat
+
+  /// The text of a positive `count`; `nil` for zero or less, which the row shows without a count.
+  init?(count: Int, fonts: FeedActionBarFonts) {
+    guard count > 0 else { return nil }
+    let text = NSAttributedString(
+      string: count.formatted, attributes: [.font: fonts.count, .kern: fonts.countKerning])
+    self.count = count
+    self.text = text
+    measuredSize = text.size()
+    font = fonts.count
+    kerning = fonts.countKerning
+  }
+
+  /// Whether this is the text the row draws for `count` in `fonts`.
+  func matches(count: Int, fonts: FeedActionBarFonts) -> Bool {
+    self.count == count && kerning == fonts.countKerning && (font === fonts.count || font == fonts.count)
+  }
+
+  /// The size the count's label needs on a screen of `scale` pixels per point: its
+  /// `intrinsicContentSize`.
+  func size(scale: CGFloat) -> CGSize {
+    let scale = max(scale, 1)
+    return CGSize(
+      width: ceil(measuredSize.width * scale) / scale, height: ceil(measuredSize.height * scale) / scale)
+  }
+}
+
+/// The reply, repost and like counts of one post as the row draws them, measured ahead of display.
+/// `apply(_:counts:)` uses a count only while it is still the post's count in the row's fonts.
+struct FeedActionBarCounts: Sendable {
+  let reply: FeedActionBarCountText?
+  let repost: FeedActionBarCountText?
+  let like: FeedActionBarCountText?
+
+  init(replyCount: Int, repostCount: Int, likeCount: Int, fonts: FeedActionBarFonts) {
+    reply = FeedActionBarCountText(count: replyCount, fonts: fonts)
+    repost = FeedActionBarCountText(count: repostCount, fonts: fonts)
+    like = FeedActionBarCountText(count: likeCount, fonts: fonts)
   }
 }
 
@@ -190,30 +247,36 @@ final class FeedActionBarView: UIView {
     reusePool.append(view)
   }
 
-  func apply(_ new: FeedActionBarState) {
+  /// Shows `new`. `counts` are the post's counts measured ahead of display; a count they do not
+  /// hold in `new.fonts` (a live count that changed since, for example) is measured here.
+  func apply(_ new: FeedActionBarState, counts: FeedActionBarCounts? = nil) {
     let old = state
     guard new != old else { return }
     state = new
     // Animate only changes to the post already shown, never the first fill or a
     // reused view switching posts.
     let animates = old?.postURI == new.postURI && !new.reduceMotion
+    func text(_ count: Int, _ prepared: FeedActionBarCountText?) -> FeedActionBarCountText? {
+      if let prepared, prepared.matches(count: count, fonts: new.fonts) { return prepared }
+      return FeedActionBarCountText(count: count, fonts: new.fonts)
+    }
 
     replyButton.configure(
-      iconName: "bubble.left", count: new.replyCount, color: .secondaryLabel,
+      iconName: "bubble.left", count: text(new.replyCount, counts?.reply), color: .secondaryLabel,
       fonts: new.fonts, animated: false)
     replyButton.isEnabled = !new.isReplyDisabled
     replyButton.accessibilityLabel = Self.countedLabel(
       "Reply", count: new.replyCount, singular: "reply", plural: "replies")
 
     repostButton.configure(
-      iconName: "arrow.2.squarepath", count: new.repostCount,
+      iconName: "arrow.2.squarepath", count: text(new.repostCount, counts?.repost),
       color: new.isReposted ? .systemGreen : .secondaryLabel, fonts: new.fonts, animated: false)
     repostButton.accessibilityLabel = Self.countedLabel(
       new.isReposted ? "Remove Repost" : "Repost or Quote Post",
       count: new.repostCount, singular: "repost", plural: "reposts")
 
     likeButton.configure(
-      iconName: new.isLiked ? "heart.fill" : "heart", count: new.likeCount,
+      iconName: new.isLiked ? "heart.fill" : "heart", count: text(new.likeCount, counts?.like),
       color: new.isLiked ? .systemRed : .secondaryLabel, fonts: new.fonts, animated: animates)
     likeButton.accessibilityLabel = Self.countedLabel(
       new.isLiked ? "Unlike" : "Like", count: new.likeCount, singular: "like", plural: "likes")
@@ -306,7 +369,11 @@ final class FeedActionBarButton: UIButton {
   private var iconName: String
   private var iconFont: UIFont?
   private var color: UIColor = .secondaryLabel
-  private var hasCount = false
+  /// The count shown, measured when it was built; layout sizes the label from it instead of
+  /// measuring the label's text.
+  private var countText: FeedActionBarCountText?
+  private var hasCount: Bool { countText != nil }
+  var countLabelForTesting: UILabel { countLabel }
 
   // Matches the SwiftUI labels: 36pt wide without a count, 46pt with one, 32pt tall.
   var minimumWidth: CGFloat { hasCount ? 46 : 36 }
@@ -340,11 +407,19 @@ final class FeedActionBarButton: UIButton {
   /// The width the icon and count need, at least `minimumWidth`.
   var fittingWidth: CGFloat {
     let iconWidth = icon.intrinsicContentSize.width
-    let countWidth = hasCount ? Self.iconSpacing + countLabel.intrinsicContentSize.width : 0
+    let countWidth = hasCount ? Self.iconSpacing + countSize.width : 0
     return max(minimumWidth, iconWidth + countWidth)
   }
 
-  func configure(iconName: String, count: Int?, color: UIColor, fonts: FeedActionBarFonts, animated: Bool) {
+  /// The count label's size: the measured count rounded up to this screen's pixels, which is the
+  /// label's own intrinsic size for the same text.
+  private var countSize: CGSize {
+    countText?.size(scale: traitCollection.displayScale) ?? .zero
+  }
+
+  func configure(
+    iconName: String, count: FeedActionBarCountText?, color: UIColor, fonts: FeedActionBarFonts, animated: Bool
+  ) {
     if iconName != self.iconName || fonts.icon != iconFont || icon.image == nil,
        let image = Self.symbolImage(iconName, font: fonts.icon) {
       if animated, iconName != self.iconName {
@@ -356,17 +431,14 @@ final class FeedActionBarButton: UIButton {
     self.iconName = iconName
     iconFont = fonts.icon
 
-    if let count, count > 0 {
-      hasCount = true
+    if let count {
       countLabel.isHidden = false
-      countLabel.attributedText = NSAttributedString(
-        string: count.formatted,
-        attributes: [.font: fonts.count, .kern: fonts.countKerning])
+      countLabel.attributedText = count.text
     } else {
-      hasCount = false
       countLabel.isHidden = true
       countLabel.attributedText = nil
     }
+    countText = count
     self.color = color
     applyColor()
     setNeedsLayout()
@@ -422,7 +494,7 @@ final class FeedActionBarButton: UIButton {
   override func layoutSubviews() {
     super.layoutSubviews()
     let iconSize = icon.intrinsicContentSize
-    let countSize = hasCount ? countLabel.intrinsicContentSize : .zero
+    let countSize = self.countSize
     let contentWidth = iconSize.width + (hasCount ? Self.iconSpacing + countSize.width : 0)
     var x = contentAlignment == .leading ? 0 : bounds.width - contentWidth
     icon.frame = CGRect(

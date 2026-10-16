@@ -55,11 +55,16 @@ enum NativeFeedRowTestFactory {
     verification: VerificationBadgeKind? = nil
   ) throws -> NativeFeedRowContent {
     let parts = try parts(text: text, contentSize: contentSize, postKey: postKey, verification: verification)
+    let barState = actionBarState(for: parts.post)
     return NativeFeedRowContent(
       post: parts.post, layout: FeedRowLayoutEngine.layout(parts.input), text: parts.input.text,
       displayName: displayName, handle: handle, timeText: timeText,
       timeAccessibilityLabel: timeAccessibilityLabel, verification: verification,
-      actionBarState: actionBarState(for: parts.post), metadataColor: .secondaryLabel)
+      actionBarState: barState, metadataColor: .secondaryLabel,
+      actionBarCounts: FeedActionBarCounts(
+        replyCount: barState.replyCount, repostCount: barState.repostCount, likeCount: barState.likeCount,
+        fonts: barState.fonts),
+      avatarURL: parts.post.author.finalAvatarURL())
   }
 
   static func actionBarState(for post: AppBskyFeedDefs.PostView) -> FeedActionBarState {

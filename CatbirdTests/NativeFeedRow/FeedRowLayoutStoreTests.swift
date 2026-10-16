@@ -6,14 +6,28 @@ import UIKit
 @MainActor
 @Suite("Feed row layout store")
 struct FeedRowLayoutStoreTests {
-  @Test("Prepared layouts are served without recomputing")
+  @Test("A layout prepared off the main actor is served without recomputing")
   func prepareThenServe() async throws {
     let store = FeedRowLayoutStore()
     let input = try NativeFeedRowTestFactory.layoutInput(text: "prepared")
-    await store.prepare([input])
+    let prepared = await Task.detached { FeedRowLayoutStore.Prepared(input) }.value
+    store.insert(prepared)
     #expect(store.cachedCount == 1)
     #expect(store.layout(for: input) == FeedRowLayoutEngine.layout(input))
     #expect(store.cachedCount == 1)
+    #expect(store.computedOnCallCount == 0)
+  }
+
+  @Test("A miss is computed on the calling thread and counted; a hit is not")
+  func missesAreCounted() throws {
+    let store = FeedRowLayoutStore()
+    let input = try NativeFeedRowTestFactory.layoutInput(text: "counted")
+    _ = store.layout(for: input)
+    #expect(store.computedOnCallCount == 1)
+    _ = store.layout(for: input)
+    #expect(store.computedOnCallCount == 1)
+    _ = store.layout(for: Self.resized(input, to: 320))
+    #expect(store.computedOnCallCount == 2)
   }
 
   @Test("A typography change misses the cache")
@@ -73,15 +87,18 @@ struct FeedRowLayoutStoreTests {
     #expect(store.cachedCount == 2)
   }
 
-  @Test("Prepare skips inputs that are already cached and duplicates within the batch")
-  func prepareSkipsKnownInputs() async throws {
+  @Test("A prepared layout for a cached key replaces it without adding an entry")
+  func preparedLayoutForCachedKey() throws {
     let store = FeedRowLayoutStore()
     let first = try NativeFeedRowTestFactory.layoutInput(text: "first")
     let second = try NativeFeedRowTestFactory.layoutInput(text: "second")
     _ = store.layout(for: first)
-    await store.prepare([first, second, second])
+    store.insert(FeedRowLayoutStore.Prepared(first))
+    store.insert(FeedRowLayoutStore.Prepared(second))
+    store.insert(FeedRowLayoutStore.Prepared(second))
     #expect(store.cachedCount == 2)
     #expect(store.layout(for: second) == FeedRowLayoutEngine.layout(second))
+    #expect(store.computedOnCallCount == 1)
   }
 
   @Test("Prepared layouts for several widths are each served for their own width")
@@ -89,12 +106,14 @@ struct FeedRowLayoutStoreTests {
     let store = FeedRowLayoutStore()
     let input = try NativeFeedRowTestFactory.layoutInput(text: "x")
     let inputs = [320, 375, 390, 430].map { Self.resized(input, to: CGFloat($0)) }
-    await store.prepare(inputs)
+    let prepared = await Task.detached { inputs.map(FeedRowLayoutStore.Prepared.init) }.value
+    for layout in prepared { store.insert(layout) }
     #expect(store.cachedCount == 4)
     for request in inputs {
       #expect(store.layout(for: request).width == request.width)
     }
     #expect(store.cachedCount == 4)
+    #expect(store.computedOnCallCount == 0)
   }
 
   @Test("A differing time text misses the cache")
@@ -135,21 +154,6 @@ struct FeedRowLayoutStoreTests {
     #expect(store.cachedCount == 3)
   }
 
-  @Test("Cancelling a prepare keeps only correct layouts")
-  func cancelledPrepareStoresCorrectLayouts() async throws {
-    let store = FeedRowLayoutStore()
-    let input = try NativeFeedRowTestFactory.layoutInput(text: "cancelled")
-    let inputs = (0..<200).map { Self.resized(input, to: CGFloat(300 + $0)) }
-    let task = Task { await store.prepare(inputs) }
-    task.cancel()
-    await task.value
-    #expect(store.cachedCount <= inputs.count)
-    for request in inputs {
-      #expect(store.layout(for: request) == FeedRowLayoutEngine.layout(request))
-    }
-    #expect(store.cachedCount == inputs.count)
-  }
-
   @Test("Exceeding the capacity wipes the cache and still serves the new layout")
   func evictionAtCapacity() throws {
     let capacity = 4
@@ -171,14 +175,12 @@ struct FeedRowLayoutStoreTests {
     let input = try NativeFeedRowTestFactory.layoutInput(text: "x")
     let first = Self.resized(input, to: 320)
     let second = Self.resized(input, to: 390)
-    // `first` is uncached when the prepare starts, so its result is stored after the store has
-    // already been filled to capacity by the main-actor calls below.
-    let task = Task { await store.prepare([first]) }
-    await Task.yield()
+    // A preparation of `first` that finishes after the main actor filled the store to capacity.
+    let prepared = await Task.detached { FeedRowLayoutStore.Prepared(first) }.value
     _ = store.layout(for: second)
     _ = store.layout(for: first)
     #expect(store.cachedCount == 2)
-    await task.value
+    store.insert(prepared)
     #expect(store.cachedCount == 2)
     #expect(store.layout(for: first) == FeedRowLayoutEngine.layout(first))
     #expect(store.layout(for: second) == FeedRowLayoutEngine.layout(second))

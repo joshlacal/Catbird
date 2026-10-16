@@ -11,6 +11,12 @@ import UIKit
 /// created only as they scroll into view.
 @available(iOS 16.0, *)
 final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate {
+  /// The feed registers this cell by reuse identifier rather than with a `CellRegistration`: a
+  /// registration bridges its item to Objective-C on every dequeue, and the first bridge of a
+  /// `Void` item searches every protocol conformance in the process, about 5 ms in the frame where
+  /// the interstitial first scrolls in.
+  static let reuseIdentifier = "TrendingInterstitialCell"
+
   struct Configuration {
     let content: TrendingFeedContent
     let appState: AppState

@@ -19,7 +19,9 @@ enum FeedRowTestPosts {
     asRepost: Bool = false, asPin: Bool = false, tags: [String]? = nil, pronouns: String? = nil,
     selfDeclaredBot: Bool = false, pinned: Bool = false, authorBlockedViewer: Bool = false,
     authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil, postKey: String = "one",
-    authorDID: String = "did:plc:fixture", liked: Bool = false, reposted: Bool = false
+    authorDID: String = "did:plc:fixture", liked: Bool = false, reposted: Bool = false,
+    handle: String = "author.test", replyCount: Int = 0, repostCount: Int = 0,
+    createdAt: Date = Date(timeIntervalSince1970: 0), avatar: String? = nil
   ) throws -> CachedFeedViewPost {
     let did = try DID(didString: authorDID)
     let viewer = authorBlockedViewer ? AppBskyActorDefs.ViewerState(blockedBy: true) : nil
@@ -32,20 +34,22 @@ enum FeedRowTestPosts {
         status: "app.bsky.actor.status#live", record: .null, isActive: true)
       : nil
     let author = AppBskyActorDefs.ProfileViewBasic(
-      did: did, handle: try Handle(handleString: "author.test"), displayName: displayName,
-      pronouns: pronouns, avatar: nil, associated: nil, viewer: viewer, labels: labels,
+      did: did, handle: try Handle(handleString: handle), displayName: displayName,
+      pronouns: pronouns, avatar: avatar.map { URI(uriString: $0) }, associated: nil, viewer: viewer, labels: labels,
       createdAt: nil, verification: nil, status: status, debug: nil)
     let post = try postView(
       uri: "at://did:plc:fixture/app.bsky.feed.post/\(postKey)", text: text, likeCount: likeCount,
       author: author, langs: langs, tags: tags, facets: facets,
       embed: withImageEmbed ? imageEmbed : nil,
-      viewerState: viewerState(liked: liked, reposted: reposted, pinned: pinned, postKey: postKey))
+      viewerState: viewerState(liked: liked, reposted: reposted, pinned: pinned, postKey: postKey),
+      replyCount: replyCount, repostCount: repostCount, createdAt: createdAt)
 
     var reply: AppBskyFeedDefs.ReplyRef?
     if asReply {
       let parent = try postView(
         uri: "at://did:plc:fixture/app.bsky.feed.post/parent", text: "Parent", likeCount: 0,
-        author: author, langs: nil, tags: nil, facets: nil, embed: nil, viewerState: nil)
+        author: author, langs: nil, tags: nil, facets: nil, embed: nil, viewerState: nil,
+        replyCount: 0, repostCount: 0, createdAt: Date(timeIntervalSince1970: 0))
       reply = AppBskyFeedDefs.ReplyRef(root: .appBskyFeedDefsPostView(parent), parent: .appBskyFeedDefsPostView(parent))
     }
     var reason: AppBskyFeedDefs.FeedViewPostReasonUnion?
@@ -98,17 +102,17 @@ enum FeedRowTestPosts {
   private static func postView(
     uri: String, text: String, likeCount: Int, author: AppBskyActorDefs.ProfileViewBasic,
     langs: [String]?, tags: [String]?, facets: [AppBskyRichtextFacet]?, embed: AppBskyFeedDefs.PostViewEmbedUnion?,
-    viewerState: AppBskyFeedDefs.ViewerState?
+    viewerState: AppBskyFeedDefs.ViewerState?, replyCount: Int, repostCount: Int, createdAt: Date
   ) throws -> AppBskyFeedDefs.PostView {
     let record = AppBskyFeedPost(
       text: text, entities: nil, facets: facets, reply: nil, embed: nil,
       langs: langs?.map { LanguageCodeContainer(languageCode: $0) }, labels: nil, tags: tags,
-      createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)))
+      createdAt: ATProtocolDate(date: createdAt))
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: uri),
       cid: CID.fromDAGCBOR(Data(uri.utf8)), author: author,
       record: .knownType(record), embed: embed, bookmarkCount: nil,
-      replyCount: 0, repostCount: 0, likeCount: likeCount, quoteCount: nil,
+      replyCount: replyCount, repostCount: repostCount, likeCount: likeCount, quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)),
       viewer: viewerState, labels: nil, threadgate: nil, debug: nil)
   }
