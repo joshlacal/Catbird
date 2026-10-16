@@ -352,7 +352,11 @@ struct UnifiedProfileContentView: View {
         id: boxedPost.value.id,
         path: $navigationPath
       )
-      .frame(maxWidth: contentMaxWidth, alignment: .center)
+      // The widest the content gets, not `contentMaxWidth`: the list keeps a row as built until
+      // its post changes, and `contentMaxWidth` follows a GeometryReader that mid-rotation briefly
+      // measures a narrower screen. In a cell, which is never wider than that screen, this cap
+      // comes to the same width, and is right whenever the row was built.
+      .frame(maxWidth: UnifiedProfileView.maxResponsiveContentWidth, alignment: .center)
       .frame(maxWidth: .infinity, alignment: .center)
 
       Divider()

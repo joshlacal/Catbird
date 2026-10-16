@@ -14,9 +14,9 @@ import AppKit
 struct UnifiedProfileView: View {
   @Environment(SceneNavigationContext.self) private var sceneContext
   #if os(macOS)
-  private static let maxResponsiveContentWidth: CGFloat = 700
+  static let maxResponsiveContentWidth: CGFloat = 700
   #else
-  private static let maxResponsiveContentWidth: CGFloat = 600
+  static let maxResponsiveContentWidth: CGFloat = 600
   #endif
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var currentColorScheme
