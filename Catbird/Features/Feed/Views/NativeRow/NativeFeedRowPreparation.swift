@@ -5,7 +5,7 @@ import UIKit
 
 // MARK: - Native Feed Row Preparation
 
-/// The work `NativeFeedRowCoordinator` moves off the main actor for rows that are about to scroll
+/// The work `NativeFeedRowPreparer` moves off the main actor for rows that are about to scroll
 /// in: each post's decision (classification, header strings, attributed text and counts), its
 /// layout at the width cells have, and its relative time strings.
 ///
@@ -19,20 +19,32 @@ enum NativeFeedRowPreparation {
   static let batchSize = 24
 
   /// One post to prepare, captured on the main actor.
-  struct Entry: Sendable {
-    let postID: String
-    let signature: FeedPostContentSignature
-    /// The post's classification input, when it has no decision yet.
-    let source: NativeFeedRowSupport.Entry?
-    /// The decision the main actor already made for this signature, when it has one; only the
-    /// layout and time strings are prepared then.
-    let decision: NativeFeedRowCoordinator.Decision?
+  enum Entry: Sendable {
+    /// A post with no decision yet for its content: classified from its captured input.
+    case classify(postID: String, signature: FeedPostContentSignature, source: NativeFeedRowSupport.Entry)
+    /// A post the main actor already decided for this content: only its layout and time strings
+    /// are prepared.
+    case decided(postID: String, signature: FeedPostContentSignature, decision: NativeFeedRowCoordinator.Decision)
+
+    var postID: String {
+      switch self {
+      case .classify(let postID, _, _), .decided(let postID, _, _): postID
+      }
+    }
+
+    var signature: FeedPostContentSignature {
+      switch self {
+      case .classify(_, let signature, _), .decided(_, let signature, _): signature
+      }
+    }
   }
 
   /// Posts to prepare under one set of row settings, at one layout width.
   struct Batch: Sendable {
-    /// The coordinator's preparation generation when the batch was taken; a batch from an
-    /// earlier generation (other settings, typography or width) is discarded.
+    /// Tells the preparer's batches apart.
+    let id: Int
+    /// The preparer's generation when the batch was taken; a batch from an earlier generation
+    /// (other settings, typography or width) is discarded.
     let generation: Int
     let width: CGFloat
     let settings: NativeFeedRowCoordinator.Settings
@@ -70,13 +82,12 @@ enum NativeFeedRowPreparation {
     for entry in batch.entries {
       if Task.isCancelled { break }
       let decision: NativeFeedRowCoordinator.Decision
-      if let existing = entry.decision {
-        decision = existing
-      } else if let source = entry.source {
+      switch entry {
+      case .classify(let postID, let signature, let source):
         decision = NativeFeedRowCoordinator.decide(
-          postID: entry.postID, entry: source, signature: entry.signature, settings: batch.settings)
-      } else {
-        continue
+          postID: postID, entry: source, signature: signature, settings: batch.settings)
+      case .decided(_, _, let existing):
+        decision = existing
       }
       guard case .native(let row) = decision else {
         prepared.append(Prepared(

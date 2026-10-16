@@ -2,6 +2,7 @@
 import Foundation
 import Petrel
 import SwiftUI
+import Synchronization
 import Testing
 import UIKit
 @testable import Catbird
@@ -29,12 +30,17 @@ struct NativeFeedRowPreparationTests {
       traits.displayScale = 3
     }
 
-    init(_ name: String) async throws {
+    /// `prepareBatch` prepares `coordinator`'s batches.
+    init(
+      _ name: String,
+      prepareBatch: @escaping NativeFeedRowPreparer.Runner = { await NativeFeedRowPreparation.run($0) }
+    ) async throws {
       let client = await ATProtoClient(baseURL: try #require(URL(string: "https://\(name).invalid")))
       appState = AppState(userDID: "did:plc:\(name)", client: client, regulatoryChecker: NoAgePrompt())
       sceneContext = SceneNavigationContext(appState: appState, sceneID: UUID())
       coordinator = NativeFeedRowCoordinator(
-        navigationPath: .constant(NavigationPath()), appState: appState, sceneContext: sceneContext)
+        navigationPath: .constant(NavigationPath()), appState: appState, sceneContext: sceneContext,
+        prepareBatch: prepareBatch)
       reference = NativeFeedRowCoordinator(
         navigationPath: .constant(NavigationPath()), appState: appState, sceneContext: sceneContext)
     }
@@ -88,38 +94,53 @@ struct NativeFeedRowPreparationTests {
     ]
   }
 
+  private static let width: CGFloat = 402
+
   @Test("A prepared row is the row the main actor builds")
   func preparedRowsMatchTheMainActor() async throws {
     let fixture = try await Fixture("nativerowpreparationequal")
     defer { fixture.tearDown() }
     let posts = try representativePosts()
-    let width: CGFloat = 402
     fixture.show(posts)
-    fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: width)
-    await fixture.coordinator.waitForPreparation()
+    fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: Self.width)
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
     let layoutsBefore = fixture.coordinator.layoutStore.computedOnCallCount
 
     fixture.show(posts, in: fixture.reference)
     for post in posts {
-      let prepared = try #require(fixture.coordinator.decision(forPostID: post.id))
-      let built = try #require(fixture.reference.decision(forPostID: post.id))
-      switch (prepared, built) {
-      case (.hosted(let preparedReason), .hosted(let builtReason)):
-        #expect(preparedReason == builtReason)
-      case (.native(let preparedRow), .native(let builtRow)):
-        try expectSameRow(preparedRow, builtRow)
-        let preparedContent = try #require(fixture.coordinator.content(for: preparedRow, width: width))
-        let builtContent = try #require(fixture.reference.content(for: builtRow, width: width))
-        expectSameContent(preparedContent, builtContent)
-        #expect(preparedContent.avatarURL == (try post.feedViewPost).post.author.finalAvatarURL())
-      default:
-        Issue.record("\(post.id) was decided differently: \(prepared) against \(built)")
-      }
+      try expectSameDecision(for: post, in: fixture)
     }
     // Every decision and layout came from the preparation, none from the main actor.
     #expect(fixture.coordinator.mainActorDecisionCount == 0)
     #expect(fixture.coordinator.layoutStore.computedOnCallCount == layoutsBefore)
     #expect(fixture.reference.mainActorDecisionCount == posts.count)
+  }
+
+  /// `post`'s prepared decision in `fixture.coordinator` is the one `fixture.reference` makes on
+  /// the main actor.
+  private func expectSameDecision(for post: CachedFeedViewPost, in fixture: Fixture) throws {
+    let prepared = try #require(fixture.coordinator.decision(forPostID: post.id))
+    let built = try #require(fixture.reference.decision(forPostID: post.id))
+    switch (prepared, built) {
+    case (.hosted(let preparedReason), .hosted(let builtReason)):
+      #expect(preparedReason == builtReason)
+    case (.native(let preparedRow), .native(let builtRow)):
+      try expectSameNativeRow(preparedRow, builtRow, post: post, in: fixture)
+    default:
+      Issue.record("\(post.id) was decided differently: \(prepared) against \(built)")
+    }
+  }
+
+  private func expectSameNativeRow(
+    _ prepared: NativeFeedRowCoordinator.Row, _ built: NativeFeedRowCoordinator.Row, post: CachedFeedViewPost,
+    in fixture: Fixture
+  ) throws {
+    try expectSameRow(prepared, built)
+    let preparedContent = try #require(fixture.coordinator.content(for: prepared, width: Self.width))
+    let builtContent = try #require(fixture.reference.content(for: built, width: Self.width))
+    expectSameContent(preparedContent, builtContent)
+    let author = try post.feedViewPost.post.author
+    #expect(preparedContent.avatarURL == author.finalAvatarURL())
   }
 
   private func expectSameContent(_ prepared: NativeFeedRowContent, _ built: NativeFeedRowContent) {
@@ -194,10 +215,10 @@ struct NativeFeedRowPreparationTests {
   /// Waits until the coordinator has taken a batch and is preparing it off the main actor.
   private func waitUntilPreparing(_ coordinator: NativeFeedRowCoordinator) async throws {
     let deadline = ContinuousClock.now + .seconds(5)
-    while !coordinator.hasPreparationInFlight, ContinuousClock.now < deadline {
+    while !coordinator.preparer.hasPreparationInFlightForTesting, ContinuousClock.now < deadline {
       await Task.yield()
     }
-    try #require(coordinator.hasPreparationInFlight)
+    try #require(coordinator.preparer.hasPreparationInFlightForTesting)
   }
 
   @Test("A width change cancels the preparation in flight, and only layouts for the new width are kept")
@@ -206,13 +227,13 @@ struct NativeFeedRowPreparationTests {
     defer { fixture.tearDown() }
     let posts = try manyPosts(40, key: "width")
     fixture.show(posts)
-    let generation = fixture.coordinator.preparationGeneration
+    let generation = fixture.coordinator.preparer.generation
     fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 402)
     try await waitUntilPreparing(fixture.coordinator)
 
     fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 320)
-    #expect(fixture.coordinator.preparationGeneration != generation)
-    await fixture.coordinator.waitForPreparation()
+    #expect(fixture.coordinator.preparer.generation != generation)
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
 
     // Every post was prepared once, for the new width; nothing from the cancelled batch was kept.
     #expect(fixture.coordinator.layoutStore.cachedCount == posts.count)
@@ -236,12 +257,12 @@ struct NativeFeedRowPreparationTests {
 
     // The controller does this when the font settings or the content size category change.
     fixture.coordinator.invalidateLayouts()
-    await fixture.coordinator.waitForPreparation()
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
     #expect(fixture.coordinator.layoutStore.cachedCount == 0)
 
     // The rows are prepared again when asked for, for the current typography.
     fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 402)
-    await fixture.coordinator.waitForPreparation()
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
     #expect(fixture.coordinator.layoutStore.cachedCount == posts.count)
     let typography = try #require(fixture.coordinator.typography)
     let row = try #require(fixture.coordinator.nativeRow(forPostID: posts[0].id))
@@ -265,10 +286,10 @@ struct NativeFeedRowPreparationTests {
     // The batch in flight holds the first posts; the snapshot keeps the last of them and the rest.
     let kept = Array(posts.suffix(20))
     fixture.show(kept)
-    await fixture.coordinator.waitForPreparation()
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
     // The kept posts the cancelled batch held are prepared once they are asked for again.
     fixture.coordinator.prepareRows(forPostIDs: kept.map(\.id), boundsWidth: 402)
-    await fixture.coordinator.waitForPreparation()
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
     // Nothing was kept for the posts that left.
     #expect(fixture.coordinator.layoutStore.cachedCount == kept.count)
     for post in kept {
@@ -277,25 +298,127 @@ struct NativeFeedRowPreparationTests {
     #expect(fixture.coordinator.mainActorDecisionCount == 0)
   }
 
+  // MARK: - Guards on Finished Batches
+
+  /// Waits until `gate` has started `count` batches.
+  private func waitUntilStarted(_ gate: PreparationGate, count: Int) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while gate.started < count, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(gate.started >= count)
+  }
+
+  /// Waits until `gate`'s first `count` batches returned and their preparation applied them on the
+  /// main actor.
+  private func waitUntilApplied(
+    _ gate: PreparationGate, count: Int, in coordinator: NativeFeedRowCoordinator
+  ) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while gate.returned < count, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(gate.returned >= count, "Only \(gate.returned) of \(count) batches were prepared")
+    // A returned batch is applied in its preparation's next main-actor turn.
+    try await Task.sleep(for: .milliseconds(100))
+    await coordinator.preparer.waitForPreparationForTesting()
+  }
+
+  @Test("A batch that returns after a typography change keeps none of its results")
+  func batchFromAnEarlierGenerationIsDropped() async throws {
+    let gate = PreparationGate()
+    let fixture = try await Fixture("nativerowguardgeneration", prepareBatch: { await gate.run($0) })
+    defer { fixture.tearDown() }
+    let posts = try manyPosts(10, key: "guardgeneration")
+    fixture.show(posts)
+    fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 402)
+    try await waitUntilStarted(gate, count: 1)
+
+    fixture.coordinator.invalidateLayouts()
+    gate.open()
+    try await waitUntilApplied(gate, count: 1, in: fixture.coordinator)
+    // The batch ran to completion, so only the generation check keeps its results out.
+    #expect(fixture.coordinator.layoutStore.cachedCount == 0)
+    #expect(fixture.coordinator.decisionCounter.total == 0)
+  }
+
+  @Test("A batch that returns after a width change keeps none of its results")
+  func batchForAnotherWidthIsDropped() async throws {
+    let gate = PreparationGate()
+    let fixture = try await Fixture("nativerowguardwidth", prepareBatch: { await gate.run($0) })
+    defer { fixture.tearDown() }
+    let posts = try manyPosts(10, key: "guardwidth")
+    fixture.show(posts)
+    fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 402)
+    try await waitUntilStarted(gate, count: 1)
+
+    fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 320)
+    try await waitUntilStarted(gate, count: 2)
+    gate.open()
+    try await waitUntilApplied(gate, count: 2, in: fixture.coordinator)
+    #expect(fixture.coordinator.layoutStore.cachedCount == posts.count)
+    let computed = fixture.coordinator.layoutStore.computedOnCallCount
+    for post in posts {
+      let row = try #require(fixture.coordinator.nativeRow(forPostID: post.id))
+      #expect(try #require(fixture.coordinator.content(for: row, width: 320)).layout.width == 320)
+    }
+    #expect(fixture.coordinator.layoutStore.computedOnCallCount == computed)
+  }
+
+  @Test("A post whose counts change while its batch is prepared is prepared again for its new content")
+  func changedPostIsPreparedAgain() async throws {
+    let gate = PreparationGate()
+    let fixture = try await Fixture("nativerowguardsignature", prepareBatch: { await gate.run($0) })
+    defer { fixture.tearDown() }
+    let before = try FeedRowTestPosts.cachedPost(text: "Counting", likeCount: 1, postKey: "changing")
+    let after = try FeedRowTestPosts.cachedPost(text: "Counting", likeCount: 2, postKey: "changing")
+    try #require(before.id == after.id)
+    try #require(FeedPostContentSignature(before) != FeedPostContentSignature(after))
+    fixture.show([before])
+    fixture.coordinator.prepareRows(forPostIDs: [before.id], boundsWidth: 402)
+    try await waitUntilStarted(gate, count: 1)
+
+    // Only the counts change; the post stays in the snapshot.
+    fixture.show([after])
+    gate.open()
+    try await waitUntilApplied(gate, count: 2, in: fixture.coordinator)
+    let row = try #require(fixture.coordinator.nativeRow(forPostID: after.id))
+    #expect(row.post.likeCount == 2)
+    #expect(fixture.coordinator.mainActorDecisionCount == 0)
+    // The decision for the old content was not kept.
+    #expect(fixture.coordinator.decisionCounter.total == 1)
+    let computed = fixture.coordinator.layoutStore.computedOnCallCount
+    _ = try #require(fixture.coordinator.content(for: row, width: 402))
+    #expect(fixture.coordinator.layoutStore.computedOnCallCount == computed)
+  }
+
   // MARK: - Time
 
   @Test("A prepared row whose time ticks over shows the new time with a layout for it")
   func tickedTimeRefreshes() async throws {
     let fixture = try await Fixture("nativerowpreparationtime")
     defer { fixture.tearDown() }
-    // One minute and 58.5 seconds old: "1m" now, "2m" in a second and a half.
-    let createdAt = Date().addingTimeInterval(-118.5)
+    // One minute and 55 seconds old: "1m" now, "2m" in five seconds.
+    let createdAt = Date().addingTimeInterval(-115)
     let post = try FeedRowTestPosts.cachedPost(text: "Ticking", postKey: "ticking", createdAt: createdAt)
     fixture.show([post])
     fixture.coordinator.prepareRows(forPostIDs: [post.id], boundsWidth: 402)
-    await fixture.coordinator.waitForPreparation()
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
     let row = try #require(fixture.coordinator.nativeRow(forPostID: post.id))
+
+    // Before the boundary the row shows the prepared time, with the layout prepared for it.
+    let layouts = fixture.coordinator.layoutStore.computedOnCallCount
+    let prepared = try #require(fixture.coordinator.content(for: row, width: 402))
+    try #require(Date() < createdAt.addingTimeInterval(120), "The setup ran past the minute boundary")
+    #expect(prepared.timeText == "1m")
+    #expect(fixture.coordinator.layoutStore.computedOnCallCount == layouts)
 
     while Date() < createdAt.addingTimeInterval(120.2) {
       try await Task.sleep(for: .milliseconds(50))
     }
     let content = try #require(fixture.coordinator.content(for: row, width: 402))
     #expect(content.timeText == "2m")
+    #expect(fixture.coordinator.layoutStore.computedOnCallCount == layouts + 1)
     #expect(content.timeAccessibilityLabel == formatTimeAgo(from: createdAt, forAccessibility: true))
     let typography = try #require(fixture.coordinator.typography)
     #expect(content.layout == FeedRowLayoutEngine.layout(FeedRowLayoutInput(
@@ -304,29 +427,69 @@ struct NativeFeedRowPreparationTests {
       contentSignature: row.signature, displayScale: 3)))
   }
 
-  @Test("The spoken time changes with the shown time from a minute up, so it can be prepared with it")
-  func timeStringsChangeTogether() {
+  /// `formatTimeAgo`'s spoken formatter, in the language of `locale`.
+  private static func spokenFormatter(locale: Locale) -> RelativeDateTimeFormatter {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .full
+    formatter.dateTimeStyle = .named
+    formatter.locale = locale
+    return formatter
+  }
+
+  @Test("formatTimeAgo reads as the formatter the time sweep checks, in the device's language")
+  func spokenFormatterIsFormatTimeAgos() {
+    let formatter = Self.spokenFormatter(locale: .current)
+    for age: TimeInterval in [67, 5407, 90_007, 3_000_007, 40_000_007] {
+      let now = Date()
+      let date = now.addingTimeInterval(-age)
+      #expect(formatTimeAgo(from: date, forAccessibility: true) == formatter.localizedString(for: date, relativeTo: now))
+    }
+  }
+
+  /// The prepared spoken time is reused while the shown time stays the same (`RowTime.isCurrent`).
+  /// That holds only if, from a minute up, the spoken time never changes inside a bucket of the
+  /// shown time: minutes, hours (an hour and a half still reads "1 hour ago"), days, months, years.
+  @Test("The spoken time changes with the shown time from a minute up, in every bucket and language",
+    arguments: ["en_US", "de_DE", "ja_JP"])
+  func timeStringsChangeTogether(localeIdentifier: String) {
+    let formatter = Self.spokenFormatter(locale: Locale(identifier: localeIdentifier))
     let minute: TimeInterval = 60
     let hour = 60 * minute
     let day = 24 * hour
-    let ages: [TimeInterval] = [
-      minute, minute + 30, 2 * minute - 1, 2 * minute, hour - 1, hour, hour + 1, 2 * hour - 1, day - 1, day,
-      day + 1, 2 * day - 1, 2 * day, 6 * day, 7 * day - 1, 7 * day, 8 * day, 13 * day, 14 * day, 27 * day,
-      31 * day, 40 * day, 364 * day, 366 * day, 800 * day,
-    ]
-    let now = Date()
+    // Every minute for two days, then every hour for more than two years; 7 s past each boundary,
+    // so the shown time is not on the edge of its bucket.
+    let ages = Array(stride(from: minute + 7, to: 2 * day, by: minute))
+      + Array(stride(from: 2 * day + 7, to: 800 * day, by: hour))
+    var previous: (age: TimeInterval, shown: String, spoken: String)?
+    var buckets = Set<String>()
     for age in ages {
-      for delta: TimeInterval in [0.5, 1, 20, 59] {
-        let newer = now.addingTimeInterval(-age)
-        let older = newer.addingTimeInterval(-delta)
-        guard shortTimeAgoString(from: newer) == shortTimeAgoString(from: older) else { continue }
-        #expect(
-          formatTimeAgo(from: newer, forAccessibility: true) == formatTimeAgo(from: older, forAccessibility: true),
-          "\(age) s and \(age + delta) s show the same time but read differently")
+      let now = Date()
+      let date = now.addingTimeInterval(-age)
+      let shown = shortTimeAgoString(from: date)
+      let spoken = formatter.localizedString(for: date, relativeTo: now)
+      if let previous, previous.shown == shown, previous.spoken != spoken {
+        Issue.record(
+          "\(localeIdentifier): \(previous.age) s and \(age) s both show \(shown) but read \(previous.spoken) and \(spoken)")
       }
+      buckets.insert(shown)
+      previous = (age, shown, spoken)
     }
-    // Below a minute the shown time stays "now" while the spoken one counts seconds; it is never reused.
-    let recent = now.addingTimeInterval(-5)
+    // The sweep went through every kind of bucket.
+    for bucket in ["1m", "59m", "1h", "23h", "1d", "29d", "1mo", "11mo", "1y", "2y"] {
+      #expect(buckets.contains(bucket))
+    }
+    // An hour and a half reads as an hour, as the shown "1h" says.
+    let now = Date()
+    let hourAndAHalf = now.addingTimeInterval(-(hour + 30 * minute))
+    #expect(shortTimeAgoString(from: hourAndAHalf) == "1h")
+    #expect(
+      formatter.localizedString(for: hourAndAHalf, relativeTo: now)
+        == formatter.localizedString(for: now.addingTimeInterval(-(hour + 7)), relativeTo: now))
+  }
+
+  @Test("Below a minute the spoken time is never reused, since it counts seconds while \"now\" shows")
+  func nowIsNeverReused() {
+    let recent = Date().addingTimeInterval(-5)
     let time = NativeFeedRowPreparation.RowTime(createdAt: recent)
     #expect(time.text == "now")
     #expect(!time.isCurrent(createdAt: recent, timeText: "now"))
@@ -350,7 +513,7 @@ struct NativeFeedRowPreparationTests {
     fixture.show(decidedHere + prepared)
     for post in decidedHere { _ = fixture.coordinator.decision(forPostID: post.id) }
     fixture.coordinator.prepareRows(forPostIDs: prepared.map(\.id), boundsWidth: 402)
-    await fixture.coordinator.waitForPreparation()
+    await fixture.coordinator.preparer.waitForPreparationForTesting()
     for post in decidedHere + prepared { _ = fixture.coordinator.decision(forPostID: post.id) }
 
     let counter = fixture.coordinator.decisionCounter
@@ -429,7 +592,7 @@ struct NativeFeedRowPreparationTests {
   private func settle(_ host: NativeFeedRowControllerHost) async {
     host.window.layoutIfNeeded()
     host.controller.collectionView.layoutIfNeeded()
-    await host.controller.nativeRowsForTesting.waitForPreparation()
+    await host.controller.nativeRowsForTesting.preparer.waitForPreparationForTesting()
     host.controller.collectionView.layoutIfNeeded()
   }
 
@@ -491,4 +654,46 @@ struct NativeFeedRowPreparationTests {
   }
 }
 
+
+// MARK: - Preparation Gate
+
+/// Prepares batches only once it is opened, so a test can change the snapshot while a batch is in
+/// flight. A batch runs to completion even if its preparation was cancelled meanwhile, as one that
+/// finished just as its preparation went stale.
+private final class PreparationGate: Sendable {
+  private struct State {
+    var isOpen = false
+    var waiting: [CheckedContinuation<Void, Never>] = []
+    var started = 0
+    var returned = 0
+  }
+
+  private let state = Mutex(State())
+
+  var started: Int { state.withLock { $0.started } }
+  var returned: Int { state.withLock { $0.returned } }
+
+  func open() {
+    let waiting = state.withLock { (state: inout State) -> [CheckedContinuation<Void, Never>] in
+      state.isOpen = true
+      defer { state.waiting = [] }
+      return state.waiting
+    }
+    waiting.forEach { $0.resume() }
+  }
+
+  func run(_ batch: NativeFeedRowPreparation.Batch) async -> [NativeFeedRowPreparation.Prepared] {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      let isOpen = state.withLock { (state: inout State) -> Bool in
+        state.started += 1
+        if !state.isOpen { state.waiting.append(continuation) }
+        return state.isOpen
+      }
+      if isOpen { continuation.resume() }
+    }
+    let prepared = await Task.detached { NativeFeedRowPreparation.prepare(batch) }.value
+    state.withLock { $0.returned += 1 }
+    return prepared
+  }
+}
 #endif

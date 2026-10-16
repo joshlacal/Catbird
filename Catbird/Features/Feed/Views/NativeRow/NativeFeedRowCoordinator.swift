@@ -24,7 +24,14 @@ private let coordinatorLogger = Logger(subsystem: "blue.catbird", category: "Nat
 ///   model belongs to the main actor;
 /// - the relative time text, computed again at configuration so a row whose minute ticked over
 ///   since it was prepared shows the new time (it then gets a layout for the new text);
-/// - the action bar's state, which reads live counts, the share origin and the signed-in account.
+/// - the action bar's state, which reads live counts, the share origin and the signed-in account;
+/// - the header labels' attributed strings: `FeedPostHeaderLineView.configure` builds three short
+///   ones from the prepared name, handle and time strings as it fills its labels, which are views
+///   and belong to the main actor; they are cheap, and carrying them through the preparation would
+///   only move their construction, not the label updates.
+///
+/// `preparer` holds the preparation queue and batches; the coordinator is its source of posts and
+/// signatures and stores what it prepares.
 @MainActor
 final class NativeFeedRowCoordinator {
   /// How one post renders.
@@ -102,30 +109,14 @@ final class NativeFeedRowCoordinator {
 
   // MARK: - Preparation State
 
-  /// Posts waiting to be prepared, in the order they were asked for.
-  private var preparationQueue: [String] = []
-  private var queuedPostIDs: Set<String> = []
-  /// Posts in the batch being prepared.
-  private var preparingPostIDs: Set<String> = []
-  private var preparationTask: Task<Void, Never>?
-  private var preparationTaskID: UUID?
-  /// Changes whenever prepared results stop applying: the settings, the typography or the layout
-  /// width changed, or the feed was replaced. A batch of an earlier generation is discarded.
-  private(set) var preparationGeneration = 0
-  /// The layout width preparations are for.
-  private var preparationWidth: CGFloat?
-  /// What each post was last prepared for. A post with a stamp for its current signature, the
-  /// current generation and the width asked for is not prepared again.
-  private var preparedStamps: [String: PreparedStamp] = [:]
+  /// Prepares rows off the main actor ahead of display (`prepareRows`).
+  let preparer: NativeFeedRowPreparer
   /// Each native post's time strings as last computed, by preparation or configuration.
   private var rowTimes: [String: NativeFeedRowPreparation.RowTime] = [:]
   /// How many decisions were made on the main actor, because no preparation had made them yet.
   private(set) var mainActorDecisionCount = 0
   /// How the current feed's posts render, for the device's reason distribution.
   let decisionCounter = NativeFeedRowDecisionCounter()
-
-  /// Whether a batch is being prepared off the main actor.
-  var hasPreparationInFlight: Bool { !preparingPostIDs.isEmpty }
 
   /// The collection view native rows are laid out in.
   weak var collectionView: UICollectionView?
@@ -134,15 +125,20 @@ final class NativeFeedRowCoordinator {
   /// Asks the controller to reconfigure every row because a setting rows read changed.
   var onSettingsChanged: (() -> Void)?
 
-  init(navigationPath: Binding<NavigationPath>, appState: AppState, sceneContext: SceneNavigationContext) {
+  /// `prepareBatch` prepares each batch of rows; the default runs on a background thread.
+  init(
+    navigationPath: Binding<NavigationPath>, appState: AppState, sceneContext: SceneNavigationContext,
+    prepareBatch: @escaping NativeFeedRowPreparer.Runner = { await NativeFeedRowPreparation.run($0) }
+  ) {
     self.navigationPath = navigationPath
     self.appState = appState
     self.sceneContext = sceneContext
     layoutStore = FeedRowLayoutStore()
+    preparer = NativeFeedRowPreparer(run: prepareBatch)
+    preparer.delegate = self
   }
 
   isolated deinit {
-    preparationTask?.cancel()
     postModels.values.forEach { $0.cancel() }
     if let policyObserver { NotificationCenter.default.removeObserver(policyObserver) }
   }
@@ -158,7 +154,7 @@ final class NativeFeedRowCoordinator {
     self.feedInteractionTarget = feedInteractionTarget
     if accountChanged {
       resolveSettingsIfNeeded()
-      discardPreparations()
+      preparer.discardAll()
       decisionCounter.reset()
       decisions.removeAll()
       rowTimes.removeAll()
@@ -195,9 +191,8 @@ final class NativeFeedRowCoordinator {
     dequeuedAsNative = dequeuedAsNative.filter { posts[$0.key] != nil }
     pendingReconfigure = pendingReconfigure.filter { posts[$0] != nil }
     requestedCellWidths = requestedCellWidths.filter { posts[$0.key.postID] != nil }
-    preparedStamps = preparedStamps.filter { posts[$0.key] != nil }
     rowTimes = rowTimes.filter { posts[$0.key] != nil }
-    dropPreparations { posts[$0] == nil }
+    preparer.snapshotDidChange()
 
     guard !rowPostIDsByURI.isEmpty else { return }
     rowPostIDsByURI = rowPostIDsByURI.compactMapValues { postIDs in
@@ -276,8 +271,7 @@ final class NativeFeedRowCoordinator {
     let time = currentTime(for: row)
     let layout = layoutStore.layout(
       for: Self.layoutInput(for: row, width: width, timeText: time.text, settings: settings))
-    preparedStamps[row.postID] = PreparedStamp(
-      signature: row.signature, width: width, generation: preparationGeneration)
+    preparer.markConfigured(postID: row.postID, signature: row.signature, width: width)
     let displayed = mergedPosts[row.post.uri.uriString()] ?? row.post
     return NativeFeedRowContent(
       post: row.post, layout: layout, text: row.text, displayName: row.displayName, handle: row.handle,
@@ -332,152 +326,25 @@ final class NativeFeedRowCoordinator {
   /// it is then not needed.
   func prepareRows(forPostIDs postIDs: [String], boundsWidth: CGFloat) {
     guard settings != nil, boundsWidth > 0 else { return }
-    let width = layoutWidth(forBoundsWidth: boundsWidth)
-    if let preparationWidth, preparationWidth != width { discardPreparations() }
-    preparationWidth = width
-    var added = false
-    for postID in postIDs where needsPreparation(postID, width: width) && queuedPostIDs.insert(postID).inserted {
-      preparationQueue.append(postID)
-      added = true
-    }
-    guard added else { return }
-    // Bounded: posts asked for long ago are behind the reader by now.
-    let excess = preparationQueue.count - Self.maximumQueuedPreparations
-    if excess > 0 {
-      preparationQueue.prefix(excess).forEach { queuedPostIDs.remove($0) }
-      preparationQueue.removeFirst(excess)
-    }
-    startPreparing()
-  }
-
-  /// Posts that may wait to be prepared at once.
-  static let maximumQueuedPreparations = NativeFeedRowPreparation.batchSize * 2
-
-  /// Waits until every row asked for is prepared, or its preparation was discarded.
-  func waitForPreparation() async {
-    while let task = preparationTask {
-      await task.value
-    }
+    preparer.prepare(postIDs, width: layoutWidth(forBoundsWidth: boundsWidth))
   }
 
   /// The controller shows another feed: preparation stops, what was prepared is forgotten and the
   /// decision counts start over. Cached decisions and layouts stay; they are keyed by everything
   /// they depend on.
   func feedDidReset() {
-    discardPreparations()
+    preparer.discardAll()
     decisionCounter.reset()
   }
 
   /// Drops every cached layout and what was prepared; fonts, text size or the width changed.
   func invalidateLayouts(includingCellWidths: Bool = false) {
-    discardPreparations()
+    preparer.discardAll()
     layoutStore.invalidateAll()
     if includingCellWidths {
       cellWidths.removeAll()
       requestedCellWidths.removeAll()
     }
-  }
-
-  private func needsPreparation(_ postID: String, width: CGFloat) -> Bool {
-    guard posts[postID] != nil, let signature = signatures[postID], !preparingPostIDs.contains(postID) else {
-      return false
-    }
-    if preparedStamps[postID] == PreparedStamp(signature: signature, width: width, generation: preparationGeneration) {
-      return false
-    }
-    if let entry = decisions[postID], entry.signature == signature, case .hosted = entry.decision { return false }
-    return true
-  }
-
-  private func startPreparing() {
-    guard preparationTask == nil, !preparationQueue.isEmpty else { return }
-    let id = UUID()
-    preparationTaskID = id
-    preparationTask = Task { [weak self] in
-      while !Task.isCancelled, let batch = self?.nextPreparationBatch() {
-        let prepared = await NativeFeedRowPreparation.run(batch)
-        guard !Task.isCancelled, let self else { return }
-        self.finish(batch, prepared: prepared)
-      }
-      self?.preparationDidFinish(id)
-    }
-  }
-
-  private func preparationDidFinish(_ id: UUID) {
-    guard preparationTaskID == id else { return }
-    preparationTask = nil
-    preparationTaskID = nil
-  }
-
-  /// The next posts to prepare, captured from the snapshot: their classification input, or the
-  /// decision already made for their content.
-  private func nextPreparationBatch() -> NativeFeedRowPreparation.Batch? {
-    guard let settings, let width = preparationWidth else {
-      preparationQueue.removeAll()
-      queuedPostIDs.removeAll()
-      return nil
-    }
-    var entries: [NativeFeedRowPreparation.Entry] = []
-    while !preparationQueue.isEmpty, entries.count < NativeFeedRowPreparation.batchSize {
-      let postID = preparationQueue.removeFirst()
-      queuedPostIDs.remove(postID)
-      guard needsPreparation(postID, width: width), let cached = posts[postID], let signature = signatures[postID]
-      else { continue }
-      let existing = decisions[postID].flatMap { $0.signature == signature ? $0.decision : nil }
-      entries.append(NativeFeedRowPreparation.Entry(
-        postID: postID, signature: signature,
-        source: existing == nil ? NativeFeedRowSupport.Entry(cached) : nil, decision: existing))
-      preparingPostIDs.insert(postID)
-    }
-    guard !entries.isEmpty else { return nil }
-    return NativeFeedRowPreparation.Batch(
-      generation: preparationGeneration, width: width, settings: settings, entries: entries)
-  }
-
-  /// Stores a finished batch's results, unless the batch is stale: from an earlier generation, or
-  /// for a post whose content changed or that left the feed meanwhile.
-  private func finish(_ batch: NativeFeedRowPreparation.Batch, prepared: [NativeFeedRowPreparation.Prepared]) {
-    batch.entries.forEach { preparingPostIDs.remove($0.postID) }
-    guard batch.generation == preparationGeneration, batch.width == preparationWidth else { return }
-    for result in prepared {
-      guard posts[result.postID] != nil, signatures[result.postID] == result.signature else { continue }
-      if decisions[result.postID]?.signature != result.signature {
-        record(result.decision, forPostID: result.postID, signature: result.signature)
-      }
-      if let layout = result.layout { layoutStore.insert(layout) }
-      if let time = result.time { rowTimes[result.postID] = time }
-      preparedStamps[result.postID] = PreparedStamp(
-        signature: result.signature, width: batch.width, generation: batch.generation)
-    }
-  }
-
-  /// Cancels the batch being prepared and drops waiting posts that `isStale`. The batch's other
-  /// posts are not prepared until asked for again.
-  private func dropPreparations(where isStale: (String) -> Bool) {
-    let staleQueued = preparationQueue.filter(isStale)
-    if !staleQueued.isEmpty {
-      preparationQueue.removeAll(where: isStale)
-      staleQueued.forEach { queuedPostIDs.remove($0) }
-    }
-    guard preparingPostIDs.contains(where: isStale) else { return }
-    preparationTask?.cancel()
-    preparationTask = nil
-    preparationTaskID = nil
-    preparingPostIDs.removeAll()
-    startPreparing()
-  }
-
-  /// Cancels all preparation and forgets what was prepared: nothing prepared before this applies
-  /// any more.
-  private func discardPreparations() {
-    preparationTask?.cancel()
-    preparationTask = nil
-    preparationTaskID = nil
-    preparationQueue.removeAll()
-    queuedPostIDs.removeAll()
-    preparingPostIDs.removeAll()
-    preparedStamps.removeAll(keepingCapacity: true)
-    preparationGeneration &+= 1
   }
 
   /// A native cell is sized to a width its layout was not computed for. Records the width cells
@@ -754,7 +621,7 @@ final class NativeFeedRowCoordinator {
   /// reconfigure.
   private func settingsDidChange() {
     resolveSettingsIfNeeded()
-    discardPreparations()
+    preparer.discardAll()
     decisions.removeAll(keepingCapacity: true)
     layoutStore.invalidateAll()
     onSettingsChanged?()
@@ -772,7 +639,7 @@ final class NativeFeedRowCoordinator {
     settingsResolutionCount += 1
     guard resolved != settings else { return false }
     settings = resolved
-    discardPreparations()
+    preparer.discardAll()
     decisions.removeAll(keepingCapacity: true)
     return true
   }
@@ -814,14 +681,38 @@ final class NativeFeedRowCoordinator {
   }
 }
 
-// MARK: - Preparation Stamps
+// MARK: - Preparation Source
 
-extension NativeFeedRowCoordinator {
-  /// What a post was prepared for: its content, the preparation generation and the layout width.
-  fileprivate struct PreparedStamp: Equatable {
-    let signature: FeedPostContentSignature
-    let width: CGFloat
-    let generation: Int
+extension NativeFeedRowCoordinator: NativeFeedRowPreparerDelegate {
+  var preparationSettings: Settings? { settings }
+
+  func preparationSignature(forPostID postID: String) -> FeedPostContentSignature? {
+    posts[postID] == nil ? nil : signatures[postID]
+  }
+
+  func preparationIsSettled(postID: String, signature: FeedPostContentSignature) -> Bool {
+    guard let entry = decisions[postID], entry.signature == signature, case .hosted = entry.decision else {
+      return false
+    }
+    return true
+  }
+
+  func preparationEntry(
+    forPostID postID: String, signature: FeedPostContentSignature
+  ) -> NativeFeedRowPreparation.Entry? {
+    guard let cached = posts[postID] else { return nil }
+    if let entry = decisions[postID], entry.signature == signature {
+      return .decided(postID: postID, signature: signature, decision: entry.decision)
+    }
+    return .classify(postID: postID, signature: signature, source: NativeFeedRowSupport.Entry(cached))
+  }
+
+  func store(_ prepared: NativeFeedRowPreparation.Prepared) {
+    if decisions[prepared.postID]?.signature != prepared.signature {
+      record(prepared.decision, forPostID: prepared.postID, signature: prepared.signature)
+    }
+    if let layout = prepared.layout { layoutStore.insert(layout) }
+    if let time = prepared.time { rowTimes[prepared.postID] = time }
   }
 }
 
