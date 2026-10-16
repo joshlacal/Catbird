@@ -52,6 +52,20 @@ struct DraftPhotoSandbox {
     )
   }
 
+  /// A sweep over this sandbox's folder and stores.
+  func sweep(
+    storeResetDate: Date? = nil,
+    batchSize: Int = DraftImageOrphanSweep.batchSize,
+    interruption: @escaping @MainActor () -> DraftImageOrphanSweep.StopReason? = { nil }
+  ) -> DraftImageOrphanSweep {
+    var sweep = DraftImageOrphanSweep(
+      directory: directory, quarantineDirectory: quarantine, storeResetDate: storeResetDate,
+      janitor: { janitor() }, interruption: interruption
+    )
+    sweep.batchSize = batchSize
+    return sweep
+  }
+
   /// A managed draft photo, last modified at `date` (now when nil).
   func managedFile(modifiedAt date: Date? = nil) throws -> URL {
     try file(named: "draft_image_\(Self.randomHex()).jpg", modifiedAt: date)
@@ -111,6 +125,17 @@ struct DraftPhotoSandbox {
   func remove() {
     try? FileManager.default.removeItem(at: root)
     suites.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) }
+  }
+}
+
+/// An object that holds draft media in memory, as an open editor does.
+@MainActor
+final class DraftPhotoTestHolder: DraftMediaReferenceHolder {
+  var heldDraftMediaURLStrings: [String]
+
+  init(_ urls: [URL]) {
+    heldDraftMediaURLStrings = urls.map(\.absoluteString)
+    LiveDraftMediaReferences.register(self)
   }
 }
 #endif

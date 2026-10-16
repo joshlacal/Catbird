@@ -613,6 +613,9 @@ final class DraftSyncService {
   private var cancellationGeneration = UUID()
   private var activeGenerations: [String: UUID] = [:]
   private(set) var lastIssue: String?
+  /// Accounts whose sync completed a whole pass (listing, imports and local reconciliation) in
+  /// this launch. DraftImageOrphanSweep waits for the current account's first one.
+  private(set) var syncedAccountsThisLaunch: Set<String> = []
 
   init(
     persistence: DraftPersistence,
@@ -629,6 +632,9 @@ final class DraftSyncService {
   }
 
   var isEnabled: Bool { enabledProvider() }
+
+  /// Whether a sync of any account is running.
+  var isSyncing: Bool { !syncingAccounts.isEmpty }
 
   static var deviceId: String {
     let key = "blue.catbird.draftSync.deviceId"
@@ -775,6 +781,7 @@ final class DraftSyncService {
           }
         }
         lastIssue = nil
+        syncedAccountsThisLaunch.insert(accountDID)
       } while needsAnotherPass.contains(accountDID)
     } catch is CancellationError {
       // Local content and durable operations remain available for the next run.

@@ -357,6 +357,26 @@ enum CatbirdSwiftDataStore {
     swiftDataStoreDirectory?.appendingPathComponent("Catbird.store")
   }
 
+  /// Where quarantineSwiftDataStore sets a store aside, one folder per quarantine.
+  static var quarantineDirectory: URL? {
+    swiftDataStoreDirectory?.deletingLastPathComponent().appendingPathComponent("quarantine", isDirectory: true)
+  }
+
+  static let storeResetDateKey = "CatbirdSwiftDataStoreResetAt"
+
+  /// When the store last lost rows: deleted, set aside in quarantine, or stripped of its
+  /// write-ahead log. Kept in standard defaults, outside the files a reset removes, so draft
+  /// photo cleanup (DraftImageOrphanSweep) keeps photos last used before then, which a lost
+  /// draft re-imported from Bluesky may still name.
+  static var lastStoreResetDate: Date? {
+    (UserDefaults.standard.object(forKey: storeResetDateKey) as? Double).map(Date.init(timeIntervalSince1970:))
+  }
+
+  /// Records a store reset before the files go, so a crash part way still leaves the record.
+  static func recordStoreReset(at date: Date = Date()) {
+    UserDefaults.standard.set(date.timeIntervalSince1970, forKey: storeResetDateKey)
+  }
+
   static var legacyAppGroupSwiftDataDirectory: URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
       .appendingPathComponent("swiftdata", isDirectory: true)
@@ -412,6 +432,8 @@ enum CatbirdSwiftDataStore {
   }
 
   static func deleteSwiftDataSidecarsOnly() {
+    // Rows not yet checkpointed into the store go with the write-ahead log.
+    recordStoreReset()
     let fileManager = FileManager.default
     let sidecars = ["-wal", "-shm"]
 
@@ -446,19 +468,19 @@ enum CatbirdSwiftDataStore {
   }
 
   static func quarantineSwiftDataStore(reason: String) {
+    recordStoreReset()
     let fileManager = FileManager.default
     let dateFormatter = ISO8601DateFormatter()
     dateFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
     let timestamp = dateFormatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
 
-    guard let storeDir = swiftDataStoreDirectory else {
+    guard let storeDir = swiftDataStoreDirectory, let quarantineRoot = quarantineDirectory else {
       logger.warning("⚠️ Cannot quarantine - store directory unavailable")
       resetAllDatabaseFiles()
       return
     }
 
-    let quarantineDir = storeDir.deletingLastPathComponent()
-      .appendingPathComponent("quarantine/\(timestamp)_\(reason)", isDirectory: true)
+    let quarantineDir = quarantineRoot.appendingPathComponent("\(timestamp)_\(reason)", isDirectory: true)
 
     do {
       try fileManager.createDirectory(at: quarantineDir, withIntermediateDirectories: true)
@@ -493,6 +515,7 @@ enum CatbirdSwiftDataStore {
   static func resetAllDatabaseFiles() {
     let resetLogger = Logger(subsystem: "blue.catbird", category: "DatabaseRecovery")
     resetLogger.warning("🗑️ RESET: Deleting all SwiftData files")
+    recordStoreReset()
 
     let fileManager = FileManager.default
     let allFiles = [
@@ -581,6 +604,8 @@ enum CatbirdSwiftDataStore {
         try fm.moveItem(at: oldFile, to: newFile)
         logger.info("📦 Migrated SwiftData file: \(fileName)")
       } catch {
+        // The old folder is removed below, so whatever this file held is lost.
+        recordStoreReset()
         logger.warning("⚠️ Failed to migrate \(fileName): \(error.localizedDescription)")
       }
     }
@@ -2049,6 +2074,10 @@ private extension CatbirdApp {
         // Reaching the background cleanly means this launch didn't crash.
         CatbirdSwiftDataStore.resetCrashLoopCounter()
         saveApplicationState()
+        // The last scene left: unlike otherScenesActive, which also keeps MLS open on macOS.
+        if !hasOtherScenes {
+          startDraftPhotoSweepIfDue()
+        }
 #if os(iOS)
         if !otherScenesActive {
           if #available(iOS 13.0, *) {
@@ -2184,6 +2213,22 @@ private extension CatbirdApp {
       logger.warning("⏭️ [RESUME] Discarded stale foreground transition")
     case .resumed:
       logger.info("✅ [RESUME] MLS transaction completed and UI projection reloaded")
+    }
+  }
+
+  /// Starts the daily draft photo sweep (ComposerDraftManager.sweepOrphanedDraftImageFilesIfDue).
+  /// Its background task begins here, while the scene transition still holds its own, and ends
+  /// when the sweep does; expiry cancels the sweep before its next batch.
+  @MainActor
+  private func startDraftPhotoSweepIfDue() {
+    guard let manager = appStateManager.lifecycle.appState?.composerDraftManager else { return }
+    let sweep = Task { @MainActor in
+      _ = await manager.sweepOrphanedDraftImageFilesIfDue()
+    }
+    let assertion = CatbirdBackgroundTask(name: "DraftPhotoSweep") { sweep.cancel() }
+    Task { @MainActor in
+      await sweep.value
+      assertion.end()
     }
   }
 

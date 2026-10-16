@@ -42,6 +42,8 @@ final class ComposerDraftManager {
     let outboxQueue: URL
     let legacyDrafts: URL?
     let draftImages: URL?
+    let quarantine: URL?
+    let storeResetDate: Date?
   }
 
   @ObservationIgnored private var testingDraftImageStores: DraftImageTestingStores?
@@ -74,18 +76,28 @@ final class ComposerDraftManager {
     reloadSavedDrafts()
   }
 
-  /// A nil legacy-drafts folder means there is none; a nil draft photo folder keeps the App
-  /// Group's, which composer writes use.
+  /// A nil legacy-drafts or quarantine folder means there is none. A nil draft photo folder
+  /// keeps the App Group's, which composer writes use, for cleanup; the orphan sweep then has no
+  /// folder and refuses.
   func useDraftImageStoresForTesting(
     handoffDefaults: UserDefaults,
     outboxQueueURL: URL,
     legacyDraftsDirectory: URL? = nil,
-    draftImagesDirectory: URL? = nil
+    draftImagesDirectory: URL? = nil,
+    quarantineDirectory: URL? = nil,
+    storeResetDate: Date? = nil
   ) {
     testingDraftImageStores = DraftImageTestingStores(
       handoff: handoffDefaults, outboxQueue: outboxQueueURL,
-      legacyDrafts: legacyDraftsDirectory, draftImages: draftImagesDirectory
+      legacyDrafts: legacyDraftsDirectory, draftImages: draftImagesDirectory,
+      quarantine: quarantineDirectory, storeResetDate: storeResetDate
     )
+  }
+
+  /// A test's own draft sync service over this manager's store, in place of none.
+  func useDraftSyncServiceForTesting(_ service: DraftSyncService) {
+    draftSyncService?.cancelPendingWork()
+    draftSyncService = service
   }
   #endif
 
@@ -290,6 +302,81 @@ final class ComposerDraftManager {
 
   private func validateAccount(_ accountDID: String) throws {
     guard currentAccountDID == accountDID else { throw ComposerEditingError.wrongAccount }
+  }
+
+  // MARK: - Orphaned draft photos
+
+  /// Runs DraftImageOrphanSweep when DraftImageOrphanSweepGate allows it, and records the start
+  /// only then; every refusal is logged by name. The sync rules use this manager's service: the
+  /// sweep waits for a complete sync of the current account, so another signed-in account's
+  /// Bluesky drafts are protected by the 7-day threshold and the store quarantine and reset
+  /// fence alone.
+  func sweepOrphanedDraftImageFilesIfDue(
+    now: Date = Date(),
+    isInBackground: @escaping @MainActor () -> Bool = { PlatformApplication.isInBackground }
+  ) async -> DraftImageOrphanSweep.Result {
+    let lastStarted = (recoveryDefaults.object(forKey: DraftImageOrphanSweep.lastStartedKey) as? Double)
+      .map(Date.init(timeIntervalSince1970:))
+    let syncCompleted = currentAccountDID.map { draftSyncService?.syncedAccountsThisLaunch.contains($0) ?? false } ?? false
+    if let refusal = DraftImageOrphanSweepGate.refusal(
+      storeIsDurable: draftPersistence?.isBackedByDurableStore ?? false,
+      isInBackground: isInBackground(),
+      syncEnabled: draftSyncService?.isEnabled ?? false,
+      syncRunning: draftSyncService?.isSyncing ?? false,
+      syncCompletedThisLaunch: syncCompleted,
+      lastStartedAt: lastStarted,
+      now: now
+    ) {
+      DraftImageOrphanSweep.logRefusal(refusal)
+      return .refused(refusal)
+    }
+    guard let folders = orphanSweepFolders() else {
+      DraftImageOrphanSweep.logRefusal(.folderUnavailable)
+      return .refused(.folderUnavailable)
+    }
+    recoveryDefaults.set(now.timeIntervalSince1970, forKey: DraftImageOrphanSweep.lastStartedKey)
+    let recoveryDefaults = recoveryDefaults
+    let sweep = DraftImageOrphanSweep(
+      directory: folders.draftImages,
+      quarantineDirectory: folders.quarantine,
+      storeResetDate: folders.storeResetDate,
+      janitor: { [weak self] in
+        // A released manager has no stores to read, so the batch cancels.
+        self?.draftImageFileJanitor(recoveryDefaults: recoveryDefaults)
+          ?? .standard(persistence: nil, recoveryDefaults: recoveryDefaults, directory: folders.draftImages)
+      },
+      interruption: { [weak self] in
+        guard let self else { return .cancelled }
+        if self.draftSyncService?.isSyncing ?? false { return .draftSyncStarted }
+        return isInBackground() ? nil : .returnedToForeground
+      }
+    )
+    return .finished(await sweep.run(now: now))
+  }
+
+  private struct OrphanSweepFolders {
+    let draftImages: URL
+    let quarantine: URL?
+    let storeResetDate: Date?
+  }
+
+  /// The app's draft photo folder, quarantine folder and last store reset, or a test's
+  /// stand-ins. A manager built for tests sweeps only a folder a test handed it.
+  private func orphanSweepFolders() -> OrphanSweepFolders? {
+    #if DEBUG
+    if let stores = testingDraftImageStores {
+      return stores.draftImages.map {
+        OrphanSweepFolders(draftImages: $0, quarantine: stores.quarantine, storeResetDate: stores.storeResetDate)
+      }
+    }
+    if testingAccountDID != nil { return nil }
+    #endif
+    guard let directory = CodableMediaItem.draftImagesDirectory else { return nil }
+    return OrphanSweepFolders(
+      draftImages: directory,
+      quarantine: CatbirdSwiftDataStore.quarantineDirectory,
+      storeResetDate: CatbirdSwiftDataStore.lastStoreResetDate
+    )
   }
 
   // MARK: - Saved library
