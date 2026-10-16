@@ -22,7 +22,11 @@ struct RenderedPixels {
       context.fill(view.bounds)
       view.layer.render(in: context.cgContext)
     }
-    let cgImage = try #require(image.cgImage)
+    try self.init(image: try #require(image.cgImage), scale: scale)
+  }
+
+  /// The pixels of `image`, drawn over a white background; `scale` is its pixels per point.
+  init(image cgImage: CGImage, scale: CGFloat) throws {
     var bytes = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
     let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
       guard let context = CGContext(
@@ -30,7 +34,10 @@ struct RenderedPixels {
         bytesPerRow: cgImage.width * 4, space: CGColorSpaceCreateDeviceRGB(),
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
       else { return false }
-      context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+      let rect = CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height)
+      context.setFillColor(UIColor.white.cgColor)
+      context.fill(rect)
+      context.draw(cgImage, in: rect)
       return true
     }
     try #require(drawn)
@@ -49,6 +56,9 @@ struct RenderedPixels {
     var isSolidRed: Bool { red > 230 && green < 40 && blue < 40 }
     var isSolidBlack: Bool { red < 25 && green < 25 && blue < 25 }
     var isNearWhite: Bool { red > 240 && green > 240 && blue > 240 }
+
+    /// Darker than `threshold` on average over the three channels.
+    func isDark(threshold: Int) -> Bool { (red + green + blue) / 3 < threshold }
   }
 
   func color(column: Int, row: Int) -> Color {
@@ -59,6 +69,33 @@ struct RenderedPixels {
   /// The color at a point in the view's coordinate space.
   func color(at point: CGPoint) -> Color {
     color(column: min(width - 1, max(0, Int(point.x * scale))), row: min(height - 1, max(0, Int(point.y * scale))))
+  }
+
+  /// Runs of consecutive pixel rows holding at least one pixel darker than `threshold`, top to bottom.
+  func inkRows(threshold: Int = 128) -> [ClosedRange<Int>] {
+    var bands: [ClosedRange<Int>] = []
+    var start: Int?
+    for row in 0..<height {
+      let inked = (0..<width).contains { color(column: $0, row: row).isDark(threshold: threshold) }
+      if inked, start == nil { start = row }
+      if !inked, let first = start {
+        bands.append(first...(row - 1))
+        start = nil
+      }
+    }
+    if let first = start { bands.append(first...(height - 1)) }
+    return bands
+  }
+
+  /// The number of pixels darker than `threshold`.
+  func darkPixelCount(threshold: Int = 128) -> Int {
+    var count = 0
+    for row in 0..<height {
+      for column in 0..<width where color(column: column, row: row).isDark(threshold: threshold) {
+        count += 1
+      }
+    }
+    return count
   }
 }
 #endif

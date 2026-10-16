@@ -127,7 +127,9 @@ final class TrendingTopicCardView: TrendingCardControl {
     appliedAllowsImageLoading = images.allowsImageLoading
     accessibilityLabel = topic.accessibilityLabel
     func place(_ view: UIView, _ frame: CGRect) {
-      view.frame = rtl ? CGRect(x: size.width - frame.maxX, y: frame.minY, width: frame.width, height: frame.height) : frame
+      let frame = rtl ? CGRect(x: size.width - frame.maxX, y: frame.minY, width: frame.width, height: frame.height) : frame
+      // Labels draw lines with a constant line height ("Tight") lower, where SwiftUI's `Text` does.
+      view.frame = (view as? UILabel).map { TrendingInterstitialText.labelFrame(frame, for: $0.attributedText) } ?? frame
     }
 
     // Category mark

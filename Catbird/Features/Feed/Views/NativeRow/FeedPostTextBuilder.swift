@@ -18,6 +18,7 @@ enum FeedPostTextBuilder {
   ) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = typography.bodyLineSpacing
+    typography.bodyLine?.apply(to: paragraph)
     paragraph.lineBreakMode = .byWordWrapping
     let output = NSMutableAttributedString(string: post.text, attributes: [
       .font: typography.body,

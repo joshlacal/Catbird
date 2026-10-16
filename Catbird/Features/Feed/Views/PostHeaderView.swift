@@ -134,6 +134,8 @@ struct PostHeaderView: View {
                                // Separator and Time
             HStack(alignment: .top, spacing: spacing) {
                 Text("·")
+                    // At Tight the separator's line takes the constant line height like the time's.
+                    .appLineSpacing()
                     .foregroundStyle(metaColor)
                     .accessibilityHidden(true)
                     .lineLimit(1)

@@ -89,7 +89,9 @@ final class TrendingVideoCardView: TrendingCardControl {
     appliedAllowsImageLoading = allowsImageLoading
     accessibilityLabel = card.accessibilityLabel
     func place(_ view: UIView, _ frame: CGRect, in width: CGFloat) {
-      view.frame = rtl ? CGRect(x: width - frame.maxX, y: frame.minY, width: frame.width, height: frame.height) : frame
+      let frame = rtl ? CGRect(x: width - frame.maxX, y: frame.minY, width: frame.width, height: frame.height) : frame
+      // Labels draw lines with a constant line height ("Tight") lower, where SwiftUI's `Text` does.
+      view.frame = (view as? UILabel).map { TrendingInterstitialText.labelFrame(frame, for: $0.attributedText) } ?? frame
     }
 
     // Thumbnail
@@ -135,8 +137,8 @@ final class TrendingVideoCardView: TrendingCardControl {
         did: card.post.author.did.didString(), labels: card.post.author.labels, policy: policy),
       allowsImageLoading: allowsImageLoading)
     let name = TrendingInterstitialText.attributed(
-      card.authorName, font: t.videoAuthor, lineSpacing: t.videoAuthorLineSpacing, kerning: t.kerning,
-      alignment: rtl ? .right : .left)
+      card.authorName, font: t.videoAuthor, lineSpacing: t.videoAuthorLineSpacing,
+      lineHeightFactor: t.lineHeightFactor, kerning: t.kerning, alignment: rtl ? .right : .left)
     authorLabel.attributedText = name
     let nameHeight = TrendingInterstitialText.height(
       name, width: layout.authorFrame.width, maximumLines: 2, scale: t.displayScale)
@@ -146,8 +148,8 @@ final class TrendingVideoCardView: TrendingCardControl {
 
   private func layoutCover(title: String, in bounds: CGRect, typography t: TrendingInterstitialTypography) {
     let text = TrendingInterstitialText.attributed(
-      title, font: t.caption, color: .secondaryLabel, lineSpacing: t.roleLineSpacing, kerning: t.kerning,
-      alignment: .center)
+      title, font: t.caption, color: .secondaryLabel, lineSpacing: t.roleLineSpacing,
+      lineHeightFactor: t.lineHeightFactor, kerning: t.kerning, alignment: .center)
     coverLabel.attributedText = text
     let width = max(0, bounds.width - 2 * DesignTokens.Spacing.sm)
     let textHeight = TrendingInterstitialText.height(text, width: width, maximumLines: 2, scale: t.displayScale)
@@ -155,8 +157,10 @@ final class TrendingVideoCardView: TrendingCardControl {
     let total = iconSize.height + DesignTokens.Spacing.xs + textHeight
     let top = (bounds.height - total) / 2
     coverIconView.frame = CGRect(x: 0, y: top, width: bounds.width, height: iconSize.height)
-    coverLabel.frame = CGRect(x: (bounds.width - width) / 2, y: top + iconSize.height + DesignTokens.Spacing.xs,
-      width: width, height: textHeight)
+    coverLabel.frame = TrendingInterstitialText.labelFrame(
+      CGRect(x: (bounds.width - width) / 2, y: top + iconSize.height + DesignTokens.Spacing.xs,
+        width: width, height: textHeight),
+      for: text)
   }
 
   func updateImageLoading(

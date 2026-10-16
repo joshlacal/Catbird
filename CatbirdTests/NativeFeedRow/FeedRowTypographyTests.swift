@@ -22,8 +22,7 @@ struct FeedRowTypographyTests {
     let typography = FeedRowTypography.resolved(
       fontManager: fontManager, boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)
     // `AppFontModifier`'s spacing, which the hosted row's text uses.
-    #expect(typography.bodyLineSpacing == max(
-      0, fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier))
+    #expect(typography.bodyLineSpacing == fontManager.roleLineSpacing)
     #expect(typography.kerning == fontManager.letterSpacingValue)
   }
 
@@ -37,6 +36,27 @@ struct FeedRowTypographyTests {
     #expect(before.generationKey != afterBold.generationKey)
   }
 
+  @Test("Tight resolves constant line heights for the body, name and metadata",
+    .enabled(if: FontManager.supportsLineHeight))
+  func tightResolvesLinePlacements() {
+    let fontManager = FontManager()
+    let contentSize = UIApplication.shared.preferredContentSizeCategory
+    let normal = FeedRowTypography.resolved(fontManager: fontManager, boldText: false, contentSize: contentSize)
+    #expect(normal.bodyLine == nil && normal.nameLine == nil && normal.metadataLine == nil)
+    #expect(normal.separatorLineHeight == FeedRowTypography.environmentFont(contentSize: contentSize).lineHeight)
+
+    fontManager.lineSpacing = "tight"
+    let tight = FeedRowTypography.resolved(fontManager: fontManager, boldText: false, contentSize: contentSize)
+    let factor = FontManager.tightLineHeightFactor
+    #expect(tight.generationKey != normal.generationKey)
+    #expect(tight.bodyLine == .resolve(font: tight.body, factor: factor))
+    #expect(tight.nameLine == .resolve(font: tight.name, factor: factor))
+    #expect(tight.metadataLine == .resolve(font: tight.metadata, factor: factor))
+    let separator = FeedRowTypography.environmentFont(contentSize: contentSize)
+    #expect(abs(tight.separatorLineHeight - factor * separator.pointSize) < 0.001)
+    #expect(tight.bodyLineSpacing == 0)
+  }
+
   @Test("Line and letter spacing changes change the generation key")
   func generationKeyTracksSpacing() {
     let fontManager = FontManager()
@@ -46,8 +66,7 @@ struct FeedRowTypographyTests {
     let afterLine = FeedRowTypography.resolved(
       fontManager: fontManager, boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)
     #expect(before.generationKey != afterLine.generationKey)
-    #expect(afterLine.bodyLineSpacing
-      == fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
+    #expect(afterLine.bodyLineSpacing == fontManager.roleLineSpacing)
     fontManager.letterSpacing = "loose"
     let afterLetter = FeedRowTypography.resolved(
       fontManager: fontManager, boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)

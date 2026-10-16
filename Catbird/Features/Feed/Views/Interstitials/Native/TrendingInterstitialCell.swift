@@ -355,7 +355,8 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     headerLabel.attributedText = TrendingInterstitialLayoutEngine.headingText(
       TrendingInterstitialLayoutEngine.topicsHeading, typography: t)
     headerLabel.textAlignment = alignment
-    headerLabel.frame = mirrored(layout.header.titleFrame, in: width)
+    headerLabel.frame = TrendingInterstitialText.labelFrame(
+      mirrored(layout.header.titleFrame, in: width), for: headerLabel.attributedText)
     optionsButton.frame = mirrored(layout.header.actionFrame, in: width)
     optionsButton.setImage(TrendingSymbolCache.symbol("ellipsis", font: t.optionsGlyph), for: .normal)
     optionsButton.tintColor = tintColor.withAlphaComponent(0.5)
@@ -379,7 +380,8 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
       videosHeaderLabel.attributedText = TrendingInterstitialLayoutEngine.headingText(
         TrendingInterstitialLayoutEngine.videosHeading, typography: t)
       videosHeaderLabel.textAlignment = alignment
-      videosHeaderLabel.frame = mirrored(header.titleFrame, in: width)
+      videosHeaderLabel.frame = TrendingInterstitialText.labelFrame(
+        mirrored(header.titleFrame, in: width), for: videosHeaderLabel.attributedText)
       openVideosButton.frame = mirrored(header.actionFrame, in: width)
       openVideosButton.apply(
         title: TrendingInterstitialLayoutEngine.openVideosText(typography: t), glyph: t.disclosureGlyph,
@@ -403,8 +405,9 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
       emptyVideosLabel.isHidden = false
       emptyVideosLabel.attributedText = TrendingInterstitialText.attributed(
         TrendingInterstitialModel.emptyVideosMessage, font: t.subheadline, color: .secondaryLabel,
-        lineSpacing: t.roleLineSpacing, kerning: t.kerning, alignment: alignment)
-      emptyVideosLabel.frame = mirrored(frame, in: width)
+        lineSpacing: t.roleLineSpacing, lineHeightFactor: t.lineHeightFactor, kerning: t.kerning, alignment: alignment)
+      emptyVideosLabel.frame = TrendingInterstitialText.labelFrame(
+        mirrored(frame, in: width), for: emptyVideosLabel.attributedText)
     } else {
       emptyVideosLabel.isHidden = true
     }

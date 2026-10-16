@@ -36,6 +36,19 @@ final class FeedPostTextView: UIView, UIGestureRecognizerDelegate {
     }
   }
 
+  /// Where the text's lines draw when they have a constant line height ("Tight"): the label
+  /// moves down by its `glyphOffset` to draw them where the hosted row's `Text` does. Link hit
+  /// testing and link frames move with it.
+  var linePlacement: AppLineHeightPlacement? {
+    didSet {
+      guard linePlacement != oldValue else { return }
+      setNeedsLayout()
+    }
+  }
+
+  /// How far below the hit-test layout's lines the label draws them.
+  private var glyphOffset: CGFloat { linePlacement?.glyphOffset ?? 0 }
+
   private struct LinkRun {
     let range: NSRange
     let url: URL
@@ -69,7 +82,8 @@ final class FeedPostTextView: UIView, UIGestureRecognizerDelegate {
     // `UILabel` measures in whole pixels of this screen; a frame computed at a coarser or finer
     // rounding is rounded up to the next pixel so the label never drops its last line.
     let scale = max(traitCollection.displayScale, 1)
-    label.frame = CGRect(x: 0, y: 0, width: bounds.width, height: ceil(bounds.height * scale) / scale)
+    let textFrame = CGRect(x: 0, y: 0, width: bounds.width, height: ceil(bounds.height * scale) / scale)
+    label.frame = linePlacement?.labelFrame(textFrame: textFrame) ?? textFrame
   }
 
   // MARK: - Link Hit Testing
@@ -153,7 +167,10 @@ final class FeedPostTextView: UIView, UIGestureRecognizerDelegate {
     return nil
   }
 
-  private func link(at point: CGPoint, in layout: HitTestLayout) -> URL? {
+  private func link(at viewPoint: CGPoint, in layout: HitTestLayout) -> URL? {
+    // The layout places the lines where TextKit does; the label draws them `glyphOffset` lower,
+    // and the band that opens above the first line belongs to it.
+    let point = CGPoint(x: viewPoint.x, y: viewPoint.y < 0 ? viewPoint.y : max(0, viewPoint.y - glyphOffset))
     // The view is as tall as the text rounded up to a whole point, and glyphs such as Arabic
     // descenders reach a fraction of a point below the last line's typographic bounds.
     let usedBottom = layout.manager.usageBoundsForTextContainer.maxY
@@ -197,8 +214,9 @@ final class FeedPostTextView: UIView, UIGestureRecognizerDelegate {
       let textRange = NSTextRange(location: start, end: end)
     else { return [] }
     var rects: [CGRect] = []
+    let offset = glyphOffset
     layout.manager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, _, _ in
-      rects.append(frame)
+      rects.append(frame.offsetBy(dx: 0, dy: offset))
       return true
     }
     return rects

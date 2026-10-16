@@ -30,7 +30,11 @@ struct TextReadabilitySettingsView: View {
       Section("Font & Spacing") {
         preferencePicker("Font Style", path: \.fontStyle, choices: [("system", "System"), ("serif", "Serif"), ("rounded", "Rounded"), ("monospaced", "Monospaced")], id: "text.fontStyle")
         preferencePicker("App Text Size", path: \.fontSize, choices: [("small", "Small"), ("default", "Default"), ("large", "Large"), ("extraLarge", "Extra Large")], id: "text.fontSize")
-        preferencePicker("Line Spacing", path: \.lineSpacing, choices: [("tight", "Tight"), ("normal", "Normal"), ("relaxed", "Relaxed")], id: "text.lineSpacing")
+        preferencePicker(
+          "Line Spacing", path: \.lineSpacing,
+          choices: FontManager.lineSpacingOptions(supportsLineHeight: FontManager.supportsLineHeight).map { ($0.value, $0.title) },
+          id: "text.lineSpacing",
+          displayedValue: { FontManager.displayedLineSpacing($0, supportsLineHeight: FontManager.supportsLineHeight) })
         preferencePicker("Letter Spacing", path: \.letterSpacing, choices: [("tight", "Tight"), ("normal", "Normal"), ("loose", "Loose")], id: "text.letterSpacing")
       }
       .disabled(!canEdit)
@@ -86,11 +90,21 @@ struct TextReadabilitySettingsView: View {
     #endif
   }
 
-  private func preferencePicker(_ title: String, path: ReferenceWritableKeyPath<AppSettings, String>, choices: [(String, String)], id: String) -> some View {
-    Picker(title, selection: string(path)) {
+  /// A menu picker over `choices`. `displayedValue` maps the stored value to the choice shown (for
+  /// a stored line spacing this system draws as another); picking a choice stores it. A shown value
+  /// that is not a choice appears as "Custom".
+  private func preferencePicker(
+    _ title: String, path: ReferenceWritableKeyPath<AppSettings, String>, choices: [(String, String)], id: String,
+    displayedValue: @escaping (String) -> String = { $0 }
+  ) -> some View {
+    let selection = Binding(
+      get: { displayedValue(appState.appSettings[keyPath: path]) },
+      set: { appState.appSettings[keyPath: path] = $0 })
+    let shown = selection.wrappedValue
+    return Picker(title, selection: selection) {
       ForEach(choices, id: \.0) { choice in Text(LocalizedStringKey(choice.1)).tag(choice.0) }
-      if !choices.contains(where: { $0.0 == appState.appSettings[keyPath: path] }) {
-        Text("Custom").tag(appState.appSettings[keyPath: path])
+      if !choices.contains(where: { $0.0 == shown }) {
+        Text("Custom").tag(shown)
       }
     }
     .pickerStyle(.menu)

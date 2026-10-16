@@ -38,6 +38,7 @@ enum NativeFeedRowTestFactory {
       name: scaled(Typography.Size.headline, weight: .semibold, style: .headline),
       metadata: scaled(Typography.Size.body, weight: .regular, style: .body),
       bodyLineSpacing: FeedRowTypography.bodyLineSpacing(fontManager: fontManager),
+      bodyLine: nil, nameLine: nil, metadataLine: nil,
       kerning: fontManager.letterSpacingValue,
       optionsGlyphSize: FeedRowTypography.optionsGlyphSize(contentSize: contentSize),
       separatorLineHeight: FeedRowTypography.separatorLineHeight(contentSize: contentSize),

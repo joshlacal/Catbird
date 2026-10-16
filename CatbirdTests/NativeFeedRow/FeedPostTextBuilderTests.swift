@@ -25,6 +25,12 @@ struct FeedPostTextBuilderTests {
       fontManager: FontManager(), boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)
   }
 
+  private func typography(lineSpacing: String, fontManager: FontManager) -> FeedRowTypography {
+    fontManager.lineSpacing = lineSpacing
+    return FeedRowTypography.resolved(
+      fontManager: fontManager, boldText: false, contentSize: UIApplication.shared.preferredContentSizeCategory)
+  }
+
   private func linkedText(in built: NSAttributedString) -> String {
     var linked = ""
     built.enumerateAttribute(.feedLink, in: NSRange(location: 0, length: built.length)) { value, range, _ in
@@ -80,6 +86,25 @@ struct FeedPostTextBuilderTests {
     #expect(built.attribute(.kern, at: 4, effectiveRange: nil) as? CGFloat == typography.kerning)
     let paragraph = built.attribute(.paragraphStyle, at: 4, effectiveRange: nil) as? NSParagraphStyle
     #expect(paragraph?.lineSpacing == typography.bodyLineSpacing)
+    // Normal lines take the font's own height.
+    #expect(paragraph?.minimumLineHeight == 0)
+    #expect(paragraph?.maximumLineHeight == 0)
+  }
+
+  @Test("At Tight every line has the constant line height and no extra spacing",
+    .enabled(if: FontManager.supportsLineHeight))
+  func tightParagraphHasConstantLineHeight() throws {
+    let fontManager = FontManager()
+    let tight = typography(lineSpacing: "tight", fontManager: fontManager)
+    let line = try #require(tight.bodyLine)
+    let built = FeedPostTextBuilder.build(
+      post: post("first line\nsecond line"), typography: tight, linkStyle: .color, textColor: .label,
+      linkColor: .systemBlue)
+    let paragraph = try #require(built.attribute(.paragraphStyle, at: 12, effectiveRange: nil) as? NSParagraphStyle)
+    #expect(paragraph.minimumLineHeight == line.lineHeight)
+    #expect(paragraph.maximumLineHeight == line.lineHeight)
+    #expect(paragraph.lineSpacing == 0)
+    #expect(paragraph.lineBreakMode == .byWordWrapping)
   }
 }
 #endif

@@ -1,4 +1,5 @@
 #if os(iOS)
+import SwiftUI
 import Testing
 import UIKit
 @testable import Catbird
@@ -135,11 +136,11 @@ struct TrendingInterstitialLayoutTests {
 
   @Test("Measured topic text is what a UILabel needs to draw it", arguments: [
     "Aurora Watch", "A Much Longer Trending Topic Title That Wraps Onto More Lines", "Ünïcödé 🦋 Topic",
-  ])
-  func measureMatchesLabel(title: String) throws {
-    let t = typography()
+  ], ["normal", "tight"])
+  func measureMatchesLabel(title: String, lineSpacing: String) throws {
+    let t = typography(lineSpacing: lineSpacing)
     let input = topic(title: title, description: title + " " + String(repeating: "described ", count: 10))
-    let card = try #require(layout(topics: [input]).topicCards.first)
+    let card = try #require(layout(topics: [input], typography: t).topicCards.first)
     let texts = TrendingInterstitialLayoutEngine.topicTexts(input, typography: t)
     let label = UILabel()
     label.numberOfLines = 0
@@ -148,6 +149,106 @@ struct TrendingInterstitialLayoutTests {
       let fitted = label.sizeThatFits(CGSize(width: frame.width, height: .greatestFiniteMagnitude))
       #expect(abs(ceil(fitted.height) - frame.height) <= 0.5)
     }
+  }
+
+  // MARK: - Line spacing
+
+  /// Every manager the line-spacing tests create, kept for the test process: the typography cache
+  /// keys on a manager's identity and generation, which a new manager at a released one's address
+  /// would share.
+  private static var fontManagers: [FontManager] = []
+
+  private static func fontManager(lineSpacing: String) -> FontManager {
+    let fontManager = FontManager()
+    fontManager.lineSpacing = lineSpacing
+    fontManagers.append(fontManager)
+    return fontManager
+  }
+
+  private func typography(lineSpacing: String) -> TrendingInterstitialTypography {
+    TrendingInterstitialTypography.resolved(
+      fontManager: Self.fontManager(lineSpacing: lineSpacing),
+      traits: UITraitCollection(preferredContentSizeCategory: UIApplication.shared.preferredContentSizeCategory))
+  }
+
+  private static var screenScale: CGFloat {
+    UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen.scale }.first ?? 3
+  }
+
+  private static func hostedHeight<V: View>(_ view: V, fontManager: FontManager, width: CGFloat) -> CGFloat {
+    let host = UIHostingController(rootView:
+      view.environment(\.fontManager, fontManager).fixedSize(horizontal: false, vertical: true))
+    return host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
+  }
+
+  /// `TrendingTopicTitle` and `DiscoverySectionHeader`'s heading pass a `Font` to `appFont`, which
+  /// spaces lines by the body size's spacing (`DirectFontModifier`) and adds no tracking.
+  @Test("Topic titles and section headings are as tall natively as the hosted Text draws them",
+    arguments: ["tight", "normal", "relaxed"])
+  func headingsMatchHostedText(setting: String) {
+    let fontManager = Self.fontManager(lineSpacing: setting)
+    let t = TrendingInterstitialTypography.resolved(
+      fontManager: fontManager,
+      traits: UITraitCollection(preferredContentSizeCategory: UIApplication.shared.preferredContentSizeCategory))
+    let width: CGFloat = 260
+    let scale = Self.screenScale
+
+    let title = "Aurora Watch\nNorthern Lights\nTonight"
+    let nativeTitle = TrendingInterstitialText.height(
+      TrendingInterstitialLayoutEngine.topicTexts(topic(title: title), typography: t).title, width: width, scale: scale)
+    let hostedTitle = Self.hostedHeight(TrendingTopicTitle(title: title, size: 18), fontManager: fontManager, width: width)
+    #expect(abs(hostedTitle - nativeTitle) < 0.001, "\(setting) title native \(nativeTitle) hosted \(hostedTitle)")
+
+    let heading = "Trending on\nBluesky\nToday"
+    let nativeHeading = TrendingInterstitialText.height(
+      TrendingInterstitialLayoutEngine.headingText(heading, typography: t), width: width, scale: scale)
+    let hostedHeading = Self.hostedHeight(
+      Text(heading).appFont(fontManager.scaledCustomFont(size: 17, weight: .bold, width: 120, relativeTo: .headline)),
+      fontManager: fontManager, width: width)
+    #expect(abs(hostedHeading - nativeHeading) < 0.001, "\(setting) heading native \(nativeHeading) hosted \(hostedHeading)")
+  }
+
+  @Test("At Tight every label's lines take the constant line height", .enabled(if: FontManager.supportsLineHeight))
+  func tightLineSpacingTightensEveryLabel() throws {
+    let t = typography(lineSpacing: "tight")
+    let factor = try #require(t.lineHeightFactor)
+    #expect(factor == FontManager.tightLineHeightFactor)
+    let input = topic(description: String(repeating: "A long description that wraps. ", count: 6))
+    let texts = TrendingInterstitialLayoutEngine.topicTexts(input, typography: t)
+    let labels: [(NSAttributedString, UIFont)] = [
+      (try #require(texts.category), t.categoryName), (texts.title, t.topicTitle),
+      (try #require(texts.description), t.subheadline), (try #require(texts.postCount), t.caption),
+      (TrendingInterstitialLayoutEngine.headingText(TrendingInterstitialLayoutEngine.topicsHeading, typography: t), t.sectionHeading),
+      (TrendingInterstitialLayoutEngine.openVideosText(typography: t), t.videosButton),
+    ]
+    for (text, font) in labels {
+      let paragraph = try #require(text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+      let line = AppLineHeightPlacement.resolve(font: font, factor: factor)
+      #expect(paragraph.minimumLineHeight == line.lineHeight && paragraph.maximumLineHeight == line.lineHeight,
+        "\(text.string)")
+      #expect(AppLineHeightPlacement(of: text) == line)
+    }
+    let description = try #require(texts.description)
+    let line = AppLineHeightPlacement.resolve(font: t.subheadline, factor: factor)
+    let twoLines = TrendingInterstitialText.height(description, width: 200, maximumLines: 2, scale: 3)
+    #expect(abs(twoLines - ceil(line.height(lines: 2) * 3 - 0.001) / 3) < 0.001)
+    let single = TrendingInterstitialText.singleLineSize(try #require(texts.postCount), scale: 3)
+    let countLine = AppLineHeightPlacement.resolve(font: t.caption, factor: factor)
+    #expect(abs(single.height - ceil(countLine.lineHeight * 3 - 0.001) / 3) < 0.001)
+    let frame = CGRect(x: 0, y: 10, width: 100, height: 20)
+    #expect(TrendingInterstitialText.labelFrame(frame, for: description) == line.labelFrame(textFrame: frame))
+    #expect(TrendingInterstitialText.labelFrame(
+      frame, for: TrendingInterstitialLayoutEngine.topicTexts(input, typography: typography(lineSpacing: "normal")).title)
+      == frame)
+  }
+
+  @Test("Tight line spacing shortens topic cards", .enabled(if: FontManager.supportsLineHeight))
+  func tightShortensTopicCards() {
+    let description = String(repeating: "A long description that wraps. ", count: 6)
+    let tight = layout(topics: [topic(description: description)], typography: typography(lineSpacing: "tight"))
+    let normal = layout(topics: [topic(description: description)], typography: typography(lineSpacing: "normal"))
+    #expect(tight.topicCardSize.height < normal.topicCardSize.height,
+      "tight \(tight.topicCardSize.height) normal \(normal.topicCardSize.height)")
   }
 
   @Test("Layouts are cached by input")

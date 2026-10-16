@@ -249,18 +249,14 @@ struct SelectableTextView: UIViewRepresentable {
     let isEmojiOnly = plainText.containsOnlyEmojis
     
     // Create NSAttributedString with proper font attributes
-    let nsAttributedString = createNSAttributedString(from: attributedString, isEmojiOnly: isEmojiOnly)
+    let (nsAttributedString, linePlacement) = createNSAttributedString(from: attributedString, isEmojiOnly: isEmojiOnly)
     
     UIView.performWithoutAnimation {
       CATransaction.begin()
       CATransaction.setDisableActions(true)
       defer { CATransaction.commit() }
 
-      if uiView.attributedText != nsAttributedString {
-        uiView.attributedText = nsAttributedString
-        uiView.invalidateMeasurement()
-        uiView.setNeedsLayout()
-      }
+      Self.show(nsAttributedString, linePlacement: linePlacement, in: uiView)
     }
     
     // Apply theme colors only when changed
@@ -281,6 +277,26 @@ struct SelectableTextView: UIViewRepresentable {
     context.coordinator.sceneContext = sceneContext
   }
   
+  /// Shows `text` in `textView`. Text with a constant line height ("Tight", `linePlacement`) is
+  /// inset by its glyph offset, so its lines sit where SwiftUI's `Text` draws them and the first
+  /// line's ascenders and accents stay inside the view, which clips its content.
+  static func show(
+    _ text: NSAttributedString, linePlacement: AppLineHeightPlacement?, in textView: SelectableSelfSizingTextView
+  ) {
+    let inset = UIEdgeInsets(top: linePlacement?.glyphOffset ?? 0, left: 0, bottom: 0, right: 0)
+    let textChanged = textView.attributedText != text
+    let insetChanged = textView.textContainerInset != inset
+    guard textChanged || insetChanged else { return }
+    if textChanged {
+      textView.attributedText = text
+    }
+    if insetChanged {
+      textView.textContainerInset = inset
+    }
+    textView.invalidateMeasurement()
+    textView.setNeedsLayout()
+  }
+
   func makeCoordinator() -> Coordinator {
     let coordinator = Coordinator()
     coordinator.sceneContext = sceneContext
@@ -324,7 +340,10 @@ struct SelectableTextView: UIViewRepresentable {
     })
   }
   
-  private func createNSAttributedString(from attributedString: AttributedString, isEmojiOnly: Bool) -> NSAttributedString {
+  /// The text to show, and where its lines draw when they have a constant line height ("Tight").
+  private func createNSAttributedString(
+    from attributedString: AttributedString, isEmojiOnly: Bool
+  ) -> (text: NSAttributedString, linePlacement: AppLineHeightPlacement?) {
     let nsAttributedString = NSMutableAttributedString(attributedString)
     
     // Calculate effective font size
@@ -353,8 +372,10 @@ struct SelectableTextView: UIViewRepresentable {
     }
     
     // Apply line spacing and paragraph style
+    let linePlacement = fontManager.lineHeightFactor.map { AppLineHeightPlacement.resolve(font: defaultFont, factor: $0) }
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = fontManager.getLineSpacing(for: scaledSize) * lineSpacing
+    linePlacement?.apply(to: paragraphStyle)
     paragraphStyle.lineBreakMode = .byWordWrapping
     paragraphStyle.alignment = .left
     
@@ -363,7 +384,7 @@ struct SelectableTextView: UIViewRepresentable {
     nsAttributedString.addAttribute(.kern, value: letterSpacingValue, range: NSRange(location: 0, length: nsAttributedString.length))
     nsAttributedString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: nsAttributedString.length))
     
-    return nsAttributedString
+    return (nsAttributedString, linePlacement)
   }
   
   /// Applies the system text size on top of the in-app size setting, so this

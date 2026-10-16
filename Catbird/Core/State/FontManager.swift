@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreText
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -319,6 +320,9 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     private var currentLetterSpacing: String = ""
     private var currentDynamicTypeEnabled: Bool = true
     private var currentMaxDynamicTypeSize: String = ""
+
+    /// Whether `applyFontSettings` has noted that this system draws a stored "tight" as Normal.
+    @ObservationIgnored private var loggedTightUnavailable = false
     
     // MARK: - Computed Properties
     
@@ -468,6 +472,10 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         logger.info("Applying font settings on \(platformInfo) - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), tracking: \(letterSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
         logger.info("System Dynamic Type: \(systemContentSize.rawValue) (scale: \(systemContentSize.scaleFactor)), App size scale: \(currentSizeScale)")
         logger.debug("Previous settings - style: \(self.currentFontStyle), size: \(self.currentFontSize), spacing: \(self.currentLineSpacing), tracking: \(self.currentLetterSpacing), dynamic: \(self.currentDynamicTypeEnabled), maxSize: \(self.currentMaxDynamicTypeSize)")
+        if lineSpacing == "tight" && !Self.supportsLineHeight && !loggedTightUnavailable {
+            loggedTightUnavailable = true
+            logger.info("Tight line spacing needs iOS 27 or macOS 27; text uses Normal spacing")
+        }
         
         // Update cache FIRST to prevent re-entrance
         currentFontStyle = fontStyle
@@ -752,8 +760,58 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     }
     
     /// Get line spacing for a given font size
+    ///
+    /// Never negative: neither SwiftUI's `Text` nor `UILabel` draws negative spacing, so "Tight"
+    /// adds none and tightens lines with `lineHeightFactor` instead.
     func getLineSpacing(for fontSize: CGFloat) -> CGFloat {
-        return fontSize * (lineSpacingMultiplier - 1.0)
+        return max(0, fontSize * (lineSpacingMultiplier - 1.0))
+    }
+
+    /// The spacing `appFont(_: AppTextRole)` gives every text role: the body size's spacing scaled
+    /// by the line-spacing multiplier.
+    var roleLineSpacing: CGFloat {
+        getLineSpacing(for: Typography.Size.body) * lineSpacingMultiplier
+    }
+
+    // MARK: - Line Height
+
+    /// "Tight" draws every line of text at this multiple of its font's point size, the distance
+    /// between two baselines: `View.lineHeight(.multiple(factor:))` in SwiftUI
+    /// (`AppLineHeightModifier`), and `AppLineHeightPlacement` in UIKit. The system fonts' own
+    /// line height is about 1.19 times their point size.
+    static let tightLineHeightFactor: CGFloat = 1.075
+
+    /// Whether SwiftUI draws a constant line height (`View.lineHeight`) for every `Text`. Before 26
+    /// there is no such API; on 26, `Text` with a link run (a post's mentions, hashtags and links)
+    /// ignores every line height, and negative line spacing too, so no public API tightens it.
+    /// Where this is false, "Tight" is not offered and a stored "tight" draws as Normal.
+    static var supportsLineHeight: Bool {
+        if #available(iOS 27.0, macOS 27.0, *) { return true }
+        return false
+    }
+
+    /// The constant line height factor of a line-spacing setting: Tight's where the system draws
+    /// it, otherwise nil (each font's own line height).
+    static func lineHeightFactor(for setting: String, supportsLineHeight: Bool) -> CGFloat? {
+        guard supportsLineHeight, setting == "tight" else { return nil }
+        return tightLineHeightFactor
+    }
+
+    /// `lineHeightFactor(for:supportsLineHeight:)` of the current setting on this system.
+    var lineHeightFactor: CGFloat? {
+        Self.lineHeightFactor(for: lineSpacing, supportsLineHeight: Self.supportsLineHeight)
+    }
+
+    /// The line-spacing choices Settings offers, Tight only where it can be drawn.
+    static func lineSpacingOptions(supportsLineHeight: Bool) -> [(value: String, title: String)] {
+        let options: [(value: String, title: String)] = [("tight", "Tight"), ("normal", "Normal"), ("relaxed", "Relaxed")]
+        return supportsLineHeight ? options : options.filter { $0.value != "tight" }
+    }
+
+    /// The choice Settings shows for a stored line-spacing setting: where Tight draws as Normal, a
+    /// stored "tight" shows as Normal. The stored value itself is kept.
+    static func displayedLineSpacing(_ stored: String, supportsLineHeight: Bool) -> String {
+        stored == "tight" && !supportsLineHeight ? "normal" : stored
     }
     
     /// Create a font that respects accessibility settings
@@ -859,8 +917,9 @@ struct AppFontModifier: ViewModifier {
         
         content
             .font(fontManager.fontForTextRole(role, weight: adjustedWeight))
-            .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
+            .lineSpacing(fontManager.roleLineSpacing)
             .tracking(fontManager.letterSpacingValue)
+            .modifier(AppLineHeightModifier(factor: fontManager.lineHeightFactor))
     }
     
     
@@ -917,6 +976,7 @@ struct CustomAppFontModifier: ViewModifier {
             ))
             .lineSpacing(fontManager.getLineSpacing(for: size))
             .tracking(fontManager.letterSpacingValue)
+            .modifier(AppLineHeightModifier(factor: fontManager.lineHeightFactor))
     }
     
     
@@ -947,6 +1007,7 @@ struct DirectFontModifier: ViewModifier {
         content
             .font(font)
             .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body))
+            .modifier(AppLineHeightModifier(factor: fontManager.lineHeightFactor))
     }
 }
 
@@ -1020,6 +1081,30 @@ struct AppLineSpacingModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body))
+            .modifier(AppLineHeightModifier(factor: fontManager.lineHeightFactor))
+    }
+}
+
+/// Draws text at a constant line height of `factor` times each text's own point size, the
+/// distance between two baselines (`View.lineHeight(.multiple(factor:))`), on systems that draw
+/// one. A nil factor leaves the line height an ancestor set, or the font's own.
+///
+/// The body branches on availability alone, never on `factor`: turning Tight on or off keeps the
+/// view's identity, so views under a container's `appFont` keep their state, and older systems get
+/// the content itself rather than an `AnyView`.
+struct AppLineHeightModifier: ViewModifier {
+    let factor: CGFloat?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            return content.transformEnvironment(\.lineHeight) { lineHeight in
+                if let factor {
+                    lineHeight = .multiple(factor: factor)
+                }
+            }
+        } else {
+            return content
+        }
     }
 }
 

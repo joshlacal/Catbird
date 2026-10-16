@@ -111,6 +111,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
       typography: typography, metadataColor: content.metadataColor, originX: 0, hideVerificationBadges: false)
     optionsGlyph.tintColor = content.metadataColor
     textView.attributedText = content.text
+    textView.linePlacement = typography.bodyLine
     textView.onOpenLink = actions.openLink
     actionBar.actions = actions.actionBar(content.post)
     barState = content.actionBarState

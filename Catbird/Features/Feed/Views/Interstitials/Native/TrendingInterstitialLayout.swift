@@ -143,18 +143,36 @@ struct TrendingInterstitialLayout: Equatable {
 /// Attributed strings for every label in the cell. Labels and measurement use the same strings,
 /// so measured heights match what `UILabel` draws.
 enum TrendingInterstitialText {
+  /// `lineHeightFactor` gives every line a constant line height ("Tight"), as SwiftUI's `appFont`
+  /// draws it; labels showing the text take their frames from `labelFrame(_:for:)`.
   static func attributed(
-    _ string: String, font: UIFont, color: UIColor = .label, lineSpacing: CGFloat, kerning: CGFloat,
-    alignment: NSTextAlignment = .natural
+    _ string: String, font: UIFont, color: UIColor = .label, lineSpacing: CGFloat, lineHeightFactor: CGFloat?,
+    kerning: CGFloat, alignment: NSTextAlignment = .natural
   ) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = max(0, lineSpacing)
+    if let lineHeightFactor {
+      AppLineHeightPlacement.resolve(font: font, factor: lineHeightFactor).apply(to: paragraph)
+    }
     paragraph.alignment = alignment
     paragraph.lineBreakMode = .byWordWrapping
     var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
     // SwiftUI `.tracking(0)` keeps the font's kerning pairs; a `.kern` of 0 would disable them.
     if kerning != 0 { attributes[.tracking] = kerning }
     return NSAttributedString(string: string, attributes: attributes)
+  }
+
+  /// The frame of a label drawing `text` where SwiftUI draws it in `frame`: when the text has a
+  /// constant line height, `AppLineHeightPlacement.labelFrame(textFrame:)`.
+  static func labelFrame(_ frame: CGRect, for text: NSAttributedString?) -> CGRect {
+    AppLineHeightPlacement(of: text)?.labelFrame(textFrame: frame) ?? frame
+  }
+
+  /// The height of one of `text`'s lines: its constant line height, or its font's own.
+  private static func oneLineHeight(of text: NSAttributedString) -> CGFloat? {
+    let style = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    if let style, style.maximumLineHeight > 0 { return style.maximumLineHeight }
+    return (text.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)?.lineHeight
   }
 
   /// Rounds up to the next device pixel, as SwiftUI aligns text frames; whole points would add
@@ -176,9 +194,9 @@ enum TrendingInterstitialText {
       with: CGSize(width: width, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
     var height = rect.height
-    if maximumLines > 0, let font = text.attribute(.font, at: 0, effectiveRange: nil) as? UIFont {
+    if maximumLines > 0, let lineHeight = oneLineHeight(of: text) {
       let style = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
-      let limit = font.lineHeight * CGFloat(maximumLines) + (style?.lineSpacing ?? 0) * CGFloat(maximumLines - 1)
+      let limit = lineHeight * CGFloat(maximumLines) + (style?.lineSpacing ?? 0) * CGFloat(maximumLines - 1)
       height = min(height, limit)
     }
     return pixelCeil(height, scale: scale)
@@ -189,7 +207,11 @@ enum TrendingInterstitialText {
     let rect = text.boundingRect(
       with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
       options: [.usesFontLeading], context: nil)
-    return CGSize(width: pixelCeil(rect.width, scale: scale), height: pixelCeil(rect.height, scale: scale))
+    // Measured as one line from its baseline, the text takes its font's height; a constant line
+    // height replaces it.
+    let style = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    let height = style.flatMap { $0.maximumLineHeight > 0 ? $0.maximumLineHeight : nil } ?? rect.height
+    return CGSize(width: pixelCeil(rect.width, scale: scale), height: pixelCeil(height, scale: scale))
   }
 }
 
@@ -271,7 +293,8 @@ enum TrendingInterstitialLayoutEngine {
       y += videos.height + m.videosStackSpacing
       let textWidth = max(0, input.width - 2 * m.horizontalInset)
       let text = TrendingInterstitialText.attributed(
-        message, font: t.subheadline, lineSpacing: t.roleLineSpacing, kerning: t.kerning)
+        message, font: t.subheadline, lineSpacing: t.roleLineSpacing, lineHeightFactor: t.lineHeightFactor,
+        kerning: t.kerning)
       let textHeight = TrendingInterstitialText.height(text, width: textWidth, scale: t.displayScale)
       let rowHeight = max(m.emptyVideosMinimumHeight, textHeight)
       emptyVideosFrame = CGRect(x: m.horizontalInset, y: y + (rowHeight - textHeight) / 2, width: textWidth, height: textHeight)
@@ -320,13 +343,14 @@ enum TrendingInterstitialLayoutEngine {
   }
 
   static func headingText(_ title: String, typography t: TrendingInterstitialTypography) -> NSAttributedString {
-    TrendingInterstitialText.attributed(title, font: t.sectionHeading, lineSpacing: t.roleLineSpacing, kerning: 0)
+    TrendingInterstitialText.attributed(
+      title, font: t.sectionHeading, lineSpacing: t.headingLineSpacing, lineHeightFactor: t.lineHeightFactor, kerning: 0)
   }
 
   static func openVideosText(typography t: TrendingInterstitialTypography) -> NSAttributedString {
     TrendingInterstitialText.attributed(
       openVideosTitle, font: t.videosButton, color: .tintColor, lineSpacing: t.videosButtonLineSpacing,
-      kerning: t.kerning)
+      lineHeightFactor: t.lineHeightFactor, kerning: t.kerning)
   }
 
   /// "Open The Vids" label plus the small disclosure chevron, at least 44pt tall.
@@ -345,16 +369,22 @@ enum TrendingInterstitialLayoutEngine {
     -> (category: NSAttributedString?, title: NSAttributedString, description: NSAttributedString?, postCount: NSAttributedString?) {
     (
       topic.categoryName.map {
-        TrendingInterstitialText.attributed($0, font: t.categoryName, lineSpacing: t.roleLineSpacing, kerning: t.kerning)
+        TrendingInterstitialText.attributed(
+          $0, font: t.categoryName, lineSpacing: t.roleLineSpacing, lineHeightFactor: t.lineHeightFactor,
+          kerning: t.kerning)
       },
-      TrendingInterstitialText.attributed(topic.title, font: t.topicTitle, lineSpacing: t.roleLineSpacing, kerning: 0),
+      TrendingInterstitialText.attributed(
+        topic.title, font: t.topicTitle, lineSpacing: t.headingLineSpacing, lineHeightFactor: t.lineHeightFactor,
+        kerning: 0),
       topic.description.map {
         TrendingInterstitialText.attributed(
-          $0, font: t.subheadline, color: .secondaryLabel, lineSpacing: t.roleLineSpacing, kerning: t.kerning)
+          $0, font: t.subheadline, color: .secondaryLabel, lineSpacing: t.roleLineSpacing,
+          lineHeightFactor: t.lineHeightFactor, kerning: t.kerning)
       },
       topic.postCountText.map {
         TrendingInterstitialText.attributed(
-          $0, font: t.caption, color: .secondaryLabel, lineSpacing: t.roleLineSpacing, kerning: t.kerning)
+          $0, font: t.caption, color: .secondaryLabel, lineSpacing: t.roleLineSpacing,
+          lineHeightFactor: t.lineHeightFactor, kerning: t.kerning)
       }
     )
   }
@@ -431,7 +461,9 @@ enum TrendingInterstitialLayoutEngine {
 
   /// Two author lines; `TrendingVideosSection` reserves `videoAuthorHeight` for them.
   static func authorTextHeight(typography t: TrendingInterstitialTypography) -> CGFloat {
-    TrendingInterstitialText.pixelCeil(t.videoAuthor.lineHeight * 2 + max(0, t.videoAuthorLineSpacing), scale: t.displayScale)
+    let lineHeight = t.lineHeightFactor.map { AppLineHeightPlacement.resolve(font: t.videoAuthor, factor: $0).lineHeight }
+      ?? t.videoAuthor.lineHeight
+    return TrendingInterstitialText.pixelCeil(lineHeight * 2 + max(0, t.videoAuthorLineSpacing), scale: t.displayScale)
   }
 }
 
