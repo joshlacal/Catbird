@@ -186,6 +186,31 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       witnesses: [("feed retry", retry), ("unconfirmed feed control", remote)])
   }
 
+  /// The root keeps its scroll offset when search begins, and on iPhone the field sits in the
+  /// bottom toolbar, so nothing scrolls the Form back up. Results must start from the top.
+  func testSearchAfterScrollingShowsBestMatchWithoutScrolling() throws {
+    let app = try launch()
+    XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
+    try reveal(app.buttons["settings.category.advanced"].firstMatch, app)
+    _ = try enterSearch("Account & Security", app)
+    let accountResult = app.buttons["settings.result.accountSecurity"].firstMatch
+    XCTAssertTrue(accountResult.waitForExistence(timeout: 5), "The best match must be shown without scrolling")
+    assertHitGeometry(accountResult, app)
+    try capture("settings-44-search-after-scroll-best-match", app,
+      witnesses: [("best match", accountResult)])
+
+    // Scroll the results away from the top, then change the query.
+    try reveal(app.buttons["settings.result.account.signOut"].firstMatch, app)
+    let field = app.searchFields["Search settings"].firstMatch
+    field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Account & Security".count))
+    field.typeText("Moderation")
+    let moderationResult = app.buttons["settings.result.moderation"].firstMatch
+    XCTAssertTrue(moderationResult.waitForExistence(timeout: 5), "A changed query must show its best match")
+    assertHitGeometry(moderationResult, app)
+    try capture("settings-45-changed-query-best-match", app,
+      witnesses: [("best match", moderationResult)])
+  }
+
   func testFullMaximumTextSizeChoicesUseActualCategoryAcrossRotation() throws {
     let app = try launch(screen: "textReadability", extra: ["--settings-large-text", "--settings-dark"])
     XCTAssertTrue(app.navigationBars["Text & Readability"].waitForExistence(timeout: 8))
