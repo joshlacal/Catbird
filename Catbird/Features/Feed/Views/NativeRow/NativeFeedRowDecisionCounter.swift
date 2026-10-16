@@ -11,8 +11,9 @@ private let decisionLogger = Logger(subsystem: "blue.catbird", category: "Native
 /// from the log.
 ///
 /// Every decision the coordinator makes is counted, including a post decided again after its
-/// content or the row settings changed. The summary holds only outcome names and counts, never
-/// post content, URIs or DIDs.
+/// content or the row settings changed: the counts are per decision, not per post, so a reading
+/// over a session with refreshes includes posts decided more than once. The summary holds only
+/// outcome names and counts, never post content, URIs or DIDs.
 @MainActor
 final class NativeFeedRowDecisionCounter {
   enum Outcome: Hashable, Sendable {
