@@ -785,6 +785,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     /// there is no such API; on 26, `Text` with a link run (a post's mentions, hashtags and links)
     /// ignores every line height, and negative line spacing too, so no public API tightens it.
     /// Where this is false, "Tight" is not offered and a stored "tight" draws as Normal.
+    /// `AppLineHeightModifier` checks the same availability.
     static var supportsLineHeight: Bool {
         if #available(iOS 27.0, macOS 27.0, *) { return true }
         return false
@@ -1086,17 +1087,19 @@ struct AppLineSpacingModifier: ViewModifier {
 }
 
 /// Draws text at a constant line height of `factor` times each text's own point size, the
-/// distance between two baselines (`View.lineHeight(.multiple(factor:))`), on systems that draw
-/// one. A nil factor leaves the line height an ancestor set, or the font's own.
+/// distance between two baselines (`View.lineHeight(.multiple(factor:))`), on the systems where
+/// `FontManager.supportsLineHeight` offers Tight. A nil factor leaves the line height an ancestor
+/// set, or the font's own.
 ///
 /// The body branches on availability alone, never on `factor`: turning Tight on or off keeps the
-/// view's identity, so views under a container's `appFont` keep their state, and older systems get
-/// the content itself rather than an `AnyView`.
+/// view's identity, so views under a container's `appFont` keep their state, and other systems get
+/// the content itself rather than an `AnyView`. The availability is `supportsLineHeight`'s, so no
+/// system transforms the environment of every `appFont` text for a factor it never receives.
 struct AppLineHeightModifier: ViewModifier {
     let factor: CGFloat?
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, macOS 26.0, *) {
+        if #available(iOS 27.0, macOS 27.0, *) {
             return content.transformEnvironment(\.lineHeight) { lineHeight in
                 if let factor {
                     lineHeight = .multiple(factor: factor)

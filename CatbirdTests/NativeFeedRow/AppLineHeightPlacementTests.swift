@@ -4,17 +4,10 @@ import Testing
 import UIKit
 @testable import Catbird
 
-/// Whether `View.lineHeight` exists. These tests use plain text, which every system that has it
-/// draws with the constant line height.
-private func systemDrawsLineHeight() -> Bool {
-  if #available(iOS 26.0, *) { return true }
-  return false
-}
-
 /// `AppLineHeightPlacement` puts UIKit's lines where SwiftUI's `Text` draws them under
 /// `AppLineHeightModifier`: the same heights, the same baselines, and nothing clipped.
 @MainActor
-@Suite("App line height placement", .enabled(if: systemDrawsLineHeight()))
+@Suite("App line height placement", .enabled(if: FontManager.supportsLineHeight))
 struct AppLineHeightPlacementTests {
   private static let factor = FontManager.tightLineHeightFactor
   private static let scale: CGFloat = 3

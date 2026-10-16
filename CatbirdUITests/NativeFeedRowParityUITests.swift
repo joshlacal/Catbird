@@ -9,6 +9,11 @@ final class NativeFeedRowParityUITests: XCTestCase {
   /// Accessibility frames are reported in single precision.
   private static let tolerance: CGFloat = 0.01
   private static let minimumSharedRows = 12
+  /// Measured posts drawn by native cells. The mixed fixture hosts posts with embeds, replies and
+  /// reposts in both modes, and draws 4 of the first 17 posts natively.
+  private static let minimumNativeRows = 4
+  /// The native cell's text view (`NativeFeedPostCell.textAccessibilityIdentifier`).
+  private static let nativeTextIdentifier = "feedRow.native.text"
   /// Posts read per launch before the measurement stops scrolling.
   private static let postsToMeasure = 16
   private static let maximumScrolls = 30
@@ -17,10 +22,12 @@ final class NativeFeedRowParityUITests: XCTestCase {
     continueAfterFailure = false
   }
 
-  /// Posts by identifier: their tops relative to the first post's top, and their heights.
+  /// Posts by identifier: their tops relative to the first post's top, their heights, and which
+  /// of them a native cell draws.
   private struct RowFrames {
     var tops: [String: CGFloat] = [:]
     var heights: [String: CGFloat] = [:]
+    var native: Set<String> = []
   }
 
   private func measure(lineSpacing: String, nativeRows: Bool, contentSize: String? = nil) throws -> RowFrames {
@@ -43,7 +50,7 @@ final class NativeFeedRowParityUITests: XCTestCase {
     var frames = RowFrames()
     for pass in 0...Self.maximumScrolls {
       let snapshot = try feed.snapshot()
-      var posts: [(identifier: String, frame: CGRect)] = []
+      var posts: [Post] = []
       Self.collectPosts(in: snapshot, into: &posts)
       // Tops are relative to the first post: on the first screen directly, after a scroll through
       // any post already measured.
@@ -58,6 +65,7 @@ final class NativeFeedRowParityUITests: XCTestCase {
       for post in posts where frames.tops[post.identifier] == nil {
         frames.tops[post.identifier] = post.frame.minY + shift
         frames.heights[post.identifier] = post.frame.height
+        if post.isNative { frames.native.insert(post.identifier) }
       }
       if frames.tops.count >= Self.postsToMeasure { break }
       // Half a screen at a time, held at the end so the feed does not coast: every screen
@@ -69,22 +77,41 @@ final class NativeFeedRowParityUITests: XCTestCase {
     return frames
   }
 
+  private struct Post {
+    let identifier: String
+    let frame: CGRect
+    /// Drawn by a native cell: its text is the native text view.
+    let isNative: Bool
+  }
+
   /// Elements identified `post.<uri>`: a native cell's content view, or a hosted `PostView` (also
   /// the parent and reply of a thread row, inset from the row's edges). The outermost element of
   /// each identifier is kept.
-  private static func collectPosts(
-    in snapshot: XCUIElementSnapshot, into posts: inout [(identifier: String, frame: CGRect)]
-  ) {
+  private static func collectPosts(in snapshot: XCUIElementSnapshot, into posts: inout [Post]) {
     if snapshot.identifier.hasPrefix("post."), !posts.contains(where: { $0.identifier == snapshot.identifier }) {
-      posts.append((snapshot.identifier, snapshot.frame))
+      posts.append(Post(
+        identifier: snapshot.identifier, frame: snapshot.frame,
+        isNative: contains(nativeTextIdentifier, in: snapshot)))
     }
     for child in snapshot.children {
       collectPosts(in: child, into: &posts)
     }
   }
 
-  private static func describe(_ posts: [(identifier: String, frame: CGRect)]) -> [String] {
+  private static func contains(_ identifier: String, in snapshot: XCUIElementSnapshot) -> Bool {
+    snapshot.identifier == identifier || snapshot.children.contains { contains(identifier, in: $0) }
+  }
+
+  private static func describe(_ posts: [Post]) -> [String] {
     posts.map { "\(name($0.identifier)) \($0.frame)" }
+  }
+
+  /// Native cells draw enough of the measured posts with native rows on, and none with them off,
+  /// so the comparison is between the two renderers.
+  private func expectRenderers(native: RowFrames, hosted: RowFrames, label: String) {
+    print("RENDERERS \(label) native rows \(native.native.count) of \(native.tops.count): \(native.native.map(Self.name).sorted())")
+    XCTAssertGreaterThanOrEqual(native.native.count, Self.minimumNativeRows, "\(label): too few native rows measured")
+    XCTAssertTrue(hosted.native.isEmpty, "\(label): native rows drawn with native rows off: \(hosted.native.sorted())")
   }
 
   private static func name(_ identifier: String) -> String {
@@ -96,6 +123,7 @@ final class NativeFeedRowParityUITests: XCTestCase {
     let hosted = try measure(lineSpacing: lineSpacing, nativeRows: false, contentSize: contentSize)
     let shared = native.tops.keys.filter { hosted.tops[$0] != nil }.sorted { native.tops[$0]! < native.tops[$1]! }
     let label = contentSize.map { "\(lineSpacing) \($0)" } ?? lineSpacing
+    expectRenderers(native: native, hosted: hosted, label: label)
     var mismatches: [String] = []
     for identifier in shared {
       let top = (native: native.tops[identifier]!, hosted: hosted.tops[identifier]!)
@@ -135,6 +163,10 @@ final class NativeFeedRowParityUITests: XCTestCase {
       let normal = try measure(lineSpacing: "normal", nativeRows: nativeRows)
       let shared = tight.heights.keys.filter { normal.heights[$0] != nil }
       let mode = nativeRows ? "native" : "hosted"
+      if nativeRows {
+        XCTAssertGreaterThanOrEqual(tight.native.count, Self.minimumNativeRows, "too few native rows measured at Tight")
+        XCTAssertGreaterThanOrEqual(normal.native.count, Self.minimumNativeRows, "too few native rows measured at Normal")
+      }
       var unchanged: [String] = []
       for identifier in shared.sorted() {
         let tightHeight = tight.heights[identifier]!

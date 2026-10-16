@@ -164,6 +164,12 @@ import AppKit
 
     /// Describes the retained attempt while controls show the last confirmed values.
     var pendingChangesDescription: String {
+        pendingChangesDescription(supportsLineHeight: FontManager.supportsLineHeight)
+    }
+
+    /// `pendingChangesDescription`, naming each value as Settings shows it on a system that does
+    /// (`supportsLineHeight`) or does not draw Tight line spacing.
+    func pendingChangesDescription(supportsLineHeight: Bool) -> String {
         guard let accountDID,
               let pending = pendingDrafts[accountDID] ?? settingsModel ?? savedSettings,
               let savedSettings = pendingBaselines[accountDID] ?? savedSettings else {
@@ -175,10 +181,14 @@ import AppKit
                 changes.append("\(title): \(pending[keyPath: path] ? "On" : "Off")")
             }
         }
-        func string(_ title: String, _ path: KeyPath<AppSettingsModel, String>, _ names: [String: String] = [:]) {
+        func string(
+            _ title: String, _ path: KeyPath<AppSettingsModel, String>, _ names: [String: String] = [:],
+            shown: (String) -> String = { $0 }
+        ) {
             let value = pending[keyPath: path]
             if value != savedSettings[keyPath: path] {
-                let display = names[value] ?? value
+                let shownValue = shown(value)
+                let display = names[shownValue] ?? shownValue
                 changes.append("\(title): \(display)")
             }
         }
@@ -187,7 +197,9 @@ import AppKit
         string("Accent Color", \.accentColor, ["default": "Default", "twilight": "Twilight", "lavender": "Lavender", "sunrise": "Sunrise", "aurora": "Aurora", "dusk": "Dusk", "midnight": "Midnight"])
         string("Font Style", \.fontStyle, ["system": "System", "serif": "Serif", "rounded": "Rounded", "monospaced": "Monospaced"])
         string("Font Size", \.fontSize, ["small": "Small", "default": "Default", "large": "Large", "extraLarge": "Extra Large"])
-        string("Line Spacing", \.lineSpacing, ["tight": "Tight", "normal": "Normal", "relaxed": "Relaxed"])
+        string("Line Spacing", \.lineSpacing, ["tight": "Tight", "normal": "Normal", "relaxed": "Relaxed"]) {
+            FontManager.displayedLineSpacing($0, supportsLineHeight: supportsLineHeight)
+        }
         string("Letter Spacing", \.letterSpacing, ["tight": "Tight", "normal": "Normal", "loose": "Loose"])
         bool("Use System Text Size", \.dynamicTypeEnabled)
         string("Maximum Text Size", \.maxDynamicTypeSize, ["system": "Full System Range", "xxLarge": "Extra Extra Large", "xxxLarge": "Extra Extra Extra Large", "accessibility1": "Accessibility Medium", "accessibility2": "Accessibility Large", "accessibility3": "Accessibility Extra Large", "accessibility4": "Accessibility Extra Extra Large", "accessibility5": "Accessibility Extra Extra Extra Large"])

@@ -12,7 +12,8 @@ import UIKit
 ///
 /// Fonts are scaled for an explicit content size category with
 /// `UIFontMetrics.scaledFont(for:compatibleWith:)`, so results do not depend on the
-/// simulator's text size setting.
+/// simulator's text size setting. Spacing follows the given `FontManager` as production rows do,
+/// including Tight's constant line heights.
 @MainActor
 enum NativeFeedRowTestFactory {
   static let width: CGFloat = 390
@@ -23,39 +24,38 @@ enum NativeFeedRowTestFactory {
 
   // MARK: - Typography
 
-  static func typography(contentSize: UIContentSizeCategory) -> FeedRowTypography {
+  static func typography(contentSize: UIContentSizeCategory, fontManager: FontManager = FontManager()) -> FeedRowTypography {
     let traits = UITraitCollection(preferredContentSizeCategory: contentSize)
     func scaled(_ size: CGFloat, weight: UIFont.Weight, style: UIFont.TextStyle) -> UIFont {
       UIFontMetrics(forTextStyle: style).scaledFont(
         for: .systemFont(ofSize: size, weight: weight), compatibleWith: traits)
     }
-    let fontManager = FontManager()
-    let body = scaled(Typography.Size.body, weight: .regular, style: .body)
     var hasher = Hasher()
     hasher.combine(contentSize.rawValue)
+    hasher.combine(fontManager.lineSpacingMultiplier)
+    hasher.combine(fontManager.lineHeightFactor)
+    hasher.combine(fontManager.letterSpacingValue)
     return FeedRowTypography(
-      body: body,
+      body: scaled(Typography.Size.body, weight: .regular, style: .body),
       name: scaled(Typography.Size.headline, weight: .semibold, style: .headline),
       metadata: scaled(Typography.Size.body, weight: .regular, style: .body),
-      bodyLineSpacing: FeedRowTypography.bodyLineSpacing(fontManager: fontManager),
-      bodyLine: nil, nameLine: nil, metadataLine: nil,
-      kerning: fontManager.letterSpacingValue,
-      optionsGlyphSize: FeedRowTypography.optionsGlyphSize(contentSize: contentSize),
-      separatorLineHeight: FeedRowTypography.separatorLineHeight(contentSize: contentSize),
-      generationKey: hasher.finalize())
+      fontManager: fontManager, contentSize: contentSize, generationKey: hasher.finalize())
   }
 
   // MARK: - Inputs and Content
 
-  static func layoutInput(text: String, contentSize: UIContentSizeCategory = .large) throws -> FeedRowLayoutInput {
-    try parts(text: text, contentSize: contentSize, postKey: "one", verification: nil).input
+  static func layoutInput(
+    text: String, contentSize: UIContentSizeCategory = .large, fontManager: FontManager = FontManager()
+  ) throws -> FeedRowLayoutInput {
+    try parts(text: text, contentSize: contentSize, postKey: "one", verification: nil, fontManager: fontManager).input
   }
 
   static func content(
     text: String, contentSize: UIContentSizeCategory = .large, postKey: String = "one",
-    verification: VerificationBadgeKind? = nil
+    verification: VerificationBadgeKind? = nil, fontManager: FontManager = FontManager()
   ) throws -> NativeFeedRowContent {
-    let parts = try parts(text: text, contentSize: contentSize, postKey: postKey, verification: verification)
+    let parts = try parts(
+      text: text, contentSize: contentSize, postKey: postKey, verification: verification, fontManager: fontManager)
     let barState = actionBarState(for: parts.post)
     return NativeFeedRowContent(
       post: parts.post, layout: FeedRowLayoutEngine.layout(parts.input), text: parts.input.text,
@@ -82,12 +82,14 @@ enum NativeFeedRowTestFactory {
   static func configuredCell(
     text: String, contentSize: UIContentSizeCategory = .large, postKey: String = "one",
     verification: VerificationBadgeKind? = nil, actions: NativeFeedRowActions? = nil,
+    fontManager: FontManager = FontManager(),
     shadowUpdates: @escaping @Sendable (String) async -> AsyncStream<AppBskyFeedDefs.PostView> = finishedShadowUpdates
   ) throws -> (NativeFeedPostCell, NativeFeedRowContent) {
-    let content = try content(text: text, contentSize: contentSize, postKey: postKey, verification: verification)
+    let content = try content(
+      text: text, contentSize: contentSize, postKey: postKey, verification: verification, fontManager: fontManager)
     let cell = NativeFeedPostCell(frame: CGRect(x: 0, y: 0, width: content.layout.width, height: content.layout.height))
     cell.configure(
-      content, typography: typography(contentSize: contentSize), actions: actions ?? noOpActions,
+      content, typography: typography(contentSize: contentSize, fontManager: fontManager), actions: actions ?? noOpActions,
       shadowUpdates: shadowUpdates)
     return (cell, content)
   }
@@ -116,14 +118,15 @@ enum NativeFeedRowTestFactory {
   }
 
   private static func parts(
-    text: String, contentSize: UIContentSizeCategory, postKey: String, verification: VerificationBadgeKind?
+    text: String, contentSize: UIContentSizeCategory, postKey: String, verification: VerificationBadgeKind?,
+    fontManager: FontManager
   ) throws -> Parts {
     let cached = try FeedRowTestPosts.cachedPost(text: text, displayName: displayName, postKey: postKey)
     let post = try cached.feedViewPost.post
     guard case .knownType(let record) = post.record, let feedPost = record as? AppBskyFeedPost else {
       throw FactoryError.notAPost
     }
-    let typography = typography(contentSize: contentSize)
+    let typography = typography(contentSize: contentSize, fontManager: fontManager)
     let attributed = FeedPostTextBuilder.build(
       post: feedPost, typography: typography, linkStyle: .color, textColor: .label, linkColor: .systemBlue)
     let input = FeedRowLayoutInput(

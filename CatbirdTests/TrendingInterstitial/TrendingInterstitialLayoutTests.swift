@@ -181,31 +181,67 @@ struct TrendingInterstitialLayoutTests {
     return host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
   }
 
-  /// `TrendingTopicTitle` and `DiscoverySectionHeader`'s heading pass a `Font` to `appFont`, which
-  /// spaces lines by the body size's spacing (`DirectFontModifier`) and adds no tracking.
-  @Test("Topic titles and section headings are as tall natively as the hosted Text draws them",
-    arguments: ["tight", "normal", "relaxed"])
-  func headingsMatchHostedText(setting: String) {
+  /// The native labels against the hosted views they mirror, at every line spacing: the section
+  /// heading against `DiscoverySectionHeader`, the category and title against `TrendingTopicHeading`
+  /// (both pass a `Font` to `appFont`, spaced by the body size's spacing with no tracking), and the
+  /// description, post count and video author against `Text` under the `appFont` the Search
+  /// sections give them.
+  @Test("Every label is as tall natively as the hosted view draws it", arguments: ["tight", "normal", "relaxed"])
+  func labelsMatchHostedViews(setting: String) throws {
     let fontManager = Self.fontManager(lineSpacing: setting)
     let t = TrendingInterstitialTypography.resolved(
       fontManager: fontManager,
       traits: UITraitCollection(preferredContentSizeCategory: UIApplication.shared.preferredContentSizeCategory))
     let width: CGFloat = 260
     let scale = Self.screenScale
-
-    let title = "Aurora Watch\nNorthern Lights\nTonight"
-    let nativeTitle = TrendingInterstitialText.height(
-      TrendingInterstitialLayoutEngine.topicTexts(topic(title: title), typography: t).title, width: width, scale: scale)
-    let hostedTitle = Self.hostedHeight(TrendingTopicTitle(title: title, size: 18), fontManager: fontManager, width: width)
-    #expect(abs(hostedTitle - nativeTitle) < 0.001, "\(setting) title native \(nativeTitle) hosted \(hostedTitle)")
+    func expectMatch(_ label: String, native: CGFloat, hosted: CGFloat) {
+      #expect(abs(hosted - native) < 0.001, "\(setting) \(label): native \(native) hosted \(hosted)")
+    }
 
     let heading = "Trending on\nBluesky\nToday"
-    let nativeHeading = TrendingInterstitialText.height(
-      TrendingInterstitialLayoutEngine.headingText(heading, typography: t), width: width, scale: scale)
-    let hostedHeading = Self.hostedHeight(
-      Text(heading).appFont(fontManager.scaledCustomFont(size: 17, weight: .bold, width: 120, relativeTo: .headline)),
-      fontManager: fontManager, width: width)
-    #expect(abs(hostedHeading - nativeHeading) < 0.001, "\(setting) heading native \(nativeHeading) hosted \(hostedHeading)")
+    expectMatch("heading",
+      native: TrendingInterstitialText.height(
+        TrendingInterstitialLayoutEngine.headingText(heading, typography: t), width: width, scale: scale),
+      hosted: Self.hostedHeight(
+        DiscoverySectionHeader(heading) { EmptyView() }, fontManager: fontManager,
+        width: width + 2 * TrendingInterstitialMetrics.horizontalInset))
+
+    let input = topic(
+      title: "Aurora Watch\nNorthern Lights\nTonight", category: "science",
+      description: "Northern lights are visible much farther south than usual tonight, across three states.",
+      postCount: "48.2K posts")
+    let texts = TrendingInterstitialLayoutEngine.topicTexts(input, typography: t)
+    let category = try #require(texts.category)
+    expectMatch("category and title",
+      native: TrendingInterstitialText.height(category, width: width, scale: scale)
+        + TrendingInterstitialMetrics.topicTitleSpacing
+        + TrendingInterstitialText.height(texts.title, width: width, scale: scale),
+      hosted: Self.hostedHeight(
+        TrendingTopicHeading(title: input.title, category: input.categoryName, size: 18, showsMark: false),
+        fontManager: fontManager, width: width))
+
+    let description = try #require(input.description)
+    expectMatch("description",
+      native: TrendingInterstitialText.height(try #require(texts.description), width: width, scale: scale),
+      hosted: Self.hostedHeight(
+        Text(description).appFont(AppTextRole.subheadline).lineLimit(nil), fontManager: fontManager, width: width))
+
+    let postCount = try #require(input.postCountText)
+    expectMatch("post count",
+      native: TrendingInterstitialText.singleLineSize(try #require(texts.postCount), scale: scale).height,
+      hosted: Self.hostedHeight(Text(postCount).fixedSize().appFont(AppTextRole.caption), fontManager: fontManager,
+        width: width))
+
+    let author = "Alexandra Konstantinopoulou-Vanderbilt of the Northern Lights Society"
+    let authorWidth: CGFloat = 106
+    let nativeAuthor = TrendingInterstitialText.attributed(
+      author, font: t.videoAuthor, lineSpacing: t.videoAuthorLineSpacing, lineHeightFactor: t.lineHeightFactor,
+      kerning: t.kerning)
+    expectMatch("video author",
+      native: TrendingInterstitialText.height(nativeAuthor, width: authorWidth, maximumLines: 2, scale: scale),
+      hosted: Self.hostedHeight(
+        Text(author).appFont(size: Typography.Size.caption, weight: .medium, relativeTo: .caption).lineLimit(2),
+        fontManager: fontManager, width: authorWidth))
   }
 
   @Test("At Tight every label's lines take the constant line height", .enabled(if: FontManager.supportsLineHeight))

@@ -279,7 +279,7 @@ struct SelectableTextView: UIViewRepresentable {
   
   /// Shows `text` in `textView`. Text with a constant line height ("Tight", `linePlacement`) is
   /// inset by its glyph offset, so its lines sit where SwiftUI's `Text` draws them and the first
-  /// line's ascenders and accents stay inside the view, which clips its content.
+  /// line's ascenders, accents and emoji stay inside the view's bounds.
   static func show(
     _ text: NSAttributedString, linePlacement: AppLineHeightPlacement?, in textView: SelectableSelfSizingTextView
   ) {

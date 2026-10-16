@@ -59,18 +59,8 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
       fontManager, size: Typography.Size.headline, weight: boldText ? .bold : .semibold, textStyle: .headline)
     let metadata = AppUIFont.font(
       fontManager, size: Typography.Size.body, weight: boldText ? .semibold : .regular, textStyle: .body)
-    let lineHeightFactor = fontManager.lineHeightFactor
     let resolved = FeedRowTypography(
-      body: body,
-      name: name,
-      metadata: metadata,
-      bodyLineSpacing: bodyLineSpacing(fontManager: fontManager),
-      bodyLine: lineHeightFactor.map { .resolve(font: body, factor: $0) },
-      nameLine: lineHeightFactor.map { .resolve(font: name, factor: $0) },
-      metadataLine: lineHeightFactor.map { .resolve(font: metadata, factor: $0) },
-      kerning: fontManager.letterSpacingValue,
-      optionsGlyphSize: optionsGlyphSize(contentSize: contentSize),
-      separatorLineHeight: separatorLineHeight(contentSize: contentSize, lineHeightFactor: lineHeightFactor),
+      body: body, name: name, metadata: metadata, fontManager: fontManager, contentSize: contentSize,
       generationKey: key)
     cache = resolved
     return resolved
@@ -110,5 +100,27 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
   }
 
   @MainActor private static var cache: FeedRowTypography?
+}
+
+extension FeedRowTypography {
+  /// The typography of rows drawn in these fonts under `fontManager`'s spacing settings: the hosted
+  /// row's line spacing and tracking, and at "Tight" the constant line height of every line.
+  /// `generationKey` must change whenever the fonts or settings do.
+  @MainActor
+  init(
+    body: UIFont, name: UIFont, metadata: UIFont, fontManager: FontManager, contentSize: UIContentSizeCategory,
+    generationKey: Int
+  ) {
+    let lineHeightFactor = fontManager.lineHeightFactor
+    self.init(
+      body: body, name: name, metadata: metadata, bodyLineSpacing: Self.bodyLineSpacing(fontManager: fontManager),
+      bodyLine: lineHeightFactor.map { .resolve(font: body, factor: $0) },
+      nameLine: lineHeightFactor.map { .resolve(font: name, factor: $0) },
+      metadataLine: lineHeightFactor.map { .resolve(font: metadata, factor: $0) },
+      kerning: fontManager.letterSpacingValue,
+      optionsGlyphSize: Self.optionsGlyphSize(contentSize: contentSize),
+      separatorLineHeight: Self.separatorLineHeight(contentSize: contentSize, lineHeightFactor: lineHeightFactor),
+      generationKey: generationKey)
+  }
 }
 #endif

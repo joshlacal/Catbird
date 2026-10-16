@@ -75,6 +75,19 @@ struct FontManagerLineHeightTests {
     #expect(FontManager.displayedLineSpacing("bogus", supportsLineHeight: false) == "bogus")
   }
 
+  /// `AppLineHeightModifier` checks the system itself: it draws a constant line height exactly
+  /// where `supportsLineHeight` offers Tight, so no system draws a Tight it hides in Settings, and
+  /// none pays for an environment transform that can never write.
+  @Test("The line-height modifier draws exactly where Tight is offered")
+  func modifierDrawsExactlyWhereTightIsOffered() {
+    let text = Text(Self.copy(lines: 4)).font(Font(UIFont.systemFont(ofSize: 17)))
+    let natural = Self.hostedHeight(text, fontManager: FontManager())
+    let modified = Self.hostedHeight(
+      text.modifier(AppLineHeightModifier(factor: FontManager.tightLineHeightFactor)), fontManager: FontManager())
+    #expect((modified < natural) == FontManager.supportsLineHeight,
+      "with the modifier \(modified), without \(natural), Tight offered: \(FontManager.supportsLineHeight)")
+  }
+
   @Test("Tight tightens plain and linked body text alike; Normal keeps the font's line height",
     .enabled(if: FontManager.supportsLineHeight))
   func hostedTightTightensPlainAndLinkedText() {

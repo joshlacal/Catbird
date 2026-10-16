@@ -82,10 +82,8 @@ struct FeedRowLineSpacingTests {
     let body = UIFontMetrics(forTextStyle: .body).scaledFont(
       for: .systemFont(ofSize: Typography.Size.body),
       compatibleWith: UITraitCollection(preferredContentSizeCategory: contentSize))
-    let line = fontManager.lineHeightFactor.map { AppLineHeightPlacement.resolve(font: body, factor: $0) }
     return FeedRowTypography(
-      body: body, name: body, metadata: body, bodyLineSpacing: resolved.bodyLineSpacing, bodyLine: line,
-      nameLine: line, metadataLine: line, kerning: resolved.kerning, optionsGlyphSize: .zero, separatorLineHeight: 0,
+      body: body, name: body, metadata: body, fontManager: fontManager, contentSize: contentSize,
       generationKey: resolved.generationKey &+ contentSize.rawValue.hashValue)
   }
 
@@ -106,19 +104,14 @@ struct FeedRowLineSpacingTests {
     let normalTypography = Self.typography(fontManager: FontManager(), contentSize: contentSize)
     for content in Content.allCases {
       let native = try Self.nativeHeight(content, typography: typography, width: width)
-      // The hosted row's body: the post's attributed text (link runs included) under `appFont(.body)`,
-      // or at an accessibility size the modifiers `AppFontModifier` applies, with that size's font.
+      // The hosted row's body: the post's attributed text (link runs included) under `appFont(.body)`.
+      // `appFont` scales its font for the running app's text size, so at an accessibility size the
+      // Text carries that size's font itself, which takes precedence over the environment's font;
+      // the line spacing, tracking and line height are still `AppFontModifier`'s own.
       let text = Text(try content.post().facetsAsAttributedString)
-      let hosted: CGFloat
-      if contentSize == nil {
-        hosted = Self.hostedHeight(text.appFont(AppTextRole.body), fontManager: fontManager, width: width)
-      } else {
-        hosted = Self.hostedHeight(
-          text.font(Font(typography.body)).lineSpacing(fontManager.roleLineSpacing)
-            .tracking(fontManager.letterSpacingValue)
-            .modifier(AppLineHeightModifier(factor: fontManager.lineHeightFactor)),
-          fontManager: fontManager, width: width)
-      }
+      let hosted = Self.hostedHeight(
+        (contentSize == nil ? text : text.font(Font(typography.body))).appFont(AppTextRole.body),
+        fontManager: fontManager, width: width)
       let label = "\(setting) \(content.rawValue) \(contentSize?.rawValue ?? "app size")"
       #expect(abs(hosted - Self.pixelCeil(native, scale: Self.screenScale)) < 0.001, "\(label): native \(native) hosted \(hosted)")
 

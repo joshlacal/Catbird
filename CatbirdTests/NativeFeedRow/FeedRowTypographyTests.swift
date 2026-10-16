@@ -57,6 +57,32 @@ struct FeedRowTypographyTests {
     #expect(tight.bodyLineSpacing == 0)
   }
 
+  /// The test factory scales its fonts for an explicit content size, and must otherwise build rows
+  /// as production does, so tests that use it see Tight's constant line heights.
+  @Test("Factory rows at Tight carry the production line placements", .enabled(if: FontManager.supportsLineHeight))
+  func factoryRowsFollowTight() throws {
+    let tightManager = FontManager()
+    tightManager.lineSpacing = "tight"
+    let factor = FontManager.tightLineHeightFactor
+    let tight = NativeFeedRowTestFactory.typography(contentSize: .large, fontManager: tightManager)
+    #expect(tight.bodyLine == .resolve(font: tight.body, factor: factor))
+    #expect(tight.nameLine == .resolve(font: tight.name, factor: factor))
+    #expect(tight.metadataLine == .resolve(font: tight.metadata, factor: factor))
+    #expect(tight.bodyLineSpacing == tightManager.roleLineSpacing)
+    #expect(tight.separatorLineHeight
+      == FeedRowTypography.separatorLineHeight(contentSize: .large, lineHeightFactor: factor))
+    let normal = NativeFeedRowTestFactory.typography(contentSize: .large, fontManager: FontManager())
+    #expect(normal.bodyLine == nil && normal.nameLine == nil && normal.metadataLine == nil)
+    #expect(tight.generationKey != normal.generationKey)
+
+    let text = "Line one of a post\nLine two of a post\nLine three of a post"
+    let (cell, content) = try NativeFeedRowTestFactory.configuredCell(text: text, fontManager: tightManager)
+    let normalContent = try NativeFeedRowTestFactory.content(text: text, fontManager: FontManager())
+    #expect(cell.textViewForTesting.linePlacement == tight.bodyLine)
+    #expect(content.layout.height < normalContent.layout.height,
+      "tight \(content.layout.height) normal \(normalContent.layout.height)")
+  }
+
   @Test("Line and letter spacing changes change the generation key")
   func generationKeyTracksSpacing() {
     let fontManager = FontManager()
