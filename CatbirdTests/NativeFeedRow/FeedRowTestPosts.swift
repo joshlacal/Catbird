@@ -21,7 +21,7 @@ enum FeedRowTestPosts {
     authorIsLive: Bool = false, facets: [AppBskyRichtextFacet]? = nil, postKey: String = "one",
     authorDID: String = "did:plc:fixture", liked: Bool = false, reposted: Bool = false,
     handle: String = "author.test", replyCount: Int = 0, repostCount: Int = 0,
-    createdAt: Date = Date(timeIntervalSince1970: 0), avatar: String? = nil
+    createdAt: Date = Date(timeIntervalSince1970: 0), avatar: String? = nil, bookmarked: Bool? = nil
   ) throws -> CachedFeedViewPost {
     let did = try DID(didString: authorDID)
     let viewer = authorBlockedViewer ? AppBskyActorDefs.ViewerState(blockedBy: true) : nil
@@ -41,7 +41,7 @@ enum FeedRowTestPosts {
       uri: "at://did:plc:fixture/app.bsky.feed.post/\(postKey)", text: text, likeCount: likeCount,
       author: author, langs: langs, tags: tags, facets: facets,
       embed: withImageEmbed ? imageEmbed : nil,
-      viewerState: viewerState(liked: liked, reposted: reposted, pinned: pinned, postKey: postKey),
+      viewerState: viewerState(liked: liked, reposted: reposted, pinned: pinned, postKey: postKey, bookmarked: bookmarked),
       replyCount: replyCount, repostCount: repostCount, createdAt: createdAt)
 
     var reply: AppBskyFeedDefs.ReplyRef?
@@ -82,13 +82,13 @@ enum FeedRowTestPosts {
 
   /// The viewer's state on the fixture post: liked and reposted with record URIs, pinned.
   private static func viewerState(
-    liked: Bool, reposted: Bool, pinned: Bool, postKey: String
+    liked: Bool, reposted: Bool, pinned: Bool, postKey: String, bookmarked: Bool? = nil
   ) throws -> AppBskyFeedDefs.ViewerState? {
-    guard liked || reposted || pinned else { return nil }
+    guard liked || reposted || pinned || bookmarked != nil else { return nil }
     return AppBskyFeedDefs.ViewerState(
       repost: reposted ? try ATProtocolURI(uriString: "at://did:plc:viewer/app.bsky.feed.repost/\(postKey)") : nil,
       like: liked ? try ATProtocolURI(uriString: "at://did:plc:viewer/app.bsky.feed.like/\(postKey)") : nil,
-      pinned: pinned ? true : nil)
+      bookmarked: bookmarked, pinned: pinned ? true : nil)
   }
 
   private static let imageEmbed: AppBskyFeedDefs.PostViewEmbedUnion = .appBskyEmbedImagesView(

@@ -57,8 +57,8 @@ actor VideoUploadSanitizer {
   static let shared: Result<VideoUploadSanitizer, Error> = Result { try VideoUploadSanitizer() }
 
   /// Raise whenever `remux`, `VideoUploadCopyStructure` or `verifyContainsOnlySamples` changes, so
-  /// no copy made under an older rule is uploaded again. Copies named with another version are
-  /// deleted when a sanitizer starts.
+  /// no copy made under an older rule is uploaded again. Unowned copies of every version are
+  /// deleted when the production singleton starts.
   static let formatVersion = 2
 
   /// Free space required beyond the size of the attachment before a copy is made: the new movie
@@ -79,6 +79,9 @@ actor VideoUploadSanitizer {
   /// the file is unchanged. A retry then reads neither file again.
   private var knownAttachments: [String: KnownAttachment] = [:]
   private var knownCopies: [String: KnownCopy] = [:]
+  /// A reader owns its prefix throughout cached verification, export and the consumer's await.
+  private var leases: [UUID: String] = [:]
+  private var readers: [String: Int] = [:]
 
   /// - Parameters:
   ///   - availableCapacity: Free bytes on the volume of the given directory, or nil when unknown.
@@ -105,7 +108,10 @@ actor VideoUploadSanitizer {
       try FileManager.default.removeItem(at: partialDirectory)
     }
     try FileManager.default.createDirectory(at: partialDirectory, withIntermediateDirectories: true)
-    try Self.removeCopies(madeUnderAnotherVersionIn: self.rootURL)
+    // Production constructs only `shared`; both upload routes use that singleton. No other
+    // actor can own a live copy in this root when it starts. Explicit roots are for isolated tests.
+    // Checkpoints own independent snapshots, so every recognizable leftover here is disposable.
+    try Self.removeUnownedCopies(in: self.rootURL)
     var values = URLResourceValues()
     values.isExcludedFromBackup = true
     var root = self.rootURL
@@ -113,13 +119,66 @@ actor VideoUploadSanitizer {
   }
 
   /// The metadata-free copy of `attachmentURL`, made on the first call for these bytes and
-  /// reused afterwards. The attachment itself is only read.
+  /// reused afterwards. The attachment itself is only read. Internal preparation/tests use this
+  /// unleased entry point; production consumers must use `uploadCopy` or `withSanitizedCopy`.
   func sanitizedCopy(of attachmentURL: URL) async throws -> SanitizedVideo {
     try Task.checkCancellation()
     guard attachmentURL.isFileURL, let format = OutputFormat(attachmentURL) else {
       throw VideoUploadSanitizationError.unreadable
     }
     let source = try attachmentFingerprint(attachmentURL)
+    return try await prepareCopy(of: attachmentURL, source: source, format: format)
+  }
+
+  /// Holds the same fingerprint's ownership before preparation can suspend or read a shared copy.
+  private func acquireCopy(of attachmentURL: URL) async throws -> (video: SanitizedVideo, token: UUID) {
+    try Task.checkCancellation()
+    guard attachmentURL.isFileURL, let format = OutputFormat(attachmentURL) else {
+      throw VideoUploadSanitizationError.unreadable
+    }
+    let source = try attachmentFingerprint(attachmentURL)
+    let prefix = "\(source.digest)-v\(Self.formatVersion)-"
+    let token = UUID()
+    leases[token] = prefix
+    readers[prefix, default: 0] += 1
+    do {
+      return (try await prepareCopy(of: attachmentURL, source: source, format: format), token)
+    } catch {
+      release(token: token)
+      throw error
+    }
+  }
+
+  /// The legacy consumer must finish using the file before this awaited scope returns or throws.
+  func withSanitizedCopy<Value: Sendable>(
+    of attachmentURL: URL,
+    operation: @Sendable (SanitizedVideo) async throws -> Value
+  ) async throws -> Value {
+    let leased = try await acquireCopy(of: attachmentURL)
+    defer { release(token: leased.token) }
+    try Task.checkCancellation()
+    return try await operation(leased.video)
+  }
+
+  private func release(token: UUID) {
+    guard let prefix = leases.removeValue(forKey: token), let count = readers[prefix] else { return }
+    guard count == 1 else {
+      readers[prefix] = count - 1
+      return
+    }
+    readers[prefix] = nil
+    knownCopies[prefix] = nil
+    // Cover every recognizable copy for this fingerprint, including a remux race's output.
+    guard let names = try? fileManager.contentsOfDirectory(atPath: rootURL.path) else { return }
+    for name in names where name.hasPrefix(prefix) && Self.copyFormatVersion(of: name) != nil {
+      do { try fileManager.removeItem(at: rootURL.appendingPathComponent(name)) }
+      catch { Self.logger.error("Couldn’t release upload copy: \(error.localizedDescription, privacy: .public)") }
+    }
+  }
+
+  private func prepareCopy(
+    of attachmentURL: URL, source: (count: Int, digest: String), format: OutputFormat
+  ) async throws -> SanitizedVideo {
     let prefix = "\(source.digest)-v\(Self.formatVersion)-"
     if let known = knownCopy(prefix: prefix) { return known }
     if let cached = try await reusableCopy(prefix: prefix, format: format) {
@@ -197,6 +256,7 @@ actor VideoUploadSanitizer {
   /// The format version in a copy's name (`<attachment SHA-256>-v<version>-<copy SHA-256>.<ext>`),
   /// or nil for any other name.
   static func copyFormatVersion(of name: String) -> Int? {
+    guard ["mov", "mp4"].contains((name as NSString).pathExtension) else { return nil }
     let stem = (name as NSString).deletingPathExtension
     let parts = stem.split(separator: "-", omittingEmptySubsequences: false)
     guard parts.count == 3, parts[0].count == 64, parts[2].count == 64,
@@ -206,11 +266,10 @@ actor VideoUploadSanitizer {
     return version
   }
 
-  /// Deletes copies an older (or newer) rule made; they are never uploaded again. No checkpoint
-  /// refers to a copy: the checkpoint store keeps its own snapshot.
-  private static func removeCopies(madeUnderAnotherVersionIn root: URL) throws {
+  /// No checkpoint refers to these files: the checkpoint store keeps its own snapshot.
+  private static func removeUnownedCopies(in root: URL) throws {
     for name in try FileManager.default.contentsOfDirectory(atPath: root.path) {
-      guard let version = copyFormatVersion(of: name), version != formatVersion else { continue }
+      guard copyFormatVersion(of: name) != nil else { continue }
       try FileManager.default.removeItem(at: root.appendingPathComponent(name))
     }
   }
@@ -374,10 +433,15 @@ actor VideoUploadSanitizer {
 extension VideoUploadSanitizer: VideoUploadCopyMaking {
   /// The metadata-free copy the multipart engine uploads in place of the attachment.
   func uploadCopy(of attachmentURL: URL) async throws -> VideoUploadCopy {
-    let copy = try await sanitizedCopy(of: attachmentURL)
-    guard Int64(copy.byteCount) <= VideoUploadPolicy.maximumBytes else {
+    let leased = try await acquireCopy(of: attachmentURL)
+    guard Int64(leased.video.byteCount) <= VideoUploadPolicy.maximumBytes else {
+      release(token: leased.token)
       throw VideoUploadSanitizationError.tooLarge
     }
-    return VideoUploadCopy(url: copy.url, mimeType: copy.mimeType)
+    return VideoUploadCopy(url: leased.video.url, mimeType: leased.video.mimeType, leaseID: leased.token)
+  }
+
+  func releaseUploadCopy(_ copy: VideoUploadCopy) {
+    release(token: copy.leaseID)
   }
 }

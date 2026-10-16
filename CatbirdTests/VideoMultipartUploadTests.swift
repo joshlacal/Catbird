@@ -548,8 +548,10 @@ struct SyntheticVideoCopies: VideoUploadCopyMaking {
   static let mp4 = SyntheticVideoCopies(mimeType: "video/mp4")
   let mimeType: String
   func uploadCopy(of attachmentURL: URL) async throws -> VideoUploadCopy {
-    VideoUploadCopy(url: attachmentURL, mimeType: mimeType)
+    VideoUploadCopy(url: attachmentURL, mimeType: mimeType, leaseID: UUID())
   }
+  // Synthetic sources belong to the fixture; this fake creates no disposable copy.
+  func releaseUploadCopy(_ copy: VideoUploadCopy) async {}
 }
 
 actor ScriptedVideoTransport: VideoMultipartTransporting {

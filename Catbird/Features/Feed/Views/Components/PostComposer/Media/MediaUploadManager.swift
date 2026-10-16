@@ -583,16 +583,20 @@ final class MediaUploadManager {
     }
 
     // Only the metadata-free copy is sent, never the attachment itself.
-    let sanitized = try await (try VideoUploadSanitizer.shared.get()).sanitizedCopy(of: url)
-    try Task.checkCancellation()
-    guard sanitized.byteCount <= maxVideoSize else { throw VideoUploadError.legacyTooLarge }
-    return try await sendLegacyVideo(sanitized, uploadID: uploadID)
+    let sanitizer = try VideoUploadSanitizer.shared.get()
+    let (responseData, response) = try await sanitizer.withSanitizedCopy(of: url) { sanitized in
+      try Task.checkCancellation()
+      guard sanitized.byteCount <= maxVideoSize else { throw VideoUploadError.legacyTooLarge }
+      return try await self.sendLegacyVideo(sanitized, uploadID: uploadID)
+    }
+    // Processing polls use only the job ID; the completed request no longer needs the file.
+    return try await processLegacyVideoResponse(responseData, response: response)
   }
 
   /// The legacy route's network half. It is handed only the sanitizer's copy, so the attachment
   /// itself is out of reach of every request made here.
   @MainActor
-  private func sendLegacyVideo(_ sanitized: SanitizedVideo, uploadID: UUID) async throws -> Blob {
+  private func sendLegacyVideo(_ sanitized: SanitizedVideo, uploadID: UUID) async throws -> (Data, URLResponse) {
     // Get authentication token
     let authToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getUploadLimits")
 
@@ -672,7 +676,12 @@ final class MediaUploadManager {
 
     try Task.checkCancellation()
 
-    // Process response
+    return (responseData, response)
+  }
+
+  @MainActor
+  private func processLegacyVideoResponse(_ responseData: Data, response: URLResponse) async throws -> Blob {
+    try Task.checkCancellation()
     guard let httpResponse = response as? HTTPURLResponse else {
       logger.error("ERROR: Invalid HTTP response type")
       throw VideoUploadError.uploadFailed

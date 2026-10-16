@@ -290,7 +290,7 @@ struct VideoUploadSanitizerTests {
     try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: copy.url.path)
     #expect(try await sanitizer.sanitizedCopy(of: fixture) == copy)
     await #expect(throws: (any Error).self, "a new process hashes the attachment again") {
-      _ = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+      _ = try await VideoUploadSanitizer(rootURL: copies.appendingPathComponent("new-process")).sanitizedCopy(of: fixture)
     }
 
     // Rewritten attachment bytes are hashed again and get their own copy.
@@ -360,13 +360,14 @@ struct VideoUploadSanitizerTests {
   func corruptedCachedCopyIsRemade() async throws {
     let fixture = try await Fixture.make(.mpeg4)
     let copies = fixture.deletingLastPathComponent().appendingPathComponent("copies")
-    let first = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    let sanitizer = try VideoUploadSanitizer(rootURL: copies)
+    let first = try await sanitizer.sanitizedCopy(of: fixture)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: first.url.path)
     var corrupted = try Data(contentsOf: first.url)
     corrupted.removeLast(corrupted.count / 3)
     try corrupted.write(to: first.url)
 
-    let remade = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    let remade = try await sanitizer.sanitizedCopy(of: fixture)
     let bytes = try Data(contentsOf: remade.url)
     #expect(bytes != corrupted)
     #expect(remade.url.lastPathComponent.hasSuffix("-\(try digest(of: remade.url)).mp4"), "name records the bytes")
@@ -379,21 +380,26 @@ struct VideoUploadSanitizerTests {
     let fixture = try await Fixture.make(.quickTime)
     let copies = fixture.deletingLastPathComponent().appendingPathComponent("copies")
     let copy = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    let bytes = try Data(contentsOf: copy.url)
+    // Start the reader before planting a non-memoized copy, so this tests read-back failure
+    // rather than startup reclamation of a previous process's unowned files.
+    let reader = try VideoUploadSanitizer(rootURL: copies)
+    try bytes.write(to: copy.url)
     // Like a protected file while the device is locked: there, but not readable.
     try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: copy.url.path)
     await #expect(throws: VideoUploadSanitizationError.exportFailed) {
-      _ = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+      _ = try await reader.sanitizedCopy(of: fixture)
     }
     #expect(FileManager.default.fileExists(atPath: copy.url.path), "the copy is not deleted")
     try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: copy.url.path)
-    #expect(try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture) == copy)
+    #expect(try await reader.sanitizedCopy(of: fixture) == copy)
   }
 
   @Test("Copies made under another format version are deleted when a sanitizer starts")
   func copiesFromOtherFormatVersionsAreDeleted() async throws {
     let fixture = try await Fixture.make(.quickTime)
     let copies = fixture.deletingLastPathComponent().appendingPathComponent("copies")
-    let current = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    _ = try VideoUploadSanitizer(rootURL: copies)
     let hex = String(repeating: "ab", count: 32)
     let older = copies.appendingPathComponent("\(hex)-v\(VideoUploadSanitizer.formatVersion - 1)-\(hex).mov")
     let unrelated = copies.appendingPathComponent("unrelated.mov")
@@ -401,7 +407,6 @@ struct VideoUploadSanitizerTests {
     try Data("not a copy".utf8).write(to: unrelated)
     _ = try VideoUploadSanitizer(rootURL: copies)
     #expect(!FileManager.default.fileExists(atPath: older.path))
-    #expect(FileManager.default.fileExists(atPath: current.url.path))
     #expect(FileManager.default.fileExists(atPath: unrelated.path))
   }
 
@@ -529,6 +534,201 @@ struct VideoUploadSanitizerTests {
                                 isOwnerCurrent: { false })
     }
     try await expectNothingSent(transport: transport, store: store, folder: folder)
+  }
+
+  @Test("A completed multipart upload releases its temporary sanitized copy and retains its retry snapshot")
+  func completedUploadReleasesTemporaryCopy() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let folder = fixture.deletingLastPathComponent()
+    let original = try digest(of: fixture)
+    let transport = try Self.recordingTransport()
+    let checkpointRoot = folder.appendingPathComponent("checkpoints")
+    let store = try VideoUploadCheckpointStore(rootURL: checkpointRoot)
+    let sanitizer = try sanitizer(for: fixture)
+    let blob = try await upload(fixture, transport: transport, sanitizer: sanitizer, store: store)
+    #expect(blob == VideoMultipartUploadChecks.blob)
+    #expect(try copyFiles(in: folder.appendingPathComponent("copies")).isEmpty)
+    #expect(try digest(of: fixture) == original)
+
+    let checkpoint = try #require(try await store.load(owner: VideoMultipartUploadChecks.owner))
+    #expect(checkpoint.phase == .complete)
+    let files = try #require(FileManager.default.enumerator(
+      at: checkpointRoot, includingPropertiesForKeys: nil))
+    let snapshot = try #require(files.allObjects.compactMap { $0 as? URL }.first {
+      $0.lastPathComponent == checkpoint.snapshotName
+    })
+    let uploaded = await transport.uploaded()
+    #expect(try Data(contentsOf: snapshot) == uploaded)
+  }
+
+  @Test("Losing ownership after sanitization releases the copy without creating an upload")
+  func ownerChangeAfterSanitizationReleasesTemporaryCopy() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let folder = fixture.deletingLastPathComponent()
+    let transport = try Self.recordingTransport()
+    let store = try VideoUploadCheckpointStore(rootURL: folder.appendingPathComponent("checkpoints"))
+    let checks = OwnerChangingAfterPreparation()
+    await #expect(throws: VideoMultipartError.self) {
+      _ = try await self.upload(
+        fixture, transport: transport, sanitizer: self.sanitizer(for: fixture), store: store,
+        isOwnerCurrent: { await checks.isCurrent() })
+    }
+    try await expectNothingSent(transport: transport, store: store, folder: folder)
+    #expect(FileManager.default.fileExists(atPath: fixture.path))
+  }
+
+  @Test("A failed checkpoint preparation releases only its temporary copy")
+  func failedCheckpointPreparationReleasesTemporaryCopy() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let folder = fixture.deletingLastPathComponent()
+    let original = try Data(contentsOf: fixture)
+    let transport = try Self.recordingTransport()
+    let store = try VideoUploadCheckpointStore(rootURL: folder.appendingPathComponent("checkpoints"))
+    // A real existing lease makes prepare reject the competing run before reading its copy.
+    let held = try await store.prepare(
+      sourceURL: fixture, owner: VideoMultipartUploadChecks.owner, mimeType: "video/quicktime")
+    await #expect(throws: VideoUploadFileError.self) {
+      _ = try await self.upload(fixture, transport: transport, sanitizer: self.sanitizer(for: fixture), store: store)
+    }
+    #expect(await transport.starts.isEmpty)
+    #expect(try copyFiles(in: folder.appendingPathComponent("copies")).isEmpty)
+    #expect(try Data(contentsOf: fixture) == original)
+    #expect(try await store.load(owner: held.owner)?.operationID == held.operationID)
+    await store.release(owner: held.owner, runID: held.runID)
+  }
+
+  @Test("One upload cannot release a copy another upload still needs")
+  func concurrentUploadConsumersKeepCopyUntilBothFinish() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let folder = fixture.deletingLastPathComponent()
+    let sanitizer = try sanitizer(for: fixture)
+    let blocked = CopyConsumerGate()
+    let firstTransport = try Self.recordingTransport()
+    let firstStore = try VideoUploadCheckpointStore(rootURL: folder.appendingPathComponent("first-checkpoints"))
+    let first = Task {
+      try await self.upload(fixture, transport: firstTransport, sanitizer: sanitizer, store: firstStore,
+                            isOwnerCurrent: { await blocked.isCurrent() })
+    }
+    // First upload has received its copy but has not yet made its independent snapshot.
+    await blocked.gate.waitUntilEntered()
+    let secondTransport = try Self.recordingTransport()
+    let second = await Task {
+      try await self.upload(
+        fixture, transport: secondTransport, sanitizer: sanitizer,
+        store: VideoUploadCheckpointStore(rootURL: folder.appendingPathComponent("second-checkpoints")))
+    }.result
+    let retainedCopies = try? copyFiles(in: folder.appendingPathComponent("copies")).count
+    // Always release the blocked consumer, including when the second run failed.
+    await blocked.gate.open()
+    let firstResult = await first.result
+    #expect(try second.get() == VideoMultipartUploadChecks.blob)
+    #expect(retainedCopies == 1)
+    #expect(try firstResult.get() == VideoMultipartUploadChecks.blob)
+    #expect(await firstTransport.uploaded() == secondTransport.uploaded())
+    #expect(try copyFiles(in: folder.appendingPathComponent("copies")).isEmpty)
+    #expect(FileManager.default.fileExists(atPath: fixture.path))
+  }
+
+  @Test("A fresh sanitizer reclaims recognizable current-version crash leftovers and preserves unrelated files")
+  func startupReclaimsCurrentVersionCrashLeftovers() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let folder = fixture.deletingLastPathComponent()
+    let copies = folder.appendingPathComponent("copies")
+    let leftover = try await VideoUploadSanitizer(rootURL: copies).sanitizedCopy(of: fixture)
+    let unrelated = copies.appendingPathComponent("unrelated.mov")
+    try Data("keep".utf8).write(to: unrelated)
+    let relaunched = try VideoUploadSanitizer(rootURL: copies)
+    #expect(!FileManager.default.fileExists(atPath: leftover.url.path))
+    #expect(try Data(contentsOf: unrelated) == Data("keep".utf8))
+    #expect(FileManager.default.fileExists(atPath: fixture.path))
+    let regenerated = try await relaunched.sanitizedCopy(of: fixture)
+    #expect(regenerated.url == leftover.url, "deterministic bytes still match retained multipart snapshots")
+    try await VideoUploadSanitizer.verifyContainsOnlySamples(regenerated.url)
+  }
+
+  @Test("Duplicate and stale copy tokens cannot release another active reader")
+  func copyTokensReleaseOnlyTheirOwnReader() async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let folder = fixture.deletingLastPathComponent()
+    let sanitizer = try sanitizer(for: fixture)
+    let first = try await sanitizer.uploadCopy(of: fixture)
+    let second = try await sanitizer.uploadCopy(of: fixture)
+    #expect(first.url == second.url)
+    #expect(first.leaseID != second.leaseID)
+    await sanitizer.releaseUploadCopy(first)
+    #expect(FileManager.default.fileExists(atPath: second.url.path))
+    await sanitizer.releaseUploadCopy(first)
+    #expect(FileManager.default.fileExists(atPath: second.url.path))
+    await sanitizer.releaseUploadCopy(second)
+    #expect(!FileManager.default.fileExists(atPath: second.url.path))
+    let later = try await sanitizer.uploadCopy(of: fixture)
+    #expect(later.url == second.url, "regenerated bytes retain the retry identity")
+    await sanitizer.releaseUploadCopy(second)
+    #expect(FileManager.default.fileExists(atPath: later.url.path))
+    await sanitizer.releaseUploadCopy(later)
+    #expect(try copyFiles(in: folder.appendingPathComponent("copies")).isEmpty)
+    #expect(FileManager.default.fileExists(atPath: fixture.path))
+  }
+
+  @Test("The legacy copy scope holds through its awaited operation and releases on every exit",
+        arguments: ["success", "error", "cancel", "size"])
+  func scopedLegacyCopyLifetime(outcome: String) async throws {
+    let fixture = try await Fixture.make(.quickTime)
+    let folder = fixture.deletingLastPathComponent()
+    let original = try digest(of: fixture)
+    let sanitizer = try sanitizer(for: fixture)
+    let gate = VideoTestGate()
+    let operation = Task {
+      try await sanitizer.withSanitizedCopy(of: fixture) { copy in
+        #expect(FileManager.default.fileExists(atPath: copy.url.path))
+        await gate.wait()
+        #expect(FileManager.default.fileExists(atPath: copy.url.path))
+        try Task.checkCancellation()
+        if outcome == "error" { throw VideoUploadSanitizationError.exportFailed }
+        if outcome == "size" { throw VideoUploadSanitizationError.tooLarge }
+        return copy.byteCount
+      }
+    }
+    await gate.waitUntilEntered()
+    let retained = try? copyFiles(in: folder.appendingPathComponent("copies")).count
+    if outcome == "cancel" { operation.cancel() }
+    await gate.open()
+    let result = await operation.result
+    #expect(retained == 1, "the awaited consumer still owns the copy")
+    switch result {
+    case .success(let count):
+      #expect(outcome == "success")
+      #expect(count > 0)
+    case .failure(let error):
+      switch outcome {
+      case "cancel": #expect(error is CancellationError)
+      case "error": #expect(error as? VideoUploadSanitizationError == .exportFailed)
+      case "size": #expect(error as? VideoUploadSanitizationError == .tooLarge)
+      default: Issue.record("Unexpected scoped upload failure: \(error)")
+      }
+    }
+    #expect(try copyFiles(in: folder.appendingPathComponent("copies")).isEmpty)
+    #expect(try digest(of: fixture) == original)
+  }
+
+  private actor CopyConsumerGate {
+    let gate = VideoTestGate()
+    private var checks = 0
+
+    func isCurrent() async -> Bool {
+      checks += 1
+      if checks == 2 { await gate.wait() }
+      return true
+    }
+  }
+
+  private actor OwnerChangingAfterPreparation {
+    private var checks = 0
+
+    func isCurrent() -> Bool {
+      checks += 1
+      return checks == 1
+    }
   }
 
   // MARK: - Helpers

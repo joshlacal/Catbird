@@ -80,6 +80,8 @@ struct VideoUploadPartPlan: Sendable {
 struct VideoUploadCopy: Sendable, Equatable {
   let url: URL
   let mimeType: String
+  /// Unique to this reader, even when another reader has the same URL.
+  let leaseID: UUID
 }
 
 /// Makes the file the engine uploads for an attachment. The engine never reads an attachment
@@ -87,6 +89,7 @@ struct VideoUploadCopy: Sendable, Equatable {
 /// every byte the transport sends comes from its metadata-free copy.
 protocol VideoUploadCopyMaking: Sendable {
   func uploadCopy(of attachmentURL: URL) async throws -> VideoUploadCopy
+  func releaseUploadCopy(_ copy: VideoUploadCopy) async
 }
 
 // MARK: - Engine
@@ -150,11 +153,20 @@ actor VideoMultipartUpload {
       await progress(.init(phase: .preparing, fraction: 0))
       // A removed attachment or switched account has already stopped here, before any copy.
       let copy = try await copies.uploadCopy(of: attachmentURL)
-      try await ensureCurrent(context)
-      var saved = try await store.prepare(
-        sourceURL: copy.url, owner: owner, mimeType: copy.mimeType,
-        allowReplacementSource: allowNewSessionAfterTerminal
-      )
+      let prepared: VideoUploadCheckpoint
+      do {
+        try await ensureCurrent(context)
+        prepared = try await store.prepare(
+          sourceURL: copy.url, owner: owner, mimeType: copy.mimeType,
+          allowReplacementSource: allowNewSessionAfterTerminal
+        )
+      } catch {
+        await copies.releaseUploadCopy(copy)
+        throw error
+      }
+      // prepare has finished reading and owns its independent durable snapshot now.
+      await copies.releaseUploadCopy(copy)
+      var saved = prepared
       checkpoint = saved
       try await ensureCurrent(context)
       if saved.phase == .abandoned, saved.uploadJobID != nil {
