@@ -108,10 +108,14 @@ struct FeedRowLineSpacingTests {
       // `appFont` scales its font for the running app's text size, so at an accessibility size the
       // Text carries that size's font itself, which takes precedence over the environment's font;
       // the line spacing, tracking and line height are still `AppFontModifier`'s own.
-      let text = Text(try content.post().facetsAsAttributedString)
-      let hosted = Self.hostedHeight(
-        (contentSize == nil ? text : text.font(Font(typography.body))).appFont(AppTextRole.body),
-        fontManager: fontManager, width: width)
+      let text = PostAttributedText(try content.post().facetsAsAttributedString)
+      let hosted: CGFloat
+      if contentSize == nil {
+        hosted = Self.hostedHeight(text.appFont(AppTextRole.body), fontManager: fontManager, width: width)
+      } else {
+        hosted = Self.hostedHeight(
+          text.font(Font(typography.body)).appFont(AppTextRole.body), fontManager: fontManager, width: width)
+      }
       let label = "\(setting) \(content.rawValue) \(contentSize?.rawValue ?? "app size")"
       #expect(abs(hosted - Self.pixelCeil(native, scale: Self.screenScale)) < 0.001, "\(label): native \(native) hosted \(hosted)")
 

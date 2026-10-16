@@ -474,7 +474,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         logger.debug("Previous settings - style: \(self.currentFontStyle), size: \(self.currentFontSize), spacing: \(self.currentLineSpacing), tracking: \(self.currentLetterSpacing), dynamic: \(self.currentDynamicTypeEnabled), maxSize: \(self.currentMaxDynamicTypeSize)")
         if lineSpacing == "tight" && !Self.supportsLineHeight && !loggedTightUnavailable {
             loggedTightUnavailable = true
-            logger.info("Tight line spacing needs iOS 27 or macOS 27; text uses Normal spacing")
+            logger.info("Tight line spacing needs iOS 26 or macOS 26; text uses Normal spacing")
         }
         
         // Update cache FIRST to prevent re-entrance
@@ -781,13 +781,12 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     /// line height is about 1.19 times their point size.
     static let tightLineHeightFactor: CGFloat = 1.075
 
-    /// Whether SwiftUI draws a constant line height (`View.lineHeight`) for every `Text`. Before 26
-    /// there is no such API; on 26, `Text` with a link run (a post's mentions, hashtags and links)
-    /// ignores every line height, and negative line spacing too, so no public API tightens it.
+    /// Whether the platform supports the constant line height used for Tight. On iOS 26,
+    /// linked post text uses our UIKit renderer because linked SwiftUI `Text` ignores it.
     /// Where this is false, "Tight" is not offered and a stored "tight" draws as Normal.
     /// `AppLineHeightModifier` checks the same availability.
     static var supportsLineHeight: Bool {
-        if #available(iOS 27.0, macOS 27.0, *) { return true }
+        if #available(iOS 26.0, macOS 26.0, *) { return true }
         return false
     }
 
@@ -1099,7 +1098,7 @@ struct AppLineHeightModifier: ViewModifier {
     let factor: CGFloat?
 
     func body(content: Content) -> some View {
-        if #available(iOS 27.0, macOS 27.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             return content.transformEnvironment(\.lineHeight) { lineHeight in
                 if let factor {
                     lineHeight = .multiple(factor: factor)

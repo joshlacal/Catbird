@@ -155,8 +155,8 @@ final class NativeFeedRowParityUITests: XCTestCase {
   }
 
   func testTightShortensEveryPost() throws {
-    guard #available(iOS 27.0, *) else {
-      throw XCTSkip("Tight line spacing is offered from iOS 27; earlier systems draw it as Normal")
+    guard #available(iOS 26.0, *) else {
+      throw XCTSkip("Tight line spacing is offered from iOS 26; earlier systems draw it as Normal")
     }
     for nativeRows in [true, false] {
       let tight = try measure(lineSpacing: "tight", nativeRows: nativeRows)

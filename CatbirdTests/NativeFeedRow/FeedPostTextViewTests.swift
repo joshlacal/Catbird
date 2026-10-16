@@ -178,6 +178,18 @@ struct FeedPostTextViewTests {
     let tight = FeedPostTextView(frame: CGRect(x: 0, y: 0, width: 300, height: height))
     tight.attributedText = text
     tight.linePlacement = Self.tightPlacement
+    // UIAccessibility converts a view's geometry to screen coordinates. On iOS 26 it returns
+    // an empty frame for unattached views, so both drawings need a real window for this check.
+    let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 300, height: 100)
+    let controller = UIViewController()
+    window.rootViewController = controller
+    controller.view.addSubview(plain)
+    controller.view.addSubview(tight)
+    window.isHidden = false
+    defer { window.isHidden = true; window.rootViewController = nil }
+    window.layoutIfNeeded()
     let x = width(of: "see ") + 10
     // A point just below the TextKit line is on the link only once the label moves down.
     let lowered = CGPoint(x: x, y: Self.tightPlacement.lineHeight + Self.tightPlacement.glyphOffset / 2)

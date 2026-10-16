@@ -33,7 +33,7 @@ struct FontManagerLineHeightTests {
   private static func linkedCopy(lines: Int) -> AttributedString {
     var text = AttributedString(copy(lines: lines))
     if let range = text.range(of: "Line 2") {
-      text[range].link = URL(string: "mention://did:plc:alice")
+      text[range].link = URL(string: "mention://did%3Aplc%3Aalice")
     }
     return text
   }
@@ -97,7 +97,7 @@ struct FontManagerLineHeightTests {
     let body = AppUIFont.font(normal, size: Typography.Size.body, weight: .regular, textStyle: .body)
 
     let tightPlain = Self.hostedHeight(Text(Self.copy(lines: lines)).appFont(AppTextRole.body), fontManager: tight)
-    let tightLinked = Self.hostedHeight(Text(Self.linkedCopy(lines: lines)).appFont(AppTextRole.body), fontManager: tight)
+    let tightLinked = Self.hostedHeight(PostAttributedText(Self.linkedCopy(lines: lines)).appFont(AppTextRole.body), fontManager: tight)
     let normalPlain = Self.hostedHeight(Text(Self.copy(lines: lines)).appFont(AppTextRole.body), fontManager: normal)
 
     // Normal: the font's own line height, rounded up to a whole pixel.
