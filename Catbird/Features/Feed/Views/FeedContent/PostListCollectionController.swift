@@ -183,8 +183,11 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   override func viewSafeAreaInsetsDidChange() {
     super.viewSafeAreaInsetsDidChange()
     if extendsUnderTopBar { applyContentInsetBehavior() }
-    // The pin line and the minimum content height follow the bars.
-    if pinnedLayout?.pinnedSection != nil { collectionView.collectionViewLayout.invalidateLayout() }
+    // The pin line and the minimum content height follow the bars without an invalidation here:
+    // UIKit moves the offset by the bars' change, and that scroll lays the pinned header out again.
+    // An invalidation, even one naming only the header, lays every row out again. Mid-rotation,
+    // while the side inset sits on one side only, that is at a narrower width, from estimates for
+    // the rows off screen: the list loses the reader's place and builds rows for the passing width.
   }
 
   /// Keeps UIKit's automatic insets and cancels only the top one, so the header
