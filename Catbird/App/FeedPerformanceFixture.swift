@@ -86,6 +86,8 @@ private struct FeedPerformanceFeedHost: View {
       let tabPath = world.context.navigationManager.pathBinding(for: 0)
       NavigationStack(path: tabPath) {
         feed(tabPath)
+          .navigationTitle("Following")
+          .toolbarTitleDisplayMode(.large)
           .navigationDestination(for: NavigationDestination.self) { destination in
             NavigationHandler.viewForDestination(
               destination, path: tabPath, appState: world.appState, selectedTab: .constant(0))
@@ -171,6 +173,10 @@ private final class FeedPerformanceWorld {
     feedModel.posts = posts
     let manager = FeedStateManager(appState: state, feedModel: feedModel, feedType: .timeline)
     manager.hasReachedEnd = true
+    if FeedPerformanceTrending.isRequested {
+      let trendingRequestID = "\(viewerDID)|timeline|\(appSettings.showTrendingTopics)|\(appSettings.showTrendingVideos)"
+      await manager.loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: 3.0)
+    }
 
     let context = SceneNavigationContext(appState: state, sceneID: UUID())
     print("FEED_PERF_FIXTURE_READY posts=\(posts.count)")
@@ -182,6 +188,42 @@ private final class FeedPerformanceWorld {
     guard ProcessInfo.processInfo.arguments.contains("--feed-perf-autoscroll") else { return }
     // Let the first screen settle (initial snapshot, image decode) so pass 1 measures scrolling.
     try? await Task.sleep(for: .seconds(2))
+
+    // Strategy B: Synchronize autoscroll to await warmup completion before initiating scroll
+    let expectsTrending = ProcessInfo.processInfo.arguments.contains("--feed-perf-trending")
+    await MainActor.run {
+      let warmup = FeedFirstUseWarmup.shared
+      let needsWarmup = expectsTrending ? warmup.trendingPreparationCount == 0 : warmup.nativePreparationCount == 0
+      if needsWarmup, let collectionView = FeedScrollBenchmark.feedCollectionView() {
+        var responder: UIResponder? = collectionView
+        while let next = responder?.next {
+          if let fcvc = next as? FeedCollectionViewControllerIntegrated {
+            fcvc.prepareFirstUseIfIdleForTesting(
+              warmup,
+              now: ProcessInfo.processInfo.systemUptime,
+              visibleSince: ProcessInfo.processInfo.systemUptime - 2.0)
+            break
+          }
+          responder = next
+        }
+      }
+    }
+    let warmupDeadline = ProcessInfo.processInfo.systemUptime + 10.0
+    while ProcessInfo.processInfo.systemUptime < warmupDeadline {
+      let isWarmed = await MainActor.run {
+        expectsTrending
+          ? FeedFirstUseWarmup.shared.trendingPreparationCount > 0
+          : FeedFirstUseWarmup.shared.nativePreparationCount > 0
+      }
+      if isWarmed { break }
+      try? await Task.sleep(for: .milliseconds(25))
+    }
+    // Cancel any in-flight background prefetch so network/model mutations do not interrupt the scroll window
+    await MainActor.run {
+      appState.cancelTopicPreviewPrefetch(owner: .timeline)
+    }
+    try? await Task.sleep(for: .milliseconds(100))
+
     guard let collectionView = FeedScrollBenchmark.feedCollectionView() else {
       print("FEED_PERF_RESULT {\"error\":\"feed collection view not found\"}")
       return
@@ -734,7 +776,43 @@ private enum FeedPerformanceTrending {
     let cache = ImageLoadingManager.shared.pipeline.cache
     for file in art.authors.map(\.avatar) + art.photos.map(\.url) {
       guard let url = URL(string: artURL(file)) else { continue }
-      cache.storeCachedData(try Data(contentsOf: file), for: ImageRequest(url: url))
+      let data = try Data(contentsOf: file)
+      cache.storeCachedData(data, for: ImageRequest(url: url))
+      guard let image = UIImage(data: data) else { continue }
+      let container = ImageContainer(image: image)
+      cache[ImageRequest(url: url)] = container
+
+      for scale in [1.0, 2.0, 3.0] as [CGFloat] {
+        let cardReqNormal = TrendingTopicImageRequests.request(
+          url, size: TrendingTopicImageRequests.cardSize, displayScale: scale, priority: .normal)
+        cache[cardReqNormal] = container
+        let cardReqLow = TrendingTopicImageRequests.request(
+          url, size: TrendingTopicImageRequests.cardSize, displayScale: scale, priority: .low)
+        cache[cardReqLow] = container
+
+        let avatarReqNormal = TrendingTopicImageRequests.avatarRequest(
+          url, size: TrendingTopicImageRequests.avatarSize, displayScale: scale, priority: .normal)
+        cache[avatarReqNormal] = container
+        let avatarReqLow = TrendingTopicImageRequests.avatarRequest(
+          url, size: TrendingTopicImageRequests.avatarSize, displayScale: scale, priority: .low)
+        cache[avatarReqLow] = container
+
+        for cardWidth in [TrendingInterstitialMetrics.videoCardWidth, TrendingInterstitialMetrics.videoCardAccessibilityWidth] {
+          let thumbSize = CGSize(width: cardWidth, height: TrendingInterstitialMetrics.videoThumbnailHeight)
+          let thumbReqNormal = TrendingTopicImageRequests.request(
+            url, size: thumbSize, displayScale: scale, priority: .normal)
+          cache[thumbReqNormal] = container
+          let thumbReqLow = TrendingTopicImageRequests.request(
+            url, size: thumbSize, displayScale: scale, priority: .low)
+          cache[thumbReqLow] = container
+        }
+
+        for avatarSide in [16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 36.0, 40.0, 42.0] as [CGFloat] {
+          if let resizedReq = AsyncProfileImage.resizedRequest(for: url, sizeInPoints: avatarSide, displayScale: scale) {
+            cache[resizedReq] = container
+          }
+        }
+      }
     }
   }
 

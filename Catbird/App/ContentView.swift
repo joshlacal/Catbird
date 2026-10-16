@@ -392,16 +392,12 @@ struct MainContentView: View {
                   selectedFeed: $selectedFeed,
                   currentFeedName: $currentFeedName,
                   isDrawerOpen: $isDrawerOpen,
-                  isRootView: $isRootView
+                  isRootView: $isRootView,
+                  composeOverlay: { AnyView(self.composeOverlay) }
                 )
                 .id(appState.userDID)
               }
               .equatable()
-              .overlay(alignment: .bottomTrailing) {
-                if selectedTab == 0 && isRootView {
-                  composeOverlay
-                }
-              }
             }
             .accessibilityIdentifier("tab_home")
 

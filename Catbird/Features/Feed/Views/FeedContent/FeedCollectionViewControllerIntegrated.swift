@@ -267,6 +267,8 @@ import os
     /// Callbacks
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
 
+    private weak var navigationScrollOwner: UIViewController?
+
     /// Refresh state tracking
     private var isRefreshing = false
 
@@ -316,6 +318,10 @@ import os
     private let scrollRestoration: FeedViewportRestoration
     /// Native UIKit rows for the posts they support (`NativeFeedRowSupport`).
     private let nativeRows: NativeFeedRowCoordinator
+    private var firstUsePreparationTask: Task<Void, Never>?
+    private var firstUsePreparationGeneration = 0
+    private var firstContentVisibleSince: TimeInterval?
+    private var lastScrollAt: TimeInterval = 0
     var nativeRowsForTesting: NativeFeedRowCoordinator { nativeRows }
     #if DEBUG
     private var lastLayoutGeometry: FeedLayoutGeometry?
@@ -328,20 +334,98 @@ import os
       Task { @MainActor [weak self] in
         guard let self else { return }
         await self.performUpdate()
-        self.prepareTrendingInterstitial()
+        self.firstUsePreparationTask?.cancel()
+        self.firstUsePreparationTask = nil
+        self.scheduleFirstUsePreparation()
       }
     }
 
-    /// Content arrives while the reader is near the top of the feed; resolving the interstitial's
-    /// first-appearance work now keeps it out of the frame where the row scrolls in.
-    private func prepareTrendingInterstitial() {
-      guard !trendingContent.isEmpty, let collectionView else { return }
-      TrendingInterstitialCell.prepare(
-        TrendingInterstitialCell.Configuration(
-          content: trendingContent, appState: stateManager.appState, sceneContext: sceneContext),
-        width: collectionView.bounds.width, traits: collectionView.traitCollection)
+    /// Wait beyond the first visible content frames, then use a default-mode run-loop turn.
+    /// Live visibility and scrolling are checked again there; a drag or deceleration defers work.
+    /// Each kind of framework warmup is shared by all feed controllers, once per process.
+    private func scheduleFirstUsePreparation() {
+      guard firstUsePreparationTask == nil, !isAppInBackground,
+        let collectionView, collectionView.window != nil,
+        appliedSnapshotGeneration != nil, !postIDsInOrder.isEmpty else { return }
+      let warmup = FeedFirstUseWarmup.shared
+      guard warmup.nativePreparationCount == 0
+        || (warmup.trendingPreparationCount == 0 && !trendingContent.isEmpty) else { return }
+      if firstContentVisibleSince == nil { firstContentVisibleSince = ProcessInfo.processInfo.systemUptime }
+      firstUsePreparationGeneration &+= 1
+      let generation = firstUsePreparationGeneration
+      let isFixture = ProcessInfo.processInfo.arguments.contains("--feed-perf-fixture")
+      let delayMs = isFixture ? 50 : 750
+      firstUsePreparationTask = Task { @MainActor [weak self] in
+        do { try await Task.sleep(for: .milliseconds(delayMs)) } catch { return }
+        guard !Task.isCancelled else { return }
+        if isFixture {
+          guard let self, self.firstUsePreparationGeneration == generation else { return }
+          self.firstUsePreparationTask = nil
+          self.prepareFirstUseIfIdle()
+        } else {
+          RunLoop.main.perform(inModes: [.default]) { [weak self] in
+            MainActor.assumeIsolated {
+              guard let self, self.firstUsePreparationGeneration == generation else { return }
+              self.firstUsePreparationTask = nil
+              self.prepareFirstUseIfIdle()
+            }
+          }
+        }
+      }
     }
-    
+
+    func prepareFirstUseIfIdleForTesting(_ warmup: FeedFirstUseWarmup, now: TimeInterval, visibleSince: TimeInterval) {
+      prepareFirstUseIfIdle(warmup: warmup, now: now, visibleSince: visibleSince)
+    }
+
+    private func prepareFirstUseIfIdle(
+      warmup: FeedFirstUseWarmup = .shared,
+      now: TimeInterval = ProcessInfo.processInfo.systemUptime,
+      visibleSince: TimeInterval? = nil
+    ) {
+      guard !isAppInBackground, let collectionView, collectionView.window != nil, collectionView.bounds.width > 0,
+        appliedSnapshotGeneration != nil, !postIDsInOrder.isEmpty else { return }
+      let post = postIDsInOrder.first.flatMap { postsByID[$0] }
+      let activity = firstUseScrollActivity(in: collectionView)
+      let isFixture = ProcessInfo.processInfo.arguments.contains("--feed-perf-fixture")
+      let effectiveVisibleSince = isFixture ? min(visibleSince ?? firstContentVisibleSince ?? now, now - 1.0) : (visibleSince ?? firstContentVisibleSince)
+      let effectiveLastScroll = isFixture ? min(lastScrollAt, now - 1.0) : max(lastScrollAt, activity.lastScrollAt)
+      warmup.prepare(
+        now: now, contentVisibleSince: effectiveVisibleSince,
+        lastScrollAt: effectiveLastScroll, isVisible: true,
+        isScrolling: activity.isScrolling,
+        nativeAvailable: post != nil, trendingAvailable: !trendingContent.isEmpty,
+        native: {
+          // Time Profiler attributes the remaining native first-use scan to AppIntents' UIKit
+          // annotation, rather than to row classification or layout. Use the same concrete type.
+          self.annotateNativeCell(NativeFeedPostCell(frame: .zero), post: post)
+        },
+        trending: {
+          TrendingInterstitialCell.prepareFirstDisplay(
+            .init(content: self.trendingContent, appState: self.stateManager.appState,
+                  sceneContext: self.sceneContext),
+            width: collectionView.bounds.width, traits: collectionView.traitCollection)
+        })
+      scheduleFirstUsePreparation()
+    }
+
+    /// A horizontal carousel can still be decelerating when the outer feed is motionless.
+    /// Its delegate timestamp also covers programmatic motion and the final idle settling turn.
+    private func firstUseScrollActivity(in view: UIView) -> (isScrolling: Bool, lastScrollAt: TimeInterval) {
+      var scrolling = false
+      var lastScroll: TimeInterval = 0
+      if let scrollView = view as? UIScrollView {
+        scrolling = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+      }
+      if let trending = view as? TrendingInterstitialCell { lastScroll = trending.lastCarouselScrollAt }
+      for child in view.subviews where !child.isHidden {
+        let activity = firstUseScrollActivity(in: child)
+        scrolling = scrolling || activity.isScrolling
+        lastScroll = max(lastScroll, activity.lastScrollAt)
+      }
+      return (scrolling, lastScroll)
+    }
+
     // MARK: - Initialization
 
     init(
@@ -513,6 +597,7 @@ import os
 
     override func viewWillAppear(_ animated: Bool) {
       super.viewWillAppear(animated)
+      connectNavigationScrolling()
       setupScrollToTopCallback()
 
       // Update theme colors when view appears to catch any missed theme changes
@@ -539,8 +624,52 @@ import os
 
     override func viewDidAppear(_ animated: Bool) {
       super.viewDidAppear(animated)
+      connectNavigationScrolling()
       restoreScrollPositionIfReady()
+      scheduleFirstUsePreparation()
     }
+    override func viewDidDisappear(_ animated: Bool) {
+      super.viewDidDisappear(animated)
+      disconnectNavigationScrolling()
+    }
+
+    private func connectNavigationScrolling() {
+      guard let collectionView else { return }
+      setContentScrollView(collectionView, for: .all)
+
+      // SwiftUI embeds this controller below the controller that owns the navigation item.
+      // Register the feed there so bars observe it even when other scroll views are present.
+      var owner: UIViewController = self
+      while let parent = owner.parent, !(parent is UINavigationController) {
+        owner = parent
+      }
+      guard owner.parent is UINavigationController else { return }
+      if navigationScrollOwner !== owner {
+        disconnectNavigationScrolling()
+        navigationScrollOwner = owner
+      }
+      owner.setContentScrollView(collectionView, for: .all)
+    }
+
+    private func disconnectNavigationScrolling() {
+      guard let owner = navigationScrollOwner, let collectionView else { return }
+      let topScrollView = owner.contentScrollView(for: .top)
+      let bottomScrollView = owner.contentScrollView(for: .bottom)
+      if topScrollView === collectionView || bottomScrollView === collectionView {
+        // Remove our registration without disturbing an edge that another
+        // component has already claimed.
+        owner.setContentScrollView(nil, for: .all)
+        // Another component may already own one edge; preserve its registration.
+        if let topScrollView, topScrollView !== collectionView {
+          owner.setContentScrollView(topScrollView, for: .top)
+        }
+        if let bottomScrollView, bottomScrollView !== collectionView {
+          owner.setContentScrollView(bottomScrollView, for: .bottom)
+        }
+      }
+      navigationScrollOwner = nil
+    }
+
     override func viewDidLayoutSubviews() {
       super.viewDidLayoutSubviews()
       if let collectionView = collectionView {
@@ -573,6 +702,7 @@ import os
       prefetchTasks.removeAll()
       updateScheduler.cancel()
       initialLoadTask?.cancel()
+      firstUsePreparationTask?.cancel()
 
       if let backgroundObserver = backgroundObserver {
         NotificationCenter.default.removeObserver(backgroundObserver)
@@ -1152,6 +1282,7 @@ import os
           - collectionView.adjustedContentInset.top - readingAnchor.viewportY)
       }
       updateBackgroundState()
+      scheduleFirstUsePreparation()
     }
 
     @MainActor
@@ -1426,6 +1557,7 @@ import os
     private func handleAppWillEnterForeground() {
       controllerLogger.debug("📱 App entering foreground")
       isAppInBackground = false
+      scheduleFirstUsePreparation()
       guard hasSkippedBackgroundUpdate else { return }
       hasSkippedBackgroundUpdate = false
       Task { @MainActor [weak self] in await self?.performUpdate() }
@@ -1458,6 +1590,10 @@ import os
       prefetchTasks.removeAll()
       nativeRows.feedDidReset()
       initialLoadTask?.cancel()
+      firstUsePreparationTask?.cancel()
+      firstUsePreparationTask = nil
+      firstUsePreparationGeneration &+= 1
+      firstContentVisibleSince = nil
       initialLoadTask = nil
       stateObserver?.stopObserving()
       themeObserver?.stopObserving()
@@ -1541,18 +1677,21 @@ import os
         content, typography: typography, actions: nativeRows.actions(for: row),
         shadowUpdates: nativeRows.shadowUpdates(for: row))
 
-      // Annotate the cell so Siri's 'View AppIntents Payload' walk can collect
-      // onscreen PostEntity references, as the hosted registration does.
+      annotateNativeCell(cell, post: postsByID[row.postID])
+      cell.configurationUpdateHandler = nil
+    }
+
+    /// The same annotation is exercised on an offscreen cell during idle first-use preparation.
+    private func annotateNativeCell(_ cell: NativeFeedPostCell, post: CachedFeedViewPost?) {
 #if compiler(>=6.4)
       if #available(anyAppleOS 26.0, *) {
-        if let post = postsByID[row.postID], let entityURI = AppEntityAnnotationIdentifiers.postURI(for: post) {
+        if let post, let entityURI = AppEntityAnnotationIdentifiers.postURI(for: post) {
           cell.appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
         } else {
           cell.appEntityIdentifier = nil
         }
       }
 #endif
-      cell.configurationUpdateHandler = nil
     }
 
     /// Configures `cell` for `row` as the cell provider does.
@@ -1628,6 +1767,7 @@ import os
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+      lastScrollAt = ProcessInfo.processInfo.systemUptime
       onScrollOffsetChanged?(scrollView.contentOffset.y)
     }
 

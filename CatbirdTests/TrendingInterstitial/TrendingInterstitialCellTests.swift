@@ -1,5 +1,6 @@
 #if os(iOS)
 import Foundation
+import Nuke
 @testable import Petrel
 import SwiftData
 import Testing
@@ -35,6 +36,7 @@ struct TrendingInterstitialCellTests {
     try #require(appState.appSettings.canEditPersistedSettings)
     appState.appSettings.showTrendingTopics = true
     appState.appSettings.showTrendingVideos = true
+    TrendingInterstitialCell.clearSharedCardPoolsForTesting()
     return appState
   }
 
@@ -45,19 +47,21 @@ struct TrendingInterstitialCellTests {
       startedAt: ATProtocolDate(date: Date()), postCount: postCount, status: "hot", category: "science", actors: [])
   }
 
-  private func makeVideo(authorName: String = "River Films", alt: String? = "A river through a garden")
+  private func makeVideo(authorName: String = "River Films", alt: String? = "A river through a garden",
+    thumbnail: URL? = nil, avatar: URL? = nil)
     throws -> AppBskyFeedDefs.FeedViewPost {
     let cid = CID.fromDAGCBOR(Data("trending-cell-video-\(authorName)".utf8))
     let author = AppBskyActorDefs.ProfileViewBasic(
       did: try DID(didString: "did:plc:trendingcellauthor"), handle: try Handle(handleString: "river.example.invalid"),
-      displayName: authorName, pronouns: nil, avatar: nil, associated: nil, viewer: nil,
+      displayName: authorName, pronouns: nil, avatar: avatar.map { URI(uriString: $0.absoluteString) }, associated: nil, viewer: nil,
       labels: nil, createdAt: nil, verification: nil, status: nil, debug: nil)
+    let postRKey = thumbnail != nil || avatar != nil ? "with-media" : "\(authorName.count)"
     let post = AppBskyFeedDefs.PostView(
-      uri: try ATProtocolURI(uriString: "at://did:plc:trendingcellauthor/app.bsky.feed.post/\(authorName.count)"),
+      uri: try ATProtocolURI(uriString: "at://did:plc:trendingcellauthor/app.bsky.feed.post/\(postRKey)"),
       cid: cid, author: author,
       record: .knownType(AppBskyFeedPost(text: "Fixture video", createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)))),
       embed: .appBskyEmbedVideoView(.init(cid: cid, playlist: URI(uriString: "file:///nonexistent/fixture.m3u8"),
-        thumbnail: nil, alt: alt, aspectRatio: .init(width: 9, height: 16))),
+        thumbnail: thumbnail.map { URI(uriString: $0.absoluteString) }, alt: alt, aspectRatio: .init(width: 9, height: 16))),
       bookmarkCount: nil, replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)), viewer: nil,
       labels: nil, threadgate: nil, debug: nil)
@@ -110,6 +114,55 @@ struct TrendingInterstitialCellTests {
     let openVideos = try #require(buttons.first { $0.accessibilityLabel == "Open The Vids" })
     #expect(openVideos.accessibilityHint == "Open the full-screen Bluesky video feed")
     #expect(openVideos.accessibilityTraits.contains(.button))
+  }
+
+  @Test("Offscreen first-display preparation never starts thumbnail or avatar requests")
+  func warmupDoesNotLoadVideoImages() async throws {
+    let appState = try await makeAppState()
+    let base = "https://warmup-images.invalid/\(UUID().uuidString)"
+    let thumb = URL(string: base + "/video.jpg")!
+    let avatar = URL(string: base + "/avatar.jpg")!
+    let video = try makeVideo(thumbnail: thumb, avatar: avatar)
+    let content = TrendingFeedContent(videos: [video])
+    let requests = TrendingInterstitialCell.prepareFirstDisplay(.init(content: content, appState: appState,
+      sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID())),
+      width: 390, traits: UITraitCollection(displayScale: 3))
+    #expect(requests == 0, "Offscreen preparation must not even enqueue pipeline image work")
+    let cell = TrendingInterstitialCell(frame: .zero)
+    _ = layOut(cell, content: content, appState: appState)
+    #expect(cell.startedImageRequestCountForTesting == 2)
+    _ = layOut(cell, content: TrendingFeedContent(), appState: appState)
+  }
+
+  @Test("Cached-only topic art does not start a pipeline request on a cache miss")
+  func warmupDoesNotLoadTopicImages() async throws {
+    let appState = try await makeAppState()
+    let url = URL(string: "https://warmup-images.invalid/\(UUID().uuidString)/topic.jpg")!
+    let view = UIImageView()
+    let slot = TrendingImageSlot(imageView: view)
+    let images = TrendingTopicImages(appState: appState, displayScale: 3, allowsImageLoading: false)
+    let request = images.mediaRequest(url)
+    images.load(request, into: slot)
+    #expect(slot.startedRequestCountForTesting == 0)
+    TrendingTopicImages(appState: appState, displayScale: 3).load(request, into: slot)
+    #expect(slot.startedRequestCountForTesting == 1,
+      "A cache-only miss must not suppress the later normal request for that same identity")
+    slot.cancel()
+    let cachedURL = URL(string: "https://warmup-images.invalid/\(UUID().uuidString)/cached.jpg")!
+    let cachedRequest = images.mediaRequest(cachedURL)
+    let cachedImage = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+    }
+    ImageLoadingManager.shared.pipeline.cache[cachedRequest] = ImageContainer(image: cachedImage)
+    defer { ImageLoadingManager.shared.pipeline.cache[cachedRequest] = nil }
+    let cachedView = UIImageView()
+    let cachedSlot = TrendingImageSlot(imageView: cachedView)
+    images.load(cachedRequest, into: cachedSlot)
+    #expect(cachedSlot.startedRequestCountForTesting == 0)
+    let rendered = try #require(cachedView.image)
+    #expect(rendered.pngData() == cachedImage.pngData())
+    cachedSlot.cancel()
   }
 
   @Test("Hidden or empty trending content collapses the row")
@@ -175,6 +228,27 @@ struct TrendingInterstitialCellTests {
       CGSize(width: 390, height: 0), withHorizontalFittingPriority: .required,
       verticalFittingPriority: .fittingSizeLevel).height
     #expect(topicsOnly < both)
+  }
+
+  @Test("Card views allocated during prepareFirstDisplay are reused by a subsequent dequeued cell")
+  func cardViewsFromWarmupAreReusedBySubsequentCell() async throws {
+    TrendingInterstitialCell.clearSharedCardPoolsForTesting()
+    defer { TrendingInterstitialCell.clearSharedCardPoolsForTesting() }
+    let appState = try await makeAppState()
+    let topic = makeTopic()
+    let video = try makeVideo()
+    let content = TrendingFeedContent(trends: [topic], videos: [video])
+    _ = TrendingInterstitialCell.prepareFirstDisplay(
+      .init(content: content, appState: appState,
+            sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID())),
+      width: 390, traits: UITraitCollection(displayScale: 3))
+
+    let liveCell = TrendingInterstitialCell(frame: .zero)
+    _ = layOut(liveCell, content: content, appState: appState)
+    let topicCard = descendants(of: TrendingTopicCardView.self, in: liveCell).first
+    let videoCard = descendants(of: TrendingVideoCardView.self, in: liveCell).first
+    #expect(topicCard != nil, "Live cell must have a topic card")
+    #expect(videoCard != nil, "Live cell must have a video card")
   }
 }
 

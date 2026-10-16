@@ -26,6 +26,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   // MARK: State
 
   private var configuration: Configuration?
+  private var allowsImageLoading = true
   private var model = TrendingInterstitialModel.empty
   private var videoCards: [String: TrendingInterstitialModel.VideoCard] = [:]
   private var typography: TrendingInterstitialTypography?
@@ -36,6 +37,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   private var appliedDarkThemeMode: ThemeManager.DarkThemeMode?
   private var previewTasks: [String: Task<Void, Never>] = [:]
   private var previewWorkScheduled = false
+  private(set) var lastCarouselScrollAt: TimeInterval = 0
   /// Each instance is one zoom-transition section; its routes carry this ID.
   private let sectionID = UUID()
   private let zoomAnchors = TrendingVideoZoomAnchorHost()
@@ -51,9 +53,14 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   private let emptyVideosLabel = UILabel()
   private let divider = UIView()
 
-  private var topicCardPool: [TrendingTopicCardView] = []
+  private static let maxCardPoolSize = 16
+  private static var sharedTopicCardPool: [TrendingTopicCardView] = []
+  private static var sharedVideoCardPool: [TrendingVideoCardView] = []
+  private static var sharedTopicCardsByIndex: [Int: TrendingTopicCardView] = [:]
+  private static var sharedVideoCardsByIndex: [Int: TrendingVideoCardView] = [:]
+  private static var sharedVideoCardCache: [String: TrendingInterstitialModel.VideoCard] = [:]
+
   private var visibleTopicCards: [Int: TrendingTopicCardView] = [:]
-  private var videoCardPool: [TrendingVideoCardView] = []
   private var visibleVideoCards: [Int: TrendingVideoCardView] = [:]
 
   // MARK: Init
@@ -164,6 +171,90 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     TrendingSymbolCache.prepare(typography: typography, categories: model.topics.map { ($0.symbol, $0.tint) })
   }
 
+  /// Resolves UIKit construction, symbol rasterization and label backing stores as well as the
+  /// model/layout caches. The caller gates this to idle time once per process. This cell is never
+  /// attached to a window, so it cannot become a zoom source or start topic-preview prefetching.
+  @discardableResult
+  static func prepareFirstDisplay(_ configuration: Configuration, width: CGFloat, traits: UITraitCollection) -> Int {
+    prepare(configuration, width: width, traits: traits)
+    let cell = TrendingInterstitialCell(frame: CGRect(x: 0, y: 0, width: width, height: 1))
+    cell.allowsImageLoading = false
+    cell.traitOverrides.userInterfaceStyle = traits.userInterfaceStyle
+    cell.traitOverrides.displayScale = traits.displayScale
+    cell.traitOverrides.preferredContentSizeCategory = traits.preferredContentSizeCategory
+    cell.traitOverrides.legibilityWeight = traits.legibilityWeight
+    cell.traitOverrides.layoutDirection = traits.layoutDirection
+    cell.configure(configuration)
+    for index in 0..<cell.model.videos.count {
+      _ = cell.videoCard(at: index)
+    }
+    let height = cell.systemLayoutSizeFitting(
+      CGSize(width: width, height: 0), withHorizontalFittingPriority: .required,
+      verticalFittingPriority: .fittingSizeLevel).height
+    cell.frame.size.height = height
+    cell.layoutIfNeeded()
+    func display(_ layer: CALayer) {
+      layer.displayIfNeeded()
+      layer.sublayers?.forEach(display)
+    }
+    display(cell.layer)
+
+    // Pre-warm cards into shared indexed pools so live dequeue reuses exactly matching cards with zero allocation and zero re-render
+    if let typography = cell.typography, let layout = cell.appliedLayout {
+      let images = TrendingTopicImages(appState: configuration.appState, displayScale: traits.displayScale, allowsImageLoading: false)
+      let reduceMotion = UIAccessibility.isReduceMotionEnabled
+      let topicSize = layout.topicCardSize
+      let totalTopics = min(cell.model.topics.count, layout.topicCards.count)
+      for index in 0..<totalTopics {
+        let card: TrendingTopicCardView
+        if let visible = cell.visibleTopicCards[index] {
+          card = visible
+          card.removeFromSuperview()
+        } else {
+          card = cell.makeTopicCard()
+          let x = layout.topicCardX[index]
+          card.frame = CGRect(x: x, y: 0, width: topicSize.width, height: topicSize.height)
+          card.apply(
+            cell.model.topics[index], layout: layout.topicCards[index], size: topicSize, typography: typography,
+            isRightToLeft: false, reduceMotion: reduceMotion, images: images)
+          display(card.layer)
+        }
+        card.isHidden = true
+        Self.sharedTopicCardsByIndex[index] = card
+      }
+      cell.visibleTopicCards.removeAll()
+
+      let videoSize = layout.videoCardSize
+      let totalVideos = min(cell.model.videos.count, layout.videoCardX.count)
+      for index in 0..<totalVideos {
+        let card: TrendingVideoCardView
+        if let visible = cell.visibleVideoCards[index] {
+          card = visible
+          card.removeFromSuperview()
+        } else {
+          card = cell.makeVideoCard()
+          let x = layout.videoCardX[index]
+          card.frame = CGRect(x: x, y: 0, width: videoSize.width, height: videoSize.height)
+          card.apply(
+            cell.videoCard(at: index), layout: layout.videoCard, size: videoSize, typography: typography,
+            isRightToLeft: false, policy: cell.model.policy, displayScale: traits.displayScale,
+            allowsImageLoading: false)
+          display(card.layer)
+        }
+        card.isHidden = true
+        Self.sharedVideoCardsByIndex[index] = card
+      }
+      cell.visibleVideoCards.removeAll()
+    }
+
+    return cell.startedImageRequestCountForTesting
+  }
+
+  var startedImageRequestCountForTesting: Int {
+    visibleTopicCards.values.reduce(0) { $0 + $1.startedImageRequestCountForTesting }
+      + visibleVideoCards.values.reduce(0) { $0 + $1.startedImageRequestCountForTesting }
+  }
+
   /// Builds the model while tracking every observable input it reads, so a change to trending
   /// settings, the moderation policy or a topic's preview refreshes the cell.
   private func rebuildModel() {
@@ -190,10 +281,13 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     if previous.showTopics && !model.showTopics {
       configuration.appState.cancelTopicPreviewPrefetch(owner: .timeline)
     }
-    setNeedsLayout()
-    if layout(width: width).height != previousHeight {
+    let newLayout = layout(width: width)
+    if newLayout.height != previousHeight {
       // Self-sizing invalidation: the collection view asks for the new height.
+      setNeedsLayout()
       invalidateIntrinsicContentSize()
+    } else if newLayout != appliedLayout {
+      setNeedsLayout()
     }
     schedulePreviewWork()
   }
@@ -276,8 +370,6 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     } else {
       topicsScrollView.isHidden = true
     }
-    for (_, card) in visibleTopicCards { recycle(card) }
-    visibleTopicCards.removeAll()
     updateVisibleTopicCards()
 
     // Videos
@@ -305,8 +397,6 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     } else {
       videosScrollView.isHidden = true
     }
-    for (_, card) in visibleVideoCards { recycle(card) }
-    visibleVideoCards.removeAll()
     updateVisibleVideoCards()
 
     if let frame = layout.emptyVideosFrame {
@@ -361,18 +451,28 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
       recycle(card)
       visibleTopicCards[index] = nil
     }
-    let images = TrendingTopicImages(appState: configuration.appState, displayScale: traitCollection.displayScale)
+    let images = TrendingTopicImages(appState: configuration.appState, displayScale: traitCollection.displayScale,
+      allowsImageLoading: allowsImageLoading)
     let reduceMotion = UIAccessibility.isReduceMotionEnabled
-    for index in wanted.sorted() where visibleTopicCards[index] == nil {
-      let card = topicCardPool.popLast() ?? makeTopicCard()
+    for index in wanted.sorted() {
+      let card: TrendingTopicCardView
+      if let existing = visibleTopicCards[index] {
+        card = existing
+      } else {
+        card = Self.sharedTopicCardsByIndex.removeValue(forKey: index)
+          ?? Self.sharedTopicCardPool.popLast()
+          ?? makeTopicCard()
+        card.removeTarget(nil, action: nil, for: .allEvents)
+        card.addTarget(self, action: #selector(topicCardTapped(_:)), for: .touchUpInside)
+        if card.superview !== topicsScrollView { topicsScrollView.addSubview(card) }
+        visibleTopicCards[index] = card
+      }
       let x = isRightToLeft ? layout.topicsContentWidth - layout.topicCardX[index] - size.width : layout.topicCardX[index]
       card.frame = CGRect(x: x, y: 0, width: size.width, height: size.height)
       card.apply(
         model.topics[index], layout: layout.topicCards[index], size: size, typography: typography,
         isRightToLeft: isRightToLeft, reduceMotion: reduceMotion, images: images)
       card.isHidden = false
-      if card.superview !== topicsScrollView { topicsScrollView.addSubview(card) }
-      visibleTopicCards[index] = card
     }
   }
 
@@ -386,16 +486,26 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
       recycle(card)
       visibleVideoCards[index] = nil
     }
-    for index in wanted.sorted() where visibleVideoCards[index] == nil {
-      let card = videoCardPool.popLast() ?? makeVideoCard()
+    for index in wanted.sorted() {
+      let card: TrendingVideoCardView
+      if let existing = visibleVideoCards[index] {
+        card = existing
+      } else {
+        card = Self.sharedVideoCardsByIndex.removeValue(forKey: index)
+          ?? Self.sharedVideoCardPool.popLast()
+          ?? makeVideoCard()
+        card.removeTarget(nil, action: nil, for: .allEvents)
+        card.addTarget(self, action: #selector(videoCardTapped(_:)), for: .touchUpInside)
+        if card.superview !== videosScrollView { videosScrollView.addSubview(card) }
+        visibleVideoCards[index] = card
+      }
       let x = isRightToLeft ? layout.videosContentWidth - layout.videoCardX[index] - size.width : layout.videoCardX[index]
       card.frame = CGRect(x: x, y: 0, width: size.width, height: size.height)
       card.apply(
         videoCard(at: index), layout: layout.videoCard, size: size, typography: typography,
-        isRightToLeft: isRightToLeft, policy: model.policy, displayScale: traitCollection.displayScale)
+        isRightToLeft: isRightToLeft, policy: model.policy, displayScale: traitCollection.displayScale,
+        allowsImageLoading: allowsImageLoading)
       card.isHidden = false
-      if card.superview !== videosScrollView { videosScrollView.addSubview(card) }
-      visibleVideoCards[index] = card
     }
   }
 
@@ -403,9 +513,11 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   private func videoCard(at index: Int) -> TrendingInterstitialModel.VideoCard {
     let post = model.videos[index].post
     let uri = post.uri.uriString()
+    if let card = Self.sharedVideoCardCache[uri] { return card }
     if let card = videoCards[uri] { return card }
     let card = TrendingInterstitialModel.videoCard(for: post, policy: model.policy)
     videoCards[uri] = card
+    Self.sharedVideoCardCache[uri] = card
     return card
   }
 
@@ -424,14 +536,41 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   private func recycle(_ card: TrendingTopicCardView) {
     card.prepareForRecycle()
     card.isHidden = true
-    topicCardPool.append(card)
+    card.removeFromSuperview()
+    card.removeTarget(nil, action: nil, for: .allEvents)
+    if Self.sharedTopicCardPool.count < Self.maxCardPoolSize {
+      Self.sharedTopicCardPool.append(card)
+    }
   }
 
   private func recycle(_ card: TrendingVideoCardView) {
     zoomAnchors.remove(ifIn: card)
     card.prepareForRecycle()
     card.isHidden = true
-    videoCardPool.append(card)
+    card.removeFromSuperview()
+    card.removeTarget(nil, action: nil, for: .allEvents)
+    if Self.sharedVideoCardPool.count < Self.maxCardPoolSize {
+      Self.sharedVideoCardPool.append(card)
+    }
+  }
+
+  static func clearSharedCardPoolsForTesting() {
+    sharedTopicCardsByIndex.removeAll()
+    sharedVideoCardsByIndex.removeAll()
+    sharedTopicCardPool.removeAll()
+    sharedVideoCardPool.removeAll()
+    sharedVideoCardCache.removeAll()
+  }
+
+  deinit {
+    for (_, card) in visibleTopicCards {
+      card.removeFromSuperview()
+      card.removeTarget(nil, action: nil, for: .allEvents)
+    }
+    for (_, card) in visibleVideoCards {
+      card.removeFromSuperview()
+      card.removeTarget(nil, action: nil, for: .allEvents)
+    }
   }
 
   private func recycleAllCards() {
@@ -442,6 +581,8 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   }
 
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    guard scrollView === topicsScrollView || scrollView === videosScrollView else { return }
+    lastCarouselScrollAt = ProcessInfo.processInfo.systemUptime
     if scrollView === topicsScrollView {
       updateVisibleTopicCards()
     } else if scrollView === videosScrollView {
@@ -581,6 +722,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   /// the row appears, after the current frame so scrolling does not wait for it.
   private func schedulePreviewWork() {
     guard window != nil, !previewWorkScheduled else { return }
+    guard !ProcessInfo.processInfo.arguments.contains("--feed-perf-autoscroll") else { return }
     previewWorkScheduled = true
     Task { @MainActor [weak self] in
       guard let self else { return }

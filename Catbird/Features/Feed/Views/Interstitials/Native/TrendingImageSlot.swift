@@ -16,6 +16,7 @@ final class TrendingImageSlot {
   private weak var imageView: UIImageView?
   private var task: ImageTask?
   private var identity: TrendingTopicImageRequests.Identity?
+  private(set) var startedRequestCountForTesting = 0
 
   init(imageView: UIImageView) {
     self.imageView = imageView
@@ -29,6 +30,7 @@ final class TrendingImageSlot {
   func setRequest(
     _ request: ImageRequest?,
     memoryImage: UIImage? = nil,
+    allowsImageLoading: Bool = true,
     fadeIn: Bool = false,
     onPhase: @escaping @MainActor (Phase) -> Void = { _ in },
     onLoaded: (@MainActor (UIImage) -> Void)? = nil
@@ -48,7 +50,14 @@ final class TrendingImageSlot {
       return
     }
     imageView.image = nil
+    guard allowsImageLoading else {
+      // A memory-cache miss is not a completed request. A later normal configure must retry it.
+      identity = nil
+      onPhase(.empty)
+      return
+    }
     onPhase(.loading)
+    startedRequestCountForTesting += 1
     task = ImageLoadingManager.shared.pipeline.loadImage(with: request) { [weak self] result in
       MainActor.assumeIsolated {
         guard let self, self.identity == newIdentity, let imageView = self.imageView else { return }

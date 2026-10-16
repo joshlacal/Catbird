@@ -101,6 +101,24 @@ final class SearchTabReselectionUITests: XCTestCase {
     capture("11-production-reselection-event-preserves-search")
   }
 
+  func testHomeComposeButtonKeepsItsLaunchPositionAfterSwitchingTabs() throws {
+    let composeButton = app.buttons["compose.fab"]
+    XCTAssertTrue(composeButton.waitForExistence(timeout: 10))
+    let initialFrame = composeButton.frame
+    capture("home-compose-initial-position")
+
+    tapTab("search")
+    waitForState { $0["selectedTab"] as? Int == 1 }
+    tapTab("home")
+    waitForState { $0["selectedTab"] as? Int == 0 }
+    XCTAssertTrue(composeButton.waitForExistence(timeout: 5))
+    let returnedFrame = composeButton.frame
+    XCTAssertEqual(initialFrame.minY, returnedFrame.minY, accuracy: 1,
+                   "The compose button must not lose an extra bottom inset after switching tabs")
+    XCTAssertEqual(initialFrame.minX, returnedFrame.minX, accuracy: 1)
+    capture("home-compose-returned-position")
+  }
+
   func testHomeRetapStillScrollsTheProductionFeedToTop() throws {
     waitForState(timeout: 15) { ($0["timelineReads"] as? Int ?? 0) > 0 && ($0["homeOffset"] as? Double ?? -1) >= 0 }
     let feed = app.collectionViews.firstMatch

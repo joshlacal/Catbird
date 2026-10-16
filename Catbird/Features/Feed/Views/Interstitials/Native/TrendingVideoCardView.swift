@@ -21,7 +21,11 @@ final class TrendingVideoCardView: TrendingCardControl {
   private let authorLabel = UILabel()
   private lazy var thumbnailSlot = TrendingImageSlot(imageView: thumbnailView)
 
+  var startedImageRequestCountForTesting: Int {
+    thumbnailSlot.startedRequestCountForTesting + avatarView.startedImageRequestCountForTesting
+  }
   private(set) var postURI: String?
+  private(set) var appliedAllowsImageLoading: Bool?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -74,9 +78,15 @@ final class TrendingVideoCardView: TrendingCardControl {
     typography t: TrendingInterstitialTypography,
     isRightToLeft rtl: Bool,
     policy: ModerationPolicy,
-    displayScale: CGFloat
+    displayScale: CGFloat,
+    allowsImageLoading: Bool = true
   ) {
+    if let applied = postURI, applied == card.uri, bounds.size == size {
+      updateImageLoading(card, layout: layout, policy: policy, displayScale: displayScale, allowsImageLoading: allowsImageLoading)
+      return
+    }
     postURI = card.uri
+    appliedAllowsImageLoading = allowsImageLoading
     accessibilityLabel = card.accessibilityLabel
     func place(_ view: UIView, _ frame: CGRect, in width: CGFloat) {
       view.frame = rtl ? CGRect(x: width - frame.maxX, y: frame.minY, width: frame.width, height: frame.height) : frame
@@ -102,7 +112,7 @@ final class TrendingVideoCardView: TrendingCardControl {
       playBadge.isHidden = false
       thumbnailView.isHidden = false
       let request = TrendingTopicImageRequests.request(url, size: thumb.size, displayScale: displayScale, priority: .normal)
-      thumbnailSlot.setRequest(request) { [weak self] phase in
+      thumbnailSlot.setRequest(request, allowsImageLoading: allowsImageLoading) { [weak self] phase in
         self?.fallbackIconView.isHidden = phase != .failed
       }
     case .none:
@@ -122,7 +132,8 @@ final class TrendingVideoCardView: TrendingCardControl {
     avatarView.apply(
       source: AsyncProfileImage.source(
         url: card.post.author.finalAvatarURL(), sizeInPoints: layout.avatarFrame.width, displayScale: displayScale,
-        did: card.post.author.did.didString(), labels: card.post.author.labels, policy: policy))
+        did: card.post.author.did.didString(), labels: card.post.author.labels, policy: policy),
+      allowsImageLoading: allowsImageLoading)
     let name = TrendingInterstitialText.attributed(
       card.authorName, font: t.videoAuthor, lineSpacing: t.videoAuthorLineSpacing, kerning: t.kerning,
       alignment: rtl ? .right : .left)
@@ -148,10 +159,38 @@ final class TrendingVideoCardView: TrendingCardControl {
       width: width, height: textHeight)
   }
 
+  func updateImageLoading(
+    _ card: TrendingInterstitialModel.VideoCard,
+    layout: TrendingVideoCardLayout,
+    policy: ModerationPolicy,
+    displayScale: CGFloat,
+    allowsImageLoading: Bool
+  ) {
+    guard appliedAllowsImageLoading != allowsImageLoading else { return }
+    appliedAllowsImageLoading = allowsImageLoading
+    let thumb = layout.thumbnailFrame
+    switch card.thumbnail {
+    case .covered:
+      thumbnailSlot.setRequest(nil)
+    case .image(let url):
+      let request = TrendingTopicImageRequests.request(url, size: thumb.size, displayScale: displayScale, priority: .normal)
+      thumbnailSlot.setRequest(request, allowsImageLoading: allowsImageLoading) { [weak self] phase in
+        self?.fallbackIconView.isHidden = phase != .failed
+      }
+    case .none:
+      thumbnailSlot.setRequest(nil)
+    }
+    avatarView.apply(
+      source: AsyncProfileImage.source(
+        url: card.post.author.finalAvatarURL(), sizeInPoints: layout.avatarFrame.width, displayScale: displayScale,
+        did: card.post.author.did.didString(), labels: card.post.author.labels, policy: policy),
+      allowsImageLoading: allowsImageLoading)
+  }
+
   func prepareForRecycle() {
     thumbnailSlot.cancel()
     avatarView.prepareForRecycle()
-    postURI = nil
+    appliedAllowsImageLoading = nil
   }
 }
 
@@ -197,7 +236,9 @@ final class TrendingAvatarView: UIView {
     concealedView.frame = bounds.insetBy(dx: bounds.width * 0.25, dy: bounds.width * 0.25)
   }
 
-  func apply(source: AsyncProfileImage.Source) {
+  var startedImageRequestCountForTesting: Int { slot.startedRequestCountForTesting }
+
+  func apply(source: AsyncProfileImage.Source, allowsImageLoading: Bool = true) {
     placeholderView.tintColor = tintColor.withAlphaComponent(0.5)
     switch source {
     case .concealed:
@@ -213,7 +254,7 @@ final class TrendingAvatarView: UIView {
     case .image(let request):
       concealedView.isHidden = true
       imageView.isHidden = false
-      slot.setRequest(request, fadeIn: true) { [weak self] phase in
+      slot.setRequest(request, allowsImageLoading: allowsImageLoading, fadeIn: true) { [weak self] phase in
         self?.placeholderView.isHidden = phase == .loaded
       }
     }

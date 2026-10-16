@@ -16,6 +16,7 @@ struct HomeView: View {
   @Binding var currentFeedName: String
   @Binding var isDrawerOpen: Bool
   @Binding var isRootView: Bool
+  var composeOverlay: () -> AnyView = { AnyView(EmptyView()) }
 
   // Local state
   @State private var showingSettings = false
@@ -118,8 +119,15 @@ struct HomeView: View {
     #else
     NavigationStack(path: navigationPath) {
       feedContentView(navigationPath: navigationPath)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .platformIgnoresSafeArea()
+        // Let the navigation content own bar clearance from the first layout.
+        .overlay(alignment: .bottomTrailing) {
+          if selectedTab == 0 && isRootView {
+            composeOverlay()
+          }
+        }
         .navigationTitle(currentFeedName)
         .ensureNavigationFonts()
         #if os(iOS)

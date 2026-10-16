@@ -10,6 +10,7 @@ import UIKit
 struct TrendingTopicImages {
   let appState: AppState
   let displayScale: CGFloat
+  var allowsImageLoading = true
 
   var isSuspended: Bool { appState.isAccountSwitchSuspended }
 
@@ -32,7 +33,7 @@ struct TrendingTopicImages {
     let revision = store.revision
     let viewerDID = appState.userDID
     let appState = appState
-    slot.setRequest(request, memoryImage: store.image(for: request), onLoaded: { image in
+    slot.setRequest(request, memoryImage: store.image(for: request), allowsImageLoading: allowsImageLoading, onLoaded: { image in
       guard !appState.isAccountSwitchSuspended, appState.userDID == viewerDID,
             appState.appSettings.showTrendingTopics, appState.topicPreviewLabelerScopeIsCurrent else { return }
       store.retainImage(image, for: request, revision: revision)
@@ -71,7 +72,11 @@ final class TrendingTopicCardView: TrendingCardControl {
   private lazy var fanSlots = fanCards.map { TrendingImageSlot(imageView: $0.imageView) }
   private lazy var participantSlots = participantViews.map { TrendingImageSlot(imageView: $0) }
 
+  var startedImageRequestCountForTesting: Int {
+    (fanSlots + participantSlots).reduce(0) { $0 + $1.startedRequestCountForTesting }
+  }
   private(set) var trendLink: String?
+  private(set) var appliedAllowsImageLoading: Bool?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -114,7 +119,12 @@ final class TrendingTopicCardView: TrendingCardControl {
     reduceMotion: Bool,
     images: TrendingTopicImages
   ) {
+    if let applied = trendLink, applied == topic.trend.link, bounds.size == size {
+      updateImageLoading(for: topic, images: images)
+      return
+    }
     trendLink = topic.trend.link
+    appliedAllowsImageLoading = images.allowsImageLoading
     accessibilityLabel = topic.accessibilityLabel
     func place(_ view: UIView, _ frame: CGRect) {
       view.frame = rtl ? CGRect(x: size.width - frame.maxX, y: frame.minY, width: frame.width, height: frame.height) : frame
@@ -200,11 +210,22 @@ final class TrendingTopicCardView: TrendingCardControl {
     }
   }
 
+  func updateImageLoading(for topic: TrendingInterstitialModel.Topic, images: TrendingTopicImages) {
+    guard appliedAllowsImageLoading != images.allowsImageLoading else { return }
+    appliedAllowsImageLoading = images.allowsImageLoading
+    for (index, _) in fanCards.enumerated() where index < topic.media.count {
+      images.load(images.mediaRequest(topic.media[index].url), into: fanSlots[index])
+    }
+    for (index, _) in participantViews.enumerated() where index < topic.participants.count {
+      images.load(images.avatarRequest(topic.participants[index].avatar), into: participantSlots[index])
+    }
+  }
+
   /// Stops image work for a card leaving the carousel or the cell.
   func prepareForRecycle() {
     fanSlots.forEach { $0.cancel() }
     participantSlots.forEach { $0.cancel() }
-    trendLink = nil
+    appliedAllowsImageLoading = nil
   }
 
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

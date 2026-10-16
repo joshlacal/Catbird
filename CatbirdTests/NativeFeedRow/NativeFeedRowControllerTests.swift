@@ -20,6 +20,63 @@ struct NativeFeedRowControllerTests {
     return AppState(userDID: "did:plc:\(name)", client: client, regulatoryChecker: NoAgePrompt())
   }
 
+  @Test("An embedded feed connects navigation scrolling and preserves a replacement scroll view")
+  func navigationScrollingFollowsVisibleFeed() async throws {
+    let appState = try await makeAppState("nativerownavigation")
+    defer { appState.cleanup() }
+    let post = try FeedRowTestPosts.cachedPost(postKey: "navigation")
+    let host = try NativeFeedRowControllerHost(appState: appState, posts: [post])
+    defer { host.tearDown() }
+
+    host.window.isHidden = true
+    host.window.rootViewController = nil
+    let owner = UIViewController()
+    // Another scroll view makes automatic hierarchy discovery ambiguous.
+    owner.view.addSubview(UIScrollView(frame: owner.view.bounds))
+    let container = UIViewController()
+    owner.addChild(container)
+    owner.view.addSubview(container.view)
+    container.didMove(toParent: owner)
+    container.addChild(host.controller)
+    container.view.addSubview(host.controller.view)
+    host.controller.didMove(toParent: container)
+    let navigation = UINavigationController(rootViewController: owner)
+    host.window.rootViewController = navigation
+    host.window.isHidden = false
+    host.window.layoutIfNeeded()
+    // Drive lifecycle hooks explicitly; window appearance delivery is asynchronous.
+    host.controller.viewWillAppear(false)
+    host.controller.viewDidAppear(false)
+
+    #expect(owner.contentScrollView(for: .top) === host.controller.collectionView)
+    #expect(owner.contentScrollView(for: .bottom) === host.controller.collectionView)
+
+    host.controller.viewWillDisappear(false)
+    host.controller.viewDidDisappear(false)
+    // Clearing the explicit registration restores UIKit's automatic discovery.
+    // Remove the outgoing child before checking that it is no longer observed.
+    host.controller.willMove(toParent: nil)
+    host.controller.view.removeFromSuperview()
+    host.controller.removeFromParent()
+    #expect(owner.contentScrollView(for: .top) !== host.controller.collectionView)
+    #expect(owner.contentScrollView(for: .bottom) !== host.controller.collectionView)
+
+    container.addChild(host.controller)
+    container.view.addSubview(host.controller.view)
+    host.controller.didMove(toParent: container)
+    host.controller.viewWillAppear(false)
+    host.controller.viewDidAppear(false)
+    #expect(owner.contentScrollView(for: .top) === host.controller.collectionView)
+
+    let replacement = UIScrollView()
+    owner.view.addSubview(replacement)
+    owner.setContentScrollView(replacement, for: .all)
+    host.controller.viewWillDisappear(false)
+    host.controller.viewDidDisappear(false)
+    #expect(owner.contentScrollView(for: .top) === replacement)
+    #expect(owner.contentScrollView(for: .bottom) === replacement)
+  }
+
   @Test("A horizontal size class change moves visible native rows into the hosted row's lane at once")
   func sizeClassChangeRelaysOutVisibleRows() async throws {
     let appState = try await makeAppState("nativerowsizeclass")
