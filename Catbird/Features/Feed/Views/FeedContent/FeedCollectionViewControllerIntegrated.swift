@@ -1555,6 +1555,11 @@ import os
       cell.configurationUpdateHandler = nil
     }
 
+    /// Configures `cell` for `row` as the cell provider does.
+    func configureNativeCellForTesting(_ cell: NativeFeedPostCell, row: NativeFeedRowCoordinator.Row) {
+      configureNativeCell(cell, row: row)
+    }
+
     /// Prepares the native rows around the first visible post, off the main actor, so cells that
     /// scroll in find them ready, and starts the preparation window over for the new snapshot.
     private func prepareNativeRows(near posts: [CachedFeedViewPost]) {

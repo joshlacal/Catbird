@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import Petrel
+import SwiftUI
 import Testing
 import UIKit
 @testable import Catbird
@@ -41,6 +42,45 @@ struct NativeFeedRowControllerTests {
     let laneX = (1000 - m.maxRegularWidthContent) / 2
     #expect(cell.avatarViewForTesting.frame.minX == laneX + fullLaneAvatarX)
     #expect(cell.dividerForTesting.frame.width == 1000)
+  }
+
+  /// The cell provider only dequeues a native cell once a snapshot resolved the row settings; a
+  /// row configured without them takes the bail-out path, which must not leave the reused cell
+  /// showing its previous post.
+  @Test("A native row configured without row settings shows none of the reused cell's text")
+  func bailOutClearsReusedText() async throws {
+    let appState = try await makeAppState("nativerowbailout")
+    defer { appState.cleanup() }
+    let sceneContext = SceneNavigationContext(appState: appState, sceneID: UUID())
+    defer { sceneContext.invalidate() }
+    // A row decided by a coordinator whose settings are resolved.
+    let deciding = NativeFeedRowCoordinator(
+      navigationPath: .constant(NavigationPath()), appState: appState, sceneContext: sceneContext)
+    let post = try FeedRowTestPosts.cachedPost(postKey: "bailout")
+    let byID = [post.id: post]
+    deciding.beginSnapshot(
+      posts: byID, signatures: byID.mapValues(FeedPostContentSignature.init),
+      traits: UITraitCollection { traits in traits.displayScale = 3 })
+    let row = try #require(deciding.nativeRow(forPostID: post.id))
+
+    // A controller that has applied no snapshot has no row settings.
+    let viewport = sceneContext.feedViewportStore.state(
+      accountDID: appState.userDID, feedIdentifier: FetchType.timeline.identifier)
+    let model = FeedModel(feedManager: FeedManager(client: nil, fetchType: .timeline), appState: appState)
+    let state = FeedStateManager(appState: appState, feedModel: model, feedType: .timeline, initialScenePhase: .background)
+    defer { state.cleanup() }
+    let controller = FeedCollectionViewControllerIntegrated(
+      stateManager: state, viewportState: viewport, sceneContext: sceneContext,
+      navigationPath: .constant(NavigationPath()))
+    controller.loadViewIfNeeded()
+    try #require(controller.nativeRowsForTesting.typography == nil)
+
+    let (cell, previous) = try NativeFeedRowTestFactory.configuredCell(text: "the previous post")
+    cell.prepareForReuse()
+    try #require(cell.textViewForTesting.attributedText === previous.text)
+    controller.configureNativeCellForTesting(cell, row: row)
+    #expect(cell.textViewForTesting.attributedText == nil)
+    #expect(cell.postURI == nil)
   }
 
   @Test("Hiding verification badges while rows are on screen removes the badge from them")
