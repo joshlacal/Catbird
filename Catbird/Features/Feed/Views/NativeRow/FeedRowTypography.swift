@@ -29,12 +29,14 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
   static func resolved(fontManager: FontManager, boldText: Bool, contentSize: UIContentSizeCategory) -> FeedRowTypography {
     // The settings themselves, not only the manager's identity and generation: a manager
     // allocated where a released one lived starts at the same generation, and must not be served
-    // the released manager's fonts (for example after an account switch).
+    // the released manager's fonts (for example after an account switch). The design is hashed as
+    // its UIKit value; describing the SwiftUI `Font.Design` as a string goes through runtime
+    // reflection.
     var hasher = Hasher()
     hasher.combine(ObjectIdentifier(fontManager))
     hasher.combine(fontManager.generation)
     hasher.combine(fontManager.sizeScale)
-    hasher.combine("\(fontManager.fontDesign)")
+    hasher.combine(AppUIFont.systemDesign(fontManager.fontDesign).rawValue)
     hasher.combine(fontManager.dynamicTypeEnabled)
     hasher.combine(fontManager.dynamicTypeLimit?.uiContentSizeCategory.rawValue)
     hasher.combine(fontManager.lineSpacingMultiplier)

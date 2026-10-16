@@ -40,5 +40,39 @@ struct TrendingInterstitialTypographyTests {
     }
     Issue.record("No FontManager was allocated at a released manager's address with its generation")
   }
+
+  /// The key hashes the font design as its UIKit value rather than describing it as a string, and
+  /// must still tell designs apart when nothing else differs.
+  @Test("A font manager at a released manager's address with another design gets its own fonts")
+  func reusedManagerAddressGetsItsOwnDesign() {
+    let traits = UITraitCollection { traits in
+      traits.preferredContentSizeCategory = .large
+      traits.displayScale = 3
+    }
+    for _ in 0..<500 {
+      let releasedID: ObjectIdentifier
+      let releasedGeneration: Int
+      let releasedName: String
+      do {
+        let released = FontManager()
+        released.fontStyle = "monospaced"
+        releasedID = ObjectIdentifier(released)
+        releasedGeneration = released.generation
+        releasedName = TrendingInterstitialTypography.resolved(fontManager: released, traits: traits)
+          .subheadline.fontName
+      }
+      let current = FontManager()
+      current.fontStyle = "serif"
+      guard ObjectIdentifier(current) == releasedID, current.generation == releasedGeneration else { continue }
+
+      let typography = TrendingInterstitialTypography.resolved(fontManager: current, traits: traits)
+      let expected = AppUIFont.font(
+        current, size: Typography.Size.subheadline, weight: .medium, textStyle: .subheadline)
+      #expect(typography.subheadline.fontName == expected.fontName)
+      #expect(typography.subheadline.fontName != releasedName)
+      return
+    }
+    Issue.record("No FontManager was allocated at a released manager's address with its generation")
+  }
 }
 #endif

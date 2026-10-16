@@ -54,5 +54,36 @@ struct FeedRowTypographyTests {
     #expect(afterLine.generationKey != afterLetter.generationKey)
     #expect(afterLetter.kerning == fontManager.letterSpacingValue)
   }
+
+  /// The key hashes the font design as its UIKit value rather than describing it as a string, and
+  /// must still tell designs apart when nothing else differs: a manager at a released manager's
+  /// address with the same generation and another design.
+  @Test("A font manager at a released manager's address with another design gets its own fonts")
+  func reusedManagerAddressGetsItsOwnDesign() {
+    let contentSize = UIApplication.shared.preferredContentSizeCategory
+    for _ in 0..<500 {
+      let releasedID: ObjectIdentifier
+      let releasedGeneration: Int
+      let releasedBody: String
+      do {
+        let released = FontManager()
+        released.fontStyle = "serif"
+        releasedID = ObjectIdentifier(released)
+        releasedGeneration = released.generation
+        releasedBody = FeedRowTypography.resolved(fontManager: released, boldText: false, contentSize: contentSize)
+          .body.fontName
+      }
+      let current = FontManager()
+      current.fontStyle = "rounded"
+      guard ObjectIdentifier(current) == releasedID, current.generation == releasedGeneration else { continue }
+
+      let typography = FeedRowTypography.resolved(fontManager: current, boldText: false, contentSize: contentSize)
+      let expected = AppUIFont.font(current, size: Typography.Size.body, weight: .regular, textStyle: .body)
+      #expect(typography.body.fontName == expected.fontName)
+      #expect(typography.body.fontName != releasedBody)
+      return
+    }
+    Issue.record("No FontManager was allocated at a released manager's address with its generation")
+  }
 }
 #endif
