@@ -13,8 +13,9 @@ import OSLog
 /// so two compositions holding the same photo share one file, and a saved draft of any account,
 /// a scene's recovery envelope, an account handoff or another open editor can name it.
 ///
-/// A discarded composition hands over the files it created. A file is deleted only when it sits
-/// directly in that folder, has the managed name, and no stored or open draft names it. A store
+/// A composition that ends (discarded, posted, saved as a draft, closed as an empty reply, or
+/// replaced) hands over the files it created. A file is deleted only when it sits directly in
+/// that folder, has the managed name, and no stored or open draft names it. A store
 /// that cannot be read cancels the whole pass. The check and the unlink run in one main-actor
 /// turn, so no editor can claim a file in between. An editor that already holds the URL of a
 /// file removed here writes it again on its next save (`DraftImageFile.exists`).
@@ -119,8 +120,9 @@ extension DraftImageFileJanitor {
   }
 
   /// Every place the app keeps a draft that can name a draft photo:
-  /// - saved-draft rows of every account, tombstones and recovery copies included, with the
-  ///   remote snapshots in their sync metadata (DraftPersistence.storedMediaReferenceData);
+  /// - live saved-draft rows of every account, recovery copies and tombstones whose create is
+  ///   unconfirmed included, with the remote snapshots in their sync metadata
+  ///   (DraftPersistence.storedMediaReferenceData);
   /// - every scene's recovery envelope and the legacy minimized draft (`recoveryDefaults`);
   /// - the App Group handoff slot the share extension and the Draft Post intent fill;
   /// - the composer outbox queue. It holds no media today; it is searched so that an outbox

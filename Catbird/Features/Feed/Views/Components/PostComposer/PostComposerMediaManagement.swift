@@ -185,10 +185,11 @@ extension PostComposerViewModel {
     }
 
     /// Removing an attachment never deletes its file: a saved draft row, a recovery envelope,
-    /// another scene or the source account of a handoff may still reference it. Draft media is
-    /// removed with its saved-draft row (DraftPersistence.deleteDraft). A photo file this
-    /// composition created stays one of its files, so discarding the composition removes it
-    /// if nothing else names it (SceneComposerEditingSession.discard).
+    /// another scene or the source account of a handoff may still reference it. A photo file
+    /// this composition created stays one of its files, so when the composition ends (discarded,
+    /// posted, saved as a draft, closed as an empty reply or replaced) the file is removed if
+    /// nothing else names it (SceneComposerEditingSession). Any other draft photo that nothing
+    /// names or uses for a week is left to DraftImageOrphanSweep.
     func removeMediaItem(withId id: UUID) {
         mediaPreviewLoads.cancel(for: id)
         if videoItem?.id == id {

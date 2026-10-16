@@ -8,14 +8,16 @@ import UIKit
 @testable import Catbird
 
 /// Composer photos are copied into the App Group's SharedDrafts folder as
-/// draft_image_<sha256>.jpg. Discarding a composition that never became a saved draft removes the
-/// files it created, unless a saved draft of any account, a recovery envelope, the handoff slot,
-/// the outbox, an open editor or a pending account handoff still names them. Nothing else is
-/// ever removed: files that were already there and saved drafts' media are kept here, and
+/// draft_image_<sha256>.jpg. A composition that ends (discarded, posted, saved as a draft, closed
+/// as an empty reply, or replaced) removes the files it created, unless a live saved draft of any
+/// account, an unconfirmed tombstone, a recovery envelope, the handoff slot, the outbox, a legacy
+/// JSON draft, an open editor or a pending account handoff still names them. Files it did not
+/// create, a restored row's own photos included, are kept here and left to DraftImageOrphanSweep;
 /// DraftImageFileJanitorTests covers each store, unmanaged names and videos on their own.
 ///
-/// These run against the real App Group folder, with the fixture's own handoff slot and outbox.
-/// Every photo has random pixels, so its content-named file belongs to that test alone.
+/// These run against the real App Group folder, with the fixture's own handoff slot, outbox and
+/// legacy-drafts folder. Every photo has random pixels, so its content-named file belongs to that
+/// test alone.
 @Suite("Draft photo file cleanup", .serialized)
 @MainActor
 struct DraftImageFileCleanupTests {
@@ -174,7 +176,7 @@ struct DraftImageFileCleanupTests {
     #expect(!exists(draftFile(for: photo)))
   }
 
-  @Test("A replaced composition with content becomes a recovery copy and keeps its photo files")
+  @Test("A replaced composition with content keeps only the photo files its recovery copy names")
   func replacedCompositionWithContentKeepsFiles() async throws {
     let fixture = try await Fixture()
     defer { fixture.cleanUp() }
@@ -189,14 +191,16 @@ struct DraftImageFileCleanupTests {
     let next = PostComposerViewModel(appState: fixture.state, editingSession: session)
     try next.startEditing()
 
+    let recovery = try #require(try fixture.persistence.allDrafts(for: fixture.accountDID).first)
     #expect(try fixture.persistence.allDrafts(for: fixture.accountDID).count == 1, "fixture: a recovery copy")
+    #expect(names(recovery, draftFile(for: kept)), "fixture: the recovery copy names the kept photo")
     #expect(exists(draftFile(for: kept)))
-    #expect(exists(draftFile(for: removed)), "a composition kept as a recovery copy removes nothing")
+    #expect(!exists(draftFile(for: removed)), "a photo the recovery copy dropped goes with the composition")
   }
 
   // MARK: Saved drafts
 
-  @Test("Saving a draft keeps its photos, and discarding it after a restore removes nothing")
+  @Test("Discarding a restored draft removes the photos it added and keeps the row's own")
   func savedDraftFilesSurvive() async throws {
     let fixture = try await Fixture()
     defer { fixture.cleanUp() }
@@ -217,13 +221,13 @@ struct DraftImageFileCleanupTests {
     #expect(reopened.discardEditingDraft())
 
     #expect(try fixture.persistence.syncState(for: row).deletedAt != nil, "fixture: the row is tombstoned")
-    #expect(exists(draftFile(for: saved)), "a saved draft's media waits for its row's deletion")
-    #expect(exists(draftFile(for: addedLater)), "a restored composition removes nothing")
+    #expect(exists(draftFile(for: saved)), "the restored composition did not create the row's own photo")
+    #expect(!exists(draftFile(for: addedLater)), "a photo the restored composition added goes with it")
   }
 
   enum SavedReference: String, CaseIterable, CustomTestStringConvertible {
     case otherAccountRow
-    case tombstonedRow
+    case unconfirmedTombstone
     case remoteSnapshotInSyncMetadata
     var testDescription: String { rawValue }
   }
@@ -241,9 +245,15 @@ struct DraftImageFileCleanupTests {
     switch reference {
     case .otherAccountRow:
       _ = try fixture.persistence.saveDraft(draft(naming: file), accountDID: "did:plc:someoneelse")
-    case .tombstonedRow:
+    case .unconfirmedTombstone:
+      // Deleted while its Bluesky create was still unconfirmed: the next sync can still resolve it
+      // to a server draft. The pending payload itself names no file here.
       let id = try fixture.persistence.saveDraft(draft(naming: file), accountDID: fixture.accountDID)
       try fixture.persistence.markDeleted(id: id, accountDID: fixture.accountDID)
+      let model = try #require(try fixture.persistence.fetchDraftModel(id: id))
+      var state = try fixture.persistence.syncState(for: model)
+      state.pendingCreate = Data(#"{"posts":[]}"#.utf8)
+      try fixture.persistence.saveSyncState(state, for: model)
     case .remoteSnapshotInSyncMetadata:
       let id = try fixture.persistence.saveDraft(draft(naming: nil), accountDID: fixture.accountDID)
       let model = try #require(try fixture.persistence.fetchDraftModel(id: id))
@@ -253,6 +263,210 @@ struct DraftImageFileCleanupTests {
 
     #expect(editor.discardEditingDraft())
     #expect(exists(file))
+  }
+
+  @Test("A deleted saved draft no longer keeps a photo it shares")
+  func tombstonedRowDoesNotKeepFile() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let photo = try uniquePhoto()
+    let file = draftFile(for: photo)
+    defer { removeIfPresent(file) }
+    let editor = try fixture.newEditor()
+    await fixture.pick(photo, into: editor)
+    let id = try fixture.persistence.saveDraft(draft(naming: file), accountDID: fixture.accountDID)
+    try fixture.persistence.markDeleted(id: id, accountDID: fixture.accountDID)
+
+    #expect(editor.discardEditingDraft())
+    #expect(!exists(file), "nothing shows, restores or re-imports a confirmed tombstone")
+  }
+
+  // MARK: Posting
+
+  @Test("A posted composition removes the photo files it created")
+  func postedCompositionRemovesCreatedFiles() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let bystander = try fixture.writeLeftoverFile()
+    defer { removeIfPresent(bystander) }
+    let editor = try fixture.newEditor()
+    let posted = try uniquePhoto(), removed = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: posted)); removeIfPresent(draftFile(for: removed)) }
+    await fixture.pick(posted, into: editor)
+    editor.removeMediaItem(withId: await fixture.pick(removed, into: editor))
+
+    #expect(fixture.post(editor))
+
+    #expect(editor.editingSession?.currentDraft == nil, "fixture: the composition ended")
+    #expect(!exists(draftFile(for: posted)), "uploads are done and nothing reopens the composition")
+    #expect(!exists(draftFile(for: removed)))
+    #expect(exists(bystander), "a file the composition did not write is never removed")
+  }
+
+  @Test("Posting a restored draft removes the photos it added and keeps the row's own")
+  func postedRestoredDraftRemovesAddedFiles() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let saved = try uniquePhoto(), added = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: saved)); removeIfPresent(draftFile(for: added)) }
+    let author = try fixture.newEditor()
+    await fixture.pick(saved, into: author)
+    let rowID = try #require(author.editingSession).stash(try #require(author.captureEditingSnapshot()))
+    author.clearAll()
+    let row = try #require(try fixture.persistence.fetchDraftModel(id: rowID))
+
+    let reopened = PostComposerViewModel(
+      appState: fixture.state, editingSession: fixture.session(persistDelay: .zero)
+    )
+    try reopened.restoreSavedDraft(DraftPostViewModel(draftPost: row))
+    await fixture.pick(added, into: reopened)
+    // The autosave writes the added photo into the restored row, so only its tombstone could
+    // keep the file once the post succeeds.
+    try await waitUntil { names(row, draftFile(for: added)) }
+    #expect(names(row, draftFile(for: added)), "fixture: the restored row names the added photo")
+
+    #expect(fixture.post(reopened))
+
+    #expect(try fixture.persistence.syncState(for: row).deletedAt != nil, "fixture: the row is tombstoned")
+    #expect(!exists(draftFile(for: added)))
+    #expect(exists(draftFile(for: saved)), "the row's own photo is left to the orphan sweep")
+  }
+
+  @Test("A submission whose editor changed after capture keeps the files")
+  func changedSubmissionKeepsFiles() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let editor = try fixture.newEditor()
+    let photo = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: photo)) }
+    await fixture.pick(photo, into: editor)
+    let snapshot = editor.captureEditingSnapshot()
+    let content = editor.editingContent()
+    editor.beginSubmission()
+    editor.postText = "Typed while posting"
+
+    #expect(!editor.completeEditingSubmission(snapshot, content: content))
+    editor.endSubmission()
+
+    #expect(editor.editingSession?.currentDraft != nil, "fixture: the composition is still open")
+    #expect(exists(draftFile(for: photo)))
+  }
+
+  enum PostedHolder: String, CaseIterable, CustomTestStringConvertible {
+    case otherSceneEditor
+    case liveSavedRow
+    case recoveryEnvelope
+    case pendingHandoff
+    var testDescription: String { rawValue }
+  }
+
+  @Test("A posted composition keeps a photo something else still names", arguments: PostedHolder.allCases)
+  func postedCompositionKeepsNamedFiles(holder: PostedHolder) async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let photo = try uniquePhoto()
+    let file = draftFile(for: photo)
+    defer { removeIfPresent(file) }
+    let editor = try fixture.newEditor()
+    await fixture.pick(photo, into: editor)
+    var otherEditor: PostComposerViewModel?
+    let queue = ComposerAccountSwitchQueue()
+
+    switch holder {
+    case .otherSceneEditor:
+      otherEditor = try fixture.newEditor()
+      await fixture.pick(photo, into: try #require(otherEditor))
+    case .liveSavedRow:
+      _ = try fixture.persistence.saveDraft(draft(naming: file), accountDID: fixture.accountDID)
+    case .recoveryEnvelope:
+      fixture.defaults.set(
+        Data(#"{"rawImageURLString":"\#(file.absoluteString)"}"#.utf8),
+        forKey: SceneComposerEditingSession.persistenceKey(sceneID: UUID(), accountDID: fixture.accountDID)
+      )
+    case .pendingHandoff:
+      let handoff = ComposerEditingSnapshot(
+        claim: ComposerDraftClaim(sceneID: UUID(), accountDID: fixture.accountDID, token: UUID()),
+        revision: 1, draft: draft(naming: file), savedDraftID: nil
+      )
+      guard case .accepted = queue.begin(
+        to: "did:plc:handofftarget", transfer: handoff,
+        authenticatedAccountDID: fixture.accountDID, isTransitioning: false
+      ) else {
+        Issue.record("fixture: the handoff was not admitted")
+        return
+      }
+    }
+
+    #expect(fixture.post(editor))
+    #expect(exists(file))
+    withExtendedLifetime(otherEditor) {}
+    withExtendedLifetime(queue) {}
+  }
+
+  // MARK: Saving a draft
+
+  @Test("Saving a draft removes the photos it dropped and keeps the ones the row names")
+  func stashRemovesDroppedPhotos() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let editor = try fixture.newEditor()
+    let kept = try uniquePhoto(), removed = try uniquePhoto()
+    defer { removeIfPresent(draftFile(for: kept)); removeIfPresent(draftFile(for: removed)) }
+    await fixture.pick(kept, into: editor)
+    editor.removeMediaItem(withId: await fixture.pick(removed, into: editor))
+
+    // Save Draft, and the New post and camera stashes.
+    let rowID = try #require(editor.editingSession).stash(try #require(editor.captureEditingSnapshot()))
+    editor.clearAll()
+
+    let row = try #require(try fixture.persistence.fetchDraftModel(id: rowID))
+    #expect(names(row, draftFile(for: kept)), "fixture: the saved row names the kept photo")
+    #expect(exists(draftFile(for: kept)))
+    #expect(!exists(draftFile(for: removed)))
+  }
+
+  @Test("Saving a restored draft again removes the photos it added and dropped")
+  func restashRemovesDroppedAdditions() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.cleanUp() }
+    let saved = try uniquePhoto(), dropped = try uniquePhoto(), added = try uniquePhoto()
+    defer { [saved, dropped, added].forEach { removeIfPresent(draftFile(for: $0)) } }
+    let author = try fixture.newEditor()
+    await fixture.pick(saved, into: author)
+    let rowID = try #require(author.editingSession).stash(try #require(author.captureEditingSnapshot()))
+    author.clearAll()
+    let row = try #require(try fixture.persistence.fetchDraftModel(id: rowID))
+
+    let reopened = PostComposerViewModel(appState: fixture.state, editingSession: fixture.session())
+    try reopened.restoreSavedDraft(DraftPostViewModel(draftPost: row))
+    reopened.removeMediaItem(withId: await fixture.pick(dropped, into: reopened))
+    await fixture.pick(added, into: reopened)
+    #expect(try reopened.editingSession?.stash(try #require(reopened.captureEditingSnapshot())) == rowID)
+    reopened.clearAll()
+
+    #expect(names(row, draftFile(for: saved)) && names(row, draftFile(for: added)), "fixture: the row's photos")
+    #expect(exists(draftFile(for: saved)))
+    #expect(exists(draftFile(for: added)))
+    #expect(!exists(draftFile(for: dropped)))
+  }
+
+  // MARK: Reusing a file
+
+  @Test("Reusing a draft photo file marks it used now")
+  func reuseRefreshesModificationDate() throws {
+    let photo = try uniquePhoto()
+    let first = try #require(CodableMediaItem.writeImageData(photo))
+    let url = try #require(URL(string: first.urlString))
+    defer { removeIfPresent(url) }
+    #expect(first.created)
+    let monthAgo = Date().addingTimeInterval(-30 * 86_400)
+    try FileManager.default.setAttributes([.modificationDate: monthAgo], ofItemAtPath: url.path)
+
+    let second = try #require(CodableMediaItem.writeImageData(photo))
+
+    #expect(!second.created, "the file was already there")
+    let modified = try #require(try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+    #expect(abs(modified.timeIntervalSinceNow) < 60, "the orphan sweep measures time unused from here")
   }
 
   // MARK: Live holders
@@ -440,11 +654,20 @@ private struct Fixture {
     manager.useDraftImageStoresForTesting(handoffDefaults: handoffDefaults, outboxQueueURL: outboxQueueURL)
   }
 
-  func session() -> SceneComposerEditingSession {
+  func session(persistDelay: Duration = .seconds(60)) -> SceneComposerEditingSession {
     SceneComposerEditingSession(
       manager: manager, accountDID: accountDID, sceneID: UUID(), defaults: defaults,
-      persistDelay: .seconds(60)
+      persistDelay: persistDelay
     )
+  }
+
+  /// What createPost and createThread do around a submission that succeeded.
+  func post(_ editor: PostComposerViewModel) -> Bool {
+    let snapshot = editor.captureEditingSnapshot()
+    let content = editor.editingContent()
+    editor.beginSubmission()
+    defer { editor.endSubmission() }
+    return editor.completeEditingSubmission(snapshot, content: content)
   }
 
   /// A new, unsaved composition in its own scene.
@@ -532,5 +755,19 @@ private func exists(_ url: URL) -> Bool {
 
 private func removeIfPresent(_ url: URL) {
   try? FileManager.default.removeItem(at: url)
+}
+
+/// Whether the saved row's draft names `file`.
+@MainActor
+private func names(_ row: DraftPost, _ file: URL) -> Bool {
+  row.draftData.range(of: Data(file.lastPathComponent.utf8)) != nil
+}
+
+/// Waits for a debounced autosave, for at most two seconds.
+@MainActor
+private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
+  for _ in 0..<200 where !condition() {
+    try await Task.sleep(for: .milliseconds(10))
+  }
 }
 #endif

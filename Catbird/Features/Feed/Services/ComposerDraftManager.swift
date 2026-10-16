@@ -11,12 +11,6 @@ import SwiftData
 import Petrel
 import OSLog
 
-enum SavedDraftMediaCleanupPolicy {
-  static func allowsImmediateCleanup(hasPersistedRow: Bool) -> Bool {
-    !hasPersistedRow
-  }
-}
-
 @MainActor
 @Observable
 final class ComposerDraftManager {

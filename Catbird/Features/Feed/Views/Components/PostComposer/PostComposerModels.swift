@@ -273,14 +273,23 @@ struct CodableMediaItem: Codable, Hashable {
 
   /// `persistImageData`, also reporting whether this call created the file. Only a composition
   /// that created a file may later remove it (DraftImageFileJanitor); a file that was already
-  /// there belongs to whoever wrote it first.
+  /// there belongs to whoever wrote it first. A reuse marks the file used now, so
+  /// DraftImageOrphanSweep measures how long a file has gone unused.
+  ///
+  /// This runs off the main actor and its result is recorded on it afterwards. A file the
+  /// janitor or the sweep removes in between is written again by the editor's next save
+  /// (`DraftImageFile.exists`), so code that stores a draft-file URL must go through
+  /// PostComposerViewModel's save, or hold the URL in a registered DraftMediaReferenceHolder.
   static func writeImageData(_ data: Data) -> DraftImageWrite? {
     guard let draftsDir = draftImagesDirectory else { return nil }
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     let filename = "draft_image_\(digest).jpg"
     let fileURL = draftsDir.appendingPathComponent(filename)
     if FileManager.default.fileExists(atPath: fileURL.path) {
-      return DraftImageWrite(urlString: fileURL.absoluteString, created: false)
+      if (try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)) != nil {
+        return DraftImageWrite(urlString: fileURL.absoluteString, created: false)
+      }
+      // The file went away since the check, or cannot be marked used: write it again.
     }
     do {
       try data.write(to: fileURL, options: .atomic)

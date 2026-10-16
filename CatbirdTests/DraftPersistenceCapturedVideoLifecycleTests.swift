@@ -6,12 +6,6 @@ import Testing
 
 @Suite("Draft Persistence Captured Video Lifecycle")
 struct DraftPersistenceCapturedVideoLifecycleTests {
-  @Test("Persisted draft media waits for successful row deletion")
-  func persistedDraftMediaDoesNotUseImmediateCleanup() {
-    #expect(SavedDraftMediaCleanupPolicy.allowsImmediateCleanup(hasPersistedRow: false))
-    #expect(!SavedDraftMediaCleanupPolicy.allowsImmediateCleanup(hasPersistedRow: true))
-  }
-
   @MainActor
   @Test("Deleting a persisted captured-video draft removes its owned file")
   func deletingPersistedDraftRemovesOwnedVideo() async throws {
