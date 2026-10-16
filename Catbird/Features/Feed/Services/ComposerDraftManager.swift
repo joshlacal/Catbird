@@ -31,16 +31,27 @@ final class ComposerDraftManager {
   // window still owns the same account. Claims span those manager instances.
   private static var savedDraftClaims: [SavedDraftClaimKey: ComposerDraftClaim] = [:]
   @ObservationIgnored private var testingAccountDID: String?
+  /// Where scene recovery envelopes live (`.standard` in the app, a suite in tests). Draft photo
+  /// cleanup reads them by default.
+  private let recoveryDefaults: UserDefaults
   #if DEBUG
-  /// Temporary stand-ins for the App Group handoff slot and the outbox queue that draft photo
-  /// cleanup reads, so tests do not depend on what the host app left there.
-  @ObservationIgnored private var testingDraftImageStores: (handoff: UserDefaults, outboxQueue: URL)?
+  /// Temporary stand-ins for the stores draft photo cleanup reads and the folder it works in, so
+  /// tests neither depend on nor touch what the host app left there.
+  struct DraftImageTestingStores {
+    let handoff: UserDefaults
+    let outboxQueue: URL
+    let legacyDrafts: URL?
+    let draftImages: URL?
+  }
+
+  @ObservationIgnored private var testingDraftImageStores: DraftImageTestingStores?
   #endif
   private var hasMigratedLegacyDrafts = false
   private let logger = Logger(subsystem: "blue.catbird", category: "ComposerDraftManager")
 
   init(appState: AppState? = nil) {
     self.appState = appState
+    self.recoveryDefaults = .standard
     // The legacy minimized blob has no account or scene owner. Only a scene's
     // explicit recovery action may read, claim, or remove it.
   }
@@ -48,6 +59,7 @@ final class ComposerDraftManager {
   #if DEBUG
   init(accountDID: String, modelContext: ModelContext, defaults: UserDefaults) {
     self.testingAccountDID = accountDID
+    self.recoveryDefaults = defaults
     configureForTesting(modelContext: modelContext)
   }
 
@@ -62,8 +74,18 @@ final class ComposerDraftManager {
     reloadSavedDrafts()
   }
 
-  func useDraftImageStoresForTesting(handoffDefaults: UserDefaults, outboxQueueURL: URL) {
-    testingDraftImageStores = (handoffDefaults, outboxQueueURL)
+  /// A nil legacy-drafts folder means there is none; a nil draft photo folder keeps the App
+  /// Group's, which composer writes use.
+  func useDraftImageStoresForTesting(
+    handoffDefaults: UserDefaults,
+    outboxQueueURL: URL,
+    legacyDraftsDirectory: URL? = nil,
+    draftImagesDirectory: URL? = nil
+  ) {
+    testingDraftImageStores = DraftImageTestingStores(
+      handoff: handoffDefaults, outboxQueue: outboxQueueURL,
+      legacyDrafts: legacyDraftsDirectory, draftImages: draftImagesDirectory
+    )
   }
   #endif
 
@@ -234,26 +256,36 @@ final class ComposerDraftManager {
 
   // MARK: - Draft photo files
 
-  /// Deletes draft photo files that a composition wrote and no longer uses, unless a saved
-  /// draft of any account, a recovery envelope in `recoveryDefaults`, the App Group handoff
-  /// slot, the outbox, an open editor or a pending account handoff still names them.
+  /// Deletes draft photo files that a composition wrote and no longer uses, unless a live saved
+  /// draft of any account, a recovery envelope in `recoveryDefaults` (this manager's when nil),
+  /// the App Group handoff slot, the outbox, a legacy JSON draft, an open editor or a pending
+  /// account handoff still names them. Posting and saving a draft call this on the main actor,
+  /// so the pass is signposted ("DraftPhotoCleanup").
   @discardableResult
   func removeUnreferencedDraftImageFiles(
     _ urlStrings: Set<String>,
-    recoveryDefaults: UserDefaults
+    recoveryDefaults: UserDefaults? = nil
   ) -> DraftImageFileJanitor.Outcome {
     guard !urlStrings.isEmpty else { return DraftImageFileJanitor.Outcome() }
+    let signpost = PerformanceSignposts.beginInterval("DraftPhotoCleanup")
+    defer { PerformanceSignposts.endInterval("DraftPhotoCleanup", signpost) }
+    return draftImageFileJanitor(recoveryDefaults: recoveryDefaults ?? self.recoveryDefaults)
+      .removeUnreferenced(urlStrings)
+  }
+
+  /// A janitor over every draft store, honouring a test's stand-ins.
+  private func draftImageFileJanitor(recoveryDefaults: UserDefaults) -> DraftImageFileJanitor {
     #if DEBUG
     if let stores = testingDraftImageStores {
       return DraftImageFileJanitor.standard(
         persistence: draftPersistence, recoveryDefaults: recoveryDefaults,
-        handoffDefaults: stores.handoff, outboxQueueURL: stores.outboxQueue
-      ).removeUnreferenced(urlStrings)
+        handoffDefaults: stores.handoff, outboxQueueURL: stores.outboxQueue,
+        legacyDraftsDirectory: stores.legacyDrafts,
+        directory: stores.draftImages ?? CodableMediaItem.draftImagesDirectory
+      )
     }
     #endif
-    return DraftImageFileJanitor
-      .standard(persistence: draftPersistence, recoveryDefaults: recoveryDefaults)
-      .removeUnreferenced(urlStrings)
+    return DraftImageFileJanitor.standard(persistence: draftPersistence, recoveryDefaults: recoveryDefaults)
   }
 
   private func validateAccount(_ accountDID: String) throws {
@@ -355,10 +387,13 @@ final class ComposerDraftManager {
   // MARK: - Legacy Migration
   
   private let fileManager = FileManager.default
-  private var legacyDraftsDirectory: URL {
-    let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    let catbirdDir = appSupport.appendingPathComponent("Catbird", isDirectory: true)
-    return catbirdDir.appendingPathComponent("Drafts", isDirectory: true)
+
+  /// Where earlier versions saved drafts as JSON. A draft whose migration failed stays there, so
+  /// draft photo cleanup reads the folder as a store (DraftImageFileJanitor.standard).
+  nonisolated static var legacyDraftsDirectoryURL: URL? {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+      .appendingPathComponent("Catbird", isDirectory: true)
+      .appendingPathComponent("Drafts", isDirectory: true)
   }
   
   /// Migrate legacy JSON drafts to SwiftData (one-time operation)
@@ -385,12 +420,12 @@ final class ComposerDraftManager {
 
     do {
       // Perform file I/O on background thread to avoid blocking main thread
-      let legacyDir = legacyDraftsDirectory
+      let legacyDir = Self.legacyDraftsDirectoryURL
       let fm = fileManager
 
       let jsonFiles: [URL] = try await Task.detached(priority: .utility) {
         // Check if legacy directory exists
-        guard fm.fileExists(atPath: legacyDir.path) else {
+        guard let legacyDir, fm.fileExists(atPath: legacyDir.path) else {
           return []
         }
 

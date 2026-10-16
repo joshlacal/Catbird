@@ -632,6 +632,7 @@ private struct Fixture {
   let handoffSuiteName: String
   let handoffDefaults: UserDefaults
   let outboxQueueURL: URL
+  let legacyDraftsDirectory: URL
   let manager: ComposerDraftManager
   let persistence: DraftPersistence
 
@@ -646,12 +647,18 @@ private struct Fixture {
     )
     persistence = DraftPersistence(modelContext: container.mainContext)
     manager = ComposerDraftManager(accountDID: accountDID, modelContext: container.mainContext, defaults: defaults)
-    // The handoff slot and the outbox are this fixture's own, not the host app's.
+    // The handoff slot, the outbox and the legacy-drafts folder are this fixture's own, not the
+    // host app's.
     handoffSuiteName = "\(suiteName).handoff"
     handoffDefaults = try #require(UserDefaults(suiteName: handoffSuiteName))
     outboxQueueURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("draft-photo-cleanup-outbox-\(UUID().uuidString).json")
-    manager.useDraftImageStoresForTesting(handoffDefaults: handoffDefaults, outboxQueueURL: outboxQueueURL)
+    legacyDraftsDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("draft-photo-cleanup-legacy-drafts-\(UUID().uuidString)", isDirectory: true)
+    manager.useDraftImageStoresForTesting(
+      handoffDefaults: handoffDefaults, outboxQueueURL: outboxQueueURL,
+      legacyDraftsDirectory: legacyDraftsDirectory
+    )
   }
 
   func session(persistDelay: Duration = .seconds(60)) -> SceneComposerEditingSession {
@@ -697,6 +704,7 @@ private struct Fixture {
     defaults.removePersistentDomain(forName: suiteName)
     handoffDefaults.removePersistentDomain(forName: handoffSuiteName)
     try? FileManager.default.removeItem(at: outboxQueueURL)
+    try? FileManager.default.removeItem(at: legacyDraftsDirectory)
   }
 }
 
