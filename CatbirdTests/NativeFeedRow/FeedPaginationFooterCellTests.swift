@@ -79,13 +79,18 @@ struct FeedPaginationFooterCellTests {
     return attributes
   }
 
-  /// The hosted footer, configured as the feed's footer registration configured it, self-sized at
-  /// `width` and laid out at that size, with the frames of its content in its own coordinates.
-  /// SwiftUI reports those frames through its accessibility elements, so callers enable app
-  /// accessibility first.
+  /// The hosted footer, configured as the feed's footer registration configured it and laid out at
+  /// `width`, with the frames of its content in its own coordinates. SwiftUI reports those frames
+  /// through its accessibility elements, so callers enable app accessibility first.
+  ///
+  /// `height` is SwiftUI's own layout of the footer at `width` (`systemLayoutSizeFitting`);
+  /// `selfSizedHeight` is what the hosting configuration answered to the list layout's self-sizing
+  /// call (`preferredLayoutAttributesFitting`). The two agree while the message fits on one line;
+  /// once it wraps, the self-sizing answer keeps a single line and SwiftUI draws the message
+  /// truncated ("Couldn’t load more…"), a defect the native footer does not reproduce.
   private func hostedFooter(
     _ state: FeedPaginationFooterState, size: Size, fontManager: FontManager, in window: UIWindow
-  ) async throws -> (height: CGFloat, frames: [String: CGRect]) {
+  ) async throws -> (height: CGFloat, selfSizedHeight: CGFloat, frames: [String: CGRect]) {
     let cell = UICollectionViewListCell(frame: CGRect(x: 0, y: Self.cellY, width: size.width, height: 44))
     window.addSubview(cell)
     defer { cell.removeFromSuperview() }
@@ -99,7 +104,10 @@ struct FeedPaginationFooterCellTests {
     }
     .margins(.all, 0)
     cell.updateTraitsIfNeeded()
-    let height = cell.preferredLayoutAttributesFitting(attributes(width: size.width)).size.height
+    let selfSizedHeight = cell.preferredLayoutAttributesFitting(attributes(width: size.width)).size.height
+    let height = cell.systemLayoutSizeFitting(
+      CGSize(width: size.width, height: 0), withHorizontalFittingPriority: .required,
+      verticalFittingPriority: .fittingSizeLevel).height
     cell.frame = CGRect(x: 0, y: Self.cellY, width: size.width, height: height)
     let names = Self.contentNames(state)
     var elements: [AppAccessibility.Element] = []
@@ -109,7 +117,7 @@ struct FeedPaginationFooterCellTests {
       elements = AppAccessibility.elements(in: cell)
     }
     let frames = Dictionary(uniqueKeysWithValues: zip(names, elements.map(\.frame)))
-    return (height, frames)
+    return (height, selfSizedHeight, frames)
   }
 
   /// The native footer configured for `state`, self-sized at `width` and laid out at that size.
@@ -239,7 +247,15 @@ struct FeedPaginationFooterCellTests {
     window.addSubview(native)
     native.frame.origin.y = Self.cellY
     #expect(native.isAccessibilityElement == false)
-    let elements = AppAccessibility.elements(in: native)
+    // UIKit answers labels and traits once its accessibility runtime has loaded, which can take a
+    // moment after it is switched on.
+    let expectedCount = Self.contentNames(state).count
+    var elements: [AppAccessibility.Element] = []
+    for _ in 0..<50 {
+      elements = AppAccessibility.elements(in: native)
+      if elements.count == expectedCount, elements.allSatisfy({ $0.label != nil }) { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
     switch state {
     case .loading:
       #expect(elements.map(\.label) == ["Loading more posts"])
@@ -278,17 +294,71 @@ struct FeedPaginationFooterCellTests {
 
   @Test("The cell is as tall as the hosted footer, with its content in the same place", arguments: states, sizes)
   func heightParity(state: FeedPaginationFooterState, size: Size) async throws {
+    try await expectParity(state, size: size, matchesSelfSizing: true) { _ in }
+  }
+
+  /// Text that wraps, at the default content size category: the message at a narrow width, with
+  /// each line-spacing setting and the full Dynamic Type range. Pins line breaking, line spacing
+  /// and the widest line's width against SwiftUI's `Text`.
+  struct WrappedText: Sendable, CustomTestStringConvertible {
+    let state: FeedPaginationFooterState
+    let width: CGFloat
+    let lineSpacing: String
+    let fullTypeRange: Bool
+    var testDescription: String {
+      "\(state) at \(Int(width)) pt, \(lineSpacing) line spacing\(fullTypeRange ? ", full type range" : "")"
+    }
+  }
+
+  static let wrappedText: [WrappedText] = [
+    WrappedText(state: .failed, width: 150, lineSpacing: "normal", fullTypeRange: false),
+    WrappedText(state: .failed, width: 150, lineSpacing: "relaxed", fullTypeRange: false),
+    WrappedText(state: .failed, width: 150, lineSpacing: "tight", fullTypeRange: false),
+    WrappedText(state: .failed, width: 120, lineSpacing: "relaxed", fullTypeRange: true),
+    WrappedText(state: .end, width: 100, lineSpacing: "normal", fullTypeRange: false),
+    WrappedText(state: .end, width: 100, lineSpacing: "relaxed", fullTypeRange: true),
+  ]
+
+  @Test("Wrapped text is as tall as the hosted footer's, with its lines in the same place", arguments: wrappedText)
+  func wrappedTextParity(text: WrappedText) async throws {
+    let native = try await expectParity(
+      text.state, size: Size(contentSize: .large, width: text.width), matchesSelfSizing: false
+    ) {
+      $0.lineSpacing = text.lineSpacing
+      if text.fullTypeRange { $0.maxDynamicTypeSize = AppTextSizeLimit.fullSystemRange }
+    }
+    // The case must actually wrap, or it pins nothing.
+    let label = try #require(text.state == .failed ? native.failureLabelForTesting : native.endLabelForTesting)
+    let font = try #require(label.attributedText?.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+    #expect(label.frame.height > font.lineHeight * 1.5, "\(label.frame) for a \(font.lineHeight) pt line")
+  }
+
+  /// Compares the native and the hosted footer for `state` at `size`, each with a font manager
+  /// set up by `settings`, and returns the native cell. With `matchesSelfSizing`, the native height
+  /// must also equal the height the hosted footer gave the list layout's self-sizing call.
+  @discardableResult
+  private func expectParity(
+    _ state: FeedPaginationFooterState, size: Size, matchesSelfSizing: Bool, settings: (FontManager) -> Void
+  ) async throws -> FeedPaginationFooterCell {
     let restore = AppAccessibility.enable()
     defer { restore() }
     let window = try makeWindow()
     defer { window.isHidden = true }
-    let hosted = try await hostedFooter(state, size: size, fontManager: FontManager(), in: window)
-    let native = nativeFooter(state, size: size, fontManager: FontManager())
+    let hostedFontManager = FontManager()
+    settings(hostedFontManager)
+    let nativeFontManager = FontManager()
+    settings(nativeFontManager)
+    let hosted = try await hostedFooter(state, size: size, fontManager: hostedFontManager, in: window)
+    let native = nativeFooter(state, size: size, fontManager: nativeFontManager)
     window.addSubview(native)
     native.frame.origin.y = Self.cellY
     native.layoutIfNeeded()
     let nativeHeight = native.preferredLayoutAttributesFitting(attributes(width: size.width)).size.height
     #expect(abs(nativeHeight - hosted.height) <= 0.5, "native \(nativeHeight) hosted \(hosted.height)")
+    if matchesSelfSizing {
+      #expect(abs(nativeHeight - hosted.selfSizedHeight) <= 0.5,
+        "native \(nativeHeight) hosted self-sized \(hosted.selfSizedHeight)")
+    }
     let frames = Self.nativeFrames(native)
     for name in Self.contentNames(state) {
       let expected = try #require(hosted.frames[name], "The hosted footer reported no \(name) frame")
@@ -297,6 +367,29 @@ struct FeedPaginationFooterCellTests {
       #expect(abs(actual.minY - expected.minY) <= 1, "\(name) y: native \(actual) hosted \(expected)")
       #expect(abs(actual.width - expected.width) <= 1, "\(name) width: native \(actual) hosted \(expected)")
       #expect(abs(actual.height - expected.height) <= 1, "\(name) height: native \(actual) hosted \(expected)")
+    }
+    return native
+  }
+
+  // MARK: Content Size Changes
+
+  @Test("A content size change after configuring resizes the spinner, the button and the cell")
+  func contentSizeChangeAfterConfigure() throws {
+    let fontManager = FontManager()
+    for state in [FeedPaginationFooterState.loading, .failed] {
+      let cell = nativeFooter(state, size: Self.sizes[0], fontManager: fontManager)
+      let largeHeight = cell.preferredLayoutAttributesFitting(attributes(width: Self.sizes[0].width)).size.height
+      let largeFrame = try #require(Self.nativeFrames(cell)[state == .loading ? "spinner" : "retry"])
+
+      cell.traitOverrides.preferredContentSizeCategory = .accessibilityExtraLarge
+      cell.updateTraitsIfNeeded()
+      let ax3Height = cell.preferredLayoutAttributesFitting(attributes(width: Self.sizes[0].width)).size.height
+      cell.frame.size.height = ax3Height
+      cell.layoutIfNeeded()
+      let ax3Frame = try #require(Self.nativeFrames(cell)[state == .loading ? "spinner" : "retry"])
+      #expect(ax3Height > largeHeight, "\(state): \(largeHeight) -> \(ax3Height)")
+      #expect(ax3Frame.height > largeFrame.height, "\(state): \(largeFrame) -> \(ax3Frame)")
+      #expect(abs(ax3Height - (ax3Frame.maxY + FeedPaginationFooterCell.verticalPadding)) < 0.001)
     }
   }
 
@@ -307,7 +400,7 @@ struct FeedPaginationFooterCellTests {
     var count = 0
   }
 
-  @Test("Tapping Try Again calls the retry closure exactly once")
+  @Test("Tapping Try Again, or activating it with VoiceOver, calls the retry closure exactly once")
   func retryRunsOnce() {
     let first = Counter()
     let second = Counter()
@@ -324,6 +417,13 @@ struct FeedPaginationFooterCellTests {
     retry.sendActions(for: .primaryActionTriggered)
     #expect(first.count == 1)
     #expect(second.count == 1)
+
+    // VoiceOver's double tap.
+    #expect(retry.accessibilityActivate())
+    #expect(second.count == 2)
+    #expect(retry.accessibilityActivate())
+    #expect(second.count == 3)
+    #expect(first.count == 1)
   }
 
   // MARK: Cost
@@ -359,6 +459,9 @@ struct FeedPaginationFooterCellTests {
     let client = await ATProtoClient(baseURL: try #require(URL(string: "https://footer-fonts.invalid")))
     let appState = AppState(userDID: "did:plc:footerfonts", client: client, regulatoryChecker: NoAgePrompt())
     defer { appState.cleanup() }
+    // Without a Dynamic Type limit the size scale always shows: at a system text size above the
+    // default limit, both sizes would be capped at the limit's size.
+    appState.fontManager.maxDynamicTypeSize = AppTextSizeLimit.fullSystemRange
     let host = try NativeFeedRowControllerHost(
       appState: appState, posts: [try FeedRowTestPosts.cachedPost(postKey: "footerfonts")])
     defer { host.tearDown() }

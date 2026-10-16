@@ -65,7 +65,7 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
   override init(frame: CGRect) {
     var configuration = UIButton.Configuration.bordered()
     configuration.title = Self.retryTitle
-    retryButton = UIButton(configuration: configuration)
+    retryButton = RetryButton(configuration: configuration)
     super.init(frame: frame)
     // A container: VoiceOver reads only the current state's elements (`accessibilityElements`).
     isAccessibilityElement = false
@@ -218,6 +218,9 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
     let paragraph = NSMutableParagraphStyle()
     paragraph.alignment = alignment
     paragraph.lineSpacing = lineSpacing
+    // `Text`'s line breaking: a last line is never left with a single word when a word can move
+    // down to it ("Couldn’t load / more posts."), which also sets the measured width.
+    paragraph.lineBreakStrategy = .standard
     return NSAttributedString(string: string, attributes: [
       .font: font, .kern: kerning, .paragraphStyle: paragraph, .foregroundColor: UIColor.secondaryLabel,
     ])
@@ -355,6 +358,17 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
 
   private static func pixelRound(_ value: CGFloat, scale: CGFloat) -> CGFloat {
     (value * scale).rounded() / scale
+  }
+}
+
+// MARK: - Retry Button
+
+/// "Try Again". VoiceOver's activation runs the retry directly, rather than through a tap
+/// synthesized at the button's activation point.
+private final class RetryButton: UIButton {
+  override func accessibilityActivate() -> Bool {
+    sendActions(for: .primaryActionTriggered)
+    return true
   }
 }
 #endif
