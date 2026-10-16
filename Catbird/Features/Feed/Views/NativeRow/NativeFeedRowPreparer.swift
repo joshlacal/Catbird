@@ -26,8 +26,9 @@ protocol NativeFeedRowPreparerDelegate: AnyObject {
 /// one batch at a time on a background thread, and what each post was prepared for.
 ///
 /// Results are applied only while they still hold:
-/// - a batch prepared for an earlier generation (other settings, typography or layout width; see
-///   `discardAll`) is dropped whole;
+/// - a batch prepared for an earlier generation is dropped whole. Every change that invalidates
+///   prepared rows starts a new generation (`discardAll`): settings, typography, another feed, and
+///   a new layout width (`prepare(_:width:)`), so the generation alone tells a stale batch;
 /// - a post that left the snapshot meanwhile is skipped;
 /// - a post whose content changed meanwhile is asked for again with its new content.
 ///
@@ -50,6 +51,10 @@ final class NativeFeedRowPreparer {
   private var width: CGFloat?
   /// Posts waiting to be prepared, in the order they were asked for.
   private var queue: [String] = []
+  /// Posts a batch asked for again (changed meanwhile, or not reached before a cancellation). They
+  /// are prepared before `queue` and never trimmed: a batch holds at most `batchSize` posts.
+  private var retries: [String] = []
+  /// The posts in `queue` and `retries`.
   private var queued: Set<String> = []
   /// The batch being prepared off the main actor.
   private var inFlight: (id: Int, postIDs: Set<String>)?
@@ -59,6 +64,8 @@ final class NativeFeedRowPreparer {
   /// What each post was last prepared for. A post with a stamp for its current signature, the
   /// current generation and the width asked for is not prepared again.
   private var stamps: [String: Stamp] = [:]
+  /// How many batches reached `finish`, whatever it kept of them.
+  private(set) var finishedBatchCountForTesting = 0
 
   init(run: @escaping Runner = { await NativeFeedRowPreparation.run($0) }) {
     self.run = run
@@ -90,6 +97,7 @@ final class NativeFeedRowPreparer {
     task = nil
     inFlight = nil
     queue.removeAll()
+    retries.removeAll()
     queued.removeAll()
     stamps.removeAll(keepingCapacity: true)
     generation &+= 1
@@ -102,9 +110,10 @@ final class NativeFeedRowPreparer {
     guard let delegate else { return }
     let isGone = { (postID: String) in delegate.preparationSignature(forPostID: postID) == nil }
     stamps = stamps.filter { !isGone($0.key) }
-    if queue.contains(where: isGone) {
+    if queue.contains(where: isGone) || retries.contains(where: isGone) {
       queue.removeAll(where: isGone)
-      queued = Set(queue)
+      retries.removeAll(where: isGone)
+      queued = Set(queue + retries)
     }
     guard let inFlight, inFlight.postIDs.contains(where: isGone) else { return }
     task?.cancel()
@@ -127,10 +136,16 @@ final class NativeFeedRowPreparer {
 
   // MARK: - Queue
 
-  private func enqueue(_ postIDs: [String], width: CGFloat) {
+  /// Queues the posts that need preparing. Retries go ahead of everything asked for and are not
+  /// trimmed; the oldest other requests are trimmed beyond `maximumQueued`.
+  private func enqueue(_ postIDs: [String], width: CGFloat, asRetries: Bool = false) {
     var added = false
     for postID in postIDs where needsPreparation(postID, width: width) && queued.insert(postID).inserted {
-      queue.append(postID)
+      if asRetries {
+        retries.append(postID)
+      } else {
+        queue.append(postID)
+      }
       added = true
     }
     guard added else { return }
@@ -153,7 +168,7 @@ final class NativeFeedRowPreparer {
   // MARK: - Batches
 
   private func startPreparing() {
-    guard task == nil, !queue.isEmpty else { return }
+    guard task == nil, !queue.isEmpty || !retries.isEmpty else { return }
     taskID &+= 1
     let id = taskID
     let run = self.run
@@ -176,12 +191,20 @@ final class NativeFeedRowPreparer {
   private func nextBatch() -> NativeFeedRowPreparation.Batch? {
     guard let delegate, let settings = delegate.preparationSettings, let width else {
       queue.removeAll()
+      retries.removeAll()
       queued.removeAll()
       return nil
     }
     var entries: [NativeFeedRowPreparation.Entry] = []
-    while !queue.isEmpty, entries.count < NativeFeedRowPreparation.batchSize {
-      let postID = queue.removeFirst()
+    while entries.count < NativeFeedRowPreparation.batchSize {
+      let postID: String
+      if !retries.isEmpty {
+        postID = retries.removeFirst()
+      } else if !queue.isEmpty {
+        postID = queue.removeFirst()
+      } else {
+        break
+      }
       queued.remove(postID)
       guard needsPreparation(postID, width: width),
         let signature = delegate.preparationSignature(forPostID: postID),
@@ -198,9 +221,10 @@ final class NativeFeedRowPreparer {
 
   /// Applies a batch's results that still hold.
   private func finish(_ batch: NativeFeedRowPreparation.Batch, prepared: [NativeFeedRowPreparation.Prepared]) {
+    finishedBatchCountForTesting += 1
     if inFlight?.id == batch.id { inFlight = nil }
-    // Prepared for other settings, typography or width.
-    guard batch.generation == generation, batch.width == width, let delegate else { return }
+    // Prepared for other settings, typography, width or feed.
+    guard batch.generation == generation, let delegate else { return }
     var askAgain: [String] = []
     for result in prepared {
       // Left the snapshot.
@@ -216,7 +240,7 @@ final class NativeFeedRowPreparer {
     // A cancelled batch stops before its last posts; those still in the snapshot are asked for again.
     let reached = Set(prepared.map(\.postID))
     askAgain += batch.entries.map(\.postID).filter { !reached.contains($0) }
-    if !askAgain.isEmpty { enqueue(askAgain, width: batch.width) }
+    if !askAgain.isEmpty { enqueue(askAgain, width: batch.width, asRetries: true) }
   }
 
   // MARK: - Stamps

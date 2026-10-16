@@ -30,8 +30,8 @@ private let coordinatorLogger = Logger(subsystem: "blue.catbird", category: "Nat
 ///   and belong to the main actor; they are cheap, and carrying them through the preparation would
 ///   only move their construction, not the label updates.
 ///
-/// `preparer` holds the preparation queue and batches; the coordinator is its source of posts and
-/// signatures and stores what it prepares.
+/// `preparer` holds the preparation queue and batches. `PreparationSource` answers it from this
+/// coordinator's snapshot and stores what it prepares.
 @MainActor
 final class NativeFeedRowCoordinator {
   /// How one post renders.
@@ -111,6 +111,8 @@ final class NativeFeedRowCoordinator {
 
   /// Prepares rows off the main actor ahead of display (`prepareRows`).
   let preparer: NativeFeedRowPreparer
+  /// The preparer's view of this coordinator's snapshot (`PreparationSource`).
+  private let preparationSource = PreparationSource()
   /// Each native post's time strings as last computed, by preparation or configuration.
   private var rowTimes: [String: NativeFeedRowPreparation.RowTime] = [:]
   /// How many decisions were made on the main actor, because no preparation had made them yet.
@@ -135,7 +137,8 @@ final class NativeFeedRowCoordinator {
     self.sceneContext = sceneContext
     layoutStore = FeedRowLayoutStore()
     preparer = NativeFeedRowPreparer(run: prepareBatch)
-    preparer.delegate = self
+    preparationSource.coordinator = self
+    preparer.delegate = preparationSource
   }
 
   isolated deinit {
@@ -683,31 +686,43 @@ final class NativeFeedRowCoordinator {
 
 // MARK: - Preparation Source
 
-extension NativeFeedRowCoordinator: NativeFeedRowPreparerDelegate {
-  var preparationSettings: Settings? { settings }
+extension NativeFeedRowCoordinator {
+  /// Answers the preparer from the coordinator's snapshot and stores what it prepares. A separate
+  /// object, so these calls are not part of the coordinator's own interface.
+  fileprivate final class PreparationSource: NativeFeedRowPreparerDelegate {
+    weak var coordinator: NativeFeedRowCoordinator?
 
-  func preparationSignature(forPostID postID: String) -> FeedPostContentSignature? {
-    posts[postID] == nil ? nil : signatures[postID]
-  }
+    var preparationSettings: Settings? { coordinator?.settings }
 
-  func preparationIsSettled(postID: String, signature: FeedPostContentSignature) -> Bool {
-    guard let entry = decisions[postID], entry.signature == signature, case .hosted = entry.decision else {
-      return false
+    func preparationSignature(forPostID postID: String) -> FeedPostContentSignature? {
+      guard let coordinator, coordinator.posts[postID] != nil else { return nil }
+      return coordinator.signatures[postID]
     }
-    return true
-  }
 
-  func preparationEntry(
-    forPostID postID: String, signature: FeedPostContentSignature
-  ) -> NativeFeedRowPreparation.Entry? {
-    guard let cached = posts[postID] else { return nil }
-    if let entry = decisions[postID], entry.signature == signature {
-      return .decided(postID: postID, signature: signature, decision: entry.decision)
+    func preparationIsSettled(postID: String, signature: FeedPostContentSignature) -> Bool {
+      guard let entry = coordinator?.decisions[postID], entry.signature == signature,
+        case .hosted = entry.decision
+      else { return false }
+      return true
     }
-    return .classify(postID: postID, signature: signature, source: NativeFeedRowSupport.Entry(cached))
+
+    func preparationEntry(
+      forPostID postID: String, signature: FeedPostContentSignature
+    ) -> NativeFeedRowPreparation.Entry? {
+      guard let coordinator, let cached = coordinator.posts[postID] else { return nil }
+      if let entry = coordinator.decisions[postID], entry.signature == signature {
+        return .decided(postID: postID, signature: signature, decision: entry.decision)
+      }
+      return .classify(postID: postID, signature: signature, source: NativeFeedRowSupport.Entry(cached))
+    }
+
+    func store(_ prepared: NativeFeedRowPreparation.Prepared) {
+      coordinator?.store(prepared)
+    }
   }
 
-  func store(_ prepared: NativeFeedRowPreparation.Prepared) {
+  /// Keeps a prepared post: its decision, layout and time strings.
+  fileprivate func store(_ prepared: NativeFeedRowPreparation.Prepared) {
     if decisions[prepared.postID]?.signature != prepared.signature {
       record(prepared.decision, forPostID: prepared.postID, signature: prepared.signature)
     }

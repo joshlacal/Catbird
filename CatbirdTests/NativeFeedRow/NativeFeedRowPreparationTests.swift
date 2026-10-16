@@ -287,7 +287,8 @@ struct NativeFeedRowPreparationTests {
     let kept = Array(posts.suffix(20))
     fixture.show(kept)
     await fixture.coordinator.preparer.waitForPreparationForTesting()
-    // The kept posts the cancelled batch held are prepared once they are asked for again.
+    // Kept posts the cancelled batch did not reach are asked for again by the batch itself when it
+    // returns, which can be after the wait above; the next window asks for them as well.
     fixture.coordinator.prepareRows(forPostIDs: kept.map(\.id), boundsWidth: 402)
     await fixture.coordinator.preparer.waitForPreparationForTesting()
     // Nothing was kept for the posts that left.
@@ -309,19 +310,18 @@ struct NativeFeedRowPreparationTests {
     try #require(gate.started >= count)
   }
 
-  /// Waits until `gate`'s first `count` batches returned and their preparation applied them on the
-  /// main actor.
-  private func waitUntilApplied(
-    _ gate: PreparationGate, count: Int, in coordinator: NativeFeedRowCoordinator
-  ) async throws {
+  /// Waits until the preparer has finished `count` batches (applied what still held of them) and
+  /// has nothing more to prepare.
+  private func waitUntilApplied(_ count: Int, in coordinator: NativeFeedRowCoordinator) async throws {
+    let preparer = coordinator.preparer
     let deadline = ContinuousClock.now + .seconds(5)
-    while gate.returned < count, ContinuousClock.now < deadline {
+    while preparer.finishedBatchCountForTesting < count, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(5))
     }
-    try #require(gate.returned >= count, "Only \(gate.returned) of \(count) batches were prepared")
-    // A returned batch is applied in its preparation's next main-actor turn.
-    try await Task.sleep(for: .milliseconds(100))
-    await coordinator.preparer.waitForPreparationForTesting()
+    try #require(
+      preparer.finishedBatchCountForTesting >= count,
+      "Only \(preparer.finishedBatchCountForTesting) of \(count) batches were finished")
+    await preparer.waitForPreparationForTesting()
   }
 
   @Test("A batch that returns after a typography change keeps none of its results")
@@ -336,14 +336,15 @@ struct NativeFeedRowPreparationTests {
 
     fixture.coordinator.invalidateLayouts()
     gate.open()
-    try await waitUntilApplied(gate, count: 1, in: fixture.coordinator)
+    try await waitUntilApplied(1, in: fixture.coordinator)
     // The batch ran to completion, so only the generation check keeps its results out.
     #expect(fixture.coordinator.layoutStore.cachedCount == 0)
     #expect(fixture.coordinator.decisionCounter.total == 0)
   }
 
+  /// A new width starts a new generation, so the generation check is what drops the batch.
   @Test("A batch that returns after a width change keeps none of its results")
-  func batchForAnotherWidthIsDropped() async throws {
+  func widthChangeDropsTheBatchInFlight() async throws {
     let gate = PreparationGate()
     let fixture = try await Fixture("nativerowguardwidth", prepareBatch: { await gate.run($0) })
     defer { fixture.tearDown() }
@@ -355,7 +356,7 @@ struct NativeFeedRowPreparationTests {
     fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 320)
     try await waitUntilStarted(gate, count: 2)
     gate.open()
-    try await waitUntilApplied(gate, count: 2, in: fixture.coordinator)
+    try await waitUntilApplied(2, in: fixture.coordinator)
     #expect(fixture.coordinator.layoutStore.cachedCount == posts.count)
     let computed = fixture.coordinator.layoutStore.computedOnCallCount
     for post in posts {
@@ -363,6 +364,52 @@ struct NativeFeedRowPreparationTests {
       #expect(try #require(fixture.coordinator.content(for: row, width: 320)).layout.width == 320)
     }
     #expect(fixture.coordinator.layoutStore.computedOnCallCount == computed)
+  }
+
+  @Test("A batch that returns after a snapshot removed some of its posts keeps only the posts still there")
+  func removedPostsOfAReturnedBatchAreSkipped() async throws {
+    let gate = PreparationGate()
+    let fixture = try await Fixture("nativerowguardremoved", prepareBatch: { await gate.run($0) })
+    defer { fixture.tearDown() }
+    let posts = try manyPosts(10, key: "guardremoved")
+    fixture.show(posts)
+    fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 402)
+    try await waitUntilStarted(gate, count: 1)
+
+    let kept = Array(posts.suffix(6))
+    fixture.show(kept)
+    gate.open()
+    try await waitUntilApplied(1, in: fixture.coordinator)
+    // The batch ran to completion, so only the snapshot check keeps the removed posts out.
+    #expect(fixture.coordinator.layoutStore.cachedCount == kept.count)
+    #expect(fixture.coordinator.decisionCounter.total == kept.count)
+    for post in kept {
+      try expectPrepared(post, in: fixture.coordinator)
+    }
+  }
+
+  @Test("Posts a cancelled batch did not reach are asked for again and prepared")
+  func unreachedPostsAreAskedForAgain() async throws {
+    // A cancelled batch returns after its first three posts.
+    let gate = PreparationGate(resultsWhenCancelled: 3)
+    let fixture = try await Fixture("nativerowguardunreached", prepareBatch: { await gate.run($0) })
+    defer { fixture.tearDown() }
+    let posts = try manyPosts(10, key: "guardunreached")
+    fixture.show(posts)
+    fixture.coordinator.prepareRows(forPostIDs: posts.map(\.id), boundsWidth: 402)
+    try await waitUntilStarted(gate, count: 1)
+
+    // Removing the first post cancels the batch; the other nine stay.
+    let kept = Array(posts.dropFirst())
+    fixture.show(kept)
+    gate.open()
+    try await waitUntilApplied(2, in: fixture.coordinator)
+    #expect(gate.started == 2)
+    #expect(fixture.coordinator.layoutStore.cachedCount == kept.count)
+    #expect(fixture.coordinator.decisionCounter.total == kept.count)
+    for post in kept {
+      try expectPrepared(post, in: fixture.coordinator)
+    }
   }
 
   @Test("A post whose counts change while its batch is prepared is prepared again for its new content")
@@ -381,15 +428,24 @@ struct NativeFeedRowPreparationTests {
     // Only the counts change; the post stays in the snapshot.
     fixture.show([after])
     gate.open()
-    try await waitUntilApplied(gate, count: 2, in: fixture.coordinator)
-    let row = try #require(fixture.coordinator.nativeRow(forPostID: after.id))
-    #expect(row.post.likeCount == 2)
-    #expect(fixture.coordinator.mainActorDecisionCount == 0)
+    try await waitUntilApplied(2, in: fixture.coordinator)
     // The decision for the old content was not kept.
     #expect(fixture.coordinator.decisionCounter.total == 1)
-    let computed = fixture.coordinator.layoutStore.computedOnCallCount
-    _ = try #require(fixture.coordinator.content(for: row, width: 402))
-    #expect(fixture.coordinator.layoutStore.computedOnCallCount == computed)
+    let row = try expectPrepared(after, in: fixture.coordinator)
+    #expect(row.post.likeCount == 2)
+  }
+
+  /// `post`'s row and its layout come from a preparation, with nothing built on the main actor.
+  @discardableResult
+  private func expectPrepared(
+    _ post: CachedFeedViewPost, in coordinator: NativeFeedRowCoordinator
+  ) throws -> NativeFeedRowCoordinator.Row {
+    let row = try #require(coordinator.nativeRow(forPostID: post.id))
+    #expect(coordinator.mainActorDecisionCount == 0)
+    let computed = coordinator.layoutStore.computedOnCallCount
+    _ = try #require(coordinator.content(for: row, width: 402))
+    #expect(coordinator.layoutStore.computedOnCallCount == computed)
+    return row
   }
 
   // MARK: - Time
@@ -456,24 +512,32 @@ struct NativeFeedRowPreparationTests {
     let minute: TimeInterval = 60
     let hour = 60 * minute
     let day = 24 * hour
-    // Every minute for two days, then every hour for more than two years; 7 s past each boundary,
-    // so the shown time is not on the edge of its bucket.
-    let ages = Array(stride(from: minute + 7, to: 2 * day, by: minute))
+    // Every 13 s for the first hour, so each minute bucket is sampled four or five times; then every
+    // minute up to two days, then every hour for more than two years. The minute and hour steps sit
+    // 7 s past each boundary; the 13 s steps are half a second off whole seconds.
+    let ages = Array(stride(from: minute + 0.5, to: hour, by: 13))
+      + Array(stride(from: hour + 7, to: 2 * day, by: minute))
       + Array(stride(from: 2 * day + 7, to: 800 * day, by: hour))
     var previous: (age: TimeInterval, shown: String, spoken: String)?
     var buckets = Set<String>()
+    var minuteBucketPairs = 0
     for age in ages {
       let now = Date()
       let date = now.addingTimeInterval(-age)
       let shown = shortTimeAgoString(from: date)
       let spoken = formatter.localizedString(for: date, relativeTo: now)
-      if let previous, previous.shown == shown, previous.spoken != spoken {
-        Issue.record(
-          "\(localeIdentifier): \(previous.age) s and \(age) s both show \(shown) but read \(previous.spoken) and \(spoken)")
+      if let previous, previous.shown == shown {
+        if age < hour { minuteBucketPairs += 1 }
+        if previous.spoken != spoken {
+          Issue.record(
+            "\(localeIdentifier): \(previous.age) s and \(age) s both show \(shown) but read \(previous.spoken) and \(spoken)")
+        }
       }
       buckets.insert(shown)
       previous = (age, shown, spoken)
     }
+    // Inside the minute buckets, pairs such as 1m05s and 1m50s were compared.
+    #expect(minuteBucketPairs > 100)
     // The sweep went through every kind of bucket.
     for bucket in ["1m", "59m", "1h", "23h", "1d", "29d", "1mo", "11mo", "1y", "2y"] {
       #expect(buckets.contains(bucket))
@@ -659,7 +723,8 @@ struct NativeFeedRowPreparationTests {
 
 /// Prepares batches only once it is opened, so a test can change the snapshot while a batch is in
 /// flight. A batch runs to completion even if its preparation was cancelled meanwhile, as one that
-/// finished just as its preparation went stale.
+/// finished just as its preparation went stale, unless `resultsWhenCancelled` is set: a cancelled
+/// batch then returns only its first posts, as a batch that stopped partway.
 private final class PreparationGate: Sendable {
   private struct State {
     var isOpen = false
@@ -669,6 +734,11 @@ private final class PreparationGate: Sendable {
   }
 
   private let state = Mutex(State())
+  private let resultsWhenCancelled: Int?
+
+  init(resultsWhenCancelled: Int? = nil) {
+    self.resultsWhenCancelled = resultsWhenCancelled
+  }
 
   var started: Int { state.withLock { $0.started } }
   var returned: Int { state.withLock { $0.returned } }
@@ -693,6 +763,7 @@ private final class PreparationGate: Sendable {
     }
     let prepared = await Task.detached { NativeFeedRowPreparation.prepare(batch) }.value
     state.withLock { $0.returned += 1 }
+    if Task.isCancelled, let resultsWhenCancelled { return Array(prepared.prefix(resultsWhenCancelled)) }
     return prepared
   }
 }
