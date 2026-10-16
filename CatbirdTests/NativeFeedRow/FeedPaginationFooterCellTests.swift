@@ -290,6 +290,38 @@ struct FeedPaginationFooterCellTests {
     #expect(elements.map(\.traits) == hosted.map(\.traits))
   }
 
+  @Test("Tight exposes each message once and retry receives taps and accessibility activation")
+  func tightAccessibilityAndRetry() async throws {
+    let restore = AppAccessibility.enable()
+    defer { restore() }
+    let window = try makeWindow()
+    defer { window.isHidden = true }
+    let manager = FontManager()
+    manager.lineSpacing = "tight"
+    for state in [FeedPaginationFooterState.failed, .end] {
+      let count = Counter()
+      let cell = nativeFooter(state, size: Self.sizes[0], fontManager: manager) { count.count += 1 }
+      window.addSubview(cell)
+      cell.frame.origin.y = Self.cellY
+      cell.layoutIfNeeded()
+      defer { cell.removeFromSuperview() }
+      var elements: [AppAccessibility.Element] = []
+      for _ in 0..<50 {
+        elements = AppAccessibility.elements(in: cell)
+        if elements.count == Self.contentNames(state).count, elements.allSatisfy({ $0.label != nil }) { break }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let labels = state == .failed ? ["Couldn’t load more posts.", "Try Again"] : ["You’re all caught up"]
+      #expect(elements.map(\.label) == labels)
+      if state == .failed {
+        let retry = cell.retryButtonForTesting
+        #expect(cell.hitTest(CGPoint(x: retry.frame.midX, y: retry.frame.midY), with: nil) === retry)
+        #expect(retry.accessibilityActivate())
+        #expect(count.count == 1)
+      }
+    }
+  }
+
   // MARK: Height Parity
 
   @Test("The cell is as tall as the hosted footer, with its content in the same place", arguments: states, sizes)
@@ -315,6 +347,7 @@ struct FeedPaginationFooterCellTests {
     WrappedText(state: .failed, width: 150, lineSpacing: "relaxed", fullTypeRange: false),
     WrappedText(state: .failed, width: 150, lineSpacing: "tight", fullTypeRange: false),
     WrappedText(state: .failed, width: 120, lineSpacing: "relaxed", fullTypeRange: true),
+    WrappedText(state: .end, width: 100, lineSpacing: "tight", fullTypeRange: false),
     WrappedText(state: .end, width: 100, lineSpacing: "normal", fullTypeRange: false),
     WrappedText(state: .end, width: 100, lineSpacing: "relaxed", fullTypeRange: true),
   ]
@@ -369,6 +402,83 @@ struct FeedPaginationFooterCellTests {
       #expect(abs(actual.height - expected.height) <= 1, "\(name) height: native \(actual) hosted \(expected)")
     }
     return native
+  }
+
+  // MARK: Text Drawing
+
+  /// Geometry alone cannot catch a missing first-baseline correction. Compare the actual label's
+  /// ink with the same SwiftUI text, including the last line's descenders, without a retry button.
+  @Test("Footer text draws on the hosted baselines at every line spacing", arguments: ["tight", "normal", "relaxed"])
+  func textInkParity(lineSpacing: String) throws {
+    let window = try makeWindow()
+    defer { window.isHidden = true }
+    let fontManager = FontManager()
+    fontManager.lineSpacing = lineSpacing
+    let scale: CGFloat = 3
+    for state in [FeedPaginationFooterState.failed, .end] {
+      let size = Size(contentSize: .large, width: state == .failed ? 150 : 100)
+      let native = nativeFooter(state, size: size, fontManager: fontManager)
+      native.overrideUserInterfaceStyle = .light
+      window.addSubview(native)
+      native.frame.origin.y = Self.cellY
+      native.layoutIfNeeded()
+      defer { native.removeFromSuperview() }
+      let label = try #require(state == .failed ? native.failureLabelForTesting : native.endLabelForTesting)
+      let text = state == .failed ? "Couldn’t load more posts." : "You’re all caught up"
+      let role: AppTextRole = state == .failed ? .subheadline : .footnote
+      let renderer = ImageRenderer(content:
+        Text(text).appFont(role).foregroundStyle(.secondary)
+          .multilineTextAlignment(state == .failed ? .center : .leading)
+          .frame(width: size.width).padding(.vertical, 24).background(Color.white)
+          .environment(\.fontManager, fontManager)
+          .environment(\.dynamicTypeSize, .large)
+          .environment(\.colorScheme, .light))
+      renderer.scale = scale
+      let hostedImage = try #require(renderer.cgImage)
+      let hosted = try RenderedPixels(image: hostedImage, scale: scale)
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = scale
+      format.opaque = true
+      let nativeImage = UIGraphicsImageRenderer(size: native.bounds.size, format: format).image { context in
+        UIColor.white.setFill()
+        context.fill(native.bounds)
+        native.layer.render(in: context.cgContext)
+      }
+      let drawn = try RenderedPixels(image: try #require(nativeImage.cgImage), scale: scale)
+      let limit = state == .failed ? native.retryButtonForTesting.frame.minY : native.bounds.height
+      let actual = drawn.inkRows(threshold: 230).filter { CGFloat($0.lowerBound) < limit * scale }
+      let expected = hosted.inkRows(threshold: 230)
+      #expect(actual.count == expected.count, "\(state) \(lineSpacing): native \(actual), hosted \(expected)")
+      for (nativeBand, hostedBand) in zip(actual, expected) {
+        #expect(abs(nativeBand.lowerBound - hostedBand.lowerBound) <= 1,
+          "\(state) \(lineSpacing): native \(nativeBand), hosted \(hostedBand)")
+        #expect(abs(nativeBand.upperBound - hostedBand.upperBound) <= 1,
+          "\(state) \(lineSpacing): native \(nativeBand), hosted \(hostedBand)")
+      }
+      #expect(abs(label.frame.minY - 24) < 0.001)
+      Attachment.record(Array(try #require(nativeImage.pngData())), named: "footer-\(state)-\(lineSpacing)-native.png")
+      let hostedPNG = UIImage(cgImage: hostedImage, scale: scale, orientation: .up).pngData()
+      Attachment.record(Array(try #require(hostedPNG)), named: "footer-\(state)-\(lineSpacing)-hosted.png")
+    }
+  }
+
+  @Test("A reused footer updates Tight and restores Normal and Relaxed geometry")
+  func lineSpacingChangeReconfiguresText() throws {
+    for state in [FeedPaginationFooterState.failed, .end] {
+      let manager = FontManager()
+      let size = Size(contentSize: .large, width: state == .failed ? 150 : 100)
+      let cell = nativeFooter(state, size: size, fontManager: manager)
+      let normal = cell.bounds.height
+      var heights: [String: CGFloat] = [:]
+      for spacing in ["tight", "relaxed", "normal"] {
+        manager.lineSpacing = spacing
+        cell.configure(state: state, fontManager: manager, onRetry: {})
+        heights[spacing] = cell.preferredLayoutAttributesFitting(attributes(width: size.width)).size.height
+      }
+      #expect(try #require(heights["tight"]) < normal)
+      #expect(try #require(heights["relaxed"]) > normal)
+      #expect(heights["normal"] == normal)
+    }
   }
 
   // MARK: Content Size Changes
