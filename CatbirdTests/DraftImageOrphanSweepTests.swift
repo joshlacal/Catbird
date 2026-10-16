@@ -144,7 +144,72 @@ struct DraftImageOrphanSweepTests {
     #expect(report.removed == 1 && report.skippedByDate == 1)
   }
 
+  @Test("Content-hash reuse preserves the original birth across a row-loss fence")
+  func reusePreservesBirthProtection() async throws {
+    let sandbox = try DraftPhotoSandbox()
+    defer { sandbox.remove() }
+    let now = Date()
+    let data = Data("isolated draft safety image".utf8)
+    let first = try #require(CodableMediaItem.writeImageData(data, directory: sandbox.directory))
+    let file = try #require(URL(string: first.urlString))
+    let birth = now.addingTimeInterval(-40 * Self.day)
+    try FileManager.default.setAttributes([.creationDate: birth, .modificationDate: birth], ofItemAtPath: file.path)
+    let reused = try #require(CodableMediaItem.writeImageData(data, directory: sandbox.directory))
+    #expect(!reused.created)
+    let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+    #expect((attributes[.creationDate] as? Date).map { abs($0.timeIntervalSince(birth)) < 1 } == true)
+    #expect((attributes[.modificationDate] as? Date).map { abs($0.timeIntervalSince(now)) < 60 } == true)
+    let report = await sandbox.sweep(storeResetDate: now.addingTimeInterval(-30 * Self.day))
+      .run(now: now.addingTimeInterval(8 * Self.day))
+    #expect(DraftPhotoSandbox.exists(file))
+    #expect(report.removed == 0)
+  }
+
   // MARK: Stopping
+
+  @Test("Reusing a pre-reset photo cannot erase its lost-row protection")
+  func reuseDoesNotCrossLostRowFence() async throws {
+    let sandbox = try DraftPhotoSandbox()
+    defer { sandbox.remove() }
+    let now = Date()
+    let birth = now.addingTimeInterval(-40 * Self.day)
+    let reset = now.addingTimeInterval(-30 * Self.day)
+    let file = try sandbox.managedFile(modifiedAt: birth)
+    try FileManager.default.setAttributes([.creationDate: birth], ofItemAtPath: file.path)
+    // Another composition reuses this content hash after the row was quarantined, then ends.
+    // Seven days later mtime is old again, but the absent account's remote row still names it.
+    try DraftPhotoSandbox.setModified(file, to: now.addingTimeInterval(-8 * Self.day))
+
+    let report = await sandbox.sweep(storeResetDate: reset).run(now: now)
+
+    #expect(DraftPhotoSandbox.exists(file), "a later reuse must not make the original lost row's photo eligible")
+    #expect(report.removed == 0)
+  }
+
+  @Test("A batch rechecks first-write protection immediately before unlink")
+  func birthFenceRecheckedBeforeUnlink() async throws {
+    let sandbox = try DraftPhotoSandbox()
+    defer { sandbox.remove() }
+    let now = Date()
+    let reset = now.addingTimeInterval(-30 * Self.day)
+    let file = try sandbox.managedFile(modifiedAt: now.addingTimeInterval(-8 * Self.day))
+    try FileManager.default.setAttributes(
+      [.creationDate: now.addingTimeInterval(-20 * Self.day)], ofItemAtPath: file.path
+    )
+    let sweep = sandbox.sweep(storeResetDate: reset, interruption: {
+      // Discovery's metadata must not authorize deletion of a file now carrying old birth
+      // provenance (for example a recovered file replaced at the same content-hash path).
+      try? FileManager.default.setAttributes(
+        [.creationDate: now.addingTimeInterval(-40 * Self.day)], ofItemAtPath: file.path
+      )
+      return nil
+    })
+
+    let report = await sweep.run(now: now)
+
+    #expect(DraftPhotoSandbox.exists(file))
+    #expect(report.removed == 0 && report.skippedByDate == 1)
+  }
 
   @Test("A store that cannot be read stops the run and keeps every file")
   func unreadableStoreStops() async throws {

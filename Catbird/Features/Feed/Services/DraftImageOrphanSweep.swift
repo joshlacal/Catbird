@@ -70,7 +70,7 @@ enum DraftImageOrphanSweepGate {
 /// when its task is cancelled (background time ran out), when `interruption` names a reason (a
 /// draft sync started, the app came back to the foreground), or when a store cannot be read.
 ///
-/// Files last used before the newest store quarantine or reset are never taken: the rows that
+/// Files first written before the newest store quarantine or reset are never taken: the rows that
 /// named them may still come back, from the quarantined store or as Bluesky drafts re-imported
 /// into the new store, and the app cannot read either ahead of time.
 @MainActor
@@ -107,6 +107,7 @@ struct DraftImageOrphanSweep {
   struct Discovery: Equatable, Sendable {
     var candidates: [URL]
     var eligible: Range<Date>?
+    var createdAfter: Date? = nil
   }
 
   enum DiscoveryError: Error, Equatable {
@@ -165,7 +166,9 @@ struct DraftImageOrphanSweep {
       }
       let end = min(start + batchSize, discovery.candidates.endIndex)
       let batch = Set(discovery.candidates[start..<end].map(\.absoluteString))
-      let outcome = janitor().removeUnreferenced(batch, eligibleModificationDates: discovery.eligible)
+      let outcome = janitor().removeUnreferenced(
+        batch, eligibleModificationDates: discovery.eligible, createdAfter: discovery.createdAfter
+      )
       if outcome.cancelled {
         report.stopReason = .storeUnreadable
         break
@@ -182,8 +185,10 @@ struct DraftImageOrphanSweep {
   }
 
   /// Lists the managed files directly in `directory` last modified at least `minimumUnusedAge`
-  /// before `now` and after the newest quarantine or store reset. A missing folder has nothing
-  /// to list; one that cannot be read throws.
+  /// before `now`, first written after the newest quarantine or store reset. Birth provenance
+  /// is separate from inactivity: reusing a hash refreshes mtime without releasing protection
+  /// for the original lost row. Unknown birth dates stay protected whenever a fence exists.
+  /// A missing folder has nothing to list; one that cannot be read throws.
   nonisolated static func discover(
     directory: URL,
     quarantineDirectory: URL?,
@@ -199,7 +204,7 @@ struct DraftImageOrphanSweep {
     guard lower < upper else { return Discovery(candidates: [], eligible: nil) }
     let eligible = lower..<upper
 
-    let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey]
+    let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey, .creationDateKey]
     let entries: [URL]
     do {
       entries = try fileManager.contentsOfDirectory(
@@ -218,10 +223,13 @@ struct DraftImageOrphanSweep {
             values.isRegularFile == true,
             let modified = values.contentModificationDate,
             eligible.contains(modified) else { continue }
+      if let fence {
+        guard let created = values.creationDate, created > fence else { continue }
+      }
       dated.append((url, modified))
     }
     dated.sort { $0.modified < $1.modified }
-    return Discovery(candidates: dated.map(\.url), eligible: eligible)
+    return Discovery(candidates: dated.map(\.url), eligible: eligible, createdAfter: fence)
   }
 
   /// The creation date of the newest quarantined store, or nil when there is none.

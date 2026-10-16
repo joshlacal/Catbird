@@ -27,7 +27,7 @@ struct DraftImageFileJanitor {
     var kept: Set<String> = []
     /// Not a managed draft photo in the draft folder; never touched.
     var ignored: Set<String> = []
-    /// Named by nothing, but modified outside the window the caller allowed; never touched.
+    /// Named by nothing, but recent or protected by lost-row birth provenance; never touched.
     var skippedByDate: Set<String> = []
     /// The total size of the removed files.
     var removedBytes: Int64 = 0
@@ -46,9 +46,11 @@ struct DraftImageFileJanitor {
 
   /// Removes the files in `urlStrings` that nothing names. With `eligibleModificationDates`, a
   /// file is removed only while its modification date, read right before the unlink, lies in
-  /// that range, so a file reused since the caller listed it stays.
+  /// that range, so a file reused since the caller listed it stays. With `createdAfter`, the
+  /// file must also have known birth provenance after that fence; reuse cannot change it.
   func removeUnreferenced(
-    _ urlStrings: Set<String>, eligibleModificationDates: Range<Date>? = nil
+    _ urlStrings: Set<String>, eligibleModificationDates: Range<Date>? = nil,
+    createdAfter: Date? = nil
   ) -> Outcome {
     var outcome = Outcome()
     guard !urlStrings.isEmpty else { return outcome }
@@ -85,7 +87,8 @@ struct DraftImageFileJanitor {
       if referenced.contains(candidate.url.lastPathComponent) {
         outcome.kept.insert(candidate.urlString)
       } else {
-        remove(candidate, eligibleModificationDates: eligibleModificationDates, into: &outcome)
+        remove(candidate, eligibleModificationDates: eligibleModificationDates,
+               createdAfter: createdAfter, into: &outcome)
       }
     }
     Self.logger.info("Draft photo cleanup removed \(outcome.removed.count) (\(outcome.removedBytes) bytes), kept \(outcome.kept.count) still named elsewhere, \(outcome.skippedByDate.count) used since listed")
@@ -96,10 +99,17 @@ struct DraftImageFileJanitor {
   private func remove(
     _ candidate: (urlString: String, url: URL),
     eligibleModificationDates: Range<Date>?,
+    createdAfter: Date?,
     into outcome: inout Outcome
   ) {
     // Gone already when this fails.
     guard let attributes = try? fileManager.attributesOfItem(atPath: candidate.url.path) else { return }
+    if let createdAfter {
+      guard let created = attributes[.creationDate] as? Date, created > createdAfter else {
+        outcome.skippedByDate.insert(candidate.urlString)
+        return
+      }
+    }
     if let eligibleModificationDates {
       guard let modified = attributes[.modificationDate] as? Date,
             eligibleModificationDates.contains(modified) else {
