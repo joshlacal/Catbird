@@ -7,7 +7,7 @@ import UIKit
 import UniformTypeIdentifiers
 @testable import Catbird
 
-@Suite("Composer image preparation")
+@Suite("Composer image preparation", .serialized)
 struct ComposerImagePreparationTests {
   // MARK: - Fixtures
 
