@@ -870,32 +870,11 @@ import os
           content: self.trendingContent, appState: self.stateManager.appState, sceneContext: self.sceneContext))
       }
 
-      // Registration for the pagination footer
-      let footerRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
-        [weak self] cell, indexPath, _ in
-        guard let self = self else {
-          cell.contentConfiguration = nil
-          return
-        }
-        let appState = self.stateManager.appState
-        cell.layoutMargins = .zero
-        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
-        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-        cell.selectedBackgroundView = nil
-
-        let state = self.currentFooterState
-        cell.contentConfiguration = UIHostingConfiguration {
-          FeedPaginationFooterView(state: state) { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-              await self.stateManager.loadMore()
-            }
-          }
-          .applyAppStateEnvironment(appState)
-          .environment(\.fontManager, appState.fontManager)
-        }
-        .margins(.all, 0)
-      }
+      // The pagination footer: a native cell, since a hosted SwiftUI footer costs more than a 120 Hz
+      // frame the first time it scrolls in, at every pagination boundary. It is registered by reuse
+      // identifier (`FeedPaginationFooterCell.reuseIdentifier` explains why).
+      collectionView.register(
+        FeedPaginationFooterCell.self, forCellWithReuseIdentifier: FeedPaginationFooterCell.reuseIdentifier)
 
       dataSource = UICollectionViewDiffableDataSource<Section, Item>(
         collectionView: collectionView
@@ -917,8 +896,12 @@ import os
           return collectionView.dequeueConfiguredReusableCell(
             using: postRegistration, for: indexPath, item: id)
         case .footer:
-          return collectionView.dequeueConfiguredReusableCell(
-            using: footerRegistration, for: indexPath, item: ())
+          let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: FeedPaginationFooterCell.reuseIdentifier, for: indexPath)
+          if let footer = cell as? FeedPaginationFooterCell {
+            self?.configureFooterCell(footer)
+          }
+          return cell
         }
       }
       // Defensive: provide a no-op supplementary provider to satisfy any unexpected requests
@@ -1799,6 +1782,15 @@ import os
       }
     }
 
+    private func configureFooterCell(_ cell: FeedPaginationFooterCell) {
+      cell.configure(state: currentFooterState, fontManager: stateManager.appState.fontManager) { [weak self] in
+        guard let self else { return }
+        Task { @MainActor in
+          await self.stateManager.loadMore()
+        }
+      }
+    }
+
     /// What the end of a non-empty feed shows: a spinner while more pages may load,
     /// a retry after a failed page, or a quiet end-of-feed line.
     private var currentFooterState: FeedPaginationFooterState {
@@ -1847,36 +1839,6 @@ import os
     case loading
     case failed
     case end
-  }
-
-  struct FeedPaginationFooterView: View {
-    let state: FeedPaginationFooterState
-    let onRetry: () -> Void
-
-    var body: some View {
-      Group {
-        switch state {
-        case .loading:
-          ProgressView()
-            .accessibilityLabel("Loading more posts")
-        case .failed:
-          VStack(spacing: 8) {
-            Text("Couldn’t load more posts.")
-              .appFont(AppTextRole.subheadline)
-              .foregroundStyle(Color.secondary)
-              .multilineTextAlignment(.center)
-            Button("Try Again", action: onRetry)
-              .buttonStyle(.bordered)
-          }
-        case .end:
-          Text("You’re all caught up")
-            .appFont(AppTextRole.footnote)
-            .foregroundStyle(Color.secondary)
-        }
-      }
-      .frame(maxWidth: .infinity)
-      .padding(.vertical, 24)
-    }
   }
 
 #else
