@@ -1,10 +1,24 @@
 import SwiftUI
+import SwiftData
+#if canImport(SafariServices)
+import SafariServices
+#endif
+
+struct IdentifiableURL: Identifiable {
+  let id = UUID()
+  let url: URL
+}
 
 struct AccountDeletionSheet: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @Environment(\.openURL) private var openURL
+  @Environment(\.modelContext) private var modelContext
   @State private var flow: AccountDeletionFlow
+  @State private var inAppBrowserURL: IdentifiableURL?
+  @State private var confirmingDataErasure = false
+  @State private var isErasingData = false
+  @State private var erasureError: String?
 
   init(target: AccountDeletionTarget) {
     _flow = State(initialValue: AccountDeletionFlow(target: target))
@@ -72,6 +86,32 @@ struct AccountDeletionSheet: View {
           Text("If the website is signed in to a different account, switch accounts there first. Opening this page does not change or delete an account.")
         }
 
+        Section {
+          Button(role: .destructive) {
+            confirmingDataErasure = true
+          } label: {
+            HStack {
+              Text("Erase Catbird Data & Sign Out")
+              Spacer()
+              if isErasingData {
+                ProgressView()
+              }
+            }
+          }
+          .disabled(isErasingData || !isCurrentAccount)
+          .accessibilityIdentifier("AccountDeletion.EraseData")
+
+          if let erasureError {
+            Text(erasureError)
+              .appFont(AppTextRole.footnote)
+              .foregroundStyle(.red)
+          }
+        } header: {
+          Text("Catbird Data")
+        } footer: {
+          Text("Erase all data held by Catbird for this account, including gateway sessions, push notification registrations, draft posts, and local settings on this device.")
+        }
+
         if let privacyURL = LegalConfig.privacyPolicyURL {
           Section {
             Link("Catbird Privacy Policy", destination: privacyURL)
@@ -80,7 +120,7 @@ struct AccountDeletionSheet: View {
           }
         }
       }
-      .navigationTitle(flow.target.purpose == .manageAccount ? "Hosted Account" : "Account Deletion Options")
+      .navigationTitle(flow.target.purpose == .manageAccount ? "Hosted Account" : "Delete Account")
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
       #endif
@@ -92,6 +132,19 @@ struct AccountDeletionSheet: View {
           }
           .accessibilityIdentifier("AccountDeletion.Cancel")
         }
+      }
+      #if os(iOS)
+      .sheet(item: $inAppBrowserURL) { item in
+        SafariView(url: item.url)
+      }
+      #endif
+      .confirmationDialog("Erase Catbird Data & Sign Out?", isPresented: $confirmingDataErasure, titleVisibility: .visible) {
+        Button("Erase All Data & Sign Out", role: .destructive) {
+          eraseAccountData()
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("This will revoke your gateway session, unregister push notifications, remove all drafts and local settings for this account on this device, and sign you out.")
       }
       .task {
         await resolveAccountPage()
@@ -130,12 +183,15 @@ struct AccountDeletionSheet: View {
     guard let destination = flow.destination else {
       return flow.isResolvingDestination ? "Finding Your Account Provider…" : "Provider Website Unavailable"
     }
+    if flow.target.purpose == .deletionOptions {
+      return destination.kind == .accountSettings ? "Continue Account Deletion" : "Open Hosting Provider Website"
+    }
     return destination.kind == .accountSettings ? "Open Account Settings" : "Open Hosting Provider Website"
   }
 
   private var handoffExplanation: String {
     if flow.target.purpose == .deletionOptions {
-      return "Catbird can’t delete your hosted account directly. Open your provider’s website and look for its account-deletion instructions."
+      return "Catbird can’t delete your hosted account directly. Open your provider’s website to complete deletion of your account and hosted data."
     }
     if flow.destination?.kind == .providerWebsite {
       return "Open your hosting provider’s website and look for account settings to manage your handle, email, or sign-in options."
@@ -180,7 +236,11 @@ struct AccountDeletionSheet: View {
         guard SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
           throw CancellationError()
         }
-        return await AccountManagementPageResolver().destination(forPDS: pdsURL)
+        return await AccountManagementPageResolver().destination(
+          forPDS: pdsURL,
+          accountHandle: target.handle,
+          userDID: target.did
+        )
       }
       guard !Task.isCancelled else { return }
       flow.resolveDestination(destination, currentDID: appState.userDID, currentRevision: accountRevision)
@@ -193,8 +253,62 @@ struct AccountDeletionSheet: View {
   private func openAccountPage() {
     guard isCurrentAccount,
           let attempt = flow.prepareToOpen(currentDID: appState.userDID, currentRevision: accountRevision) else { return }
+    #if os(iOS)
+    inAppBrowserURL = IdentifiableURL(url: attempt.url)
+    flow.finishOpening(attempt.id, accepted: true, currentDID: appState.userDID, currentRevision: accountRevision)
+    #else
     openURL(attempt.url) { accepted in
       flow.finishOpening(attempt.id, accepted: accepted, currentDID: appState.userDID, currentRevision: accountRevision)
     }
+    #endif
+  }
+
+  private func eraseAccountData() {
+    guard isCurrentAccount, !isErasingData else { return }
+    isErasingData = true
+    let did = flow.target.did
+    Task { @MainActor in
+      do {
+        try await AccountDeletionCoordinator.eraseCatbirdData(forDID: did, modelContext: modelContext)
+        dismiss()
+      } catch {
+        erasureError = error.localizedDescription
+        isErasingData = false
+      }
+    }
   }
 }
+
+#if os(iOS)
+struct SafariView: UIViewControllerRepresentable {
+  let url: URL
+  var onDismiss: (() -> Void)? = nil
+
+  func makeUIViewController(context: Context) -> SFSafariViewController {
+    let configuration = SFSafariViewController.Configuration()
+    configuration.entersReaderIfAvailable = false
+    let controller = SFSafariViewController(url: url, configuration: configuration)
+    controller.dismissButtonStyle = .close
+    controller.delegate = context.coordinator
+    return controller
+  }
+
+  func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(onDismiss: onDismiss)
+  }
+
+  final class Coordinator: NSObject, SFSafariViewControllerDelegate {
+    let onDismiss: (() -> Void)?
+
+    init(onDismiss: (() -> Void)?) {
+      self.onDismiss = onDismiss
+    }
+
+    func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
+      onDismiss?()
+    }
+  }
+}
+#endif

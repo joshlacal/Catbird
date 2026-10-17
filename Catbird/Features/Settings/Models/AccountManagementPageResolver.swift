@@ -2,9 +2,11 @@ import Foundation
 
 /// Resolves a read-only web handoff, never a deletion request.
 /// ATProto metadata identifies the OAuth issuer but defines no account-management URL.
-/// Only the known Bluesky provider has an explicitly supported account-page convention.
+/// Supports reference ATProto providers (bsky.social, self-hosted reference PDS, Swan)
+/// and probes `/account` support using HTTP navigation headers.
 struct AccountManagementPageResolver: Sendable {
   typealias Fetch = @Sendable (URL) async throws -> Data
+  typealias Probe = @Sendable (URLRequest) async -> Bool
 
   struct Destination: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
@@ -18,35 +20,97 @@ struct AccountManagementPageResolver: Sendable {
   static let requestTimeout: TimeInterval = 8
 
   private let fetch: Fetch
+  private let probe: Probe
 
-  init(fetch: @escaping Fetch = AccountManagementPageResolver.fetchOverNetwork) {
+  init(
+    fetch: @escaping Fetch = AccountManagementPageResolver.fetchOverNetwork,
+    probe: @escaping Probe = AccountManagementPageResolver.probeOverNetwork
+  ) {
     self.fetch = fetch
+    self.probe = probe
   }
 
-  /// Unknown providers open their PDS website, without guessing an account or deletion route.
-  /// Missing or invalid PDS information produces no destination.
-  func destination(forPDS pdsURL: URL?) async -> Destination? {
+  /// Discovers authoritative OAuth issuer from PDS metadata and probes /account support.
+  /// Falls back safely to the provider website root if /account fails.
+  func destination(
+    forPDS pdsURL: URL?,
+    accountHandle: String? = nil,
+    userDID: String? = nil
+  ) async -> Destination? {
     guard let pdsURL, let pdsOrigin = Self.origin(of: pdsURL) else { return nil }
-    if Self.isKnownBlueskyOrigin(pdsOrigin) {
-      return Destination(url: pdsOrigin.appendingPathComponent("account"), kind: .accountSettings)
-    }
     let website = Destination(url: pdsOrigin, kind: .providerWebsite)
-    let metadataURL = pdsOrigin.appendingPathComponent(".well-known/oauth-protected-resource")
-    do {
-      let data = try await fetch(metadataURL)
-      try Task.checkCancellation()
-      guard let issuer = Self.issuerOrigin(fromProtectedResourceMetadata: data, expectedResource: pdsOrigin),
-            Self.isKnownBlueskyOrigin(issuer) else { return website }
-      // A separate entryway must identify itself as the issuer selected by this PDS.
-      let issuerData = try await fetch(issuer.appendingPathComponent(".well-known/oauth-authorization-server"))
-      try Task.checkCancellation()
-      guard let metadata = try? JSONDecoder().decode(AuthorizationServerMetadata.self, from: issuerData),
-            let declaredIssuer = URL(string: metadata.issuer),
-            Self.origin(of: declaredIssuer) == issuer else { return website }
-      return Destination(url: issuer.appendingPathComponent("account"), kind: .accountSettings)
-    } catch {
-      return Task.isCancelled ? nil : website
+    let loginHint = (accountHandle?.isEmpty == false ? accountHandle : userDID)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    var targetOrigin: URL?
+    if Self.isKnownBlueskyOrigin(pdsOrigin) {
+      targetOrigin = pdsOrigin
+    } else {
+      let metadataURL = pdsOrigin.appendingPathComponent(".well-known/oauth-protected-resource")
+      do {
+        let data = try await fetch(metadataURL)
+        try Task.checkCancellation()
+        guard let issuer = Self.issuerOrigin(fromProtectedResourceMetadata: data, expectedResource: pdsOrigin) else {
+          return website
+        }
+        if issuer == pdsOrigin {
+          // Self-hosted reference PDS (acts as its own authorization server)
+          targetOrigin = pdsOrigin
+        } else if Self.isKnownBlueskyOrigin(issuer) || Self.isKnownSwanOrigin(issuer) {
+          // A separate reference entryway must identify itself as the issuer selected by this PDS.
+          let issuerData = try await fetch(issuer.appendingPathComponent(".well-known/oauth-authorization-server"))
+          try Task.checkCancellation()
+          guard let metadata = try? JSONDecoder().decode(AuthorizationServerMetadata.self, from: issuerData),
+                let declaredIssuer = URL(string: metadata.issuer),
+                Self.origin(of: declaredIssuer) == issuer else { return website }
+          targetOrigin = issuer
+        } else {
+          // An unknown separate issuer does not become an invented management page.
+          return website
+        }
+      } catch {
+        return Task.isCancelled ? nil : website
+      }
     }
+
+    guard let origin = targetOrigin else { return website }
+
+    let accountURL = origin.appendingPathComponent("account")
+    let probeRequest = Self.makeNavigationProbeRequest(for: accountURL)
+    let supportsAccount = await probe(probeRequest)
+    if Task.isCancelled { return nil }
+
+    if supportsAccount {
+      let finalURL: URL
+      if let loginHint, !loginHint.isEmpty {
+        finalURL = Self.appendLoginHint(loginHint, to: accountURL)
+      } else {
+        finalURL = accountURL
+      }
+      return Destination(url: finalURL, kind: .accountSettings)
+    } else {
+      return website
+    }
+  }
+
+  /// Appends a target login_hint query parameter scoping the provider UI to the deleted account.
+  static func appendLoginHint(_ hint: String, to url: URL) -> URL {
+    guard !hint.isEmpty,
+          var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+    var queryItems = components.queryItems ?? []
+    queryItems.append(URLQueryItem(name: "login_hint", value: hint))
+    components.queryItems = queryItems
+    return components.url ?? url
+  }
+
+  /// Builds a probe request using HTTP navigation metadata headers.
+  static func makeNavigationProbeRequest(for url: URL) -> URLRequest {
+    var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: requestTimeout)
+    request.httpMethod = "GET"
+    request.setValue("navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
+    request.setValue("document", forHTTPHeaderField: "Sec-Fetch-Dest")
+    request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+    return request
   }
 
   /// Accepts only a bare HTTPS origin, without credentials, query, fragment or a service path.
@@ -76,8 +140,21 @@ struct AccountManagementPageResolver: Sendable {
     return origin(of: issuerURL)
   }
 
-  private static func isKnownBlueskyOrigin(_ origin: URL) -> Bool {
-    origin.host?.lowercased() == "bsky.social" && origin.port == nil
+  static func isKnownBlueskyOrigin(_ origin: URL) -> Bool {
+    guard let host = origin.host?.lowercased() else { return false }
+    return (host == "bsky.social" || host.hasSuffix(".bsky.social")) && origin.port == nil
+  }
+
+  static func isKnownSwanOrigin(_ origin: URL) -> Bool {
+    guard let host = origin.host?.lowercased() else { return false }
+    return (host == "swan.place" || host.hasSuffix(".swan.place")) && origin.port == nil
+  }
+
+  static func isReferenceProvider(_ origin: URL, pdsOrigin: URL) -> Bool {
+    if isKnownBlueskyOrigin(origin) || isKnownSwanOrigin(origin) {
+      return true
+    }
+    return origin == pdsOrigin
   }
 
   /// Hosts shown to people ("bsky.social"), without a port for the default HTTPS port.
@@ -104,6 +181,26 @@ struct AccountManagementPageResolver: Sendable {
       throw URLError(.badServerResponse)
     }
     return data
+  }
+
+  @Sendable
+  static func probeOverNetwork(_ request: URLRequest) async -> Bool {
+    guard let url = request.url else { return false }
+    if isKnownBlueskyOrigin(url) {
+      return true
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = requestTimeout
+    configuration.timeoutIntervalForResource = requestTimeout
+    let session = URLSession(configuration: configuration)
+    defer { session.finishTasksAndInvalidate() }
+    do {
+      let (_, response) = try await session.data(for: request)
+      guard let http = response as? HTTPURLResponse else { return false }
+      return (200...399).contains(http.statusCode)
+    } catch {
+      return false
+    }
   }
 
   private struct ProtectedResourceMetadata: Decodable {

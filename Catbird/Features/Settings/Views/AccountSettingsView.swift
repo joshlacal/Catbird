@@ -212,13 +212,13 @@ struct AccountSettingsView: View {
                 }
                 .settingsControl(.init(rawValue: "account.management"))
                 Section {
-                    Button("Account Deletion Options") {
+                    Button("Delete Account", role: .destructive) {
                         showProviderPage(for: .deletionOptions)
                     }
                     .disabled(appState.userDID.isEmpty || isExportingData)
-                    .accessibilityIdentifier("AccountDeletion.Options")
+                    .accessibilityIdentifier("AccountDeletion.Delete")
                 } footer: {
-                    Text("Find deletion instructions from your hosting provider. Opening its website does not delete anything.")
+                    Text("Delete your hosted account on your provider and erase Catbird-held account data.")
                 }
                 .settingsControl(.init(rawValue: "account.delete"))
             }

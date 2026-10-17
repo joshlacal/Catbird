@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import Catbird
 
@@ -54,6 +55,15 @@ struct AccountDeletionFlowTests {
     #expect(!attempt.url.absoluteString.contains(did))
   }
 
+  @Test("Destination with valid login_hint is accepted and scoped")
+  func destinationWithLoginHint() throws {
+    var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: "fixture.handle", accountRevision: revision))
+    let destinationURL = URL(string: "https://bsky.social/account?login_hint=fixture.handle")!
+    flow.resolveDestination(.init(url: destinationURL, kind: .accountSettings), currentDID: did, currentRevision: revision)
+    #expect(flow.canOpen)
+    #expect(flow.destination?.url == destinationURL)
+  }
+
   @Test("Nothing opens until the provider page is known")
   func waitsForDestination() {
     var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: "fixture.example", accountRevision: revision))
@@ -65,7 +75,8 @@ struct AccountDeletionFlowTests {
 
   @Test("Only plain HTTPS provider pages are accepted",
         arguments: ["http://provider.example/account", "https://user:pass@provider.example/account",
-                    "https://provider.example?did=fixture", "https://provider.example#x", "catbird://account"])
+                    "https://provider.example?did=fixture", "https://provider.example#x", "catbird://account",
+                    "https://provider.example?token=secret", "https://provider.example?login_hint=alice&token=secret"])
   func rejectsUnsafeDestination(address: String) throws {
     var flow = AccountDeletionFlow(target: AccountDeletionTarget(did: did, handle: nil, accountRevision: revision))
     flow.resolveDestination(.init(url: try #require(URL(string: address)), kind: .providerWebsite), currentDID: did, currentRevision: revision)
@@ -206,14 +217,34 @@ struct AccountManagementPageResolverTests {
   private func resolver(
     _ body: String?,
     issuerBody: String? = #"{"issuer":"https://bsky.social"}"#,
-    recordInto log: FetchLog? = nil
+    probeResponse: Bool? = nil,
+    recordInto log: FetchLog? = nil,
+    recordProbeInto probeLog: ProbeLog? = nil
   ) -> AccountManagementPageResolver {
-    AccountManagementPageResolver { url in
-      await log?.record(url)
-      let response = url.path == "/.well-known/oauth-authorization-server" ? issuerBody : body
-      guard let response else { throw FetchFailure() }
-      return Data(response.utf8)
-    }
+    AccountManagementPageResolver(
+      fetch: { url in
+        await log?.record(url)
+        let response = url.path == "/.well-known/oauth-authorization-server" ? issuerBody : body
+        guard let response else { throw FetchFailure() }
+        return Data(response.utf8)
+      },
+      probe: { request in
+        await probeLog?.record(request)
+        if let probeResponse {
+          return probeResponse
+        }
+        guard request.value(forHTTPHeaderField: "Sec-Fetch-Mode") == "navigate",
+              request.value(forHTTPHeaderField: "Sec-Fetch-Dest") == "document" else {
+          return false
+        }
+        if let url = request.url {
+          if AccountManagementPageResolver.isKnownBlueskyOrigin(url) || AccountManagementPageResolver.isKnownSwanOrigin(url) {
+            return true
+          }
+        }
+        return false
+      }
+    )
   }
 
   private actor FetchLog {
@@ -221,13 +252,18 @@ struct AccountManagementPageResolverTests {
     func record(_ url: URL) { urls.append(url) }
   }
 
+  private actor ProbeLog {
+    private(set) var requests: [URLRequest] = []
+    func record(_ request: URLRequest) { requests.append(request) }
+  }
+
   @Test("A separate known issuer is bound to the PDS and identifies itself")
   func discoversSeparateIssuer() async throws {
     let log = FetchLog()
     let result = await resolver(#"{"resource":"https://morel.us-east.host.bsky.network","authorization_servers":["https://bsky.social"]}"#, recordInto: log)
-      .destination(forPDS: URL(string: "https://morel.us-east.host.bsky.network"))
+      .destination(forPDS: URL(string: "https://morel.us-east.host.bsky.network"), accountHandle: "alice.bsky.social")
     let destination = try #require(result)
-    #expect(destination.url.absoluteString == "https://bsky.social/account")
+    #expect(destination.url.absoluteString == "https://bsky.social/account?login_hint=alice.bsky.social")
     #expect(destination.kind == .accountSettings)
     #expect(await log.urls.map(\.absoluteString) == [
       "https://morel.us-east.host.bsky.network/.well-known/oauth-protected-resource",
@@ -235,23 +271,64 @@ struct AccountManagementPageResolverTests {
     ])
   }
 
-  @Test("The known Bluesky PDS has an explicit account-page convention")
+  @Test("The known Bluesky PDS has an explicit account-page convention with login_hint")
   func knownProvider() async throws {
     let log = FetchLog()
-    let result = await resolver(nil, recordInto: log).destination(forPDS: URL(string: "https://bsky.social:443/"))
+    let result = await resolver(nil, recordInto: log)
+      .destination(forPDS: URL(string: "https://bsky.social:443/"), userDID: "did:plc:fixture-user")
     let destination = try #require(result)
-    #expect(destination.url.absoluteString == "https://bsky.social/account")
+    #expect(destination.url.absoluteString == "https://bsky.social/account?login_hint=did%3Aplc%3Afixture-user")
     #expect(destination.kind == .accountSettings)
     #expect(await log.urls.isEmpty)
   }
 
-  @Test("An unknown self-hosted provider keeps its origin and port without guessing a route")
-  func selfHostedProvider() async throws {
-    let result = await resolver(#"{"resource":"https://pds.example:8443","authorization_servers":["https://pds.example:8443/"]}"#)
-      .destination(forPDS: URL(string: "https://pds.example:8443"))
+  @Test("A self-hosted reference PDS with /account support resolves with login_hint and navigation headers")
+  func selfHostedProviderWithAccount() async throws {
+    let probeLog = ProbeLog()
+    let result = await resolver(
+      #"{"resource":"https://pds.example:8443","authorization_servers":["https://pds.example:8443/"]}"#,
+      probeResponse: true,
+      recordProbeInto: probeLog
+    ).destination(
+      forPDS: URL(string: "https://pds.example:8443"),
+      accountHandle: "bob.example"
+    )
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://pds.example:8443/account?login_hint=bob.example")
+    #expect(destination.kind == .accountSettings)
+    let probedRequests = await probeLog.requests
+    #expect(probedRequests.count == 1)
+    let request = try #require(probedRequests.first)
+    #expect(request.value(forHTTPHeaderField: "Sec-Fetch-Mode") == "navigate")
+    #expect(request.value(forHTTPHeaderField: "Sec-Fetch-Dest") == "document")
+  }
+
+  @Test("A self-hosted provider without /account support falls back to website root")
+  func selfHostedProviderFallback() async throws {
+    let result = await resolver(
+      #"{"resource":"https://pds.example:8443","authorization_servers":["https://pds.example:8443/"]}"#,
+      probeResponse: false
+    ).destination(forPDS: URL(string: "https://pds.example:8443"))
     let destination = try #require(result)
     #expect(destination.url.absoluteString == "https://pds.example:8443")
     #expect(destination.kind == .providerWebsite)
+  }
+
+  @Test("Swan provider resolves /account with login_hint when probed")
+  func swanProvider() async throws {
+    let probeLog = ProbeLog()
+    let result = await resolver(
+      #"{"resource":"https://pds.swan.place","authorization_servers":["https://swan.place"]}"#,
+      issuerBody: #"{"issuer":"https://swan.place"}"#,
+      probeResponse: true,
+      recordProbeInto: probeLog
+    ).destination(
+      forPDS: URL(string: "https://pds.swan.place"),
+      userDID: "did:plc:swan-user"
+    )
+    let destination = try #require(result)
+    #expect(destination.url.absoluteString == "https://swan.place/account?login_hint=did%3Aplc%3Aswan-user")
+    #expect(destination.kind == .accountSettings)
   }
 
   @Test("An unknown separate issuer does not become an invented management page")
@@ -310,5 +387,80 @@ struct AccountManagementPageResolverTests {
   func displayHost() {
     #expect(AccountManagementPageResolver.displayHost(of: URL(string: "https://bsky.social/account")!) == "bsky.social")
     #expect(AccountManagementPageResolver.displayHost(of: URL(string: "https://pds.example:8443")!) == "pds.example:8443")
+  }
+}
+
+@Suite("Account deletion Catbird data erasure")
+struct AccountDeletionCoordinatorTests {
+  @Test("Erase Catbird data removes SwiftData records for the specified account while preserving others")
+  @MainActor
+  func swiftDataErasure() async throws {
+    let schema = Schema([AppSettingsModel.self, Preferences.self, DraftPost.self])
+    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try ModelContainer(for: schema, configurations: [config])
+    let context = ModelContext(container)
+
+    let targetDID = "did:plc:target-delete"
+    let preservedDID = "did:plc:keep-intact"
+
+    // Seed models
+    let targetSettings = AppSettingsModel(accountDID: targetDID)
+    let preservedSettings = AppSettingsModel(accountDID: preservedDID)
+    context.insert(targetSettings)
+    context.insert(preservedSettings)
+
+    let targetPref = Preferences()
+    targetPref.accountDID = targetDID
+    let preservedPref = Preferences()
+    preservedPref.accountDID = preservedDID
+    context.insert(targetPref)
+    context.insert(preservedPref)
+
+    let targetDraft = DraftPost(
+      id: UUID(),
+      accountDID: targetDID,
+      draftData: Data("{}".utf8),
+      previewText: "Target Draft",
+      hasMedia: false,
+      isReply: false,
+      isQuote: false,
+      isThread: false
+    )
+    let preservedDraft = DraftPost(
+      id: UUID(),
+      accountDID: preservedDID,
+      draftData: Data("{}".utf8),
+      previewText: "Keep Draft",
+      hasMedia: false,
+      isReply: false,
+      isQuote: false,
+      isThread: false
+    )
+    context.insert(targetDraft)
+    context.insert(preservedDraft)
+    try context.save()
+
+    // Execute erasure
+    try await AccountDeletionCoordinator.eraseCatbirdData(forDID: targetDID, token: "test-token", modelContext: context)
+
+    // Verify target rows deleted
+    let targetSettingsDesc = FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == "app_settings_\(targetDID)" })
+    #expect(try context.fetch(targetSettingsDesc).isEmpty)
+
+    let targetPrefDesc = FetchDescriptor<Preferences>(predicate: #Predicate { $0.accountDID == targetDID })
+    #expect(try context.fetch(targetPrefDesc).isEmpty)
+
+    let targetDraftDesc = FetchDescriptor<DraftPost>(predicate: #Predicate { $0.accountDID == targetDID })
+    #expect(try context.fetch(targetDraftDesc).isEmpty)
+
+    // Verify preserved rows untouched
+    let preservedSettingsDesc = FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == "app_settings_\(preservedDID)" })
+    #expect(try context.fetch(preservedSettingsDesc).count == 1)
+
+    let preservedPrefDesc = FetchDescriptor<Preferences>(predicate: #Predicate { $0.accountDID == preservedDID })
+    #expect(try context.fetch(preservedPrefDesc).count == 1)
+
+    let preservedDraftDesc = FetchDescriptor<DraftPost>(predicate: #Predicate { $0.accountDID == preservedDID })
+    #expect(try context.fetch(preservedDraftDesc).count == 1)
   }
 }

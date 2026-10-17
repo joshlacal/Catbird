@@ -444,10 +444,14 @@ struct SettingsRuntimeWiringTests {
     #expect(!visibleForm.contains("Text(\"Reactivate Account\""))
     #expect(!visibleForm.contains("emailSection.settingsControl"))
     #expect(!visibleForm.contains(".sheet(isPresented: $isShowingEmailSheet)"))
-    #expect(source.contains("Button(\"Account Deletion Options\")"))
+    #expect(source.contains("Button(\"Delete Account\""))
     #expect(source.contains("rawValue: \"account.management\""))
     #expect(source.contains("rawValue: \"account.delete\""))
     #expect(!source.contains("deleteAccount("))
+
+    let securitySource = try settingsSource(named: "AccountSecuritySettingsView.swift")
+    #expect(securitySource.contains("Button(\"Delete Account\""))
+    #expect(securitySource.contains("rawValue: \"account.delete\""))
   }
 
   @Test("Two-Factor Authentication wires to emailAuthFactor and JIT account:email?action=manage")

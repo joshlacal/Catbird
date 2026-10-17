@@ -12,6 +12,7 @@ struct AccountSecuritySettingsView: View {
     @State private var showingPendingSignOut = false
     @State private var pendingSignOutDID: String?
     @State private var signingOut = false
+    @State private var accountDeletionTarget: AccountDeletionTarget?
     init(initialFocus: SettingsControlID? = nil) { self.initialFocus = initialFocus }
 
     var body: some View {
@@ -21,7 +22,11 @@ struct AccountSecuritySettingsView: View {
             Section("Account") {
                 SettingsLink(screen: .accountDetails, summary: "Handle, automation label, public data export", systemImage: "person.crop.circle", family: .account)
                 SettingsLink(screen: .accountDetails, title: "Manage Hosted Account", summary: "Open your provider’s website for account settings", systemImage: "arrow.up.right.square", family: .account, control: .init(rawValue: "account.management"))
-                SettingsLink(screen: .accountDetails, title: "Account Deletion Options", summary: "Find your hosting provider’s deletion instructions", systemImage: "person.crop.circle.badge.minus", family: .account, control: .init(rawValue: "account.delete"))
+                Button("Delete Account", role: .destructive) {
+                    showDeleteAccountSheet()
+                }
+                .disabled(signingOut)
+                .settingsControl(.init(rawValue: "account.delete"))
             }
             if AppStateManager.shared.authentication.biometricType != .none {
                 Section {
@@ -47,6 +52,9 @@ struct AccountSecuritySettingsView: View {
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
+        .sheet(item: $accountDeletionTarget) { target in
+            AccountDeletionSheet(target: target)
+        }
         .confirmationDialog("Sign out of this account?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) {
                 guard let did = signOutDID, SettingsAccountBoundary.isCurrent(did, revision: signOutRevision) else { return }
@@ -94,5 +102,18 @@ struct AccountSecuritySettingsView: View {
             signingOut = false
             dismiss()
         }
+    }
+
+    private func showDeleteAccountSheet() {
+        let did = appState.userDID
+        guard !did.isEmpty else { return }
+        let revision = AppStateManager.shared.settingsAccountContextRevision
+        let handle = AppStateManager.shared.authentication.getCachedProfileData(for: did)?.handle
+        accountDeletionTarget = AccountDeletionTarget(
+            did: did,
+            handle: handle,
+            accountRevision: revision,
+            purpose: .deletionOptions
+        )
     }
 }

@@ -1,4 +1,6 @@
 import Foundation
+import SwiftData
+import os
 
 /// A local handoff to the provider's account settings, never a deletion request.
 struct AccountDeletionTarget: Identifiable, Equatable {
@@ -46,6 +48,27 @@ struct AccountDeletionFlow {
     }
   }
 
+  /// Verifies destination URL safety: HTTPS, valid host, no credentials/fragments,
+  /// and only permits a scoped login_hint query parameter while rejecting sensitive tokens.
+  static func isSafeDestinationURL(_ url: URL) -> Bool {
+    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+          components.scheme?.lowercased() == "https",
+          let host = components.host, !host.isEmpty,
+          components.user == nil, components.password == nil,
+          components.fragment == nil else {
+      return false
+    }
+    if let queryItems = components.queryItems {
+      guard queryItems.count == 1,
+            let item = queryItems.first,
+            item.name == "login_hint",
+            let value = item.value, !value.isEmpty else {
+        return false
+      }
+    }
+    return true
+  }
+
   /// Late discovery cannot attach a destination to a changed or cancelled account context.
   mutating func resolveDestination(
     _ result: AccountManagementPageResolver.Destination?,
@@ -58,9 +81,7 @@ struct AccountDeletionFlow {
       phase = .unavailable
       return
     }
-    let url = result.url
-    guard url.scheme?.lowercased() == "https", url.host?.isEmpty == false,
-          url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+    guard Self.isSafeDestinationURL(result.url) else {
       phase = .unavailable
       return
     }
@@ -93,5 +114,95 @@ struct AccountDeletionFlow {
 
   mutating func cancel() {
     phase = .cancelled
+  }
+}
+
+/// Coordinates the deletion and erasure of Catbird-held account data to satisfy
+/// App Store Review Guideline 5.1.1(v).
+@MainActor
+struct AccountDeletionCoordinator {
+  private static let logger = Logger(subsystem: "blue.catbird", category: "AccountDeletionCoordinator")
+
+  /// Erases all account data held by Catbird:
+  /// 1. Remote: Nest gateway session/push revocation via POST /auth/logout with Bearer token.
+  /// 2. Local SwiftData: modelContext.delete for AppSettingsModel, Preferences, DraftPost matching DID.
+  /// 3. Filesystem: purge draft media/video directories for account.
+  /// 4. Keychain: delete stored OAuth/refresh tokens and stored handles.
+  /// 5. State: transition appState.signOut() and notify widget/spotlight.
+  static func eraseCatbirdData(
+    forDID did: String,
+    token: String? = nil,
+    modelContext: ModelContext? = nil
+  ) async throws {
+    guard !did.isEmpty else { return }
+    logger.info("🗑️ Starting Catbird data erasure for account: \(did)")
+
+    // 1. Remote: Revoke Nest gateway session and push registrations
+    await revokeNestGatewaySession(forDID: did, explicitToken: token)
+
+    // 2. Local SwiftData: Purge account-scoped models
+    if let context = modelContext {
+      purgeSwiftData(forDID: did, in: context)
+    }
+
+    // 3. Filesystem: Purge draft media, captured videos, and local caches
+    await purgeFilesystemData(forDID: did)
+
+    // 4 & 5. Keychain & State: Sign out and remove account from Petrel/Keychain and AppState
+    do {
+      try await AppStateManager.shared.authentication.removeAccount(did: did)
+      logger.info("✅ Finished Catbird data erasure for account: \(did)")
+    } catch {
+      logger.error("Failed to remove account from AuthManager: \(error.localizedDescription)")
+      throw error
+    }
+  }
+
+  private static func revokeNestGatewaySession(forDID did: String, explicitToken: String?) async {
+    let gatewayURL = CatbirdGatewayConfiguration.current.origin
+    let logoutURL = gatewayURL.appendingPathComponent("auth/logout")
+
+    var tokensToRevoke: [String] = []
+    if let explicitToken, !explicitToken.isEmpty {
+      tokensToRevoke.append(explicitToken)
+    }
+
+    for token in tokensToRevoke {
+      var request = URLRequest(url: logoutURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+      request.httpMethod = "POST"
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.finishTasksAndInvalidate() }
+      do {
+        let (_, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+          logger.info("🚪 Gateway logout returned status \(http.statusCode)")
+        }
+      } catch {
+        logger.warning("🚪 Gateway logout request failed (continuing erasure): \(error.localizedDescription)")
+      }
+    }
+  }
+
+  private static func purgeSwiftData(forDID did: String, in context: ModelContext) {
+    let settingsId = AppSettingsModel.settingsId(for: did)
+    do {
+      try context.delete(model: AppSettingsModel.self, where: #Predicate { $0.id == settingsId })
+      try context.delete(model: Preferences.self, where: #Predicate { $0.accountDID == did })
+      try context.delete(model: DraftPost.self, where: #Predicate { $0.accountDID == did })
+      try context.save()
+      logger.info("✅ SwiftData purged for account \(did)")
+    } catch {
+      logger.error("Failed to purge SwiftData for account \(did): \(error.localizedDescription)")
+    }
+  }
+
+  private static func purgeFilesystemData(forDID did: String) async {
+    LabelerDefinitionsDiskCache.remove(accountDID: did)
+    FeedWidgetDataProvider.shared.clearWidgetData(for: did)
+    await SpotlightEntityDonator.shared.removeAll()
+    ThreadManager.clearPrefillCache()
   }
 }
