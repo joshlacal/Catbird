@@ -995,7 +995,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     do {
       let input = AppBskyActorSearchActorsTypeahead.Parameters(
         term: trimmed,
-        limit: 3
+        limit: 8
       )
       let (_, profileResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: input)
       guard !Task.isCancelled, query == searchQuery, !isCommittedSearch else { return }

@@ -9,11 +9,12 @@ struct SearchSuggestionRow<Title: View>: View {
   @ViewBuilder let title: () -> Title
 
   var body: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: 14) {
       Image(systemName: systemImage)
         .appFont(AppTextRole.body)
+        .fontWeight(.medium)
         .foregroundStyle(tint)
-        .frame(width: 24)
+        .frame(width: 28)
         .accessibilityHidden(true)
       title()
         .appFont(AppTextRole.body)
@@ -22,8 +23,8 @@ struct SearchSuggestionRow<Title: View>: View {
       Spacer(minLength: 0)
     }
     .padding(.horizontal, 16)
-    .frame(minHeight: 44)
-    .padding(.vertical, 2)
+    .frame(minHeight: 52)
+    .padding(.vertical, 6)
     .contentShape(Rectangle())
   }
 }
