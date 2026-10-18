@@ -92,6 +92,58 @@ struct ChatTabConversationTests {
     #expect(manager.activeConversationId == nil)
   }
 
+  @Test("Optimistic DM send clears draft immediately on tap and preserves diffableID across server confirmation")
+  func optimisticSendClearsDraftImmediatelyAndPreservesDiffableIDOnHandover() async throws {
+    let pages = MessagePagesStub()
+    let manager = await makeManager(pages)
+    defer { manager.stopAllPolling() }
+
+    let source = BlueskyConversationDataSource(
+      chatManager: manager, convoID: "open", currentUserDID: "did:plc:alice"
+    )
+
+    let initialTrigger = source.scrollToBottomTrigger
+    let pendingID = source.beginPendingSend(text: "Hello instantly!")
+
+    #expect(source.scrollToBottomTrigger == initialTrigger + 1)
+    #expect(source.messages.count == 1)
+
+    let pendingMsg = try #require(source.messages.first)
+    #expect(pendingMsg.id == pendingID)
+    #expect(pendingMsg.diffableID == pendingID)
+    #expect(pendingMsg.text == "Hello instantly!")
+    #expect(pendingMsg.isFromCurrentUser == true)
+    #expect(pendingMsg.sendState == .sending)
+    #expect(source.message(for: pendingID)?.text == "Hello instantly!")
+
+    // Simulate server confirmation arriving with real message ID
+    let realID = "3lserverconfirmed123"
+    let confirmedView = ChatBskyConvoDefs.MessageView(
+      id: realID,
+      rev: "rev1",
+      text: "Hello instantly!",
+      facets: nil,
+      embed: nil,
+      reactions: nil,
+      replyTo: nil,
+      sender: ChatBskyConvoDefs.MessageViewSender(did: try DID(didString: "did:plc:alice")),
+      sentAt: ATProtocolDate(date: pendingMsg.sentAt)
+    )
+
+    source.completePendingSend(id: pendingID, realMessageID: realID)
+    pages.messages = [.chatBskyConvoDefsMessageView(confirmedView)]
+    await source.loadMessages(userInitiated: true)
+    await settle { source.messages.first?.sendState == .sent }
+
+    #expect(source.messages.count == 1)
+    let confirmedAdapter = try #require(source.messages.first)
+    #expect(confirmedAdapter.id == realID)
+    #expect(confirmedAdapter.diffableID == pendingID)
+    #expect(confirmedAdapter.sendState == .sent)
+    #expect(source.message(for: pendingID)?.id == realID)
+    #expect(source.message(for: realID)?.diffableID == pendingID)
+  }
+
   // MARK: - Destinations pushed over the selected conversation
 
   @Test("The tab publishes its selection only while that Bluesky conversation is on screen")
@@ -196,6 +248,7 @@ struct ChatTabConversationTests {
 private final class MessagePagesStub {
   private(set) var requestCount = 0
   var pauseNextRequest = false
+  var messages: [ChatBskyConvoGetMessages.OutputMessagesUnion] = []
   private var pausedRequest: CheckedContinuation<Void, Never>?
   private var startWaiter: CheckedContinuation<Void, Never>?
 
@@ -209,7 +262,7 @@ private final class MessagePagesStub {
         startWaiter = nil
       }
     }
-    return (200, .init(messages: []))
+    return (200, .init(messages: messages))
   }
 
   func waitForPausedRequest() async {

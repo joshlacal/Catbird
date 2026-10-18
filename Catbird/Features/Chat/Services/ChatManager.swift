@@ -1582,7 +1582,8 @@ final class ChatManager: StateInvalidationSubscriber {
     convoId: String,
     text: String,
     embed: ChatBskyConvoDefs.MessageInputEmbedUnion? = nil,
-    replyTo: ChatBskyConvoDefs.ReplyRef? = nil
+    replyTo: ChatBskyConvoDefs.ReplyRef? = nil,
+    onConfirmedMessage: ((ChatBskyConvoDefs.MessageView) -> Void)? = nil
   ) async -> Bool {
     guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
     defer { pollingBarrier.finish(ticket) }
@@ -1650,6 +1651,10 @@ final class ChatManager: StateInvalidationSubscriber {
         setEmptyResponseError(context: "sendMessage(\(convoId))")
         return false
       }
+
+      // Notify caller before mutating originalMessagesMap so optimistic pending
+      // messages can bind their stable diffableID before @Observable fires.
+      onConfirmedMessage?(messageView)
 
       // Add the real message to our local state
       if var existingOriginals = originalMessagesMap[convoId] {

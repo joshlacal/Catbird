@@ -240,6 +240,11 @@ struct ConversationView: View {
           emojiPickerMessageID = messageID
           showingEmojiPicker = true
         },
+        onRetryMessage: { messageID in
+          Task {
+            await dataSource.retryFailedSend(pendingID: messageID)
+          }
+        },
         onReply: { message in
           guard !message.isSystemMessage else { return }
           dataSource.draft.value.replyTarget = message
@@ -428,6 +433,7 @@ private struct ConversationInputBar: View {
   let dataSource: BlueskyConversationDataSource
   let convoId: String
   let onDraftEmptied: () -> Void
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     VStack(spacing: 0) {
@@ -468,6 +474,7 @@ private struct ConversationInputBar: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.bottom, 4)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
       }
 
       ChatMessageComposerView(
@@ -484,13 +491,14 @@ private struct ConversationInputBar: View {
         ),
         conversationId: convoId,
         onSend: { _, _ in
-          guard let submission = dataSource.draft.beginSend() else { return }
-          Task { await dataSource.sendDraft(submission) }
+          PlatformHaptics.light()
+          dataSource.submitDraft()
         },
         clearsDraftOnSend: false,
         dismissKeyboardOnSend: false
       )
     }
+    .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: dataSource.draft.value.replyTarget?.id)
     .onChange(of: dataSource.draftText) { _, text in
       if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         onDraftEmptied()
