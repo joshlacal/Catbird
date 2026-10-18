@@ -13,12 +13,7 @@ struct QuotesView: View {
     let postUri: String
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var quotes: [AppBskyFeedDefs.PostView] = []
-
-    private var contentMaxWidth: CGFloat {
-        hSizeClass == .compact ? .infinity : 600
-    }
     @State private var loading: Bool = true
     @State private var isLoadingPage: Bool = false
     @State private var initialError: Error?
@@ -58,30 +53,16 @@ struct QuotesView: View {
                     appState: appState,
                     accessibilityIdentifier: "quotes.posts"
                 ) { post in
-                    Button {
-                        path.append(NavigationDestination.post(post.uri))
-                    } label: {
-                        VStack(spacing: 0) {
-                            PostView(
-                                post: post,
-                                grandparentAuthor: nil,
-                                isParentPost: false,
-                                isSelectable: false,
-                                path: $path,
-                                appState: appState
-                            )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                    VStack(spacing: 0) {
+                        EnhancedFeedPost(
+                            feedViewPost: AppBskyFeedDefs.FeedViewPost(post: post),
+                            path: $path
+                        )
 
-                            Rectangle()
-                                .fill(Color.separator)
-                                .frame(height: 0.5)
-                        }
+                        Rectangle()
+                            .fill(Color.separator)
+                            .frame(height: 0.5)
                     }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                    .frame(maxWidth: contentMaxWidth)
-                    .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .background(
                     Color.primaryBackground(
