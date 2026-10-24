@@ -411,7 +411,7 @@ struct PostComposerViewUIKit: View {
           // Show a single editor instance.
           // In thread mode, the active editor is rendered inside threadEntriesSection.
           if !vm.isThreadMode {
-            if CircleFeatureFlags.isEnabled {
+            if appState.circlesEnabled || vm.destination != .public {
               CircleAudiencePicker(
                 selectedDestination: Binding(
                   get: { vm.destination },
@@ -493,13 +493,15 @@ struct PostComposerViewUIKit: View {
         characterCount: vm.postText.count,
         allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
         isAddToThreadDisabled: vm.destination != .public,
+        arePhotosDisabled: !vm.canAddMoreMedia,
+        isPublicMediaDisabled: vm.destination != .public,
         threadgateValue: vm.interactionSettings.summary,
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
           onPhotos: { presentPhotoPicker(vm: vm) },
-          onVideo: { videoPickerVisible = true },
-          onGif: { showingGifPicker = true },
-          onAudio: { showingAudioRecorder = true },
+          onVideo: { if vm.destination == .public { videoPickerVisible = true } },
+          onGif: { if vm.destination == .public { showingGifPicker = true } },
+          onAudio: { if vm.destination == .public { showingAudioRecorder = true } },
           onLink: { presentLinkCreation(vm: vm) },
           onThreadgate: { showingThreadgate = true },
           onLanguage: { showingLanguagePicker = true },

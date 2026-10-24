@@ -10,10 +10,7 @@ import Petrel
 import SwiftUI
 
 /// Enhanced version of FeedPost that supports thread consolidation
-struct EnhancedFeedPost: View, Equatable {
-  static func == (lhs: EnhancedFeedPost, rhs: EnhancedFeedPost) -> Bool {
-    lhs.id == rhs.id
-  }
+struct EnhancedFeedPost: View {
 
   // MARK: - Types
   private enum Source {
@@ -36,7 +33,11 @@ struct EnhancedFeedPost: View, Equatable {
   @Environment(\.horizontalSizeClass) private var hSizeClass
 
   private var contentMaxWidth: CGFloat {
-    hSizeClass == .compact ? .infinity : 600
+    #if os(macOS)
+    return 700
+    #else
+    return hSizeClass == .compact ? .infinity : 600
+    #endif
   }
 
   private static let baseUnit: CGFloat = 3

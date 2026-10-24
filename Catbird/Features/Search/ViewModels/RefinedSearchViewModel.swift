@@ -146,15 +146,25 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     logger.debug("RefinedSearchViewModel unsubscribed from state invalidation bus")
   }
 
+  private var isTrendingTopicsLoading = false
+
   // MARK: - Discovery Lifecycle (G03, G04, G06)
 
+  /// `onAppear` re-fires when popping back from a pushed detail view; load discovery once and
+  /// leave re-fetching to explicit pull-to-refresh (`refreshDiscoveryContent`). The view model is
+  /// rebuilt per account via `.id(userDID)`, so account switches still load fresh content.
+  private var hasLoadedDiscoveryContent = false
+
   public func initialize(client: ATProtoClient) {
+    guard !hasLoadedDiscoveryContent else { return }
+    hasLoadedDiscoveryContent = true
     Task {
       await refreshDiscoveryContent(client: client)
     }
   }
 
   public func refreshDiscoveryContent(client: ATProtoClient) async {
+    hasLoadedDiscoveryContent = true
     async let trendsTask: Void = fetchTrendingTopics(client: client)
     async let suggestedTask: Void = fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
     async let videosTask: Void = fetchTrendingVideos(client: client)
@@ -190,6 +200,14 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   }
 
   public func fetchTrendingTopics(client: ATProtoClient) async {
+    guard !isTrendingTopicsLoading else { return }
+    isTrendingTopicsLoading = true
+    defer { isTrendingTopicsLoading = false }
+    let started = ContinuousClock.now
+    defer {
+      let elapsed = started.duration(to: .now)
+      logger.debug("Trending topics request completed in \(String(describing: elapsed), privacy: .public)")
+    }
     do {
       let input = AppBskyUnspeccedGetTrends.Parameters(limit: 10)
       let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
@@ -202,8 +220,15 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   }
 
   public func fetchSuggestedUsers(category: String?, client: ATProtoClient) async {
+    guard !isSuggestedProfilesLoading || selectedSuggestedCategory != category else { return }
+    let started = ContinuousClock.now
+    defer {
+      let elapsed = started.duration(to: .now)
+      logger.debug("Suggested accounts request completed in \(String(describing: elapsed), privacy: .public)")
+    }
+    let isChangingCategory = selectedSuggestedCategory != category
     selectedSuggestedCategory = category
-    suggestedProfiles = []
+    if isChangingCategory { suggestedProfiles = [] }
     isSuggestedProfilesLoading = true
     suggestedUsersGeneration &+= 1
     let generation = suggestedUsersGeneration
@@ -224,7 +249,6 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     } catch {
       guard generation == self.suggestedUsersGeneration else { return }
       logger.error("Error fetching suggested users: \(error.localizedDescription)")
-      suggestedProfiles = []
     }
     if generation == self.suggestedUsersGeneration {
       isSuggestedProfilesLoading = false
@@ -236,6 +260,12 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   }
 
   public func fetchTrendingVideos(client: ATProtoClient) async {
+    guard !isTrendingVideosLoading else { return }
+    let started = ContinuousClock.now
+    defer {
+      let elapsed = started.duration(to: .now)
+      logger.debug("Trending videos request completed in \(String(describing: elapsed), privacy: .public)")
+    }
     guard appState.appSettings.showTrendingVideos else {
       trendingVideos = []
       return
@@ -250,7 +280,6 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       trendingVideos = posts
     } catch {
       logger.error("Error fetching trending videos: \(error.localizedDescription)")
-      trendingVideos = []
     }
   }
 

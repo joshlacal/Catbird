@@ -2,7 +2,9 @@
 import Foundation
 import Petrel
 import PetrelCatbird
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct E2EConstants {
   static let aliceDIDString = "did:plc:alicee2efixture"
@@ -251,7 +253,11 @@ actor E2ECircleStore {
   }
 
   func capabilities(userDID: DID) -> CircleCapability {
-    CircleCapability(enabled: true, protocolRevision: "2026-08-26", supportsImages: true)
+    CircleCapability(
+      enabled: !ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds"),
+      protocolRevision: CircleConfiguration.protocolRevision,
+      supportsImages: !ProcessInfo.processInfo.arguments.contains("--circles-images-unavailable")
+    )
   }
 
   func listCircles(userDID: DID, cursor: String?) -> CircleListPage {
@@ -869,8 +875,8 @@ final class E2ECircleTransport: CircleTransport, @unchecked Sendable {
     try await store.removeMember(userDID: accountDID, space: space, did: did)
   }
 
-  func listMembers(space: SpaceRef) async throws -> [DID] {
-    try await store.listMembers(userDID: accountDID, space: space)
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] {
+    try await store.listMembers(userDID: accountDID, space: space).map { CircleMember(did: $0, read: true, write: true) }
   }
 
   func uploadImage(_ data: Data) async throws -> Blob {

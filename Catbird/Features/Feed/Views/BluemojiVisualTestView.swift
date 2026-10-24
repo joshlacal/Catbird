@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG && os(iOS)
   import BluemojiKit
   import Petrel
   import SwiftUI

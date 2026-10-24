@@ -33,9 +33,8 @@ public struct LiveStatusEditorSheet: View {
             Form {
                 Section {
                     TextField("https://twitch.tv/...", text: $streamURLString)
-                        .keyboardType(.URL)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
+                        .platformURLInput()
+                        .autocorrectionDisabled()
                         .onChange(of: streamURLString) { _, newValue in
                             loadPreviewDebounced(for: newValue)
                         }

@@ -34,6 +34,8 @@ final class FeedsStartPageViewModel {
     return _cachedPinnedFeedsSet.contains(feedURI)
   }
 
+  @ObservationIgnored private var nativeReorderTask: Task<Void, Never>?
+
   private var lastFetchTime: Date?
   private let fetchInterval: TimeInterval = 300  // 5 minutes
   private var didLogout = false  // Track if a logout occurred
@@ -476,6 +478,58 @@ final class FeedsStartPageViewModel {
     } catch {
       errorMessage = "Failed to remove feed: \(error.localizedDescription)"
       logger.error("Error removing feed: \(error.localizedDescription)")
+    }
+  }
+
+  /// Applies native reorder destinations to the full persisted arrays, including
+  /// feeds hidden by search. The default card remains the first pinned feed.
+  @MainActor
+  func applyFeedReorder(sources: [String], category: String, before: String?) async {
+    let previous = nativeReorderTask
+    let operation = Task { @MainActor in
+      await previous?.value
+      await self.persistFeedReorder(sources: sources, category: category, before: before)
+    }
+    nativeReorderTask = operation
+    await operation.value
+  }
+
+  @MainActor
+  private func persistFeedReorder(sources: [String], category: String, before: String?) async {
+    guard ["pinned", "saved", "default"].contains(category) else { return }
+    do {
+      let preferences = try await appState.preferencesManager.getPreferences()
+      let originalPinned = preferences.pinnedFeeds
+      let originalSaved = preferences.savedFeeds
+      let known = Set(originalPinned + originalSaved)
+      var seen = Set<String>()
+      let moving = sources.filter { known.contains($0) && seen.insert($0).inserted }
+      guard !moving.isEmpty else { return }
+      // Timeline must remain pinned, matching the existing pin/unpin policy.
+      guard category != "saved" || !moving.contains(where: SystemFeedTypes.isTimelineFeed) else { return }
+      let movingSet = Set(moving)
+      var pinned = originalPinned.filter { !movingSet.contains($0) }
+      var saved = originalSaved.filter { !movingSet.contains($0) }
+      if category == "default" {
+        pinned.insert(contentsOf: moving, at: 0)
+      } else if category == "pinned" {
+        let index = before.flatMap { pinned.firstIndex(of: $0) } ?? pinned.endIndex
+        pinned.insert(contentsOf: moving, at: index)
+      } else {
+        let index = before.flatMap { saved.firstIndex(of: $0) } ?? saved.endIndex
+        saved.insert(contentsOf: moving, at: index)
+      }
+      guard pinned != originalPinned || saved != originalSaved else { return }
+      // Save both sections together so a cross-section move cannot lose a feed
+      // between separate server synchronizations.
+      preferences.pinnedFeeds = pinned
+      preferences.savedFeeds = saved
+      try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+      await updateCaches()
+      await appState.stateInvalidationBus.notify(.feedListChanged)
+    } catch {
+      errorMessage = "Failed to reorder feed: \(error.localizedDescription)"
+      logger.error("Failed to apply native feed reorder: \(error.localizedDescription)")
     }
   }
 

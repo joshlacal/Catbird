@@ -6,7 +6,32 @@
 //
 
 import SwiftUI
-// **Note:** this is causing ambiguity with SwiftUI
+#if os(macOS)
+public struct PlatformTextInputAutocapitalization: Sendable {
+    public static let never = PlatformTextInputAutocapitalization()
+    public static let words = PlatformTextInputAutocapitalization()
+    public static let sentences = PlatformTextInputAutocapitalization()
+    public static let characters = PlatformTextInputAutocapitalization()
+}
+
+public struct PlatformNavigationBarTitleDisplayMode: Sendable {
+    public static let automatic = PlatformNavigationBarTitleDisplayMode()
+    public static let inline = PlatformNavigationBarTitleDisplayMode()
+    public static let large = PlatformNavigationBarTitleDisplayMode()
+}
+
+public extension View {
+    @inlinable
+    func textInputAutocapitalization(_ capitalization: PlatformTextInputAutocapitalization?) -> some View {
+        self
+    }
+
+    @inlinable
+    func navigationBarTitleDisplayMode(_ displayMode: PlatformNavigationBarTitleDisplayMode) -> some View {
+        self
+    }
+}
+#endif
 
 
 
@@ -355,3 +380,49 @@ public extension View {
 //    }
 //}
 //#endif
+
+// Named adapters avoid shadowing SwiftUI's platform-specific overloads.
+enum PlatformTextInputCapitalization {
+  case never, words
+}
+
+extension View {
+  @ViewBuilder
+  func platformTextInputCapitalization(_ capitalization: PlatformTextInputCapitalization) -> some View {
+    #if os(iOS)
+    switch capitalization {
+    case .never: self.textInputAutocapitalization(.never)
+    case .words: self.textInputAutocapitalization(.words)
+    }
+    #else
+    self
+    #endif
+  }
+
+  @ViewBuilder
+  func platformURLInput() -> some View {
+    #if os(iOS)
+    self.keyboardType(.URL).textInputAutocapitalization(.never)
+    #else
+    self
+    #endif
+  }
+
+  @ViewBuilder
+  func platformInlineNavigationTitle() -> some View {
+    #if os(iOS)
+    self.navigationBarTitleDisplayMode(.inline)
+    #else
+    self
+    #endif
+  }
+
+  @ViewBuilder
+  func platformInsetGroupedListStyle() -> some View {
+    #if os(iOS)
+    self.listStyle(.insetGrouped)
+    #else
+    self.listStyle(.inset)
+    #endif
+  }
+}

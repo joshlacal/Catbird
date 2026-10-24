@@ -30,9 +30,12 @@ struct CircleMediaView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.displayScale) private var displayScale: CGFloat
   @State private var platformImage: PlatformImage?
+  @State private var renderedAccountDID: String?
   @State private var hasError = false
   @State private var targetBucket: Int? = nil
   @State private var renderedBucket: Int = 0
+  @State private var lifecycleGeneration = 0
+  @State private var isRetired = false
 
   private static let pixelBuckets = [120, 240, 360, 480, 720, 960, 1280, 1920]
 
@@ -82,12 +85,15 @@ struct CircleMediaView: View {
     // Extract CID from thumb or fullsize URI
     let cidString = Self.extractCID(from: viewImage.fullsize.uriString()) ?? Self.extractCID(from: viewImage.thumb.uriString())
     guard let cidString else { return nil }
-    self.cid = (try? CID.parse(cidString)) ?? CID.fromBlob(Data(cidString.utf8))
+    guard let cid = try? CID.parse(cidString) else { return nil }
+    self.cid = cid
   }
 
   var body: some View {
     ZStack {
-      if let platformImage {
+      if !appState.circleSupportsImages || isRetired {
+        errorPlaceholderView
+      } else if let platformImage, renderedAccountDID == appState.userDID {
         imageView(platformImage)
       } else if hasError {
         errorPlaceholderView
@@ -96,6 +102,30 @@ struct CircleMediaView: View {
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    .onChange(of: appState.userDID) { _, _ in
+      lifecycleGeneration += 1
+      platformImage = nil
+      renderedAccountDID = nil
+      renderedBucket = 0
+      hasError = false
+    }
+    .onChange(of: appState.circleSupportsImages) { _, supported in
+      if !supported { lifecycleGeneration += 1; platformImage = nil; renderedBucket = 0 }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .circleDeleted)) { notification in
+      guard notification.userInfo?["accountDID"] as? String == appState.userDID,
+            notification.userInfo?["spaceURI"] as? String == space.uriString() else { return }
+      lifecycleGeneration += 1
+      isRetired = true
+      platformImage = nil
+      hasError = true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .circleAccountInvalidated)) { notification in
+      guard notification.userInfo?["accountDID"] as? String == appState.userDID else { return }
+      lifecycleGeneration += 1
+      platformImage = nil
+      hasError = true
+    }
     .onGeometryChange(for: CGSize.self) { proxy in
       proxy.size
     } action: { newSize in
@@ -110,7 +140,7 @@ struct CircleMediaView: View {
         targetBucket = bucket
       }
     }
-    .task(id: "\(space.description)|\(authorDID.description)|\(cid.description)|\(targetBucket?.description ?? "nil")") {
+    .task(id: "\(appState.userDID)|\(appState.circleSupportsImages)|\(space.description)|\(authorDID.description)|\(cid.description)|\(targetBucket?.description ?? "nil")") {
       guard let targetBucket else { return }
       await loadImage(bucket: targetBucket)
     }
@@ -155,23 +185,27 @@ struct CircleMediaView: View {
   }
 
   private func loadImage(bucket: Int) async {
-    guard platformImage == nil || bucket > renderedBucket else { return }
+    guard appState.circleSupportsImages, !isRetired else { return }
+    let requestGeneration = lifecycleGeneration
+    let accountDID = appState.userDID
+    guard platformImage == nil || renderedAccountDID != accountDID || bucket > renderedBucket else { return }
     hasError = false
 
     do {
       let image = try await CircleMediaLoader.shared.image(
-        accountDID: appState.userDID,
+        accountDID: accountDID,
         space: space,
         authorDID: authorDID,
         cid: cid,
         targetBucket: bucket,
         service: appState.circleService
       )
-      if Task.isCancelled { return }
+      guard !Task.isCancelled, lifecycleGeneration == requestGeneration, appState.userDID == accountDID else { return }
+      self.renderedAccountDID = accountDID
       self.platformImage = image
       self.renderedBucket = bucket
     } catch {
-      if Task.isCancelled { return }
+      guard !Task.isCancelled, lifecycleGeneration == requestGeneration, appState.userDID == accountDID else { return }
       if platformImage == nil {
         hasError = true
       }

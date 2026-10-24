@@ -13,10 +13,6 @@ struct ConversationRow: View {
     convo.displayTitle(currentUserDID: currentUserDID)
   }
 
-  private var subtitleLabel: String? {
-    convo.displaySubtitle(currentUserDID: currentUserDID)
-  }
-
   private var groupAvatarParticipants: [MLSParticipantViewModel] {
     convo.displayMembersExcludingCurrentUser(currentUserDID: currentUserDID).map { member in
       MLSParticipantViewModel(
@@ -62,7 +58,7 @@ struct ConversationRow: View {
               .font(.caption)
           }
 
-          Image(systemName: convo.isGroupConversation ? "person.3.fill" : "bubble.left.and.bubble.right")
+          Image(systemName: "bubble.left.and.bubble.right")
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .accessibilityHidden(true)
@@ -86,52 +82,23 @@ struct ConversationRow: View {
           if let lastMessage = convo.lastMessage, let date = lastMessageDate(lastMessage) {
             Text(formatDate(date))
               .designCaption()
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
               .foregroundColor(convo.unreadCount > 0 ? .accentColor : .secondary)
               .fontWeight(convo.unreadCount > 0 ? .medium : .regular)
               .accessibilityLabel("Last message \(formatDate(date))")
           }
         }
 
-        // Last message preview
         if let lastMessage = convo.lastMessage {
-          HStack(spacing: DesignTokens.Spacing.xs) {
-            if let subtitleLabel {
-              Text(subtitleLabel)
-                .designFootnote()
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-
-              Text("-")
-                .designFootnote()
-                .foregroundColor(.secondary)
-            }
-
-            LastMessagePreview(
-              lastMessage: lastMessage,
-              groupMembers: convo.isGroupConversation
-                ? convo.displayMembersExcludingCurrentUser(currentUserDID: currentUserDID)
-                : []
-            )
-            .accessibilityLabel("Last message")
-          }
+          LastMessagePreview(
+            lastMessage: lastMessage,
+            groupMembers: convo.isGroupConversation ? convo.members : []
+          )
         } else {
-          HStack(spacing: DesignTokens.Spacing.xs) {
-            if let subtitleLabel {
-              Text(subtitleLabel)
-                .designFootnote()
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-
-              Text("-")
-                .designFootnote()
-                .foregroundColor(.secondary)
-            }
-
-            Text("No messages yet")
-              .designFootnote()
-              .foregroundColor(.secondary)
-              .accessibilityLabel("No messages in this conversation yet")
-          }
+          Text("No messages yet")
+            .designFootnote()
+            .foregroundColor(.secondary)
         }
       }
     }
@@ -140,6 +107,8 @@ struct ConversationRow: View {
     .accessibilityAddTraits(.isButton)
     .accessibilityHint("Double tap to open conversation")
     .spacingSM(.vertical)
+    .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+    .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
     // Consider adding context menu for mute/leave actions
   }
 
@@ -242,5 +211,8 @@ struct LastMessagePreview: View {
           .italic()
       }
     }
+    .lineLimit(2)
+    .multilineTextAlignment(.leading)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 }

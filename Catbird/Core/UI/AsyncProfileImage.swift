@@ -3,16 +3,6 @@ import NukeUI
 import Nuke
 import Petrel
 
-private extension Image {
-    init(platformImage: PlatformImage) {
-        #if canImport(UIKit)
-        self.init(uiImage: platformImage)
-        #else
-        self.init(nsImage: platformImage)
-        #endif
-    }
-}
-
 enum AvatarModerationState {
     case show      // Show avatar normally
     case blur      // Show avatar blurred (tap to reveal)

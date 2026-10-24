@@ -13,6 +13,18 @@ struct PostNotFoundView: View {
     @State private var showingFetchedContent = false
     
     private let logger = Logger(subsystem: "blue.catbird", category: "PostNotFoundView")
+
+    init(uri: ATProtocolURI?, reason: PostNotFoundReason, path: Binding<NavigationPath>) {
+        self.uri = uri
+        self.reason = reason
+        self._path = path
+    }
+
+    init(postURI: ATProtocolURI, postCID: CID? = nil, didTapAccount: ((DID) -> Void)? = nil) {
+        self.uri = postURI
+        self.reason = .notFound
+        self._path = .constant(NavigationPath())
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

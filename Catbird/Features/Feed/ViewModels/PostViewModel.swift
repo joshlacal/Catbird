@@ -125,48 +125,24 @@ final class PostViewModel {
             shadow.hydrateFromServer(likeUri: post.viewer?.like, repostUri: post.viewer?.repost)
         }
         guard !Task.isCancelled else { return }
-        
-        let shadow = await appState.postShadowManager.getShadow(forUri: post.uri.uriString())
+
+        // Derive local state from the merged post so the shadow remains the single
+        // source of truth. Reading the raw payload directly would let a stale page
+        // (one fetched before the AppView indexed the interaction) revert state
+        // that the shadow already knows about.
+        let merged = await appState.postShadowManager.mergeShadow(post: post)
         guard !Task.isCancelled else { return }
-        
-        if let shadow, shadow.likeDecided {
-            isLiked = shadow.likeUri != nil
-            likeUri = shadow.likeUri
-            if shadow.likeUri != nil && post.viewer?.like == nil {
-                likeCount = (post.likeCount ?? 0) + 1
-            } else if shadow.likeUri == nil && post.viewer?.like != nil {
-                likeCount = max(0, (post.likeCount ?? 0) - 1)
-            } else {
-                likeCount = post.likeCount ?? 0
-            }
-        } else {
-            isLiked = post.viewer?.like != nil
-            likeUri = post.viewer?.like
-            likeCount = post.likeCount ?? 0
-        }
-        
-        if let shadow, shadow.repostDecided {
-            isReposted = shadow.repostUri != nil
-            repostUri = shadow.repostUri
-            if shadow.repostUri != nil && post.viewer?.repost == nil {
-                repostCount = (post.repostCount ?? 0) + 1
-            } else if shadow.repostUri == nil && post.viewer?.repost != nil {
-                repostCount = max(0, (post.repostCount ?? 0) - 1)
-            } else {
-                repostCount = post.repostCount ?? 0
-            }
-        } else {
-            isReposted = post.viewer?.repost != nil
-            repostUri = post.viewer?.repost
-            repostCount = post.repostCount ?? 0
-        }
-        
-        if let shadow, let bookmarked = shadow.bookmarked {
-            isBookmarked = bookmarked
-        } else {
-            isBookmarked = post.viewer?.bookmarked == true
-        }
-        replyCount = post.replyCount ?? 0
+
+        isLiked = merged.viewer?.like != nil
+        likeUri = merged.viewer?.like
+        likeCount = merged.likeCount ?? 0
+
+        isReposted = merged.viewer?.repost != nil
+        repostUri = merged.viewer?.repost
+        repostCount = merged.repostCount ?? 0
+
+        isBookmarked = merged.viewer?.bookmarked == true
+        replyCount = merged.replyCount ?? 0
     }
     
     /// Updates the interaction state from the shadow manager

@@ -34,6 +34,7 @@ final class CircleManagementViewModel {
   var state: CircleManagementState = .idle
   var name: String = ""
   var members: [DID] = []
+  private(set) var memberPermissions: [CircleMember] = []
   var validationError: String?
 
   let service: CircleService
@@ -49,9 +50,11 @@ final class CircleManagementViewModel {
     self.members = []
   }
 
+  static let placeholderURIString = "at://did:plc:placeholder/space/blue.catbird.circle/new"
+
   init(service: CircleService, userDID: String = "") {
-    let placeholderURI = (try? SpaceRef(uriString: "at://did:plc:placeholder/space/blue.catbird.circle/new"))
-      ?? (try! SpaceRef(uriString: "at://did:plc:placeholder/space/blue.catbird.circle/new"))
+    let placeholderURI = (try? SpaceRef(uriString: Self.placeholderURIString))
+      ?? (try! SpaceRef(uriString: Self.placeholderURIString))
     let ownerDID = (try? DID(didString: userDID.isEmpty ? "did:plc:placeholder" : userDID))
       ?? (try! DID(didString: "did:plc:placeholder"))
     let placeholderTID = (try? TID(tidString: "3zzzzzzzzzzzz"))
@@ -81,12 +84,18 @@ final class CircleManagementViewModel {
     state.canRetryActivation
   }
 
+  /// Whether a real Circle Space has been created on the owner's PDS (preventing recreation).
+  var hasCreatedSpace: Bool {
+    circle.uri.uriString() != Self.placeholderURIString
+  }
+
   /// Authoritatively loads the member roster for owners directly from the owner's PDS.
   func loadMembers() async {
     guard canManageMembers else { return }
     do {
       let memberList = try await service.listMembers(space: circle.uri)
-      self.members = memberList
+      self.memberPermissions = memberList
+      self.members = memberList.map(\.did)
     } catch {
       // Preserve existing in-memory members on network failure
     }
@@ -132,9 +141,18 @@ final class CircleManagementViewModel {
   /// 2. createSpace on PDS with memberListPolicy and #allowList
   /// 3. putRecord metadata with circleId
   /// 4. addMember per initial member on PDS
-  /// 5. activateCircle against AppView (activation failure is a retryable sync state)
+  /// 5. activateCircle against AppView (failure preserves the Space for activation retry)
   @discardableResult
   func createCircle(name: String? = nil, memberDIDs: [DID]? = nil) async throws -> CircleSummary {
+    guard state != .submitting else {
+      return circle
+    }
+
+    if hasCreatedSpace || canRetryActivation {
+      try await retryActivation()
+      return circle
+    }
+
     let rawName = name ?? self.name
     let validName: String
     switch Self.validateName(rawName) {
@@ -189,6 +207,12 @@ final class CircleManagementViewModel {
       return activated
     } catch {
       let cError = circleError(from: error)
+      switch cError {
+      case .authRequired, .notAuthorized, .accessExpired:
+        CircleAppViewAuthCoordinator.shared.invalidate(for: userDID)
+      default:
+        break
+      }
       self.state = .activationFailed(message: cError.localizedDescription)
       return createdSummary
     }
@@ -196,7 +220,8 @@ final class CircleManagementViewModel {
 
   /// Retries AppView activation for an already created Circle Space.
   func retryActivation() async throws {
-    guard canRetryActivation else { return }
+    guard canRetryActivation || hasCreatedSpace else { return }
+    guard state != .submitting else { return }
     state = .submitting
     do {
       let activated = try await service.activateCircle(space: circle.uri)
@@ -204,6 +229,12 @@ final class CircleManagementViewModel {
       self.state = .complete
     } catch {
       let cError = circleError(from: error)
+      switch cError {
+      case .authRequired, .notAuthorized, .accessExpired:
+        CircleAppViewAuthCoordinator.shared.invalidate(for: userDID)
+      default:
+        break
+      }
       self.state = .activationFailed(message: cError.localizedDescription)
       throw cError
     }
@@ -249,6 +280,7 @@ final class CircleManagementViewModel {
     do {
       try await service.removeMember(space: circle.uri, did: did)
       members.removeAll(where: { $0.didString() == did.didString() })
+      memberPermissions.removeAll(where: { $0.did == did })
       state = .complete
     } catch {
       let cError = circleError(from: error)

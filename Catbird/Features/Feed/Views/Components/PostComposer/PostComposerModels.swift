@@ -86,6 +86,8 @@ struct PostComposerSubmitValidationState: Equatable {
         case videoPreparing
         case videoBlocked(String)
         case missingAltText
+        case circleImagesUnavailable
+        case circleUnsupportedMedia
     }
 
     let canSubmit: Bool
@@ -103,6 +105,10 @@ struct PostComposerSubmitValidationState: Equatable {
             return "Video is still preparing."
         case .videoBlocked(let reason):
             return reason
+        case .circleUnsupportedMedia:
+            return "GIFs, video, and audio are unavailable in Circles. Remove the attachment to continue."
+        case .circleImagesUnavailable:
+            return "Images are unavailable for this Circle. Remove the attachments to post text."
         case .missingAltText:
             return "Add alt text to every media attachment before posting."
         case nil:
@@ -112,7 +118,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText:
+        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .circleImagesUnavailable, .circleUnsupportedMedia:
             return true
         case .emptyContent, .posting, nil:
             return false

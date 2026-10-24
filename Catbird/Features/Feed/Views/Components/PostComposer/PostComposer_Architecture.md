@@ -1,9 +1,9 @@
 # Post Composer — Architecture & Roadmap
 
-This document describes the current architecture of the Post Composer, proposes targeted improvements to align with iOS 26-era APIs and robustness goals, and outlines a clean, feature‑rich UIKit variant that shares the same domain layer.
+This document describes the current architecture of the Post Composer, aligned with iOS 26-era APIs and robustness goals, built around the single `PostComposerViewUIKit` presentation layer that shares the common domain layer.
 
 - Source root: `Catbird/Features/Feed/Views/Components/PostComposer/`
-- Key types: `PostComposerView`, `PostComposerViewModel`, `ThreadPostEditorView`, `MediaUploadManager`, `RichTextFacetUtils`
+- Key types: `PostComposerViewUIKit`, `PostComposerViewModel`, `ThreadPostEditorView`, `MediaUploadManager`, `RichTextFacetUtils`
 - Protocol client: Petrel (AT Protocol) via `AppState.atProtoClient` and `postManager`
 
 ## Overview
@@ -17,9 +17,8 @@ The composer is a modular SwiftUI feature that supports:
 
 ## Current Architecture
 
-- View layer (SwiftUI)
-  - `PostComposerView`: Container, sheets, pickers, toolbars, and submit/minimize. Uses `.interactiveDismissDisabled(true)`, shows account switcher, emoji picker, link creation, label selector, threadgate, GIF picker, audio recorder/preview.
-  - Components: `ThreadPostEditorView`, `EnhancedRichTextEditor`/`ModernEnhancedRichTextEditor` (link facets, paste handling, attributed text), `ComposeURLCardView`, `LabelSelectorView`, `ReplyingToView`, `OutlineTagsView`, `AltTextEditorView`, `MediaGalleryView`.
+- View layer
+  - `PostComposerViewUIKit`: Single production composer container (SwiftUI shell embedding a UIKit text editor), sheets, pickers, toolbars, and submit/minimize. Uses `.interactiveDismissDisabled(true)`, shows account switcher, emoji picker, link creation, label selector, threadgate, GIF picker, audio recorder/preview.
 
 - View model (domain + state)
   - `@MainActor @Observable PostComposerViewModel` centralizes state and behavior: text, attributed text (NSAttributedString + AttributedString), languages, labels, outline tags; reply/quote; media (images/video/GIF), alt text editing; URL detection + cards; mention suggestions/resolution; posting state; threadgate settings.
@@ -145,7 +144,7 @@ Migration strategy
 
 ## Key Paths & Types (for reference)
 
-- Views: `PostComposerView.swift`, `Components/ThreadPostEditorView.swift`, `Components/EnhancedRichTextEditor.swift`, `Media/*`, `Audio/*`
+- Views: `PostComposerViewUIKit.swift` (and `PostComposerViewUIKit/` extensions), `Components/ThreadPostEditorView.swift`, `Components/EnhancedRichTextEditor.swift`, `Media/*`, `Audio/*`
 - ViewModel & domain: `PostComposerViewModel.swift`, `PostComposerCore.swift`, `PostComposerTextProcessing.swift`, `PostComposerMediaManagement.swift`, `PostComposerUploading.swift`
 - Utilities: `Utils/RichTextFacetUtils.swift`, `Utils/LanguageHelpers.swift`
 - Tests: `CatbirdTests/PostComposerFixesTests.swift`, `CatbirdTests/PostComposerIntegrationTests.swift`

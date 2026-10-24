@@ -12,6 +12,7 @@ struct GroupConfigView: View {
   @Binding var groupName: String
   let participants: [MLSParticipantViewModel]
   var kind: GroupKind = .mls
+  var introduction: Binding<String>?
   var onEditSelection: (() -> Void)?
 
   private var defaultGroupName: String {
@@ -38,7 +39,7 @@ struct GroupConfigView: View {
   private var participantsFooter: String {
     switch kind {
     case .bluesky: return "Everyone listed will be invited when this group chat is created."
-    case .mls: return "Everyone listed will join this secure group once it is created."
+    case .mls: return "Everyone listed receives a separate group invitation when the group is created."
     }
   }
 
@@ -81,6 +82,8 @@ struct GroupConfigView: View {
         Text(participantsFooter)
           .designCaption()
       }
+
+      if let introduction { MLSOptionalGroupIntroductionSection(text: introduction) }
 
       securitySection
     }

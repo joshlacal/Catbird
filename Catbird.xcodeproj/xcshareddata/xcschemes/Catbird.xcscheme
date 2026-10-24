@@ -53,6 +53,12 @@
             </BuildableReference>
          </TestableReference>
       </Testables>
+      <CommandLineArguments>
+         <CommandLineArgument
+            argument = "--encrypted-request-ui-fixture"
+            isEnabled = "YES">
+         </CommandLineArgument>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -78,6 +84,10 @@
       <CommandLineArguments>
          <CommandLineArgument
             argument = "--mls-authority-mode=fullRust"
+            isEnabled = "YES">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "--encrypted-request-ui-fixture"
             isEnabled = "YES">
          </CommandLineArgument>
       </CommandLineArguments>

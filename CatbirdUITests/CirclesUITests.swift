@@ -47,13 +47,13 @@ final class CirclesUITests: XCTestCase {
   // MARK: - Navigation & Action Helpers
 
   private func tapNotificationsTab() {
-    let tab = app.buttons["tab_notifications"].firstMatch
+    let tab = app.descendants(matching: .any).matching(identifier: "tab_notifications").firstMatch
     XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected Notifications tab")
     tab.tap()
   }
 
   private func tapHomeTab() {
-    let tab = app.buttons["tab_home"].firstMatch
+    let tab = app.descendants(matching: .any).matching(identifier: "tab_home").firstMatch
     XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected Home tab")
     tab.tap()
   }
@@ -92,18 +92,27 @@ final class CirclesUITests: XCTestCase {
     return el
   }
 
-  /// 1. Unsupported PDS: Circles disabled with explanation.
-  func testUnsupportedCapabilityShowsExplanation() throws {
+  /// Unsupported accounts should not advertise an unavailable preview feature.
+  func testUnsupportedCapabilityHidesCircles() throws {
     launchWithUnsupportedCircles()
-
     openDrawer()
+    XCTAssertFalse(app.buttons["Circles"].exists)
+    XCTAssertFalse(app.buttons["Circles, unsupported"].exists)
+    XCTAssertFalse(app.staticTexts["Circles requires a PDS that supports ATProto Spaces"].exists)
+    let screenshot = XCTAttachment(screenshot: app.screenshot())
+    screenshot.name = "Unsupported account hides Circles"
+    screenshot.lifetime = .keepAlways
+    add(screenshot)
+  }
 
-    let explanation = app.staticTexts["Circles requires a PDS that supports ATProto Spaces"]
-    XCTAssertTrue(explanation.waitForExistence(timeout: 5), "Expected unsupported capability explanation text")
-
-    let unsupportedEntry = app.buttons["Circles, unsupported"]
-    XCTAssertTrue(unsupportedEntry.waitForExistence(timeout: 5), "Expected disabled Circles entry")
-    XCTAssertFalse(unsupportedEntry.isEnabled, "Unsupported Circles entry must be disabled")
+  func testSupportedCapabilityShowsCircles() throws {
+    launchWithCircles()
+    openCirclesFeed()
+    XCTAssertTrue(app.navigationBars["Circles"].waitForExistence(timeout: 5))
+    let screenshot = XCTAttachment(screenshot: app.screenshot())
+    screenshot.name = "Supported account shows Circles"
+    screenshot.lifetime = .keepAlways
+    add(screenshot)
   }
 
   /// 2. Approved end-to-end scenario: Create Circle, post, verify badge, remove member, verify removal disclosure
@@ -282,6 +291,24 @@ final class CirclesUITests: XCTestCase {
 
     let renderedImage = app.images["Circle image"]
     XCTAssertTrue(renderedImage.waitForExistence(timeout: 5), "Expected rendered Circle image in post")
+  }
+
+  func testUnqualifiedImagesKeepPrivateDraftUnsubmitted() throws {
+    launchWithCircles(extraArgs: ["--e2e-auto-photo", "--circles-images-unavailable"])
+    let compose = app.buttons["compose.fab"]
+    XCTAssertTrue(compose.waitForExistence(timeout: 5))
+    compose.tap()
+    let audience = app.buttons["composer.audiencePicker"]
+    XCTAssertTrue(audience.waitForExistence(timeout: 5))
+    audience.tap()
+    app.buttons["Family"].tap()
+    XCTAssertTrue(app.staticTexts["Images are unavailable for this Circle. Remove the attachments to post text."].waitForExistence(timeout: 5))
+    XCTAssertFalse(app.buttons["Post"].isEnabled)
+    XCTAssertTrue(audience.label.contains("Family"))
+    let capture = XCTAttachment(screenshot: app.screenshot())
+    capture.name = "Circle-image-capability-gate-presentation-fixture"
+    capture.lifetime = .keepAlways
+    add(capture)
   }
 
   /// 4. Feed: Circle badge visible; no repost/quote/share actions. Baseline: public post has them.

@@ -26,6 +26,8 @@
 	<array>
 		<string>analysis</string>
 	</array>
+	<key>com.apple.developer.siri</key>
+	<true/>
 	<key>com.apple.developer.ubiquity-container-identifiers</key>
 	<array>
 		<string>iCloud.Catbird</string>

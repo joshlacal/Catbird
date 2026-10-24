@@ -45,6 +45,11 @@ private struct EmojiKitPickerSheet: View {
   @State private var query = ""
   @State private var selection = Emoji.GridSelection()
 
+  init(title: String, onEmojiSelected: @escaping (String) -> Void) {
+    self.title = title
+    self.onEmojiSelected = onEmojiSelected
+  }
+
   private var categories: [EmojiCategory] {
     [.recent, .frequent] + .standard
   }

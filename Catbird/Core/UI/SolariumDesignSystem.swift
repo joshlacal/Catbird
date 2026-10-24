@@ -419,6 +419,10 @@ extension View {
 struct InteractiveGlassModifier: ViewModifier {
     let pressedIntensity: SolariumDesignSystem.GlassIntensity?
     @State private var isPressed = false
+
+    init(pressedIntensity: SolariumDesignSystem.GlassIntensity? = nil) {
+        self.pressedIntensity = pressedIntensity
+    }
     
     func body(content: Content) -> some View {
         content
@@ -435,6 +439,11 @@ struct SolariumShimmerModifier: ViewModifier {
     let intensity: Double
     let angle: Double
     @State private var shimmerOffset: CGFloat = -1
+
+    init(intensity: Double = 0.3, angle: Double = 45) {
+        self.intensity = intensity
+        self.angle = angle
+    }
     
     func body(content: Content) -> some View {
         content

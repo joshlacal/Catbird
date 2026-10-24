@@ -9,6 +9,9 @@ import Observation
 import SwiftUI
 
 @Observable class AppNavigationManager {
+    /// Canonical tab index for the Chat / Messages tab
+    static let chatTabIndex: Int = 4
+
     // One path per tab
     var tabPaths: [Int: NavigationPath] = [
         0: NavigationPath(),

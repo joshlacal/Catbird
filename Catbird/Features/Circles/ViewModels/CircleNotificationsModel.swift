@@ -117,6 +117,7 @@ final class CircleNotificationsModel {
     isLoading = true
     defer { isLoading = false }
 
+    let cacheGeneration = cache.generation(accountDID: accountDID)
     let requestGeneration = currentGeneration
     let requestAccountDID = accountDID
 
@@ -147,7 +148,7 @@ final class CircleNotificationsModel {
       self.error = nil
 
       let storedPage = CircleNotificationPage(notifications: self.notifications, cursor: self.cursor)
-      await cache.store(storedPage, accountDID: accountDID)
+      await cache.store(storedPage, accountDID: accountDID, generation: cacheGeneration)
     } catch {
       guard !self.isInvalidated,
             requestGeneration == self.currentGeneration,
@@ -167,6 +168,7 @@ final class CircleNotificationsModel {
     isRefreshing = true
     defer { isRefreshing = false }
 
+    let cacheGeneration = cache.generation(accountDID: accountDID)
     let requestGeneration = currentGeneration
     let requestAccountDID = accountDID
 
@@ -185,8 +187,9 @@ final class CircleNotificationsModel {
       self.error = nil
 
       let storedPage = CircleNotificationPage(notifications: self.notifications, cursor: self.cursor)
-      await cache.store(storedPage, accountDID: accountDID)
+      await cache.store(storedPage, accountDID: accountDID, generation: cacheGeneration)
     } catch {
+      guard !Task.isCancelled else { return }
       guard !self.isInvalidated,
             requestGeneration == self.currentGeneration,
             let activeDID = resolveActiveDID(override: activeAccountCheck),
@@ -205,6 +208,7 @@ final class CircleNotificationsModel {
     isLoading = true
     defer { isLoading = false }
 
+    let cacheGeneration = cache.generation(accountDID: accountDID)
     let requestGeneration = currentGeneration
     let requestAccountDID = accountDID
 
@@ -227,7 +231,7 @@ final class CircleNotificationsModel {
       self.error = nil
 
       let updatedPage = CircleNotificationPage(notifications: self.notifications, cursor: self.cursor)
-      await cache.store(updatedPage, accountDID: accountDID)
+      await cache.store(updatedPage, accountDID: accountDID, generation: cacheGeneration)
     } catch {
       guard !self.isInvalidated,
             requestGeneration == self.currentGeneration,

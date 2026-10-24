@@ -11,15 +11,13 @@ struct FeedDiscoveryHeaderView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.themeManager) private var themeManager
   let feed: AppBskyFeedDefs.GeneratorView
-  let isSubscribed: Bool
-  let onSubscriptionToggle: () async -> Void
   /// Invoked when the row body (avatar + text) is tapped. When `nil` the row is
   /// non-tappable — used when this view is the header of an already-open feed.
   var onTap: (() -> Void)? = nil
   var onLikedByTap: (() -> Void)? = nil
   var onAskCatbird: (() -> Void)? = nil
   var onReportTap: (() -> Void)? = nil
-  @State private var isTogglingSubscription = false
+  var onOpenFeed: (() -> Void)? = nil
   @State private var isLiking = false
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
@@ -35,7 +33,7 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   var body: some View {
-    HStack(alignment: .top, spacing: 12) {
+    VStack(alignment: .leading, spacing: 8) {
       // Tappable content region — avatar + text. Disabled (non-tappable) when
       // no onTap is provided, e.g. the header of an already-open feed.
       Button {
@@ -53,8 +51,11 @@ struct FeedDiscoveryHeaderView: View {
 
       // Trailing actions are separate hit targets, so tapping them never
       // triggers row navigation.
-      subscribePill
-      moreMenu
+      HStack(alignment: .top) {
+        FeedLibraryControls(feed: feed, onOpen: onOpenFeed)
+        Spacer(minLength: 8)
+        moreMenu
+      }
     }
     .padding(.vertical, 8)
     .sheet(isPresented: $isShowingReportSheet) {
@@ -119,7 +120,8 @@ struct FeedDiscoveryHeaderView: View {
         Text(description)
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
-          .lineLimit(2)
+          .lineLimit(nil)
+          .multilineTextAlignment(.leading)
           .fixedSize(horizontal: false, vertical: true)
       }
     }
@@ -135,40 +137,6 @@ struct FeedDiscoveryHeaderView: View {
   }
 
   // MARK: - Trailing actions
-
-  /// Compact subscribe / subscribed toggle. Filled accent "+" when the user is
-  /// not subscribed; a tinted checkmark capsule once subscribed.
-  private var subscribePill: some View {
-    Button {
-      Task { await toggleSubscription() }
-    } label: {
-      Group {
-        if isTogglingSubscription {
-          ProgressView()
-            .controlSize(.small)
-            .tint(isSubscribed ? .accentColor : .white)
-        } else {
-          Image(systemName: isSubscribed ? "checkmark" : "plus")
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.bold)
-            .foregroundStyle(isSubscribed ? Color.accentColor : .white)
-        }
-      }
-      .frame(width: 40, height: 32)
-      .background(
-        Capsule()
-          .fill(isSubscribed ? Color.accentColor.opacity(0.12) : Color.accentColor)
-      )
-      .overlay(
-        Capsule()
-          .stroke(isSubscribed ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
-      )
-      .contentShape(Capsule())
-    }
-    .buttonStyle(.plain)
-    .disabled(isTogglingSubscription)
-    .accessibilityLabel(isSubscribed ? "Subscribed" : "Subscribe")
-  }
 
   private var moreMenu: some View {
     Menu {
@@ -220,18 +188,6 @@ struct FeedDiscoveryHeaderView: View {
     .accessibilityLabel("More options")
   }
 
-  
-  private func toggleSubscription() async {
-    guard !isTogglingSubscription else { return }
-    
-    isTogglingSubscription = true
-    defer { isTogglingSubscription = false }
-    
-    await onSubscriptionToggle()
-    
-    // Notify state invalidation bus that feeds have changed
-    await appState.stateInvalidationBus.notify(.feedListChanged)
-  }
   
   // MARK: - Share / Report
   
@@ -379,9 +335,7 @@ struct FeedDiscoveryHeaderView: View {
     NavigationStack {
       ScrollView {
         FeedDiscoveryHeaderView(
-          feed: feed,
-          isSubscribed: false,
-          onSubscriptionToggle: {}
+          feed: feed
         )
       }
     }
