@@ -422,6 +422,8 @@ struct PostComposerViewUIKit: View {
               )
               .padding(.horizontal, 16)
             }
+            submitValidationMessageView(vm: vm)
+              .padding(.horizontal, 16)
             composerEditorSection(vm: vm)
             mentionSuggestionsSection(vm: vm)
             mediaAttachmentsSection(vm: vm)
