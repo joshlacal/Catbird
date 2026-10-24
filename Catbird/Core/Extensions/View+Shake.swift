@@ -27,6 +27,14 @@ struct ShakeEffect: ViewModifier {
     
     // Animatable binding for smooth transitions
     @State private var animatableParameter: CGFloat = 0
+
+    init(animating: Bool, intensity: CGFloat, cycles: CGFloat, duration: CGFloat, appSettings: AppSettings) {
+        self.animating = animating
+        self.intensity = intensity
+        self.cycles = cycles
+        self.duration = duration
+        self.appSettings = appSettings
+    }
     
     func body(content: Content) -> some View {
         content

@@ -2,6 +2,9 @@ import AuthenticationServices
 import Foundation
 import Petrel
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Drives the Circle AppView's own OAuth authorization.
 ///
@@ -56,12 +59,7 @@ final class CircleAppViewAuthCoordinator {
         let targetAccountDID = (notification.userInfo?["accountDID"] as? String)
           ?? (notification.userInfo?["did"] as? String)
           ?? ""
-        if targetAccountDID.isEmpty || targetAccountDID == self.authorizedDID || targetAccountDID == self.authorizingDID {
-          self.generation += 1
-          self.authorizingDID = nil
-          self.authorizedDID = nil
-          self.state = .idle
-        }
+        self.invalidate(for: targetAccountDID)
       }
     }
   }
@@ -69,6 +67,17 @@ final class CircleAppViewAuthCoordinator {
   deinit {
     if let invalidationObserver {
       NotificationCenter.default.removeObserver(invalidationObserver)
+    }
+  }
+
+  /// Drops local belief in an AppView grant for the given DID (or active DID if nil).
+  func invalidate(for did: String? = nil) {
+    let target = did ?? authorizedDID ?? authorizingDID ?? ""
+    if target.isEmpty || target == authorizedDID || target == authorizingDID {
+      generation += 1
+      authorizingDID = nil
+      authorizedDID = nil
+      state = .idle
     }
   }
 
@@ -91,11 +100,29 @@ final class CircleAppViewAuthCoordinator {
     }
   }
 
+  /// Requires completed consent, not merely an authorization attempt.
+  func ensureAuthorization(did: DID, using session: WebAuthenticationSession) async throws {
+    let targetDID = did.didString()
+    if needsAuthorization(for: targetDID) {
+      await authorize(did: did, using: session)
+    }
+    switch state {
+    case .authorized where authorizedDID == targetDID:
+      return
+    case .idle:
+      throw CancellationError()
+    case .failed(let message):
+      throw CircleError.networkError(message)
+    default:
+      throw CircleError.authRequired
+    }
+  }
+
   /// Presents the AppView-hosted authorization page, resolving when the AppView
   /// redirects to `blue.catbird://oauth/circle-appview`.
   ///
-  /// Uses the same `webAuthenticationSession` seam as gateway login, so the
-  /// second consent screen behaves identically to the first.
+  /// Uses the gateway's `webAuthenticationSession` seam, waiting for its
+  /// browser dismissal to finish before presenting the second consent screen.
   func authorize(did: DID, using session: WebAuthenticationSession) async {
     guard state != .authorizing else { return }
     let targetDID = did.didString()
@@ -117,6 +144,22 @@ final class CircleAppViewAuthCoordinator {
     }
 
     do {
+      #if os(iOS)
+      // The preceding gateway session returns its callback before UIKit has
+      // finished dismissing its browser. Starting here too early loads an
+      // invisible second browser and never completes authorization.
+      for scene in UIApplication.shared.connectedScenes {
+        guard let scene = scene as? UIWindowScene,
+              scene.activationState != .background else { continue }
+        for window in scene.windows where !window.isHidden {
+          if let root = window.rootViewController {
+            await Self.waitForPresentationTransition(in: root)
+          }
+        }
+      }
+      #endif
+      guard localGeneration == self.generation, authorizingDID == targetDID else { return }
+      try Task.checkCancellation()
       let callback = try await session.authenticate(
         using: startURL,
         callbackURLScheme: callbackScheme,
@@ -126,7 +169,8 @@ final class CircleAppViewAuthCoordinator {
         return
       }
       complete(callback: callback, expectedDID: targetDID)
-    } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+    } catch where error is CancellationError
+      || (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
       // User dismissed the sheet. Not a failure; leave it retryable.
       guard localGeneration == self.generation, authorizingDID == targetDID else { return }
       state = .idle
@@ -137,6 +181,23 @@ final class CircleAppViewAuthCoordinator {
       authorizingDID = nil
     }
   }
+
+  #if os(iOS)
+  /// Waits for UIKit's actual dismissal completion, not an arbitrary delay.
+  static func waitForPresentationTransition(in root: UIViewController) async {
+    var presenter = root
+    while let presented = presenter.presentedViewController {
+      presenter = presented
+    }
+    guard presenter.isBeingDismissed,
+          let transition = presenter.transitionCoordinator else { return }
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      transition.animate(alongsideTransition: nil) { _ in
+        continuation.resume()
+      }
+    }
+  }
+  #endif
 
   /// Completes authorization from the deep link.
   ///

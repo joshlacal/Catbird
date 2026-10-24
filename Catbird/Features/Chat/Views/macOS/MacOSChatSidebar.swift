@@ -44,6 +44,9 @@ struct MacOSChatSidebar: View {
     .navigationTitle("Messages")
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
+        MessageRequestsButton()
+      }
+      ToolbarItem(placement: .primaryAction) {
         Button {
           onNewConversation()
         } label: {

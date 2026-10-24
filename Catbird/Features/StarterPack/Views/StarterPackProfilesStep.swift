@@ -30,7 +30,7 @@ struct StarterPackProfilesStep: View {
                 
                 TextField("Search people to add...", text: $searchQuery)
                     .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
+        .platformInsetGroupedListStyle()
                     .onChange(of: searchQuery) { _, newValue in
                         performSearch(query: newValue)
                     }
@@ -111,7 +111,7 @@ struct StarterPackProfilesStep: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .platformInsetGroupedListStyle()
     }
     
     private func searchResultRow(profile: AppBskyActorDefs.ProfileViewBasic) -> some View {
@@ -222,7 +222,7 @@ struct StarterPackProfilesStep: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .platformInsetGroupedListStyle()
     }
     
     // MARK: - Search Execution

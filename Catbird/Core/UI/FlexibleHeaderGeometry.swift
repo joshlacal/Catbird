@@ -22,8 +22,10 @@ import SwiftUI
 private struct FlexibleHeaderContentModifier: ViewModifier {
     @Environment(FlexibleHeaderGeometry.self) private var geometry
 
+    var baseHeight: CGFloat = 200
+
     func body(content: Content) -> some View {
-        let height = 200 - geometry.offset  // Using fixed 200pt height like Apple's example
+        let height = baseHeight - geometry.offset
         content
             .frame(height: height)
             .padding(.bottom, geometry.offset)
@@ -34,6 +36,8 @@ private struct FlexibleHeaderContentModifier: ViewModifier {
 /// A view modifier that tracks scroll view geometry to stretch a view with ``FlexibleHeaderContentModifier``.
 private struct FlexibleHeaderScrollViewModifier: ViewModifier {
     @State private var geometry = FlexibleHeaderGeometry()
+
+    init() {}
 
     func body(content: Content) -> some View {
         content
@@ -57,8 +61,8 @@ extension ScrollView {
 
 extension View {
     /// A function that returns a view after it applies `FlexibleHeaderContentModifier` to it.
-    func flexibleHeaderContent() -> some View {
-        modifier(FlexibleHeaderContentModifier())
+    func flexibleHeaderContent(height: CGFloat = 200) -> some View {
+        modifier(FlexibleHeaderContentModifier(baseHeight: height))
     }
 }
 
@@ -71,6 +75,11 @@ struct ConcentricBannerClip: ViewModifier {
   var minimumCornerRadius: CGFloat = 16
 
   @State private var resolvedTopRadius: CGFloat?
+
+  init(horizontalInset: CGFloat = 0, minimumCornerRadius: CGFloat = 16) {
+    self.horizontalInset = horizontalInset
+    self.minimumCornerRadius = minimumCornerRadius
+  }
 
   private var cornerRadius: CGFloat {
     max(resolvedTopRadius ?? 0, minimumCornerRadius)

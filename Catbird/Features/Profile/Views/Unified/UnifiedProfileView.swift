@@ -7,7 +7,11 @@ import SwiftUI
 
 /// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
+  #if os(macOS)
+  private static let maxResponsiveContentWidth: CGFloat = 700
+  #else
   private static let maxResponsiveContentWidth: CGFloat = 600
+  #endif
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var currentColorScheme
   @State private var viewModel: ProfileViewModel
@@ -56,10 +60,10 @@ struct UnifiedProfileView: View {
       stateInvalidationBus: appState.stateInvalidationBus
     )
 
-    self._viewModel = State(initialValue: viewModel)
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
     _navigationPath = path
+    self._viewModel = State(initialValue: viewModel)
   }
 
   init(did: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>) {
@@ -70,10 +74,10 @@ struct UnifiedProfileView: View {
       stateInvalidationBus: appState.stateInvalidationBus
     )
     
-    self._viewModel = State(initialValue: viewModel)
     self._selectedTab = selectedTab
     self._lastTappedTab = Binding.constant(nil)
     _navigationPath = path
+    self._viewModel = State(initialValue: viewModel)
   }
 
   var body: some View {

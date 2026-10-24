@@ -28,6 +28,7 @@ actor CircleMediaLoader {
   private var service: CircleService?
   private var caches: [String: NSCache<NSString, PlatformImage>] = [:]
   private var cacheKeys: [String: Set<String>] = [:]
+  private var generation: UInt64 = 0
 
   private let totalCostLimit: Int = 50 * 1024 * 1024 // 50MB per account
   private let countLimit: Int = 200
@@ -37,6 +38,7 @@ actor CircleMediaLoader {
   }
 
   func setService(_ service: CircleService) {
+    generation &+= 1
     self.service = service
   }
 
@@ -72,7 +74,11 @@ actor CircleMediaLoader {
       throw CircleMediaError.serviceUnavailable
     }
 
+    let requestGeneration = generation
     let data = try await activeService.media(space: space, authorDID: authorDID, cid: cid)
+    guard !Task.isCancelled, generation == requestGeneration else {
+      throw CancellationError()
+    }
     guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
       throw CircleMediaError.invalidImage
     }
@@ -117,6 +123,7 @@ actor CircleMediaLoader {
 
   /// Purges every cached image for an account (called on logout, switch, removal).
   func purge(accountDID: String) {
+    generation &+= 1
     caches[accountDID]?.removeAllObjects()
     caches.removeValue(forKey: accountDID)
     cacheKeys.removeValue(forKey: accountDID)
@@ -124,6 +131,7 @@ actor CircleMediaLoader {
 
   /// Purges cached images for one account in one Space.
   func purge(accountDID: String, space: SpaceRef) {
+    generation &+= 1
     let prefix = "\(space.description)|"
     if let accountCache = caches[accountDID], var keys = cacheKeys[accountDID] {
       for key in keys where key.hasPrefix(prefix) {
@@ -136,6 +144,7 @@ actor CircleMediaLoader {
 
   /// Purges cached images for a specific Space regardless of account.
   func purge(space: SpaceRef) {
+    generation &+= 1
     let prefix = "\(space.description)|"
     for (accountDID, accountCache) in caches {
       if var keys = cacheKeys[accountDID] {
@@ -150,6 +159,7 @@ actor CircleMediaLoader {
 
   /// Purges all in-memory Circle images.
   func purgeAll() {
+    generation &+= 1
     for cache in caches.values {
       cache.removeAllObjects()
     }

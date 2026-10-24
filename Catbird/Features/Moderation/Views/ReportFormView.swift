@@ -137,6 +137,7 @@ enum ReportCategory: String, CaseIterable, Identifiable {
 
 /// View for submitting reports for content or users via a multi-step wizard
 struct ReportFormView: View {
+    @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @State private var reportingService: ReportingService
@@ -176,7 +177,6 @@ struct ReportFormView: View {
         videoTimestamp: Double? = nil,
         onComplete: ((Bool) -> Void)? = nil
     ) {
-        self._reportingService = State(initialValue: reportingService)
         self.subject = subject
         self.contentDescription = contentDescription
         if let videoTimestamp = videoTimestamp {
@@ -190,6 +190,7 @@ struct ReportFormView: View {
             self.videoTimestamp = nil
         }
         self.onComplete = onComplete
+        self._reportingService = State(initialValue: reportingService)
     }
     
     var body: some View {
@@ -363,7 +364,7 @@ struct ReportFormView: View {
                 
                 Button {
                     if let url = URL(string: "https://blueskyweb.zendesk.com/hc/en-us/requests/new?ticket_form_id=24729188849421") {
-                        UIApplication.shared.open(url)
+                        openURL(url)
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {

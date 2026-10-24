@@ -41,8 +41,6 @@ extension PostComposerViewUIKit {
 
         }
       }
-
-      submitValidationMessageView(vm: vm)
     }
     .padding(.horizontal, 16)
     .onAppear {

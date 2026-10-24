@@ -9,7 +9,7 @@ The Post Composer is a sophisticated SwiftUI-based component that enables rich t
 ### Core Components
 
 ```
-PostComposerView (SwiftUI)
+PostComposerViewUIKit (SwiftUI shell with UIKit text editor)
 ├── PostComposerViewModel (@Observable)
 │   ├── PostComposerCore (Business Logic)
 │   ├── PostComposerTextProcessing (Rich Text)

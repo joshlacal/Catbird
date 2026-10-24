@@ -247,7 +247,7 @@ struct IntentRuleEditorSheet: View {
                 }
             }
             .navigationTitle(existingRule == nil ? "New Intent Rule" : "Edit Intent Rule")
-            .navigationBarTitleDisplayMode(.inline)
+            .platformInlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

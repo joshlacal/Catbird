@@ -90,7 +90,7 @@ import SwiftUI
             displayName: profile?.displayName,
             handle: profile?.handle,
             avatarURL: profile?.avatarURL,
-            isCurrentUser: reaction.senderDID == currentUserDID
+            isCurrentUser: MLSCredentialBinding.isSameAccount(reaction.senderDID, as: currentUserDID)
           )
         }
         return ReactionGroup(emoji: emoji, reactors: reactors)

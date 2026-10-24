@@ -521,6 +521,10 @@ final class AuthenticationManager: AuthProgressDelegate {
   // Current authentication state - the source of truth
   private(set) var state: AuthState = .initializing
 
+  // UI continuity across async SDK validation, including same-DID credential replacement.
+  @ObservationIgnored
+  @MainActor private var authSessionRevision: UInt64 = 0
+
   // Handle storage for multi-account support
   private let handleStorageKey = "catbird_account_handles"
   private let accountOrderKey = "catbird_account_order"
@@ -727,6 +731,10 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   #if DEBUG
   nonisolated(unsafe) static var switchAccountOverride: (@Sendable (String) async throws -> (did: String, handle: String))?
 
+  // Delays delivery of the SDK's real result without allowing tests to forge validation.
+  @ObservationIgnored
+  @MainActor var gatewaySessionFailureValidationDeliveryHook: ((Bool) async -> Void)?
+
   func resetDebounceForTesting() {
     self.isHandlingAuthExpiration = false
   }
@@ -734,9 +742,61 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
   // MARK: - Auto-logout handling from Petrel
 
+  @MainActor
+  private final class GatewayRejectionTransition {
+    var didExpire = false
+  }
+
+  /// A gateway rejection can belong to a request from an account or session that
+  /// has already been replaced. Validate its proof immediately before changing UI.
+  @MainActor
+  func handleGatewaySessionRejection(_ context: GatewaySessionFailureContext) async {
+    guard state.userDID == context.did, let rejectedClient = client else { return }
+    let validatedRevision = authSessionRevision
+    #if DEBUG
+    if let hook = gatewaySessionFailureValidationDeliveryHook {
+      await hook(await rejectedClient.isCurrentGatewaySessionFailure(context))
+    }
+    #endif
+    let transition = GatewayRejectionTransition()
+    let consumed = await rejectedClient.withCurrentGatewaySessionFailure(context) { @MainActor [self] in
+      guard self.authSessionRevision == validatedRevision,
+            self.client === rejectedClient, self.state.userDID == context.did,
+            !self.isHandlingAuthExpiration else { return }
+
+      // Only synchronous UI state changes here. The SDK holds its credential mutation
+      // gate through this callback, including any pending-candidate recovery promotion.
+      if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
+        appState.notificationManager.clearLocalNotificationState()
+      }
+      self.isAuthInvalid = true
+      self.isHandlingAuthExpiration = true
+      self.expiredAccountInfo = self.makeExpiredAccountInfo(for: context.did)
+      self.updateState(.unauthenticated)
+      self.replaceClient(nil)
+      self.handle = nil
+      self.updateAvailableAccountsFromStoredHandles(activeDID: nil)
+      self.pendingAuthAlert = nil
+      transition.didExpire = true
+      self.logger.info(.autoLogoutExpiredAccountStored)
+    }
+    guard consumed, transition.didExpire else { return }
+
+    // Notification observers and asynchronous cleanup run after the SDK releases its gate.
+    NotificationCenter.default.post(name: .circleAccountInvalidated, object: nil,
+      userInfo: ["accountDID": context.did])
+    await CircleFeedCache.shared.purge(accountDID: context.did)
+    await CircleMediaLoader.shared.purge(accountDID: context.did)
+    await CircleNotificationCache.shared.purge(accountDID: context.did)
+  }
+
   /// Called when Petrel detects a terminal auth failure (e.g., invalid_grant) and performs a logout.
   @MainActor
   func handleAutoLogoutFromPetrel(did: String?, reason: String?) async {
+    // The SDK broadcasts across all clients, including anonymous public requests and
+    // inactive accounts. Only an event naming the active account may expire its UI.
+    guard let did, !did.isEmpty, state.userDID == did else { return }
+
     // FAST PATH: Set invalid flag IMMEDIATELY to short-circuit pending requests
     // This prevents "401 storms" where hundreds of requests fail before transitioning to login
     isAuthInvalid = true
@@ -754,39 +814,27 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     // Mark that we're handling an expiration to block further triggers
     isHandlingAuthExpiration = true
 
-    if let did {
-      expiredAccountInfo = makeExpiredAccountInfo(for: did)
-      logger.info(.autoLogoutExpiredAccountStored)
-    }
+    expiredAccountInfo = makeExpiredAccountInfo(for: did)
+    logger.info(.autoLogoutExpiredAccountStored)
 
     if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
       await appState.notificationManager.cleanupNotifications(previousClient: client)
     }
 
     // Clear handle if this was the active account (check before state change)
-    let wasActiveAccount =
-      if let did, case .authenticated(let current) = state {
-        current == did
-      } else {
-        false
-      }
+    let wasActiveAccount = state.userDID == did
 
-    let departingDID = did ?? state.userDID
-    if let departingDID {
-      NotificationCenter.default.post(
-        name: .circleAccountInvalidated,
-        object: nil,
-        userInfo: ["accountDID": departingDID]
-      )
-    }
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": did]
+    )
 
     updateState(.unauthenticated)
-    if let departingDID {
-      await CircleFeedCache.shared.purge(accountDID: departingDID)
-      await CircleMediaLoader.shared.purge(accountDID: departingDID)
-      await CircleNotificationCache.shared.purge(accountDID: departingDID)
-    }
-    client = nil
+    await CircleFeedCache.shared.purge(accountDID: did)
+    await CircleMediaLoader.shared.purge(accountDID: did)
+    await CircleNotificationCache.shared.purge(accountDID: did)
+    replaceClient(nil)
 
     if wasActiveAccount {
       handle = nil
@@ -853,22 +901,35 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   @MainActor
   func updateState(_ newState: AuthState) {
     guard newState != state else { return }
+    advanceAuthSessionRevision()
     logger.debug(.stateUpdated)
     self.state = newState
     // Emit synchronously - no Task wrapper to eliminate race windows
     stateSubject.continuation.yield(newState)
   }
 
+  @MainActor
+  private func advanceAuthSessionRevision() {
+    authSessionRevision &+= 1
+  }
+
+  @MainActor
+  private func replaceClient(_ replacement: ATProtoClient?) {
+    guard client !== replacement else { return }
+    advanceAuthSessionRevision()
+    client = replacement
+  }
+
   #if DEBUG
   @MainActor
   func setClientForTesting(_ client: ATProtoClient?) {
-    self.client = client
+    replaceClient(client)
   }
 
   @MainActor
   func setAuthenticatedForTesting(did: String, client: ATProtoClient? = nil) {
     if let client = client {
-      self.client = client
+      replaceClient(client)
     }
     updateState(.authenticated(userDID: did))
   }
@@ -937,7 +998,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }.value
 #endif
       // Update state on main actor
-      client = newClient
+      replaceClient(newClient)
       await client?.applicationDidBecomeActive()
 
       if client == nil {
@@ -954,6 +1015,24 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       logger.info(.clientExists)
       await client?.updateServiceDIDs(bskyAppViewDID: customAppViewDID, bskyChatDID: customChatDID)
     }
+
+    #if DEBUG && canImport(Network) && canImport(Security)
+    // The local runtime gateway has no OAuth login: adopt the configured synthetic account's
+    // session, or refuse. Never fall through to a real login in fixture mode.
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      guard let client, let session = DebugGatewayTransport.shared.activeAccount?.session else {
+        updateState(.error(message: "Runtime fixture session unavailable"))
+        return
+      }
+      do {
+        try await client.adoptFixtureGatewaySession(session)
+        advanceAuthSessionRevision()
+      } catch {
+        updateState(.error(message: "Runtime fixture session adoption failed: \(error)"))
+        return
+      }
+    }
+    #endif
 
     logger.debug(.checkingAuthState)
     await checkAuthenticationState()
@@ -1032,6 +1111,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         logger.debug(.tokenRefreshAttempt)
         let success = try await client.refreshToken()
         if success {
+          advanceAuthSessionRevision()
           logger.info(.tokenRefreshSuccessful)
           return true
         } else {
@@ -1200,7 +1280,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
         #if DEBUG
           
-      client = try? await ATProtoClient(
+      replaceClient(try? await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
@@ -1209,10 +1289,10 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID,
         accessGroup: accessGroup
-      )
+      ))
         
         #else
-        client = try? await ATProtoClient(
+        replaceClient(try? await ATProtoClient(
           oauthConfig: oauthConfig,
           namespace: "blue.catbird",
           authMode: .gateway,
@@ -1221,7 +1301,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
           bskyAppViewDID: customAppViewDID,
           bskyChatDID: customChatDID,
           accessGroup: accessGroup
-        )
+        ))
 
         #endif
       await client?.applicationDidBecomeActive()
@@ -1389,7 +1469,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       logger.info(.e2ePasswordLoginSuccess)
 
       // Replace the main client with the authenticated legacy client
-      client = legacyClient
+      replaceClient(legacyClient)
       await client?.applicationDidBecomeActive()
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
@@ -1432,7 +1512,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     }
     
     var result: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    let status = KeychainSecItem.copyMatching(query as CFDictionary, &result)
     
     if status == errSecSuccess, let items = result as? [[String: Any]] {
       for item in items {
@@ -1446,7 +1526,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
           if let group = accessGroup {
             deleteQuery[kSecAttrAccessGroup as String] = group
           }
-          let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+          let deleteStatus = KeychainSecItem.delete(deleteQuery as CFDictionary)
           if deleteStatus == errSecSuccess {
             logger.info(.e2eKeychainDeletedItem)
           }
@@ -1492,6 +1572,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         } else {
           try await client.handleOAuthCallback(url: url)
         }
+        await self.advanceAuthSessionRevision()
         self.logger.info(.callbackTokenExchangeCompleted)
         self.logger.info(.callbackImmediateAPISuccess)
         do {
@@ -1630,6 +1711,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       } else {
         try await activeClient.handleOAuthCallback(url: url)
       }
+      advanceAuthSessionRevision()
 
       updateState(.authenticating(progress: .finalizing))
 
@@ -1745,7 +1827,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }
     }
 
-    self.client = nil
+    replaceClient(nil)
     handle = nil
     
     // For manual (user-initiated) logout, clear expiredAccountInfo to prevent
@@ -2082,6 +2164,9 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
           for: snapshot.did
         )
       }
+      // Promotion changes the credential even when DID, client and AuthState stay equal.
+      // Advance before checking the grant: a partial grant can still replace the session.
+      advanceAuthSessionRevision()
     } catch {
       if Task.isCancelled || error is CancellationError {
         logger.info("Gateway permission upgrade complete cancelled for \(permission.rawValue)")
@@ -2559,7 +2644,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     #endif
 
       #if DEBUG
-    client = try? await ATProtoClient(
+    replaceClient(try? await ATProtoClient(
       oauthConfig: oauthConfig,
       namespace: "blue.catbird",
       authMode: .gateway,
@@ -2568,9 +2653,9 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       bskyAppViewDID: customAppViewDID,
       bskyChatDID: customChatDID,
       accessGroup: accessGroup
-    )
+    ))
       #else
-      client = try? await ATProtoClient(
+      replaceClient(try? await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
@@ -2579,7 +2664,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID,
         accessGroup: accessGroup
-      )
+      ))
       #endif
       
     await client?.applicationDidBecomeActive()
@@ -2933,6 +3018,15 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
   /// Check if biometric authentication is available and configure it
   func configureBiometricAuthentication() async {
+    #if DEBUG && os(macOS)
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      await MainActor.run {
+        self.biometricType = .none
+        self.biometricAuthEnabled = false
+      }
+      return
+    }
+    #endif
     // Do work off the main actor
     let context = LAContext()
     var error: NSError?

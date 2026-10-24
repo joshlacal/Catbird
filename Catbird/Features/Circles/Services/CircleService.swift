@@ -18,6 +18,19 @@ actor GatewayCircleTransport: CircleTransport {
   let publicEndpointCallCount: Int = 0
 
   func capabilities() async throws -> CircleCapability {
+    // The AppView's global switch says nothing about this account's PDS.
+    // listSpaces is an authenticated, read-only PDS query; an empty list is valid.
+    do {
+      let (status, output) = try await client.com.atproto.space.listSpaces(
+        input: ComAtprotoSpaceListSpaces.Parameters(
+          spaceType: try NSID(nsidString: CircleConfiguration.spaceType), limit: 1
+        )
+      )
+      guard status == 200, output != nil else { throw CircleError.invalidResponse }
+    } catch {
+      if Self.isUnsupportedSpacesError(error) { throw CircleError.unsupportedPDS }
+      throw error
+    }
     let endpoint = CircleConfiguration.appViewBaseURL
       .appendingPathComponent("xrpc/blue.catbird.circle.getCapabilities")
     let data: Data
@@ -41,6 +54,12 @@ actor GatewayCircleTransport: CircleTransport {
       protocolRevision: output.protocolRevision,
       supportsImages: output.supportsImages
     )
+  }
+
+  static func isUnsupportedSpacesError(_ error: Error) -> Bool {
+    guard let error = error as? ATProtoXRPCError else { return false }
+    return (error.statusCode == 501 && error.error == "MethodNotImplemented")
+      || (error.statusCode == 404 && error.error == "permissioned_endpoint_unavailable")
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
@@ -94,9 +113,12 @@ actor GatewayCircleTransport: CircleTransport {
 
     let (_, created) = try await client.com.atproto.simplespace.createSpace(
       input: ComAtprotoSimplespaceCreateSpace.Input(
-        type: try NSID(nsidString: CircleConfiguration.spaceType),
+        spaceType: try NSID(nsidString: CircleConfiguration.spaceType),
         skey: try RecordKey(keyString: skey),
-        policy: ComAtprotoSimplespaceCreateSpace.InputPolicyUnion(
+        readPolicy: ComAtprotoSimplespaceCreateSpace.InputReadPolicyUnion(
+          ComAtprotoSimplespaceDefs.MemberListPolicy()
+        ),
+        writePolicy: ComAtprotoSimplespaceCreateSpace.InputWritePolicyUnion(
           ComAtprotoSimplespaceDefs.MemberListPolicy()
         ),
         appAccess: ComAtprotoSimplespaceCreateSpace.InputAppAccessUnion(
@@ -155,8 +177,13 @@ actor GatewayCircleTransport: CircleTransport {
   }
 
   func addMember(space: SpaceRef, did: DID) async throws {
-    _ = try await client.com.atproto.simplespace.addMember(
-      input: ComAtprotoSimplespaceAddMember.Input(space: space, did: did)
+    _ = try await client.com.atproto.simplespace.putMember(
+      input: ComAtprotoSimplespacePutMember.Input(
+        space: space,
+        did: did,
+        read: true,
+        write: true
+      )
     )
   }
 
@@ -168,8 +195,8 @@ actor GatewayCircleTransport: CircleTransport {
 
   /// Full member roster from the owner's own PDS. Paginates to completion so a
   /// truncated page can never read as a shrunken Circle.
-  func listMembers(space: SpaceRef) async throws -> [DID] {
-    var members: [DID] = []
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] {
+    var members: [CircleMember] = []
     var cursor: String?
     var seenCursors: Set<String> = []
     repeat {
@@ -179,10 +206,9 @@ actor GatewayCircleTransport: CircleTransport {
         )
       )
       guard let output else { throw CircleError.invalidResponse }
-      members.append(contentsOf: output.members.map(\.did))
-      // A server echoing a constant cursor would spin this loop forever and
-      // grow `members` without bound. Treat a repeated cursor as end-of-list.
-      if let next = output.cursor, seenCursors.insert(next).inserted {
+      members.append(contentsOf: output.members.map { CircleMember(did: $0.did, read: $0.read, write: $0.write) })
+      if let next = output.cursor {
+        guard seenCursors.insert(next).inserted else { throw CircleError.invalidResponse }
         cursor = next
       } else {
         cursor = nil
@@ -349,13 +375,29 @@ actor GatewayCircleTransport: CircleTransport {
 /// `CircleError`-shaped and never fall back to public endpoints.
 actor CircleService {
   private let transport: any CircleTransport
+  private var retiredSpaces: Set<SpaceRef> = []
 
   init(transport: any CircleTransport) {
     self.transport = transport
   }
 
   func capabilities() async throws -> CircleCapability {
-    try await transport.capabilities()
+    let result = try await transport.capabilities()
+    guard result.protocolRevision == CircleConfiguration.protocolRevision else {
+      throw CircleError.protocolRevisionMismatch
+    }
+    return result
+  }
+
+  func retireSpace(_ space: SpaceRef) {
+    retiredSpaces.insert(space)
+  }
+
+  func requireImages() async throws {
+    let result = try await capabilities()
+    guard result.isCompatible, result.supportsImages else {
+      throw CircleError.invalidParameter("Images are unavailable for this Circle service.")
+    }
   }
 
   func listCircles(cursor: String? = nil) async throws -> CircleListPage {
@@ -363,19 +405,30 @@ actor CircleService {
   }
 
   func getFeed(space: SpaceRef?, cursor: String? = nil) async throws -> CircleFeedPage {
-    try await transport.getFeed(space: space, cursor: cursor)
+    if let space, retiredSpaces.contains(space) { throw CircleError.accessRemoved }
+    let page = try await transport.getFeed(space: space, cursor: cursor)
+    if let space, retiredSpaces.contains(space) { throw CircleError.accessRemoved }
+    return CircleFeedPage(items: page.items.filter { !retiredSpaces.contains($0.circle.uri) }, cursor: page.cursor)
   }
 
   func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage {
-    try await transport.getPostThread(uri: uri, space: space)
+    guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    let page = try await transport.getPostThread(uri: uri, space: space)
+    guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    return page
   }
 
   func listNotifications(cursor: String? = nil) async throws -> CircleNotificationPage {
-    try await transport.listNotifications(cursor: cursor)
+    let page = try await transport.listNotifications(cursor: cursor)
+    return CircleNotificationPage(notifications: page.notifications.filter { !retiredSpaces.contains($0.circle.uri) }, cursor: page.cursor)
   }
 
   func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data {
-    try await transport.media(space: space, authorDID: authorDID, cid: cid)
+    guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    try await requireImages()
+    let data = try await transport.media(space: space, authorDID: authorDID, cid: cid)
+    guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    return data
   }
 
   func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
@@ -384,9 +437,13 @@ actor CircleService {
 
   func deleteSpace(space: SpaceRef) async throws {
     try await transport.deleteSpace(space: space)
+    retiredSpaces.insert(space)
   }
 
   func addMember(space: SpaceRef, did: DID) async throws {
+    // Addition is idempotent and never upgrades an existing restricted grant.
+    let roster = try await transport.listMembers(space: space)
+    guard !roster.contains(where: { $0.did == did }) else { return }
     try await transport.addMember(space: space, did: did)
   }
 
@@ -394,7 +451,7 @@ actor CircleService {
     try await transport.removeMember(space: space, did: did)
   }
 
-  func listMembers(space: SpaceRef) async throws -> [DID] {
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] {
     try await transport.listMembers(space: space)
   }
 

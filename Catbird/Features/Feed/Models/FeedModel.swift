@@ -202,7 +202,7 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // Refresh shadows for restored posts
     let feedViewPosts = validPosts.compactMap { try? $0.feedViewPost }
-    await refreshPostShadows(feedViewPosts)
+    await refreshPostShadows(feedViewPosts, authoritative: false)
   }
   
   /// Applies pre-warmed feed data from account switching for smooth transition
@@ -224,7 +224,7 @@ final class FeedModel: StateInvalidationSubscriber {
     self.lastRefreshTime = Date()
     
     // Refresh post shadows for pre-warmed data
-    await refreshPostShadows(prewarmData)
+    await refreshPostShadows(prewarmData, authoritative: false)
     
     logger.info("Applied \(cachedPosts.count) pre-warmed posts to feed from \(prewarmData.count) raw posts")
     
@@ -507,8 +507,12 @@ final class FeedModel: StateInvalidationSubscriber {
     }
   }
 
-  /// Refresh post shadows in parallel for better performance
-  private func refreshPostShadows(_ posts: [AppBskyFeedDefs.FeedViewPost]) async {
+  /// Refresh post shadows in parallel for better performance.
+  ///
+  /// - Parameter authoritative: Pass `true` only for pages just fetched from the
+  ///   network. Restored or prewarmed pages may predate an interaction the shadow
+  ///   already holds, so they must not be allowed to clear it.
+  private func refreshPostShadows(_ posts: [AppBskyFeedDefs.FeedViewPost], authoritative: Bool = true) async {
     await SpotlightEntityDonator.shared.donate(posts: posts.map(\.post))
 
     // Use task group for parallel shadow updates
@@ -516,7 +520,11 @@ final class FeedModel: StateInvalidationSubscriber {
       for post in posts {
         group.addTask {
           await self.appState.postShadowManager.updateShadow(forUri: post.post.uri.uriString()) { shadow in
-            shadow.hydrateFromServer(likeUri: post.post.viewer?.like, repostUri: post.post.viewer?.repost)
+            shadow.hydrateFromServer(
+              likeUri: post.post.viewer?.like,
+              repostUri: post.post.viewer?.repost,
+              authoritative: authoritative
+            )
           }
         }
       }

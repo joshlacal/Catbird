@@ -8,6 +8,8 @@ on:
       - "Catbird.xcodeproj/**"
       - "Package.resolved"
       - ".github/workflows/ios-keychain-tests.yml"
+      - ".github/ci/ios-dependencies.json"
+      - "scripts/verify_ios_ci_dependencies.py"
   push:
     branches: [main, staging]
     paths:
@@ -16,27 +18,88 @@ on:
       - "Catbird.xcodeproj/**"
       - "Package.resolved"
       - ".github/workflows/ios-keychain-tests.yml"
+      - ".github/ci/ios-dependencies.json"
+      - "scripts/verify_ios_ci_dependencies.py"
   workflow_dispatch:
 
 jobs:
   keychain-tests:
-    runs-on: macos-15
+    # Standard GitHub-hosted arm64 image, not a paid larger or self-hosted runner.
+    # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+    # https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
+    runs-on: xcode-27
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: Catbird
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      CATBIRD_MLS_LOCAL_INTEGRATION: "1"
+      VALIDATION_DIR: ${{ github.workspace }}/keychain-validation
     permissions:
       contents: read
 
     steps:
-      - name: Checkout
+      - name: Checkout Catbird
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: Catbird
+          persist-credentials: false
 
-      - name: Resolve Swift packages
-        run: xcodebuild -resolvePackageDependencies -project Catbird.xcodeproj -scheme Catbird
+      - name: Read immutable sibling revisions
+        id: dependencies
+        run: python3 scripts/verify_ios_ci_dependencies.py manifest >> "$GITHUB_OUTPUT"
 
-      - name: Setup CI Keychain
+      - name: Checkout pinned Petrel
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: joshlacal/Petrel
+          ref: ${{ steps.dependencies.outputs.petrel_revision }}
+          path: Petrel
+          persist-credentials: false
+
+      - name: Checkout pinned PetrelCatbird
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: joshlacal/PetrelCatbird
+          ref: ${{ steps.dependencies.outputs.petrelcatbird_revision }}
+          path: PetrelCatbird
+          persist-credentials: false
+
+      - name: Checkout pinned CatbirdMLSCore
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: joshlacal/CatbirdMLSCore
+          ref: ${{ steps.dependencies.outputs.catbirdmlscore_revision }}
+          path: CatbirdMLSCore
+          persist-credentials: false
+
+      - name: Verify Xcode and pinned source provenance
         run: |
-          security create-keychain -p "" ci.keychain || true
-          security default-keychain -s ci.keychain
-          security unlock-keychain -p "" ci.keychain
-          security set-keychain-settings -t 3600 -u ci.keychain
+          set -euo pipefail
+          mkdir -p "$VALIDATION_DIR"
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version | tee "$VALIDATION_DIR/xcode-version.txt"
+          grep -Fx 'Xcode 27.1' "$VALIDATION_DIR/xcode-version.txt"
+          grep -Fx 'Build version 27A9275' "$VALIDATION_DIR/xcode-version.txt"
+          xcrun swift --version > "$VALIDATION_DIR/swift-version.txt"
+          sw_vers > "$VALIDATION_DIR/macos-version.txt"
+          uname -m > "$VALIDATION_DIR/architecture.txt"
+          python3 scripts/verify_ios_ci_dependencies.py checkouts --reports "$VALIDATION_DIR"
+
+      - name: Install the Xcode Metal compiler component
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Resolve and verify Swift packages
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies -project Catbird.xcodeproj -scheme Catbird \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            2>&1 | tee "$VALIDATION_DIR/resolve.log"
+          python3 scripts/verify_ios_ci_dependencies.py resolved \
+            --reports "$VALIDATION_DIR" --source-packages "$RUNNER_TEMP/SourcePackages"
 
       - name: Run the complete keychain suite
         shell: bash
@@ -50,29 +113,37 @@ jobs:
           fi
           echo "Expecting $expected_tests MLS keychain tests"
 
-          simulator_id="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ { print $2; exit }' | sed 's/[[:space:]]*$//')"
+          xcrun simctl list devices available -j > "$VALIDATION_DIR/simulators.json"
+          simulator_id="$(jq -r '[.devices | to_entries[] | select(.key == "com.apple.CoreSimulator.SimRuntime.iOS-27-0") | .value[] | select(.isAvailable and (.name | startswith("iPhone")))] | first | .udid // empty' "$VALIDATION_DIR/simulators.json")"
           if [[ -z "$simulator_id" ]]; then
-            echo "No available iPhone simulator found" >&2
+            echo "No available iOS 27.0 iPhone simulator found" >&2
             exit 1
           fi
           destination="platform=iOS Simulator,id=${simulator_id}"
           echo "Using destination: $destination"
+          printf '%s\n' "$destination" > "$VALIDATION_DIR/destination.txt"
 
-          # Simulator tests intentionally use the system keychain with no
-          # access-group override. The MLSKeychainManager implementation and
-          # accessibility attributes remain unchanged; no test is skipped.
+          # Keep the application's entitlements and ad-hoc signing: disabling
+          # signing changes simulator keychain/App Group behavior. This needs
+          # no signing certificate or provisioning-profile secret.
           set +e
-          rm -rf keychain-tests.xcresult keychain-tests.log
           xcodebuild test \
             -project Catbird.xcodeproj \
             -scheme Catbird \
             -destination "$destination" \
-            -resultBundlePath keychain-tests.xcresult \
+            -resultBundlePath "$VALIDATION_DIR/keychain-tests.xcresult" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution -skipPackageUpdates \
+            -jobs 3 \
             -parallel-testing-enabled NO \
             -only-testing:CatbirdTests/MLSKeychainManagerTests \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            | tee keychain-tests.log
+            -only-testing:CatbirdTests/NativeMLSArtifactTests \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=YES \
+            DEBUG_INFORMATION_FORMAT=dwarf \
+            2>&1 | tee "$VALIDATION_DIR/keychain-tests.log"
           xcode_status=${PIPESTATUS[0]}
           set -e
           if [[ "$xcode_status" -ne 0 ]]; then
@@ -80,15 +151,15 @@ jobs:
             exit "$xcode_status"
           fi
 
-          if [[ ! -d keychain-tests.xcresult ]]; then
+          if [[ ! -d "$VALIDATION_DIR/keychain-tests.xcresult" ]]; then
             echo "xcodebuild produced no xcresult bundle" >&2
             exit 1
           fi
 
           xcrun xcresulttool get test-results tests \
-            --path keychain-tests.xcresult \
-            --compact > keychain-tests.json
-          if ! jq empty keychain-tests.json; then
+            --path "$VALIDATION_DIR/keychain-tests.xcresult" \
+            --compact > "$VALIDATION_DIR/keychain-tests.json"
+          if ! jq empty "$VALIDATION_DIR/keychain-tests.json"; then
             echo "xcresult test report was not valid JSON" >&2
             exit 1
           fi
@@ -100,10 +171,10 @@ jobs:
           # nodeIdentifier instead of guessing from source text or counting
           # excluded plan nodes. Xcode 27 does not populate sourceLocation for
           # these nodes, while nodeIdentifier remains stable (Class/test()).
-          suite_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")))] | length' keychain-tests.json)"
-          passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result == "Passed")] | length' keychain-tests.json)"
-          non_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result != "Passed")] | length' keychain-tests.json)"
-          planned_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' keychain-tests.json)"
+          suite_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")))] | length' "$VALIDATION_DIR/keychain-tests.json")"
+          passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result == "Passed")] | length' "$VALIDATION_DIR/keychain-tests.json")"
+          non_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result != "Passed")] | length' "$VALIDATION_DIR/keychain-tests.json")"
+          planned_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' "$VALIDATION_DIR/keychain-tests.json")"
           echo "Keychain suite result: selectedTestCases=$suite_tests expectedFromSource=$expected_tests plannedTargetTestCases=$planned_tests passed=$passed_tests nonPassed=$non_passed_tests"
 
           if [[ "$suite_tests" -ne "$expected_tests" || "$passed_tests" -ne "$expected_tests" || "$non_passed_tests" -ne 0 ]]; then
@@ -111,3 +182,40 @@ jobs:
             exit 1
           fi
           echo "Keychain suite passed: $suite_tests discovered test cases; every Test Case result is exactly Passed"
+
+          # This separate app-host test initializes the actual linked native MLS
+          # library through its generated bindings and checks the UniFFI contract.
+          native_expected_tests="$(grep -Ec '^[[:space:]]*@Test([ (]|$)' CatbirdTests/NativeMLSArtifactTests.swift)"
+          native_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | startswith("NativeMLSArtifactTests/")))] | length' "$VALIDATION_DIR/keychain-tests.json")"
+          native_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | startswith("NativeMLSArtifactTests/")) and .result == "Passed")] | length' "$VALIDATION_DIR/keychain-tests.json")"
+          if [[ "$native_expected_tests" -ne 1 || "$native_tests" -ne "$native_expected_tests" || "$native_passed_tests" -ne "$native_expected_tests" ]]; then
+            echo "Native MLS artifact test evidence is incomplete or non-Passed: expected=$native_expected_tests discovered=$native_tests passed=$native_passed_tests" >&2
+            exit 1
+          fi
+          echo "Native MLS artifact test passed in the signed application host"
+
+      - name: Preserve simulator signing evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$VALIDATION_DIR"
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Debug-iphonesimulator/Catbird.app"
+          if [[ -d "$app" ]]; then
+            codesign --verify --strict "$app" 2>&1 | tee "$VALIDATION_DIR/signature-verification.txt"
+            codesign --display --verbose=4 "$app" 2> "$VALIDATION_DIR/signature-details.txt"
+            # Simulator entitlements live in the Mach-O __entitlements section;
+            # codesign --display --entitlements can correctly return an empty dict.
+            xcrun otool -l "$app/Catbird" > "$VALIDATION_DIR/app-load-commands.txt"
+            entitlements="$RUNNER_TEMP/DerivedData/Build/Intermediates.noindex/Catbird.build/Debug-iphonesimulator/Catbird.build/Catbird.app-Simulated.xcent"
+            if [[ -f "$entitlements" ]]; then
+              cp "$entitlements" "$VALIDATION_DIR/simulator-entitlements.plist"
+            fi
+          fi
+
+      - name: Preserve keychain validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-keychain-validation
+          path: ${{ github.workspace }}/keychain-validation/
+          if-no-files-found: error

@@ -253,6 +253,7 @@ final class AppState {
 
     /// Preferences manager for handling user preferences
     @ObservationIgnored let preferencesManager = PreferencesManager()
+    @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
     @ObservationIgnored let feedFeedbackManager = FeedFeedbackManager()
@@ -492,6 +493,19 @@ final class AppState {
         }
     }
 
+
+    @MainActor
+    func navigateToMLSConversation(_ conversationID: String) {
+        let chatTab = AppNavigationManager.chatTabIndex
+        chatMode = "Catbird Groups"
+        navigationManager.targetMLSConversationId = conversationID
+        navigationManager.tabSelection?(chatTab)
+        navigationManager.updateCurrentTab(chatTab)
+        #if os(iOS)
+        navigationManager.navigate(to: .mlsConversation(conversationID), in: chatTab)
+        #endif
+    }
+
     @MainActor
     init(
         userDID: String,
@@ -652,6 +666,8 @@ final class AppState {
         _circleNotificationsModel = nil
         _circleNotificationService = nil
         _circleService = nil
+        circleCapabilityProbeID = nil
+        circleCapability = .unknown
         // Perform async cleanup in background task
         Task {
             // Stop all WebSocket subscriptions FIRST and WAIT for completion
@@ -809,6 +825,7 @@ final class AppState {
 
         let shouldStartMLS = ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
             || ProcessInfo.processInfo.arguments.contains("--e2e-mode")
+            || CatbirdGatewayConfiguration.current.isRuntimeFixture
         if shouldStartMLS {
             Task(priority: .utility) { [weak self] in
                 guard let self else { return }
@@ -837,9 +854,6 @@ final class AppState {
                 await self.loadCurrentUserProfile(did: userDID)
 
                 await AppStateManager.shared.authentication.refreshAvailableAccounts()
-
-                // Probe Circle capabilities from the server for this account
-                await self.probeCircleCapabilities()
 
                 // Synchronize server preferences with app settings
                 do {
@@ -872,6 +886,14 @@ final class AppState {
         logger.info("Refreshing data after account switch")
         MLSDeviceUUIDCache.shared.invalidate()
         isTransitioningAccounts = true
+        _circleNotificationsModel = nil
+        _circleNotificationService = nil
+        _circleService = nil
+        circleCapabilityProbeID = nil
+        circleCapability = .unknown
+        #if DEBUG
+        if let transport = e2eCircleTransport { installE2ECircleFixture(transport: transport) }
+        #endif
 
         Task { [weak self] in
             await self?.probeCircleCapabilities()
@@ -954,7 +976,6 @@ final class AppState {
 
         await preferencesTask
         await profileTask
-        await probeCircleCapabilities()
     }
 
     @MainActor
@@ -991,9 +1012,6 @@ final class AppState {
         mlsConversationManagerInitTask = nil
         await mlsEpochRetentionCleanupCoordinator.stop()
         clearMLSGlobalWebSocketSubscriptionTracking()
-        _circleNotificationsModel = nil
-        _circleNotificationService = nil
-        _circleService = nil
 
         // CRITICAL FIX: Signal NSE to yield BEFORE stopping event streams
         // This prevents new NSE decryption attempts during shutdown, avoiding race conditions
@@ -1204,6 +1222,15 @@ final class AppState {
         client
     }
 
+    /// Availability belongs to this account and its authenticated client, never the process.
+    var circleCapability: CircleCapabilityState = .unknown {
+        didSet { if circleCapability != .supported { circleSupportsImages = false } }
+    }
+    private(set) var circleSupportsImages = false
+    var circlesEnabled: Bool { circleCapability == .supported }
+    @ObservationIgnored private var circleCapabilityProbeID: UUID?
+    @ObservationIgnored private var circleCapabilityPDSURL: URL?
+
     @ObservationIgnored private var _circleService: CircleService?
 
     /// Circle service using the current authenticated client
@@ -1212,7 +1239,9 @@ final class AppState {
             if let _circleService {
                 return _circleService
             }
-            return CircleService(transport: GatewayCircleTransport(client: client))
+            let service = CircleService(transport: GatewayCircleTransport(client: client))
+            _circleService = service
+            return service
         }
         set {
             _circleService = newValue
@@ -1261,6 +1290,8 @@ final class AppState {
 
     @MainActor
     func installE2ECircleFixture(transport: E2ECircleTransport) {
+        self.circleCapability = ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds") ? .unsupported : .supported
+        self.circleSupportsImages = self.circleCapability == .supported && !ProcessInfo.processInfo.arguments.contains("--circles-images-unavailable")
         self.e2eCircleTransport = transport
         let service = CircleService(transport: transport)
         self.circleService = service
@@ -1272,35 +1303,49 @@ final class AppState {
     }
 #endif
 
-    /// Probes Circle capabilities from the server once for this active account,
-    /// updating `CircleFeatureFlags.serverCapability` while race-checking against account switches.
+    /// Require both the active PDS Spaces API and the shared Circle service.
+    /// Unknown errors hide entry points without classifying the PDS as unsupported.
     @MainActor
     func probeCircleCapabilities() async {
-        let targetDID = userDID
-        // Route every generated `blue.catbird.circle.*` read to the standalone
-        // Circle AppView. Petrel longest-prefix matches this map, so this one
-        // entry covers the whole namespace without per-call header plumbing.
-        // `com.atproto.simplespace.*` and `com.atproto.space.*` are deliberately
-        // left unmapped so Space administration and permissioned writes stay on
-        // the user's own PDS. Registered before the first probe, and re-run on
-        // account switch, because the client is rebuilt per account.
+        guard AppStateManager.shared.lifecycle.appState === self else { return }
+        let probeID = UUID()
+        circleCapabilityProbeID = probeID
+        let probeClient = client
+        let account = await probeClient.getActiveAccountInfo()
+        guard AppStateManager.shared.lifecycle.appState === self, client === probeClient,
+              circleCapabilityProbeID == probeID else { return }
+        if let accountDID = account.did, accountDID != userDID {
+            circleCapability = .unknown
+            return
+        }
+        if circleCapabilityPDSURL != account.pdsURL {
+            circleCapability = .unknown
+        }
         await client.setServiceDID(
             CircleConfiguration.serviceDID, for: CircleConfiguration.serviceNSIDPrefix
         )
+        let result: CircleCapabilityState
+        var supportsImages = false
         do {
             let caps = try await circleService.capabilities()
-            guard AppStateManager.shared.lifecycle.userDID == targetDID else {
-                logger.info("Circle capability probe discarded for inactive account: \(targetDID)")
-                return
-            }
-            CircleFeatureFlags.serverCapability(enabled: caps.enabled)
-            logger.info("Circle capability probe succeeded for \(targetDID): enabled=\(caps.enabled)")
+            result = caps.isCompatible ? .supported : .unsupported
+            supportsImages = caps.isCompatible && caps.supportsImages
         } catch {
-            guard AppStateManager.shared.lifecycle.userDID == targetDID else {
-                return
-            }
-            logger.debug("Circle capability probe failed for \(targetDID): \(error.localizedDescription)")
+            let circleError = error as? CircleError
+            result = (circleError == .unsupportedPDS || circleError == .protocolRevisionMismatch) ? .unsupported : .unknown
+            logger.debug("Circle capability probe did not establish support: \(error.localizedDescription)")
         }
+        let currentAccount = await probeClient.getActiveAccountInfo()
+        guard !Task.isCancelled, client === probeClient,
+              circleCapabilityProbeID == probeID,
+              AppStateManager.shared.lifecycle.appState === self else { return }
+        guard account.did == currentAccount.did, account.pdsURL == currentAccount.pdsURL else {
+            circleCapability = .unknown
+            return
+        }
+        circleCapabilityPDSURL = currentAccount.pdsURL
+        circleCapability = result
+        circleSupportsImages = supportsImages
     }
 
     #if canImport(FoundationModels)
@@ -1393,9 +1438,6 @@ final class AppState {
             return nil
         }
 
-        // CRITICAL FIX: Verify Shutdown Coordinator is idle before creating NEW manager
-        // This prevents "locking wars" between the old closing manager and new opening one
-        // for the same or different users on the same SQLCipher file (if path collision)
         if await MLSShutdownCoordinator.shared.isShuttingDown {
             logger.warning("MLS: 🚫 Creation blocked - Shutdown Coordinator is busy. Waiting...")
             try? await Task.sleep(nanoseconds: 200_000_000) // Brief wait
@@ -1403,6 +1445,8 @@ final class AppState {
                 return nil // Fail fast if still busy, will retry via natural UI retry or polling
             }
         }
+
+
 
         if AppStateManager.shared.isUserUnderStorageMaintenance(userDid) {
             logger.warning(
@@ -1455,6 +1499,8 @@ final class AppState {
                 mlsConversationManagerInitTask = nil
             }
         }
+
+
 
         // Check if initialization is already in progress - add timeout to prevent indefinite hang
         if let existingTask = mlsConversationManagerInitTask {
@@ -1572,11 +1618,16 @@ final class AppState {
             )
 
             // Propagate fresh database pools to AppState after corruption recovery.
+            let managerIdentity = ObjectIdentifier(manager)
             manager.onDatabaseRefreshed = { [weak self] newDatabase in
                 Task { @MainActor in
-                    if let pool = newDatabase as? DatabasePool {
-                        self?.mlsDatabase = pool
-                    }
+                    guard let self, let currentManager = self.mlsConversationManagerStorage,
+                        ObjectIdentifier(currentManager) == managerIdentity,
+                        let pool = newDatabase as? DatabasePool,
+                        let currentPool = currentManager.database as? DatabasePool,
+                        currentPool === pool
+                    else { return }
+                    self.mlsDatabase = pool
                 }
             }
 
@@ -1594,6 +1645,9 @@ final class AppState {
                 try await manager.initialize()
                 logger.info("MLS: ✅ Created and initialized new conversation manager successfully")
                 mlsConversationManagerStorage = manager
+                if let pool = manager.database as? DatabasePool {
+                    mlsDatabase = pool
+                }
                 mlsServiceState.status = .ready
                 mlsServiceState.retryCount = 0 // Reset retry count on success
                 mlsServiceState.lastError = nil
@@ -2381,6 +2435,7 @@ final class AppState {
             ) { [weak self] _ in
                 Task { [weak self] in
                     await self?.notificationManager.checkUnreadNotifications()
+                    await self?.probeCircleCapabilities()
                 }
             }
         #elseif os(macOS)
@@ -2391,6 +2446,7 @@ final class AppState {
             ) { [weak self] _ in
                 Task { [weak self] in
                     await self?.notificationManager.checkUnreadNotifications()
+                    await self?.probeCircleCapabilities()
                 }
             }
         #endif
@@ -3025,7 +3081,15 @@ final class AppState {
     @MainActor
     func updateClient(_ newClient: ATProtoClient) {
         logger.info("Updating AppState client reference for user: \(self.userDID)")
+        circleCapabilityProbeID = nil
+        circleCapability = .unknown
+        _circleService = nil
+        _circleNotificationService = nil
+        _circleNotificationsModel = nil
         client = newClient
+        #if DEBUG
+        if let transport = e2eCircleTransport { installE2ECircleFixture(transport: transport) }
+        #endif
 
         // Update all managers that hold client references
         postManager.updateClient(newClient)

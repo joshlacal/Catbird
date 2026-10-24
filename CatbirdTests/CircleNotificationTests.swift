@@ -208,7 +208,7 @@ struct CircleNotificationTests {
     let notifCache = CircleNotificationCache()
     let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let page = CircleNotificationPage(notifications: [notif], cursor: nil)
-    await notifCache.store(page, accountDID: "did:plc:alice")
+    await notifCache.store(page, accountDID: "did:plc:alice", generation: notifCache.generation(accountDID: "did:plc:alice"))
 
     let service = RecordingCircleNotificationService()
     await service.setPages([page])
@@ -311,8 +311,8 @@ struct CircleNotificationTests {
     let alicePage = CircleNotificationPage(notifications: [notifFamily, notifWork], cursor: nil)
     let bobPage = CircleNotificationPage(notifications: [notifFamily], cursor: nil)
 
-    await cache.store(alicePage, accountDID: "did:plc:alice")
-    await cache.store(bobPage, accountDID: "did:plc:bob")
+    await cache.store(alicePage, accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
+    await cache.store(bobPage, accountDID: "did:plc:bob", generation: cache.generation(accountDID: "did:plc:bob"))
 
     await cache.purge(accountDID: "did:plc:alice", space: familyCircle.uri)
 
@@ -332,7 +332,7 @@ struct CircleNotificationTests {
     let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let page = CircleNotificationPage(notifications: [notif], cursor: nil)
 
-    await cache.store(page, accountDID: "did:plc:alice")
+    await cache.store(page, accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
     #expect(await cache.page(accountDID: "did:plc:alice") != nil)
 
     await cache.purge(accountDID: "did:plc:alice")
@@ -347,7 +347,7 @@ struct CircleNotificationTests {
     let notifFamily = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let notifWork = makeNotification(id: "n2", reason: .value_like, circle: workCircle)
     let page = CircleNotificationPage(notifications: [notifFamily, notifWork], cursor: nil)
-    await cache.store(page, accountDID: "did:plc:alice")
+    await cache.store(page, accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
 
     let service = RecordingCircleNotificationService()
     await service.setPages([page])
@@ -732,8 +732,8 @@ struct CircleNotificationTests {
     let notifAlice = makeNotification(id: "n_alice", reason: .value_reply, circle: familyCircle)
     let notifBob = makeNotification(id: "n_bob", reason: .value_reply, circle: familyCircle)
 
-    await cache.store(CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice"), accountDID: "did:plc:alice")
-    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob")
+    await cache.store(CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice"), accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
+    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob", generation: cache.generation(accountDID: "did:plc:bob"))
 
     let service = RecordingCircleNotificationService()
     let model = CircleNotificationsModel(
@@ -799,7 +799,7 @@ struct CircleNotificationTests {
     let notifAlice = makeNotification(id: "n_alice", reason: .value_reply, circle: familyCircle)
     let notifBob = makeNotification(id: "n_bob", reason: .value_reply, circle: familyCircle)
 
-    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob")
+    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob", generation: cache.generation(accountDID: "did:plc:bob"))
 
     let service = RecordingCircleNotificationService()
     await service.setPages([CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice")])
@@ -1242,7 +1242,7 @@ struct CircleNotificationTests {
       }
 
       func capabilities() async throws -> CircleCapability {
-        CircleCapability(enabled: true, protocolRevision: "2026-08", supportsImages: true)
+        CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
       }
 
       func listCircles(cursor: String?) async throws -> CircleListPage {
@@ -1314,7 +1314,7 @@ struct CircleNotificationTests {
       func deleteSpace(space: SpaceRef) async throws {}
       func addMember(space: SpaceRef, did: DID) async throws {}
       func removeMember(space: SpaceRef, did: DID) async throws {}
-      func listMembers(space: SpaceRef) async throws -> [DID] { [] }
+      func listMembers(space: SpaceRef) async throws -> [CircleMember] { [] }
     }
 
     appStateManager.setAppStateFactoryForTesting { did, cli in

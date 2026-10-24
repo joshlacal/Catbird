@@ -30,10 +30,13 @@ struct ThreadComposePrompt: View {
         avatarURL: appState.currentUserProfile?.finalAvatarURL()
       )
       .clipShape(Circle())
+      .fixedSize()
 
       Text("Write your reply")
         .font(.subheadline)
         .foregroundStyle(.secondary)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 14)

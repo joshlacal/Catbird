@@ -6,13 +6,23 @@ import Petrel
 import PetrelCatbird
 import SwiftUI
 
+struct MacOSMLSConversationView: View {
+  let conversationId: String
+  var body: some View {
+    MLSRequestConversationGate(conversationID: conversationId) {
+      MacOSMLSOrdinaryConversationView(conversationId: conversationId)
+    }
+  }
+}
+
 // MARK: - macOS MLS Conversation Detail
 
 /// Displays an end-to-end encrypted MLS conversation on macOS using the shared
 /// ChatListView for message rendering. Includes group info inspector and E2E badge.
 @available(macOS 13.0, *)
-struct MacOSMLSConversationView: View {
+struct MacOSMLSOrdinaryConversationView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.scenePhase) private var scenePhase
   let conversationId: String
 
   @State private var dataSource: MLSConversationDataSource?
@@ -39,6 +49,19 @@ struct MacOSMLSConversationView: View {
             showingEmojiPicker = true
           }
         )
+        .task(id: "\(appState.nseStateReloadTrigger):\(scenePhase)") {
+          guard !Task.isCancelled,
+                scenePhase == .active,
+                !MLSClient.isSuspensionInProgress,
+                !MLSCoreContext.isSuspensionInProgress,
+                let manager = viewModel?.conversationManager,
+                manager.userDid == appState.userDID,
+                appState.mlsConversationManager === manager,
+                !manager.isShuttingDown,
+                manager.currentCoordinationGeneration == MLSCoordinationStore.shared.currentGeneration
+          else { return }
+          await dataSource.loadMessages()
+        }
       } else {
         ProgressView("Loading encrypted conversation...")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -85,6 +108,9 @@ struct MacOSMLSConversationView: View {
     .task {
       await initializeConversation()
     }
+    .onReceive(NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)) { _ in
+      Task { await consumePendingDraft() }
+    }
     .onAppear {
       appState.chatHeartbeatManager.viewAppeared()
     }
@@ -117,7 +143,6 @@ struct MacOSMLSConversationView: View {
 
     let newViewModel = MLSConversationDetailViewModel(
       conversationId: conversationId,
-      database: manager.database,
       apiClient: manager.apiClient,
       conversationManager: manager
     )
@@ -130,10 +155,21 @@ struct MacOSMLSConversationView: View {
     )
 
     await loadConversationMetadata(manager: manager)
+    await consumePendingDraft()
 
     Task.detached(priority: .userInitiated) { [newViewModel] in
       await newViewModel.loadConversation()
     }
+  }
+
+  @MainActor
+  private func consumePendingDraft() async {
+    let account = appState.userDID
+    guard let database = appState.mlsDatabase, let dataSource else { return }
+    guard let text = try? await ChatDraftHandoff.shared.consumeDurably(
+      for: conversationId, accountDID: account, database: database),
+      appState.userDID == account else { return }
+    dataSource.draftText = text
   }
 
   @MainActor
@@ -175,7 +211,6 @@ struct MacOSGroupInfoInspector: View {
   var body: some View {
     inspectorContent
       .listStyle(.sidebar)
-      .navigationTitle("Group Info")
   }
 
   @ViewBuilder

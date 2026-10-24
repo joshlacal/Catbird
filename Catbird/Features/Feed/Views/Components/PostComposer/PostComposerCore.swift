@@ -116,6 +116,13 @@ extension PostComposerViewModel {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .posting)
         }
 
+        if case .circle = destination, selectedGif != nil || videoItem != nil {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: .circleUnsupportedMedia)
+        }
+        if case .circle = destination, !mediaItems.isEmpty, !appState.circleSupportsImages {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: .circleImagesUnavailable)
+        }
+
         if let videoUploadBlockedReason {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .videoBlocked(videoUploadBlockedReason))
         }
@@ -590,9 +597,8 @@ extension PostComposerViewModel {
         // Temporarily set mediaItems for image upload
         let originalItems = mediaItems
         mediaItems = entry.mediaItems
-        let embed = try await createImagesEmbed()
-        mediaItems = originalItems
-        return embed
+        defer { mediaItems = originalItems }
+        return try await createImagesEmbed()
     }
 
     /// Maps the embed produced by createImagesEmbed (images for <=4 photos,
@@ -621,13 +627,21 @@ extension PostComposerViewModel {
         }
 
         let submission = try beginSubmission()
+        if case .circle = submission.destination {
+            guard selectedGif == nil, videoItem == nil else {
+                throw CircleError.invalidParameter("GIFs, video, and audio are unavailable in Circles.")
+            }
+            if !mediaItems.isEmpty {
+                try await (circleService ?? appState.circleService).requireImages()
+            }
+        }
 
         // Start MetricKit tracking for post composition
         if #available(iOS 26, macOS 26, *) {
           await MetricKitSignposts.beginPostComposition()
         }
 
-        logger.info("Creating post with text: \(self.postText), destination: \(String(describing: submission.destination))")
+        logger.info("Creating post with the selected destination")
         // Process facets (mentions, links, etc.)
         logger.debug("Processing facets...")
         let facets = await processFacets()
@@ -1004,6 +1018,9 @@ extension PostComposerViewModel {
     // MARK: - Embed Creation Helpers
 
     private func createGifEmbed(_ gif: TenorGif) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        guard destination == .public else {
+            throw CircleError.invalidParameter("GIFs are unavailable in Circles.")
+        }
         guard let client = appState.atProtoClient else { return nil }
 
         // Get the proper GIF media URL (not the Tenor page URL)
@@ -1112,7 +1129,7 @@ extension PostComposerViewModel {
         // 2. Thumbnail cache by URL
         // 3. Async upload if needed
         let cacheKey = urlCard.resolvedURL
-        let thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]
+        let thumbBlob = destination == .public ? (urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]) : nil
 
         let external = AppBskyEmbedExternal.External(
             uri: URI(uriString: cacheKey),
@@ -1123,7 +1140,7 @@ extension PostComposerViewModel {
         )
 
         // Start async thumbnail upload if image is available and not cached
-        if !urlCard.image.isEmpty && thumbBlob == nil {
+        if destination == .public && !urlCard.image.isEmpty && thumbBlob == nil {
             Task {
                 await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
             }
@@ -1137,12 +1154,12 @@ extension PostComposerViewModel {
     private func createExternalEmbedWithThumbnail(_ urlCard: URLCardResponse) async -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
         // Check for existing thumbnail
         let cacheKey = urlCard.resolvedURL
-        var thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]
+        var thumbBlob = destination == .public ? (urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]) : nil
 
         // If no thumbnail exists but image URL is available, try to upload synchronously
-        if thumbBlob == nil && !urlCard.image.isEmpty {
+        if destination == .public && thumbBlob == nil && !urlCard.image.isEmpty {
             await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-            thumbBlob = thumbnailCache[cacheKey]
+            thumbBlob = destination == .public ? thumbnailCache[cacheKey] : nil
         }
 
         let external = AppBskyEmbedExternal.External(
@@ -1158,6 +1175,7 @@ extension PostComposerViewModel {
 
     /// Uploads thumbnail for external embed and caches the blob reference
     private func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async {
+        guard destination == .public else { return }
         guard let client = appState.atProtoClient,
               let url = URL(string: imageURL) else {
             logger.warning("Cannot upload thumbnail: invalid URL or missing client")
@@ -1168,7 +1186,17 @@ extension PostComposerViewModel {
             logger.debug("Downloading thumbnail from: \(imageURL)")
 
             // Download the image data
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let data: Data
+            let response: URLResponse
+            #if DEBUG
+            if let thumbnailDownloadForTesting {
+                (data, response) = try await thumbnailDownloadForTesting(url)
+            } else {
+                (data, response) = try await URLSession.shared.data(from: url)
+            }
+            #else
+            (data, response) = try await URLSession.shared.data(from: url)
+            #endif
 
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
@@ -1195,7 +1223,8 @@ extension PostComposerViewModel {
 
             logger.debug("Uploading thumbnail (\(processedData.count) bytes) with MIME type: \(mimeType)")
 
-            // Upload to AT Protocol
+            // The audience can change while the thumbnail downloads.
+            guard destination == .public else { return }
             let (uploadCode, uploadResult) = try await client.com.atproto.repo.uploadBlob(
                 data: processedData,
                 mimeType: mimeType

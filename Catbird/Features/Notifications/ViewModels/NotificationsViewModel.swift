@@ -250,15 +250,15 @@ private actor FollowRecordCreatedAtCacheActor {
 
   /// Makes sure we have enough notifications to fill the screen
   private func ensureEnoughNotifications() async {
-    // If we have fewer than 5 grouped notifications and there are more available,
-    // automatically load more
-    if groupedNotifications.count < 5 && hasMoreNotifications && !isLoadingMore {
+    // Empty/filtered pages must not keep the loading state alive indefinitely.
+    var remainingPages = 3
+    while groupedNotifications.count < 5, hasMoreNotifications,
+      !isLoadingMore, error == nil, remainingPages > 0 {
+      let previousCursor = cursor
+      guard previousCursor != nil else { break }
       await loadMoreNotifications()
-
-      // Recursively check again after loading more
-      if groupedNotifications.count < 5 && hasMoreNotifications {
-        await ensureEnoughNotifications()
-      }
+      remainingPages -= 1
+      guard cursor != previousCursor else { break }
     }
   }
 
@@ -330,6 +330,7 @@ private actor FollowRecordCreatedAtCacheActor {
         cursor: resetCursor ? nil : cursor
       )
 
+      let requestStarted = ContinuousClock.now
       let (responseCode, output) = try await client.app.bsky.notification.listNotifications(
         input: params
       )
@@ -343,6 +344,9 @@ private actor FollowRecordCreatedAtCacheActor {
         return
       }
 
+      logger.info("Notification API completed in \(String(describing: requestStarted.duration(to: .now)), privacy: .public)")
+      let groupingStarted = ContinuousClock.now
+
       // Reset page counter when doing a full refresh
       if resetCursor {
         currentPage = 0
@@ -355,6 +359,7 @@ private actor FollowRecordCreatedAtCacheActor {
       let newGroupedNotifications = await groupNotifications(
         output.notifications, pageNumber: currentPage)
 
+      logger.info("Notification hydration/grouping completed in \(String(describing: groupingStarted.duration(to: .now)), privacy: .public)")
       await MainActor.run {
         if resetCursor {
           if self.groupedNotifications.isEmpty {

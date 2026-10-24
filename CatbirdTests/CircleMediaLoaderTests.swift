@@ -130,8 +130,8 @@ struct CircleMediaLoaderTests {
 
     let page1 = CircleFeedPage(items: [makeFeedItem(circle: CircleTestFixtures.family, rkey: "post1", text: "Hello")], cursor: nil)
     let page2 = CircleFeedPage(items: [makeFeedItem(circle: CircleTestFixtures.family, rkey: "post2", text: "World")], cursor: nil)
-    await CircleFeedCache.shared.store(page1, accountDID: "did:plc:account1", space: CircleTestFixtures.familyURI)
-    await CircleFeedCache.shared.store(page2, accountDID: "did:plc:account2", space: CircleTestFixtures.familyURI)
+    await CircleFeedCache.shared.store(page1, accountDID: "did:plc:account1", space: CircleTestFixtures.familyURI, generation: CircleFeedCache.shared.generation(accountDID: "did:plc:account1"))
+    await CircleFeedCache.shared.store(page2, accountDID: "did:plc:account2", space: CircleTestFixtures.familyURI, generation: CircleFeedCache.shared.generation(accountDID: "did:plc:account2"))
 
     #expect(await CircleFeedCache.shared.page(accountDID: "did:plc:account1", space: CircleTestFixtures.familyURI) != nil)
     #expect(await CircleFeedCache.shared.page(accountDID: "did:plc:account2", space: CircleTestFixtures.familyURI) != nil)
@@ -160,6 +160,23 @@ struct CircleMediaLoaderTests {
       cid: cid,
       targetBucket: 360
     )
+  }
+
+  @Test("A media response cannot repopulate memory after Space purge")
+  func mediaResponseAfterPurgeIsDiscarded() async throws {
+    let transport = MockCircleTransport()
+    let loader = CircleMediaLoader(service: CircleService(transport: transport))
+    await transport.setOnMedia {
+      await loader.purge(accountDID: "alice", space: CircleTestFixtures.familyURI)
+    }
+    await #expect(throws: CancellationError.self) {
+      _ = try await loader.image(accountDID: "alice", space: CircleTestFixtures.familyURI,
+        authorDID: CircleTestFixtures.alice, cid: CID.fromDAGCBOR(Data("late".utf8)), targetBucket: 360)
+    }
+    await transport.setOnMedia(nil)
+    _ = try await loader.image(accountDID: "alice", space: CircleTestFixtures.familyURI,
+      authorDID: CircleTestFixtures.alice, cid: CID.fromDAGCBOR(Data("late".utf8)), targetBucket: 360)
+    #expect(await transport.mediaCallCount == 2)
   }
 
   @Test("CircleMediaView bucket calculation produces discrete monotonic bounds")

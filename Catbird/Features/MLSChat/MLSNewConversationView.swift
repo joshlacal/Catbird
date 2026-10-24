@@ -12,6 +12,9 @@ struct MLSNewConversationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     
+    @State private var introductionText = ""
+    @State private var invitationNotes: MLSGroupInvitationNotes?
+    @State private var directDraft: MLSDirectComposeDraft?
     @State private var conversationName = ""
     @State private var searchText = ""
     @State private var selectedParticipants: Set<String> = []
@@ -81,26 +84,34 @@ struct MLSNewConversationView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                contentView
+                if let invitationNotes {
+                    MLSGroupInvitationNotesView(batch: invitationNotes) { dismiss() }
+                } else { contentView }
                 
                 if isCreatingConversation {
                     creationOverlay
                 }
             }
-            .navigationTitle(currentStep.title)
+            .sheet(item: $directDraft) { draft in
+                MLSDirectComposeView(draft: draft) { conversationID in
+                    onNavigateToConversation?(conversationID)
+                    dismiss()
+                }
+            }
+            .navigationTitle(invitationNotes == nil ? currentStep.title : "Invitation Notes")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    if invitationNotes == nil { Button("Cancel") {
                         creationTask?.cancel()
                         dismiss()
-                    }
+                    } }
                 }
                 
                 ToolbarItem(placement: .confirmationAction) {
-                    nextButton
+                    if invitationNotes == nil { nextButton }
                 }
             }
             .alert("Error", isPresented: $showingError) {
@@ -133,6 +144,10 @@ struct MLSNewConversationView: View {
         #endif
         .onDisappear { creationTask?.cancel() }
         .onChange(of: appState.userDID) { _, _ in
+            dismiss()
+            invitationNotes = nil
+            introductionText = ""
+            directDraft = nil
             creationTask?.cancel()
             searchGeneration = UUID()
             searchTask?.cancel()
@@ -264,10 +279,12 @@ struct MLSNewConversationView: View {
                     Text("Participants")
                         .designCaption()
                 } footer: {
-                    Text("Everyone listed will join this secure group once it is created.")
+                    Text("Everyone listed receives a separate group invitation when the group is created.")
                         .designCaption()
                 }
                 
+                MLSOptionalGroupIntroductionSection(text: $introductionText)
+
                 Section {
                     encryptionDetailRow(
                         icon: "lock.shield.fill",
@@ -896,19 +913,23 @@ struct MLSNewConversationView: View {
             return
         }
 
-        // Don't set a conversation title for 1:1 — it will be resolved
-        // dynamically as the other participant's display name for each user
-        withAnimation(.spring(response: 0.25)) {
-            currentStep = .creating
+        do {
+            guard let database = appState.mlsDatabase,
+                  appState.userDID == accountDID,
+                  let recipient = selectedParticipants.first else { return }
+            directDraft = try await MLSDirectComposeDraftStore.open(
+                accountDID: accountDID, recipientDID: recipient, database: database)
+        } catch {
+            errorMessage = "Could not save this draft. Please try again."
+            showingError = true
         }
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        await createMLSConversation()
     }
     @MainActor
     private func createMLSConversation() async {
         let accountDID = appState.userDID
         let membersSnapshot = Array(selectedParticipants)
         let nameSnapshot = conversationName
+        let noteSnapshot = introductionText
         let profilesSnapshot = Array(selectedParticipantDetails.values)
         guard !membersSnapshot.isEmpty, !Task.isCancelled else { return }
         guard let database = appState.mlsDatabase,
@@ -974,6 +995,15 @@ struct MLSNewConversationView: View {
             }
             guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
             let stableConversationID = createdConversation.conversationId
+            if !noteSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let notes = MLSGroupInvitationNotes(accountDID: accountDID,
+                    conversationID: stableConversationID, recipients: membersSnapshot.sorted(), text: noteSnapshot)
+                invitationNotes = notes
+                do { try await MLSGroupInvitationNotesStore.save(notes, database: database) }
+                catch { logger.warning("Group created; optional notes require local save retry") }
+                return
+            }
+
 
             // Seed the selected profile rows before the detail screen opens so
             // the first render never falls back to a DID-only participant.

@@ -447,6 +447,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Delegate to standard refresh
         await refresh()
+
+        // Pull-to-refresh is the explicit "show me something new" gesture, so it
+        // also replaces the trending set the feed is currently showing.
+        if let trendingRequestID {
+            trendingInvalidated = true
+            await loadTrendingIfNeeded(requestID: trendingRequestID)
+        }
     }
     
     /// Refreshes the feed data (user-initiated)
@@ -591,6 +598,43 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
     }
     
+    // MARK: - Trending Interstitial
+
+    /// Trending topics and videos shown inside the feed. Owned here, not by the
+    /// hosting view: that view's state is lost whenever the collection view is
+    /// rebuilt (theme/font change, cell reuse), and `thevids` returns a different
+    /// set on every request, so refetching on reappear visibly reshuffles videos.
+    private var trendingContent = TrendingFeedContent()
+    private var trendingRequestID: String?
+    private var trendingLoadedAt: Date?
+    private var trendingInvalidated = false
+
+    /// How long a loaded trending set stays on screen before a reappear refetches it.
+    static let trendingMaxAge: TimeInterval = 15 * 60
+
+    /// The trending set for `requestID`, or empty when what's held belongs to a
+    /// different account, feed, or trending settings.
+    func trendingContent(for requestID: String) -> TrendingFeedContent {
+        trendingRequestID == requestID ? trendingContent : TrendingFeedContent()
+    }
+
+    func loadTrendingIfNeeded(requestID: String) async {
+        guard shouldReloadTrending(for: requestID, now: Date()) else { return }
+        let content = await TrendingFeedContent.load(appState: appState)
+        guard !Task.isCancelled else { return }
+        trendingContent = content
+        trendingRequestID = requestID
+        trendingLoadedAt = Date()
+        trendingInvalidated = false
+    }
+
+    private func shouldReloadTrending(for requestID: String, now: Date) -> Bool {
+        guard trendingRequestID == requestID, let trendingLoadedAt, !trendingInvalidated else { return true }
+        // An empty set is what a failed load produces; retry it on the next appear.
+        if trendingContent.isEmpty { return true }
+        return now.timeIntervalSince(trendingLoadedAt) > Self.trendingMaxAge
+    }
+
     // MARK: - Data Updates
     
     /// Updates posts from the feed model with debouncing

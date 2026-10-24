@@ -18,6 +18,8 @@ public struct TrendingVideosSection: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
 
+  @ScaledMetric(relativeTo: .caption) private var authorRowHeight: CGFloat = 20
+
   public static let thevidsURI = "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/thevids"
 
   public init(
@@ -68,13 +70,15 @@ public struct TrendingVideosSection: View {
 
   private var carouselView: some View {
     ScrollView(.horizontal, showsIndicators: false) {
-      LazyHStack(spacing: 12) {
+      LazyHStack(alignment: .top, spacing: 12) {
         ForEach(videos, id: \.post.uri) { feedViewPost in
           videoCard(feedViewPost.post)
         }
       }
       .padding(.horizontal)
     }
+    // A horizontal lazy stack cannot infer its cross-axis size inside a vertical scroll view.
+    .frame(height: 220 + 8 + max(20, authorRowHeight))
   }
 
   private func videoCard(_ post: AppBskyFeedDefs.PostView) -> some View {
@@ -144,7 +148,7 @@ public struct TrendingVideosSection: View {
             .lineLimit(1)
             .foregroundColor(.primary)
         }
-        .frame(width: 160, alignment: .leading)
+        .frame(width: 160, height: max(20, authorRowHeight), alignment: .leading)
       }
     }
     .buttonStyle(.plain)

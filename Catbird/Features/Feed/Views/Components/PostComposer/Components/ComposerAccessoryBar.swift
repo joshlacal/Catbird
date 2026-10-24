@@ -23,6 +23,8 @@ struct ComposerAccessoryBar: View {
   let characterCount: Int
   let allowTenor: Bool
   var isAddToThreadDisabled: Bool = false
+  var arePhotosDisabled: Bool = false
+  var isPublicMediaDisabled: Bool = false
   let threadgateValue: String
   let languageValue: String
   let actions: ComposerBarActions
@@ -132,11 +134,15 @@ struct ComposerAccessoryBar: View {
   private var plusMenu: some View {
     VStack(alignment: .leading, spacing: 0) {
       menuRow("Photos", systemImage: "photo", action: actions.onPhotos)
+        .disabled(arePhotosDisabled)
       menuRow("Video", systemImage: "video", action: actions.onVideo)
+        .disabled(isPublicMediaDisabled)
       if allowTenor {
         menuRow("GIF", systemImage: "play.rectangle", action: actions.onGif)
+        .disabled(isPublicMediaDisabled)
       }
       menuRow("Audio", systemImage: "mic", action: actions.onAudio)
+        .disabled(isPublicMediaDisabled)
       menuRow("Link", systemImage: "link", action: actions.onLink)
 
       Divider()
@@ -167,11 +173,15 @@ struct ComposerAccessoryBar: View {
   @ViewBuilder
   private var attachmentMenuItems: some View {
     Button(action: actions.onPhotos) { Label("Photos", systemImage: "photo") }
+      .disabled(arePhotosDisabled)
     Button(action: actions.onVideo) { Label("Video", systemImage: "video") }
+        .disabled(isPublicMediaDisabled)
     if allowTenor {
       Button(action: actions.onGif) { Label("GIF", systemImage: "play.rectangle") }
+        .disabled(isPublicMediaDisabled)
     }
     Button(action: actions.onAudio) { Label("Audio", systemImage: "mic") }
+        .disabled(isPublicMediaDisabled)
     Button(action: actions.onLink) { Label("Link", systemImage: "link") }
   }
 

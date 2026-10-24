@@ -1,22 +1,29 @@
 import SwiftUI
 import Petrel
 import OSLog
+import Observation
 
 /// A screen wrapper for viewing a specific feed URI outside the main feeds interface.
-/// If the user is subscribed to this feed, shows a compact header with feed info.
+/// Shows feed details and shared library actions, retaining metadata during refresh.
 struct FeedScreen: View {
   @Environment(AppState.self) private var appState
   @Binding var path: NavigationPath
 
   let uri: ATProtocolURI
 
-  @State private var generatorView: AppBskyFeedDefs.GeneratorView?
-  @State private var isSubscribed: Bool = false
-  @State private var isLoading: Bool = false
+  @State private var metadata: FeedScreenMetadata
   @State private var isShowingCopilot: Bool = false
   @State private var isShowingReportSheet: Bool = false
   @State private var pendingDedicatedProposal: CopilotProposal?
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedScreen")
+
+  init(path: Binding<NavigationPath>, uri: ATProtocolURI,
+       initialGenerator: AppBskyFeedDefs.GeneratorView? = nil) {
+    self._path = path
+    self.uri = uri
+    self._metadata = State(initialValue: FeedScreenMetadata(
+      generator: initialGenerator?.uri == uri ? initialGenerator : nil))
+  }
 
   var body: some View {
     FeedCollectionView.create(
@@ -30,7 +37,7 @@ struct FeedScreen: View {
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Menu {
-          if generatorView != nil {
+          if metadata.generator != nil {
             Button(role: .destructive) {
               isShowingReportSheet = true
             } label: {
@@ -43,7 +50,7 @@ struct FeedScreen: View {
       }
     }
     .sheet(isPresented: $isShowingReportSheet) {
-      if let client = appState.atProtoClient, let generatorView = generatorView {
+      if let client = appState.atProtoClient, let generatorView = metadata.generator {
         let reportingService = ReportingService(client: client)
         let subject = reportingService.createFeedSubject(uri: generatorView.uri, cid: generatorView.cid)
         ReportFormView(
@@ -54,7 +61,7 @@ struct FeedScreen: View {
       }
     }
     .sheet(isPresented: $isShowingCopilot) {
-      let feedName = generatorView?.displayName ?? "Feed"
+      let feedName = metadata.generator?.displayName ?? "Feed"
       let feedURI = uri.uriString()
       CatbirdCopilotSheet(
         context: .feed(uri: feedURI, name: feedName),
@@ -65,7 +72,7 @@ struct FeedScreen: View {
             expectedAccountDID: appState.userDID,
             appState: appState
           )
-          await updateSubscriptionStatus()
+          await appState.feedLibraryActions.refresh()
         },
         onDedicatedAction: { proposal in
           pendingDedicatedProposal = proposal
@@ -82,78 +89,97 @@ struct FeedScreen: View {
     }
     .task(id: uri.uriString()) {
       await loadGenerator()
-      await updateSubscriptionStatus()
+      await appState.feedLibraryActions.refresh()
     }
   }
 
-  // Convert header to AnyView when we have generator details
+  // The UIKit header host retains this child. Read observable metadata in the
+  // child body so updates do not depend on replacing the AnyView configuration.
   private var headerAnyView: AnyView? {
-    guard let generatorView else { return nil }
-    return AnyView(
-      FeedDiscoveryHeaderView(
-        feed: generatorView,
-        isSubscribed: isSubscribed,
-        onSubscriptionToggle: { await toggleFeedSubscription(generatorView) },
-        onLikedByTap: {
-          path.append(NavigationDestination.postLikes(generatorView.uri.uriString()))
-        },
-        onAskCatbird: {
-          isShowingCopilot = true
-        },
-        onReportTap: {
-          isShowingReportSheet = true
-        }
-      )
-      .padding(.horizontal)
-      .padding(.top, 8)
-    )
+    AnyView(FeedScreenMetadataHeader(
+      metadata: metadata,
+      onLikedByTap: { feed in
+        path.append(NavigationDestination.postLikes(feed.uri.uriString()))
+      },
+      onAskCatbird: { isShowingCopilot = true },
+      onReportTap: { isShowingReportSheet = true },
+      onRetry: { Task { await loadGenerator() } }
+    ))
   }
 
   // MARK: - Data
 
   private func loadGenerator() async {
-    guard !isLoading else { return }
-    isLoading = true
-    defer { isLoading = false }
+    guard !metadata.isLoading else { return }
+    metadata.isLoading = true
+    metadata.error = nil
+    defer { metadata.isLoading = false }
 
     do {
-      if let data = try await appState.atProtoClient?.app.bsky.feed.getFeedGenerator(input: .init(feed: uri)).data {
-        await MainActor.run { self.generatorView = data.view }
+      guard let client = appState.atProtoClient else {
+        metadata.error = "Feed details are unavailable. Please try again."
+        return
       }
+      let response = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
+      try Task.checkCancellation()
+      guard response.responseCode == 200, let data = response.data else {
+        metadata.error = "Feed details could not be loaded. Please try again."
+        return
+      }
+      metadata.generator = data.view
     } catch {
+      guard !Task.isCancelled, !(error is CancellationError) else { return }
+      metadata.error = "Feed details could not be loaded. Please try again."
       logger.error("Failed to load generator for uri=\(self.uri.uriString()): \(error.localizedDescription)")
     }
   }
 
-  private func updateSubscriptionStatus() async {
-    do {
-      let preferences = try await appState.preferencesManager.getPreferences()
-      let u = uri.uriString()
-      await MainActor.run {
-        self.isSubscribed = preferences.pinnedFeeds.contains(u) || preferences.savedFeeds.contains(u)
-      }
-    } catch {
-      await MainActor.run { self.isSubscribed = false }
-    }
+
+}
+
+/// Shared by the screen and its independently hosted collection header.
+@MainActor @Observable
+private final class FeedScreenMetadata {
+  var generator: AppBskyFeedDefs.GeneratorView?
+  var isLoading = false
+  var error: String?
+
+  init(generator: AppBskyFeedDefs.GeneratorView?) {
+    self.generator = generator
   }
+}
 
-  private func toggleFeedSubscription(_ feed: AppBskyFeedDefs.GeneratorView) async {
-    let feedURIString = feed.uri.uriString()
-    do {
-      let preferences = try await appState.preferencesManager.getPreferences()
+private struct FeedScreenMetadataHeader: View {
+  let metadata: FeedScreenMetadata
+  let onLikedByTap: (AppBskyFeedDefs.GeneratorView) -> Void
+  let onAskCatbird: () -> Void
+  let onReportTap: () -> Void
+  let onRetry: () -> Void
 
-      if isSubscribed {
-        await MainActor.run { preferences.removeFeed(feedURIString) }
-      } else {
-        await MainActor.run { preferences.addFeed(feedURIString, pinned: false) }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if let generator = metadata.generator {
+        FeedDiscoveryHeaderView(
+          feed: generator,
+          onLikedByTap: { onLikedByTap(generator) },
+          onAskCatbird: onAskCatbird,
+          onReportTap: onReportTap
+        )
       }
-
-      try await appState.preferencesManager.saveAndSyncPreferences(preferences)
-      await appState.stateInvalidationBus.notify(.feedListChanged)
-      await updateSubscriptionStatus()
-    } catch {
-      logger.error("Failed to toggle feed subscription: \(error.localizedDescription)")
+      if let error = metadata.error {
+        Text(error)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Button("Retry feed details", action: onRetry)
+          .disabled(metadata.isLoading)
+          .frame(minHeight: 44)
+      } else if metadata.isLoading && metadata.generator == nil {
+        ProgressView("Loading feed details…")
+      }
     }
+    .padding(.horizontal)
+    .padding(.top, 8)
   }
 }
 

@@ -35,6 +35,8 @@ extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
 /// document — and is the value named in a Space's `#allowList`. `serviceDID`
 /// is only the `atproto-proxy` target and `registerNotify` subscriber.
 enum CircleConfiguration {
+  static let protocolRevision = "ac0c9f15392f6f0298d71dc52aa88c05036150be"
+
   /// Service identifier the gateway proxies Circle reads to.
   static let serviceDID = "did:web:circles.catbird.blue#atproto_circles"
 
@@ -130,11 +132,21 @@ struct CircleNotificationPage: Sendable {
   let cursor: String?
 }
 
+struct CircleMember: Sendable, Equatable {
+  let did: DID
+  let read: Bool
+  let write: Bool
+}
+
 /// Server-advertised Circle capability metadata.
 struct CircleCapability: Sendable, Equatable {
   let enabled: Bool
   let protocolRevision: String
   let supportsImages: Bool
+
+  var isCompatible: Bool {
+    enabled && protocolRevision == CircleConfiguration.protocolRevision
+  }
 }
 
 
@@ -348,7 +360,7 @@ protocol CircleTransport: Sendable {
   func deleteSpace(space: SpaceRef) async throws
   func addMember(space: SpaceRef, did: DID) async throws
   func removeMember(space: SpaceRef, did: DID) async throws
-  func listMembers(space: SpaceRef) async throws -> [DID]
+  func listMembers(space: SpaceRef) async throws -> [CircleMember]
 }
 
 /// Maps a generated `BlueCatbirdCircle*` error (or gateway/network error) to a
