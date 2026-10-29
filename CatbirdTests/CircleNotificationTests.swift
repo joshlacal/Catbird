@@ -1037,6 +1037,8 @@ struct CircleNotificationTests {
     let manager2 = AuthenticationManager(logHandler: recorder2, dependencyOverrides: overrides2)
     manager2.setClientForTesting(dummyClient)
     manager2.storeHandle(canaryHandle, for: canaryDID)
+    // Auto-logout expires only the active account, so the canary must be signed in.
+    manager2.setAuthenticatedForTesting(did: canaryDID)
     await manager2.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
     recorder2.clear()
     do {
@@ -1134,6 +1136,7 @@ struct CircleNotificationTests {
     let recorder7 = RecordingAuthLogHandler()
     let manager7 = AuthenticationManager(logHandler: recorder7)
     manager7.storeHandle(canaryHandle, for: canaryDID)
+    manager7.setAuthenticatedForTesting(did: canaryDID)
     await manager7.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
     verifyScenario(
       "Petrel auto-logout",
