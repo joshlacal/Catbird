@@ -62,7 +62,9 @@ struct MainPostCellEnvironmentTests {
     cell: MainPostCell, window: UIWindow, appState: AppState, imageCount: Int, sentinel: String
   ) async throws {
     // ALT overlays must render while opening the post, even if the image is a placeholder.
-    let deadline = ContinuousClock.now + .seconds(3)
+    // The deadline also covers the tiled badge read, which takes a few seconds per capture on
+    // the simulator.
+    let deadline = ContinuousClock.now + .seconds(5)
     var lastPNG = Data()
     var transcript = ""
     var captureError = ""
@@ -88,11 +90,10 @@ struct MainPostCellEnvironmentTests {
       lastPNG = image.pngData() ?? Data()
       do {
         transcript = try recognizeText(in: image)
-        altBadgeCount = try countAltBadges(in: image, imageCount: imageCount, transcript: transcript)
         let words = transcript.uppercased().split(whereSeparator: { $0.isWhitespace })
-        readable = drewHierarchy
-          && words.joined(separator: " ").contains(sentinel)
-          && altBadgeCount == imageCount
+        let showsPost = drewHierarchy && words.joined(separator: " ").contains(sentinel)
+        altBadgeCount = try showsPost ? countAltBadges(in: image) : 0
+        readable = showsPost && altBadgeCount == imageCount
         captureError = ""
       } catch {
         captureError = String(describing: error)
@@ -120,29 +121,69 @@ struct MainPostCellEnvironmentTests {
       + "background=\(String(describing: color))\n"
   }
 
-  private func countAltBadges(in image: UIImage, imageCount: Int, transcript: String) throws -> Int {
-    let text: String
-    if imageCount > 1 {
-      // Vision can collapse identical text on the same row. Read each grid
-      // column separately so every visible badge still has to be recognized.
-      text = try [CGFloat(0), CGFloat(0.5)].map { originX in
-        try recognizeText(in: image, region: CGRect(x: originX, y: 0, width: 0.5, height: 1))
-      }.joined(separator: "\n")
-    } else {
-      text = transcript
+  /// Counts distinct ALT badges in the capture. Vision can collapse identical text on one row
+  /// and can miss a small badge when it reads a tall region, so the capture is read per grid
+  /// column in overlapping half-height bands. Each recognized badge is mapped back to image
+  /// coordinates and overlapping detections count once, so every visible badge must be
+  /// recognized at least once and no badge is counted twice.
+  private func countAltBadges(in image: UIImage) throws -> Int {
+    var badgeFrames: [CGRect] = []
+    for tile in Self.badgeSearchTiles {
+      for observation in try recognizeTextObservations(in: image, region: tile) {
+        let tokens = observation.text.uppercased().split(whereSeparator: { $0.isWhitespace })
+        guard tokens.contains(where: isAltBadgeToken),
+              !badgeFrames.contains(where: { $0.intersects(observation.frame) })
+        else { continue }
+        badgeFrames.append(observation.frame)
+      }
     }
-    return text.uppercased().split(whereSeparator: { $0.isWhitespace }).filter { $0 == "ALT" }.count
+    return badgeFrames.count
   }
 
-  private func recognizeText(in image: UIImage, region: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) throws -> String {
+  /// Two grid columns, each split into half-height bands that overlap by half a band, so
+  /// every badge lies wholly inside at least one tile.
+  private static let badgeSearchTiles: [CGRect] = [CGFloat(0), CGFloat(0.5)].flatMap { originX in
+    stride(from: CGFloat(0), through: CGFloat(0.5), by: CGFloat(0.25)).map { originY in
+      CGRect(x: originX, y: originY, width: 0.5, height: 0.5)
+    }
+  }
+
+  /// Vision sometimes reads the badge capsule's rounded left edge as a leading glyph, so a
+  /// badge can come back as "(ALT" or "CALT". Compare letters only, and allow at most one
+  /// extra leading letter so longer words that end in "ALT" are not counted as badges.
+  private func isAltBadgeToken(_ token: Substring) -> Bool {
+    let letters = String(token.filter(\.isLetter))
+    return letters == "ALT" || (letters.count == 4 && letters.hasSuffix("ALT"))
+  }
+
+  private func recognizeText(in image: UIImage) throws -> String {
+    try recognizeTextObservations(in: image, region: CGRect(x: 0, y: 0, width: 1, height: 1))
+      .map(\.text)
+      .joined(separator: "\n")
+  }
+
+  /// Recognized lines with frames in normalized image coordinates (Vision reports each
+  /// observation relative to the region of interest).
+  private func recognizeTextObservations(
+    in image: UIImage, region: CGRect
+  ) throws -> [(text: String, frame: CGRect)] {
     let request = VNRecognizeTextRequest()
     request.regionOfInterest = region
     request.recognitionLevel = .accurate
     request.recognitionLanguages = ["en-US"]
     request.usesLanguageCorrection = false
     try VNImageRequestHandler(cgImage: try #require(image.cgImage), options: [:]).perform([request])
-    return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-      .joined(separator: "\n")
+    return (request.results ?? []).compactMap { observation in
+      guard let text = observation.topCandidates(1).first?.string else { return nil }
+      let box = observation.boundingBox
+      let frame = CGRect(
+        x: region.minX + box.minX * region.width,
+        y: region.minY + box.minY * region.height,
+        width: box.width * region.width,
+        height: box.height * region.height
+      )
+      return (text, frame)
+    }
   }
 
   private func makeImagePost(imageCount: Int, text: String) throws -> AppBskyFeedDefs.PostView {
