@@ -217,6 +217,84 @@ struct CircleServiceTests {
     #expect(anotherAccount.circleService !== first)
   }
 
+  @Test("A Circle list requested after removal restores a re-added member's reads")
+  func freshCircleListClearsRetirement() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "readded", text: "Welcome back")])
+    let service = CircleService(transport: transport)
+    // Removal: the AppView answered AccessRemoved and the feed model retired the Space.
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    #expect(await transport.feedCallCount == 0)
+    // Re-add: a page requested after the retirement lists the Circle again.
+    let page = try await service.listCircles()
+    #expect(page.circles.contains { $0.uri == CircleTestFixtures.familyURI })
+    let feed = try await service.getFeed(space: CircleTestFixtures.familyURI)
+    #expect(feed.items.count == 1)
+    #expect(await transport.feedCallCount == 1)
+    _ = try await service.getPostThread(uri: feed.items[0].post.post.uri, space: CircleTestFixtures.familyURI)
+    #expect(await transport.threadCallCount == 1)
+  }
+
+  @Test("A unified feed requested after removal restores a re-added Circle")
+  func freshUnifiedFeedClearsRetirement() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "readded", text: "Welcome back")])
+    let service = CircleService(transport: transport)
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    let unified = try await service.getFeed(space: nil)
+    #expect(unified.items.map(\.circle.uri) == [CircleTestFixtures.familyURI])
+    let detail = try await service.getFeed(space: CircleTestFixtures.familyURI)
+    #expect(detail.items.count == 1)
+  }
+
+  @Test("Results requested before a retirement stay rejected after it clears")
+  func lateResultsStayRejectedAfterRetirementClears() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "late", text: "Retired")])
+    let service = CircleService(transport: transport)
+    // A Circle list already in flight when the Space retires is stale and cannot clear it.
+    await transport.setOnListCircles { await service.retireSpace(CircleTestFixtures.familyURI) }
+    _ = try await service.listCircles()
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    // Reads in flight across a retirement and a later re-grant are still rejected.
+    await transport.setOnListCircles(nil)
+    await transport.setOnGetFeed {
+      await service.retireSpace(CircleTestFixtures.familyURI)
+      _ = try? await service.listCircles()
+    }
+    let lateUnified = try await service.getFeed(space: nil)
+    #expect(lateUnified.items.isEmpty)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    // The re-grant itself stands: the next request is answered.
+    await transport.setOnGetFeed(nil)
+    let fresh = try await service.getFeed(space: CircleTestFixtures.familyURI)
+    #expect(fresh.items.count == 1)
+  }
+
+  @Test("An owner-deleted Space stays retired while the AppView still lists it")
+  func ownerDeletionIsNotClearedByListings() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "deleted", text: "Deleted")])
+    let service = CircleService(transport: transport)
+    try await service.deleteSpace(space: CircleTestFixtures.familyURI)
+    // The .circleDeleted fan-out retires it again; that must not weaken the deletion.
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    // notifySpaceDeleted reaches the AppView in the background, so its pages can still show the Space.
+    _ = try await service.listCircles()
+    let unified = try await service.getFeed(space: nil)
+    #expect(unified.items.isEmpty)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+  }
+
   @Test("CircleService deleteLike forwards to transport and stays Circle scoped")
   func circleServiceDeleteLikeForwardsToTransport() async throws {
     let transport = RecordingCircleTransport()

@@ -18,6 +18,7 @@ actor MockCircleTransport: CircleTransport {
   var feedCallCount: Int = 0
   var errorToThrow: (any Error)?
   var onGetFeed: (@Sendable () async -> Void)?
+  var onListCircles: (@Sendable () async -> Void)?
   var onMedia: (@Sendable () async -> Void)?
   var mediaData: Data = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAKeyNrvgAAAABJRU5ErkJggg==")!
   var lastMediaSpace: SpaceRef?
@@ -49,6 +50,8 @@ actor MockCircleTransport: CircleTransport {
     self.onGetFeed = action
   }
 
+  func setOnListCircles(_ action: (@Sendable () async -> Void)?) { onListCircles = action }
+
   func setOnMedia(_ action: (@Sendable () async -> Void)?) { onMedia = action }
 
   func capabilities() async throws -> CircleCapability {
@@ -56,7 +59,8 @@ actor MockCircleTransport: CircleTransport {
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
-    CircleListPage(circles: [CircleTestFixtures.family, CircleTestFixtures.work], cursor: nil)
+    if let onListCircles { await onListCircles() }
+    return CircleListPage(circles: [CircleTestFixtures.family, CircleTestFixtures.work], cursor: nil)
   }
 
   func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {

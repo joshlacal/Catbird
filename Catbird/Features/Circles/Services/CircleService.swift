@@ -375,7 +375,16 @@ actor GatewayCircleTransport: CircleTransport {
 /// `CircleError`-shaped and never fall back to public endpoints.
 actor CircleService {
   private let transport: any CircleTransport
+  /// Spaces whose lifecycle ended in this session. Reads of these are refused
+  /// before any request until a fresh authoritative page lists them again.
   private var retiredSpaces: Set<SpaceRef> = []
+  /// Spaces this account deleted. They never un-retire: the AppView learns of a
+  /// deletion in the background, so its pages can still list one for a while.
+  private var deletedSpaces: Set<SpaceRef> = []
+  /// Epoch of each Space's latest retirement. It outlives a cleared retirement,
+  /// so a result whose request started before that retirement stays rejected.
+  private var retirementEpochs: [SpaceRef: UInt64] = [:]
+  private var lifecycleEpoch: UInt64 = 0
 
   init(transport: any CircleTransport) {
     self.transport = transport
@@ -390,7 +399,25 @@ actor CircleService {
   }
 
   func retireSpace(_ space: SpaceRef) {
+    lifecycleEpoch += 1
     retiredSpaces.insert(space)
+    retirementEpochs[space] = lifecycleEpoch
+  }
+
+  /// Whether a result for `space` from a request started at epoch `start`
+  /// belongs to a retired lifecycle: the Space is retired now, or it was
+  /// retired after the request started.
+  private func isRetired(_ space: SpaceRef, since start: UInt64) -> Bool {
+    retiredSpaces.contains(space) || retirementEpochs[space, default: 0] > start
+  }
+
+  /// A page requested after a Space's latest retirement is the AppView's
+  /// current view, which lists only Circles this account may read. A Space it
+  /// lists again (a member re-added) resumes; owner deletions never do.
+  private func restore(_ spaces: [SpaceRef], since start: UInt64) {
+    for space in spaces where !deletedSpaces.contains(space) && retirementEpochs[space, default: 0] <= start {
+      retiredSpaces.remove(space)
+    }
   }
 
   func requireImages() async throws {
@@ -401,33 +428,41 @@ actor CircleService {
   }
 
   func listCircles(cursor: String? = nil) async throws -> CircleListPage {
-    try await transport.listCircles(cursor: cursor)
+    let start = lifecycleEpoch
+    let page = try await transport.listCircles(cursor: cursor)
+    restore(page.circles.map(\.uri), since: start)
+    return page
   }
 
   func getFeed(space: SpaceRef?, cursor: String? = nil) async throws -> CircleFeedPage {
     if let space, retiredSpaces.contains(space) { throw CircleError.accessRemoved }
+    let start = lifecycleEpoch
     let page = try await transport.getFeed(space: space, cursor: cursor)
-    if let space, retiredSpaces.contains(space) { throw CircleError.accessRemoved }
-    return CircleFeedPage(items: page.items.filter { !retiredSpaces.contains($0.circle.uri) }, cursor: page.cursor)
+    if let space, isRetired(space, since: start) { throw CircleError.accessRemoved }
+    if space == nil { restore(page.items.map(\.circle.uri), since: start) }
+    return CircleFeedPage(items: page.items.filter { !isRetired($0.circle.uri, since: start) }, cursor: page.cursor)
   }
 
   func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage {
     guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    let start = lifecycleEpoch
     let page = try await transport.getPostThread(uri: uri, space: space)
-    guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    guard !isRetired(space, since: start) else { throw CircleError.accessRemoved }
     return page
   }
 
   func listNotifications(cursor: String? = nil) async throws -> CircleNotificationPage {
+    let start = lifecycleEpoch
     let page = try await transport.listNotifications(cursor: cursor)
-    return CircleNotificationPage(notifications: page.notifications.filter { !retiredSpaces.contains($0.circle.uri) }, cursor: page.cursor)
+    return CircleNotificationPage(notifications: page.notifications.filter { !isRetired($0.circle.uri, since: start) }, cursor: page.cursor)
   }
 
   func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data {
     guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    let start = lifecycleEpoch
     try await requireImages()
     let data = try await transport.media(space: space, authorDID: authorDID, cid: cid)
-    guard !retiredSpaces.contains(space) else { throw CircleError.accessRemoved }
+    guard !isRetired(space, since: start) else { throw CircleError.accessRemoved }
     return data
   }
 
@@ -437,7 +472,8 @@ actor CircleService {
 
   func deleteSpace(space: SpaceRef) async throws {
     try await transport.deleteSpace(space: space)
-    retiredSpaces.insert(space)
+    deletedSpaces.insert(space)
+    retireSpace(space)
   }
 
   func addMember(space: SpaceRef, did: DID) async throws {
