@@ -19,6 +19,8 @@ actor MockCircleTransport: CircleTransport {
   var errorToThrow: (any Error)?
   var onGetFeed: (@Sendable () async -> Void)?
   var onListCircles: (@Sendable () async -> Void)?
+  var notifications: [BlueCatbirdCircleDefs.Notification] = []
+  var onListNotifications: (@Sendable () async -> Void)?
   var onMedia: (@Sendable () async -> Void)?
   var mediaData: Data = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAKeyNrvgAAAABJRU5ErkJggg==")!
   var lastMediaSpace: SpaceRef?
@@ -51,6 +53,10 @@ actor MockCircleTransport: CircleTransport {
   }
 
   func setOnListCircles(_ action: (@Sendable () async -> Void)?) { onListCircles = action }
+
+  func setNotifications(_ notifications: [BlueCatbirdCircleDefs.Notification]) { self.notifications = notifications }
+
+  func setOnListNotifications(_ action: (@Sendable () async -> Void)?) { onListNotifications = action }
 
   func setOnMedia(_ action: (@Sendable () async -> Void)?) { onMedia = action }
 
@@ -128,7 +134,8 @@ actor MockCircleTransport: CircleTransport {
   }
 
   func listNotifications(cursor: String?) async throws -> CircleNotificationPage {
-    CircleNotificationPage(notifications: [], cursor: nil)
+    if let onListNotifications { await onListNotifications() }
+    return CircleNotificationPage(notifications: notifications, cursor: nil)
   }
 
   func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data {

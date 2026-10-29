@@ -287,12 +287,50 @@ struct CircleServiceTests {
     // The .circleDeleted fan-out retires it again; that must not weaken the deletion.
     await service.retireSpace(CircleTestFixtures.familyURI)
     // notifySpaceDeleted reaches the AppView in the background, so its pages can still show the Space.
+    await transport.setNotifications([CircleTestFixtures.makeNotification(circle: CircleTestFixtures.family, id: "deleted")])
     _ = try await service.listCircles()
+    let notifications = try await service.listNotifications()
+    #expect(notifications.notifications.isEmpty)
     let unified = try await service.getFeed(space: nil)
     #expect(unified.items.isEmpty)
     await #expect(throws: CircleError.accessRemoved) {
       try await service.getFeed(space: CircleTestFixtures.familyURI)
     }
+  }
+
+  @Test("A notification list requested after removal restores a re-added member's reads")
+  func freshNotificationListClearsRetirement() async throws {
+    let reply = CircleTestFixtures.makeNotification(circle: CircleTestFixtures.family, id: "readded")
+    let subject = try #require(reply.subject)
+    let transport = MockCircleTransport()
+    await transport.setNotifications([reply])
+    let service = CircleService(transport: transport)
+    // Removal: a Circle read answered AccessRemoved and the Space was retired.
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getPostThread(uri: subject, space: CircleTestFixtures.familyURI)
+    }
+    #expect(await transport.threadCallCount == 0)
+    // Re-add: the AppView lists notifications only from Circles this account may read now.
+    let page = try await service.listNotifications()
+    #expect(page.notifications.map(\.id) == ["readded"])
+    _ = try await service.getPostThread(uri: subject, space: CircleTestFixtures.familyURI)
+    #expect(await transport.threadCallCount == 1)
+  }
+
+  @Test("A notification list requested before a retirement cannot clear it")
+  func lateNotificationListCannotClearRetirement() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "late", text: "Retired")])
+    await transport.setNotifications([CircleTestFixtures.makeNotification(circle: CircleTestFixtures.family, id: "late")])
+    let service = CircleService(transport: transport)
+    await transport.setOnListNotifications { await service.retireSpace(CircleTestFixtures.familyURI) }
+    let late = try await service.listNotifications()
+    #expect(late.notifications.isEmpty)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    #expect(await transport.feedCallCount == 0)
   }
 
   @Test("CircleService deleteLike forwards to transport and stays Circle scoped")
@@ -530,5 +568,30 @@ enum CircleTestFixtures {
       reqId: nil
     )
     return BlueCatbirdCircleDefs.FeedItem(post: feedViewPost, circle: circle)
+  }
+
+  /// A reply notification whose subject is the post `id` in `circle`.
+  static func makeNotification(circle: CircleSummary, id: String) -> BlueCatbirdCircleDefs.Notification {
+    BlueCatbirdCircleDefs.Notification(
+      id: id,
+      reason: .value_reply,
+      actor: AppBskyActorDefs.ProfileViewBasic(
+        did: alice,
+        handle: try! Handle(handleString: "alice.test"),
+        displayName: "Alice",
+        pronouns: nil,
+        avatar: nil,
+        associated: nil,
+        viewer: nil,
+        labels: nil,
+        createdAt: nil,
+        verification: nil,
+        status: nil,
+        debug: nil
+      ),
+      subject: try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.post/\(id)"),
+      indexedAt: ATProtocolDate(date: Date()),
+      circle: circle
+    )
   }
 }

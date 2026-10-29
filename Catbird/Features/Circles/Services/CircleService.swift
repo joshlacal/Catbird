@@ -454,6 +454,8 @@ actor CircleService {
   func listNotifications(cursor: String? = nil) async throws -> CircleNotificationPage {
     let start = lifecycleEpoch
     let page = try await transport.listNotifications(cursor: cursor)
+    // The AppView returns notifications only from Circles this account may read now.
+    restore(page.notifications.map(\.circle.uri), since: start)
     return CircleNotificationPage(notifications: page.notifications.filter { !isRetired($0.circle.uri, since: start) }, cursor: page.cursor)
   }
 
