@@ -956,7 +956,7 @@ struct CircleNotificationTests {
     }
   }
 
-  @Test("AuthManager logs are content-free finite codes excluding all canaries across all auth flows")
+  @Test("AuthManager logs are content-free finite codes excluding all canaries across all auth flows", .isolatesSharedAccountState)
   @MainActor
   func authManagerLogsAreContentFreeAndExcludeCanaries() async throws {
     let canaryDID = "did:plc:supersecretcanaryauthdid999"
@@ -1166,7 +1166,7 @@ struct CircleNotificationTests {
   }
 
   // 18. Switch Alice -> Bob -> Alice rebuilds fresh Circle models; old model stays inert
-  @Test("Account switch Alice -> Bob -> Alice rebuilds fresh Circle models while old model stays inert")
+  @Test("Account switch Alice -> Bob -> Alice rebuilds fresh Circle models while old model stays inert", .isolatesSharedAccountState)
   @MainActor
   func accountSwitchAliceBobAliceRebuildsFreshCircleModels() async throws {
     let appStateManager = AppStateManager.shared
@@ -1452,7 +1452,7 @@ struct CircleNotificationTests {
     try await storage.saveCurrentDID("")
   }
   // 19. Forced database drain failure during switch propagates and recovers without leaving lifecycle .launching
-  @Test("Forced database drain failure during account switch propagates and recovers safely")
+  @Test("Forced database drain failure during account switch propagates and recovers safely", .isolatesSharedAccountState)
   @MainActor
   func forcedDatabaseDrainFailureDuringSwitchRecoversSafely() async throws {
     let appStateManager = AppStateManager.shared
