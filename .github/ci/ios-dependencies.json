@@ -3,15 +3,15 @@
   "packages": {
     "Petrel": {
       "repository": "joshlacal/Petrel",
-      "revision": "e115236537041a900ec971be05185a70cca73e8a"
+      "revision": "4037e7760e2d1bb71db9a6cfdd0cd4134d4dd3bc"
     },
     "PetrelCatbird": {
       "repository": "joshlacal/PetrelCatbird",
-      "revision": "8672c80ffeb3b9cfbdb6bd98f66efa09b13fe0db"
+      "revision": "77ecaa4c396fc0d819a860eceaf5240f9abf2970"
     },
     "CatbirdMLSCore": {
       "repository": "joshlacal/CatbirdMLSCore",
-      "revision": "d3bd03c8122434eb5bf3c72a2e4de2eecb060ba8"
+      "revision": "571f4bc7c6774b8f7dd5def547b27496bdf8aa45"
     }
   },
   "nativeArtifact": {
