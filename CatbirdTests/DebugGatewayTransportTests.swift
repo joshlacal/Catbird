@@ -239,11 +239,23 @@ struct DebugGatewayTransportTests {
 
     // MARK: - Live Gateway Smoke Test
 
-    @Test("Live gateway smoke test on simulator")
+    /// The smoke test needs a running fixture gateway and its launch config, so ordinary test
+    /// runs skip it. Opt in with CATBIRD_LIVE_GATEWAY_SMOKE=1 in the test process environment
+    /// (from xcodebuild: TEST_RUNNER_CATBIRD_LIVE_GATEWAY_SMOKE=1).
+    private static let liveGatewaySmokeRequested =
+        ProcessInfo.processInfo.environment["CATBIRD_LIVE_GATEWAY_SMOKE"] == "1"
+
+    @Test(
+        "Live gateway smoke test on simulator",
+        .enabled(
+            if: liveGatewaySmokeRequested,
+            "Set CATBIRD_LIVE_GATEWAY_SMOKE=1 to run against a live fixture gateway"
+        )
+    )
     func liveGatewaySmokeTest() async throws {
         #if DEBUG
-        // The fixture launch config is a required input. A missing file fails the test instead of
-        // silently reporting success without running any assertion.
+        // Once opted in, the fixture launch config is a required input. A missing file fails the
+        // test instead of silently reporting success without running any assertion.
         let configPath = try #require(
             DebugGatewayTransport.resolveConfigPath() ?? "/tmp/catbird-apple-gateway-run-001/config.json"
         )
