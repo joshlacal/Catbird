@@ -271,7 +271,7 @@ struct ViewImageGridView: View {
       .pipeline(ImageLoadingManager.shared.pipeline)
     }
     .frame(width: width, height: height)
-    .overlay(alignment: .bottomLeading) {
+    .overlay(alignment: .bottomTrailing) {
       if !isBlurred {
         altBadge(for: viewImage)
           .padding(6)
@@ -341,7 +341,7 @@ struct ViewImageGridView: View {
       }
       .frame(maxWidth: .infinity)
       .frame(height: height)
-      .overlay(alignment: .bottomLeading) {
+      .overlay(alignment: .bottomTrailing) {
         if !isBlurred {
           altBadge(for: viewImage)
             .padding(10)
