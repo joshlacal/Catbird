@@ -138,7 +138,7 @@ final class CircleManagementViewModel {
 
   /// Creates a new named Circle following the 5-step sequence:
   /// 1. Mint TID skey and circleId
-  /// 2. createSpace on PDS with memberListPolicy and #allowList
+  /// 2. createSpace on PDS with a memberspace policy whose allowedApps is the AppView
   /// 3. putRecord metadata with circleId
   /// 4. addMember per initial member on PDS
   /// 5. activateCircle against AppView (failure preserves the Space for activation retry)

@@ -104,25 +104,19 @@ actor GatewayCircleTransport: CircleTransport {
 
   /// Creates the Circle Space on the owner's own PDS and writes its metadata.
   ///
-  /// `#allowList` names only the AppView's OAuth `client_id`, so no other app
-  /// can mint a credential for this Space. The returned summary is provisional:
+  /// The memberspace policy's `allowedApps` names only the AppView's OAuth
+  /// `client_id`, so no other app can mint a credential for this Space. The returned summary is provisional:
   /// `activateCircle` replaces it with the AppView's authoritative view.
   func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
     let ownerDID = try DID(didString: try await client.getDid())
     let tid = try TID(tidString: circleId)
 
-    let (_, created) = try await client.com.atproto.simplespace.createSpace(
-      input: ComAtprotoSimplespaceCreateSpace.Input(
+    let (_, created) = try await client.com.atproto.space.createSpace(
+      input: ComAtprotoSpaceCreateSpace.Input(
         spaceType: try NSID(nsidString: CircleConfiguration.spaceType),
         skey: try RecordKey(keyString: skey),
-        readPolicy: ComAtprotoSimplespaceCreateSpace.InputReadPolicyUnion(
-          ComAtprotoSimplespaceDefs.MemberListPolicy()
-        ),
-        writePolicy: ComAtprotoSimplespaceCreateSpace.InputWritePolicyUnion(
-          ComAtprotoSimplespaceDefs.MemberListPolicy()
-        ),
-        appAccess: ComAtprotoSimplespaceCreateSpace.InputAppAccessUnion(
-          ComAtprotoSimplespaceDefs.AllowList(allowed: [CircleConfiguration.clientID])
+        policy: ComAtprotoSpaceCreateSpace.InputPolicyUnion(
+          ComAtprotoMemberspacePolicy(allowedApps: [CircleConfiguration.clientID])
         )
       )
     )
@@ -171,14 +165,14 @@ actor GatewayCircleTransport: CircleTransport {
   }
 
   func deleteSpace(space: SpaceRef) async throws {
-    _ = try await client.com.atproto.simplespace.deleteSpace(
-      input: ComAtprotoSimplespaceDeleteSpace.Input(space: space)
+    _ = try await client.com.atproto.space.deleteSpace(
+      input: ComAtprotoSpaceDeleteSpace.Input(space: space)
     )
   }
 
   func addMember(space: SpaceRef, did: DID) async throws {
-    _ = try await client.com.atproto.simplespace.putMember(
-      input: ComAtprotoSimplespacePutMember.Input(
+    _ = try await client.com.atproto.memberspace.putMember(
+      input: ComAtprotoMemberspacePutMember.Input(
         space: space,
         did: did,
         read: true,
@@ -188,8 +182,8 @@ actor GatewayCircleTransport: CircleTransport {
   }
 
   func removeMember(space: SpaceRef, did: DID) async throws {
-    _ = try await client.com.atproto.simplespace.removeMember(
-      input: ComAtprotoSimplespaceRemoveMember.Input(space: space, did: did)
+    _ = try await client.com.atproto.memberspace.removeMember(
+      input: ComAtprotoMemberspaceRemoveMember.Input(space: space, did: did)
     )
   }
 
@@ -200,8 +194,8 @@ actor GatewayCircleTransport: CircleTransport {
     var cursor: String?
     var seenCursors: Set<String> = []
     repeat {
-      let (_, output) = try await client.com.atproto.simplespace.listMembers(
-        input: ComAtprotoSimplespaceListMembers.Parameters(
+      let (_, output) = try await client.com.atproto.memberspace.listMembers(
+        input: ComAtprotoMemberspaceListMembers.Parameters(
           space: space, limit: nil, cursor: cursor
         )
       )
