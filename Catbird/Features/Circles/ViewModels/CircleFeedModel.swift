@@ -143,6 +143,7 @@ final class CircleFeedModel {
     isLoading = true
     defer { isLoading = false }
 
+    let cacheGeneration = cache.generation(accountDID: accountDID)
     let requestGeneration = currentGeneration
     let requestAccountDID = accountDID
     let requestSpace = space
@@ -183,7 +184,7 @@ final class CircleFeedModel {
       self.accessState = .active
       self.error = nil
       let storedPage = CircleFeedPage(items: self.items, cursor: self.cursor)
-      await cache.store(storedPage, accountDID: accountDID, space: space)
+      await cache.store(storedPage, accountDID: accountDID, space: space, generation: cacheGeneration)
     } catch {
       guard !self.isInvalidated,
             requestGeneration == self.currentGeneration,
@@ -220,6 +221,7 @@ final class CircleFeedModel {
     guard !isInvalidated, let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
+    let cacheGeneration = cache.generation(accountDID: accountDID)
     let requestGeneration = currentGeneration
     let requestAccountDID = accountDID
     let requestSpace = space
@@ -246,7 +248,7 @@ final class CircleFeedModel {
       self.error = nil
 
       let updatedPage = CircleFeedPage(items: self.items, cursor: self.cursor)
-      await cache.store(updatedPage, accountDID: accountDID, space: space)
+      await cache.store(updatedPage, accountDID: accountDID, space: space, generation: cacheGeneration)
     } catch {
       guard !self.isInvalidated,
             requestGeneration == self.currentGeneration,
@@ -277,6 +279,10 @@ final class CircleFeedModel {
     guard !isInvalidated else { return }
     currentGeneration += 1
     items.removeAll(where: { $0.circle.uri == space })
+    cursor = nil
+    await service.retireSpace(space)
+    NotificationCenter.default.post(name: .circleDeleted, object: nil,
+      userInfo: ["accountDID": accountDID, "spaceURI": space.uriString()])
     await cache.purge(accountDID: accountDID, space: space)
     await CircleMediaLoader.shared.purge(accountDID: accountDID, space: space)
     await CircleNotificationCache.shared.purge(accountDID: accountDID, space: space)
@@ -300,6 +306,8 @@ final class CircleFeedModel {
   /// Synchronous purge for `.circleDeleted` lifecycle notification.
   private func handleCircleDeletedSync(space deletedSpace: SpaceRef) {
     currentGeneration += 1
+    cursor = nil
+    Task { [service] in await service.retireSpace(deletedSpace) }
     if self.space == nil {
       items.removeAll(where: { $0.circle.uri.uriString() == deletedSpace.uriString() })
       Task { [accountDID, cache] in

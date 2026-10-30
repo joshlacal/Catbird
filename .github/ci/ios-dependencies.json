@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "Petrel": {
+      "repository": "joshlacal/Petrel",
+      "revision": "c806bb11330faccfd0fd54f09785599289afea84"
+    },
+    "PetrelCatbird": {
+      "repository": "joshlacal/PetrelCatbird",
+      "revision": "3b14001800009d38efdf9e076d405f796d6bbc93"
+    },
+    "CatbirdMLSCore": {
+      "repository": "joshlacal/CatbirdMLSCore",
+      "revision": "546fde3c8eb547e620f775023c4a813bfece6a42"
+    }
+  },
+  "nativeArtifact": {
+    "url": "https://github.com/joshlacal/CatbirdMLSCore/releases/download/v1.5.21/CatbirdMLSFFI.xcframework.zip",
+    "checksum": "ee9bbc95e2aeed94e1cf400eac202fb35f1be15f8e2668f7980e7e818a92bf72"
+  }
+}

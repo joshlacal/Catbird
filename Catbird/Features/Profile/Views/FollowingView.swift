@@ -16,8 +16,8 @@ struct FollowingView: View {
 
     init(userDID: String, client: ATProtoClient?, path: Binding<NavigationPath>) {
         self.userDID = userDID
-        _viewModel = State(initialValue: FollowViewModel(client: client, userDID: userDID))
         self._path = path
+        _viewModel = State(initialValue: FollowViewModel(client: client, userDID: userDID))
     }
 
     var body: some View {

@@ -13,7 +13,8 @@ struct CreateCircleView: View {
   @State private var name: String = ""
   @State private var selectedMembers: [AppBskyActorDefs.ProfileViewBasic] = []
   @State private var showingMemberPicker = false
-  @State private var showingErrorAlert = false
+  @State private var isSubmitting = false
+  private var authCoordinator: CircleAppViewAuthCoordinator { .shared }
 
   var body: some View {
     NavigationStack {
@@ -86,7 +87,7 @@ struct CreateCircleView: View {
               HStack {
                 ProgressView()
                   .padding(.trailing, 8)
-                Text("Creating Circle...")
+                Text(vm.hasCreatedSpace ? "Activating Circle..." : "Creating Circle...")
                   .font(.subheadline)
                   .foregroundStyle(.secondary)
               }
@@ -100,22 +101,18 @@ struct CreateCircleView: View {
           case .activationFailed(let message):
             Section {
               VStack(alignment: .leading, spacing: 8) {
-                Label("Circle created, but AppView sync is pending", systemImage: "exclamationmark.triangle.fill")
+                Label("Circle created, but AppView activation failed", systemImage: "exclamationmark.triangle.fill")
                   .foregroundStyle(.orange)
                   .font(.subheadline.weight(.semibold))
                 Text(message)
                   .font(.caption)
                   .foregroundStyle(.secondary)
-                Button("Retry AppView Sync") {
-                  Task {
-                    try? await vm.retryActivation()
-                    if vm.state == .complete {
-                      dismiss()
-                    }
-                  }
+                Button("Retry Activation") {
+                  retryActivation()
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("Retry AppView sync")
+                .disabled(isSubmitting)
+                .accessibilityLabel("Retry Circle activation")
               }
             }
           case .complete:
@@ -125,7 +122,17 @@ struct CreateCircleView: View {
                 .font(.subheadline.weight(.semibold))
             }
           case .idle:
-            EmptyView()
+            if isSubmitting {
+              Section {
+                HStack {
+                  ProgressView()
+                    .padding(.trailing, 8)
+                  Text("Authorizing...")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                }
+              }
+            }
           }
         }
       }
@@ -138,18 +145,25 @@ struct CreateCircleView: View {
           Button("Cancel") {
             dismiss()
           }
+          .disabled(isSubmitting)
           .accessibilityLabel("Cancel creating circle")
         }
 
         ToolbarItem(placement: .confirmationAction) {
-          if viewModel?.state == .submitting {
+          if isSubmitting || viewModel?.state == .submitting {
             ProgressView()
+          } else if viewModel?.canRetryActivation == true || viewModel?.hasCreatedSpace == true {
+            Button("Retry") {
+              retryActivation()
+            }
+            .fontWeight(.semibold)
+            .accessibilityLabel("Retry Activation")
           } else {
             Button("Create") {
               createCircle()
             }
             .fontWeight(.semibold)
-            .disabled(!isFormValid || viewModel?.state == .submitting)
+            .disabled(!isFormValid || isSubmitting || viewModel?.state == .submitting)
             .accessibilityLabel("Create Circle")
             .accessibilityHint("Validates name and member DIDs, then creates the Circle")
           }
@@ -200,31 +214,87 @@ struct CreateCircleView: View {
         )
       }
     }
-    guard appState.userDID == expectedDID else {
+    guard appState.userDID == expectedDID,
+          appStateManager.lifecycle.userDID == expectedDID else {
+      throw GatewayPermissionError.stateChanged
+    }
+  }
+
+  /// Ensures standalone AppView OAuth consent is granted for the active account before Space creation or activation.
+  @MainActor
+  private func ensureAppViewConsent() async throws {
+    let currentDID = appState.userDID
+    guard !currentDID.isEmpty,
+          appStateManager.lifecycle.userDID == currentDID,
+          let did = try? DID(didString: currentDID) else {
+      throw GatewayPermissionError.stateChanged
+    }
+    try await authCoordinator.ensureAuthorization(did: did, using: webAuthenticationSession)
+    guard appState.userDID == currentDID,
+          appStateManager.lifecycle.userDID == currentDID else {
       throw GatewayPermissionError.stateChanged
     }
   }
 
   private func createCircle() {
-    guard let vm = viewModel else { return }
+    guard let vm = viewModel, vm.userDID == appState.userDID else { return }
+    guard !isSubmitting, vm.state != .submitting else { return }
+    if vm.canRetryActivation || vm.hasCreatedSpace {
+      retryActivation()
+      return
+    }
+    guard isFormValid else { return }
+
     let memberDIDs = selectedMembers.map(\.did)
+    isSubmitting = true
 
     Task {
+      defer { isSubmitting = false }
       do {
         try await ensureCirclePermission()
+        try await ensureAppViewConsent()
+        guard vm.userDID == appStateManager.lifecycle.userDID else {
+          throw GatewayPermissionError.stateChanged
+        }
         _ = try await vm.createCircle(name: name, memberDIDs: memberDIDs)
         if vm.state == .complete {
           dismiss()
         }
-      } catch is CancellationError {
-        // User dismissed the consent sheet; preserve form in idle state
-        vm.state = .idle
-      } catch GatewayPermissionError.cancelled {
-        // User dismissed the consent sheet; preserve form in idle state
-        vm.state = .idle
+      } catch is CancellationError, GatewayPermissionError.cancelled {
+        // User dismissed the consent sheet; preserve form in idle state unless Space was created
+        if !vm.hasCreatedSpace && !vm.canRetryActivation {
+          vm.state = .idle
+        }
       } catch {
-        vm.state = .failed(message: error.localizedDescription)
-        showingErrorAlert = true
+        vm.state = vm.hasCreatedSpace
+          ? .activationFailed(message: error.localizedDescription)
+          : .failed(message: error.localizedDescription)
+      }
+    }
+  }
+
+  private func retryActivation() {
+    guard let vm = viewModel, vm.userDID == appState.userDID else { return }
+    guard vm.canRetryActivation || vm.hasCreatedSpace else { return }
+    guard !isSubmitting, vm.state != .submitting else { return }
+
+    isSubmitting = true
+
+    Task {
+      defer { isSubmitting = false }
+      do {
+        try await ensureAppViewConsent()
+        guard vm.userDID == appStateManager.lifecycle.userDID else {
+          throw GatewayPermissionError.stateChanged
+        }
+        try await vm.retryActivation()
+        if vm.state == .complete {
+          dismiss()
+        }
+      } catch is CancellationError, GatewayPermissionError.cancelled {
+        // User dismissed the consent sheet; preserve partial state (.activationFailed)
+      } catch {
+        vm.state = .activationFailed(message: error.localizedDescription)
       }
     }
   }

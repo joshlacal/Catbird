@@ -3,28 +3,28 @@
 This checklist breaks the remaining work into clear, parallel tracks with dependencies, acceptance criteria, and suggested ownership. Use it to coordinate multiple implementers or agents.
 
 - Scope: Complete a robust, production‑ready composer with UIKit text editor + SwiftUI shell, aligned with iOS 26, Bluesky protocol, and Catbird’s architecture.
-- Entry points: `PostComposerViewUIKit.swift` (new), `PostComposerView.swift` (existing), `PostComposerViewModel.swift` + extensions (domain), `Components/*`, `Media/*`, `Utils/*`.
+- Entry points: `PostComposerViewUIKit.swift` (single production composer), `PostComposerViewModel.swift` + extensions (domain), `Components/*`, `Media/*`, `Utils/*`.
 
-## 0) Adoption & Toggle
-- [ ] Add feature flag to choose `PostComposerViewUIKit` vs existing `PostComposerView`.
-- [ ] Update all presentation sites (e.g., `ContentView.swift`) to use the flag.
-- [ ] Ensure restore‑from‑draft path can instantiate either view.
-- Acceptance: Flag on → UIKit path; off → legacy path; both can post successfully.
+## 0) Adoption & Single Composer Standardization (Completed)
+- [x] Standardize on `PostComposerViewUIKit` across all presentation sites (`ContentView`, `CatbirdApp`, `AppState`, `ActionButtonsView`, `TabViewBottomAccessoryWrapper`, `ThreadComposePrompt`).
+- [x] Delete legacy `PostComposerView.swift` and retire dual-view fallback/feature flag.
+- [x] Ensure restore‑from‑draft path instantiates `PostComposerViewUIKit` directly.
+- Acceptance: Single UIKit composer active everywhere with no fallback or feature flag.
 - Depends on: None.
 
 ## 1) UIKit Editor Integration (Core)
-- [ ] Consolidate editor abstraction: keep UIKit `EnhancedRichTextEditor` as default; legacy `RichTextEditor` remains fallback.
+- [x] Consolidate editor abstraction: use UIKit `EnhancedRichTextEditor` in `PostComposerViewUIKit`.
 - [ ] Ensure AttributedString↔NSAttributedString bridge is centralized (single adapter) and used by VM.
 - [ ] Verify link menu (“Create Link”) appears with selected text; invokes `LinkCreationDialog` and updates facets.
 - [ ] Selection→facet mapping correctness (byte ranges) verified with multibyte text tests.
-- Acceptance: Editing, selection, link creation behave identically to legacy; facets serialize correctly.
+- Acceptance: Editing, selection, link creation behave properly; facets serialize correctly.
 - Depends on: Existing `EnhancedRichTextEditor`, VM insert helpers.
 
 ## 2) Media Pickers & Sheets (UIKit View)
-- [ ] Add Photos pickers (images, video) to `PostComposerViewUIKit` matching legacy toolbar.
-- [ ] Integrate GIF picker sheet; ensure GIF clears other media and starts GIF→video flow.
-- [ ] Integrate audio recorder and visualizer preview sheets; pipe generated video into VM.
-- [ ] Integrate Alt Text editor sheet driven by `currentEditingMediaId`.
+- [x] Add Photos pickers (images, video) to `PostComposerViewUIKit` in `PostComposerViewUIKit+Sheets.swift`.
+- [x] Integrate GIF picker sheet; ensure GIF clears other media and starts GIF→video flow.
+- [x] Integrate audio recorder and visualizer preview sheets; pipe generated video into VM.
+- [x] Integrate Alt Text editor sheet driven by `currentEditingMediaId`.
 - Acceptance: All media types selectable; conflicts resolved; alt text editable; previews and progress shown.
 - Depends on: Existing components in `Media/*`, `Audio/*`, VM methods.
 

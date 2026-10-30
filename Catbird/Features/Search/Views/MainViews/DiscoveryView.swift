@@ -65,21 +65,6 @@ struct DiscoveryView: View {
                         }
                     )
                 }
-                // Trending videos (G03)
-                if !viewModel.trendingVideos.isEmpty,
-                   let client = appState.atProtoClient,
-                   appState.appSettings.showTrendingVideos {
-                    TrendingVideosSection(
-                        videos: viewModel.trendingVideos,
-                        onSelectPost: { post in
-                            path.append(NavigationDestination.post(post.uri))
-                        },
-                        onSeeAll: {
-                            path.append(NavigationDestination.videoFeed)
-                        }
-                    )
-                }
-                
                 // Trending topics (G06)
                 if !viewModel.trendingTopics.isEmpty, 
                    let client = appState.atProtoClient,
@@ -94,6 +79,21 @@ struct DiscoveryView: View {
                             showAllTrendingTopics = true
                         },
                         maxItems: 5
+                    )
+                }
+                
+                // Trending videos (G03)
+                if !viewModel.trendingVideos.isEmpty,
+                   appState.atProtoClient != nil,
+                   appState.appSettings.showTrendingVideos {
+                    TrendingVideosSection(
+                        videos: viewModel.trendingVideos,
+                        onSelectPost: { post in
+                            path.append(NavigationDestination.post(post.uri))
+                        },
+                        onSeeAll: {
+                            path.append(NavigationDestination.videoFeed)
+                        }
                     )
                 }
                 
@@ -286,8 +286,8 @@ private struct InlineTopicSummaryLine: View {
                 Text(description)
                     .appFont(AppTextRole.footnote)
                     .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                    .lineLimit(5)
-                    .accessibilityLabel("Topic description")
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.top, 6)

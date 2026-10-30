@@ -261,7 +261,11 @@ enum NavigationFontConfig {
         let compactAppearance = UINavigationBarAppearance()
         
         standardAppearance.configureWithDefaultBackground()
-        scrollEdgeAppearance.configureWithDefaultBackground()
+        if #available(iOS 26.0, *) {
+            scrollEdgeAppearance.configureWithTransparentBackground()
+        } else {
+            scrollEdgeAppearance.configureWithDefaultBackground()
+        }
         compactAppearance.configureWithOpaqueBackground()
         
         // Apply custom fonts to all appearances

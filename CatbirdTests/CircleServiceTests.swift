@@ -7,11 +7,30 @@ import Testing
 /// Recording transport double that proves Circle failures stay Circle-scoped
 /// and never touch public endpoints.
 actor RecordingCircleTransport: CircleTransport {
-  private let error: CircleError?
+  private let error: (any Error)?
   private let customCapabilities: CircleCapability?
+  private let customMembers: [CircleMember]
+  private(set) var memberAddCallCount = 0
   private(set) var publicEndpointCallCount = 0
+  private var pauseCapabilities = false
+  private var capabilityContinuation: CheckedContinuation<Void, Never>?
+  private var startedContinuation: CheckedContinuation<Void, Never>?
+  private var capabilityStarted = false
 
-  init(error: CircleError? = nil, capabilities: CircleCapability? = nil) {
+  func suspendCapabilities() { pauseCapabilities = true }
+
+  func waitForCapabilities() async {
+    if capabilityStarted { return }
+    await withCheckedContinuation { startedContinuation = $0 }
+  }
+
+  func resumeCapabilities() {
+    capabilityContinuation?.resume()
+    capabilityContinuation = nil
+  }
+
+  init(error: (any Error)? = nil, capabilities: CircleCapability? = nil, members: [CircleMember] = []) {
+    self.customMembers = members
     self.error = error
     self.customCapabilities = capabilities
   }
@@ -21,9 +40,15 @@ actor RecordingCircleTransport: CircleTransport {
   }
 
   func capabilities() async throws -> CircleCapability {
+    capabilityStarted = true
+    startedContinuation?.resume()
+    startedContinuation = nil
+    if pauseCapabilities {
+      await withCheckedContinuation { capabilityContinuation = $0 }
+    }
     try throwIfConfigured()
     if let customCapabilities { return customCapabilities }
-    return CircleCapability(enabled: true, protocolRevision: "test", supportsImages: true)
+    return CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
@@ -94,6 +119,7 @@ actor RecordingCircleTransport: CircleTransport {
   }
 
   func addMember(space: SpaceRef, did: DID) async throws {
+    memberAddCallCount += 1
     try throwIfConfigured()
   }
 
@@ -101,9 +127,9 @@ actor RecordingCircleTransport: CircleTransport {
     try throwIfConfigured()
   }
 
-  func listMembers(space: SpaceRef) async throws -> [DID] {
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] {
     try throwIfConfigured()
-    return []
+    return customMembers
   }
 }
 
@@ -133,6 +159,180 @@ struct CircleServiceTests {
     #expect(summary.uri == CircleTestFixtures.family.uri)
   }
 
+  @Test("Adding an existing member preserves restricted read/write permissions")
+  func repeatedAdditionPreservesPermissions() async throws {
+    let restricted = CircleMember(did: CircleTestFixtures.alice, read: true, write: false)
+    let transport = RecordingCircleTransport(members: [restricted])
+    let service = CircleService(transport: transport)
+    try await service.addMember(space: CircleTestFixtures.familyURI, did: restricted.did)
+    #expect(await transport.memberAddCallCount == 0)
+    #expect(try await service.listMembers(space: CircleTestFixtures.familyURI) == [restricted])
+  }
+
+  @Test("An enabled incompatible service is rejected")
+  func incompatibleProtocolIsRejected() async {
+    let service = CircleService(transport: RecordingCircleTransport(capabilities:
+      CircleCapability(enabled: true, protocolRevision: "old-profile", supportsImages: true)))
+    await #expect(throws: CircleError.protocolRevisionMismatch) { try await service.capabilities() }
+  }
+
+  @Test("Private media is denied when images are unqualified")
+  func unqualifiedImagesAreDenied() async {
+    let service = CircleService(transport: RecordingCircleTransport(capabilities:
+      CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: false)))
+    await #expect(throws: CircleError.self) {
+      try await service.media(space: CircleTestFixtures.familyURI, authorDID: CircleTestFixtures.alice,
+        cid: CID.fromDAGCBOR(Data("private-image".utf8)))
+    }
+  }
+
+  @Test("Retiring a Space rejects late feed and thread content")
+  func retirementRejectsLateAndSubsequentReads() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "late", text: "Retired")])
+    let service = CircleService(transport: transport)
+    await transport.setOnGetFeed { await service.retireSpace(CircleTestFixtures.familyURI) }
+    let page = try await service.getFeed(space: nil)
+    #expect(page.items.isEmpty)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getPostThread(uri: CircleTestFixtures.makeFeedItem(
+        circle: CircleTestFixtures.family, rkey: "late", text: "Retired").post.post.uri,
+        space: CircleTestFixtures.familyURI)
+    }
+    #expect(await transport.threadCallCount == 0)
+  }
+
+  @Test("AppState shares retirement across production Circle service accesses")
+  func accountScopedServiceRetirement() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let first = appState.circleService
+    let second = appState.circleService
+    #expect(first === second)
+    await first.retireSpace(CircleTestFixtures.familyURI)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await second.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    let anotherAccount = AppState(userDID: "did:plc:bob", client: client)
+    #expect(anotherAccount.circleService !== first)
+  }
+
+  @Test("A Circle list requested after removal restores a re-added member's reads")
+  func freshCircleListClearsRetirement() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "readded", text: "Welcome back")])
+    let service = CircleService(transport: transport)
+    // Removal: the AppView answered AccessRemoved and the feed model retired the Space.
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    #expect(await transport.feedCallCount == 0)
+    // Re-add: a page requested after the retirement lists the Circle again.
+    let page = try await service.listCircles()
+    #expect(page.circles.contains { $0.uri == CircleTestFixtures.familyURI })
+    let feed = try await service.getFeed(space: CircleTestFixtures.familyURI)
+    #expect(feed.items.count == 1)
+    #expect(await transport.feedCallCount == 1)
+    _ = try await service.getPostThread(uri: feed.items[0].post.post.uri, space: CircleTestFixtures.familyURI)
+    #expect(await transport.threadCallCount == 1)
+  }
+
+  @Test("A unified feed requested after removal restores a re-added Circle")
+  func freshUnifiedFeedClearsRetirement() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "readded", text: "Welcome back")])
+    let service = CircleService(transport: transport)
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    let unified = try await service.getFeed(space: nil)
+    #expect(unified.items.map(\.circle.uri) == [CircleTestFixtures.familyURI])
+    let detail = try await service.getFeed(space: CircleTestFixtures.familyURI)
+    #expect(detail.items.count == 1)
+  }
+
+  @Test("Results requested before a retirement stay rejected after it clears")
+  func lateResultsStayRejectedAfterRetirementClears() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "late", text: "Retired")])
+    let service = CircleService(transport: transport)
+    // A Circle list already in flight when the Space retires is stale and cannot clear it.
+    await transport.setOnListCircles { await service.retireSpace(CircleTestFixtures.familyURI) }
+    _ = try await service.listCircles()
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    // Reads in flight across a retirement and a later re-grant are still rejected.
+    await transport.setOnListCircles(nil)
+    await transport.setOnGetFeed {
+      await service.retireSpace(CircleTestFixtures.familyURI)
+      _ = try? await service.listCircles()
+    }
+    let lateUnified = try await service.getFeed(space: nil)
+    #expect(lateUnified.items.isEmpty)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    // The re-grant itself stands: the next request is answered.
+    await transport.setOnGetFeed(nil)
+    let fresh = try await service.getFeed(space: CircleTestFixtures.familyURI)
+    #expect(fresh.items.count == 1)
+  }
+
+  @Test("An owner-deleted Space stays retired while the AppView still lists it")
+  func ownerDeletionIsNotClearedByListings() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "deleted", text: "Deleted")])
+    let service = CircleService(transport: transport)
+    try await service.deleteSpace(space: CircleTestFixtures.familyURI)
+    // The .circleDeleted fan-out retires it again; that must not weaken the deletion.
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    // notifySpaceDeleted reaches the AppView in the background, so its pages can still show the Space.
+    await transport.setNotifications([CircleTestFixtures.makeNotification(circle: CircleTestFixtures.family, id: "deleted")])
+    _ = try await service.listCircles()
+    let notifications = try await service.listNotifications()
+    #expect(notifications.notifications.isEmpty)
+    let unified = try await service.getFeed(space: nil)
+    #expect(unified.items.isEmpty)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+  }
+
+  @Test("A notification list requested after removal restores a re-added member's reads")
+  func freshNotificationListClearsRetirement() async throws {
+    let reply = CircleTestFixtures.makeNotification(circle: CircleTestFixtures.family, id: "readded")
+    let subject = try #require(reply.subject)
+    let transport = MockCircleTransport()
+    await transport.setNotifications([reply])
+    let service = CircleService(transport: transport)
+    // Removal: a Circle read answered AccessRemoved and the Space was retired.
+    await service.retireSpace(CircleTestFixtures.familyURI)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getPostThread(uri: subject, space: CircleTestFixtures.familyURI)
+    }
+    #expect(await transport.threadCallCount == 0)
+    // Re-add: the AppView lists notifications only from Circles this account may read now.
+    let page = try await service.listNotifications()
+    #expect(page.notifications.map(\.id) == ["readded"])
+    _ = try await service.getPostThread(uri: subject, space: CircleTestFixtures.familyURI)
+    #expect(await transport.threadCallCount == 1)
+  }
+
+  @Test("A notification list requested before a retirement cannot clear it")
+  func lateNotificationListCannotClearRetirement() async throws {
+    let transport = MockCircleTransport(feedItems: [CircleTestFixtures.makeFeedItem(
+      circle: CircleTestFixtures.family, rkey: "late", text: "Retired")])
+    await transport.setNotifications([CircleTestFixtures.makeNotification(circle: CircleTestFixtures.family, id: "late")])
+    let service = CircleService(transport: transport)
+    await transport.setOnListNotifications { await service.retireSpace(CircleTestFixtures.familyURI) }
+    let late = try await service.listNotifications()
+    #expect(late.notifications.isEmpty)
+    await #expect(throws: CircleError.accessRemoved) {
+      try await service.getFeed(space: CircleTestFixtures.familyURI)
+    }
+    #expect(await transport.feedCallCount == 0)
+  }
+
   @Test("CircleService deleteLike forwards to transport and stays Circle scoped")
   func circleServiceDeleteLikeForwardsToTransport() async throws {
     let transport = RecordingCircleTransport()
@@ -142,70 +342,139 @@ struct CircleServiceTests {
     #expect(await transport.publicEndpointCallCount == 0)
   }
 
-  @Test("AppState probes capabilities and enables server capability flag")
-  @MainActor
-  func appStateProbesCapabilitiesAndFlipsFlag() async throws {
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
+  @Test("Capability results belong to the active account", arguments: [true, false])
+  func activeAccountCapability(enabled: Bool) async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    appState.circleService = CircleService(transport: RecordingCircleTransport(
+      capabilities: CircleCapability(enabled: enabled, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
+    ))
+    await appState.probeCircleCapabilities()
+    #expect(appState.circleCapability == (enabled ? .supported : .unsupported))
+    #expect(appState.circlesEnabled == enabled)
+  }
 
+  @Test("Unsupported is distinct from network and authorization failures")
+  func probeClassifiesErrorsWithoutRetainingSupportedState() async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    let cases: [(any Error, CircleCapabilityState)] = [
+      (CircleError.unsupportedPDS, .unsupported),
+      (CircleError.authRequired, .unknown),
+      (CircleError.notAuthorized, .unknown),
+      (CircleError.upstreamUnavailable, .unknown),
+      (CircleError.invalidResponse, .unknown),
+      (URLError(.timedOut), .unknown),
+      (URLError(.notConnectedToInternet), .unknown),
+      (ATProtoXRPCError(error: "ExpiredToken", message: "Expired", statusCode: 401), .unknown)
+    ]
+    for (error, expected) in cases {
+      appState.circleCapability = .supported
+      appState.circleService = CircleService(transport: RecordingCircleTransport(error: error))
+      await appState.probeCircleCapabilities()
+      #expect(appState.circleCapability == expected)
+      #expect(!appState.circlesEnabled)
+    }
+  }
+
+  @Test("An in-flight probe cannot update a replacement session, even for the same DID",
+        arguments: ["did:plc:alice", "did:plc:bob"])
+  func staleInFlightProbeIsDiscarded(replacementDID: String) async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let stale = AppState(userDID: "did:plc:alice", client: client)
+    let replacement = AppState(userDID: replacementDID, client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(stale))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    let transport = RecordingCircleTransport()
+    await transport.suspendCapabilities()
+    stale.circleService = CircleService(transport: transport)
+    let probe = Task { await stale.probeCircleCapabilities() }
+    await transport.waitForCapabilities()
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(replacement))
+    await transport.resumeCapabilities()
+    await probe.value
+    #expect(stale.circleCapability == .unknown)
+    #expect(replacement.circleCapability == .unknown)
+    #expect(!replacement.circlesEnabled)
+  }
+
+  @Test("Replacing a client invalidates support and rejects the old client's in-flight probe")
+  func replacingClientInvalidatesCapabilityAndPendingProbe() async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+
+    appState.circleCapability = .supported
+    let replacement = await ATProtoClient(baseURL: URL(string: "https://replacement.example")!)
+    appState.updateClient(replacement)
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
+
+    let transport = RecordingCircleTransport()
+    await transport.suspendCapabilities()
+    appState.circleService = CircleService(transport: transport)
+    let probe = Task { await appState.probeCircleCapabilities() }
+    await transport.waitForCapabilities()
+    appState.updateClient(client)
+    #expect(appState.circleCapability == .unknown)
+    await transport.resumeCapabilities()
+    await probe.value
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
+  }
+
+  @Test("Cancelled probe cannot enable Circles")
+  func cancelledProbeIsDiscarded() async {
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:alice", client: client)
     let previousLifecycle = AppStateManager.shared.lifecycle
     AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
     defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
     let transport = RecordingCircleTransport()
+    await transport.suspendCapabilities()
     appState.circleService = CircleService(transport: transport)
-
-    await appState.probeCircleCapabilities()
-    #expect(CircleFeatureFlags.isEnabled)
+    let probe = Task { await appState.probeCircleCapabilities() }
+    await transport.waitForCapabilities()
+    probe.cancel()
+    await transport.resumeCapabilities()
+    await probe.value
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
   }
 
-  @Test("AppState probe failure preserves the last known AppView capability")
-  @MainActor
-  func appStateProbeFailurePreservesCapability() async throws {
-    CircleFeatureFlags.serverCapability(enabled: true)
-    #expect(CircleFeatureFlags.isEnabled)
-
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:alice", client: client)
-    let previousLifecycle = AppStateManager.shared.lifecycle
-    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
-    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
-    let transport = RecordingCircleTransport(error: CircleError.unsupportedPDS)
-    appState.circleService = CircleService(transport: transport)
-
-    await appState.probeCircleCapabilities()
-    #expect(CircleFeatureFlags.isEnabled)
+  @Test("Only documented Spaces unsupported status and code pairs are definitive")
+  func unsupportedErrorClassification() {
+    let cases: [(Int, String, Bool)] = [
+      (501, "MethodNotImplemented", true),
+      (404, "permissioned_endpoint_unavailable", true),
+      (404, "MethodNotImplemented", false),
+      (501, "permissioned_endpoint_unavailable", false),
+      (404, "NotFound", false),
+      (500, "InternalServerError", false),
+      (401, "AuthRequired", false),
+      (403, "Forbidden", false),
+      (429, "RateLimitExceeded", false),
+      (501, "NotImplemented", false)
+    ]
+    for (status, code, expected) in cases {
+      let error = ATProtoXRPCError(error: code, message: "test", statusCode: status)
+      #expect(GatewayCircleTransport.isUnsupportedSpacesError(error) == expected)
+    }
+    #expect(!GatewayCircleTransport.isUnsupportedSpacesError(URLError(.timedOut)))
+    #expect(!GatewayCircleTransport.isUnsupportedSpacesError(CircleError.upstreamUnavailable))
   }
 
-  @Test("AppState probe stale result from inactive account is discarded")
-  @MainActor
-  func appStateProbeStaleResultFromInactiveAccountIsDiscarded() async throws {
-    CircleFeatureFlags.serverCapability(enabled: false)
-
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let staleAppState = AppState(userDID: "did:plc:stale_account", client: client)
-    let transport = RecordingCircleTransport()
-    staleAppState.circleService = CircleService(transport: transport)
-
-    // If active account in lifecycle is different, the result must be discarded
-    let activeAppState = AppState(userDID: "did:plc:active_account", client: client)
-    let previousLifecycle = AppStateManager.shared.lifecycle
-    AppStateManager.shared.setLifecycleForTesting(.authenticated(activeAppState))
-    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
-    await staleAppState.probeCircleCapabilities()
-    #expect(!CircleFeatureFlags.isEnabled)
-  }
-
-  @Test("An explicit disabled AppView capability disables Circle-backed surfaces")
-  @MainActor
-  func explicitDisabledCapabilityDisablesCircles() async throws {
-    CircleFeatureFlags.serverCapability(enabled: true)
-    #expect(CircleFeatureFlags.isEnabled)
-
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
-  }
 }
 
 /// Shared test fixtures for Circle tests.
@@ -299,5 +568,30 @@ enum CircleTestFixtures {
       reqId: nil
     )
     return BlueCatbirdCircleDefs.FeedItem(post: feedViewPost, circle: circle)
+  }
+
+  /// A reply notification whose subject is the post `id` in `circle`.
+  static func makeNotification(circle: CircleSummary, id: String) -> BlueCatbirdCircleDefs.Notification {
+    BlueCatbirdCircleDefs.Notification(
+      id: id,
+      reason: .value_reply,
+      actor: AppBskyActorDefs.ProfileViewBasic(
+        did: alice,
+        handle: try! Handle(handleString: "alice.test"),
+        displayName: "Alice",
+        pronouns: nil,
+        avatar: nil,
+        associated: nil,
+        viewer: nil,
+        labels: nil,
+        createdAt: nil,
+        verification: nil,
+        status: nil,
+        debug: nil
+      ),
+      subject: try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.post/\(id)"),
+      indexedAt: ATProtocolDate(date: Date()),
+      circle: circle
+    )
   }
 }

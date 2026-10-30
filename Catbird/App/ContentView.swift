@@ -346,274 +346,114 @@ struct MainContentView: View {
     ZStack(alignment: .top) {
       #if os(iOS)
       SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen, drawerWidth: PlatformScreenInfo.responsiveDrawerWidth) {
-        if #available(iOS 26.0, *) {
-          GlassEffectContainer(spacing: 20) {
-            ZStack(alignment: .bottomTrailing) {
-              TabView(
-                selection: Binding(
-                  get: { selectedTab },
-                  set: { newValue in
-                    if selectedTab == newValue {
-                      logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-                      lastTappedTab = newValue
-                    }
-                    selectedTab = newValue
+        ZStack(alignment: .bottomTrailing) {
+          TabView(
+            selection: Binding(
+              get: { selectedTab },
+              set: { newValue in
+                if selectedTab == newValue {
+                  logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
+                  lastTappedTab = newValue
+                }
+                selectedTab = newValue
 
-                    // Update the navigation manager with the new tab index
-                    navigationManager.updateCurrentTab(newValue)
-                  }
-                )
-              ) {
-                // Home Tab
-                Tab("Home", systemImage: "house", value: 0) {
-                  HomeView(
+                // Update the navigation manager with the new tab index
+                navigationManager.updateCurrentTab(newValue)
+              }
+            )
+          ) {
+            // Home Tab
+            Tab("Home", systemImage: "house", value: 0) {
+              HomeView(
+                selectedTab: $selectedTab,
+                lastTappedTab: $lastTappedTab,
+                selectedFeed: $selectedFeed,
+                currentFeedName: $currentFeedName,
+                isDrawerOpen: $isDrawerOpen,
+                isRootView: $isRootView
+              )
+              .id(appState.userDID)
+            }
+            .accessibilityIdentifier("tab_home")
+
+            // Search Tab
+            Tab(value: 1, role: .search) {
+              RefinedSearchView(
+                appState: appState,
+                selectedTab: $selectedTab,
+                lastTappedTab: $lastTappedTab
+              )
+              .id(appState.userDID)
+            }
+            .accessibilityIdentifier("tab_search")
+
+            // Notifications Tab
+            Tab("Notifications", systemImage: "bell", value: 2) {
+              NotificationsView(
+                appState: appState,
+                selectedTab: $selectedTab,
+                lastTappedTab: $lastTappedTab
+              )
+              .id(appState.userDID)
+            }
+            .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
+            .accessibilityIdentifier("tab_notifications")
+
+            // Profile Tab - Hidden on iPhone to save space
+            if !PlatformDeviceInfo.isPhone {
+              Tab("Profile", systemImage: "person", value: 3) {
+                NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+                  UnifiedProfileView(
+                    appState: appState,
                     selectedTab: $selectedTab,
                     lastTappedTab: $lastTappedTab,
-                    selectedFeed: $selectedFeed,
-                    currentFeedName: $currentFeedName,
-                    isDrawerOpen: $isDrawerOpen,
-                    isRootView: $isRootView
+                    path: appState.navigationManager.pathBinding(for: 3)
                   )
                   .id(appState.userDID)
-                }
-                .accessibilityIdentifier("tab_home")
-
-                // Search Tab
-                Tab("Search", systemImage: "magnifyingglass", value: 1) {
-                  RefinedSearchView(
-                    appState: appState,
-                    selectedTab: $selectedTab,
-                    lastTappedTab: $lastTappedTab
-                  )
-                  .id(appState.userDID)
-                }
-                .accessibilityIdentifier("tab_search")
-
-                // Notifications Tab
-                Tab("Notifications", systemImage: "bell", value: 2) {
-                  NotificationsView(
-                    appState: appState,
-                    selectedTab: $selectedTab,
-                    lastTappedTab: $lastTappedTab
-                  )
-                  .id(appState.userDID)
-                }
-                .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
-                .accessibilityIdentifier("tab_notifications")
-
-                // Profile Tab - Hidden on iPhone to save space
-                if !PlatformDeviceInfo.isPhone {
-                  Tab("Profile", systemImage: "person", value: 3) {
-                    NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-                      UnifiedProfileView(
-                        appState: appState,
-                        selectedTab: $selectedTab,
-                        lastTappedTab: $lastTappedTab,
-                        path: appState.navigationManager.pathBinding(for: 3)
-                      )
-                      .id(appState.userDID)
-                      .navigationDestination(for: NavigationDestination.self) { destination in
-                        NavigationHandler.viewForDestination(
-                          destination,
-                          path: appState.navigationManager.pathBinding(for: 3),
-                          appState: appState,
-                          selectedTab: $selectedTab
-                        )
-                      }
-                    }
-                  }
-                  .accessibilityIdentifier("tab_profile")
-                }
-
-                #if os(iOS)
-                // Chat Tab (iOS only)
-                Tab("Messages", systemImage: "envelope", value: 4) {
-                  ChatTabView(
-                    selectedTab: $selectedTab,
-                    lastTappedTab: $lastTappedTab
-                  )
-                  .id(appState.userDID)
-                }
-                .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
-                .accessibilityIdentifier("tab_messages")
-                #endif
-              }
-              #if targetEnvironment(macCatalyst)
-              .toolbar(.hidden, for: .tabBar)
-              #endif
-
-              #if !targetEnvironment(macCatalyst)
-              if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
-                FAB(
-                  composeAction: { openComposerResumingDraft() },
-                  feedsAction: {},
-                  showFeedsButton: false,
-                  hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
-                  newPostAction: {
-                    Task { @MainActor in
-                      await openFreshComposerStashingDraft()
-                    }
-                  },
-                  showDraftsAction: { openDraftsBrowser() },
-                  takePhotoAction: {
-                    #if os(iOS)
-                    Task { @MainActor in
-                      await beginCameraCapture(.photo)
-                    }
-                    #endif
-                  },
-                  recordVideoAction: {
-                    #if os(iOS)
-                    Task { @MainActor in
-                      await beginCameraCapture(.video)
-                    }
-                    #endif
-                  },
-                  clearDraftAction: {
-                    appState.composerDraftManager.clearDraft()
-                  }
-                )
-                .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
-                .padding(.trailing, 5)
-                // Mark FAB as the source of the Liquid Glass morph on iOS 26
-                    // Source tagging now occurs inside FAB on the compose button itself
-              }
-              #endif
-            }
-          }
-        } else {
-          ZStack(alignment: .bottomTrailing) {
-            TabView(
-              selection: Binding(
-                get: { selectedTab },
-                set: { newValue in
-                  if selectedTab == newValue {
-                    logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-                    lastTappedTab = newValue
-                  }
-                  selectedTab = newValue
-
-                  // Update the navigation manager with the new tab index
-                  navigationManager.updateCurrentTab(newValue)
-                }
-              )
-            ) {
-              // Home Tab
-              Tab("Home", systemImage: "house", value: 0) {
-                HomeView(
-                  selectedTab: $selectedTab,
-                  lastTappedTab: $lastTappedTab,
-                  selectedFeed: $selectedFeed,
-                  currentFeedName: $currentFeedName,
-                  isDrawerOpen: $isDrawerOpen,
-                  isRootView: $isRootView
-                )
-                .id(appState.userDID)
-              }
-              .accessibilityIdentifier("tab_home")
-
-              // Search Tab
-              Tab(value: 1, role: .search) {
-                RefinedSearchView(
-                  appState: appState,
-                  selectedTab: $selectedTab,
-                  lastTappedTab: $lastTappedTab
-                )
-                .id(appState.userDID)
-              }
-              .accessibilityIdentifier("tab_search")
-
-              // Notifications Tab
-              Tab("Notifications", systemImage: "bell", value: 2) {
-                NotificationsView(
-                  appState: appState,
-                  selectedTab: $selectedTab,
-                  lastTappedTab: $lastTappedTab
-                )
-                .id(appState.userDID)
-              }
-              .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
-              .accessibilityIdentifier("tab_notifications")
-
-              // Profile Tab - Hidden on iPhone to save space
-              if !PlatformDeviceInfo.isPhone {
-                Tab("Profile", systemImage: "person", value: 3) {
-                  NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-                    UnifiedProfileView(
+                  .navigationDestination(for: NavigationDestination.self) { destination in
+                    NavigationHandler.viewForDestination(
+                      destination,
+                      path: appState.navigationManager.pathBinding(for: 3),
                       appState: appState,
-                      selectedTab: $selectedTab,
-                      lastTappedTab: $lastTappedTab,
-                      path: appState.navigationManager.pathBinding(for: 3)
+                      selectedTab: $selectedTab
                     )
-                    .id(appState.userDID)
-                    .navigationDestination(for: NavigationDestination.self) { destination in
-                      NavigationHandler.viewForDestination(
-                        destination,
-                        path: appState.navigationManager.pathBinding(for: 3),
-                        appState: appState,
-                        selectedTab: $selectedTab
-                      )
-                    }
                   }
                 }
-                .accessibilityIdentifier("tab_profile")
               }
-
-              #if os(iOS)
-              // Chat Tab (iOS only)
-              Tab("Messages", systemImage: "envelope", value: 4) {
-                ChatTabView(
-                  selectedTab: $selectedTab,
-                  lastTappedTab: $lastTappedTab
-                )
-                .id(appState.userDID)
-              }
-              .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
-              .accessibilityIdentifier("tab_messages")
-              #endif
+              .accessibilityIdentifier("tab_profile")
             }
-            #if targetEnvironment(macCatalyst)
-            .toolbar(.hidden, for: .tabBar)
-            #endif
 
-            #if !targetEnvironment(macCatalyst)
-            if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
-              FAB(
-                composeAction: { openComposerResumingDraft() },
-                feedsAction: {},
-                showFeedsButton: false,
-                hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
-                newPostAction: {
-                  Task { @MainActor in
-                    await openFreshComposerStashingDraft()
-                  }
-                },
-                showDraftsAction: { openDraftsBrowser() },
-                takePhotoAction: {
-                  #if os(iOS)
-                  Task { @MainActor in
-                    await beginCameraCapture(.photo)
-                  }
-                  #endif
-                },
-                recordVideoAction: {
-                  #if os(iOS)
-                  Task { @MainActor in
-                    await beginCameraCapture(.video)
-                  }
-                  #endif
-                },
-                clearDraftAction: {
-                  appState.composerDraftManager.clearDraft()
-                }
+            #if os(iOS)
+            // Chat Tab (iOS only)
+            Tab("Messages", systemImage: "envelope", value: 4) {
+              ChatTabView(
+                selectedTab: $selectedTab,
+                lastTappedTab: $lastTappedTab
               )
-              .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
-              .padding(.trailing, 5)
-              // Mark FAB as the source of the Liquid Glass morph on iOS 26
-                  // Source tagging now occurs inside FAB on the compose button itself
+              .id(appState.userDID)
             }
+            .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
+            .accessibilityIdentifier("tab_messages")
             #endif
           }
+          #if targetEnvironment(macCatalyst)
+          .toolbar(.hidden, for: .tabBar)
+          #endif
+          #if os(iOS)
+          .tabViewStyle(.sidebarAdaptable)
+          #endif
+
+          #if !targetEnvironment(macCatalyst)
+          if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
+            if #available(iOS 26.0, *) {
+              GlassEffectContainer(spacing: 20) {
+                fabView
+              }
+            } else {
+              fabView
+            }
+          }
+          #endif
         }
       } drawer: {
           NavigationStack(path: $drawerNavigationPath) {
@@ -1136,6 +976,41 @@ extension MainContentView {
     pendingCameraCapture = mode
   }
   #endif
+
+  @ViewBuilder
+  private var fabView: some View {
+    FAB(
+      composeAction: { openComposerResumingDraft() },
+      feedsAction: {},
+      showFeedsButton: false,
+      hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
+      newPostAction: {
+        Task { @MainActor in
+          await openFreshComposerStashingDraft()
+        }
+      },
+      showDraftsAction: { openDraftsBrowser() },
+      takePhotoAction: {
+        #if os(iOS)
+        Task { @MainActor in
+          await beginCameraCapture(.photo)
+        }
+        #endif
+      },
+      recordVideoAction: {
+        #if os(iOS)
+        Task { @MainActor in
+          await beginCameraCapture(.video)
+        }
+        #endif
+      },
+      clearDraftAction: {
+        appState.composerDraftManager.clearDraft()
+      }
+    )
+    .padding(.bottom, 79) // Tab bar (49) + spacing (30)
+    .padding(.trailing, 5)
+  }
 }
 
 // MARK: - Conditional Navigation Transition Helper

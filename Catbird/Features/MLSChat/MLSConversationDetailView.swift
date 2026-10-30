@@ -8,7 +8,7 @@ import SwiftUI
 
 #if os(iOS)
 
-    struct MLSConversationDetailView: View {
+    struct MLSOrdinaryConversationDetailView: View {
         @Environment(AppState.self) var appState
         @Environment(\.colorScheme) private var colorScheme
         @Environment(\.dismiss) var dismiss
@@ -309,7 +309,17 @@ import SwiftUI
                             emojiPickerMessageID = nil
                         }
                     }
-                    .task {
+                    .task(id: "\(appState.nseStateReloadTrigger):\(scenePhase)") {
+                        guard !Task.isCancelled,
+                              scenePhase == .active,
+                              !MLSClient.isSuspensionInProgress,
+                              !MLSCoreContext.isSuspensionInProgress,
+                              let manager = viewModel?.conversationManager,
+                              manager.userDid == appState.userDID,
+                              appState.mlsConversationManager === manager,
+                              !manager.isShuttingDown,
+                              manager.currentCoordinationGeneration == MLSCoordinationStore.shared.currentGeneration
+                        else { return }
                         await dataSource.loadMessages()
                         consumePendingChatDraft()
                     }
@@ -512,8 +522,14 @@ import SwiftUI
 
         @MainActor
         private func consumePendingChatDraft() {
-            guard let draft = ChatDraftHandoff.shared.consume(for: conversationId) else { return }
-            pendingDraftText = draft.isEmpty ? nil : draft
+            let account = appState.userDID
+            guard let database = appState.mlsDatabase else { return }
+            Task {
+                guard let draft = try? await ChatDraftHandoff.shared.consumeDurably(
+                    for: conversationId, accountDID: account, database: database),
+                    appState.userDID == account else { return }
+                pendingDraftText = draft.isEmpty ? nil : draft
+            }
         }
 
         /// Loading placeholder shown while profiles are loading to avoid DID flicker
@@ -775,7 +791,9 @@ import SwiftUI
                     // Optimistic local update
                     await MainActor.run {
                         if var reactions = messageReactionsMap[messageId] {
-                            reactions.removeAll { $0.reaction == emoji && $0.senderDID == appState.userDID }
+                            reactions.removeAll {
+                                $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: appState.userDID)
+                            }
                             if reactions.isEmpty {
                                 messageReactionsMap.removeValue(forKey: messageId)
                             } else {
@@ -1183,7 +1201,6 @@ import SwiftUI
 
                 let newViewModel = MLSConversationDetailViewModel(
                     conversationId: conversationId,
-                    database: dependencies.conversationManager.database,
                     apiClient: dependencies.apiClient,
                     conversationManager: dependencies.conversationManager
                 )
@@ -2317,12 +2334,16 @@ import SwiftUI
                 // 🔍 DEBUG: Log what server sent (sender extracted during decryption)
                 for (index, msgView) in messageViews.enumerated() {
                     logger.info("📨 SERVER MESSAGE [\(index)]: id=\(msgView.id)")
-                    logger.info("  - epoch: \(msgView.epoch)")
-                    logger.info("  - seq: \(msgView.seq)")
-                    logger.info("  - ciphertext.count: \(msgView.ciphertext.count)")
-                    logger.info(
-                        "  - ciphertext (first 32 bytes): \(msgView.ciphertext.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))"
-                    )
+                    if let body = msgView.parsedBody {
+                        logger.info("  - epoch: \(body.prior.epoch)")
+                        logger.info("  - seq: \(msgView.seq)")
+                        logger.info("  - ciphertext.count: \(body.applicationMessage.bytes.data.count)")
+                        logger.info(
+                            "  - ciphertext (first 32 bytes): \(body.applicationMessage.bytes.data.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))"
+                        )
+                    } else {
+                        logger.warning("  - [FAIL-CLOSED] Unknown/malformed application body variant for id=\(msgView.id) seq=\(msgView.seq)")
+                    }
                     logger.info("  - sentAt: \(msgView.createdAt.date)")
                 }
 
@@ -4265,35 +4286,15 @@ import SwiftUI
             }
         }
 
+        /// Own messages include those sent from this account's sibling devices, whose sender
+        /// identity is `did#deviceId`; compare DID roots like the core's `is_own`.
         private func isMessageFromCurrentUser(senderDID: String) -> Bool {
-            logger.debug("🔍 MLS_OWNERSHIP: Checking message ownership")
-            logger.debug("🔍 MLS_OWNERSHIP: Sender DID raw = '\(senderDID)'")
-
             // Use auth state DID as source of truth (currentUserDID may not be set yet)
-            let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
-            logger.debug("🔍 MLS_OWNERSHIP: Current DID raw = '\(currentUserDID ?? "NIL")'")
-
-            guard let currentUserDID = currentUserDID else {
-                logger.warning("🔍 MLS_OWNERSHIP: ❌ currentUserDID is nil, returning false")
+            guard let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID else {
+                logger.warning("MLS_OWNERSHIP: current user DID unavailable; treating sender as another user")
                 return false
             }
-
-            // Normalize DIDs for comparison (trim whitespace, case-insensitive)
-            let normalizedSender = senderDID.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                .lowercased()
-            let normalizedCurrent = currentUserDID.trimmingCharacters(
-                in: CharacterSet.whitespacesAndNewlines
-            ).lowercased()
-
-            logger.debug("🔍 MLS_OWNERSHIP: Sender DID normalized = '\(normalizedSender)'")
-            logger.debug("🔍 MLS_OWNERSHIP: Current DID normalized = '\(normalizedCurrent)'")
-
-            let isMatch = normalizedSender == normalizedCurrent
-            logger.info(
-                "🔍 MLS_OWNERSHIP: \(isMatch ? "✅ MATCH" : "❌ NO MATCH") - isCurrentUser = \(isMatch)"
-            )
-
-            return isMatch
+            return MLSCredentialBinding.isSameAccount(senderDID, as: currentUserDID)
         }
 
         private func chatIdentity(

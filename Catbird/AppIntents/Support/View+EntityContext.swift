@@ -27,7 +27,7 @@ extension View {
   /// No-op on OS versions without the annotation API.
   @ViewBuilder
   func entityContext(_ identifier: EntityIdentifier?) -> some View {
-#if compiler(>=7.0)
+#if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *) {
       self.appEntityIdentifier(identifier)
     } else {

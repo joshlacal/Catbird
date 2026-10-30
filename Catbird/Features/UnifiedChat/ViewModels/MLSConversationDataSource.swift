@@ -122,6 +122,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   private(set) var leavePresentation: MLSConversationLeavePresentation = .none
   private(set) var isPendingRequest: Bool = false
   private(set) var hasResolvedConsent: Bool = false
+  private(set) var directRequestCapabilities: RequestCapabilities?
   private var recoveryResolutionID = UUID()
 
   var composerPlaceholder: String {
@@ -131,7 +132,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// Whether outgoing sends should be blocked right now (visible state, not a
   /// swallowed error — the composer disables and a banner explains why).
   var isSendBlockedByRecovery: Bool {
-    isPendingRequest || conversationRecoveryState.blocksSending
+    !hasResolvedConsent || isPendingRequest || directRequestCapabilities?.canSend == false || conversationRecoveryState.blocksSending
   }
 
   private(set) var isLoading: Bool = false
@@ -150,6 +151,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   private var messageObservation: AnyDatabaseCancellable?
   private var conversationObservation: AnyDatabaseCancellable?
   private weak var observedDatabase: DatabasePool?
+  private var observationID = UUID()
   private var typingParticipants: [String: Date] = [:]
   private var typingCleanupTask: Task<Void, Never>?
   private var localTypingActive: Bool = false
@@ -229,6 +231,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     // Guard against re-observing the same database instance
     guard observedDatabase !== database else { return }
     stopObserving()
+    observedDatabase = database
+    let observationID = self.observationID
 
     let convoId = conversationId
     let userDID = currentUserDID
@@ -244,14 +248,21 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       onError: { [weak self] error in
         self?.logger.error("ValueObservation error: \(error.localizedDescription)")
       },
-      onChange: { [weak self] models in
-        Task { @MainActor [weak self] in
-          await self?.handleObservedModels(models)
+      onChange: { [weak self, weak database] models in
+        Task { @MainActor [weak self, weak database] in
+          guard let self, let database,
+                self.isCurrentProjection(database: database, observationID: observationID) else { return }
+          await self.handleObservedModels(models, database: database, observationID: observationID)
         }
       }
     )
     startObservingConversationRecovery(database: database)
-    observedDatabase = database
+  }
+
+  private func isCurrentProjection(database: DatabasePool, observationID: UUID) -> Bool {
+    !Task.isCancelled && self.observationID == observationID
+      && appState?.mlsDatabase === database && appState?.userDID == currentUserDID
+      && !MLSCoreContext.isSuspensionInProgress && !MLSClient.isSuspensionInProgress
   }
 
   private func fetchDisplayableMessageModels(database: DatabasePool) async throws -> [MLSMessageModel] {
@@ -268,10 +279,13 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func reloadObservedMessages(database: DatabasePool) async {
+    let observationID = self.observationID
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
     do {
       let models = try await fetchDisplayableMessageModels(database: database)
-      await handleObservedModels(models)
+      await handleObservedModels(models, database: database, observationID: observationID)
     } catch {
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
       self.error = error
       logger.error("Failed to reload observed MLS messages: \(error.localizedDescription)")
     }
@@ -279,6 +293,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   /// Stop the current database observation and release references.
   func stopObserving() {
+    // GRDB cancellation does not cancel main-actor tasks already queued by a callback.
+    observationID = UUID()
+    recoveryResolutionID = UUID()
+    reactionReloadTask?.cancel()
+    reactionReloadTask = nil
     messageObservation?.cancel()
     messageObservation = nil
     conversationObservation?.cancel()
@@ -357,6 +376,16 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   /// Test seam: simulates a confirmed row arriving via the GRDB observation
   /// path (what buildAdapters produces), including handover pruning.
+  #if DEBUG
+  /// Isolated action tests supply an explicit consent projection. This seam
+  /// cannot modify a data source connected to an account or real transport.
+  func setActionConsentForTesting(resolved: Bool, pending: Bool) {
+    precondition(appState == nil && actionPerformer != nil)
+    hasResolvedConsent = resolved
+    isPendingRequest = pending
+  }
+  #endif
+
   func ingestConfirmedMessageForTesting(_ adapter: MLSMessageAdapter) {
     confirmedMessages.append(adapter)
     sortMessagesInDisplayOrder(&confirmedMessages)
@@ -412,6 +441,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// send-blocking state as soon as they change.
   private func startObservingConversationRecovery(database: DatabasePool) {
     conversationObservation?.cancel()
+    let observationID = self.observationID
 
     let convoId = conversationId
     let userDID = currentUserDID
@@ -435,16 +465,22 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         self?.logger.error(
           "Conversation recovery observation error: \(error.localizedDescription)")
       },
-      onChange: { [weak self] projection in
-        Task { @MainActor [weak self] in
-          guard let self else { return }
+      onChange: { [weak self, weak database] projection in
+        Task { @MainActor [weak self, weak database] in
+          guard let self, let database,
+                self.isCurrentProjection(database: database, observationID: observationID) else { return }
           let previousRecovery = self.conversationRecoveryState
           let previousLeave = self.leavePresentation
           await self.resolveRecoveryState(model: projection.0)
+          guard self.isCurrentProjection(database: database, observationID: observationID) else { return }
           if let manager = await self.appState?.getMLSConversationManager(timeout: 2.0),
              manager.userDid == self.currentUserDID {
-            self.leavePresentation = await manager.conversationLeavePresentation(conversationID: self.conversationId)
+            guard self.isCurrentProjection(database: database, observationID: observationID) else { return }
+            let leave = await manager.conversationLeavePresentation(conversationID: self.conversationId)
+            guard self.isCurrentProjection(database: database, observationID: observationID) else { return }
+            self.leavePresentation = leave
           }
+          guard self.isCurrentProjection(database: database, observationID: observationID) else { return }
           if previousRecovery != self.conversationRecoveryState || previousLeave != self.leavePresentation {
             await self.reloadObservedMessages(database: database)
           }
@@ -456,6 +492,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// Resolve the spec §8.1 state. In rustFull, Rust owns transient recovery;
   /// legacy modes still overlay Swift `MLSRecoveryManager` state on DB flags.
   private func resolveRecoveryState(model _: MLSConversationModel?) async {
+    let observationID = self.observationID
     let resolutionID = UUID()
     recoveryResolutionID = resolutionID
     let expectedGeneration = MLSCoordinationAwareTask.captureGeneration()
@@ -476,12 +513,25 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         return (current, try current?.hasPendingConsent(in: db) ?? false)
       }
       try MLSCoordinationAwareTask.validateGeneration(expectedGeneration)
-      guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID else { return }
+      guard recoveryResolutionID == resolutionID,
+            isCurrentProjection(database: database, observationID: observationID) else { return }
       durableModel = projection.0
-      isPendingRequest = projection.1
-      hasResolvedConsent = projection.0 != nil
-    } catch {
+      guard let manager = await appState.getMLSConversationManager(), manager.currentUserDID == currentUserDID else {
+        throw MLSConversationPipelineAccess.Failure.managerUnavailable
+      }
+      let classification = try await manager.classifyDirectRequestConversation(conversationId: convoID)
+      let verifiedRequest = try await manager.listDirectRequestViews().first { $0.conversationId == convoID }
+      guard classification == .legacyV1 || verifiedRequest != nil else {
+        throw MLSConversationPipelineAccess.Failure.managerUnavailable
+      }
       guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID else { return }
+      directRequestCapabilities = verifiedRequest?.capabilities
+      isPendingRequest = verifiedRequest.map { $0.consent == .incomingPending || $0.consent == .outgoingPending } ?? projection.1
+      hasResolvedConsent = projection.0 != nil
+      if verifiedRequest?.consent == .closed { conversationRecoveryState = .closed; return }
+    } catch {
+      guard recoveryResolutionID == resolutionID,
+            isCurrentProjection(database: database, observationID: observationID) else { return }
       hasResolvedConsent = false
       isPendingRequest = false
       logger.warning("Consent projection unavailable: \(error.localizedDescription, privacy: .public)")
@@ -498,6 +548,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     if let manager = await appState.getMLSConversationManager(timeout: 2.0),
       manager.userDid == currentUserDID
     {
+      guard recoveryResolutionID == resolutionID,
+            isCurrentProjection(database: database, observationID: observationID) else { return }
       if manager.protocolAuthorityMode == .rustFull {
         do {
           let projection = try await manager.conversationDiagnosticsProjection(
@@ -513,11 +565,14 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       } else if let userDid = manager.userDid,
         let recovery = await manager.mlsClient.recovery(for: userDid)
       {
+        guard recoveryResolutionID == resolutionID,
+              isCurrentProjection(database: database, observationID: observationID) else { return }
         resolved = await recovery.recoveryState(for: conversationId, model: durableModel)
       }
     }
 
-    guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID,
+    guard recoveryResolutionID == resolutionID,
+          isCurrentProjection(database: database, observationID: observationID),
           (try? MLSCoordinationAwareTask.validateGeneration(expectedGeneration)) != nil else { return }
     if conversationRecoveryState != resolved {
       logger.info(
@@ -532,17 +587,25 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// the row observation alone can miss them.
   func refreshRecoveryState() async {
     guard let appState, let database = appState.mlsDatabase else { return }
+    let observationID = self.observationID
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
     let model = try? await MLSStorage.shared.fetchConversation(
       conversationID: conversationId,
       currentUserDID: currentUserDID,
       database: database
     )
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
     let previousRecovery = conversationRecoveryState
     let previousLeave = leavePresentation
     await resolveRecoveryState(model: model)
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
     if let manager = await appState.getMLSConversationManager(timeout: 2.0), manager.userDid == currentUserDID {
-      leavePresentation = await manager.conversationLeavePresentation(conversationID: conversationId, refresh: true)
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
+      let leave = await manager.conversationLeavePresentation(conversationID: conversationId, refresh: true)
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
+      leavePresentation = leave
     }
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
     if previousRecovery != conversationRecoveryState || previousLeave != leavePresentation {
       await reloadObservedMessages(database: database)
     }
@@ -550,10 +613,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   /// Core conversion logic: turns raw `MLSMessageModel` rows into
   /// `MLSMessageAdapter` values and updates the published `messages` array.
-  private func handleObservedModels(_ models: [MLSMessageModel]) async {
-    guard let appState = appState,
-      let database = appState.mlsDatabase
-    else { return }
+  private func handleObservedModels(
+    _ models: [MLSMessageModel], database: DatabasePool, observationID: UUID
+  ) async {
+    guard let appState, isCurrentProjection(database: database, observationID: observationID) else { return }
 
     let storage = MLSStorage.shared
 
@@ -565,6 +628,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           currentUserDID: currentUserDID,
           database: database
         )
+        guard isCurrentProjection(database: database, observationID: observationID) else { return }
         for member in members {
           memberCache[MLSProfileEnricher.canonicalDID(member.did)] = (
             handle: member.handle,
@@ -581,6 +645,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     let enricher = appState.mlsProfileEnricher
     let memberDIDs = Array(memberCache.keys)
     let enricherProfiles = await enricher.getCachedProfiles(for: memberDIDs)
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
     for (canonical, profile) in enricherProfiles {
       if profileCache[canonical] == nil || profileCache[canonical]?.avatarURL == nil {
         profileCache[canonical] = profile
@@ -599,6 +664,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       remoteReadCursors = []
       logger.error("Failed to load remote read cursors: \(error.localizedDescription)")
     }
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
     var messageCoordinatesByID: [String: (epoch: Int64, sequenceNumber: Int64)] = [:]
     for model in models {
@@ -614,9 +680,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     await loadCachedReactions(
       for: messageIDs,
       database: database,
+      observationID: observationID,
       replaceExisting: true,
       refreshMessages: false
     )
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
     // Convert models to adapters
     var adapters: [MLSMessageAdapter] = []
@@ -634,6 +702,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         "Failed to obtain MLS context for payload decryption: \(error.localizedDescription)")
       mlsContext = nil
     }
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
     let currentDeviceID = (try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: currentUserDID)) ?? ""
     for model in models {
@@ -771,14 +840,15 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     hasReceivedInitialMessages = true
     self.hasMoreMessages = models.count >= 50
     applyRemoteReadCutoffToLoadedMessages()
-    scheduleDelayedReactionReload(messageIDs: messageIDs, database: database)
+    scheduleDelayedReactionReload(messageIDs: messageIDs, observationID: observationID)
 
     // Fetch profiles for unknown senders
     if !unknownDIDs.isEmpty {
       logger.debug("Fetching profiles for \(unknownDIDs.count) unknown sender DIDs")
-      await loadProfilesForMessages(adapters)
+      await loadProfilesForMessages(adapters, database: database, observationID: observationID)
     } else if !hasLoadedInitialProfiles {
-      await loadProfilesForMessages(adapters)
+      await loadProfilesForMessages(adapters, database: database, observationID: observationID)
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
       hasLoadedInitialProfiles = true
     }
 
@@ -962,7 +1032,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   private func adoptOrphanedReactionsIfNeeded(
     messageIDs: Set<String>,
-    database: MLSDatabase
+    database: DatabasePool,
+    observationID: UUID
   ) async -> Bool {
     let storage = MLSStorage.shared
 
@@ -974,7 +1045,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         database: database
       )
 
-      guard !orphanStats.isEmpty else { return false }
+      guard isCurrentProjection(database: database, observationID: observationID),
+            !orphanStats.isEmpty else { return false }
 
       logger.info(
         "[ORPHAN-UI] Found \(orphanStats.count) orphaned reaction parent(s) for \(self.conversationId.prefix(16))"
@@ -982,6 +1054,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
       var adoptedAny = false
       for (messageID, _) in orphanStats {
+        guard isCurrentProjection(database: database, observationID: observationID) else { return false }
         guard messageIDs.contains(messageID) else { continue }
         _ = try await storage.adoptOrphansForMessage(
           messageID,
@@ -1085,26 +1158,32 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   private func loadCachedReactions(
     for messageIDs: [String],
-    database: MLSDatabase,
+    database: DatabasePool,
+    observationID: UUID,
     replaceExisting: Bool,
     refreshMessages: Bool
   ) async {
-    guard !messageIDs.isEmpty else { return }
+    guard isCurrentProjection(database: database, observationID: observationID),
+          !messageIDs.isEmpty else { return }
 
     let storage = MLSStorage.shared
     let messageIDSet = Set(messageIDs)
-    _ = await adoptOrphanedReactionsIfNeeded(messageIDs: messageIDSet, database: database)
+    _ = await adoptOrphanedReactionsIfNeeded(
+      messageIDs: messageIDSet, database: database, observationID: observationID
+    )
 
     let maxRetries = 3
     var lastError: Error?
 
     for attempt in 1...maxRetries {
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
       do {
         let cachedReactions = try await storage.fetchReactionsForMessages(
           messageIDs,
           currentUserDID: currentUserDID,
           database: database
         )
+        guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
         if refreshMessages,
           mergeCachedReactions(cachedReactions, replaceExisting: replaceExisting)
@@ -1135,15 +1214,18 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
   }
 
-  private func scheduleDelayedReactionReload(messageIDs: [String], database: MLSDatabase) {
+  private func scheduleDelayedReactionReload(messageIDs: [String], observationID: UUID) {
     reactionReloadTask?.cancel()
+    reactionReloadTask = nil
     guard !messageIDs.isEmpty else { return }
     reactionReloadTask = Task { @MainActor [weak self] in
       try? await Task.sleep(nanoseconds: 2_000_000_000)
-      guard let self, !Task.isCancelled else { return }
+      guard let self, let database = self.appState?.mlsDatabase,
+            self.isCurrentProjection(database: database, observationID: observationID) else { return }
       await self.loadCachedReactions(
         for: messageIDs,
         database: database,
+        observationID: observationID,
         replaceExisting: false,
         refreshMessages: true
       )
@@ -1157,12 +1239,23 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func loadMessages() async {
-    guard let appState = appState,
-      let database = appState.mlsDatabase
-    else {
+    guard let appState = appState else { return }
+    let database: DatabasePool?
+    if let db = appState.mlsDatabase {
+      database = db
+    } else if let pool = appState.mlsConversationManager?.database as? DatabasePool {
+      database = pool
+    } else if let pool = (await appState.getMLSConversationManager())?.database as? DatabasePool {
+      database = pool
+    } else {
+      database = nil
+    }
+
+    guard let database else {
       logger.error("Cannot load messages: database not available")
       return
     }
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
     if observedDatabase === database {
       await reloadObservedMessages(database: database)
@@ -1183,6 +1276,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     else {
       return
     }
+    let observationID = self.observationID
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
     guard oldestLoadedSeq != Int.max else {
       hasMoreMessages = false
@@ -1199,6 +1294,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         database: database,
         limit: 50
       )
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
       guard !olderModels.isEmpty else {
         hasMoreMessages = false
@@ -1209,15 +1305,18 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       await loadCachedReactions(
         for: messageIDs,
         database: database,
+        observationID: observationID,
         replaceExisting: false,
         refreshMessages: false
       )
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
       let remoteReadCursors = try await storage.fetchRemoteReadCursors(
         conversationID: conversationId,
         currentUserDID: currentUserDID,
         database: database
       )
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
       var messageCoordinatesByID: [String: (epoch: Int64, sequenceNumber: Int64)] = [:]
       for adapter in confirmedMessages {
@@ -1246,6 +1345,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           "Failed to obtain MLS context for older-page decryption: \(error.localizedDescription)")
         mlsContext = nil
       }
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
       let currentDeviceID = (try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: currentUserDID)) ?? ""
       for model in olderModels {
@@ -1363,12 +1463,13 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
       // Only fetch profiles for unknown DIDs
       if !unknownDIDs.isEmpty {
-        await loadProfilesForMessages(adapters)
+        await loadProfilesForMessages(adapters, database: database, observationID: observationID)
       }
 
       logger.info("Loaded \(adapters.count) older MLS messages")
 
     } catch {
+      guard isCurrentProjection(database: database, observationID: observationID) else { return }
       self.error = error
       logger.error("Failed to load more MLS messages: \(error.localizedDescription)")
     }
@@ -1458,6 +1559,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func sendTypingIndicator(isTyping: Bool) async {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canEmitReceipts != false else { return }
     guard let appState = appState,
       let manager = await appState.getMLSConversationManager()
     else {
@@ -1465,6 +1567,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
 
     do {
+      guard appState.userDID == currentUserDID, manager.currentUserDID == currentUserDID,
+            hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canEmitReceipts != false else { return }
       try await manager.sendTypingIndicator(convoId: conversationId, isTyping: isTyping)
     } catch {
       logger.debug("Typing indicator send failed: \(error.localizedDescription)")
@@ -1472,6 +1576,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func sendMessage(text: String) async {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedEmbed != nil
     else { return }
 
@@ -1585,6 +1690,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
   }
   func toggleReaction(messageID: String, emoji: String) {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     let messageID = resolveRealMessageID(messageID)
     Task {
       guard let appState = appState,
@@ -1596,7 +1702,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       do {
         let currentReactions = localReactions[messageID] ?? []
         let hasReaction = currentReactions.contains {
-          $0.reaction == emoji && $0.senderDID == currentUserDID
+          $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
         }
 
         if hasReaction {
@@ -1606,7 +1712,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             reaction: emoji
           )
           let updated = currentReactions.filter {
-            !($0.reaction == emoji && $0.senderDID == currentUserDID)
+            !($0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID))
           }
           if updated.isEmpty {
             localReactions.removeValue(forKey: messageID)
@@ -1666,6 +1772,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func addReaction(messageID: String, emoji: String) {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     // For MLS, addReaction always adds (doesn't toggle)
     let messageID = resolveRealMessageID(messageID)
     Task {
@@ -1680,7 +1787,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
         // Only add if not already reacted with this emoji
         let hasReaction = currentReactions.contains {
-          $0.reaction == emoji && $0.senderDID == currentUserDID
+          $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
         }
 
         guard !hasReaction else {
@@ -1898,6 +2005,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   @discardableResult
   func editMessage(messageID: String, newText: String) async -> Bool {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return false }
     let trimmedText = newText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedText.isEmpty, let target = message(for: messageID), target.canEdit else {
       return false
@@ -1931,6 +2039,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func unsendMessage(messageID: String) async {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     guard let target = message(for: messageID), target.canUnsend else { return }
     let resolvedMessageID = target.id
 
@@ -1967,7 +2076,9 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   // MARK: - Profile Loading
 
-  private func loadProfilesForMessages(_ adapters: [MLSMessageAdapter]) async {
+  private func loadProfilesForMessages(
+    _ adapters: [MLSMessageAdapter], database: DatabasePool, observationID: UUID
+  ) async {
     guard let appState = appState,
       let client = appState.atProtoClient
     else {
@@ -1984,6 +2095,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       using: client,
       currentUserDID: currentUserDID
     )
+    guard isCurrentProjection(database: database, observationID: observationID) else { return }
 
     // Update cache and rebuild affected messages
     for (did, profile) in profiles {

@@ -60,6 +60,10 @@ final class ThreadManager: StateInvalidationSubscriber {
 
   /// The URI of the currently loaded thread (for state invalidation)
   private var currentThreadURI: ATProtocolURI?
+  private var currentVisibilityContext: PostVisibilityContext = .public
+  private var currentCircleService: CircleService?
+  private var circleGeneration: UInt64 = 0
+  @ObservationIgnored private var circleObservers: [NSObjectProtocol] = []
 
   /// Model context for SwiftData cache operations
   @ObservationIgnored private var modelContext: ModelContext?
@@ -75,11 +79,26 @@ final class ThreadManager: StateInvalidationSubscriber {
     self.appState = appState
     // Subscribe to state invalidation events
     appState.stateInvalidationBus.subscribe(self)
+    for name in [Notification.Name.circleDeleted, .circleAccountInvalidated] {
+      circleObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+        guard let self, case .circle(let circle) = self.currentVisibilityContext,
+              notification.userInfo?["accountDID"] as? String == self.appState.userDID else { return }
+        if notification.name == .circleDeleted,
+           notification.userInfo?["spaceURI"] as? String != circle.uri.uriString() { return }
+        self.circleGeneration &+= 1
+        self.threadData = nil
+        self.blockedAnchor = nil
+        self.hiddenReplies = []
+        self.error = CircleError.accessRemoved
+        self.isLoading = false
+      })
+    }
   }
 
   deinit {
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
+    circleObservers.forEach(NotificationCenter.default.removeObserver)
   }
 
   /// Configure with model context for SwiftData cache operations
@@ -131,19 +150,27 @@ final class ThreadManager: StateInvalidationSubscriber {
     error = nil
     blockedAnchor = nil
     currentThreadURI = uri
+    currentVisibilityContext = visibilityContext
+    currentCircleService = circleService
+    circleGeneration &+= 1
+    let requestGeneration = circleGeneration
 
-    logger.debug("Loading thread: \(uri.uriString()) (context: \(visibilityContext))")
+    logger.debug("Loading thread")
 
     if case .circle(let circle) = visibilityContext {
       let service = circleService ?? appState.circleService
       do {
         let threadPage = try await service.getPostThread(uri: uri, space: circle.uri)
+        guard requestGeneration == circleGeneration, !Task.isCancelled else { return }
         let threadItems = Self.flattenThreadViewPost(threadPage.thread)
         let output = AppBskyUnspeccedGetPostThreadV2.Output(thread: threadItems, hasOtherReplies: false)
         self.threadData = output
         self.blockedAnchor = nil
         isLoading = false
       } catch {
+        guard requestGeneration == circleGeneration, !Task.isCancelled else { return }
+        self.threadData = nil
+        self.hiddenReplies = []
         self.error = circleError(from: error)
         isLoading = false
       }
@@ -164,10 +191,14 @@ final class ThreadManager: StateInvalidationSubscriber {
         return
       }
       
+      // Linear threads fetch one deep chain per reply; tree threads fetch a
+      // shallower but fully branching tree.
+      let layoutMode = ThreadLayoutMode(threadedReplies: appState.appSettings.threadedReplies)
       let params = AppBskyUnspeccedGetPostThreadV2.Parameters(
         anchor: uri,
         above: true,  // Load parent posts
-        below: 10,  // Load reply depth
+        below: layoutMode.fetchDepth,
+        branchingFactor: layoutMode.fetchBranchingFactor,
         sort: ThreadSortAPIMapper.apiValue(for: appState.appSettings.threadSortOrder)
       )
       let (responseCode, output) = try await client.app.bsky.unspecced.getPostThreadV2(input: params)
@@ -236,6 +267,7 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// - Parameter uri: The anchor post URI to load hidden replies for
   @MainActor
   func loadHiddenReplies(uri: ATProtocolURI) async {
+    guard case .public = currentVisibilityContext else { return }
     guard !isLoadingHiddenReplies else {
       logger.debug("Already loading hidden replies, skipping request.")
       return
@@ -276,6 +308,7 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// - Returns: Success flag indicating if more parents were successfully loaded
   @MainActor
   func loadMoreParents(uri: ATProtocolURI) async -> Bool {
+    guard case .public = currentVisibilityContext else { return false }
     guard !isLoadingMoreParents else {
       logger.debug("Already loading more parents, skipping request.")
       return false
@@ -600,7 +633,7 @@ final class ThreadManager: StateInvalidationSubscriber {
     guard let currentURI = currentThreadURI, !isLoading else { return }
     
     logger.debug("Refreshing current thread: \(currentURI.uriString())")
-    await loadThread(uri: currentURI)
+    await loadThread(uri: currentURI, visibilityContext: currentVisibilityContext, circleService: currentCircleService)
   }
   
   /// Clear thread data
@@ -629,24 +662,6 @@ public struct ParentPost: Identifiable, Equatable, Hashable, Sendable {
   
   // Ensure hash value is based only on id to match equality implementation
   public func hash(into hasher: inout Hasher) {
-    hasher.combine(id)
-  }
-}
-
-struct ReplyWrapper: Identifiable, Equatable, Hashable {
-  let id: String
-  let threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem
-  let depth: Int
-  let isFromOP: Bool
-  let isOpThread: Bool  // Whether this post is part of OP's contiguous thread
-  let hasReplies: Bool
-      
-  static func == (lhs: ReplyWrapper, rhs: ReplyWrapper) -> Bool {
-    return lhs.id == rhs.id
-  }
-  
-  // Ensure hash value is based only on id to match equality implementation
-  func hash(into hasher: inout Hasher) {
     hasher.combine(id)
   }
 }

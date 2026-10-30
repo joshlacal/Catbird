@@ -120,6 +120,17 @@ final class MLSNewConversationViewModel {
 
     // MARK: - Public Methods
 
+    /// Selecting one recipient creates only a durable local compose target.
+    @MainActor
+    func createRecipientDraft() async throws -> MLSDirectComposeDraft {
+        guard selectedMembers.count == 1, let accountDID = conversationManager.userDid,
+              AppStateManager.shared.lifecycle.userDID == accountDID else {
+            throw MLSDirectComposeDraftStore.Failure.accountChanged
+        }
+        return try await MLSDirectComposeDraftStore.open(accountDID: accountDID,
+            recipientDID: selectedMembers[0], database: database)
+    }
+
     /// Create a new conversation
     @MainActor
     @discardableResult
@@ -134,6 +145,12 @@ final class MLSNewConversationViewModel {
                 self.error = NSError(domain: "MLSNewConversation", code: 400, userInfo: [NSLocalizedDescriptionKey: errorMessage])
                 errorSubject.send(self.error!)
             }
+            return nil
+        }
+
+        guard !isDirectMessage else {
+            self.error = NSError(domain: "MLSNewConversation", code: 400,
+                userInfo: [NSLocalizedDescriptionKey: "Write an introduction before sending a direct message request."])
             return nil
         }
 

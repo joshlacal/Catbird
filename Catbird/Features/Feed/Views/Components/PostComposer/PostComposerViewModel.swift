@@ -156,6 +156,11 @@ final class PostComposerViewModel {
     return _performanceOptimizer
   }
   
+  #if DEBUG
+  @ObservationIgnored
+  var thumbnailDownloadForTesting: (@Sendable (URL) async throws -> (Data, URLResponse))?
+  #endif
+
   // MARK: - Constants
 
   let maxImagesAllowed = 10
@@ -169,6 +174,7 @@ final class PostComposerViewModel {
   // MARK: - Computed Properties
   
   var canAddMoreMedia: Bool {
+    if case .circle = destination, !appState.circleSupportsImages { return false }
     return videoItem == nil && mediaItems.count < maxImagesAllowed
   }
   

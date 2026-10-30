@@ -8,11 +8,17 @@ enum CatbirdGatewayConfigurationError: Error, Equatable {
 /// The single routing decision for foreground Catbird traffic that terminates at Nest or MLS.
 ///
 /// Production is immutable. The staging deployment can be selected only by the exact launch
-/// argument emitted by the E2E harness while `--e2e-mode` is also present.
+/// argument emitted by the E2E harness while `--e2e-mode` is also present. DEBUG builds given an
+/// explicit runtime fixture config (`CATBIRD_RUNTIME_FIXTURE_CONFIG` or
+/// `--catbird-runtime-fixture-config`) route to that local gateway only; an invalid config refuses
+/// to launch rather than falling back to a real deployment.
 struct CatbirdGatewayConfiguration: Sendable, Equatable {
   private enum Deployment: Sendable, Equatable {
     case production
     case stagingE2E
+    #if DEBUG
+    case runtimeFixture(URL)
+    #endif
   }
 
   private static let overrideArgument = "--catbird-gateway-origin"
@@ -25,6 +31,22 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
   private let deployment: Deployment
 
   static let current: Self = {
+    #if DEBUG && canImport(Network) && canImport(Security)
+    // Activation installs the fixture tunnel before any Petrel client reads this origin.
+    let fixtureOrigin: URL?
+    do {
+      fixtureOrigin = try DebugGatewayTransport.shared.activate()
+        ? DebugGatewayTransport.shared.activeManifest?.origin : nil
+    } catch {
+      preconditionFailure("Invalid Catbird runtime fixture configuration: \(error)")
+    }
+    if let fixtureOrigin {
+      guard !ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix(overrideArgument) }) else {
+        preconditionFailure("Runtime fixture and staging gateway override are mutually exclusive")
+      }
+      return Self(deployment: .runtimeFixture(fixtureOrigin))
+    }
+    #endif
     do {
       return try resolve(arguments: ProcessInfo.processInfo.arguments)
     } catch {
@@ -32,12 +54,23 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
     }
   }()
 
+  var isRuntimeFixture: Bool {
+    #if DEBUG
+    if case .runtimeFixture = deployment { return true }
+    #endif
+    return false
+  }
+
   var origin: URL {
     switch deployment {
     case .production:
       Self.productionOrigin
     case .stagingE2E:
       Self.stagingOrigin
+    #if DEBUG
+    case .runtimeFixture(let origin):
+      origin
+    #endif
     }
   }
 
@@ -48,6 +81,10 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
       "did:web:api.catbird.blue"
     case .stagingE2E:
       "did:web:dev-api.catbird.blue"
+    #if DEBUG
+    case .runtimeFixture(let origin):
+      "did:web:\(origin.host ?? "")"
+    #endif
     }
   }
 
@@ -58,6 +95,10 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
       nil
     case .stagingE2E:
       "did:web:dev-api.catbird.blue:mls#atproto_mls"
+    #if DEBUG
+    case .runtimeFixture(let origin):
+      "did:web:\(origin.host ?? ""):mls#atproto_mls"
+    #endif
     }
   }
 

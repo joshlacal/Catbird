@@ -10,6 +10,11 @@ enum PetrelAuthUIBridge {
         // Use new typed auth event system - no string parsing needed
         PetrelAuthEvents.addObserver { event in
             switch event {
+            case let .gatewaySessionRejected(context, _):
+                Task { @MainActor in
+                    await AppStateManager.shared.authentication.handleGatewaySessionRejection(context)
+                }
+
             case let .autoLogoutTriggered(did, reason):
                 Task { @MainActor in
                     logger.error("UI handling auto logout did=\(did) reason=\(reason)")

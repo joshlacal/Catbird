@@ -18,6 +18,10 @@ actor MockCircleTransport: CircleTransport {
   var feedCallCount: Int = 0
   var errorToThrow: (any Error)?
   var onGetFeed: (@Sendable () async -> Void)?
+  var onListCircles: (@Sendable () async -> Void)?
+  var notifications: [BlueCatbirdCircleDefs.Notification] = []
+  var onListNotifications: (@Sendable () async -> Void)?
+  var onMedia: (@Sendable () async -> Void)?
   var mediaData: Data = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAKeyNrvgAAAABJRU5ErkJggg==")!
   var lastMediaSpace: SpaceRef?
   var lastMediaAuthorDID: DID?
@@ -48,12 +52,21 @@ actor MockCircleTransport: CircleTransport {
     self.onGetFeed = action
   }
 
+  func setOnListCircles(_ action: (@Sendable () async -> Void)?) { onListCircles = action }
+
+  func setNotifications(_ notifications: [BlueCatbirdCircleDefs.Notification]) { self.notifications = notifications }
+
+  func setOnListNotifications(_ action: (@Sendable () async -> Void)?) { onListNotifications = action }
+
+  func setOnMedia(_ action: (@Sendable () async -> Void)?) { onMedia = action }
+
   func capabilities() async throws -> CircleCapability {
-    CircleCapability(enabled: true, protocolRevision: "2026-08", supportsImages: true)
+    CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
-    CircleListPage(circles: [CircleTestFixtures.family, CircleTestFixtures.work], cursor: nil)
+    if let onListCircles { await onListCircles() }
+    return CircleListPage(circles: [CircleTestFixtures.family, CircleTestFixtures.work], cursor: nil)
   }
 
   func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {
@@ -121,10 +134,12 @@ actor MockCircleTransport: CircleTransport {
   }
 
   func listNotifications(cursor: String?) async throws -> CircleNotificationPage {
-    CircleNotificationPage(notifications: [], cursor: nil)
+    if let onListNotifications { await onListNotifications() }
+    return CircleNotificationPage(notifications: notifications, cursor: nil)
   }
 
   func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data {
+    if let onMedia { await onMedia() }
     if let errorToThrow { throw errorToThrow }
     mediaCallCount += 1
     lastMediaSpace = space
@@ -162,7 +177,7 @@ actor MockCircleTransport: CircleTransport {
   func deleteSpace(space: SpaceRef) async throws {}
   func addMember(space: SpaceRef, did: DID) async throws {}
   func removeMember(space: SpaceRef, did: DID) async throws {}
-  func listMembers(space: SpaceRef) async throws -> [DID] {
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] {
     []
   }
 }

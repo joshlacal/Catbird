@@ -366,8 +366,8 @@ struct CircleFeedModelTests {
     let itemBob = makeFeedItem(circle: familyCircle, rkey: "post_bob", text: "Bob post")
 
     let cache = CircleFeedCache()
-    await cache.store(CircleFeedPage(items: [itemFamily], cursor: "cursor_alice"), accountDID: "did:plc:alice", space: familyCircle.uri)
-    await cache.store(CircleFeedPage(items: [itemBob], cursor: "cursor_bob"), accountDID: "did:plc:bob", space: familyCircle.uri)
+    await cache.store(CircleFeedPage(items: [itemFamily], cursor: "cursor_alice"), accountDID: "did:plc:alice", space: familyCircle.uri, generation: cache.generation(accountDID: "did:plc:alice"))
+    await cache.store(CircleFeedPage(items: [itemBob], cursor: "cursor_bob"), accountDID: "did:plc:bob", space: familyCircle.uri, generation: cache.generation(accountDID: "did:plc:bob"))
 
     let transport = MockCircleTransport(feedItems: [])
     let service = CircleService(transport: transport)
@@ -435,7 +435,7 @@ struct CircleFeedModelTests {
     let itemBob = makeFeedItem(circle: familyCircle, rkey: "post_bob", text: "Bob post")
 
     let cache = CircleFeedCache()
-    await cache.store(CircleFeedPage(items: [itemBob], cursor: "cursor_bob"), accountDID: "did:plc:bob", space: familyCircle.uri)
+    await cache.store(CircleFeedPage(items: [itemBob], cursor: "cursor_bob"), accountDID: "did:plc:bob", space: familyCircle.uri, generation: cache.generation(accountDID: "did:plc:bob"))
 
     let transport = MockCircleTransport(feedItems: [itemAlice])
     let service = CircleService(transport: transport)

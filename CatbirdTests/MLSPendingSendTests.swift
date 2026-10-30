@@ -22,6 +22,16 @@ struct MLSPendingSendTests {
     )
   }
 
+  /// A data source with an inert action performer, which the consent test seam requires.
+  private func makeActionDataSource() -> MLSConversationDataSource {
+    MLSConversationDataSource(
+      conversationId: "convo-1",
+      currentUserDID: "did:plc:tester",
+      appState: nil,
+      actionPerformer: MLSMessageActionPerformer(edit: { _, _, _ in }, unsend: { _, _ in })
+    )
+  }
+
   @Test func beginPendingSendAppearsInMessagesAsSending() {
     let dataSource = makeDataSource()
     let id = dataSource.beginPendingSend(text: "hello", embed: nil)
@@ -122,9 +132,19 @@ struct MLSPendingSendTests {
   }
 
   @Test func recoveryStateDefaultsToHealthyAndDoesNotBlock() {
-    let dataSource = makeDataSource()
+    let dataSource = makeActionDataSource()
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     #expect(dataSource.conversationRecoveryState == .healthy)
     #expect(dataSource.isSendBlockedByRecovery == false)
+  }
+
+  /// Sending fails closed until the conversation's consent is resolved, even when the
+  /// recovery state is healthy.
+  @Test func unresolvedConsentBlocksSendingWhileRecoveryIsHealthy() {
+    let dataSource = makeActionDataSource()
+    #expect(dataSource.hasResolvedConsent == false)
+    #expect(dataSource.conversationRecoveryState == .healthy)
+    #expect(dataSource.isSendBlockedByRecovery == true)
   }
 
   @Test func onlyCurrentUserMessageExposesEditAndUnsendCapabilities() {
@@ -175,6 +195,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     dataSource.ingestConfirmedMessageForTesting(
       MLSMessageAdapter(
         id: "msg-real",
@@ -204,6 +225,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     let message = MLSMessageAdapter(
       id: "msg-real",
       text: "before",
@@ -238,6 +260,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     let message = MLSMessageAdapter(
       id: "msg-real",
       text: "before",
@@ -292,6 +315,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     dataSource.ingestConfirmedMessageForTesting(
       MLSMessageAdapter(
         id: "remote",
@@ -323,6 +347,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     dataSource.ingestConfirmedMessageForTesting(
       MLSMessageAdapter(
         id: "msg-real",

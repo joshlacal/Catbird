@@ -117,8 +117,8 @@ struct ExternalEmbedView: View {
     init(external: AppBskyEmbedExternal.ViewExternal, shouldBlur: Bool, postID: String) {
         self.external = external
         self.shouldBlur = shouldBlur
-        self._isBlurred = State(initialValue: shouldBlur)
         self.postID = postID
+        self._isBlurred = State(initialValue: shouldBlur)
 
         // Compute the GIF aspect-ratio hint synchronously (from the record's own
         // hh=/ww= query params, where present) so the very first render already
@@ -230,7 +230,7 @@ struct ExternalEmbedView: View {
         }
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: PlatformScreenInfo.height * 0.6)
+        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
@@ -258,7 +258,7 @@ struct ExternalEmbedView: View {
         }
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: PlatformScreenInfo.height * 0.6)
+        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }
     
@@ -271,7 +271,7 @@ struct ExternalEmbedView: View {
         )
         .aspectRatio(videoModel.aspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: PlatformScreenInfo.height * 0.6)
+        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }

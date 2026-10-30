@@ -185,63 +185,27 @@ actor ContentFilterService {
       return false
     }
     
-    // Check replies by not followed users
-    // Interpretation: Hide replies TO posts/threads from unfollowed users
-    // Key: Must follow someone in the ORIGINAL THREAD (parent or root), EXCLUDING the reply author
-    // This prevents seeing followed bots/users spamming replies to unfollowed users
+    // Evaluate the authors of the original context, including a followed
+    // author's self-thread. Following only an unrelated reply author is not enough.
     if settings.hideRepliesByUnfollowed && isReply {
-      let replyAuthor = post.post.author.handle
-      let replyAuthorDid = post.post.author.did.didString()
-      
-      // Exception 1: Always show user's own replies
-      if let currentUserDid = settings.currentUserDid, replyAuthorDid == currentUserDid {
-        logger.debug("✅ Showing reply by @\(replyAuthor): user's own reply")
-        return true
-      }
-      
-      // Check if we follow anyone in the ORIGINAL THREAD (parent or root)
-      // CRITICAL: We exclude the reply author from this check
-      var followedInThread: [String] = []
-      
+      let isOwnReply = post.post.author.did.didString() == settings.currentUserDid
+      var followsContext = false
       if let reply = post.reply {
-        // Check parent author (if not the reply author)
-        if case .appBskyFeedDefsPostView(let parentView) = reply.parent {
-          let parentHandle = parentView.author.handle
-          let parentDid = parentView.author.did.didString()
-          
-          // Skip if parent is the same as reply author (self-reply)
-          if parentDid != replyAuthorDid {
-            if parentView.author.viewer?.following != nil {
-              followedInThread.append("@\(parentHandle) (parent)")
-            }
-          }
+        if case .appBskyFeedDefsPostView(let parent) = reply.parent {
+          followsContext = parent.author.viewer?.following != nil
+            || parent.author.did.didString() == settings.currentUserDid
         }
-        
-        // Check root author (if not the reply author)
-        if case .appBskyFeedDefsPostView(let rootView) = reply.root {
-          let rootHandle = rootView.author.handle
-          let rootDid = rootView.author.did.didString()
-          
-          // Skip if root is the same as reply author (self-reply)
-          if rootDid != replyAuthorDid {
-            if rootView.author.viewer?.following != nil {
-              followedInThread.append("@\(rootHandle) (root)")
-            }
-          }
+        if case .appBskyFeedDefsPostView(let root) = reply.root {
+          followsContext = followsContext || root.author.viewer?.following != nil
+            || root.author.did.didString() == settings.currentUserDid
         }
       }
-      
-      // Show only if we follow someone in the thread OTHER THAN the reply author
-      if !followedInThread.isEmpty {
-        logger.debug("✅ Showing reply by @\(replyAuthor): follows \(followedInThread.joined(separator: ", "))")
-        return true
+      if !isOwnReply && !followsContext {
+        logger.debug("Filtered: reply to unfollowed thread")
+        return false
       }
-      
-      // Hide: replying to a thread with no OTHER followed users
-      logger.debug("🚫 FILTERING: Reply by @\(replyAuthor) to unfollowed thread")
-      return false
     }
-    
+
     // Check content label filtering
     if !settings.contentLabelPreferences.isEmpty || settings.hideAdultContent {
       if let labels = post.post.labels, !labels.isEmpty {

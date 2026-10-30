@@ -27,15 +27,18 @@ import PetrelCatbird
     /// Sender's DID extracted from MLS credential
     let senderDID: String
 
-    /// Initialize from ApplicationEntry after decryption
-    init(
+    /// Initialize from ApplicationEntry after decryption (fails closed if entry body is malformed)
+    init?(
       messageView: BlueCatbirdChatDefs.ApplicationEntry,
       payload: MLSMessagePayload,
       senderDID: String
     ) {
+      guard let epoch = messageView.epoch else {
+        return nil
+      }
       self.id = messageView.id
       self.convoId = messageView.convoId
-      self.epoch = messageView.epoch
+      self.epoch = epoch
       self.seq = messageView.seq
       self.createdAt = messageView.createdAt.date
       self.payload = payload

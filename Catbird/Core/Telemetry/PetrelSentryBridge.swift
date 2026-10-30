@@ -53,6 +53,9 @@ enum PetrelSentryBridge {
 
     private static func authEventToExtras(_ event: AuthEvent) -> [String: Any] {
         switch event {
+        case .gatewaySessionRejected:
+            return ["type": "GatewaySessionRejected"]
+
         case let .autoLogoutTriggered(did, reason):
             return ["type": "AutoLogoutTriggered", "did": did, "reason": reason]
 
@@ -120,6 +123,9 @@ enum PetrelSentryBridge {
 
     private static func authEventToSentry(_ event: AuthEvent) -> (level: String, message: String) {
         switch event {
+        case .gatewaySessionRejected:
+            return ("warning", "Gateway session rejected")
+
         case let .autoLogoutTriggered(did, reason):
             return ("error", "Auto logout triggered for \(did): \(reason)")
 

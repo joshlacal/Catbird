@@ -220,11 +220,11 @@ struct ContentLabelManager<Content: View>: View {
         self.labels = labels
         self.selfLabelValues = selfLabelValues
         self.contentType = contentType
+        self.content = content()
         // Use a more conservative initial visibility that will be updated by async task
         let initialVisibility = ContentLabelManager.getInitialContentVisibility(labels: labels)
         self._contentVisibility = State(initialValue: initialVisibility)
         self._isBlurred = State(initialValue: initialVisibility == .warn)
-        self.content = content()
     }
     
     /// Conservative initial visibility determination without user preferences

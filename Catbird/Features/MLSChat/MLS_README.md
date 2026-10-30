@@ -15,14 +15,12 @@
 
 ```
 MLSChat/
-├── ViewModels/                                    (4 files, 962 lines)
-│   ├── MLSConversationListViewModel.swift         197 lines
+├── ViewModels/                                    (3 files)
 │   ├── MLSConversationDetailViewModel.swift       303 lines
 │   ├── MLSNewConversationViewModel.swift          219 lines
 │   └── MLSMemberManagementViewModel.swift         243 lines
 │
-├── Tests/ (CatbirdTests/ViewModels/MLSChat/)     (4 files, 1,499 lines)
-│   ├── MLSConversationListViewModelTests.swift    305 lines
+├── Tests/ (CatbirdTests/ViewModels/MLSChat/)     (3 files)
 │   ├── MLSConversationDetailViewModelTests.swift  403 lines
 │   ├── MLSNewConversationViewModelTests.swift     354 lines
 │   └── MLSMemberManagementViewModelTests.swift    437 lines
@@ -36,16 +34,11 @@ MLSChat/
 
 ## Overview
 
-Four production-ready view models for MLS Chat functionality:
+Production-ready view models for MLS Chat functionality:
 
-### 1. MLSConversationListViewModel
-Manages the list of MLS conversations with:
-- Pagination (cursor-based)
-- Search/filtering
-- Real-time updates
-- CRUD operations
+> **Note**: MLS conversation listing is integrated into the unified chat list (`ChatTabView` and `UnifiedChatCoordinator` in `Features/Chat/`). The standalone `MLSConversationListView` and `MLSConversationListViewModel` have been retired.
 
-### 2. MLSConversationDetailViewModel
+### 1. MLSConversationDetailViewModel
 Manages individual conversation with:
 - Message loading/pagination
 - Send message functionality
@@ -80,21 +73,17 @@ Manages conversation members:
 ```swift
 import Combine
 
-// Initialize
-let apiClient = MLSAPIClient()
-let viewModel = MLSConversationListViewModel(apiClient: apiClient)
-var cancellables = Set<AnyCancellable>()
-
-// Subscribe to updates
-viewModel.conversationsPublisher
-    .sink { conversations in
-        // Update UI
-    }
-    .store(in: &cancellables)
+// Initialize detail view model
+let viewModel = MLSConversationDetailViewModel(
+    conversationId: "convo-123",
+    database: database,
+    apiClient: apiClient,
+    conversationManager: conversationManager
+)
 
 // Load data
 Task {
-    await viewModel.loadConversations()
+    await viewModel.loadInitialData()
 }
 ```
 
@@ -103,19 +92,15 @@ Task {
 ```swift
 @MainActor
 final class MyTests: XCTestCase {
-    var viewModel: MLSConversationListViewModel!
-    var mockAPIClient: MockMLSAPIClient!
-    
+    var viewModel: MLSConversationDetailViewModel!
+    var mockAPIClient: MockMLSAPIClientDetail!
+
     override func setUp() async throws {
-        mockAPIClient = MockMLSAPIClient()
-        viewModel = MLSConversationListViewModel(
+        mockAPIClient = MockMLSAPIClientDetail()
+        viewModel = MLSConversationDetailViewModel(
+            conversationId: "test-convo",
             apiClient: mockAPIClient
         )
-    }
-    
-    func testLoadConversations() async {
-        await viewModel.loadConversations()
-        XCTAssertFalse(viewModel.conversations.isEmpty)
     }
 }
 ```

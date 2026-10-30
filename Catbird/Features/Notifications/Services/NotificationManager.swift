@@ -269,6 +269,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         return
       }
       saveMLSChatNotificationPreference()
+      Task { await self.updateSignedRequestPushRegistration() }
     }
   }
 
@@ -479,6 +480,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     if newClient != nil, let deviceToken = deviceToken {
       notificationLogger.info("🚀 Triggering device registration from updateClient")
       await registerDeviceToken(deviceToken)
+      await updateSignedRequestPushRegistration()
     } else if newClient == nil {
       notificationLogger.info("🧹 Client cleared - cleaning up notifications")
       // Client was cleared (user logged out), clean up notifications
@@ -728,7 +730,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let previousToken = lastRegisteredDeviceToken,
       previousToken == deviceToken {
       notificationLogger.info(
-        "🔁 Device token already registered; skipping duplicate registration request")
+        "🔁 Device token already registered with notification service")
+      await updateSignedRequestPushRegistration()
       return
     }
 
@@ -873,6 +876,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Cleanup notifications when user logs out
+  @MainActor
   func cleanupNotifications(previousClient: ATProtoClient? = nil) async {
     notificationLogger.info("Cleaning up notifications after logout")
 
@@ -886,13 +890,23 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let didSource = previousClient ?? client
         if let did = try await didSource?.getDid() {
           await unregisterDeviceToken(deviceToken, did: did, using: didSource)
-          await unregisterMLSDeviceToken(deviceToken)
+          await unregisterMLSDeviceToken(deviceToken, expectedAccount: did)
         }
       } catch {
         notificationLogger.error(
           "Failed to determine DID during cleanup: \(error.localizedDescription)")
       }
     }
+
+    clearLocalNotificationState()
+  }
+
+  /// Clear presentation state without reading credentials or unregistering a device.
+  /// Gateway rejection consumes this synchronously before a replacement session can start.
+  @MainActor
+  func clearLocalNotificationState() {
+    unreadCheckTimer?.invalidate()
+    unreadCheckTimer = nil
 
     // Reset state
     status = .unknown
@@ -917,9 +931,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
           }
         }
       } else {
-        await MainActor.run {
-          UIApplication.shared.applicationIconBadgeNumber = 0
-        }
+        UIApplication.shared.applicationIconBadgeNumber = 0
       }
     #elseif os(macOS)
       if #available(macOS 14.0, *) {
@@ -930,9 +942,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
           }
         }
       } else {
-        await MainActor.run {
-          NSApplication.shared.dockTile.badgeLabel = nil
-        }
+        NSApplication.shared.dockTile.badgeLabel = nil
       }
     #endif
 
@@ -1485,6 +1495,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Register device token with MLS server
   private func registerMLSDeviceToken(_ token: Data) async {
+    await updateSignedRequestPushRegistration()
     #if os(iOS)
       guard let appState = appState else { return }
       guard let client = client else { return }
@@ -1540,7 +1551,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Unregister device token with MLS server
-  private func unregisterMLSDeviceToken(_ token: Data) async {
+  private func unregisterMLSDeviceToken(_ token: Data, expectedAccount: String? = nil) async {
+    await updateSignedRequestPushRegistration(enabled: false, expectedAccount: expectedAccount)
     #if os(iOS)
       guard let appState = appState else { return }
       guard let conversationManager = await appState.getMLSConversationManager() else { return }
@@ -1548,6 +1560,41 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       if let mlsClient = await appState.getMLSAPIClient() {
         _ = try? await mlsClient.unregisterDeviceToken(deviceId: deviceInfo.deviceId)
       }
+    #endif
+  }
+
+  /// Request push authority is independent of legacy token registration.
+  /// Core retains exact signed bytes and validates the active device binding.
+  @MainActor
+  private func updateSignedRequestPushRegistration(enabled override: Bool? = nil, expectedAccount: String? = nil) async {
+    #if os(iOS)
+    guard let appState, let client, let token = deviceToken else { return }
+    let account = appState.userDID
+    guard expectedAccount == nil || expectedAccount == account else { return }
+    let desired = override ?? (notificationsEnabled && isMasterPushEnabled() && mlsChatNotificationsEnabled)
+    do {
+      guard try await client.getDid() == account,
+            let manager = await appState.getMLSConversationManager(), manager.currentUserDID == account,
+            appState.userDID == account, appState.mlsConversationManager === manager else { return }
+      if desired {
+        let receipt = try await manager.registerSignedPushToken(hexString(from: token), provider: .apns, appID: pushAppID)
+        guard receipt.enabled, appState.userDID == account, appState.mlsConversationManager === manager else { return }
+        // A changed token or preference is a new generation, never inferred from
+        // the old acknowledgement. Core's journal serializes the exact binding.
+        if deviceToken != token || !notificationsEnabled || !isMasterPushEnabled() || !mlsChatNotificationsEnabled {
+          await updateSignedRequestPushRegistration()
+          return
+        }
+        notificationLogger.info("Signed encrypted-request push registration confirmed")
+      } else {
+        _ = try await manager.disableSignedPushRegistration(provider: .apns, appID: pushAppID)
+        guard appState.userDID == account, appState.mlsConversationManager === manager else { return }
+        notificationLogger.info("Signed encrypted-request push registration disabled")
+      }
+    } catch {
+      guard appState.userDID == account else { return }
+      notificationLogger.warning("Signed request push registration remains unconfirmed; exact retry is retained")
+    }
     #endif
   }
 
@@ -1575,6 +1622,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // Check notification status when app becomes active
     Task {
       await checkNotificationStatus()
+      await updateSignedRequestPushRegistration()
 
       // Also check for unread notifications
       await checkUnreadNotifications()
@@ -1665,6 +1713,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // Skip already-decrypted MLS notifications (prevent infinite loop)
     if userInfo["_mls_decrypted"] as? Bool == true {
       notificationLogger.debug("📦 [FG] Already decrypted MLS notification - showing as-is")
+      completionHandler([.banner, .sound])
+      return
+    }
+
+    if userInfo["type"] as? String == "mls_message_request" {
+      // Request payloads are metadata-only. Let the ordinary authoritative
+      // refresh discover/import the request; never decode push ciphertext here.
       completionHandler([.banner, .sound])
       return
     }
@@ -1760,31 +1815,62 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// For NON-ACTIVE users (account switch scenario), the sync loop is not
   /// running, so we must decrypt here using ephemeral database access.
   /// ═══════════════════════════════════════════════════════════════════════════
-  private func resolveMLSConversationRoute(
+  internal func resolveMLSConversationRoute(
     _ requestedID: String,
-    recipientDID: String
+    recipientDID: String,
+    maxWaitTime: TimeInterval = 10.0
   ) async -> (conversationID: String, groupID: Data)? {
-    do {
-      let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDID) { db in
-        try CatbirdMLSCore.MLSConversationModel
-          .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDID)
-          .fetchAll(db)
+    let checkInterval: TimeInterval = 0.2
+    var elapsed: TimeInterval = 0
+
+    while elapsed < maxWaitTime {
+      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
+        notificationLogger.info("⏳ [MLS Route] Deferring route resolution while MLS suspension gate is active...")
+        do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+        elapsed += checkInterval
+        continue
       }
-      let records = models.map {
-        MLSConversationIdentityBoundary.Record(
-          conversationID: $0.conversationID,
-          groupID: $0.groupID.hexEncodedString()
-        )
-      }
-      guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(requestedID, in: records),
-            let model = models.first(where: { $0.conversationID == canonicalID }) else {
+
+      do {
+        let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDID) { db in
+          try CatbirdMLSCore.MLSConversationModel
+            .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDID)
+            .fetchAll(db)
+        }
+        let records = models.map {
+          MLSConversationIdentityBoundary.Record(
+            conversationID: $0.conversationID,
+            groupID: $0.groupID.hexEncodedString()
+          )
+        }
+        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(requestedID, in: records),
+              let model = models.first(where: { $0.conversationID == canonicalID }) else {
+          return nil
+        }
+        return (canonicalID, model.groupID)
+      } catch let error as MLSSQLCipherError {
+        if case .storageUnavailable(let reason) = error, reason.contains("suspension") {
+          notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended (\(reason))...")
+          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+          elapsed += checkInterval
+          continue
+        }
+        notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
+        return nil
+      } catch {
+        let desc = error.localizedDescription
+        if desc.contains("suspension") || desc.contains("Database open blocked") {
+          notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended: \(desc)...")
+          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+          elapsed += checkInterval
+          continue
+        }
+        notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
         return nil
       }
-      return (canonicalID, model.groupID)
-    } catch {
-      notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
-      return nil
     }
+    notificationLogger.warning("Refusing unresolved MLS notification route: timed out after \(maxWaitTime)s waiting for storage resumption")
+    return nil
   }
 
   private func decryptAndPresentMLSNotification(
@@ -2436,10 +2522,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       // Cross-process coordination uses MLSNotificationCoordinator.
 
       for message in result.messages {
-        // ciphertext is already Data
-        let ciphertextData = message.ciphertext
-
-        // Padding is stripped by catbird-mls process_message internally.
+        guard let ciphertextData = message.ciphertext, let messageEpoch = message.epoch else {
+          notificationLogger.warning("⚠️ [FG] Skipping message \(message.id) with unsupported/malformed body variant")
+          continue
+        }
         let actualCiphertext = ciphertextData
 
         do {
@@ -2464,7 +2550,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
               // so we also match by ciphertext to avoid double-decrypt (SecretReuseError).
               let isTargetByOrder =
                 (targetEpoch != nil && targetSeq != nil)
-                ? (message.epoch == targetEpoch && message.seq == targetSeq)
+                ? (messageEpoch == targetEpoch && message.seq == targetSeq)
                 : false
               let isTargetByCiphertext = (actualCiphertext == targetCiphertext)
               let isTarget =
@@ -2510,7 +2596,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
               }
 
               // Cache ALL decrypted messages to prevent SecretReuseError
-              let serverEpoch = Int64(message.epoch)
+              let serverEpoch = Int64(messageEpoch)
               let serverSeq = Int64(message.seq)
 
               do {
@@ -3443,33 +3529,41 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let uriString = userInfo["uri"] as? String
     let typeString = userInfo["type"] as? String
 
-    // Handle MLS message notifications (from NSE)
-    if let type = typeString, type == "mls_message" || type == "mls_message_decrypted" {
-      let recipientDid = resolveRecipientDID(from: userInfo)
-      let convoId = userInfo["convo_id"] as? String
+    // Handle MLS message notifications (from NSE) and direct message requests (F65)
+    if Self.isNavigableMLSNotification(fromUserInfo: userInfo) {
+      guard let recipientDid = resolveRecipientDID(from: userInfo) else {
+        notificationLogger.warning("MLS notification rejected: recipient account could not be resolved from payload")
+        completionHandler()
+        return
+      }
+      guard let convoId = Self.mlsConversationID(fromUserInfo: userInfo) else {
+        completionHandler()
+        return
+      }
 
-      Task {
+      Task { @MainActor in
         // Switch to correct account if needed
-        if let did = recipientDid {
-          await ensureActiveAccount(for: did)
+        await ensureActiveAccount(for: recipientDid)
+
+        // Fail-closed guard: ensure active account matches the notification recipient
+        guard case .authenticated(let state) = AppStateManager.shared.lifecycle,
+              state.userDID == recipientDid else {
+          notificationLogger.warning("MLS notification rejected: active account does not match notification recipient")
+          completionHandler()
+          return
         }
 
         // Navigate to MLS conversation
-        if let convoId = convoId {
-          notificationLogger.info(
-            "MLS notification tapped - navigating to conversation: \(convoId.prefix(16))...")
-          #if os(iOS)
-          await handleMLSNotificationNavigation(convoId)
-          #endif
-        }
+        notificationLogger.info(
+          "MLS notification tapped - navigating to conversation: \(convoId.prefix(16))...")
+        #if os(iOS)
+        await handleMLSNotificationNavigation(convoId)
+        #endif
 
-        await MainActor.run {
-          completionHandler()
-        }
+        completionHandler()
       }
       return
     }
-
     // Handle chat notifications that identify the conversation by ID instead of URI:
     // NSE `chat_message` pushes carry `convoId`, local polling notifications carry
     // `conversationID`. Payloads with `uri`/`did` keys keep the generic path below.
@@ -3511,6 +3605,33 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     completionHandler()
+  }
+  /// Validate whether an incoming push payload represents a navigable MLS notification
+  /// (ordinary message, decrypted message, or direct message request per F65).
+  nonisolated static func isNavigableMLSNotification(fromUserInfo userInfo: [AnyHashable: Any]) -> Bool {
+    guard let type = userInfo["type"] as? String else { return false }
+    if type == "mls_message" || type == "mls_message_decrypted" {
+      guard let convoId = userInfo["convo_id"] as? String,
+            MLSConversationIdentityBoundary.isCanonicalStableID(convoId)
+      else { return false }
+      return true
+    }
+    if type == "mls_message_request" {
+      guard userInfo["protocol_version"] as? String == "2",
+            let hash = userInfo["recipient_account"] as? String,
+            hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }),
+            let convoId = userInfo["convo_id"] as? String,
+            MLSConversationIdentityBoundary.isCanonicalStableID(convoId)
+      else { return false }
+      return true
+    }
+    return false
+  }
+
+  /// Extract the MLS conversation ID from a validated MLS notification payload.
+  nonisolated static func mlsConversationID(fromUserInfo userInfo: [AnyHashable: Any]) -> String? {
+    guard isNavigableMLSNotification(fromUserInfo: userInfo) else { return nil }
+    return userInfo["convo_id"] as? String
   }
 
   /// Extract the conversation ID from a chat notification payload, or nil when the
@@ -3768,7 +3889,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     // Handle MLS chat notifications
-    if type == "mls_message" || type == "mls_message_decrypted" {
+    if type == "mls_message" || type == "mls_message_decrypted" || type == "mls_message_request" {
       await handleMLSNotificationNavigation(uriString)
       return
     }
@@ -3821,15 +3942,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
-    guard let resolved = await resolveMLSConversationRoute(
-      convoId,
-      recipientDID: currentAppState.userDID
-    ) else {
-      notificationLogger.warning("Refusing MLS notification navigation for unresolved route")
-      return
-    }
-    let canonicalConvoID = resolved.conversationID
-
     // Wait for MLS service to be ready (up to 10 seconds) after potential account switch
     // Increased timeout because account switching involves database setup
     let maxWaitTime: TimeInterval = 10.0
@@ -3865,24 +3977,36 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       )
     }
 
-    await MainActor.run {
-      // Switch the chat mode to MLS so the correct view is shown
-      currentAppState.chatMode = "Catbird Groups"
-
-      // CRITICAL FIX: Set targetMLSConversationId BEFORE switching tabs
-      // This ensures the conversation list view can pick up the target even while still loading
-      currentAppState.navigationManager.targetMLSConversationId = canonicalConvoID
-
-      // Switch to chat tab using the tab selection callback (this actually changes the tab)
-      if let tabSelection = currentAppState.navigationManager.tabSelection {
-        tabSelection(4)  // Switch to chat tab
+    var resolved = await resolveMLSConversationRoute(convoId, recipientDID: currentAppState.userDID)
+    if resolved == nil,
+      let manager = await currentAppState.getMLSConversationManager(timeout: 10)
+    {
+      let deadline = ContinuousClock().now.advanced(by: .seconds(10))
+      while true {
+        do {
+          try await manager.syncWithServerFresh()
+          break
+        } catch MLSConversationError.operationFailed(let reason)
+          where reason == "Rust orchestrator runtime unavailable for syncWithServer"
+            && ContinuousClock().now < deadline
+        {
+          // Foreground resume can release the suspension gate before its Rust runtime is restored.
+          do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+        } catch {
+          notificationLogger.warning("MLS notification sync before route resolution failed: \(error.localizedDescription)")
+          break
+        }
       }
-      currentAppState.navigationManager.updateCurrentTab(4)
+      resolved = await resolveMLSConversationRoute(convoId, recipientDID: currentAppState.userDID)
+    }
+    guard let resolved else {
+      notificationLogger.warning("Refusing MLS notification navigation for unresolved route")
+      return
+    }
+    let canonicalConvoID = resolved.conversationID
 
-      // Navigate to the specific MLS conversation
-      let destination = NavigationDestination.mlsConversation(canonicalConvoID)
-      currentAppState.navigationManager.navigate(to: destination, in: 4)
-
+    await MainActor.run {
+      currentAppState.navigateToMLSConversation(canonicalConvoID)
       notificationLogger.info("Successfully navigated to MLS conversation \(canonicalConvoID.prefix(16))...")
     }
   }

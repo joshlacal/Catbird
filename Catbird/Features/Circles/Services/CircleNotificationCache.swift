@@ -19,6 +19,16 @@ final class CircleNotificationCache: @unchecked Sendable {
 
   private let lock = NSLock()
   private var store: [String: CacheEntry] = [:]
+  private var generations: [String: UUID] = [:]
+
+  func generation(accountDID: String) -> UUID {
+    lock.withLock {
+      if let generation = generations[accountDID] { return generation }
+      let generation = UUID()
+      generations[accountDID] = generation
+      return generation
+    }
+  }
 
   #if DEBUG
   private var onPageFetch: (@Sendable () async -> Void)?
@@ -30,16 +40,19 @@ final class CircleNotificationCache: @unchecked Sendable {
   }
   #endif
 
-  func store(_ page: CircleNotificationPage, accountDID: String) async {
+  func store(_ page: CircleNotificationPage, accountDID: String, generation: UUID) async {
     lock.withLock {
+      guard generations[accountDID] == generation else { return }
       store[accountDID] = CacheEntry(notifications: page.notifications, cursor: page.cursor)
     }
   }
 
   func page(accountDID: String) async -> CircleNotificationPage? {
-    let cachedPage: CircleNotificationPage? = lock.withLock {
-      guard let entry = store[accountDID] else { return nil }
-      return CircleNotificationPage(notifications: entry.notifications, cursor: entry.cursor)
+    let (cachedPage, generation): (CircleNotificationPage?, UUID?) = lock.withLock {
+      let page = store[accountDID].map {
+        CircleNotificationPage(notifications: $0.notifications, cursor: $0.cursor)
+      }
+      return (page, generations[accountDID])
     }
     #if DEBUG
     let hook = lock.withLock { onPageFetch }
@@ -47,12 +60,13 @@ final class CircleNotificationCache: @unchecked Sendable {
       await hook()
     }
     #endif
-    return cachedPage
+    return lock.withLock { generations[accountDID] == generation ? cachedPage : nil }
   }
 
   /// Purge every cached notification for an account (called on switch, logout, removal).
   func purge(accountDID: String) async {
     lock.withLock {
+      generations[accountDID] = UUID()
       store.removeValue(forKey: accountDID)
     }
   }
@@ -60,18 +74,20 @@ final class CircleNotificationCache: @unchecked Sendable {
   /// Purge cached notifications for one account in one Space (called on membership removal or space deletion).
   func purge(accountDID: String, space: SpaceRef) async {
     lock.withLock {
+      generations[accountDID] = UUID()
       guard let entry = store[accountDID] else { return }
       let filtered = entry.notifications.filter { $0.circle.uri != space }
-      store[accountDID] = CacheEntry(notifications: filtered, cursor: entry.cursor)
+      store[accountDID] = CacheEntry(notifications: filtered, cursor: nil)
     }
   }
 
   /// Purge cached notifications for a Space across all accounts (called on space deletion).
   func purgeSpace(space: SpaceRef) async {
     lock.withLock {
+      for accountDID in generations.keys { generations[accountDID] = UUID() }
       for (accountDID, entry) in store {
         let filtered = entry.notifications.filter { $0.circle.uri != space }
-        store[accountDID] = CacheEntry(notifications: filtered, cursor: entry.cursor)
+        store[accountDID] = CacheEntry(notifications: filtered, cursor: nil)
       }
     }
   }
@@ -83,6 +99,7 @@ final class CircleNotificationCache: @unchecked Sendable {
 
   func purgeAll() async {
     lock.withLock {
+      for accountDID in generations.keys { generations[accountDID] = UUID() }
       store.removeAll()
     }
   }

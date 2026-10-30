@@ -15,7 +15,7 @@ actor ModerationRecordingCircleTransport: CircleTransport {
   }
 
   func capabilities() async throws -> CircleCapability {
-    CircleCapability(enabled: true, protocolRevision: "0.1.0", supportsImages: true)
+    CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
@@ -127,7 +127,7 @@ actor ModerationRecordingCircleTransport: CircleTransport {
 
   func removeMember(space: SpaceRef, did: DID) async throws {}
 
-  func listMembers(space: SpaceRef) async throws -> [DID] {
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] {
     []
   }
 }

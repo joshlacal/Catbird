@@ -41,9 +41,9 @@ struct RefinedSearchView: View {
     // MARK: - Initialization
     
     init(appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>) {
-        self._viewModel = State(initialValue: RefinedSearchViewModel(appState: appState))
         self._selectedTab = selectedTab
         self._lastTappedTab = lastTappedTab
+        self._viewModel = State(initialValue: RefinedSearchViewModel(appState: appState))
     }
     
     // MARK: - Main Body

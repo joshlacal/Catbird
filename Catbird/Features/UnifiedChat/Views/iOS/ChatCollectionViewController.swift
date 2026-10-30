@@ -83,8 +83,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var isAtBottom = true
   /// Tight threshold for treating the transcript as bottom-locked.
   private let bottomLockThreshold: CGFloat = 24
-  /// Looser threshold for auto-scrolling when genuinely new items arrive.
-  private let bottomAutoScrollThreshold: CGFloat = 120
   private var isLoadingOlderMessages = false
   
   // Callbacks for message actions
@@ -153,6 +151,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var onComposerVoicePreviewDiscard: (() -> Void)?
   private var onComposerCancelEdit: (() -> Void)?
 
+  private weak var reactionDetailsController: UIViewController?
   private var reactionOverlayControl: UIControl?
   private var reactionOverlayHost: UIViewController?
 
@@ -213,7 +212,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   // MARK: - Setup
 
   private func setupCollectionView() {
-    collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: createLayout())
+    collectionView = ChatTranscriptCollectionView(frame: view.bounds, collectionViewLayout: createLayout())
     collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     collectionView.backgroundColor = .clear
     collectionView.delegate = self
@@ -256,23 +255,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     ])
   }
   private func createLayout() -> UICollectionViewLayout {
-    let itemSize = NSCollectionLayoutSize(
-      widthDimension: .fractionalWidth(1.0),
-      heightDimension: .estimated(80)
-    )
-    let item = NSCollectionLayoutItem(layoutSize: itemSize)
-
-    let groupSize = NSCollectionLayoutSize(
-      widthDimension: .fractionalWidth(1.0),
-      heightDimension: .estimated(80)
-    )
-    let group = NSCollectionLayoutGroup.vertical(layoutSize: groupSize, subitems: [item])
-
-    let section = NSCollectionLayoutSection(group: group)
-    section.interGroupSpacing = 4
-    section.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
-
-    return UICollectionViewCompositionalLayout(section: section)
+    ChatAnchoredLayout()
   }
 
   // MARK: - Keyboard Tracking
@@ -338,7 +321,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 
   private func setupDataSource() {
-    let messageRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
+    let messageRegistration = UICollectionView.CellRegistration<ChatTranscriptCell, String> {
       [weak self] cell, _, messageID in
       guard
         let self,
@@ -359,86 +342,94 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       cell.contentView.transform = .identity
 
       cell.contentConfiguration = UIHostingConfiguration {
-        UnifiedMessageBubble(
-          message: message,
-          navigationPath: self.navigationPath,
-          onReactionTapped: { emoji in
-            Task { @MainActor in
-              self.dataSource.toggleReaction(messageID: messageID, emoji: emoji)
-              self.onReactionTapped?(messageID, emoji)
-            }
-          },
-          onAddReaction: { emoji in
-            Task { @MainActor in
-              self.dataSource.addReaction(messageID: messageID, emoji: emoji)
-              self.onReactionTapped?(messageID, emoji)
-            }
-          },
-          onRequestEmojiPicker: { requestedMessageID in
-            self.onRequestEmojiPicker?(requestedMessageID)
-          },
-          onLongPress: { bubbleGlobalFrame in
-            self.onMessageLongPress?(message)
-            self.presentReactionOverlay(messageID: messageID, bubbleGlobalFrame: bubbleGlobalFrame)
-          },
-          onReactionLongPress: {
-            Task { @MainActor [weak self] in
-              await self?.presentReactionDetailsSheet(messageID: messageID)
-            }
-          },
-          onReply: { [weak self] in
-            guard let self, let msg = self.dataSource.message(for: messageID) else { return }
-            self.onReply?(msg)
-          },
-          onReplyTapped: { [weak self] referencedID in
-            self?.scrollToMessage(id: referencedID, highlight: true)
-          },
-          onToggleGroup: { [weak self] in
-            (self?.dataSource as? BlueskyConversationDataSource)?.toggleSystemGroup(groupID: messageID)
-          },
-          onRetry: { [weak self] in
-            self?.onRetryMessage?(messageID)
-          },
-          groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
-        )
-        .environment(appState)
+        ChatTranscriptContent(cell: cell) {
+          UnifiedMessageBubble(
+            message: message,
+            navigationPath: self.navigationPath,
+            onReactionTapped: { emoji in
+              Task { @MainActor in
+                self.dataSource.toggleReaction(messageID: messageID, emoji: emoji)
+                self.onReactionTapped?(messageID, emoji)
+              }
+            },
+            onAddReaction: { emoji in
+              Task { @MainActor in
+                self.dataSource.addReaction(messageID: messageID, emoji: emoji)
+                self.onReactionTapped?(messageID, emoji)
+              }
+            },
+            onRequestEmojiPicker: { requestedMessageID in
+              self.onRequestEmojiPicker?(requestedMessageID)
+            },
+            onLongPress: { bubbleGlobalFrame in
+              self.onMessageLongPress?(message)
+              self.presentReactionOverlay(messageID: messageID, bubbleGlobalFrame: bubbleGlobalFrame)
+            },
+            onReactionLongPress: {
+              Task { @MainActor [weak self] in
+                await self?.presentReactionDetailsSheet(messageID: messageID)
+              }
+            },
+            onReply: { [weak self] in
+              guard let self, let msg = self.dataSource.message(for: messageID) else { return }
+              self.onReply?(msg)
+            },
+            onReplyTapped: { [weak self] referencedID in
+              self?.scrollToMessage(id: referencedID, highlight: true)
+            },
+            onToggleGroup: { [weak self] in
+              (self?.dataSource as? BlueskyConversationDataSource)?.toggleSystemGroup(groupID: messageID)
+            },
+            onRetry: { [weak self] in
+              self?.onRetryMessage?(messageID)
+            },
+            groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
+          )
+          .environment(appState)
+        }
       }
       .margins(.all, 0)
     }
 
-    let dateSeparatorRegistration = UICollectionView.CellRegistration<UICollectionViewCell, Date> {
+    let dateSeparatorRegistration = UICollectionView.CellRegistration<ChatTranscriptCell, Date> {
       cell, _, date in
       cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
       cell.selectedBackgroundView = nil
 
       cell.contentConfiguration = UIHostingConfiguration {
-        Text(date, format: .dateTime.month().day().year())
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 8)
+        ChatTranscriptContent(cell: cell) {
+          Text(date, format: .dateTime.month().day().year())
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
       }
       .margins(.all, 0)
     }
 
-    let typingIndicatorRegistration = UICollectionView.CellRegistration<UICollectionViewCell, TypingAvatarItem> {
+    let typingIndicatorRegistration = UICollectionView.CellRegistration<ChatTranscriptCell, TypingAvatarItem> {
       cell, _, item in
       cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
 
       cell.contentConfiguration = UIHostingConfiguration {
-        TypingIndicatorView(avatarURL: item.avatarURL)
-          .padding(.vertical, 4)
+        ChatTranscriptContent(cell: cell) {
+          TypingIndicatorView(avatarURL: item.avatarURL)
+            .padding(.vertical, 4)
+        }
       }
       .margins(.all, 0)
     }
 
-    let historyBoundaryRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
+    let historyBoundaryRegistration = UICollectionView.CellRegistration<ChatTranscriptCell, String> {
       cell, _, text in
       cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
       cell.selectedBackgroundView = nil
 
       cell.contentConfiguration = UIHostingConfiguration {
-        HistoryBoundaryView(text: text)
+        ChatTranscriptContent(cell: cell) {
+          HistoryBoundaryView(text: text)
+        }
       }
       .margins(.all, 0)
     }
@@ -549,18 +540,18 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     // Capture current state before update for scroll position maintenance
     let previousItemCount = diffableDataSource.snapshot().numberOfItems
     let previousContentHeight = collectionView.contentSize.height
+    let visibleAnchor = captureVisibleMessageAnchor()
     let previousContentOffsetY = collectionView.contentOffset.y
     let previousVisibleBottom =
       previousContentOffsetY +
       collectionView.bounds.height -
       collectionView.adjustedContentInset.bottom
     let wasLockedToBottom = previousVisibleBottom >= previousContentHeight - bottomLockThreshold
-    let wasNearBottom = previousVisibleBottom >= previousContentHeight - bottomAutoScrollThreshold
     let userIsInteracting =
       collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
     let shouldAutoScrollForNewItems =
       itemsChanged &&
-      ((previousItemCount == 0) || wasLockedToBottom || wasNearBottom)
+      ((previousItemCount == 0) || wasLockedToBottom)
     let shouldPinBottomAfterUpdate =
       !userIsInteracting &&
       (forceScrollToBottom || wasLockedToBottom || shouldAutoScrollForNewItems)
@@ -629,9 +620,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       UIView.performWithoutAnimation {
         diffableDataSource.apply(snapshot, animatingDifferences: false)
         collectionView.layoutIfNeeded()
-        let newContentHeight = collectionView.contentSize.height
-        let deltaHeight = newContentHeight - previousContentHeight
-        collectionView.contentOffset.y = previousContentOffsetY + deltaHeight
+        restoreVisibleMessageAnchor(visibleAnchor)
       }
       lastOldestMessageID = currentOldestMessageID
       lastMessageCount = currentMessageCount
@@ -648,6 +637,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
         scrollToBottom(animated: true)
         hideNewMessagesPill(animated: true)
       } else {
+        collectionView.layoutIfNeeded()
+        restoreVisibleMessageAnchor(visibleAnchor)
         let newlyAppendedCount = currentMessageCount - lastMessageCount
         if itemsChanged && newlyAppendedCount > 0 && !forceScrollToBottom {
           let latestMessageIsFromSelf = dataSource.messages.last?.isFromCurrentUser ?? false
@@ -660,11 +651,27 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       lastMessageCount = currentMessageCount
     }
   }
+  private func captureVisibleMessageAnchor() -> ChatVisibleItemAnchor<Item>? {
+    ChatVisibleItemAnchor.capture(
+      in: collectionView,
+      itemAt: { self.diffableDataSource.itemIdentifier(for: $0) },
+      include: { if case .message = $0 { return true }; return false }
+    )
+  }
+
+  private func restoreVisibleMessageAnchor(_ anchor: ChatVisibleItemAnchor<Item>?) {
+    anchor?.restore(in: collectionView, indexPathFor: { self.diffableDataSource.indexPath(for: $0) })
+  }
+
   func updateNavigationBinding(_ binding: Binding<NavigationPath>) {
     navigationPath = binding
   }
 
   func updateAppState(_ newAppState: AppState) {
+    if appState?.userDID != newAppState.userDID {
+      reactionDetailsController?.dismiss(animated: false)
+      dismissReactionOverlay()
+    }
     appState = newAppState
   }
 
@@ -890,56 +897,17 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     guard let message = dataSource.message(for: messageID) else { return }
     guard !message.isSystemMessage, !message.reactions.isEmpty else { return }
 
-    let mlsReactions = message.reactions.map { reaction in
-      MLSMessageReaction(
-        messageId: reaction.messageID,
-        reaction: reaction.emoji,
-        senderDID: reaction.senderDID,
-        reactedAt: reaction.reactedAt
-      )
-    }
-
-    let senderDIDs = Array(Set(mlsReactions.map(\.senderDID)))
-    let currentUserDID = appState?.userDID ?? ""
-
-    let makeSheet: ([String: MLSProfileEnricher.ProfileData]) -> MLSReactionDetailsSheet = { profiles in
-      MLSReactionDetailsSheet(
-        reactions: mlsReactions,
-        participantProfiles: profiles,
-        currentUserDID: currentUserDID,
-        onAddReaction: { [weak self] emoji in
-          guard let self else { return }
-          self.dataSource.addReaction(messageID: messageID, emoji: emoji)
-        },
-        onRemoveReaction: { [weak self] emoji in
-          guard let self else { return }
-          self.dataSource.toggleReaction(messageID: messageID, emoji: emoji)
-        }
-      )
-    }
-
-    let host = UIHostingController(rootView: makeSheet([:]))
+    guard let appState else { return }
+    let accountDID = appState.userDID
+    let host = UIHostingController(rootView: UnifiedReactionDetailsSheet(
+      dataSource: dataSource,
+      messageID: messageID,
+      appState: appState,
+      accountDID: accountDID
+    ))
     host.modalPresentationStyle = .pageSheet
+    reactionDetailsController = host
     present(host, animated: true)
-
-    Task { @MainActor [weak self, weak host] in
-      guard let self, let host else { return }
-      guard let appState = self.appState, let client = appState.atProtoClient else { return }
-
-      let requestedProfiles = await appState.mlsProfileEnricher.ensureProfiles(
-        for: senderDIDs,
-        using: client,
-        currentUserDID: appState.userDID
-      )
-
-      var canonicalProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
-      canonicalProfiles.reserveCapacity(requestedProfiles.count)
-      for (requestedDID, profile) in requestedProfiles {
-        canonicalProfiles[MLSProfileEnricher.canonicalDID(requestedDID)] = profile
-      }
-
-      host.rootView = makeSheet(canonicalProfiles)
-    }
   }
 
   @MainActor
@@ -1106,6 +1074,9 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     // measured and the target offset is exact — with estimated heights,
     // contentSize is approximate until the bottom cells have been created.
     // Nothing renders mid-transaction, so the temporary offset is invisible.
+    let layout = collectionView.collectionViewLayout as? ChatAnchoredLayout
+    layout?.preservesSelfSizingAnchor = false
+    defer { layout?.preservesSelfSizingAnchor = true }
     let startOffsetY = collectionView.contentOffset.y
     var targetY = startOffsetY
     UIView.performWithoutAnimation {

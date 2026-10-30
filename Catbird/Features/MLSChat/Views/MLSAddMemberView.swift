@@ -20,12 +20,25 @@ struct MLSAddMemberView: View {
   @State private var showingError = false
   @State private var showBlockWarning = false
   @State private var blockWarningMessage = ""
+  @State private var invitedDID: String?
+  @State private var noteDraft: MLSDirectComposeDraft?
+  @State private var noteError: String?
+  @State private var preparingNote = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSAddMemberView")
 
   var body: some View {
     List {
-      if let viewModel {
+      if let invitedDID {
+        Section("Group invitation sent") {
+          Text("The group invitation is separate from a direct message. You can write an optional encrypted note.")
+          Button("Write a separate note") { Task { await prepareInvitationNote(recipient: invitedDID) } }
+            .disabled(preparingNote)
+          Button("Done") { dismiss() }
+          if preparingNote { ProgressView() }
+          if let noteError { Text(noteError).foregroundStyle(.red) }
+        }
+      } else if let viewModel {
         listContent(viewModel: viewModel)
       }
     }
@@ -61,11 +74,13 @@ struct MLSAddMemberView: View {
         existingMemberDIDs: existingMemberDIDs
       )
     }
-    .onChange(of: viewModel?.didAddMember) { _, didAdd in
-      if didAdd == true {
+    .sheet(item: $noteDraft) { draft in
+      MLSDirectComposeView(draft: draft) { conversationID in
+        appState.navigationManager.targetMLSConversationId = conversationID
         dismiss()
       }
     }
+    .onChange(of: appState.userDID) { _, _ in dismiss() }
   }
 
   // MARK: - List Content
@@ -260,9 +275,37 @@ struct MLSAddMemberView: View {
       logger.warning("checkBlocks failed: \(String(describing: error))")
     }
 
+    let account = appState.userDID
+    guard conversationManager.currentUserDID == account else { return }
     await viewModel?.addMember(participant.id)
+    guard appState.userDID == account, conversationManager.currentUserDID == account else { return }
     if viewModel?.error != nil {
       showingError = true
+    } else if viewModel?.didAddMember == true {
+      invitedDID = participant.id
     }
   }
+
+  @MainActor private func prepareInvitationNote(recipient: String) async {
+    guard !preparingNote else { return }
+    let account = appState.userDID
+    guard conversationManager.currentUserDID == account else { return }
+    preparingNote = true
+    defer { preparingNote = false }
+    do {
+      guard let verified = try await conversationManager.getGroupInvitationReference(conversationId: conversationId, recipientDid: recipient),
+            appState.userDID == account, conversationManager.currentUserDID == account else {
+        noteError = "The group invitation could not be verified yet. The invitation remains separate; try opening the note again."
+        return
+      }
+      let reference = try MLSGroupInvitationReference(verified: verified)
+      let saved = try await MLSDirectComposeDraftStore.invitationDraft(accountDID: account, reference: reference, database: conversationManager.database)
+      guard appState.userDID == account else { return }
+      noteDraft = saved
+    } catch {
+      guard appState.userDID == account else { return }
+      noteError = "The group invitation was sent, but the optional note could not be prepared. Try again."
+    }
+  }
+
 }

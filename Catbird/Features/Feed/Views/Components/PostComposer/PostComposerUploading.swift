@@ -22,6 +22,10 @@ extension PostComposerViewModel {
             return nil 
         }
 
+        if case .circle = destination {
+            try await appState.circleService.requireImages()
+        }
+
         logger.info("PostComposerUploading: Creating images embed with \(self.mediaItems.count) items")
         var imageEmbeds: [AppBskyEmbedImages.Image] = []
 
@@ -111,6 +115,9 @@ extension PostComposerViewModel {
     }
 
     func createVideoEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        guard destination == .public else {
+            throw CircleError.invalidParameter("Video and audio are unavailable in Circles.")
+        }
         guard let videoItem = videoItem, let mediaUploadManager = mediaUploadManager else {
             logger.debug("DEBUG: Missing videoItem or mediaUploadManager")
             return nil

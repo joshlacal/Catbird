@@ -28,7 +28,7 @@ actor DestinationRecordingCircleTransport: CircleTransport {
 
   func capabilities() async throws -> CircleCapability {
     if let error { throw error }
-    return CircleCapability(enabled: true, protocolRevision: "2026-08-26", supportsImages: true)
+    return CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
@@ -178,9 +178,9 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     callLog.append("removeMember:\(did.didString())")
   }
 
-  func listMembers(space: SpaceRef) async throws -> [DID] {
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] {
     if let error { throw error }
-    return [CircleTestFixtures.alice]
+    return [CircleMember(did: CircleTestFixtures.alice, read: true, write: true)]
   }
 
   func setActivateError(_ err: CircleError?) {
@@ -212,6 +212,43 @@ struct CircleDestinationTests {
       appState: state,
       circleService: circleService
     )
+  }
+
+  @MainActor
+  @Test("Circle media is rejected before public upload or publication")
+  func circleRejectsUnqualifiedMediaBeforeSubmission() async throws {
+    let transport = DestinationRecordingCircleTransport()
+    let vm = await composer(destination: .circle(CircleTestFixtures.family),
+      circleService: CircleService(transport: transport))
+    vm.postText = "Private draft"
+    vm.videoItem = PostComposerViewModel.MediaItem()
+    #expect(vm.submitValidationState.reason == .circleUnsupportedMedia)
+    await #expect(throws: CircleError.self) { try await vm.createVideoEmbed() }
+    await #expect(throws: CircleError.self) { try await vm.createPost() }
+    #expect(await transport.publishedPosts.isEmpty)
+    vm.videoItem = nil
+    vm.selectedGif = try JSONDecoder().decode(TenorGif.self, from: Data(#"{"id":"private-gif","title":"GIF","content_description":"GIF","itemurl":"https://example.com/gif","url":"https://example.com/gif","tags":[],"media_formats":{},"created":0,"flags":[],"hasaudio":false,"content_description_source":"fixture"}"#.utf8))
+    #expect(vm.submitValidationState.reason == .circleUnsupportedMedia)
+    await #expect(throws: CircleError.self) { try await vm.createPost() }
+    #expect(await transport.publishedPosts.isEmpty)
+    #expect(vm.postText == "Private draft")
+    #expect(vm.destination == .circle(CircleTestFixtures.family))
+  }
+
+  @MainActor
+  @Test("Private link-card pre-upload and retry never download or upload a thumbnail")
+  func circleThumbnailBoundariesStayClosed() async throws {
+    let vm = await composer(destination: .circle(CircleTestFixtures.family))
+    let card = URLCardResponse(error: "", likelyType: "html", url: "https://example.com/private",
+      title: "Private link", description: "", image: "https://example.com/thumbnail.png")
+    vm.urlCards[card.url] = card
+    vm.thumbnailDownloadForTesting = { _ in
+      Issue.record("Private thumbnail reached the download/upload path")
+      throw URLError(.cancelled)
+    }
+    await vm.preUploadThumbnails()
+    await vm.retryThumbnailUpload(for: card.url)
+    #expect(vm.getThumbnail(for: card.url) == nil)
   }
 
   private var circlePost: AppBskyFeedDefs.PostView {
@@ -718,7 +755,7 @@ struct CircleDestinationTests {
     appState.circleService = service
     let binding = Binding.constant(NavigationPath())
 
-    // 1. ParentPostView with circle visibility context vs default public
+    // 1. ThreadRowView (ancestor and reply rows) with circle visibility context vs default public
     let threadItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
       post: circlePost,
       moreParents: false,
@@ -729,61 +766,39 @@ struct CircleDestinationTests {
       hiddenByThreadgate: false,
       mutedByViewer: false
     )
-    let parentPost = ParentPost(
-      id: circlePost.uri.uriString(),
-      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
-        uri: circlePost.uri,
-        depth: 0,
-        value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
-      ),
-      grandparentAuthor: nil
-    )
-
-    let defaultParentView = ParentPostView(parentPost: parentPost, path: binding, appState: appState)
-    #expect(defaultParentView.visibilityContext == .public)
-
-    let circleParentView = ParentPostView(
-      parentPost: parentPost,
-      path: binding,
-      appState: appState,
-      visibilityContext: .circle(family)
-    )
-    #expect(circleParentView.visibilityContext == .circle(family))
-
-    // 2. ReplyView with circle visibility context vs default public
-    let replyWrapper = ReplyWrapper(
-      id: circlePost.uri.uriString(),
-      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
-        uri: circlePost.uri,
-        depth: 1,
-        value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
-      ),
+    let threadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+      uri: circlePost.uri,
       depth: 1,
-      isFromOP: false,
-      isOpThread: false,
-      hasReplies: false
+      value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+    )
+    let replyRow = try #require(
+      ThreadRowBuilder.build(
+        items: [ThreadRowBuilder.Item(threadItem)],
+        mode: .linear,
+        maxIndentLevels: ThreadReplyGeometry.compactMaxIndentLevels
+      ).first
     )
 
-    let defaultReplyView = ReplyView(
-      replyWrapper: replyWrapper,
-      opAuthorID: "did:plc:alice",
-      nestedReplies: [],
+    let defaultRowView = ThreadRowView(
+      row: replyRow,
+      threadItem: threadItem,
+      parentAuthor: nil,
       path: binding,
       appState: appState
     )
-    #expect(defaultReplyView.visibilityContext == .public)
+    #expect(defaultRowView.visibilityContext == .public)
 
-    let circleReplyView = ReplyView(
-      replyWrapper: replyWrapper,
-      opAuthorID: "did:plc:alice",
-      nestedReplies: [],
+    let circleRowView = ThreadRowView(
+      row: replyRow,
+      threadItem: threadItem,
+      parentAuthor: nil,
       path: binding,
       appState: appState,
       visibilityContext: .circle(family)
     )
-    #expect(circleReplyView.visibilityContext == .circle(family))
+    #expect(circleRowView.visibilityContext == .circle(family))
 
-    // 3. ThreadViewMainPostView with circle visibility creates PostViewModel routing to CircleService
+    // 2. ThreadViewMainPostView with circle visibility creates PostViewModel routing to CircleService
     let mainPostView = ThreadViewMainPostView(
       post: circlePost,
       showLine: false,
@@ -793,7 +808,7 @@ struct CircleDestinationTests {
     )
     #expect(mainPostView.visibilityContext == .circle(family))
 
-    // 4. PostView with circle visibility context initializes PostViewModel with disabled public capabilities and Circle routing
+    // 3. PostView with circle visibility context initializes PostViewModel with disabled public capabilities and Circle routing
     let postView = PostView(
       post: circlePost,
       grandparentAuthor: nil,

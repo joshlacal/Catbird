@@ -22,8 +22,8 @@ enum BlueskyAgentError: LocalizedError {
             return "An authenticated Bluesky client is required before issuing agent requests."
         case .notAThread:
             return "Thread summarization requires a post with visible thread context."
-        case .invalidThreadURI(let value):
-            return "The supplied thread identifier is invalid: \(value)."
+        case .invalidThreadURI:
+            return "Choose a Bluesky post or supply a valid Bluesky post link."
         case .emptyResult(let context):
             return "No data was returned for \(context)."
         case .contextLimitExceeded(let limit, let required):
@@ -31,6 +31,44 @@ enum BlueskyAgentError: LocalizedError {
         case .underlying(let error):
             return error.localizedDescription
         }
+    }
+}
+
+/// Deterministic input and transcript bounds shared by the read tools.
+enum AskCatbirdToolPolicy {
+    // Leave room for a compact read result in this turn. This is headroom,
+    // not a guarantee that repeated tool calls fit the model context window.
+    static let onDeviceToolResultTokenReserve = 1024
+
+    static func postURI(_ input: String) throws -> ATProtocolURI {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate: String
+        if let link = URLComponents(string: trimmed),
+           link.scheme?.lowercased() == "https", link.host?.lowercased() == "bsky.app",
+           link.user == nil, link.password == nil, link.port == nil {
+            let parts = link.path.split(separator: "/", omittingEmptySubsequences: true)
+            guard parts.count == 4, parts[0] == "profile", parts[2] == "post" else {
+                throw BlueskyAgentError.invalidThreadURI(input)
+            }
+            candidate = "at://\(parts[1])/app.bsky.feed.post/\(parts[3])"
+        } else {
+            candidate = trimmed
+        }
+        guard candidate.range(of: #"^at://[^/\s?#]+/app\.bsky\.feed\.post/[^/\s?#]+$"#,
+                              options: .regularExpression) != nil,
+              let uri = try? ATProtocolURI(uriString: candidate) else {
+            throw BlueskyAgentError.invalidThreadURI(input)
+        }
+        return uri
+    }
+
+    /// Keep the anchor first, then the nearest context; distant parents cannot
+    /// consume the entire response budget before the requested post appears.
+    static func precedes(depth: Int, otherDepth: Int) -> Bool {
+        if depth == 0 { return otherDepth != 0 }
+        if otherDepth == 0 { return false }
+        if depth.magnitude != otherDepth.magnitude { return depth.magnitude < otherDepth.magnitude }
+        return depth < otherDepth
     }
 }
 
@@ -122,6 +160,10 @@ actor BlueskyIntelligenceAgent {
                     guard !Task.isCancelled else {
                         continuation.finish()
                         return
+                    }
+                    if route == .privateCloudCompute,
+                       let reason = CopilotCloudAvailability.unavailableReason {
+                        throw CopilotCloudUnavailableError(reason: reason)
                     }
                     guard let client else {
                         throw BlueskyAgentError.missingClient
@@ -314,6 +356,7 @@ actor BlueskyIntelligenceAgent {
             let instructionsTokens = try await model.tokenCount(for: instructions)
             let toolsTokens = try await model.tokenCount(for: turnTools)
             let reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
+                + AskCatbirdToolPolicy.onDeviceToolResultTokenReserve
 
             let selection = try await CopilotContextBudget.selectHistory(
                 turns: history,
@@ -841,6 +884,9 @@ actor BlueskyIntelligenceAgent {
     - Use read tools when current Bluesky data is required.
     - Ground factual claims in the supplied context or tool results.
     - Be concise, neutral, and explicit when information is unavailable.
+    - Refer to posts by their author and a short excerpt, profiles by name or @handle, and feeds by title. Never use AT URIs, DIDs, or CIDs as visible labels.
+    - Navigation identifiers in context and tool results are only for tool arguments and link destinations. Use readable labels for links.
+    - A tool reporting unavailable data is not evidence about the post contents. Explain the limitation without inventing a result.
 
     Actions:
     - You cannot mutate Catbird or Bluesky state.
@@ -922,12 +968,36 @@ private struct ToolContext: @unchecked Sendable {
         self.sourceCollector = sourceCollector
     }
 
+    func read(_ name: String, operation: () async throws -> String) async throws -> String {
+        do {
+            try Task.checkCancellation()
+            return try await operation()
+        } catch {
+            if Task.isCancelled || error is CancellationError { throw CancellationError() }
+            logger.error("Ask Catbird read tool \(name, privacy: .public) failed: \(String(describing: error), privacy: .private)")
+            if let agentError = error as? BlueskyAgentError {
+                return "Data unavailable: \(agentError.localizedDescription) Do not infer missing contents."
+            }
+            return "Data unavailable: Bluesky could not complete this request. The connection, sign-in, or service may be unavailable. Do not infer missing contents."
+        }
+    }
+
     func recordSource(label: String, uri: String?) async {
         await sourceCollector?.add(label: label, uri: uri)
     }
 }
 @available(iOS 26.0, macOS 26.0, *)
 private enum ToolFormatter {
+    static func sourceLabel(post: AppBskyFeedDefs.PostView) -> String {
+        let author = post.author.handle.description
+        if case .knownType(let record) = post.record,
+           let feedPost = record as? AppBskyFeedPost {
+            let excerpt = sanitize(feedPost.text, limit: 80)
+            if !excerpt.isEmpty { return "@\(author): \(excerpt)" }
+        }
+        return "Post by @\(author)"
+    }
+
     static func summarize(
         post: AppBskyFeedDefs.PostView,
         depth: Int = 0,
@@ -1022,8 +1092,9 @@ private enum ToolFormatter {
             }
         }
 
+        sanitized = sanitize(sanitized, limit: maxLength)
         let handle = post.author.handle.description
-        let display = post.author.displayName ?? handle
+        let display = sanitize(post.author.displayName ?? handle, limit: 80)
         let timestamp = formatTimestamp(feedPost.createdAt.date)
         let indent = String(repeating: "  ", count: max(depth, 0))
         let prefixSegment = prefix.map { "[\($0.uppercased())] " } ?? ""
@@ -1102,6 +1173,74 @@ private enum ToolFormatter {
     }
 }
 
+/// The actual fetch tool formatter, exposed internally for controlled transcript tests.
+/// Tool.Output is String: compact JSON preserves authored text and unambiguous
+/// reply relationships without adding a second generated schema to the session.
+@available(iOS 26.0, macOS 26.0, *)
+enum AskCatbirdThreadFormatter {
+    struct Transcript {
+        let text: String
+        let sources: [CopilotSource]
+    }
+
+    static func format(_ output: AppBskyUnspeccedGetPostThreadV2.Output) throws -> Transcript {
+        let ordered = output.thread.sorted {
+            AskCatbirdToolPolicy.precedes(depth: $0.depth, otherDepth: $1.depth)
+        }
+        guard let anchor = ordered.first(where: { $0.depth == 0 }),
+              case .appBskyUnspeccedDefsThreadItemPost(let focus) = anchor.value,
+              ToolFormatter.summarize(post: focus.post, maxLength: 200) != nil else {
+            throw BlueskyAgentError.emptyResult("the requested post (unavailable, restricted, or unreadable)")
+        }
+
+        let isLong = ordered.count > 6
+        let selected = Array(ordered.prefix(6))
+        var sources: [CopilotSource] = []
+        var rows: [[String: Any]] = []
+        var serverHasMore = output.hasOtherReplies
+        for item in ordered {
+            if case .appBskyUnspeccedDefsThreadItemPost(let value) = item.value {
+                serverHasMore = serverHasMore || value.moreParents || value.moreReplies > 0
+            }
+        }
+        for item in selected {
+            let role = item.depth == 0 ? "focus" : (item.depth < 0 ? "ancestor" : "reply")
+            var row: [String: Any] = ["id": item.uri.uriString(), "role": role, "depth": item.depth]
+            if case .appBskyUnspeccedDefsThreadItemPost(let value) = item.value {
+                let post = value.post
+                row["author"] = "@" + post.author.handle.description
+                if let name = post.author.displayName, !name.isEmpty { row["authorName"] = name }
+                if case .knownType(let record) = post.record, let body = record as? AppBskyFeedPost {
+                    // Preserve all authored content in short threads, including newlines.
+                    // Unusually token-expensive text can still exceed local model context;
+                    // do not silently omit short-thread content to hide that error.
+                    row["text"] = isLong ? String(body.text.prefix(200)) : body.text
+                    row["textTruncated"] = isLong && body.text.count > 200
+                    row["replyTo"] = body.reply.map { $0.parent.uri.uriString() as Any } ?? NSNull()
+                    row["root"] = body.reply.map { $0.root.uri.uriString() as Any } ?? NSNull()
+                    if post.embed != nil {
+                        row["mediaContext"] = ToolFormatter.summarize(post: post, maxLength: 200)
+                    }
+                } else {
+                    row["contentStatus"] = "unreadable record; do not infer its contents"
+                }
+                sources.append(CopilotSource(label: ToolFormatter.sourceLabel(post: post), uri: post.uri.uriString()))
+            } else {
+                row["contentStatus"] = "unavailable or restricted; do not infer its contents"
+            }
+            rows.append(row)
+        }
+        let payload: [String: Any] = [
+            "posts": rows,
+            "omittedReturnedItems": max(ordered.count - selected.count, 0),
+            "serverReportsAdditionalContext": serverHasMore,
+            "coverage": "All returned items are included when there are at most six; longer results contain focus and nearest context. Server request is bounded to six reply levels and ten replies per branch. Hidden or restricted replies and deeper branches may be absent. This endpoint has no continuation cursor; fetch a returned post ID to inspect another branch. IDs are tool/navigation identities, never visible labels."
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
+        return Transcript(text: String(decoding: data, as: UTF8.self), sources: sources)
+    }
+}
+
 // MARK: - Tools
 
 @available(iOS 26.0, macOS 26.0, *)
@@ -1119,29 +1258,33 @@ private struct ThreadFetchTool: Tool {
     @available(iOS 26.0, macOS 26.0, *)
     @Generable
     struct Arguments {
-        @Guide(description: "The at:// URI of the post to inspect.")
+        @Guide(description: "The at:// post URI or https://bsky.app/profile/.../post/... link from context or search results. Never invent an identifier.")
         let uri: String
 
-        @Guide(description: "Maximum number of reply levels to include (API maximum is 20)", .range(4 ... 20))
-        let limit: Int?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        context.logger.debug("fetch_thread invoked: uri=\(arguments.uri), limit=\(arguments.limit ?? 20)")
+        try await context.read(name) {
+            try await self.fetch(arguments: arguments)
+        }
+    }
+
+    private func fetch(arguments: Arguments) async throws -> String {
+        context.logger.debug("fetch_thread invoked")
         
-        guard let uri = try? ATProtocolURI(uriString: arguments.uri) else {
+        guard let uri = try? AskCatbirdToolPolicy.postURI(arguments.uri) else {
             context.logger.error("Invalid URI format: \(arguments.uri)")
             throw BlueskyAgentError.invalidThreadURI(arguments.uri)
         }
 
-        let limit = min(arguments.limit ?? 20, 20)
         let params = AppBskyUnspeccedGetPostThreadV2.Parameters(
             anchor: uri,
             above: true,
-            below: limit
+            below: 6,
+            branchingFactor: 10
         )
         
-        context.logger.debug("Fetching thread for URI: \(uri.uriString()), above=true, below=\(limit)")
+        context.logger.debug("Fetching thread for URI: \(uri.uriString()), above=true, below=6, branchingFactor=10")
         
         let (code, output) = try await context.client.app.bsky.unspecced.getPostThreadV2(input: params)
         
@@ -1166,103 +1309,11 @@ private struct ThreadFetchTool: Tool {
             throw BlueskyAgentError.emptyResult("thread (empty array)")
         }
 
-        let sortedItems = threadData.thread.sorted { $0.depth < $1.depth }
-
-        for item in sortedItems.prefix(limit) {
-            if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
-                let handle = threadItemPost.post.author.handle.description
-                await context.recordSource(
-                    label: "@\(handle)",
-                    uri: threadItemPost.post.uri.uriString()
-                )
-            }
+        let transcript = try AskCatbirdThreadFormatter.format(threadData)
+        for source in transcript.sources {
+            await context.recordSource(label: source.label, uri: source.uri)
         }
-
-        let segments = flatten(threadData: threadData, limit: limit)
-        guard !segments.isEmpty else {
-            context.logger.error("Thread flattening produced no segments for URI: \(uri.uriString()), thread items: \(threadData.thread.count)")
-            throw BlueskyAgentError.emptyResult("thread (no valid posts after parsing)")
-        }
-
-        return segments.joined(separator: "\n")
-    }
-
-    private func flatten(threadData: AppBskyUnspeccedGetPostThreadV2.Output, limit: Int) -> [String] {
-        var lines: [String] = []
-        var remaining = limit
-        var skippedItems = 0
-
-        func append(post: AppBskyFeedDefs.PostView, depth: Int, prefix: String?) {
-            guard remaining > 0 else { return }
-            if let summary = ToolFormatter.summarize(post: post, depth: depth, prefix: prefix) {
-                lines.append(summary)
-                remaining -= 1
-            } else {
-                skippedItems += 1
-                context.logger.debug("Skipped post at depth \(depth): no summary generated")
-            }
-        }
-
-        // Sort thread items by depth (parents first, then main post, then replies)
-        let sortedItems = threadData.thread.sorted { $0.depth < $1.depth }
-        
-        context.logger.debug("Flattening thread: \(sortedItems.count) total items, limit=\(limit)")
-        
-        // Count different item types
-        var postCount = 0
-        var notFoundCount = 0
-        var blockedCount = 0
-        var noAuthCount = 0
-        var unexpectedCount = 0
-        
-        for item in sortedItems {
-            switch item.value {
-            case .appBskyUnspeccedDefsThreadItemPost:
-                postCount += 1
-            case .appBskyUnspeccedDefsThreadItemNotFound:
-                notFoundCount += 1
-            case .appBskyUnspeccedDefsThreadItemBlocked:
-                blockedCount += 1
-            case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-                noAuthCount += 1
-            case .unexpected:
-                unexpectedCount += 1
-            }
-        }
-        
-        context.logger.debug("Thread items breakdown: posts=\(postCount), notFound=\(notFoundCount), blocked=\(blockedCount), noAuth=\(noAuthCount), unexpected=\(unexpectedCount)")
-        
-        // Process parent posts (depth < 0)
-        let parentItems = sortedItems.filter { $0.depth < 0 }
-        for (offset, item) in parentItems.enumerated() where remaining > 0 {
-            if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
-                append(post: threadItemPost.post, depth: offset, prefix: "parent")
-            }
-        }
-        
-        // Process main post (depth = 0)
-        if let mainItem = sortedItems.first(where: { $0.depth == 0 }), remaining > 0 {
-            if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = mainItem.value {
-                append(post: threadItemPost.post, depth: parentItems.count, prefix: "focus")
-            } else {
-                context.logger.error("Main post (depth=0) is not a valid post item")
-            }
-        } else {
-            context.logger.error("No main post found at depth=0")
-        }
-        
-        // Process reply posts (depth > 0)
-        let replyItems = sortedItems.filter { $0.depth > 0 }
-        for item in replyItems where remaining > 0 {
-            if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
-                let prefix = item.depth == 1 ? "reply" : nil
-                append(post: threadItemPost.post, depth: parentItems.count + item.depth, prefix: prefix)
-            }
-        }
-        
-        context.logger.debug("Thread flattening complete: generated \(lines.count) summaries, skipped \(skippedItems) items")
-        
-        return lines
+        return transcript.text
     }
 }
 
@@ -1282,26 +1333,34 @@ private struct PostSearchTool: Tool {
         @Guide(description: "Free text query to search for.")
         let query: String
 
-        @Guide(description: "Maximum number of posts to return", .range(1 ... 25))
+        @Guide(description: "Maximum number of posts to return", .range(1 ... 5))
         let limit: Int?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let limit = arguments.limit ?? 10
+        try await context.read(name) {
+            try await self.fetch(arguments: arguments)
+        }
+    }
+
+    private func fetch(arguments: Arguments) async throws -> String {
+        let limit = min(max(arguments.limit ?? 5, 1), 5)
         let params = AppBskyFeedSearchPosts.Parameters(q: arguments.query, limit: limit)
         let (code, output) = try await context.client.app.bsky.feed.searchPosts(input: params)
         guard (200 ... 299).contains(code), let posts = output?.posts, !posts.isEmpty else {
             throw BlueskyAgentError.emptyResult("post search")
         }
         for post in posts.prefix(limit) {
-            let handle = post.author.handle.description
             await context.recordSource(
-                label: "Post by @\(handle)",
+                label: ToolFormatter.sourceLabel(post: post),
                 uri: post.uri.uriString()
             )
         }
 
-        let summaries = posts.prefix(limit).compactMap { ToolFormatter.summarize(post: $0) }
+        let summaries = posts.prefix(limit).compactMap { post -> String? in
+            guard let summary = ToolFormatter.summarize(post: post, maxLength: 200) else { return nil }
+            return "\(summary)\nNavigation identifier (tool arguments only): \(post.uri.uriString())"
+        }
         guard !summaries.isEmpty else {
             throw BlueskyAgentError.emptyResult("post search")
         }
@@ -1326,12 +1385,18 @@ private struct FeedSearchTool: Tool {
         @Guide(description: "Keyword to match feed titles or descriptions.")
         let query: String
 
-        @Guide(description: "Maximum feeds to include", .range(1 ... 25))
+        @Guide(description: "Maximum feeds to include", .range(1 ... 5))
         let limit: Int?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let limit = arguments.limit ?? 10
+        try await context.read(name) {
+            try await self.fetch(arguments: arguments)
+        }
+    }
+
+    private func fetch(arguments: Arguments) async throws -> String {
+        let limit = min(max(arguments.limit ?? 5, 1), 5)
         let params = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(limit: limit, query: arguments.query)
         let (code, output) = try await context.client.app.bsky.unspecced.getPopularFeedGenerators(input: params)
         guard (200 ... 299).contains(code), let feeds = output?.feeds, !feeds.isEmpty else {
@@ -1345,7 +1410,9 @@ private struct FeedSearchTool: Tool {
             )
         }
 
-        let summaries = feeds.prefix(limit).map { ToolFormatter.summarize(generator: $0) }
+        let summaries = feeds.prefix(limit).map {
+            "\(ToolFormatter.summarize(generator: $0, limit: 160))\nNavigation identifier (tool arguments only): \($0.uri.uriString())"
+        }
         return "Feed generators for \(arguments.query):\n" + summaries.joined(separator: "\n")
     }
 }
@@ -1366,13 +1433,19 @@ private struct ProfileSearchTool: Tool {
         @Guide(description: "Search term or handle to look up.")
         let query: String
 
-        @Guide(description: "Maximum profiles to include", .range(1 ... 25))
+        @Guide(description: "Maximum profiles to include", .range(1 ... 5))
         let limit: Int?
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let limit = arguments.limit ?? 10
-        let params = AppBskyActorSearchActors.Parameters(term: arguments.query, limit: limit)
+        try await context.read(name) {
+            try await self.fetch(arguments: arguments)
+        }
+    }
+
+    private func fetch(arguments: Arguments) async throws -> String {
+        let limit = min(max(arguments.limit ?? 5, 1), 5)
+        let params = AppBskyActorSearchActors.Parameters(q: arguments.query, limit: limit)
         let (code, output) = try await context.client.app.bsky.actor.searchActors(input: params)
         guard (200 ... 299).contains(code), let actors = output?.actors, !actors.isEmpty else {
             throw BlueskyAgentError.emptyResult("profile search")
@@ -1386,7 +1459,9 @@ private struct ProfileSearchTool: Tool {
             )
         }
 
-        let summaries = actors.prefix(limit).map { ToolFormatter.summarize(profile: $0) }
+        let summaries = actors.prefix(limit).map {
+            "\(ToolFormatter.summarize(profile: $0, limit: 160))\nNavigation identifier (tool arguments only): \($0.did.description)"
+        }
         return "Profiles for \(arguments.query):\n" + summaries.joined(separator: "\n")
     }
 }

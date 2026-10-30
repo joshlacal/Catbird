@@ -48,7 +48,12 @@ struct MacOSChatContentView: View {
 
   /// Per-account MLS chat enabled state
   private var mlsChatEnabledForCurrentAccount: Bool {
-    ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    #if DEBUG
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      return true
+    }
+    #endif
+    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
   }
 
   var body: some View {
@@ -375,7 +380,7 @@ struct MacOSChatContentView: View {
       coordinator.mlsState = newState
 
       if let selectedConvoId,
-         !acceptedConversations.contains(where: { $0.conversationID == selectedConvoId }) {
+         !canonicalIDs.contains(selectedConvoId) {
         self.selectedConvoId = nil
       }
 
@@ -434,6 +439,9 @@ struct MacOSChatContentView: View {
 
   @MainActor
   private func canonicalMLSRoute(for requestedID: String) async -> String? {
+    if MLSConversationIdentityBoundary.isCanonicalStableID(requestedID) {
+      return requestedID
+    }
     let userDID = appState.userDID
     guard let snapshot = try? await MLSStorage.shared
       .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID) else {

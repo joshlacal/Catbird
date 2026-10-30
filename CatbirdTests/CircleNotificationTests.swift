@@ -208,7 +208,7 @@ struct CircleNotificationTests {
     let notifCache = CircleNotificationCache()
     let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let page = CircleNotificationPage(notifications: [notif], cursor: nil)
-    await notifCache.store(page, accountDID: "did:plc:alice")
+    await notifCache.store(page, accountDID: "did:plc:alice", generation: notifCache.generation(accountDID: "did:plc:alice"))
 
     let service = RecordingCircleNotificationService()
     await service.setPages([page])
@@ -311,8 +311,8 @@ struct CircleNotificationTests {
     let alicePage = CircleNotificationPage(notifications: [notifFamily, notifWork], cursor: nil)
     let bobPage = CircleNotificationPage(notifications: [notifFamily], cursor: nil)
 
-    await cache.store(alicePage, accountDID: "did:plc:alice")
-    await cache.store(bobPage, accountDID: "did:plc:bob")
+    await cache.store(alicePage, accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
+    await cache.store(bobPage, accountDID: "did:plc:bob", generation: cache.generation(accountDID: "did:plc:bob"))
 
     await cache.purge(accountDID: "did:plc:alice", space: familyCircle.uri)
 
@@ -332,7 +332,7 @@ struct CircleNotificationTests {
     let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let page = CircleNotificationPage(notifications: [notif], cursor: nil)
 
-    await cache.store(page, accountDID: "did:plc:alice")
+    await cache.store(page, accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
     #expect(await cache.page(accountDID: "did:plc:alice") != nil)
 
     await cache.purge(accountDID: "did:plc:alice")
@@ -347,7 +347,7 @@ struct CircleNotificationTests {
     let notifFamily = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let notifWork = makeNotification(id: "n2", reason: .value_like, circle: workCircle)
     let page = CircleNotificationPage(notifications: [notifFamily, notifWork], cursor: nil)
-    await cache.store(page, accountDID: "did:plc:alice")
+    await cache.store(page, accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
 
     let service = RecordingCircleNotificationService()
     await service.setPages([page])
@@ -732,8 +732,8 @@ struct CircleNotificationTests {
     let notifAlice = makeNotification(id: "n_alice", reason: .value_reply, circle: familyCircle)
     let notifBob = makeNotification(id: "n_bob", reason: .value_reply, circle: familyCircle)
 
-    await cache.store(CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice"), accountDID: "did:plc:alice")
-    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob")
+    await cache.store(CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice"), accountDID: "did:plc:alice", generation: cache.generation(accountDID: "did:plc:alice"))
+    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob", generation: cache.generation(accountDID: "did:plc:bob"))
 
     let service = RecordingCircleNotificationService()
     let model = CircleNotificationsModel(
@@ -799,7 +799,7 @@ struct CircleNotificationTests {
     let notifAlice = makeNotification(id: "n_alice", reason: .value_reply, circle: familyCircle)
     let notifBob = makeNotification(id: "n_bob", reason: .value_reply, circle: familyCircle)
 
-    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob")
+    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob", generation: cache.generation(accountDID: "did:plc:bob"))
 
     let service = RecordingCircleNotificationService()
     await service.setPages([CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice")])
@@ -956,7 +956,7 @@ struct CircleNotificationTests {
     }
   }
 
-  @Test("AuthManager logs are content-free finite codes excluding all canaries across all auth flows")
+  @Test("AuthManager logs are content-free finite codes excluding all canaries across all auth flows", .isolatesSharedAccountState)
   @MainActor
   func authManagerLogsAreContentFreeAndExcludeCanaries() async throws {
     let canaryDID = "did:plc:supersecretcanaryauthdid999"
@@ -1037,6 +1037,8 @@ struct CircleNotificationTests {
     let manager2 = AuthenticationManager(logHandler: recorder2, dependencyOverrides: overrides2)
     manager2.setClientForTesting(dummyClient)
     manager2.storeHandle(canaryHandle, for: canaryDID)
+    // Auto-logout expires only the active account, so the canary must be signed in.
+    manager2.setAuthenticatedForTesting(did: canaryDID)
     await manager2.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
     recorder2.clear()
     do {
@@ -1134,6 +1136,7 @@ struct CircleNotificationTests {
     let recorder7 = RecordingAuthLogHandler()
     let manager7 = AuthenticationManager(logHandler: recorder7)
     manager7.storeHandle(canaryHandle, for: canaryDID)
+    manager7.setAuthenticatedForTesting(did: canaryDID)
     await manager7.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
     verifyScenario(
       "Petrel auto-logout",
@@ -1163,7 +1166,7 @@ struct CircleNotificationTests {
   }
 
   // 18. Switch Alice -> Bob -> Alice rebuilds fresh Circle models; old model stays inert
-  @Test("Account switch Alice -> Bob -> Alice rebuilds fresh Circle models while old model stays inert")
+  @Test("Account switch Alice -> Bob -> Alice rebuilds fresh Circle models while old model stays inert", .isolatesSharedAccountState)
   @MainActor
   func accountSwitchAliceBobAliceRebuildsFreshCircleModels() async throws {
     let appStateManager = AppStateManager.shared
@@ -1242,7 +1245,7 @@ struct CircleNotificationTests {
       }
 
       func capabilities() async throws -> CircleCapability {
-        CircleCapability(enabled: true, protocolRevision: "2026-08", supportsImages: true)
+        CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
       }
 
       func listCircles(cursor: String?) async throws -> CircleListPage {
@@ -1314,7 +1317,7 @@ struct CircleNotificationTests {
       func deleteSpace(space: SpaceRef) async throws {}
       func addMember(space: SpaceRef, did: DID) async throws {}
       func removeMember(space: SpaceRef, did: DID) async throws {}
-      func listMembers(space: SpaceRef) async throws -> [DID] { [] }
+      func listMembers(space: SpaceRef) async throws -> [CircleMember] { [] }
     }
 
     appStateManager.setAppStateFactoryForTesting { did, cli in
@@ -1449,7 +1452,7 @@ struct CircleNotificationTests {
     try await storage.saveCurrentDID("")
   }
   // 19. Forced database drain failure during switch propagates and recovers without leaving lifecycle .launching
-  @Test("Forced database drain failure during account switch propagates and recovers safely")
+  @Test("Forced database drain failure during account switch propagates and recovers safely", .isolatesSharedAccountState)
   @MainActor
   func forcedDatabaseDrainFailureDuringSwitchRecoversSafely() async throws {
     let appStateManager = AppStateManager.shared

@@ -56,8 +56,10 @@ final class MLSConversationDetailViewModel {
         if $0.timestamp != $1.timestamp {
           return $0.timestamp < $1.timestamp
         }
-        if $0.epoch != $1.epoch {
-          return $0.epoch < $1.epoch
+        if let lhsEpoch = $0.epoch, let rhsEpoch = $1.epoch, lhsEpoch != rhsEpoch {
+          return lhsEpoch < rhsEpoch
+        } else if ($0.epoch == nil) != ($1.epoch == nil) {
+          return $0.epoch != nil
         }
         return $0.id < $1.id
       }
@@ -86,7 +88,9 @@ final class MLSConversationDetailViewModel {
 
     // MARK: - Dependencies
 
-    private let database: MLSDatabase
+    // The manager replaces its pool after suspension; an open detail view keeps
+    // its drafts and model while resolving each operation against current storage.
+    private var database: MLSDatabase { conversationManager.database }
     let apiClient: MLSAPIClient // Internal for admin dashboard access
     let conversationManager: MLSConversationManager // Internal for admin features access
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetailViewModel")
@@ -117,12 +121,10 @@ final class MLSConversationDetailViewModel {
 
     init(
         conversationId: String,
-        database: MLSDatabase,
         apiClient: MLSAPIClient,
         conversationManager: MLSConversationManager
     ) {
         self.conversationId = conversationId
-        self.database = database
         self.apiClient = apiClient
         self.conversationManager = conversationManager
         logger.debug("MLSConversationDetailViewModel initialized for conversation: \(conversationId)")
