@@ -1125,6 +1125,11 @@ private extension CatbirdApp {
     }
     context.navigationManager.updateCurrentTab(2)
     context.navigationManager.tabSelection?(2)
+  } else if (scheme == "blue.catbird" || scheme == "catbird") && host == "share" {
+    // The share extension saved a draft to the app group and opened Catbird.
+    // The import presents it in the composer once an account is ready, and
+    // keeps any draft that was already open as a recoverable saved draft.
+    IncomingSharedDraftHandler.importIfAvailable()
   } else if (scheme == "blue.catbird" || scheme == "catbird") && Self.widgetRouteHosts.contains(host) {
     handleWidgetURL(url, components: components, host: host, in: scene)
   } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
