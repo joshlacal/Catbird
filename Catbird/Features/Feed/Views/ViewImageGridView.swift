@@ -1166,40 +1166,10 @@ struct EnhancedImageViewer: View {
   }
 
   private var altTextView: some View {
-    VStack(spacing: 4) {
-      Text(images[currentIndex].alt)
-        .appFont(AppTextRole.caption)
-        .lineLimit(isAltTextExpanded ? nil : 2)
-        .multilineTextAlignment(.leading)
-
-      if !isAltTextExpanded {
-        Button(action: {
-          withAnimation(.easeInOut(duration: 0.2)) {
-            isAltTextExpanded = true
-          }
-        }) {
-          Text("Show More")
-            .appFont(AppTextRole.caption2)
-            .foregroundColor(Color.accentColor)
-        }
-        .accessibilityLabel("Show more alt text")
-      }
-    }
-    .padding(10)
-    .frame(maxWidth: .infinity)
-    .background(Material.ultraThin)
-    .cornerRadius(10)
-    .padding(.horizontal)
-    .accessibilityElement(children: isAltTextExpanded ? .contain : .combine)
-    .accessibilityLabel(isAltTextExpanded ? "Alt text" : "Alt text (collapsed)")
-    .accessibilityValue(images[currentIndex].alt)
-    .accessibilityAddTraits(.isButton)
-    .accessibilityHint(isAltTextExpanded ? "Double tap to collapse" : "Double tap to expand")
-    .onTapGesture {
-      withAnimation(.easeInOut(duration: 0.2)) {
-        isAltTextExpanded.toggle()
-      }
-    }
+    ExpandableAltTextCaption(
+      text: images[currentIndex].alt,
+      isExpanded: $isAltTextExpanded
+    )
   }
 
   private func prefetchFullSizeImages() async {

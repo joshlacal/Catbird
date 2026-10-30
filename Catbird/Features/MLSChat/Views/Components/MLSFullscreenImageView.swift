@@ -206,29 +206,12 @@ struct MLSFullscreenImageView: View {
 
       // Alt text at bottom
       if let alt = altText, !alt.isEmpty {
-        VStack(spacing: 4) {
-          Text(alt)
-            .appFont(AppTextRole.caption)
-            .lineLimit(isAltTextExpanded ? nil : 2)
-            .multilineTextAlignment(.leading)
-
-          if !isAltTextExpanded {
-            Text("Show More")
-              .appFont(AppTextRole.caption2)
-              .foregroundColor(.accentColor)
-          }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Material.ultraThin)
-        .cornerRadius(10)
-        .padding(.horizontal)
+        ExpandableAltTextCaption(
+          text: alt,
+          isExpanded: $isAltTextExpanded,
+          alignment: .leading
+        )
         .padding(.bottom, 16)
-        .onTapGesture {
-          withAnimation(.easeInOut(duration: 0.2)) {
-            isAltTextExpanded.toggle()
-          }
-        }
       }
     }
   }
