@@ -146,7 +146,11 @@ final class ShareViewController: UIViewController {
       if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
           provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
-            if let u = self.decodeURL(item) { urls.append(u) }
+            // Images and videos shared from Files also arrive as file URLs; only web links belong in the post.
+            if let u = self.decodeURL(item), let scheme = u.scheme?.lowercased(),
+               scheme == "http" || scheme == "https" {
+              urls.append(u)
+            }
             cont.resume()
           }
         }
@@ -189,7 +193,35 @@ final class ShareViewController: UIViewController {
     return data
   }
 
-  /// Share extensions can't open their app, so confirm the save and say where to finish the post.
+  /// Opens Catbird, which imports the saved draft into the composer when it becomes active.
+  private func openComposerInApp() {
+    guard let url = URL(string: "blue.catbird://share"), let application = hostApplication() else {
+      showSavedAndFinish()
+      return
+    }
+    application.open(url, options: [:]) { [weak self] opened in
+      guard let self else { return }
+      if opened {
+        self.finish()
+      } else {
+        logger.warning("SharedDraftImporter: Catbird did not open; the draft waits for the next launch")
+        self.showSavedAndFinish()
+      }
+    }
+  }
+
+  /// Share extensions have no API for launching their app, so the shared UIApplication
+  /// is reached through the responder chain that hosts this view controller.
+  private func hostApplication() -> UIApplication? {
+    var responder: UIResponder? = self
+    while let current = responder {
+      if let application = current as? UIApplication { return application }
+      responder = current.next
+    }
+    return nil
+  }
+
+  /// When Catbird can't be opened, confirm the save and say where to finish the post.
   private func showSavedAndFinish() {
     presentMessage(
       title: "Saved to Catbird",
@@ -211,7 +243,12 @@ final class ShareViewController: UIViewController {
   }
 
   private func processItems() async {
-    let (text, urls, images, videos) = await loadAll()
+    let (text, sharedURLs, images, videos) = await loadAll()
+    // Safari and many apps send the link both as text and as a URL; keep one copy.
+    let urls = sharedURLs.reduce(into: [URL]()) { kept, url in
+      guard !kept.contains(url), !(text?.contains(url.absoluteString) ?? false) else { return }
+      kept.append(url)
+    }
     let hasText = !(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     guard hasText || !urls.isEmpty || !images.isEmpty || !videos.isEmpty else {
       logger.warning("SharedDraftImporter: Nothing shareable was found")
@@ -220,7 +257,7 @@ final class ShareViewController: UIViewController {
     }
     if let data = encodePayload(text: text, urls: urls, imageURLs: images, videos: videos) {
       storeDraft(data)
-      showSavedAndFinish()
+      openComposerInApp()
     } else {
       showErrorAndFinish(message: "Catbird can share text, links, up to 4 images, or 1 video.")
     }
