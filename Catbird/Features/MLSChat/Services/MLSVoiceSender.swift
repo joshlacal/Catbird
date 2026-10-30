@@ -31,6 +31,8 @@ final class MLSVoiceSender {
   private var audioRecorder: AVAudioRecorder?
   private var recordingURL: URL?
   private var recordingStartTime: Date?
+  /// The audio session claim this sender holds while recording, released exactly once.
+  private var recordingSessionOwner: UUID?
   #if os(iOS)
   private var displayLink: CADisplayLink?
   #endif
@@ -42,18 +44,17 @@ final class MLSVoiceSender {
 
   deinit {
     stopDisplayLink()
-    let wasRecording = audioRecorder != nil
     audioRecorder?.stop()
-    if wasRecording {
-      AudioSessionManager.shared.resetAfterRecording()
-    }
+    releaseRecordingSession()
     cleanupRecording()
   }
 
   // MARK: - Recording
 
   func startRecording() async throws {
-    await AudioSessionManager.shared.configureForRecording()
+    let owner = UUID()
+    try await AudioSessionManager.shared.configureForRecording(owner: owner)
+    recordingSessionOwner = owner
 
     let tempDir = FileManager.default.temporaryDirectory
     let url = tempDir.appendingPathComponent("voice_\(UUID().uuidString).wav")
@@ -68,18 +69,29 @@ final class MLSVoiceSender {
       AVLinearPCMIsBigEndianKey: false,
     ]
 
-    audioRecorder = try AVAudioRecorder(url: url, settings: settings)
+    do {
+      audioRecorder = try AVAudioRecorder(url: url, settings: settings)
+    } catch {
+      releaseRecordingSession()
+      throw error
+    }
     audioRecorder?.record()
     recordingStartTime = Date()
     state = .recording(duration: 0)
     startDisplayLink()
   }
 
+  private func releaseRecordingSession() {
+    guard let owner = recordingSessionOwner else { return }
+    recordingSessionOwner = nil
+    AudioSessionManager.shared.resetAfterRecording(owner: owner)
+  }
+
   func cancelRecording() {
     stopDisplayLink()
     audioRecorder?.stop()
     audioRecorder = nil
-    AudioSessionManager.shared.resetAfterRecording()
+    releaseRecordingSession()
     cleanupRecording()
     state = .idle
   }
@@ -90,7 +102,7 @@ final class MLSVoiceSender {
     stopDisplayLink()
     audioRecorder?.stop()
     audioRecorder = nil
-    AudioSessionManager.shared.resetAfterRecording()
+    releaseRecordingSession()
     state = .processing
 
     guard let url = recordingURL else {
