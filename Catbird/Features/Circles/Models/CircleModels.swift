@@ -32,10 +32,10 @@ extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
 ///
 /// `clientID` and `serviceDID` are NOT interchangeable. `clientID` is the
 /// AppView's OAuth client identifier — the HTTPS URL of its client-metadata
-/// document — and is the value named in a Space's `#allowList`. `serviceDID`
+/// document — and is the value named in the memberspace policy's `allowedApps`. `serviceDID`
 /// is only the `atproto-proxy` target and `registerNotify` subscriber.
 enum CircleConfiguration {
-  static let protocolRevision = "ac0c9f15392f6f0298d71dc52aa88c05036150be"
+  static let protocolRevision = "5d88b414a98de1ada22c94c78fa0667a7028163c"
 
   /// Service identifier the gateway proxies Circle reads to.
   static let serviceDID = "did:web:circles.catbird.blue#atproto_circles"
