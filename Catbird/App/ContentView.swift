@@ -7,11 +7,11 @@ import UIKit
 
 struct ContentView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppStateManager.self) private var appStateManager
   @State private var selectedTab = 0
   @State private var lastTappedTab: Int?
   @State private var hasRestoredState = false
-  @State private var showingComposerFromAccountSwitch = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ContentView")
 
@@ -36,8 +36,7 @@ struct ContentView: View {
       }
     }
     .modifier(ContentViewModifiers(
-      appStateManager: appStateManager,
-      showingComposerFromAccountSwitch: $showingComposerFromAccountSwitch
+      appStateManager: appStateManager
       ))
   }
 }
@@ -55,10 +54,12 @@ private extension ContentView {
     case .deactivated(let appState):
       AccountDeactivatedView(appState: appState)
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .environment(appStateManager)
     case .takendown(let appState):
       AccountTakedownView(appState: appState)
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .environment(appStateManager)
     }
   }
@@ -70,6 +71,7 @@ private extension ContentView {
       lastTappedTab: $lastTappedTab
     )
     .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
     .environment(appStateManager)
     .onAppear {
       // Finish extended launch measurement when main content appears
@@ -77,11 +79,29 @@ private extension ContentView {
         MetricKitManager.shared.finishExtendedLaunchMeasurement()
       }
     }
+    .task(id: appState.userDID) {
+      await evaluateWelcomeOnboarding(for: appState)
+    }
+  }
+
+  /// Runs when an account's main content appears (this view is rebuilt for every account).
+  /// Only accounts created on this device, or joining via a starter pack, get the welcome flow;
+  /// existing accounts signing in here skip it, so it never offers to replace their avatar.
+  func evaluateWelcomeOnboarding(for appState: AppState) async {
+    let did = appState.userDID
+    let onboarding = appState.onboardingManager
+    guard !onboarding.hasCompletedWelcome(for: did) else { return }
+    let isNewAccount = NewAccountOnboardingMarker.consumeRecentSignup()
+    if isNewAccount || StarterPackOnboardingManager.shared.pendingContext != nil {
+      await onboarding.checkForWelcomeOnboarding(client: appState.client, for: did)
+    } else {
+      onboarding.completeWelcomeOnboarding(for: did)
+    }
   }
 
   @ViewBuilder
   var launchingView: some View {
-    ContentViewLoadingView(message: "Loading...")
+    ContentViewLoadingView(message: "Loading…")
   }
 
   @ViewBuilder
@@ -195,6 +215,8 @@ private struct ComposeSourceModifier: ViewModifier {
 @available(iOS 18.0, *)
 struct MainContentView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
@@ -207,7 +229,7 @@ struct MainContentView: View {
   // Add state for showing post composer
   @State private var showingPostComposer = false
   @State private var showingComposerDrafts = false
-  @State private var pendingSelectedDraft: PostComposerDraft?
+  @State private var pendingSelectedDraft: DraftPostViewModel?
   @State private var showingSettings = false
   @State private var showingNewMessageSheet = false
   @State private var hasInitializedFeed = false
@@ -219,6 +241,7 @@ struct MainContentView: View {
   @State private var drawerNavigationPath = NavigationPath()
   // Snapshot the draft at presentation time so autosave mutations don't recreate the sheet content
   @State private var composerInitialDraft: PostComposerDraft?
+  @State private var composerEditingClaim: ComposerDraftClaim?
   #if os(iOS)
   @State private var pendingCameraCapture: CameraCaptureMode?
   @State private var composerCapturedMedia: CapturedMedia?
@@ -229,7 +252,7 @@ struct MainContentView: View {
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
-    appState.navigationManager
+    sceneContext.navigationManager
   }
 
   // Whether the drawer's native toolbar chrome (close button + bottom-bar
@@ -242,18 +265,16 @@ struct MainContentView: View {
   }
 
    #if os(iOS)
-   /// Whether the Profile tab should appear in the top (iPad) tab bar.
+   /// Whether the Profile tab should appear in the tab bar.
    ///
-   /// The five iPad tabs — Home / Search / Notifications / Profile / Messages —
-   /// overflow into the system ">" chevron on narrow layouts, most visibly on
-   /// iPad mini in portrait. When there isn't room we drop Profile from the bar;
-   /// it stays reachable from the avatar button and the drawer's Profile
-   /// shortcut. Profile is never shown on iPhone.
+   /// Five tabs — Home / Search / Notifications / Profile / Messages — only fit
+   /// in a regular-width scene (iPad, an unfolded iPhone Duo). In a compact
+   /// scene (iPhone, a folded iPhone Duo, a narrow iPad Split View) Profile is
+   /// dropped from the bar; it stays reachable from the avatar button and the
+   /// drawer's Profile shortcut. Because the size class changes as the scene
+   /// resizes, the tab can disappear while selected — see `body`.
    private var shouldShowProfileTab: Bool {
-     guard !PlatformDeviceInfo.isPhone else { return false }
-     // NOTE: future — measure available tab-bar width and drop Profile when the
-     // five iPad tabs would overflow into the system ">" chevron.
-     return true
+     horizontalSizeClass == .regular
    }
    #endif
 
@@ -297,7 +318,7 @@ struct MainContentView: View {
       let uriString = String(savedFeedIdentifier.dropFirst("feed:".count))
       if let uri = try? ATProtocolURI(uriString: uriString) {
         selectedFeed = .feed(uri)
-        currentFeedName = "Feed" // Will be updated by task(id: selectedFeed)
+        currentFeedName = FetchType.feed(uri).displayName // Will be updated by task(id: selectedFeed)
       } else {
         await loadDefaultFeed()
       }
@@ -312,7 +333,7 @@ struct MainContentView: View {
       }
       if let uri = try? ATProtocolURI(uriString: candidate) {
         selectedFeed = .list(uri)
-        currentFeedName = "List" // Will be updated elsewhere if needed
+        currentFeedName = FetchType.list(uri).displayName // Will be updated elsewhere if needed
       } else {
         await loadDefaultFeed()
       }
@@ -330,10 +351,10 @@ struct MainContentView: View {
        let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
       if firstPinnedFeed.contains("/app.bsky.graph.list/") {
         selectedFeed = .list(uri)
-        currentFeedName = "List"
+        currentFeedName = FetchType.list(uri).displayName
       } else {
         selectedFeed = .feed(uri)
-        currentFeedName = "Feed" // Will be updated by .task(id: selectedFeed)
+        currentFeedName = FetchType.feed(uri).displayName // Will be updated by .task(id: selectedFeed)
       }
     } else {
       // Fallback to timeline
@@ -341,99 +362,79 @@ struct MainContentView: View {
       currentFeedName = "Timeline"
     }
   }
+  private var tabSelectionBinding: Binding<Int> {
+    Binding(
+      get: { selectedTab },
+      set: { newValue in
+        if selectedTab == newValue {
+          logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
+          lastTappedTab = newValue
+        }
+        selectedTab = newValue
+
+        // Update the navigation manager with the new tab index
+        navigationManager.updateCurrentTab(newValue)
+      }
+    )
+  }
 
   var body: some View {
     ZStack(alignment: .top) {
       #if os(iOS)
-      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen, drawerWidth: PlatformScreenInfo.responsiveDrawerWidth) {
+      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen) {
         ZStack(alignment: .bottomTrailing) {
-          TabView(
-            selection: Binding(
-              get: { selectedTab },
-              set: { newValue in
-                if selectedTab == newValue {
-                  logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-                  lastTappedTab = newValue
-                }
-                selectedTab = newValue
-
-                // Update the navigation manager with the new tab index
-                navigationManager.updateCurrentTab(newValue)
-              }
-            )
-          ) {
+          TabView(selection: tabSelectionBinding) {
             // Home Tab
             Tab("Home", systemImage: "house", value: 0) {
-              HomeView(
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab,
-                selectedFeed: $selectedFeed,
-                currentFeedName: $currentFeedName,
-                isDrawerOpen: $isDrawerOpen,
-                isRootView: $isRootView
-              )
-              .id(appState.userDID)
+              PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_home_\(appState.userDID)") {
+                HomeView(
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab,
+                  selectedFeed: $selectedFeed,
+                  currentFeedName: $currentFeedName,
+                  isDrawerOpen: $isDrawerOpen,
+                  isRootView: $isRootView,
+                  composeOverlay: { AnyView(self.composeOverlay) }
+                )
+                .id(appState.userDID)
+              }
+              .equatable()
             }
             .accessibilityIdentifier("tab_home")
 
             // Search Tab
             Tab(value: 1, role: .search) {
-              RefinedSearchView(
-                appState: appState,
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab
-              )
-              .id(appState.userDID)
+              PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_search_\(appState.userDID)") {
+                RefinedSearchView(
+                  appState: appState,
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab
+                )
+                .id(appState.userDID)
+              }
+              .equatable()
             }
             .accessibilityIdentifier("tab_search")
 
             // Notifications Tab
-            Tab("Notifications", systemImage: "bell", value: 2) {
-              NotificationsView(
-                appState: appState,
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab
-              )
-              .id(appState.userDID)
-            }
-            .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
-            .accessibilityIdentifier("tab_notifications")
+            NotificationsTab(
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab
+            )
 
-            // Profile Tab - Hidden on iPhone to save space
-            if !PlatformDeviceInfo.isPhone {
-              Tab("Profile", systemImage: "person", value: 3) {
-                NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-                  UnifiedProfileView(
-                    appState: appState,
-                    selectedTab: $selectedTab,
-                    lastTappedTab: $lastTappedTab,
-                    path: appState.navigationManager.pathBinding(for: 3)
-                  )
-                  .id(appState.userDID)
-                  .navigationDestination(for: NavigationDestination.self) { destination in
-                    NavigationHandler.viewForDestination(
-                      destination,
-                      path: appState.navigationManager.pathBinding(for: 3),
-                      appState: appState,
-                      selectedTab: $selectedTab
-                    )
-                  }
-                }
-              }
-              .accessibilityIdentifier("tab_profile")
-            }
+            // Profile Tab - Kept resident in hierarchy and hidden on compact (P266)
+            MainProfileTab(
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab,
+              composeOverlay: AnyView(composeOverlay)
+            )
 
             #if os(iOS)
             // Chat Tab (iOS only)
-            Tab("Messages", systemImage: "envelope", value: 4) {
-              ChatTabView(
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab
-              )
-              .id(appState.userDID)
-            }
-            .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
-            .accessibilityIdentifier("tab_messages")
+            MessagesTab(
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab
+            )
             #endif
           }
           #if targetEnvironment(macCatalyst)
@@ -441,28 +442,28 @@ struct MainContentView: View {
           #endif
           #if os(iOS)
           .tabViewStyle(.sidebarAdaptable)
-          #endif
-
-          #if !targetEnvironment(macCatalyst)
-          if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
-            if #available(iOS 26.0, *) {
-              GlassEffectContainer(spacing: 20) {
-                fabView
-              }
-            } else {
-              fabView
-            }
+          .onChange(of: shouldShowProfileTab) { _, isShown in
+            // Folding an iPhone Duo or narrowing a split view removes the Profile
+            // tab; if it was selected, land on Home rather than an absent tab.
+            guard !isShown, selectedTab == 3 else { return }
+            selectedTab = 0
+            navigationManager.updateCurrentTab(0)
           }
           #endif
         }
       } drawer: {
           NavigationStack(path: $drawerNavigationPath) {
-              FeedsStartPage(
-                appState: appState,
-                selectedFeed: $selectedFeed,
-                currentFeedName: $currentFeedName,
-                isDrawerOpen: $isDrawerOpen
-              )
+              PlatformAgeProtectedContent(operation: .generalContent, identityKey: "drawer_\(appState.userDID)") {
+                FeedsStartPage(
+                  appState: appState,
+                  selectedFeed: $selectedFeed,
+                  currentFeedName: $currentFeedName,
+                  isDrawerOpen: $isDrawerOpen
+                )
+                // A new identity per account rebuilds the drawer's view model and profile header.
+                .id(appState.userDID)
+              }
+              .equatable()
               .containerBackground(.clear, for: .navigation)
               .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(
@@ -490,7 +491,7 @@ struct MainContentView: View {
                   ToolbarItem(placement: .bottomBar) {
                       Button {
                           let did = appState.userDID
-                          appState.navigationManager.navigate(to: .profile(did))
+                          sceneContext.navigationManager.navigate(to: .profile(did))
                           isDrawerOpen = false
                       } label: { Label("Profile", systemImage: "person") }
                           .opacity(drawerChromeVisible ? 1 : 0)
@@ -500,7 +501,7 @@ struct MainContentView: View {
                   }
                   ToolbarItem(placement: .bottomBar) {
                       Button {
-                          appState.navigationManager.navigate(to: .bookmarks)
+                          sceneContext.navigationManager.navigate(to: .bookmarks)
                           isDrawerOpen = false
                       } label: { Label("Bookmarks", systemImage: "bookmark") }
                           .opacity(drawerChromeVisible ? 1 : 0)
@@ -511,7 +512,7 @@ struct MainContentView: View {
                   }
                   ToolbarItem(placement: .bottomBar) {
                       Button {
-                          appState.navigationManager.navigate(to: .listManager)
+                          sceneContext.navigationManager.navigate(to: .listManager)
                           isDrawerOpen = false
                       } label: { Label("My Lists", systemImage: "list.bullet") }
                           .opacity(drawerChromeVisible ? 1 : 0)
@@ -525,7 +526,7 @@ struct MainContentView: View {
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
-      .toastContainer()
+      .toastContainer(using: appState.toastManager)
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
         
@@ -554,41 +555,53 @@ struct MainContentView: View {
         scheduleNuxEvaluation(delay: 500_000_000)
       }
       .sheet(isPresented: $showingPostComposer) {
-        Group {
+        PlatformAgeProtectedContent(operation: .generalContent) {
           #if os(iOS)
           if let media = composerCapturedMedia {
             PostComposerViewUIKit(
               initialCapturedMedia: media,
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           } else if let draft = composerInitialDraft {
             PostComposerViewUIKit(
               restoringFromDraft: draft,
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           } else {
             PostComposerViewUIKit(
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           }
           #else
           if let draft = composerInitialDraft {
             PostComposerViewUIKit(
               restoringFromDraft: draft,
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           } else {
             PostComposerViewUIKit(
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           }
           #endif
         }
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
+        .toastContainer(using: appState.toastManager)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
-          enabled: (selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone)),
+          enabled: (selectedTab == 0 || (selectedTab == 3 && shouldShowProfileTab)),
           sourceID: "compose",
           namespace: composeTransitionNamespace
         )
@@ -600,10 +613,11 @@ struct MainContentView: View {
         }
       }) {
         DraftsListView(appState: appState) { draftViewModel in
-          pendingSelectedDraft = appState.composerDraftManager.loadSavedDraft(draftViewModel)
+          pendingSelectedDraft = draftViewModel
           showingComposerDrafts = false
         }
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
       }
@@ -613,69 +627,72 @@ struct MainContentView: View {
           showingPostComposer = true
         }
       }) { mode in
-        CameraCaptureView(
-          mode: mode,
-          onCapture: { media in
-            composerCapturedMedia = media
-            composerInitialDraft = nil
-            pendingCameraCapture = nil
-          },
-          onCancel: {
-            pendingCameraCapture = nil
-          }
-        )
-        .ignoresSafeArea()
+        PlatformAgeProtectedContent(operation: .generalContent) {
+          CameraCaptureView(
+            mode: mode,
+            onCapture: { media in
+              composerCapturedMedia = media
+              composerInitialDraft = nil
+              composerEditingClaim = nil
+              pendingCameraCapture = nil
+            },
+            onCancel: {
+              pendingCameraCapture = nil
+            }
+          )
+          .ignoresSafeArea()
+        }
       }
       #endif
       .sheet(isPresented: $showingNewMessageSheet) {
-        NewConversationView()
-          .applyAppStateEnvironment(appState)
-          .presentationDetents([.large])
-          .presentationDragIndicator(.visible)
+        PlatformAgeProtectedContent(operation: .directMessaging) {
+          NewConversationView()
+        }
+        .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
       }
-      .sheet(isPresented: $showingOnboarding) {
+      .sheet(isPresented: welcomePresentation) {
         WelcomeOnboardingView()
           .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
       }
       .sheet(isPresented: Binding(
         get: { showingVerifyEmailCode != nil },
-        set: { if !$0 { showingVerifyEmailCode = nil; appState.urlHandler.externalIntentPresenter.clearActiveIntent() } }
+        set: { if !$0 { showingVerifyEmailCode = nil; sceneContext.urlHandler.externalIntentPresenter.clearActiveIntent() } }
       )) {
         if let code = showingVerifyEmailCode {
           VerifyEmailIntentView(code: code)
             .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         }
       }
       .sheet(isPresented: Binding(
         get: { showingGroupChatCode != nil },
-        set: { if !$0 { showingGroupChatCode = nil; appState.urlHandler.externalIntentPresenter.clearActiveIntent() } }
+        set: { if !$0 { showingGroupChatCode = nil; sceneContext.urlHandler.externalIntentPresenter.clearActiveIntent() } }
       )) {
         if let code = showingGroupChatCode {
-          GroupChatJoinIntentView(code: code)
-            .applyAppStateEnvironment(appState)
-        }
-      }
-      .sheet(isPresented: Binding(
-        get: {
-          if showingOnboarding || showingPostComposer { return false }
-          return appState.nuxPresenter.activeAnnouncement != nil
-        },
-        set: { if !$0 { appState.nuxPresenter.dismissActiveAnnouncement() } }
-      )) {
-        if let nuxID = appState.nuxPresenter.activeAnnouncement {
-          NuxAnnouncementView(nuxID: nuxID) {
-            appState.nuxPresenter.dismissActiveAnnouncement()
+          PlatformAgeProtectedContent(operation: .groupMessaging) {
+            GroupChatJoinIntentView(code: code)
           }
           .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
         }
       }
-      .onChange(of: appState.urlHandler.externalIntentPresenter.activeIntent) { _, newIntent in
+      .modifier(
+        NuxAnnouncementSheetModifier(
+          showingOnboarding: showingOnboarding,
+          showingPostComposer: showingPostComposer
+        )
+      )
+      .onChange(of: sceneContext.urlHandler.externalIntentPresenter.activeIntent) { _, newIntent in
         guard let intent = newIntent else { return }
         switch intent {
         case .compose(let text):
           Task { @MainActor in
             await openFreshComposerWithPrefilledText(text ?? "")
-            appState.urlHandler.externalIntentPresenter.clearActiveIntent()
+            sceneContext.urlHandler.externalIntentPresenter.clearActiveIntent()
           }
         case .verifyEmail(let code):
           showingVerifyEmailCode = code
@@ -695,12 +712,13 @@ struct MainContentView: View {
           scheduleNuxEvaluation(delay: 300_000_000)
         }
       }
-      .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+      .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
         showingOnboarding = newValue
       }
       .onChange(of: showingPostComposer) { _, isPresented in
         if !isPresented {
           composerInitialDraft = nil
+          composerEditingClaim = nil
           #if os(iOS)
           composerCapturedMedia = nil
           #endif
@@ -718,7 +736,7 @@ struct MainContentView: View {
         // button and SideDrawer canOpen stay in sync.
         if isDrawerOpen && newPath.count > 0 {
           isRootView = false
-        } else if newPath.count == 0 && appState.navigationManager.tabPaths[0]?.count == 0 {
+        } else if newPath.count == 0 && sceneContext.navigationManager.tabPaths[0]?.count == 0 {
           isRootView = true
         }
       }
@@ -755,6 +773,14 @@ struct MainContentView: View {
       .task(id: selectedFeed) {
         // Fetch feed name when selectedFeed changes to a custom feed
         if case .feed(let uri) = selectedFeed {
+          // If currentFeedName is already known and valid (not empty and not placeholder "Feed"), skip network fetch
+          if !currentFeedName.isEmpty && currentFeedName != "Feed" && currentFeedName != "Timeline" {
+            return
+          }
+          if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
+            currentFeedName = cachedName
+            return
+          }
           // Fetch feed generator info to get display name
           if let client = appState.atProtoClient {
             do {
@@ -765,13 +791,13 @@ struct MainContentView: View {
                 }
               } else {
                 await MainActor.run {
-                  currentFeedName = "Feed"
+                  currentFeedName = FetchType.feed(uri).displayName
                 }
               }
             } catch {
               logger.error("Failed to fetch feed name: \(error.localizedDescription)")
               await MainActor.run {
-                currentFeedName = "Feed"
+                currentFeedName = FetchType.feed(uri).displayName
               }
             }
           }
@@ -780,6 +806,13 @@ struct MainContentView: View {
             currentFeedName = "Timeline"
           }
         } else if case .list(let uri) = selectedFeed {
+          if !currentFeedName.isEmpty && currentFeedName != "List" && currentFeedName != "Timeline" {
+            return
+          }
+          if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
+            currentFeedName = cachedName
+            return
+          }
           do {
             let listDetails = try await appState.listManager.getListDetails(uri.uriString())
             await MainActor.run {
@@ -788,46 +821,50 @@ struct MainContentView: View {
           } catch {
             logger.error("Failed to fetch list name: \(error.localizedDescription)")
             await MainActor.run {
-              currentFeedName = uri.recordKey ?? "List"
+              currentFeedName = FetchType.list(uri).displayName
             }
           }
         }
       }
       
       #elseif os(macOS)
-      MacOSMainView()
-        .id(appState.userDID)
-        .onAppear {
-          Task {
-            if !hasInitializedFeed {
-              hasInitializedFeed = true
-              await restoreLastFeedForAccount()
+      PlatformAgeProtectedContent(operation: .generalContent, identityKey: "macos_main_\(appState.userDID)") {
+        MacOSMainView()
+          .id(appState.userDID)
+          .onAppear {
+            Task {
+              if !hasInitializedFeed {
+                hasInitializedFeed = true
+                await restoreLastFeedForAccount()
+              }
             }
-          }
 
-          navigationManager.registerTabSelectionCallback { newTab in
-            selectedTab = newTab
-          }
-
-          scheduleNuxEvaluation(delay: 500_000_000)
-        }
-        .sheet(isPresented: $showingOnboarding) {
-          WelcomeOnboardingView()
-            .applyAppStateEnvironment(appState)
-        }
-        .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
-          showingOnboarding = newValue
-        }
-        .onChange(of: showingOnboarding) { _, newValue in
-          if !newValue && appState.onboardingManager.showWelcomeSheet {
-            Task { @MainActor in
-              appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
+            navigationManager.registerTabSelectionCallback { newTab in
+              selectedTab = newTab
             }
+
+            scheduleNuxEvaluation(delay: 500_000_000)
           }
-          if !newValue {
-            scheduleNuxEvaluation(delay: 300_000_000)
+      }
+      .equatable()
+      .sheet(isPresented: welcomePresentation) {
+        WelcomeOnboardingView()
+          .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
+      }
+      .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
+        showingOnboarding = newValue
+      }
+      .onChange(of: showingOnboarding) { _, newValue in
+        if !newValue && appState.onboardingManager.showWelcomeSheet {
+          Task { @MainActor in
+            appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
           }
         }
+        if !newValue {
+          scheduleNuxEvaluation(delay: 300_000_000)
+        }
+      }
       #endif
       
       NetworkStatusIndicator()
@@ -836,6 +873,7 @@ struct MainContentView: View {
     .sheet(isPresented: $showingSettings) {
       SettingsView()
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .environment(appState)
     }
     .modifier(CatalystToolbarBridge(
@@ -864,6 +902,17 @@ extension ContentView {
 }
 
 extension MainContentView {
+  private var welcomePresentation: Binding<Bool> {
+    Binding(
+      get: { showingOnboarding && appState.ageAccess.allows(.generalContent) },
+      set: { showing in
+        // A temporary platform restriction must not complete an unseen welcome flow.
+        guard showing || appState.ageAccess.allows(.generalContent) else { return }
+        showingOnboarding = showing
+      }
+    )
+  }
+
   @MainActor
   func restoreUIState() async {
     guard !hasRestoredState else { return }
@@ -874,7 +923,19 @@ extension MainContentView {
     #if os(iOS)
     composerCapturedMedia = nil
     #endif
-    composerInitialDraft = appState.composerDraftManager.currentDraft
+    let session = sceneContext.composerEditingSession
+    guard !sceneContext.isInvalidated else { return }
+    if let claim = session.activeClaim {
+      guard session.resume(claim: claim) else {
+        showComposerIssue(session.lastIssue ?? "Could not reopen your draft")
+        return
+      }
+      composerEditingClaim = claim
+      composerInitialDraft = session.currentDraft
+    } else {
+      composerEditingClaim = nil
+      composerInitialDraft = nil
+    }
     showingPostComposer = true
   }
 
@@ -884,6 +945,7 @@ extension MainContentView {
   private func scheduleNuxEvaluation(delay nanoseconds: UInt64) {
     Task { @MainActor in
       try? await Task.sleep(nanoseconds: nanoseconds)
+      guard !Task.isCancelled, appState.ageAccess.allows(.generalContent) else { return }
       appState.nuxPresenter.evaluateAndPresentIfNeeded(
         isWelcomeShowing: showingOnboarding,
         isComposerShowing: showingPostComposer
@@ -894,18 +956,21 @@ extension MainContentView {
   private func stashWorkingDraft(
     destinationAvailable: Bool = true
   ) async -> WorkingDraftStashPolicy.Result {
-    let manager = appState.composerDraftManager
-    let workingDraft = manager.currentDraft
+    let session = sceneContext.composerEditingSession
+    let snapshot = session.snapshot()
     return await WorkingDraftStashPolicy.perform(
-      hasWorkingDraft: workingDraft != nil,
+      hasWorkingDraft: snapshot != nil,
       destinationAvailable: destinationAvailable,
       save: {
-        guard let workingDraft else { return false }
-        return await manager.createSavedDraftAndWait(workingDraft)
+        guard let snapshot else { return false }
+        do {
+          try session.stash(snapshot)
+          return true
+        } catch {
+          return false
+        }
       },
-      clearAfterSave: {
-        manager.clearWorkingDraftAfterStash()
-      }
+      clearAfterSave: {} // The session detaches only the successfully saved snapshot.
     )
   }
 
@@ -943,16 +1008,29 @@ extension MainContentView {
     #if os(iOS)
     composerCapturedMedia = nil
     #endif
+    guard !sceneContext.isInvalidated else { return }
     composerInitialDraft = initialDraft
+    composerEditingClaim = nil
     showingPostComposer = true
   }
 
-  private func openComposerRestoring(_ draft: PostComposerDraft) {
-    #if os(iOS)
-    composerCapturedMedia = nil
-    #endif
-    composerInitialDraft = draft
-    showingPostComposer = true
+  private func openComposerRestoring(_ draft: DraftPostViewModel) {
+    guard !sceneContext.isInvalidated else { return }
+    do {
+      let session = sceneContext.composerEditingSession
+      composerEditingClaim = try session.restoreSaved(draft)
+      composerInitialDraft = session.currentDraft
+      #if os(iOS)
+      composerCapturedMedia = nil
+      #endif
+      showingPostComposer = true
+    } catch {
+      showComposerIssue(error.localizedDescription)
+    }
+  }
+
+  private func showComposerIssue(_ message: String) {
+    appState.toastManager.show(ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
   }
 
   private func openDraftsBrowser() {
@@ -977,13 +1055,27 @@ extension MainContentView {
   }
   #endif
 
+  /// Inherit tab content geometry instead of estimating system bar clearance.
+  @ViewBuilder
+  private var composeOverlay: some View {
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    if #available(iOS 26.0, *) {
+      GlassEffectContainer(spacing: 20) {
+        fabView
+      }
+    } else {
+      fabView
+    }
+    #endif
+  }
+
   @ViewBuilder
   private var fabView: some View {
     FAB(
       composeAction: { openComposerResumingDraft() },
       feedsAction: {},
       showFeedsButton: false,
-      hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
+      hasMinimizedComposer: sceneContext.composerEditingSession.isMinimized,
       newPostAction: {
         Task { @MainActor in
           await openFreshComposerStashingDraft()
@@ -1005,11 +1097,12 @@ extension MainContentView {
         #endif
       },
       clearDraftAction: {
-        appState.composerDraftManager.clearDraft()
+        let session = sceneContext.composerEditingSession
+        if let claim = session.activeClaim, !session.discard(claim: claim) {
+          showComposerIssue(session.lastIssue ?? "Could not discard your draft")
+        }
       }
     )
-    .padding(.bottom, 79) // Tab bar (49) + spacing (30)
-    .padding(.trailing, 5)
   }
 }
 
@@ -1066,67 +1159,18 @@ private struct SoftScrollEdgeEffectModifier: ViewModifier {
 
 private struct ContentViewModifiers: ViewModifier {
   let appStateManager: AppStateManager
-  @Binding var showingComposerFromAccountSwitch: Bool
 
-  private var pendingAlertBinding: Binding<AuthenticationManager.AuthAlert?> {
-    Binding(
-      get: { appStateManager.authentication.pendingAuthAlert },
-      set: { _ in Task { await appStateManager.authentication.clearPendingAuthAlert() } }
-    )
-  }
-
+  // Auth alerts are presented by CatbirdApp's scene root so they also show over the sign-in screen.
   func body(content: Content) -> some View {
     content
-      .alert(item: pendingAlertBinding, content: authAlertContent)
       .onChange(of: appStateManager.lifecycle) { _, newValue in
-        if case .authenticated(let appState) = newValue {
+        if case .authenticated = newValue {
           Task { @MainActor in
             await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
-            await appState.onboardingManager.checkForWelcomeOnboarding(client: appState.client, for: appState.userDID)
           }
-        }
-      }
-      .onChange(of: appStateManager.pendingComposerDraft) { _, newValue in
-        if let draft = newValue {
-          logger.info("[ContentView] Pending composer draft detected after account switch - will reopen composer")
-          logger.debug("[ContentView] Draft preview: text length \(draft.postText.count), media items \(draft.mediaItems.count)")
-
-          Task { @MainActor in
-            // Wait for transition overlay to clear (typically ~500ms)
-            try? await Task.sleep(nanoseconds: 600_000_000)  // 600ms
-
-            // Verify draft hasn't been manually cleared
-            guard appStateManager.pendingComposerDraft != nil else {
-              logger.debug("[ContentView] pendingComposerDraft was cleared before reopen - skipping")
-              return
-            }
-
-            logger.info("[ContentView] Reopening composer with transferred draft")
-            showingComposerFromAccountSwitch = true
-
-            // Clear after presenting
-            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms buffer
-            appStateManager.clearPendingComposerDraft()
-            logger.debug("[ContentView] Cleared pendingComposerDraft after reopen")
-          }
-        }
-      }
-      .sheet(isPresented: $showingComposerFromAccountSwitch) {
-        if let appState = appStateManager.lifecycle.appState {
-          PostComposerViewUIKit(appState: appState)
         }
       }
       .modifier(AppStateThemeModifier(appStateManager: appStateManager))
-  }
-
-  private func authAlertContent(_ alert: AuthenticationManager.AuthAlert) -> Alert {
-    Alert(
-      title: Text(alert.title),
-      message: Text(alert.message),
-      dismissButton: .default(Text("OK"), action: {
-        Task { await appStateManager.authentication.clearPendingAuthAlert() }
-      })
-    )
   }
 }
 
@@ -1143,6 +1187,123 @@ private struct AppStateThemeModifier: ViewModifier {
     } else {
       content
     }
+  }
+}
+
+// MARK: - Tab Content Subviews (Isolated Badge & Layout Updates)
+
+#if os(iOS)
+private struct NotificationsTab: TabContent {
+  typealias TabValue = Int
+  @Environment(AppState.self) private var appState
+  @Binding var selectedTab: Int
+  @Binding var lastTappedTab: Int?
+
+  var body: some TabContent<Int> {
+    Tab("Notifications", systemImage: "bell", value: 2) {
+      PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_notifications_\(appState.userDID)") {
+        NotificationsView(
+          appState: appState,
+          selectedTab: $selectedTab,
+          lastTappedTab: $lastTappedTab
+        )
+        .id(appState.userDID)
+      }
+      .equatable()
+    }
+    .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
+    .accessibilityIdentifier("tab_notifications")
+  }
+}
+
+private struct MainProfileTab: TabContent {
+  typealias TabValue = Int
+  @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @Binding var selectedTab: Int
+  @Binding var lastTappedTab: Int?
+  let composeOverlay: AnyView
+
+  var body: some TabContent<Int> {
+    Tab("Profile", systemImage: "person", value: 3) {
+      NavigationStack(path: sceneContext.navigationManager.pathBinding(for: 3)) {
+        PlatformAgeProtectedContent(operation: .generalContent, identityKey: "tab_profile_\(appState.userDID)") {
+          UnifiedProfileView(
+            appState: appState,
+            selectedTab: $selectedTab,
+            lastTappedTab: $lastTappedTab,
+            path: sceneContext.navigationManager.pathBinding(for: 3)
+          )
+          .id(appState.userDID)
+        }
+        .equatable()
+        .navigationDestination(for: NavigationDestination.self) { destination in
+          NavigationHandler.viewForDestination(
+            destination,
+            path: sceneContext.navigationManager.pathBinding(for: 3),
+            appState: appState,
+            selectedTab: $selectedTab
+          )
+        }
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if selectedTab == 3 && appState.ageAccess.allows(.generalContent) {
+          composeOverlay
+        }
+      }
+    }
+    .hidden(horizontalSizeClass != .regular)
+    .accessibilityIdentifier("tab_profile")
+  }
+}
+
+private struct MessagesTab: TabContent {
+  typealias TabValue = Int
+  @Environment(AppState.self) private var appState
+  @Binding var selectedTab: Int
+  @Binding var lastTappedTab: Int?
+
+  var body: some TabContent<Int> {
+    Tab("Messages", systemImage: "envelope", value: 4) {
+      PlatformAgeProtectedContent(operation: .directMessaging, identityKey: "tab_messages_\(appState.userDID)") {
+        ChatTabView(
+          selectedTab: $selectedTab,
+          lastTappedTab: $lastTappedTab
+        )
+        .id(appState.userDID)
+      }
+      .equatable()
+    }
+    .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
+    .accessibilityIdentifier("tab_messages")
+  }
+}
+#endif
+
+private struct NuxAnnouncementSheetModifier: ViewModifier {
+  @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  let showingOnboarding: Bool
+  let showingPostComposer: Bool
+
+  func body(content: Content) -> some View {
+    content
+      .sheet(isPresented: Binding(
+        get: {
+          if showingOnboarding || showingPostComposer || !appState.ageAccess.allows(.generalContent) { return false }
+          return appState.nuxPresenter.activeAnnouncement != nil
+        },
+        set: { if !$0 { appState.nuxPresenter.dismissActiveAnnouncement() } }
+      )) {
+        if let nuxID = appState.nuxPresenter.activeAnnouncement {
+          NuxAnnouncementView(nuxID: nuxID) {
+            appState.nuxPresenter.dismissActiveAnnouncement()
+          }
+          .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
+        }
+      }
   }
 }
 

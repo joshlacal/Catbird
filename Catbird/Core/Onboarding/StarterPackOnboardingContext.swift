@@ -10,13 +10,25 @@ struct StarterPackPendingContext: Codable, Sendable, Equatable {
     let cid: String
     let name: String?
     let creatorDID: String?
+    let listUri: String?
+    let feedUris: [String]?
     
-    init(flowID: UUID = UUID(), uri: String, cid: String, name: String? = nil, creatorDID: String? = nil) {
+    init(
+        flowID: UUID = UUID(),
+        uri: String,
+        cid: String,
+        name: String? = nil,
+        creatorDID: String? = nil,
+        listUri: String? = nil,
+        feedUris: [String]? = nil
+    ) {
         self.flowID = flowID
         self.uri = uri
         self.cid = cid
         self.name = name
         self.creatorDID = creatorDID
+        self.listUri = listUri
+        self.feedUris = feedUris
     }
     
     enum CodingKeys: String, CodingKey {
@@ -25,6 +37,8 @@ struct StarterPackPendingContext: Codable, Sendable, Equatable {
         case cid
         case name
         case creatorDID
+        case listUri
+        case feedUris
     }
     
     init(from decoder: Decoder) throws {
@@ -34,6 +48,8 @@ struct StarterPackPendingContext: Codable, Sendable, Equatable {
         self.cid = try container.decode(String.self, forKey: .cid)
         self.name = try container.decodeIfPresent(String.self, forKey: .name)
         self.creatorDID = try container.decodeIfPresent(String.self, forKey: .creatorDID)
+        self.listUri = try container.decodeIfPresent(String.self, forKey: .listUri)
+        self.feedUris = try container.decodeIfPresent([String].self, forKey: .feedUris)
     }
 }
 
@@ -50,9 +66,11 @@ struct StarterPackFinalizationResult: Sendable, Equatable {
     }
 }
 
-/// Manages pending starter pack onboarding context and post-auth finalization
+/// Manages pending starter pack onboarding context and post-auth finalization.
+/// Main-actor isolated: finalization and the auth observer both change its state.
+@MainActor
 @Observable
-final class StarterPackOnboardingManager: @unchecked Sendable {
+final class StarterPackOnboardingManager {
     static let shared = StarterPackOnboardingManager()
     
     private let logger = Logger(subsystem: "blue.catbird", category: "StarterPackOnboarding")
@@ -61,16 +79,25 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
     
     private(set) var activeFlowID: UUID?
     private(set) var isFinalizing: Bool = false
-    
+    private(set) var activeFinalizationTask: Task<StarterPackFinalizationResult, Error>?
+    private(set) var storedResult: StarterPackFinalizationResult?
+    private(set) var storedError: String?
     var pendingContext: StarterPackPendingContext? {
         didSet {
             saveToStorage()
         }
     }
     
+    @ObservationIgnored private var authObserverTask: Task<Void, Never>?
+    
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         loadFromStorage()
+        startAuthObservation()
+    }
+    
+    deinit {
+        authObserverTask?.cancel()
     }
     
     private func loadFromStorage() {
@@ -110,17 +137,77 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
     func setPendingContext(_ context: StarterPackPendingContext) {
         self.activeFlowID = context.flowID
         self.pendingContext = context
+        resetStoredState()
     }
     
     func clearPendingContext() {
         self.activeFlowID = nil
         self.pendingContext = nil
+        resetStoredState()
+    }
+    
+    func resetStoredState() {
+        self.storedResult = nil
+        self.storedError = nil
+        self.activeFinalizationTask?.cancel()
+        self.activeFinalizationTask = nil
+    }
+    
+    /// Resets the stored result and cancels a running finalization whenever the signed-in
+    /// account changes. `.shared` is often first used after launch has signed in, so the
+    /// observer starts from the account signed in now, not from nil: otherwise the first
+    /// sign-out (nil after nil) would keep the previous account's result and finalization.
+    /// The current state is read and the stream subscribed together on the main actor, where
+    /// AuthenticationManager.updateState runs, so no change falls between them.
+    private func startAuthObservation() {
+        let authentication = AppStateManager.shared.authentication
+        let states = authentication.stateChanges
+        let initialDID = authentication.state.userDID
+        authObserverTask = Task { @MainActor [weak self] in
+            var lastDID = initialDID
+            for await state in states {
+                guard !Task.isCancelled, let self else { return }
+                let currentDID = state.userDID
+                if currentDID != lastDID {
+                    lastDID = currentDID
+                    self.resetStoredState()
+                }
+            }
+        }
     }
     
     /// Finalizes starter pack join post-authentication by bulk following members and pinning feeds.
     /// Idempotent and recoverable: pendingContext is cleared only after every required mutation succeeds.
     @MainActor
     func finalizeStarterPackOnboarding(
+        client: ATProtoClient,
+        appState: AppState,
+        context: StarterPackPendingContext
+    ) async throws -> StarterPackFinalizationResult {
+        // Reuse in-flight finalization task if one is already running for this flow
+        if let existingTask = activeFinalizationTask, activeFlowID == context.flowID {
+            return try await existingTask.value
+        }
+        
+        let task = Task<StarterPackFinalizationResult, Error> { @MainActor in
+            do {
+                let result = try await self.performFinalization(client: client, appState: appState, context: context)
+                self.storedResult = result
+                self.storedError = nil
+                self.activeFinalizationTask = nil
+                return result
+            } catch {
+                self.storedError = error.localizedDescription
+                self.activeFinalizationTask = nil
+                throw error
+            }
+        }
+        self.activeFinalizationTask = task
+        return try await task.value
+    }
+    
+    @MainActor
+    private func performFinalization(
         client: ATProtoClient,
         appState: AppState,
         context: StarterPackPendingContext
@@ -163,56 +250,73 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         
         let strongRef = ComAtprotoRepoStrongRef(uri: starterPackURI, cid: starterPackCID)
         
-        // 1. Fetch starter pack details
-        let getPackParams = AppBskyGraphGetStarterPack.Parameters(starterPack: starterPackURI)
-        let (packCode, packData) = try await client.app.bsky.graph.getStarterPack(input: getPackParams)
-        
-        guard packCode == 200, let packView = packData?.starterPack else {
-            logger.error("Failed to fetch starter pack details: HTTP \(packCode)")
-            throw NSError(
-                domain: "StarterPackOnboarding",
-                code: packCode,
-                userInfo: [NSLocalizedDescriptionKey: "Starter pack unavailable (HTTP \(packCode))"]
-            )
-        }
-        
-        // 2. Fetch all members from backing list (throw on pagination/HTTP failure)
+        // 1 & 2: Fetch members and feed URIs (skip getStarterPack if listUri is already cached)
         var memberItems: [AppBskyGraphDefs.ListItemView] = []
-        if let listUri = packView.list?.uri {
+        var feedURIs: [String] = []
+        
+        if let listUriStr = context.listUri, let listUri = try? ATProtocolURI(uriString: listUriStr) {
             memberItems = try await StarterPackService.shared.fetchAllMembers(
                 client: client,
                 listUri: listUri
             )
+            feedURIs = context.feedUris ?? []
+        } else {
+            let getPackParams = AppBskyGraphGetStarterPack.Parameters(starterPack: starterPackURI)
+            let (packCode, packData) = try await client.app.bsky.graph.getStarterPack(input: getPackParams)
+            
+            guard packCode == 200, let packView = packData?.starterPack else {
+                logger.error("Failed to fetch starter pack details: HTTP \(packCode)")
+                throw NSError(
+                    domain: "StarterPackOnboarding",
+                    code: packCode,
+                    userInfo: [NSLocalizedDescriptionKey: "Starter pack unavailable (HTTP \(packCode))"]
+                )
+            }
+            
+            if let listUri = packView.list?.uri {
+                memberItems = try await StarterPackService.shared.fetchAllMembers(
+                    client: client,
+                    listUri: listUri
+                )
+            }
+            feedURIs = packView.feeds?.map { $0.uri.uriString() } ?? []
         }
         
-        // 3. Bulk follow members with via strong reference using StarterPackService (idempotent)
-        var followedCount = 0
-        if !memberItems.isEmpty {
-            followedCount = try await StarterPackService.shared.followAll(
-                client: client,
-                members: memberItems,
-                starterPack: packView,
-                currentAccountDID: appState.userDID
-            )
-        }
-        
-        // 4. Pin feeds from the pack
-        var pinnedFeedsCount = 0
-        if let feeds = packView.feeds, !feeds.isEmpty {
+        // 3. Overlap preference pin sync (not a repo write) with bulk follow repo operations
+        async let pinFeedsTask: Int = {
+            guard !feedURIs.isEmpty else { return 0 }
             let prefs = try await appState.preferencesManager.getPreferences()
             var currentPinned = prefs.pinnedFeeds
-            for feed in feeds {
-                let feedURI = feed.uri.uriString()
+            var addedCount = 0
+            for feedURI in feedURIs {
                 if !currentPinned.contains(feedURI) {
                     currentPinned.append(feedURI)
-                    pinnedFeedsCount += 1
+                    addedCount += 1
                 }
             }
-            if pinnedFeedsCount > 0 {
+            if addedCount > 0 {
                 try await appState.preferencesManager.setPinnedFeeds(currentPinned)
             }
-        }
+            return addedCount
+        }()
         
+        // 4. Bulk follow members with via strong reference using StarterPackService (idempotent)
+        var followedCount = 0
+        if !memberItems.isEmpty {
+            let eligible = StarterPackService.shared.filterEligibleMembers(
+                memberItems,
+                currentAccountDID: appState.userDID
+            )
+            let dids = eligible.map { $0.subject.did }
+            if !dids.isEmpty {
+                followedCount = try await StarterPackService.shared.bulkFollow(
+                    client: client,
+                    dids: dids,
+                    via: strongRef,
+                    accountDID: appState.userDID
+                )
+            }
+        }
         // 5. Update profile with joinedViaStarterPack
         var updatedProfile = false
         let getRecordParams = ComAtprotoRepoGetRecord.Parameters(
@@ -224,7 +328,10 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         
         if getRecordCode == 200, let existingRecord = getRecordOutput,
            let profile = existingRecord.value.decoded(AppBskyActorProfile.self) {
-            if profile.joinedViaStarterPack == nil {
+            // Attribution is public, so only stamp profiles created in this sign-up, never
+            // an existing account that signed in from a starter pack link.
+            let isNewProfile = profile.createdAt.map { Date().timeIntervalSince($0.date) < 24 * 60 * 60 } ?? false
+            if profile.joinedViaStarterPack == nil, isNewProfile {
                 let updated = AppBskyActorProfile(
                     displayName: profile.displayName,
                     description: profile.description,
@@ -294,9 +401,11 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
             )
         }
         
-        // 6. Clear pending context ONLY after every required step has succeeded
-        clearPendingContext()
+        // 6. Wait for feed pinning before clearing pending context
+        let pinnedFeedsCount = try await pinFeedsTask
         
+        // 7. Clear pending context ONLY after every required step has succeeded
+        clearPendingContext()
         logger.info("Starter pack onboarding finalization completed: followed \(followedCount) members, pinned \(pinnedFeedsCount) feeds")
         return StarterPackFinalizationResult(
             followedCount: followedCount,

@@ -334,7 +334,11 @@ enum MessagesSchemaRuntime {
   static func personEntity(
     from member: MLSMemberModel, directory: ChatDirectory
   ) -> CatbirdMessagesPersonEntity {
-    CatbirdMessagesPersonEntity(id: member.did, displayName: directory.name(for: member))
+    CatbirdMessagesPersonEntity(
+      id: member.did,
+      displayName: directory.name(for: member),
+      handle: directory.handle(for: member)
+    )
   }
 
   static func conversationEntity(

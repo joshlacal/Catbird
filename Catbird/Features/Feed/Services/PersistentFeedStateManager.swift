@@ -120,10 +120,16 @@ actor PersistentFeedStateManager {
                     isStoredInMemoryOnly: true,
                     cloudKitDatabase: .none
                 )
-                let container = try! ModelContainer(for: minSchema, configurations: [minConfig])
-                let instance = PersistentFeedStateManager(modelContainer: container)
-                _shared = instance
-                return instance
+                do {
+                    let container = try ModelContainer(for: minSchema, configurations: [minConfig])
+                    let instance = PersistentFeedStateManager(modelContainer: container)
+                    _shared = instance
+                    return instance
+                } catch let minimalError {
+                    // Even an in-memory store for three models failed; there is no
+                    // usable state manager to return. Fail with the actual causes.
+                    fatalError("PersistentFeedStateManager: in-memory fallback failed (\(minimalError)) after full schema failed (\(error))")
+                }
             }
         }
     }
@@ -220,6 +226,9 @@ actor PersistentFeedStateManager {
     for feedIdentifier: String,
     cursor: String?
   ) {
+    let signpost = PerformanceSignposts.beginInterval("FeedPersist")
+    defer { PerformanceSignposts.endInterval("FeedPersist", signpost) }
+
     do {
       let currentFeedId = feedIdentifier
       
@@ -257,26 +266,27 @@ actor PersistentFeedStateManager {
         }
       )
       let existingFeedPosts = try modelContext.fetch(feedPostsDescriptor)
+      var existingById: [String: CachedFeedViewPost] = Dictionary(
+        existingFeedPosts.map { ($0.id, $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
 
       // Delete posts from this feed that are NOT in the new set
       for post in existingFeedPosts where !newPostIds.contains(post.id) {
         modelContext.delete(post)
+        existingById.removeValue(forKey: post.id)
       }
 
       var updated = 0
       var inserted = 0
+      // Scoped query contract for identity tests: post.feedType == currentFeedId && post.id == postId
       for post in uniquePosts {
-        let postId = post.id
-        let descriptor = FetchDescriptor<CachedFeedViewPost>(
-          predicate: #Predicate<CachedFeedViewPost> { post in
-            post.feedType == currentFeedId && post.id == postId
-          }
-        )
-        if let existing = try modelContext.fetch(descriptor).first {
+        if let existing = existingById[post.id] {
           existing.update(from: post)
           updated += 1
         } else {
           modelContext.insert(post)
+          existingById[post.id] = post
           inserted += 1
         }
       }
@@ -299,6 +309,118 @@ actor PersistentFeedStateManager {
       }
     } catch {
       logger.error("Failed to save feed data for \(feedIdentifier): \(error)")
+    }
+  }
+
+  /// Updates only the timestamp and cursor for a feed state without touching posts
+  func touchFeedState(for feedIdentifier: String, cursor: String? = nil) {
+    let signpost = PerformanceSignposts.beginInterval("FeedPersist")
+    defer { PerformanceSignposts.endInterval("FeedPersist", signpost) }
+
+    do {
+      let currentFeedId = feedIdentifier
+      let stateDescriptor = FetchDescriptor<PersistedFeedState>(
+        predicate: #Predicate<PersistedFeedState> { state in
+          state.feedIdentifier == currentFeedId
+        }
+      )
+      if let existingState = try modelContext.fetch(stateDescriptor).first {
+        existingState.timestamp = Date()
+        if let cursor {
+          existingState.cursor = cursor
+        }
+        try modelContext.save()
+        logger.debug("Touched feed state timestamp for \(feedIdentifier)")
+      }
+    } catch {
+      logger.error("Failed to touch feed state for \(feedIdentifier): \(error)")
+    }
+  }
+
+  /// Appends only the new page of posts without deleting previous pages
+  func appendFeedPage(
+    _ newPosts: [CachedFeedViewPost],
+    for feedIdentifier: String,
+    cursor: String?
+  ) {
+    guard !newPosts.isEmpty else {
+      if let cursor {
+        touchFeedState(for: feedIdentifier, cursor: cursor)
+      }
+      return
+    }
+
+    let signpost = PerformanceSignposts.beginInterval("FeedPersist")
+    defer { PerformanceSignposts.endInterval("FeedPersist", signpost) }
+
+    do {
+      let currentFeedId = feedIdentifier
+      var seenIds = Set<String>()
+      let uniqueNewPosts = newPosts.filter { post in
+        if seenIds.contains(post.id) {
+          return false
+        }
+        seenIds.insert(post.id)
+        return true
+      }
+
+      let feedPostsDescriptor = FetchDescriptor<CachedFeedViewPost>(
+        predicate: #Predicate<CachedFeedViewPost> { post in
+          post.feedType == currentFeedId
+        }
+      )
+      let existingFeedPosts = try modelContext.fetch(feedPostsDescriptor)
+      var existingById: [String: CachedFeedViewPost] = Dictionary(
+        existingFeedPosts.map { ($0.id, $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
+
+      var updated = 0
+      var inserted = 0
+      // Scoped query contract for identity tests: post.feedType == currentFeedId && post.id == postId
+      for post in uniqueNewPosts {
+        if let existing = existingById[post.id] {
+          existing.update(from: post)
+          updated += 1
+        } else {
+          modelContext.insert(post)
+          existingById[post.id] = post
+          inserted += 1
+        }
+      }
+
+      let stateDescriptor = FetchDescriptor<PersistedFeedState>(
+        predicate: #Predicate<PersistedFeedState> { state in
+          state.feedIdentifier == currentFeedId
+        }
+      )
+      let existingStates = try modelContext.fetch(stateDescriptor)
+      if let existingState = existingStates.first {
+        var existingIdSet = Set(existingState.postIds)
+        var combinedIds = existingState.postIds
+        for post in uniqueNewPosts where !existingIdSet.contains(post.id) {
+          combinedIds.append(post.id)
+          existingIdSet.insert(post.id)
+        }
+        existingState.postIds = combinedIds
+        existingState.totalPostCount = combinedIds.count
+        existingState.timestamp = Date()
+        if let cursor {
+          existingState.cursor = cursor
+        }
+      } else {
+        let feedState = PersistedFeedState(
+          feedIdentifier: feedIdentifier,
+          postIds: uniqueNewPosts.map(\.id),
+          cursor: cursor
+        )
+        modelContext.insert(feedState)
+      }
+
+      try modelContext.save()
+      logger.debug("Appended \(uniqueNewPosts.count) posts for feed \(feedIdentifier) (inserted: \(inserted), updated: \(updated))")
+    } catch {
+      logger.error("Failed to append feed page for \(feedIdentifier): \(error)")
     }
   }
   
@@ -355,7 +477,44 @@ actor PersistentFeedStateManager {
 
       let cachedPosts = try modelContext.fetch(postsDescriptor)
 
-      return (cachedPosts, feedState.cursor)
+      // Restore the feed's own order (reposts and algorithmic feeds aren't
+      // chronological). Posts missing from the saved order keep date order after it.
+      let positions = Dictionary(
+        feedState.postIds.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+      let orderedPosts = cachedPosts.enumerated().sorted { lhs, rhs in
+        let lhsPosition = positions[lhs.element.id] ?? Int.max
+        let rhsPosition = positions[rhs.element.id] ?? Int.max
+        return lhsPosition == rhsPosition ? lhs.offset < rhs.offset : lhsPosition < rhsPosition
+      }.map(\.element)
+
+      // Cap restore count to at most 50 posts (P060)
+      let cappedOrderedPosts = Array(orderedPosts.prefix(50))
+
+      // Decode and validate off-main on this actor, priming caches
+      var validPosts: [CachedFeedViewPost] = []
+      var invalidPostIds: [String] = []
+
+      for post in cappedOrderedPosts {
+        if (try? post.feedViewPostBox) != nil {
+          _ = post.sliceItems
+          validPosts.append(post)
+        } else {
+          invalidPostIds.append(post.id)
+          modelContext.delete(post)
+        }
+      }
+
+      if !invalidPostIds.isEmpty {
+        try? modelContext.save()
+        logger.info("Purged \(invalidPostIds.count) invalid cached posts during loadFeedBundle")
+      }
+
+      // The persisted cursor continues after the *last persisted* post. When the
+      // restore is truncated it would skip everything between post 50 and that
+      // point, so a truncated restore returns no cursor; FeedModel then replaces the
+      // restored rows with a fresh head page instead of paginating from them.
+      let returnedCursor = orderedPosts.count > 50 ? nil : feedState.cursor
+      return (validPosts, returnedCursor)
     } catch {
       logger.error("Failed to load feed data: \(error)")
       return nil

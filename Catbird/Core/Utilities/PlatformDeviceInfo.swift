@@ -74,26 +74,10 @@ public struct PlatformDeviceInfo {
   }
   
   // MARK: - Device Type Detection
-  
-  /// Whether the current device is an iPhone
-  public static var isPhone: Bool {
-    return userInterfaceIdiom == .phone
-  }
-  
-  /// Whether the current device is an iPhone (alias for isPhone)
-  public static var isIPhone: Bool {
-    return isPhone
-  }
-  
-  /// Whether the current device is an iPad
-  public static var isPad: Bool {
-    return userInterfaceIdiom == .pad
-  }
-  
-  /// Whether the current device is an iPad (alias for isPad)
-  public static var isIPad: Bool {
-    return isPad
-  }
+  //
+  // There is deliberately no `isPhone` / `isPad`. Choosing a layout from the
+  // device class breaks when a scene resizes (iPad Split View, iPhone Mirroring,
+  // an iPhone Duo folding or unfolding); read the horizontal size class instead.
   
   /// Whether the current device is a Mac
   public static var isMac: Bool {
@@ -117,15 +101,10 @@ public struct PlatformDeviceInfo {
   
   // MARK: - Screen Size Helpers
   
+  #if os(macOS)
   /// Current screen bounds
   public static var screenBounds: CGRect {
-    #if os(iOS)
-      return UIScreen.main.bounds
-    #elseif os(macOS)
     return NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
-    #else
-    return .zero
-    #endif
   }
   
   /// Current screen size
@@ -145,13 +124,7 @@ public struct PlatformDeviceInfo {
   
   /// Display scale factor
   public static var screenScale: CGFloat {
-    #if os(iOS)
-      return UIScreen.main.scale
-    #elseif os(macOS)
     return NSScreen.main?.backingScaleFactor ?? 2.0
-    #else
-    return 1.0
-    #endif
   }
   
   /// Whether the screen is in landscape orientation
@@ -169,6 +142,7 @@ public struct PlatformDeviceInfo {
     let minDimension = min(screenWidth, screenHeight)
     return minDimension >= 768
   }
+  #endif
   
   // MARK: - Battery Monitoring
   
@@ -272,7 +246,7 @@ public struct PlatformDeviceInfo {
   /// Whether the device has haptic feedback capability
   public static var hasHapticFeedback: Bool {
     #if os(iOS)
-    return isPhone || isPad // iPhone and iPad support haptics
+    return userInterfaceIdiom == .phone || userInterfaceIdiom == .pad // iPhone and iPad support haptics
     #elseif os(macOS)
     return false // macOS doesn't have haptic feedback
     #else
@@ -283,7 +257,7 @@ public struct PlatformDeviceInfo {
   /// Whether the device supports multiple windows
   public static var supportsMultipleWindows: Bool {
     #if os(iOS)
-    return isPad || isMac // iPad and Catalyst apps support multiple windows
+    return userInterfaceIdiom == .pad || isMac // iPad and Catalyst apps support multiple windows
     #elseif os(macOS) 
     return true // macOS natively supports multiple windows
     #else
@@ -294,7 +268,7 @@ public struct PlatformDeviceInfo {
   /// Whether the device supports external displays
   public static var supportsExternalDisplay: Bool {
     #if os(iOS)
-    return isPad // iPad can connect to external displays
+    return userInterfaceIdiom == .pad // iPad can connect to external displays
     #elseif os(macOS)
     return true // macOS supports external displays
     #else
@@ -335,11 +309,11 @@ public struct PlatformDeviceInfo {
   public static var deviceDescription: String {
     let model = deviceModel
     let version = systemVersion
-    let screen = "\(Int(screenWidth))x\(Int(screenHeight))"
     
     #if os(iOS)
-    return "\(model) (iOS \(version)) - \(screen)@\(screenScale)x"
+    return "\(model) (iOS \(version))"
     #elseif os(macOS)
+    let screen = "\(Int(screenWidth))x\(Int(screenHeight))"
     return "\(model) (macOS \(version)) - \(screen)@\(screenScale)x"
     #else
     return "Unknown Device"
@@ -361,26 +335,10 @@ extension PlatformDeviceInfo {
     return userInterfaceIdiom.supportsTouchInput
   }
   
+  #if os(macOS)
   /// Get a pixel-perfect value rounded to the display scale
   public static func pixelPerfect(_ value: CGFloat) -> CGFloat {
     return round(value * screenScale) / screenScale
   }
-  
-  /// Check if device supports advanced features based on capabilities
-  public static var supportsAdvancedFeatures: Bool {
-    if isMac {
-      return true // macOS generally supports advanced features
-    } else if isPad {
-      return true // iPad generally supports advanced features
-    } else if isPhone {
-      // Check for ProMotion or newer devices
-      #if os(iOS)
-        return (UIScreen.main.maximumFramesPerSecond) > 60
-      #else
-      return false
-      #endif
-    } else {
-      return false
-    }
-  }
+  #endif
 }

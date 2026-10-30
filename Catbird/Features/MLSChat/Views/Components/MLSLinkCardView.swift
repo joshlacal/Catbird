@@ -7,6 +7,7 @@ struct MLSLinkCardView: View {
   let linkEmbed: MLSLinkEmbed
 
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
@@ -29,7 +30,7 @@ struct MLSLinkCardView: View {
     )
     .onTapGesture {
       if let url = URL(string: linkEmbed.url) {
-        _ = appState.urlHandler.handle(url)
+        _ = sceneContext.urlHandler.handle(url)
       }
     }
   }

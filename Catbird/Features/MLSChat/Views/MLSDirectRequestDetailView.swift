@@ -85,6 +85,7 @@ struct MLSRequestConversationGate<Ordinary: View>: View {
 
 struct MLSDirectRequestDetailView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let request: DirectRequestView
   var onAccepted: ((String) -> Void)? = nil
   let onChange: (DirectRequestView) -> Void
@@ -106,7 +107,7 @@ struct MLSDirectRequestDetailView: View {
       onRefresh: { Task { await act(.refresh) } },
       onOpenInvitation: { reference in
         guard reference.recipientDid == appState.userDID || reference.invitedByDid == appState.userDID else { return }
-        appState.navigationManager.targetMLSConversationId = reference.conversationId
+        appState.navigateToMLSConversation(reference.conversationId, preferredSceneID: sceneContext.sceneID)
       }
     )
     .navigationTitle("Message Request")

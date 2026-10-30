@@ -150,7 +150,7 @@ final class LiveEventService {
     }
 
     var activeEvents: [LiveEventFeed] {
-        guard !hideAllFeeds else { return [] }
+        guard CatbirdFeatures.live, !hideAllFeeds else { return [] }
 
         let mutedWords = (try? appState?.preferencesManager.getLocalPreferences())?.mutedWords.map { $0.value.lowercased() } ?? []
         return rawFeeds.filter { feed in
@@ -173,6 +173,7 @@ final class LiveEventService {
     }
 
     func fetchLiveEvents(force: Bool = false) async {
+        guard CatbirdFeatures.live else { return }
         if !force, let last = lastFetchDate, Date().timeIntervalSince(last) < 300 {
             logger.debug("Skipping fetch; cooldown active")
             return

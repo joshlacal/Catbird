@@ -14,30 +14,40 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   private let chatManager: ChatManager
   private let convoID: String
   private let currentUserDID: String
-  @ObservationIgnored private nonisolated(unsafe) var chatObservationTask: Task<Void, Never>?
+  private weak var appState: AppState?
 
   private(set) var messages: [BlueskyMessageAdapter] = []
-  private(set) var isLoading: Bool = false
+  var messageLoadState: ChatManager.MessageLoadState {
+    chatManager.messageLoadStates[convoID] ?? .idle
+  }
+  var isLoading: Bool { messageLoadState == .loading }
   private(set) var hasMoreMessages: Bool = true
   private(set) var error: Error?
   private(set) var expandedSystemGroupIDs: Set<String> = []
   private var hasReceivedInitialMessages: Bool = false
 
-  var draftText: String = ""
+  /// Whether this is a group chat, which shows sender names above messages.
+  var isGroupConversation: Bool {
+    chatManager.conversations.first { $0.id == convoID }?.isGroupConversation ?? false
+  }
+
+  let draft = MessageDraft(BlueskyConversationDraft())
+  var draftText: String {
+    get { draft.value.text }
+    set { draft.value.text = newValue }
+  }
   // MARK: - Init
 
-  init(chatManager: ChatManager, convoID: String, currentUserDID: String) {
+  init(chatManager: ChatManager, convoID: String, currentUserDID: String, appState: AppState? = nil) {
     self.chatManager = chatManager
     self.convoID = convoID
     self.currentUserDID = currentUserDID
+    self.appState = appState
+    updateMessagesFromManager()
+    hasReceivedInitialMessages = false
     startObservingChatManager()
   }
   
-  deinit {
-    chatObservationTask?.cancel()
-    chatObservationTask = nil
-  }
-
   // MARK: - UnifiedChatDataSource
 
   func message(for id: String) -> BlueskyMessageAdapter? {
@@ -46,21 +56,18 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
 
   func loadMessages() async {
     guard !isLoading else { return }
-    isLoading = true
     error = nil
 
+    // The transcript owns load-error presentation; polling and Retry share this state.
     await chatManager.loadMessages(convoId: convoID, refresh: true)
     updateMessagesFromManager()
-    isLoading = false
   }
 
   func loadMoreMessages() async {
     guard !isLoading, hasMoreMessages else { return }
-    isLoading = true
 
     await chatManager.loadMessages(convoId: convoID, refresh: false)
     updateMessagesFromManager()
-    isLoading = false
   }
 
   func sendMessage(text: String) async {
@@ -74,7 +81,39 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   ) async -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty || embed != nil else { return false }
+    // Explicit payloads do not own the editor draft, even when their text matches.
+    return await transmitMessage(text: text, embed: embed, replyTo: replyTo)
+  }
 
+  func submitDraft() {
+    draft.submitSend { value in
+      await self.transmitDraft(value)
+    }
+  }
+
+  func sendDraft(_ submission: MessageDraft<BlueskyConversationDraft>.Submission) async {
+    let success = await transmitDraft(submission.value)
+    draft.finishSend(submission, succeeded: success)
+  }
+
+  private func transmitDraft(_ value: BlueskyConversationDraft) async -> Bool {
+    let embed: ChatBskyConvoDefs.MessageInputEmbedUnion?
+    if value.attachedEmbed != nil, let postRef = value.postRef {
+      embed = .appBskyEmbedRecord(AppBskyEmbedRecord(record: postRef))
+    } else {
+      embed = nil
+    }
+    let reply = value.replyTarget.map { ChatBskyConvoDefs.ReplyRef(messageId: $0.id) }
+    return await transmitMessage(text: value.text, embed: embed, replyTo: reply)
+  }
+
+  private func transmitMessage(
+    text: String,
+    embed: ChatBskyConvoDefs.MessageInputEmbedUnion?,
+    replyTo: ChatBskyConvoDefs.ReplyRef?
+  ) async -> Bool {
+    guard !Task.isCancelled else { return false }
+    error = nil
     let success = await chatManager.sendMessage(
       convoId: convoID,
       text: text,
@@ -82,14 +121,11 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       replyTo: replyTo
     )
     if success {
-      draftText = ""
-      // Refresh to get the sent message
       await loadMessages()
-      return true
-    } else {
+    } else if !Task.isCancelled {
       self.error = NSError(domain: "ChatError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to send message"])
-      return false
     }
+    return success
   }
 
   func toggleSystemGroup(groupID: String) {
@@ -127,6 +163,23 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
 
   // MARK: - Private
 
+  /// The shared posts getMessages returned fully hydrated
+  /// (`app.bsky.embed.record#view` holding a `#viewRecord`), keyed by post URI.
+  /// They seed ChatRecordEmbedStore so a shared post renders its card on the
+  /// first layout without a getPosts call. Posts the server could not hydrate
+  /// (not found, blocked, detached) are left out.
+  nonisolated static func hydratedSharedPosts<Messages: Sequence>(
+    in messages: Messages
+  ) -> [(uri: String, record: ChatRecordEmbedStore.Record)]
+  where Messages.Element == ChatBskyConvoDefs.MessageView {
+    messages.compactMap { messageView in
+      guard case .appBskyEmbedRecordView(let recordView)? = messageView.embed,
+        case .appBskyEmbedRecordViewRecord(let record) = recordView.record
+      else { return nil }
+      return (record.uri.uriString(), recordView.record)
+    }
+  }
+
   private func updateMessagesFromManager() {
     let existingIDs = Set(messages.map { $0.id })
     let maxExistingTimestamp = messages.map { $0.sentAt }.max() ?? .distantPast
@@ -136,6 +189,13 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     let systemMessages = chatManager.systemMessagesMap[convoID] ?? [:]
     let relatedProfiles = chatManager.relatedProfilesMap[convoID] ?? [:]
 
+
+    // Seed ChatRecordEmbedStore from hydrated record embeds in getMessages (P135)
+    if let state = appState ?? AppStateManager.shared.lifecycle.appState {
+      for shared in Self.hydratedSharedPosts(in: originalMessages.values) {
+        ChatRecordEmbedStore.shared.seed(shared.record, uri: shared.uri, appState: state)
+      }
+    }
     // Get member profiles from the conversation
     let conversation = chatManager.conversations.first { $0.id == convoID }
     let memberProfiles: [String: ChatBskyActorDefs.ProfileViewBasic] = {
@@ -210,21 +270,17 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   }
   
   private func startObservingChatManager() {
-    chatObservationTask?.cancel()
-    chatObservationTask = Task { @MainActor [weak self] in
-      guard let self else { return }
-      withObservationTracking {
-        _ = chatManager.originalMessagesMap[convoID]
-        _ = chatManager.systemMessagesMap[convoID]
-        _ = chatManager.relatedProfilesMap[convoID]
-        _ = chatManager.conversations
-        _ = chatManager.hasMoreMessages(for: convoID)
-      } onChange: {
-        Task { @MainActor [weak self] in
-          guard let self else { return }
-          self.updateMessagesFromManager()
-          self.startObservingChatManager()
-        }
+    withObservationTracking {
+      _ = chatManager.conversationRevision(for: convoID)
+      _ = chatManager.originalMessagesMap[convoID]
+      _ = chatManager.systemMessagesMap[convoID]
+      _ = chatManager.relatedProfilesMap[convoID]
+      _ = chatManager.hasMoreMessages(for: convoID)
+    } onChange: { [weak self] in
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+        self.updateMessagesFromManager()
+        self.startObservingChatManager()
       }
     }
   }

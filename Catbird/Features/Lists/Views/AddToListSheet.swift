@@ -3,6 +3,7 @@ import Petrel
 import OSLog
 import NukeUI
 
+@MainActor
 @Observable
 final class AddToListSheetViewModel {
   // MARK: - Properties
@@ -14,6 +15,7 @@ final class AddToListSheetViewModel {
   // Data
   var userLists: [AppBskyGraphDefs.ListView] = []
   var membershipStatus: [String: Bool] = [:] // listURI -> isMember
+  private var membershipItemURIs: [String: ATProtocolURI] = [:] // listURI -> listItemURI
   
   // State
   var isLoading = false
@@ -47,29 +49,91 @@ final class AddToListSheetViewModel {
     errorMessage = nil
     
     do {
-      // Load user's lists
-      userLists = try await appState.listManager.loadUserLists()
-      
-      // Check membership status for each list
-      for list in userLists {
-        let isMember = try await appState.listManager.isUserMember(
-          userDID: userDID,
-          of: list.uri.description
-        )
-        membershipStatus[list.uri.description] = isMember
+      guard let client = appState.atProtoClient else {
+        throw ListError.clientNotInitialized
       }
       
-        logger.info("Loaded \(self.userLists.count) lists for add-to-list sheet")
+      let actorIdentifier = try ATIdentifier(string: userDID)
+      var cursor: String? = nil
+      var seenCursors = Set<String>()
       
+      repeat {
+        // No `purposes`: the AppView already defaults to curate and mod lists.
+        let input = AppBskyGraphGetListsWithMembership.Parameters(
+          actor: actorIdentifier,
+          limit: 100,
+          cursor: cursor
+        )
+        
+        let (responseCode, output) = try await client.app.bsky.graph.getListsWithMembership(input: input)
+        guard responseCode == 200, let data = output else {
+          throw ListError.invalidResponse
+        }
+        
+        // Append rather than replace, so a list created from this sheet while
+        // later pages load (inserted in front by `syncCreatedLists`) stays, and a
+        // list already shown keeps the membership the user may have toggled.
+        var known = Set(userLists.map { $0.uri.description })
+        var pageLists: [AppBskyGraphDefs.ListView] = []
+        for item in data.listsWithMembership {
+          // Exclude reference lists (used in starter packs)
+          guard item.list.purpose != .appbskygraphdefsreferencelist else { continue }
+          let listURI = item.list.uri.description
+          guard known.insert(listURI).inserted else { continue }
+          pageLists.append(item.list)
+          membershipStatus[listURI] = (item.listItem != nil)
+          if let itemURI = item.listItem?.uri {
+            membershipItemURIs[listURI] = itemURI
+          }
+        }
+        
+        // Progressively fill membership and lists
+        userLists.append(contentsOf: pageLists)
+        
+        if isLoading && !userLists.isEmpty {
+          // Dismiss the spinner as soon as there is a list to show; an empty
+          // first page shouldn't flash the "no lists" state while more load.
+          isLoading = false
+        }
+        
+        // Keep paging through empty pages: the AppView filters list purposes
+        // after paging, so a page can be empty and still have a cursor. Stop on
+        // a missing cursor, or one already seen, so a repeating server can't
+        // loop forever.
+        guard let next = data.cursor, !next.isEmpty, seenCursors.insert(next).inserted else { break }
+        cursor = next
+      } while true
+      
+      logger.info("Loaded \(self.userLists.count) lists for add-to-list sheet")
     } catch {
-      logger.error("Failed to load lists: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
-      showingError = true
+      // Closing the sheet cancels the load; that isn't a failure to report.
+      if !Self.isCancellation(error) {
+        logger.error("Failed to load lists: \(error.localizedDescription)")
+        errorMessage = error.localizedDescription
+        showingError = true
+      }
     }
     
     isLoading = false
   }
   
+  private static func isCancellation(_ error: Error) -> Bool {
+    Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
+  }
+  
+  /// Picks up lists created from this sheet, which `ListManager` adds to its cache.
+  @MainActor
+  func syncCreatedLists() {
+    let known = Set(userLists.map { $0.uri.description })
+    let created = appState.listManager.userLists.filter {
+      $0.purpose != .appbskygraphdefsreferencelist && !known.contains($0.uri.description)
+    }
+    for list in created {
+      membershipStatus[list.uri.description] = false
+    }
+    userLists.insert(contentsOf: created, at: 0)
+  }
+
   // MARK: - List Operations
   
   @MainActor
@@ -84,13 +148,18 @@ final class AddToListSheetViewModel {
     do {
       if currentlyMember {
         // Remove from list
-        try await appState.listManager.removeMember(userDID: userDID, from: listURI)
+        let itemURI = membershipItemURIs[listURI]
+        try await appState.listManager.removeMember(userDID: userDID, from: listURI, listItemURI: itemURI)
         membershipStatus[listURI] = false
+        membershipItemURIs.removeValue(forKey: listURI)
         logger.info("Removed user from list: \(listURI)")
       } else {
         // Add to list
-        try await appState.listManager.addMember(userDID: userDID, to: listURI)
+        let createdURI = try await appState.listManager.addMember(userDID: userDID, to: listURI, skipDuplicateCheck: true)
         membershipStatus[listURI] = true
+        if let createdURI {
+          membershipItemURIs[listURI] = createdURI
+        }
         logger.info("Added user to list: \(listURI)")
       }
       
@@ -147,7 +216,7 @@ struct AddToListSheet: View {
               }
             }
           }
-          .alert("Error", isPresented: Binding(
+          .alert("Couldn’t Update List", isPresented: Binding(
             get: { viewModel.showingError },
             set: { viewModel.showingError = $0 }
           )) {
@@ -162,16 +231,22 @@ struct AddToListSheet: View {
           .sheet(isPresented: Binding(
             get: { viewModel.showingCreateList },
             set: { viewModel.showingCreateList = $0 }
-          )) {
+          ), onDismiss: {
+            viewModel.syncCreatedLists()
+          }) {
             CreateListView()
           }
       } else {
         ProgressView()
-          .task {
-            viewModel = AddToListSheetViewModel(userDID: userDID, appState: appState)
-            await viewModel?.loadData()
-          }
       }
+    }
+    // On the stack, not the placeholder ProgressView: setting `viewModel`
+    // removes that view, and SwiftUI would cancel its task mid-request.
+    .task {
+      guard viewModel == nil else { return }
+      let model = AddToListSheetViewModel(userDID: userDID, appState: appState)
+      viewModel = model
+      await model.loadData()
     }
   }
   
@@ -190,7 +265,7 @@ struct AddToListSheet: View {
     VStack(spacing: 16) {
       ProgressView()
         .scaleEffect(1.5)
-      Text("Loading your lists...")
+      Text("Loading your lists…")
         .font(.headline)
         .foregroundStyle(.secondary)
     }
@@ -208,7 +283,7 @@ struct AddToListSheet: View {
           .font(.title2)
           .fontWeight(.semibold)
         
-        Text("Create your first list to organize and curate accounts")
+        Text("Create your first list to organize and curate accounts.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -320,7 +395,7 @@ struct ListSelectionRow: View {
             .lineLimit(2)
         }
         
-        Text("\(list.listItemCount ?? 0) members")
+        Text(MemberCountFormatter.format(count: list.listItemCount ?? 0))
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -341,6 +416,7 @@ struct ListSelectionRow: View {
       }
       .buttonStyle(.plain)
       .disabled(isOperationInProgress)
+      .accessibilityLabel(isMember ? "Remove from \(list.name)" : "Add to \(list.name)")
     }
     .contentShape(Rectangle())
     .onTapGesture {

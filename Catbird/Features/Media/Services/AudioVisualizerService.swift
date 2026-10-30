@@ -564,35 +564,74 @@ final class AudioVisualizerService {
 
               // Generate frame on-demand to minimize memory usage
               do {
-                let frameImage = try self.renderMemoryEfficientFrameSync(
-                  currentTime: currentTime,
-                  duration: duration,
-                  waveformPoints: waveformPoints,
-                  username: username,
-                  accentColor: accentColor,
-                  videoSize: videoSize
-                )
+                // Draw directly into pooled CVPixelBuffer at 1x (P091)
+                guard let pixelBufferPool = pixelBufferAdaptor.pixelBufferPool else {
+                  self.logger.debug("Failed to get pixel buffer pool for frame \(currentFrameIndex)")
+                  currentFrameIndex += 1
+                  return
+                }
 
-                // Convert to pixel buffer using pool
-                guard let pixelBuffer = self.createPooledPixelBuffer(from: frameImage, adaptor: pixelBufferAdaptor) else {
+                var pixelBuffer: CVPixelBuffer?
+                let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pixelBufferPool, &pixelBuffer)
+                guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
                   self.logger.debug("Failed to create pixel buffer for frame \(currentFrameIndex)")
                   currentFrameIndex += 1
                   return
                 }
 
+                CVPixelBufferLockBaseAddress(buffer, [])
+                if let baseAddress = CVPixelBufferGetBaseAddress(buffer) {
+                  let width = CVPixelBufferGetWidth(buffer)
+                  let height = CVPixelBufferGetHeight(buffer)
+                  let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+                  let colorSpace = CGColorSpaceCreateDeviceRGB()
+                  if let context = CGContext(
+                    data: baseAddress,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: bytesPerRow,
+                    space: colorSpace,
+                    bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                  ) {
+                    #if os(iOS)
+                    context.translateBy(x: 0, y: CGFloat(height))
+                    context.scaleBy(x: 1, y: -1)
+                    UIGraphicsPushContext(context)
+                    #endif
+
+                    self.renderMemoryEfficientFrameContent(
+                      context: context,
+                      currentTime: currentTime,
+                      duration: duration,
+                      waveformPoints: waveformPoints,
+                      username: username,
+                      accentColor: accentColor,
+                      videoSize: videoSize
+                    )
+
+                    #if os(iOS)
+                    UIGraphicsPopContext()
+                    #endif
+                  }
+                }
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+
                 // Append the frame
-                let success = pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime)
+                let success = pixelBufferAdaptor.append(buffer, withPresentationTime: presentationTime)
                 if !success {
                   self.logger.debug("Failed to append frame \(currentFrameIndex)")
                 }
 
                 currentFrameIndex += 1
 
-                // Update progress on main
-                DispatchQueue.main.async {
-                  self.progress += frameProgressIncrement
+                // Throttle progress updates to main to every 15 frames or at the end (P091)
+                if currentFrameIndex % 15 == 0 || currentFrameIndex == totalFrames {
+                  let progressFraction = Double(currentFrameIndex) / Double(totalFrames)
+                  DispatchQueue.main.async {
+                    self.progress = progressFraction
+                  }
                 }
-
                 if currentFrameIndex % 30 == 0 {
                   self.logger.debug("Encoded frame \(currentFrameIndex)/\(totalFrames)")
                 }
@@ -1755,8 +1794,10 @@ final class AudioVisualizerService {
   // MARK: - Utility Methods
   
   private func generateOutputURL() -> URL {
-    let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    return documentsPath.appendingPathComponent("audio_visualizer_\(Date().timeIntervalSince1970).mp4")
+    // The composer copies the finished video into its draft storage, so this render is
+    // only an intermediate file: keep it out of Documents (and device backups).
+    FileManager.default.temporaryDirectory
+      .appendingPathComponent("audio_visualizer_\(Date().timeIntervalSince1970).mp4")
   }
   
   private func formatTime(_ timeInterval: TimeInterval) -> String {

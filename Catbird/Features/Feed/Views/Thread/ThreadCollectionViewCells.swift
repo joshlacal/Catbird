@@ -32,6 +32,7 @@ final class ThreadRowCell: UICollectionViewCell {
     threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem?,
     parentAuthor: AppBskyActorDefs.ProfileViewBasic?,
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     path: Binding<NavigationPath>,
     visibilityContext: PostVisibilityContext = .public,
     isActionLoading: Bool = false,
@@ -68,9 +69,18 @@ final class ThreadRowCell: UICollectionViewCell {
       onAction: onAction
     )
 
+    // The configuration closure runs once, here: the policy it injects is a
+    // snapshot, so the row tracks the live policy itself.
+    // A reused cell keeps its hosting view and updates it in place. The identity resets
+    // the row's own state, such as PostView's view models, when the cell shows another
+    // row or scene, and leaves the modifiers around it in place.
+    let rowIdentity = Self.contentIdentity(row: row, sceneContext: sceneContext)
     contentConfiguration = UIHostingConfiguration {
       content
+        .id(rowIdentity)
+        .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .transaction { txn in txn.animation = nil }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -84,13 +94,18 @@ final class ThreadRowCell: UICollectionViewCell {
       appEntityIdentifier = nil
     }
 #endif
-    contentConfiguration = nil
+  }
+
+  /// The SwiftUI identity of a row's content: the row and the scene showing it, in the
+  /// same form as MainPostCell's. Reconfiguring the same row keeps its state.
+  static func contentIdentity(row: ThreadRow, sceneContext: SceneNavigationContext) -> String {
+    "\(row.id)|\(ObjectIdentifier(sceneContext))"
   }
 }
 
 @available(iOS 18.0, *)
 final class MainPostCell: UICollectionViewCell {
-  private var configuredIdentity: String?
+  private(set) var configuredIdentity: String?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -121,6 +136,7 @@ final class MainPostCell: UICollectionViewCell {
   func configure(
     post: AppBskyFeedDefs.PostView,
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     path: Binding<NavigationPath>,
     opThreadPostIndex: Int? = nil,
     opThreadPostCount: Int? = nil,
@@ -128,7 +144,13 @@ final class MainPostCell: UICollectionViewCell {
     showsLineFromParent: Bool = false
   ) {
     let postIdentity = post.uri.uriString()
-    let configurationIdentity = postIdentity + (showsLineFromParent ? "|line-in" : "")
+    let configurationIdentity = Self.configurationIdentity(
+      post: post,
+      sceneContext: sceneContext,
+      opThreadPostIndex: opThreadPostIndex,
+      opThreadPostCount: opThreadPostCount,
+      showsLineFromParent: showsLineFromParent
+    )
 
 #if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *),
@@ -158,16 +180,22 @@ final class MainPostCell: UICollectionViewCell {
       }
       .id(postIdentity)
 
-    // Only reconfigure if needed (using post URI as identity check)
+    // Only reconfigure when something shown changed. The content keeps `.id(postIdentity)`,
+    // so a new copy of the same post (the thread's copy replacing the tapped feed post, or
+    // fresh counts after a reload) updates the hosting view in place and keeps its state.
     if contentConfiguration == nil
       || configurationIdentity != configuredIdentity {
 
       configuredIdentity = configurationIdentity
 
       // Supply state at the UIKit hosting boundary for all main-post descendants.
+      // The policy is tracked, not snapshotted, so a settings change re-gates
+      // the anchor in place.
       contentConfiguration = UIHostingConfiguration {
         content
+          .trackingModerationPolicy(of: appState)
           .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
           .transaction { txn in txn.animation = nil }
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -184,6 +212,28 @@ final class MainPostCell: UICollectionViewCell {
 #endif
     contentConfiguration = nil
     configuredIdentity = nil
+  }
+
+  /// What the anchor shows: the post, its line from the parent, the scene, the OP post
+  /// number and the parts of the post that change between copies of it (counts and the
+  /// viewer's like, repost and bookmark).
+  static func configurationIdentity(
+    post: AppBskyFeedDefs.PostView,
+    sceneContext: SceneNavigationContext,
+    opThreadPostIndex: Int?,
+    opThreadPostCount: Int?,
+    showsLineFromParent: Bool
+  ) -> String {
+    let lineIn = showsLineFromParent ? "|line-in" : ""
+    let number = "\(opThreadPostIndex.map(String.init) ?? "-")/\(opThreadPostCount.map(String.init) ?? "-")"
+    let counts = [post.replyCount, post.repostCount, post.likeCount, post.quoteCount, post.bookmarkCount]
+      .map { $0.map(String.init) ?? "-" }
+      .joined(separator: ",")
+    let viewer = [
+      post.viewer?.like != nil, post.viewer?.repost != nil, post.viewer?.bookmarked == true
+    ].map { $0 ? "1" : "0" }.joined()
+    return post.uri.uriString() + lineIn + "|\(ObjectIdentifier(sceneContext))"
+      + "|op:\(number)|\(post.cid.string)|\(counts)|\(viewer)"
   }
 }
 
@@ -219,13 +269,14 @@ final class BlockedAnchorCell: UICollectionViewCell {
     blocked: AppBskyUnspeccedDefs.ThreadItemBlocked,
     anchorURI: ATProtocolURI,
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     path: Binding<NavigationPath>
   ) {
     contentView.backgroundColor = UIColor(
       Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
     )
 
-    let identity = anchorURI.uriString() + "|" + blocked.author.did.didString()
+    let identity = anchorURI.uriString() + "|" + blocked.author.did.didString() + "|\(ObjectIdentifier(sceneContext))"
     guard contentConfiguration == nil || identity != configuredIdentity else { return }
     configuredIdentity = identity
 
@@ -238,7 +289,9 @@ final class BlockedAnchorCell: UICollectionViewCell {
           variant: .anchor,
           path: path
         )
+        .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
         .padding(.horizontal, ThreadReplyGeometry.rowInset)
         .padding(.vertical, ThreadReplyGeometry.connectedTopSpacing)
       }

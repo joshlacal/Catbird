@@ -52,9 +52,9 @@ struct UnifiedProfileContentRenderTests {
       navigationPath: .constant(NavigationPath()),
       refreshAllContent: {},
       onTabChange: { _ in },
-      prepareBlockConfirmation: {}
+      requestUnblock: {}
     )
-    let controller = UIHostingController(rootView: content.environment(appState))
+    let controller = UIHostingController(rootView: content.environment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID())))
     controller.loadViewIfNeeded()
     controller.view.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
     controller.view.layoutIfNeeded()

@@ -45,9 +45,17 @@ final class FeedsStartPageViewModel {
   private var hasAttemptedPreferencesRepair = false
 
   private let maxGeneratorRetryAttempts = 4
+  /// Launch asks for the same generator views from several paths within a second or two;
+  /// identical requests share one in-flight read, and a just-completed read answers repeats.
+  private typealias GeneratorResponse = (responseCode: Int, data: AppBskyFeedGetFeedGenerators.Output?)
+  @ObservationIgnored private var inFlightGeneratorFetch: (uris: Set<String>, task: Task<GeneratorResponse, Error>)?
+  @ObservationIgnored private var lastGeneratorFetch: (uris: Set<String>, at: Date)?
+  private let generatorFetchReuseWindow: TimeInterval = 5
   private let generatorRetryDelayBase: UInt64 = 500_000_000 // 0.5 seconds base delay
 
   // logger
+  @ObservationIgnored private var authObservationTask: Task<Void, Never>?
+
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedsStartPageViewModel")
 
   private var appState: AppState
@@ -57,9 +65,27 @@ final class FeedsStartPageViewModel {
     self.appState = appState
     self.modelContext = modelContext
 
-    // Setup observation of authentication state changes to detect logouts
-    Task {
-      for await state in AppStateManager.shared.authentication.stateChanges {
+    startAuthObservation()
+  }
+
+  deinit {
+    authObservationTask?.cancel()
+  }
+
+  func cancel() {
+    authObservationTask?.cancel()
+    authObservationTask = nil
+  }
+
+  func startAuthObservation() {
+    guard authObservationTask == nil else { return }
+    // Subscribe now rather than when the task first runs, so a logout in
+    // between isn't missed: each subscription only sees later changes.
+    let authStates = AppStateManager.shared.authentication.stateChanges
+    authObservationTask = Task { [weak self] in
+      for await state in authStates {
+        guard !Task.isCancelled else { break }
+        guard let self else { break }
         if case .unauthenticated = state {
           // Mark that a logout occurred
           self.didLogout = true
@@ -67,6 +93,7 @@ final class FeedsStartPageViewModel {
           // Clear local feed data immediately on logout
           self.feedGenerators = [:]
           self.lastFetchTime = nil
+          self.lastGeneratorFetch = nil
           self._cachedPinnedFeeds = []
           self._cachedSavedFeeds = []
           self._cachedPinnedFeedsSet = Set()
@@ -74,15 +101,14 @@ final class FeedsStartPageViewModel {
           // Reset loaded state
           self.hasLoadedFeedsAtLeastOnce = false
 
-          logger.info("User logged out - cleared local feed data")
+          self.logger.info("User logged out - cleared local feed data")
         } else if case .authenticated = state {
           // Don't trigger an immediate refresh if we already have data
           // This prevents double-loading and race conditions
           if !self.hasLoadedFeedsAtLeastOnce {
-            logger.info("First authentication detected - will load feeds when view is ready")
-            // Don't do anything here - wait for the view to trigger initialization
+            self.logger.info("First authentication detected - will load feeds when view is ready")
           } else {
-            logger.info("Auth state change detected but feeds already loaded - no action needed")
+            self.logger.info("Auth state change detected but feeds already loaded - no action needed")
           }
         }
       }
@@ -93,16 +119,12 @@ final class FeedsStartPageViewModel {
   func initializeWithModelContext(_ modelContext: ModelContext) async {
     // Set model context
     self.modelContext = modelContext
+    logger.debug("✅ ModelContext is set")
 
-    // Initialize PreferencesManager with ModelContext
-    appState.initializePreferencesManager(with: modelContext)
-
-    logger.debug("✅ ModelContext is set and PreferencesManager initialized")
-
-    // Only force refresh if we haven't loaded feeds before
+    // Only refresh if we haven't loaded feeds before
     if !hasLoadedFeedsAtLeastOnce {
-      logger.info("🔄 Forcing first feed refresh during initialization")
-      await loadFeedsIfNeeded(forceRefresh: true)
+      logger.info("🔄 First feed refresh during initialization")
+      await loadFeedsIfNeeded(forceRefresh: false)
       await updateCaches()
       hasLoadedFeedsAtLeastOnce = true
     } else {
@@ -125,9 +147,13 @@ final class FeedsStartPageViewModel {
   func updateCaches() async {
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
-      _cachedPinnedFeeds = preferences.pinnedFeeds
-      _cachedSavedFeeds = preferences.savedFeeds
-      _cachedPinnedFeedsSet = Set(preferences.pinnedFeeds)
+      let pinned = preferences.pinnedFeeds
+      let saved = preferences.savedFeeds
+      let pinnedSet = Set(pinned)
+
+      _cachedPinnedFeeds = pinned
+      _cachedSavedFeeds = saved
+      _cachedPinnedFeedsSet = pinnedSet
 
       // Update widget data with feed preferences
       await updateWidgetFeedPreferences()
@@ -156,8 +182,8 @@ final class FeedsStartPageViewModel {
     }
     
     // Add system feeds
-    feedGeneratorDisplayNames["timeline"] = "Home Timeline"
-    feedGeneratorDisplayNames["following"] = "Following"
+    feedGeneratorDisplayNames["timeline"] = "Timeline"
+    feedGeneratorDisplayNames["following"] = "Timeline"
     
     // Update widget with current preferences
     FeedWidgetDataProvider.shared.updateSharedFeedPreferences(
@@ -170,25 +196,24 @@ final class FeedsStartPageViewModel {
   }
 
   func loadFeedsIfNeeded(forceRefresh: Bool = false) async {
-    guard !isLoading else { return }
+    guard !isLoading, !Task.isCancelled else { return }
 
     isLoading = true
     logger.info("📊 Loading feeds with forceRefresh=\(forceRefresh)")
     do {
-      // Initialize PreferencesManager if needed
-      if let modelContext = modelContext {
-        appState.initializePreferencesManager(with: modelContext)
-      }
-
+      // PreferencesManager is configured by app bootstrap
       // Try to load preferences using PreferencesManager with force refresh option
       try await appState.preferencesManager.fetchPreferences(forceRefresh: forceRefresh)
+      try Task.checkCancellation()
 
       // Update caches
       await updateCaches()
 
       // Fetch feed generators and list details based on the preferences
       await self.fetchFeedGenerators()
+      try Task.checkCancellation()
       await self.fetchListDetails()
+      try Task.checkCancellation()
 
       errorMessage = nil
 
@@ -197,6 +222,10 @@ final class FeedsStartPageViewModel {
       logger.debug(
         "Successfully loaded feeds, hasLoadedFeedsAtLeastOnce=\(self.hasLoadedFeedsAtLeastOnce)")
     } catch {
+      if Task.isCancelled || error.isCancellation {
+        isLoading = false
+        return
+      }
       if let prefError = error as? PreferencesManagerError {
         switch prefError {
         case .clientNotInitialized, .modelContextNotInitialized:
@@ -209,11 +238,11 @@ final class FeedsStartPageViewModel {
           await loadFeedsIfNeeded(forceRefresh: true)
           return
         default:
-          errorMessage = "Failed to fetch preferences: \(prefError.localizedDescription)"
+          errorMessage = "Couldn’t load your feeds. Check your connection and try again."
           logger.error("Error loading feeds: \(prefError.localizedDescription)")
         }
       } else {
-        errorMessage = "Failed to fetch preferences: \(error.localizedDescription)"
+        errorMessage = "Couldn’t load your feeds. Check your connection and try again."
         logger.error("Error loading feeds: \(error.localizedDescription)")
       }
     }
@@ -221,8 +250,10 @@ final class FeedsStartPageViewModel {
   }
 
   func fetchFeedGenerators(attempt: Int = 0) async {
+    guard !Task.isCancelled else { return }
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
+      try Task.checkCancellation()
       
       // Start with all unique feeds
       let allUniqueFeeds = Array(Set(preferences.pinnedFeeds + preferences.savedFeeds))
@@ -257,7 +288,7 @@ final class FeedsStartPageViewModel {
         if attempt < maxGeneratorRetryAttempts {
           let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff
           logger.info("ATProto client not ready, retrying in \(Double(delay) / 1_000_000_000)s (attempt \(attempt + 1)/\(self.maxGeneratorRetryAttempts))")
-          try? await Task.sleep(nanoseconds: delay)
+          try await Task.sleep(nanoseconds: delay)
           await fetchFeedGenerators(attempt: attempt + 1)
         } else {
           logger.error("ATProto client not available after \(self.maxGeneratorRetryAttempts) attempts")
@@ -265,22 +296,40 @@ final class FeedsStartPageViewModel {
         return
       }
       
-      logger.info("Attempting to fetch \(feedURIs.count) feed generators (attempt \(attempt + 1))")
-      let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
-      let (responseCode, output) = try await client.app.bsky.feed.getFeedGenerators(input: input)
+      let requestedURIs = Set(feedURIs.map { $0.uriString() })
+      if attempt == 0, let last = lastGeneratorFetch, last.uris == requestedURIs,
+         Date().timeIntervalSince(last.at) < generatorFetchReuseWindow {
+        logger.info("Feed generators for these \(feedURIs.count) feeds were just fetched; skipping")
+        return
+      }
+      let responseTask: Task<GeneratorResponse, Error>
+      if attempt == 0, let inFlight = inFlightGeneratorFetch, inFlight.uris == requestedURIs {
+        logger.info("Joining in-flight fetch of \(feedURIs.count) feed generators")
+        responseTask = inFlight.task
+      } else {
+        logger.info("Attempting to fetch \(feedURIs.count) feed generators (attempt \(attempt + 1))")
+        let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
+        responseTask = Task { try await client.app.bsky.feed.getFeedGenerators(input: input) }
+        inFlightGeneratorFetch = (requestedURIs, responseTask)
+      }
+      defer { if inFlightGeneratorFetch?.task == responseTask { inFlightGeneratorFetch = nil } }
+      let (responseCode, output) = try await responseTask.value
+      try Task.checkCancellation()
       
       if responseCode == 200, let generators = output?.feeds {
+        lastGeneratorFetch = (requestedURIs, Date())
         logger.info("✅ Successfully fetched \(generators.count) feed generators")
         // IMPORTANT: Don't completely replace feedGenerators - update it
         for generator in generators {
           feedGenerators[generator.uri] = generator
         }
+        appState.feedGeneratorInfoCache.store(generators)
       } else if responseCode == 401 {
         // Don't clear existing generators on auth failure - keep stale data for better UX
         logger.warning("Unauthorized when fetching feed generators (attempt \(attempt + 1)); scheduling retry")
         if attempt < maxGeneratorRetryAttempts {
           let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff: 0.5s, 1s, 2s, 4s
-          try? await Task.sleep(nanoseconds: delay)
+          try await Task.sleep(nanoseconds: delay)
           await fetchFeedGenerators(attempt: attempt + 1)
         } else {
           logger.error("Feed generator fetch unauthorized after \(self.maxGeneratorRetryAttempts) attempts")
@@ -291,14 +340,12 @@ final class FeedsStartPageViewModel {
         // Retry on other failures too
         if attempt < maxGeneratorRetryAttempts {
           let delay = generatorRetryDelayBase * UInt64(1 << attempt)
-          try? await Task.sleep(nanoseconds: delay)
+          try await Task.sleep(nanoseconds: delay)
           await fetchFeedGenerators(attempt: attempt + 1)
         }
       }
     } catch {
-      // Check if it's a cancellation error
-      let nsError = error as NSError
-      if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+      if Task.isCancelled || error.isCancellation {
         // This is a cancellation error, don't update UI or show alerts
         logger.debug("Feed generator fetch cancelled")
         return
@@ -307,7 +354,11 @@ final class FeedsStartPageViewModel {
       if attempt < maxGeneratorRetryAttempts {
         let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff
         logger.info("Transient error fetching feed generators (\(error.localizedDescription)); retrying in \(Double(delay) / 1_000_000_000)s (attempt \(attempt + 1)/\(self.maxGeneratorRetryAttempts))")
-        try? await Task.sleep(nanoseconds: delay)
+        do {
+          try await Task.sleep(nanoseconds: delay)
+        } catch {
+          return
+        }
         await fetchFeedGenerators(attempt: attempt + 1)
         return
       }
@@ -317,8 +368,10 @@ final class FeedsStartPageViewModel {
   }
 
   func fetchListDetails() async {
+    guard !Task.isCancelled else { return }
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
+      try Task.checkCancellation()
       let allUniqueFeeds = Array(Set(preferences.pinnedFeeds + preferences.savedFeeds))
       let listURIs = allUniqueFeeds
         .filter { $0.contains("/app.bsky.graph.list/") }
@@ -338,15 +391,22 @@ final class FeedsStartPageViewModel {
             let uriString = uri.uriString()
             do {
               let details = try await self.appState.listManager.getListDetails(uriString)
+              try Task.checkCancellation()
               return (uri, details)
             } catch {
-              self.logger.error("Failed to fetch list details for \(uriString): \(error.localizedDescription)")
+              if !Task.isCancelled, !error.isCancellation {
+                self.logger.error("Failed to fetch list details for \(uriString): \(error.localizedDescription)")
+              }
               return (uri, nil)
             }
           }
         }
 
         for await (uri, details) in group {
+          guard !Task.isCancelled else {
+            group.cancelAll()
+            break
+          }
           if let details = details {
             self.listDetails[uri] = details
             successCount += 1
@@ -357,16 +417,27 @@ final class FeedsStartPageViewModel {
       }
 
       PerformanceSignposts.endBatchOperation(id: signpostId, successCount: successCount, failureCount: failureCount)
+      try Task.checkCancellation()
 
       // After fetching, update widget mapping
       await updateWidgetFeedPreferences()
     } catch {
+      guard !Task.isCancelled, !error.isCancellation else { return }
       logger.error("Error fetching list details: \(error.localizedDescription)")
     }
   }
 
   func extractTitle(from uri: ATProtocolURI) -> String {
     return uri.recordKey ?? "Unknown Feed"
+  }
+
+  /// The name to show for a pinned or saved feed or list. Never a record key:
+  /// until details load (or when they can't), this is a generic "Feed" or "List".
+  func displayName(for uri: ATProtocolURI) -> String {
+    if uri.uriString().contains("/app.bsky.graph.list/") {
+      return listDetails[uri]?.name ?? "List"
+    }
+    return feedGenerators[uri]?.displayName ?? "Feed"
   }
 
   // MARK: - Feed Management Functions
@@ -440,7 +511,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to toggle pin status: \(error.localizedDescription)"
+      errorMessage = "Couldn’t update this pin. Try again."
       logger.error("Error toggling pin status: \(error.localizedDescription)")
     }
   }
@@ -476,7 +547,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to remove feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t remove this feed. Try again."
       logger.error("Error removing feed: \(error.localizedDescription)")
     }
   }
@@ -528,7 +599,7 @@ final class FeedsStartPageViewModel {
       await updateCaches()
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to reorder feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t save the new order. Try again."
       logger.error("Failed to apply native feed reorder: \(error.localizedDescription)")
     }
   }
@@ -580,7 +651,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to reorder pinned feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t save the new order. Try again."
       logger.error("Error reordering pinned feed: \(error.localizedDescription)")
     }
   }
@@ -630,7 +701,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to reorder saved feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t save the new order. Try again."
       logger.error("Error reordering saved feed: \(error.localizedDescription)")
     }
   }
@@ -639,7 +710,7 @@ final class FeedsStartPageViewModel {
   func addFeed(_ feedURI: String, pinned: Bool = false) async {
     // Validate the URI first
     guard (try? ATProtocolURI(uriString: feedURI)) != nil else {
-      errorMessage = "Invalid feed URI"
+      errorMessage = "This feed link isn’t valid."
       logger.error("Attempted to add invalid feed URI: \(feedURI)")
       return
     }
@@ -666,7 +737,7 @@ final class FeedsStartPageViewModel {
       await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
-      errorMessage = "Failed to add feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t add this feed. Try again."
       logger.error("Error adding feed '\(feedURI)': \(error.localizedDescription)")
     }
   }
@@ -735,7 +806,7 @@ final class FeedsStartPageViewModel {
       await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
-      errorMessage = "Failed to set default feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t change your default feed. Try again."
       logger.error("❌ Failed to set default feed: \(error.localizedDescription)")
     }
   }

@@ -45,41 +45,103 @@ public struct PlatformHaptics {
         case selection
     }
     
+    // MARK: - Generator Cache
+
+    #if os(iOS)
+    private static var lightGenerator: UIImpactFeedbackGenerator?
+    private static var mediumGenerator: UIImpactFeedbackGenerator?
+    private static var heavyGenerator: UIImpactFeedbackGenerator?
+    private static var softGenerator: UIImpactFeedbackGenerator?
+    private static var rigidGenerator: UIImpactFeedbackGenerator?
+    private static var notificationGenerator: UINotificationFeedbackGenerator?
+    private static var selectionGenerator: UISelectionFeedbackGenerator?
+
+    @MainActor
+    private static func impactGenerator(for intensity: ImpactIntensity) -> UIImpactFeedbackGenerator {
+        switch intensity {
+        case .light:
+            if let g = lightGenerator { return g }
+            let g = UIImpactFeedbackGenerator(style: .light)
+            lightGenerator = g
+            return g
+        case .medium:
+            if let g = mediumGenerator { return g }
+            let g = UIImpactFeedbackGenerator(style: .medium)
+            mediumGenerator = g
+            return g
+        case .heavy:
+            if let g = heavyGenerator { return g }
+            let g = UIImpactFeedbackGenerator(style: .heavy)
+            heavyGenerator = g
+            return g
+        case .soft:
+            if let g = softGenerator { return g }
+            let g: UIImpactFeedbackGenerator
+            if #available(iOS 17.0, *) {
+                g = UIImpactFeedbackGenerator(style: .soft)
+            } else {
+                g = UIImpactFeedbackGenerator(style: .light)
+            }
+            softGenerator = g
+            return g
+        case .rigid:
+            if let g = rigidGenerator { return g }
+            let g: UIImpactFeedbackGenerator
+            if #available(iOS 17.0, *) {
+                g = UIImpactFeedbackGenerator(style: .rigid)
+            } else {
+                g = UIImpactFeedbackGenerator(style: .heavy)
+            }
+            rigidGenerator = g
+            return g
+        }
+    }
+
+    @MainActor
+    private static func getNotificationGenerator() -> UINotificationFeedbackGenerator {
+        if let g = notificationGenerator { return g }
+        let g = UINotificationFeedbackGenerator()
+        notificationGenerator = g
+        return g
+    }
+
+    @MainActor
+    private static func getSelectionGenerator() -> UISelectionFeedbackGenerator {
+        if let g = selectionGenerator { return g }
+        let g = UISelectionFeedbackGenerator()
+        selectionGenerator = g
+        return g
+    }
+    #endif
+
     // MARK: - Impact Feedback
-    
+
+    /// Prepare haptic actuator early for an upcoming impact
+    public static func prepare(_ intensity: ImpactIntensity = .medium) {
+        guard isEnabled else { return }
+        #if os(iOS)
+        if Thread.isMainThread {
+            impactGenerator(for: intensity).prepare()
+        } else {
+            DispatchQueue.main.async {
+                impactGenerator(for: intensity).prepare()
+            }
+        }
+        #endif
+    }
+
     /// Provide impact haptic feedback
     public static func impact(_ intensity: ImpactIntensity = .medium) {
         guard isEnabled else { return }
         #if os(iOS)
-        Task { @MainActor in
-            let generator: UIImpactFeedbackGenerator
-            
-            switch intensity {
-            case .light:
-                generator = UIImpactFeedbackGenerator(style: .light)
-            case .medium:
-                generator = UIImpactFeedbackGenerator(style: .medium)
-            case .heavy:
-                generator = UIImpactFeedbackGenerator(style: .heavy)
-            case .soft:
-                if #available(iOS 17.0, *) {
-                    generator = UIImpactFeedbackGenerator(style: .soft)
-                } else {
-                    generator = UIImpactFeedbackGenerator(style: .light)
-                }
-            case .rigid:
-                if #available(iOS 17.0, *) {
-                    generator = UIImpactFeedbackGenerator(style: .rigid)
-                } else {
-                    generator = UIImpactFeedbackGenerator(style: .heavy)
-                }
+        if Thread.isMainThread {
+            impactGenerator(for: intensity).impactOccurred()
+        } else {
+            DispatchQueue.main.async {
+                impactGenerator(for: intensity).impactOccurred()
             }
-            
-            generator.prepare()
-            generator.impactOccurred()
-            
-            hapticsLogger.debug("Impact haptic triggered: \(String(describing: intensity))")
         }
+        hapticsLogger.debug("Impact haptic triggered: \(String(describing: intensity))")
         #elseif os(macOS)
         // macOS fallback: play system sound
         switch intensity {
@@ -90,7 +152,7 @@ public struct PlatformHaptics {
         case .heavy, .rigid:
             NSSound(named: "Purr")?.play()
         }
-        
+
         hapticsLogger.debug("macOS sound feedback for impact: \(String(describing: intensity))")
         #endif
     }
@@ -122,23 +184,23 @@ public struct PlatformHaptics {
     public static func notification(_ type: NotificationType) {
         guard isEnabled else { return }
         #if os(iOS)
-        Task { @MainActor in
-            let generator = UINotificationFeedbackGenerator()
-            generator.prepare()
-            
-            let feedbackType: UINotificationFeedbackGenerator.FeedbackType
-            switch type {
-            case .success:
-                feedbackType = .success
-            case .warning:
-                feedbackType = .warning
-            case .error:
-                feedbackType = .error
-            }
-            
-            generator.notificationOccurred(feedbackType)
-            hapticsLogger.debug("Notification haptic triggered: \(String(describing: type))")
+        let feedbackType: UINotificationFeedbackGenerator.FeedbackType
+        switch type {
+        case .success:
+            feedbackType = .success
+        case .warning:
+            feedbackType = .warning
+        case .error:
+            feedbackType = .error
         }
+        if Thread.isMainThread {
+            getNotificationGenerator().notificationOccurred(feedbackType)
+        } else {
+            DispatchQueue.main.async {
+                getNotificationGenerator().notificationOccurred(feedbackType)
+            }
+        }
+        hapticsLogger.debug("Notification haptic triggered: \(String(describing: type))")
         #elseif os(macOS)
         // macOS fallback: system sounds
         switch type {
@@ -149,7 +211,7 @@ public struct PlatformHaptics {
         case .error:
             NSSound(named: "Basso")?.play()
         }
-        
+
         hapticsLogger.debug("macOS sound feedback for notification: \(String(describing: type))")
         #endif
     }
@@ -173,12 +235,14 @@ public struct PlatformHaptics {
     public static func selection() {
         guard isEnabled else { return }
         #if os(iOS)
-        Task { @MainActor in
-            let generator = UISelectionFeedbackGenerator()
-            generator.prepare()
-            generator.selectionChanged()
-            hapticsLogger.debug("Selection haptic triggered")
+        if Thread.isMainThread {
+            getSelectionGenerator().selectionChanged()
+        } else {
+            DispatchQueue.main.async {
+                getSelectionGenerator().selectionChanged()
+            }
         }
+        hapticsLogger.debug("Selection haptic triggered")
         #elseif os(macOS)
         // Subtle system sound for selection
         NSSound.beep() // Use system beep instead
@@ -214,14 +278,16 @@ public struct PlatformHaptics {
     public static func customImpact(intensity: CGFloat) {
         guard isEnabled else { return }
         let clampedIntensity = max(0.0, min(1.0, intensity))
-        
+
         #if os(iOS)
-        Task { @MainActor in
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.prepare()
-            generator.impactOccurred(intensity: clampedIntensity)
-            hapticsLogger.debug("Custom impact haptic triggered: intensity \(clampedIntensity)")
+        if Thread.isMainThread {
+            impactGenerator(for: .medium).impactOccurred(intensity: clampedIntensity)
+        } else {
+            DispatchQueue.main.async {
+                impactGenerator(for: .medium).impactOccurred(intensity: clampedIntensity)
+            }
         }
+        hapticsLogger.debug("Custom impact haptic triggered: intensity \(clampedIntensity)")
         #elseif os(macOS)
         // Scale sound volume based on intensity
         let soundName: NSSound.Name = clampedIntensity > 0.7 ? "Purr" : (clampedIntensity > 0.3 ? "Ping" : "Funk")
@@ -239,16 +305,22 @@ public struct PlatformHaptics {
     public static func prepareHaptics() {
         guard isEnabled else { return }
         #if os(iOS)
-        Task { @MainActor in
-            // Pre-warm haptic generators
-            UIImpactFeedbackGenerator(style: .light).prepare()
-            UIImpactFeedbackGenerator(style: .medium).prepare()
-            UIImpactFeedbackGenerator(style: .heavy).prepare()
-            UINotificationFeedbackGenerator().prepare()
-            UISelectionFeedbackGenerator().prepare()
-            
-            hapticsLogger.debug("Haptic generators prepared for reduced latency")
+        if Thread.isMainThread {
+            impactGenerator(for: .light).prepare()
+            impactGenerator(for: .medium).prepare()
+            impactGenerator(for: .heavy).prepare()
+            getNotificationGenerator().prepare()
+            getSelectionGenerator().prepare()
+        } else {
+            DispatchQueue.main.async {
+                impactGenerator(for: .light).prepare()
+                impactGenerator(for: .medium).prepare()
+                impactGenerator(for: .heavy).prepare()
+                getNotificationGenerator().prepare()
+                getSelectionGenerator().prepare()
+            }
         }
+        hapticsLogger.debug("Haptic generators prepared for reduced latency")
         #elseif os(macOS)
         // No preparation needed for macOS sound feedback
         hapticsLogger.debug("macOS sound system ready (no preparation needed)")

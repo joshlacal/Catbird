@@ -15,6 +15,7 @@ struct ModernPostRow: View {
 struct ProfileImageView: View {
     let url: URL?
     let size: CGFloat
+    @Environment(\.displayScale) private var displayScale
     
     var body: some View {
         ZStack {
@@ -23,7 +24,7 @@ struct ProfileImageView: View {
                 .frame(width: size, height: size)
             
             if let url = url {
-                LazyImage(url: url) { state in
+                LazyImage(request: ImageRequestFactory.avatar(url, pointSize: size, scale: displayScale)) { state in
                     if let image = state.image {
                         image
                             .resizable()

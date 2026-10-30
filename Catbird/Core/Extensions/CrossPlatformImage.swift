@@ -210,62 +210,9 @@ extension PlatformImage {
     }
 }
 
-// MARK: - Image Compression Utilities
+// MARK: - Image Resizing Utilities
 
 extension PlatformImage {
-    
-    /// Compress image to target size in bytes
-    func compressed(maxSizeInBytes: Int = 900_000) -> Data? {
-        var compression: CGFloat = 1.0
-        
-        #if os(iOS)
-        var imageData = jpegData(compressionQuality: compression)
-        
-        // Gradually lower quality until we get under target size
-        while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
-            compression -= 0.1
-            imageData = jpegData(compressionQuality: compression)
-        }
-        
-        // If we still exceed the size limit, resize the image
-        if let bestData = imageData, bestData.count > maxSizeInBytes {
-            let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(bestData.count))
-            let newSize = CGSize(
-                width: imageSize.width * scale,
-                height: imageSize.height * scale
-            )
-            
-            if let resizedImage = resized(to: newSize) {
-                return resizedImage.jpegData(compressionQuality: 0.7)
-            }
-        }
-        
-        return imageData
-        #elseif os(macOS)
-        var imageData = jpegImageData(compressionQuality: compression)
-        
-        // Gradually lower quality until we get under target size
-        while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
-            compression -= 0.1
-            imageData = jpegImageData(compressionQuality: compression)
-        }
-        
-        // If we still exceed the size limit, resize the image
-        if let bestData = imageData, bestData.count > maxSizeInBytes {
-            let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(bestData.count))
-            let newSize = CGSize(
-                width: imageSize.width * scale,
-                height: imageSize.height * scale
-            )
-            
-            if let resizedImage = resized(to: newSize) {
-                return resizedImage.jpegImageData(compressionQuality: 0.7)
-            }
-        }
-        
-        return imageData
-        #endif
-    }
     
     /// Resize image to specified size
     func resized(to newSize: CGSize) -> PlatformImage? {

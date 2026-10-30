@@ -80,6 +80,32 @@ actor ProfileCacheDatabase {
     }
   }
 
+  func write(profiles: [(did: String, handle: String, displayName: String?, avatarURL: String?)]) async {
+    guard !profiles.isEmpty else { return }
+    do {
+      let pool = try getPool()
+      let now = Date()
+      try await pool.write { db in
+        for profile in profiles {
+          try db.execute(
+            sql: """
+              INSERT INTO cached_profiles (did, handle, displayName, avatarURL, updatedAt)
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT (did) DO UPDATE SET
+                handle = excluded.handle,
+                displayName = excluded.displayName,
+                avatarURL = excluded.avatarURL,
+                updatedAt = excluded.updatedAt
+              """,
+            arguments: [profile.did, profile.handle, profile.displayName, profile.avatarURL, now]
+          )
+        }
+      }
+    } catch {
+      logger.error("Failed to write batched profile cache: \(error.localizedDescription)")
+    }
+  }
+
   func read(did: String) async -> CachedProfile? {
     do {
       let pool = try getPool()

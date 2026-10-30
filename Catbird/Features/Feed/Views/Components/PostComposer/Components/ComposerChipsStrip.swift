@@ -19,6 +19,8 @@ struct ComposerChipsStrip: View {
   let onApplySuggestedLanguage: () -> Void
   let onEditInteractionSettings: () -> Void
   let onEditLabels: () -> Void
+  /// Reply settings only apply to the first post of a thread, so replies hide them.
+  let showsInteractionSettings: Bool
 
   init(
     outlineTags: [String],
@@ -31,7 +33,8 @@ struct ComposerChipsStrip: View {
     onToggleLanguage: @escaping (LanguageCodeContainer) -> Void,
     onApplySuggestedLanguage: @escaping () -> Void,
     onEditInteractionSettings: @escaping () -> Void,
-    onEditLabels: @escaping () -> Void
+    onEditLabels: @escaping () -> Void,
+    showsInteractionSettings: Bool = true
   ) {
     self.outlineTags = outlineTags
     self.selectedLanguages = selectedLanguages
@@ -44,6 +47,7 @@ struct ComposerChipsStrip: View {
     self.onApplySuggestedLanguage = onApplySuggestedLanguage
     self.onEditInteractionSettings = onEditInteractionSettings
     self.onEditLabels = onEditLabels
+    self.showsInteractionSettings = showsInteractionSettings
   }
 
   init(
@@ -85,7 +89,7 @@ struct ComposerChipsStrip: View {
   }
 
   private var interactionSettingsIsCustom: Bool {
-    interactionSettings.isCustom
+    showsInteractionSettings && interactionSettings.isCustom
   }
 
   private var showsLanguageSuggestion: Bool {
@@ -120,7 +124,7 @@ struct ComposerChipsStrip: View {
             let summary = interactionSettings.summary
             tappableChip(
               text: summary,
-              systemImage: "bubble.left.and.exclamationmark.bubble.right",
+              systemImage: "bubble.left.and.bubble.right",
               accessibilityLabel: "Interaction settings: \(summary)",
               action: onEditInteractionSettings
             )
@@ -148,6 +152,7 @@ struct ComposerChipsStrip: View {
               .padding(.horizontal, 10)
               .padding(.vertical, 5)
               .background(Color.accentColor.opacity(0.15))
+              .background(.regularMaterial, in: Capsule())
               .foregroundStyle(Color.accentColor)
               .clipShape(Capsule())
             }
@@ -174,14 +179,13 @@ struct ComposerChipsStrip: View {
         Image(systemName: "xmark.circle.fill")
           .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
-          .padding(4)
-          .contentShape(Rectangle())
+          .contentShape(Rectangle().inset(by: -6))
       }
       .accessibilityLabel("Remove \(accessibilityLabel)")
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 5)
-    .background(Color.secondary.opacity(0.1))
+    .background(.regularMaterial, in: Capsule())
     .foregroundStyle(.secondary)
     .clipShape(Capsule())
     .accessibilityElement(children: .contain)
@@ -204,7 +208,7 @@ struct ComposerChipsStrip: View {
       }
       .padding(.horizontal, 10)
       .padding(.vertical, 5)
-      .background(Color.secondary.opacity(0.1))
+      .background(.regularMaterial, in: Capsule())
       .foregroundStyle(.secondary)
       .clipShape(Capsule())
     }

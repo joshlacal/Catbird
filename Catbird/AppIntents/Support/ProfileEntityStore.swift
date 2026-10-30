@@ -20,25 +20,29 @@ actor ProfileEntityStore {
 
   private var entities: [String: ProfileEntity] = [:]
   private var order: [String] = []
-  private let capacity = 200
-  private let defaults: UserDefaults?
+  private static let capacity = 200
   private static let storageKey = "recentProfileEntities.v1"
+  /// Coalesces the App Group mirror; nil when there is no App Group suite.
+  private let persisted: AppGroupEntityWriteBuffer<PersistedProfileEntity>?
 
   init(
     defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
   ) {
-    self.defaults = defaults
+    persisted = defaults.map {
+      AppGroupEntityWriteBuffer(
+        defaults: $0, storageKey: Self.storageKey, capacity: Self.capacity, id: { $0.id })
+    }
   }
 
   func store(_ entity: ProfileEntity) {
     storeInMemory(entity)
-    persist([entity])
+    persisted?.enqueue([PersistedProfileEntity(entity)])
   }
 
   private func storeInMemory(_ entity: ProfileEntity) {
     if entities.updateValue(entity, forKey: entity.id) == nil {
       order.append(entity.id)
-      if order.count > capacity {
+      if order.count > Self.capacity {
         entities.removeValue(forKey: order.removeFirst())
       }
     }
@@ -48,41 +52,39 @@ actor ProfileEntityStore {
     for entity in newEntities {
       storeInMemory(entity)
     }
-    persist(newEntities)
+    persisted?.enqueue(newEntities.map(PersistedProfileEntity.init))
   }
 
   func entities(for identifiers: [String]) -> [ProfileEntity] {
-    let persisted = persistedEntities()
+    // Read (and decode) the App Group list only when memory misses something.
+    let persisted = identifiers.allSatisfy { entities[$0] != nil } ? [:] : persistedEntities()
     let hits = identifiers.compactMap { entities[$0] ?? persisted[$0]?.entity }
     logger.info(
       "resolve: \(hits.count)/\(identifiers.count) from store (\(self.entities.count) cached)")
     return hits
   }
 
-  private func persist(_ newEntities: [ProfileEntity]) {
-    guard let defaults, !newEntities.isEmpty else { return }
-    let fresh = newEntities.map(PersistedProfileEntity.init)
-    let freshIDs = Set(fresh.map(\.id))
-    var merged = fresh + persistedEntities().values.filter { !freshIDs.contains($0.id) }
-    if merged.count > capacity {
-      merged = Array(merged.prefix(capacity))
-    }
-    guard let data = try? JSONEncoder().encode(merged) else { return }
-    defaults.set(data, forKey: Self.storageKey)
+  /// Writes buffered App Group entries now instead of after the coalescing delay.
+  func flushPendingWrites() {
+    persisted?.flush()
   }
 
+  /// Forgets every profile, in memory and in the App Group (sign-out, account removal).
+  func removeAll() {
+    entities.removeAll()
+    order.removeAll()
+    persisted?.removeAll()
+  }
+
+  /// The App Group list, including entries this process hasn't flushed yet.
   private func persistedEntities() -> [String: PersistedProfileEntity] {
-    guard
-      let defaults,
-      let data = defaults.data(forKey: Self.storageKey),
-      let values = try? JSONDecoder().decode([PersistedProfileEntity].self, from: data)
-    else { return [:] }
+    guard let values = persisted?.entries() else { return [:] }
     return Dictionary(values.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
   }
 }
 
 @available(iOS 18.0, *)
-private struct PersistedProfileEntity: Codable {
+private struct PersistedProfileEntity: Codable, Equatable, Sendable {
   let id: String
   let handle: String
   let displayName: String?

@@ -115,7 +115,7 @@ struct FeedContinuityBanner: View {
     case .newContentAvailable(let count):
       return count == 1 ? "New post available" : "\(count) new posts available"
     case .loadingGap:
-      return "Loading..."
+      return "Loading…"
     case .connectionRestored:
       return "Connection restored"
     case .cacheFallback:

@@ -45,7 +45,7 @@ extension CatbirdApp {
   
   @MainActor
   func restoreUserDefaultsState() async {
-    guard let appState = appState else { return }
+    guard appState != nil else { return }
 
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
 
@@ -53,12 +53,6 @@ extension CatbirdApp {
     if let biometricEnabled = defaults.object(forKey: "biometric_auth_enabled") as? Bool {
       await AppStateManager.shared.authentication.setBiometricAuthEnabled(biometricEnabled)
       logger.debug("Restored biometric auth setting: \(biometricEnabled)")
-    }
-
-    // Restore adult content setting
-    if let adultContentEnabled = defaults.object(forKey: "isAdultContentEnabled.\(appState.userDID)") as? Bool {
-      appState.isAdultContentEnabled = adultContentEnabled
-      logger.debug("Restored adult content setting: \(adultContentEnabled)")
     }
 
     logger.debug("User defaults state restored")
@@ -80,15 +74,12 @@ extension CatbirdApp {
   
   @MainActor
   func saveApplicationState() {
-    guard let appState = appState else { return }
+    guard appState != nil else { return }
     
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
     
     // Save biometric settings
     defaults.set(AppStateManager.shared.authentication.biometricAuthEnabled, forKey: "biometric_auth_enabled")
-    
-    // Save adult content setting
-    defaults.set(appState.isAdultContentEnabled, forKey: "isAdultContentEnabled.\(appState.userDID)")
     
     logger.debug("Application state saved")
   }

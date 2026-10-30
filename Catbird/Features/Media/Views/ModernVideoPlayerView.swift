@@ -8,6 +8,7 @@
 import AVKit
 import Foundation
 import Petrel
+import NukeUI
 import SwiftUI
 import os.log
 
@@ -64,12 +65,17 @@ struct ModernVideoPlayerView: View {
   let model: VideoModel
   @State private var player: AVPlayer?
   @State private var timeObserverToken: Any?
+  @State private var setupFlight = PlayerSetupFlight()
   @State private var isVisible = false
   @State private var showControls = false
   @State private var showFullscreen = false
+  @State private var loadFailed = false
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.displayScale) private var displayScale
   @Environment(AppState.self) private var appState
   let postID: String
+  private var preparePlayer: (@MainActor (VideoModel) async throws -> AVPlayer)?
+  private var registerPlayer: (@MainActor (VideoModel, AVPlayer) -> Void)?
 
   // For iOS 18+ transitions
   @Namespace private var videoTransitionNamespace
@@ -84,9 +90,15 @@ struct ModernVideoPlayerView: View {
   // MARK: - Initializers
 
   // Primary initializer that takes a VideoModel directly
-  init(model: VideoModel, postID: String) {
+  init(
+    model: VideoModel, postID: String,
+    preparePlayer: (@MainActor (VideoModel) async throws -> AVPlayer)? = nil,
+    registerPlayer: (@MainActor (VideoModel, AVPlayer) -> Void)? = nil
+  ) {
     self.model = model
     self.postID = postID
+    self.preparePlayer = preparePlayer
+    self.registerPlayer = registerPlayer
   }
 
   // Convenience initializer for AppBskyEmbedVideo.View
@@ -97,10 +109,11 @@ struct ModernVideoPlayerView: View {
       return nil
     }
 
-    // Compute aspect ratio defensively (avoid divide by zero)
+    // Clamp to 3:4...2:1 (as PostVideoEmbedContent does) so tall videos letterbox
+    // instead of filling the screen.
     let ar: CGFloat
-    if let arIn = bskyVideo.aspectRatio, arIn.height != 0 {
-      ar = CGFloat(arIn.width) / CGFloat(arIn.height)
+    if let arIn = bskyVideo.aspectRatio, arIn.width > 0, arIn.height > 0 {
+      ar = min(max(CGFloat(arIn.width) / CGFloat(arIn.height), 0.75), 2)
     } else {
       ar = 16.0 / 9.0
     }
@@ -126,7 +139,8 @@ struct ModernVideoPlayerView: View {
       url: playlistURL,
       type: videoType,
       aspectRatio: ar,
-      thumbnailURL: bskyVideo.thumbnail?.url
+      thumbnailURL: bskyVideo.thumbnail?.url,
+      alt: bskyVideo.alt
     )
     self.postID = postID
   }
@@ -155,17 +169,26 @@ struct ModernVideoPlayerView: View {
       ZStack {
         playerLayerView()
 
-        // Show thumbnail overlay if video is not playing and autoplay is disabled
-        if !model.isPlaying && !appState.appSettings.autoplayVideos,
-           let thumbnailURL = model.thumbnailURL
-        {
-          VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
+        // Show play glyph overlay if video is not playing and autoplay is disabled
+        if !model.isPlaying && !appState.appSettings.autoplayVideos && !loadFailed {
+          Image(systemName: "play.fill")
+            .font(.title2)
+            .foregroundStyle(.white)
+            .frame(width: 52, height: 52)
+            .background(.ultraThinMaterial, in: Circle())
+            .accessibilityHidden(true)
             .allowsHitTesting(false)  // Let taps pass through to the player
         }
       }
       .contentShape(Rectangle())
       .onTapGesture { location in
         handleTap(location: location)
+      }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(videoAccessibilityLabel)
+      .accessibilityAddTraits(.startsMediaSession)
+      .accessibilityAction {
+        handleAccessibilityActivate()
       }
 
       // HLS video controls (mute button)
@@ -181,14 +204,17 @@ struct ModernVideoPlayerView: View {
       .frame(maxWidth: 800)
       #endif
       .task {
-        await setupPlayer()
+        if appState.appSettings.autoplayVideos || model.type.isGif {
+          await setupPlayer()
+        }
       }
       .onAppear {
         // Setup player if needed
-        
         if let player = player {
           VideoCoordinator.shared.appSettings = appState.appSettings
           VideoCoordinator.shared.register(model, player: player)
+        } else if appState.appSettings.autoplayVideos || model.type.isGif {
+          Task { await setupPlayer() }
         }
       }
       .onDisappear {
@@ -215,19 +241,22 @@ struct ModernVideoPlayerView: View {
       .onChange(of: scenePhase) { oldPhase, newPhase in
         handleScenePhaseChange(from: oldPhase, to: newPhase)
       }
+      .onChange(of: showFullscreen) { _, isFullscreen in
+        VideoCoordinator.shared.setFullscreenActive(isFullscreen, for: model.id)
+      }
 
     if #available(iOS 18.0, *) {
       finalView
         .onScrollVisibilityChange(threshold: 0.5) { visible in
           isVisible = visible
-          VideoCoordinator.shared.updateVisibility(visible, for: model.id)
+          handleVisibilityChange(visible)
         }
     } else {
       finalView
         .background(
           VisibilityDetector(visibilityThreshold: 0.5) { isVisible in
             self.isVisible = isVisible
-            VideoCoordinator.shared.updateVisibility(isVisible, for: model.id)
+            handleVisibilityChange(isVisible)
           }
         )
     }
@@ -247,6 +276,8 @@ struct ModernVideoPlayerView: View {
         shouldLoop: !model.type.isGif,
         onLayerReady: nil
       )
+      // The layer is transparent until its first frame, so the poster shows instead of black.
+      .background { videoPoster }
 
       if #available(iOS 18.0, *) {
         playerView
@@ -261,10 +292,74 @@ struct ModernVideoPlayerView: View {
           .animation(.spring(), value: playerScale)
       }
 
+    } else if loadFailed {
+      ZStack {
+        if let thumbnailURL = model.thumbnailURL {
+          VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
+        } else {
+          Rectangle()
+            .fill(Color.gray.opacity(0.3))
+        }
+        VStack(spacing: 8) {
+          Label(model.type.isGif ? "GIF Unavailable" : "Video Unavailable", systemImage: "exclamationmark.triangle")
+            .appFont(AppTextRole.subheadline)
+          Button("Try Again") {
+            Task { await setupPlayer() }
+          }
+          .buttonStyle(.bordered)
+        }
+        .padding()
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+      }
+      .clipShape(RoundedRectangle(cornerRadius: 10))
     } else {
-      ProgressView()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      videoPoster
+        .overlay {
+          if appState.appSettings.autoplayVideos || model.type.isGif {
+            ProgressView().tint(.white)
+          } else {
+            Image(systemName: "play.fill")
+              .font(.title2)
+              .foregroundStyle(.white)
+              .frame(width: 52, height: 52)
+              .background(.ultraThinMaterial, in: Circle())
+              .accessibilityHidden(true)
+          }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
+  }
+
+  /// Fit on black matches `.resizeAspect`, so the first frame replaces the poster without a jump.
+  private var videoPoster: some View {
+    Color.black.overlay {
+      if let thumbnailURL = model.thumbnailURL {
+        let posterSize = CGSize(width: 600, height: 600 / max(model.aspectRatio, 0.5))
+        let request = ImageRequestFactory.image(
+          thumbnailURL,
+          pointSize: posterSize,
+          scale: displayScale,
+          contentMode: .aspectFit
+        )
+        LazyImage(request: request) { state in
+          if let image = state.image {
+            image.resizable().scaledToFit()
+          }
+        }
+        .pipeline(ImageLoadingManager.shared.pipeline)
+      }
+    }
+  }
+
+  private var videoAccessibilityLabel: String {
+    let kind = model.type.isGif ? "GIF" : "Video"
+    if loadFailed {
+      return "\(kind) unavailable"
+    }
+    if let alt = model.alt?.trimmingCharacters(in: .whitespacesAndNewlines), !alt.isEmpty {
+      return "\(kind): \(alt)"
+    }
+    return kind
   }
 
   @ViewBuilder
@@ -309,8 +404,29 @@ struct ModernVideoPlayerView: View {
 
   // MARK: - Gesture Handling
 
+  private func handleAccessibilityActivate() {
+    if loadFailed || player == nil || player?.currentItem == nil || !VideoCoordinator.shared.isRegistered(model.id) {
+      Task {
+        await setupPlayer()
+        VideoCoordinator.shared.forcePlayVideo(model.id)
+      }
+    } else if !model.isPlaying && !appState.appSettings.autoplayVideos {
+      VideoCoordinator.shared.forcePlayVideo(model.id)
+    } else if case .hlsStream = model.type, player != nil {
+      showFullscreen = true
+    }
+  }
+
   private func handleTap(location: CGPoint) {
     guard !muteButtonFrame.contains(location) else { return }
+
+    if player == nil || player?.currentItem == nil || !VideoCoordinator.shared.isRegistered(model.id) {
+      Task {
+        await setupPlayer()
+        VideoCoordinator.shared.forcePlayVideo(model.id)
+      }
+      return
+    }
 
     if !model.isPlaying && !appState.appSettings.autoplayVideos {
       VideoCoordinator.shared.forcePlayVideo(model.id)
@@ -333,28 +449,42 @@ struct ModernVideoPlayerView: View {
   // MARK: - Private Methods
 
 
+  /// Appearance (`.task` and `.onAppear`), visibility, taps and Try Again can each ask for a
+  /// player while preparation is suspended on asset loading. They share one setup, so one
+  /// AVPlayer is prepared, and every caller resumes after that setup has finished, by which
+  /// point its player is registered or `loadFailed` is set.
   private func setupPlayer() async {
-    // Check if we already have a player (from restoration or previous setup)
-    if player != nil {
-      logger.debug("📺 Player already exists for \(model.id), skipping setup")
-      return
+    await setupFlight.run { await prepareAndRegisterPlayer() }
+  }
+
+  private func prepareAndRegisterPlayer() async {
+    // Check if we already have a working, registered player
+    if let player {
+      let isReady = player.currentItem != nil || preparePlayer != nil
+      if isReady && (registerPlayer != nil || VideoCoordinator.shared.isRegistered(model.id)) {
+        logger.debug("📺 Player already exists and is registered for \(model.id), skipping setup")
+        return
+      }
+
+      if isReady {
+        logger.debug("📺 Player exists with item but unregistered for \(model.id), re-registering")
+        registerPreparedPlayer(player)
+        return
+      }
     }
-    
+    loadFailed = false
+
     // Create player
     do {
-      let newPlayer = try await VideoAssetManager.shared.preparePlayer(for: model)
+      let newPlayer: AVPlayer
+      if let preparePlayer {
+        newPlayer = try await preparePlayer(model)
+      } else {
+        newPlayer = try await VideoAssetManager.shared.preparePlayer(for: model)
+      }
       await MainActor.run {
         self.player = newPlayer
-        newPlayer.isMuted = true
-        newPlayer.volume = 0
-
-        model.isMuted = true
-        model.volume = 0
-        // Tenor/Giphy GIFs are MP4 videos that can have audio tracks; without
-        // ambient + mixWithOthers, AVPlayer activation can interrupt background
-        // audio (e.g. Music). Configure the same as HLS for all video types.
-        AudioSessionManager.shared.configureForSilentPlayback()
-        VideoCoordinator.shared.register(model, player: newPlayer)
+        registerPreparedPlayer(newPlayer)
         
         // Observe playback time to publish current position for reporting (WS-E / WS-J handoff)
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
@@ -375,6 +505,22 @@ struct ModernVideoPlayerView: View {
       }
     } catch {
       logger.debug("Failed to setup player: \(error)")
+      if !Task.isCancelled {
+        loadFailed = true
+      }
+    }
+  }
+
+  private func registerPreparedPlayer(_ player: AVPlayer) {
+    // A new model supplies the muted default. Recreating a player for an
+    // existing model must retain the user's current mute and volume choices.
+    player.isMuted = model.isMuted
+    player.volume = model.isMuted ? 0 : model.volume
+    if let registerPlayer {
+      registerPlayer(model, player)
+    } else {
+      if model.isMuted { AudioSessionManager.shared.configureForSilentPlayback() }
+      VideoCoordinator.shared.register(model, player: player)
     }
   }
 
@@ -421,13 +567,13 @@ struct ModernVideoPlayerView: View {
   private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
     switch newPhase {
     case .active:
-      if isVisible, let player = player, model.isPlaying {
-        player.safePlay()
+      if !VideoCoordinator.shared.isPictureInPictureActive(model.id) {
+        handleVisibilityChange(isVisible)
       }
     case .background, .inactive:
       // Pausing here would end an active PiP session when the app backgrounds
       if !VideoCoordinator.shared.isPictureInPictureActive(model.id) {
-        player?.pause()
+        VideoCoordinator.shared.updateVisibility(false, for: model.id)
       }
     @unknown default:
       break
@@ -435,6 +581,43 @@ struct ModernVideoPlayerView: View {
   }
 
 
+  private func handleVisibilityChange(_ visible: Bool) {
+    VideoCoordinator.shared.updateVisibility(visible, for: model.id)
+    if visible {
+      if player == nil || player?.currentItem == nil || !VideoCoordinator.shared.isRegistered(model.id) {
+        Task { @MainActor in
+          await setupPlayer()
+        }
+      }
+    }
+  }
+
+}
+
+// MARK: - Player Setup Flight
+
+/// Runs one player setup at a time for a `ModernVideoPlayerView`. A caller that arrives while a
+/// setup is running waits for it instead of starting another.
+@MainActor
+private final class PlayerSetupFlight {
+  private var inFlight: Task<Void, Never>?
+
+  /// Runs `setup`, or joins the setup already running, and returns when that setup finishes.
+  func run(_ setup: @escaping @MainActor () async -> Void) async {
+    if let inFlight {
+      await inFlight.value
+      return
+    }
+    let flight = Task { @MainActor in
+      await setup()
+      // The body starts only after `inFlight` is assigned below, because this caller holds the
+      // main actor until it awaits. Clearing here, not after the await, means a caller arriving
+      // once the setup has finished starts a new one rather than joining a finished run.
+      self.inFlight = nil
+    }
+    inFlight = flight
+    await flight.value
+  }
 }
 
 // MARK: - Helper Components
@@ -443,16 +626,27 @@ struct ModernVideoPlayerView: View {
 struct VideoThumbnailView: View {
   let thumbnailURL: URL
   let aspectRatio: CGFloat
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
-    AsyncImage(url: thumbnailURL) { image in
-      image
-        .resizable()
-        .aspectRatio(contentMode: .fill)
-    } placeholder: {
-      Rectangle()
-        .fill(Color.gray.opacity(0.3))
+    let thumbSize = CGSize(width: 600, height: 600 / max(aspectRatio, 0.5))
+    let request = ImageRequestFactory.image(
+      thumbnailURL,
+      pointSize: thumbSize,
+      scale: displayScale,
+      contentMode: .aspectFill
+    )
+    LazyImage(request: request) { state in
+      if let image = state.image {
+        image
+          .resizable()
+          .aspectRatio(contentMode: .fill)
+      } else {
+        Rectangle()
+          .fill(Color.gray.opacity(0.3))
+      }
     }
+    .pipeline(ImageLoadingManager.shared.pipeline)
     .aspectRatio(aspectRatio, contentMode: .fit)
     .clipped()
   }
@@ -464,11 +658,9 @@ struct MuteButton: View {
   let player: AVPlayer
   let model: VideoModel
 
-  @State private var isMuted: Bool = true
-
   var body: some View {
     Button(action: toggleMute) {
-      Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+      Image(systemName: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
         .foregroundStyle(.white)
         .frame(width: 32, height: 32)
         .background(Circle().fill(Color.black.opacity(0.6)))
@@ -476,14 +668,12 @@ struct MuteButton: View {
     .padding(4)
     .contentShape(Circle().scale(1.5))
     .buttonStyle(MuteButtonStyle())
-    .onAppear {
-      isMuted = model.isMuted
-    }
+    .accessibilityLabel(model.isMuted ? "Unmute" : "Mute")
   }
 
   private func toggleMute() {
-    isMuted.toggle()
-    VideoCoordinator.shared.setUnmuted(model.id, unmuted: !isMuted)
+    // Muted now means the user is asking to unmute.
+    VideoCoordinator.shared.setUnmuted(model.id, unmuted: model.isMuted)
   }
 }
 

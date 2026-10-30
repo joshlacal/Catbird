@@ -18,7 +18,7 @@ struct ListView: View {
     var body: some View {
         Group {
             if isLoading && listData == nil {
-                ProgressView("Loading list...")
+                ProgressView("Loading list…")
                     .scaleEffect(1.5)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = error {
@@ -68,7 +68,7 @@ struct ListView: View {
                             .frame(maxWidth: .infinity)
                             .padding()
                         } else if isLoading && !listItems.isEmpty {
-                            ProgressView("Loading more...")
+                            ProgressView("Loading more…")
                                 .frame(maxWidth: .infinity)
                                 .padding()
                         }
@@ -116,7 +116,7 @@ struct ListView: View {
             
             await MainActor.run {
                 guard responseCode >= 200 && responseCode < 300, let response = response else {
-                    error = "Failed to load list (HTTP \(responseCode))"
+                    error = "Couldn’t load this list. Try again."
                     isLoading = false
                     logger.error("Failed to load list: HTTP \(responseCode)")
                     return
@@ -132,7 +132,7 @@ struct ListView: View {
             
         } catch {
             await MainActor.run {
-                self.error = error.localizedDescription
+                self.error = UserFacingError.message(for: error, action: "load this list") ?? "Couldn’t load this list. Try again."
                 isLoading = false
                 logger.error("Error loading list: \(error.localizedDescription)")
             }
@@ -161,7 +161,7 @@ struct ListView: View {
             
             await MainActor.run {
                 guard responseCode >= 200 && responseCode < 300, let response = response else {
-                    error = "Failed to load more items (HTTP \(responseCode))"
+                    error = "Couldn’t load more people. Try again."
                     isLoading = false
                     logger.error("Failed to load more items: HTTP \(responseCode)")
                     return
@@ -176,7 +176,7 @@ struct ListView: View {
             
         } catch {
             await MainActor.run {
-                self.error = error.localizedDescription
+                self.error = UserFacingError.message(for: error, action: "load this list") ?? "Couldn’t load this list. Try again."
                 isLoading = false
                 logger.error("Error loading more items: \(error.localizedDescription)")
             }
@@ -226,7 +226,7 @@ struct ListHeaderView: View {
                         .foregroundColor(.secondary)
                     
                     if let itemCount = list.listItemCount {
-                        Text("\(itemCount) items")
+                        Text("^[\(itemCount) person](inflect: true)")
                             .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }

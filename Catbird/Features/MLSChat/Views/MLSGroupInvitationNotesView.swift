@@ -16,6 +16,7 @@ struct MLSOptionalGroupIntroductionSection: View {
 
 struct MLSGroupInvitationNotesView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @State private var batch: MLSGroupInvitationNotes
   @State private var draft: MLSDirectComposeDraft?
   @State private var statuses: [String: String] = [:]
@@ -50,7 +51,7 @@ struct MLSGroupInvitationNotesView: View {
       }
       Section {
         Button("Open group") {
-          appState.navigationManager.targetMLSConversationId = batch.conversationID
+          appState.navigateToMLSConversation(batch.conversationID, preferredSceneID: sceneContext.sceneID)
           onDone()
         }
         Button("Done") { onDone() }.disabled(!saved)
@@ -62,7 +63,7 @@ struct MLSGroupInvitationNotesView: View {
     .onChange(of: appState.userDID) { _, _ in onDone() }
     .sheet(item: $draft) { draft in
       MLSDirectComposeView(draft: draft) { conversationID in
-        appState.navigationManager.targetMLSConversationId = conversationID
+        appState.navigateToMLSConversation(conversationID, preferredSceneID: sceneContext.sceneID)
       }
     }
   }
@@ -100,7 +101,7 @@ struct MLSGroupInvitationNotesView: View {
         guard appState.userDID == batch.accountDID, appState.mlsConversationManager === manager else { return }
         if archived {
           statuses[recipient] = retained.conversationID == nil ? "Request cancelled — retained without retry" : "Sent — open the direct conversation to inspect"
-          if let conversation = retained.conversationID { appState.navigationManager.targetMLSConversationId = conversation }
+          if let conversation = retained.conversationID { appState.navigateToMLSConversation(conversation, preferredSceneID: sceneContext.sceneID) }
         } else {
           statuses[recipient] = retained.noteAttempted == true ? "Delivery uncertain — inspect the direct conversation" : "Saved introduction — Send is a separate action"
           draft = retained

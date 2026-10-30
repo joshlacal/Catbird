@@ -21,7 +21,7 @@ extension ChatManager {
         // First check availability
         let (canChat, existingConvo) = await checkConversationAvailability(members: [currentUserDID, userDID])
         
-        if canChat {
+        if canChat == true {
             if let existing = existingConvo {
                 // Return existing conversation
                 return (true, existing.id)
@@ -48,7 +48,7 @@ extension ChatManager {
         // Ensure we have the current user's DID
         guard let currentUserDID = try? await client.getDid() else {
             logger.error("Cannot start conversation: failed to get current user DID")
-            errorState = .generalError(NSError(domain: "ChatManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to get current user DID"]))
+            errorState = .operationFailed(operation: "start this conversation")
             return nil
         }
         
@@ -66,7 +66,9 @@ extension ChatManager {
                    
             guard responseCode >= 200 && responseCode < 300 else {
                 logger.error("Error getting conversation: HTTP \(responseCode)")
-                errorState = .networkError(code: responseCode)
+                // Lexicon errors (e.g. the recipient only accepts messages from
+                // people they follow) arrive as HTTP 400 with the body dropped.
+                errorState = responseCode == 400 ? .recipientNotAccepting : .networkError(code: responseCode)
                 return nil
             }
             
@@ -96,7 +98,9 @@ extension ChatManager {
             
         } catch {
             logger.error("Error starting conversation: \(error.localizedDescription)")
-            errorState = .generalError(error)
+            if UserFacingError.kind(of: error) != .cancelled {
+                errorState = .operationFailed(operation: "start this conversation")
+            }
             return nil
         }
     }
@@ -114,13 +118,13 @@ extension ChatManager {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             logger.error("Cannot start group conversation: missing group name")
-            errorState = .generalError(NSError(domain: "ChatManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "Group name is required"]))
+            errorState = .invalidInput("Enter a name for the group.")
             return nil
         }
 
         guard let currentUserDID = try? await client.getDid() else {
             logger.error("Cannot start group conversation: failed to get current user DID")
-            errorState = .generalError(NSError(domain: "ChatManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to get current user DID"]))
+            errorState = .operationFailed(operation: "create this group")
             return nil
         }
 
@@ -137,7 +141,7 @@ extension ChatManager {
 
         guard !uniqueMemberDIDs.isEmpty else {
             logger.error("Cannot start group conversation: no members selected")
-            errorState = .generalError(NSError(domain: "ChatManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "Select at least one person"]))
+            errorState = .invalidInput("Select at least one person.")
             return nil
         }
 
@@ -151,7 +155,7 @@ extension ChatManager {
 
             guard responseCode >= 200 && responseCode < 300 else {
                 logger.error("Error creating group conversation: HTTP \(responseCode)")
-                errorState = .networkError(code: responseCode)
+                errorState = responseCode == 400 ? .groupMembersUnavailable : .networkError(code: responseCode)
                 return nil
             }
 
@@ -176,7 +180,9 @@ extension ChatManager {
             return convo.id
         } catch {
             logger.error("Error creating group conversation: \(error.localizedDescription)")
-            errorState = .generalError(error)
+            if UserFacingError.kind(of: error) != .cancelled {
+                errorState = .operationFailed(operation: "create this group")
+            }
             return nil
         }
     }

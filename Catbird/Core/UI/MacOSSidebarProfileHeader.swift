@@ -97,7 +97,9 @@ struct MacOSSidebarProfileHeader: View {
 
   @ViewBuilder
   private var avatarView: some View {
-    AsyncProfileImage(url: profile?.finalAvatarURL(), size: avatarSize)
+    AsyncProfileImage(
+      url: profile?.finalAvatarURL(), size: avatarSize, did: profile?.did.didString(),
+      labels: profile?.labels)
       .frame(width: avatarSize, height: avatarSize)
       .overlay(
         Circle().stroke(Color.primary.opacity(0.12), lineWidth: 2)

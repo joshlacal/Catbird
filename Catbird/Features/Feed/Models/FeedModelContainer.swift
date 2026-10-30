@@ -17,7 +17,15 @@ final class FeedModelContainer {
     private init() {}
     
     func getModel(for feedType: FetchType, appState: AppState) -> FeedModel {
-        let key = feedType.identifier
+        let accountID = appState.userDID ?? "unknown-account"
+        let key = "\(accountID)-\(feedType.identifier)"
+        
+        // Evict foreign accounts
+        let foreignKeys = modelCache.keys.filter { !$0.hasPrefix("\(accountID)-") }
+        for foreignKey in foreignKeys {
+            modelCache.removeValue(forKey: foreignKey)
+            lastAccessed.removeValue(forKey: foreignKey)
+        }
         
         // Record access time
         lastAccessed[key] = Date()
@@ -27,7 +35,6 @@ final class FeedModelContainer {
            model.feedManager.fetchType.identifier == feedType.identifier {
             return model
         }
-        
         // Create new model with safeguards
         do {
             let feedManager = FeedManager(
@@ -42,9 +49,9 @@ final class FeedModelContainer {
             
             
             modelCache[key] = model
+            enforceModelLimit(maxModels: 4)
             return model
         } catch {
-            // Create a failsafe model if something goes wrong
             let failsafeModel = FeedModel(
                 feedManager: FeedManager(
                     client: nil,  // No client in failsafe mode
@@ -73,5 +80,17 @@ final class FeedModelContainer {
     func clearCache() {
         modelCache.removeAll()
         lastAccessed.removeAll()
+    }
+
+    private func enforceModelLimit(maxModels: Int) {
+        while modelCache.count > maxModels {
+            let oldest = lastAccessed.min { $0.value < $1.value }
+            if let oldestKey = oldest?.key {
+                modelCache.removeValue(forKey: oldestKey)
+                lastAccessed.removeValue(forKey: oldestKey)
+            } else {
+                break
+            }
+        }
     }
 }

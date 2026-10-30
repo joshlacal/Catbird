@@ -6,12 +6,12 @@ struct MotionManager {
     
     /// Check if motion should be reduced based on user settings
     static func shouldReduceMotion(appSettings: AppSettings) -> Bool {
-        return appSettings.reduceMotion
+        return appSettings.effectiveReduceMotion
     }
     
     /// Check if crossfade transitions should be preferred
     static func shouldUseCrossfade(appSettings: AppSettings) -> Bool {
-        return appSettings.reduceMotion && appSettings.prefersCrossfade
+        return appSettings.effectiveReduceMotion && appSettings.effectivePrefersCrossfade
     }
     
     /// Get appropriate animation for user preferences

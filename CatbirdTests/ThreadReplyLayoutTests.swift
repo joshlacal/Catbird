@@ -3,6 +3,7 @@
 //  CatbirdTests
 //
 
+import AppIntents
 import Petrel
 import SwiftUI
 import Testing
@@ -461,10 +462,132 @@ struct ThreadReplyLayoutTests {
     #expect(linear != tree)
   }
 
+  // MARK: Prefilled anchor
+
+  /// A post as a feed hands it to the thread, replying to `parent` when given.
+  private func tappedPost(_ name: String, parent: String?) throws -> AppBskyFeedDefs.PostView {
+    let reply = parent.map { parentName in
+      let ref = ComAtprotoRepoStrongRef(uri: Self.uri(parentName), cid: CID.fromDAGCBOR(Data("\(parentName)-cid".utf8)))
+      return AppBskyFeedPost.ReplyRef(root: ref, parent: ref)
+    }
+    let record = AppBskyFeedPost(
+      text: name,
+      entities: nil,
+      facets: nil,
+      reply: reply,
+      embed: nil,
+      langs: nil,
+      labels: nil,
+      tags: nil,
+      createdAt: ATProtocolDate(date: Date())
+    )
+    return PublicPostTestFixtures.makePostView(
+      uri: Self.uri(name),
+      authorDID: try DID(didString: "did:plc:thread"),
+      text: name,
+      record: .knownType(record)
+    )
+  }
+
+  @Test(
+    "A prefilled anchor row equals the loaded anchor row, so the anchor keeps its cell",
+    arguments: [ThreadLayoutMode.linear, .tree]
+  )
+  func prefilledAnchorMatchesLoadedAnchor(mode: ThreadLayoutMode) throws {
+    let topLevel = try tappedPost("anchor", parent: nil)
+    let loadedTopLevel = try row("anchor", in: build([anchor, post("a", depth: 1, parent: "anchor")], mode: mode))
+    #expect(ThreadRowBuilder.prefilledAnchorRow(for: topLevel, mode: mode) == loadedTopLevel)
+    #expect(!loadedTopLevel.lineIn)
+
+    let reply = try tappedPost("anchor", parent: "p")
+    let loadedReply = try row(
+      "anchor",
+      in: build([post("p", depth: -1, parent: nil), post("anchor", depth: 0, parent: "p")], mode: mode)
+    )
+    #expect(ThreadRowBuilder.prefilledAnchorRow(for: reply, mode: mode) == loadedReply)
+    #expect(loadedReply.lineIn)
+  }
+
+  @Test("A parent that loads as a tombstone gives the anchor a different row")
+  func prefilledAnchorDiffersWhenTheParentIsATombstone() throws {
+    let reply = try tappedPost("anchor", parent: "p")
+    let loaded = try row("anchor", in: build([blocked("p", depth: -1), post("anchor", depth: 0, parent: "p")], mode: .linear))
+    #expect(ThreadRowBuilder.prefilledAnchorRow(for: reply, mode: .linear) != loaded)
+  }
+
+  /// The tapped post again as the thread returns it: same post, fresher counts.
+  private func threadCopy(of post: AppBskyFeedDefs.PostView, likes: Int) -> AppBskyFeedDefs.PostView {
+    AppBskyFeedDefs.PostView(
+      uri: post.uri,
+      cid: post.cid,
+      author: post.author,
+      record: post.record,
+      embed: post.embed,
+      bookmarkCount: post.bookmarkCount,
+      replyCount: 2,
+      repostCount: post.repostCount,
+      likeCount: likes,
+      quoteCount: post.quoteCount,
+      indexedAt: post.indexedAt,
+      viewer: post.viewer,
+      labels: post.labels,
+      threadgate: post.threadgate,
+      debug: post.debug
+    )
+  }
+
+  @MainActor
+  @Test("The anchor cell takes the thread's copy of the post and its post number in place")
+  func mainPostCellUpdatesInPlaceForANewCopyOfThePost() async throws {
+    guard #available(iOS 18.0, *) else { return }
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+    let tapped = try tappedPost("anchor", parent: nil)
+    let loaded = threadCopy(of: tapped, likes: 7)
+
+    func identity(_ post: AppBskyFeedDefs.PostView, index: Int? = nil, count: Int? = nil) -> String {
+      MainPostCell.configurationIdentity(
+        post: post, sceneContext: scene, opThreadPostIndex: index, opThreadPostCount: count, showsLineFromParent: false)
+    }
+    #expect(identity(tapped) == identity(tapped))
+    #expect(identity(loaded) != identity(tapped))
+    #expect(identity(tapped, index: 1, count: 3) != identity(tapped))
+
+    let cell = MainPostCell(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
+    cell.configure(post: tapped, appState: appState, sceneContext: scene, path: .constant(NavigationPath()))
+    let tappedIdentity = try #require(cell.configuredIdentity)
+    cell.layoutIfNeeded()
+    let initialHostingView = descendants(of: cell).first { String(describing: type(of: $0)).contains("Hosting") }
+    #expect(initialHostingView != nil)
+
+    cell.configure(
+      post: loaded, appState: appState, sceneContext: scene, path: .constant(NavigationPath()),
+      opThreadPostIndex: 1, opThreadPostCount: 3)
+    #expect(cell.configuredIdentity != tappedIdentity)
+    cell.layoutIfNeeded()
+    let updatedHostingView = descendants(of: cell).first { String(describing: type(of: $0)).contains("Hosting") }
+    #expect(updatedHostingView === initialHostingView)
+  }
+
+  @MainActor
+  @Test("The anchor view compares the whole post, so a fresher copy re-renders it")
+  func anchorViewComparesTheWholePost() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let tapped = try tappedPost("anchor", parent: nil)
+
+    func view(_ post: AppBskyFeedDefs.PostView) -> ThreadViewMainPostView {
+      ThreadViewMainPostView(post: post, showLine: false, path: .constant(NavigationPath()), appState: appState)
+    }
+    #expect(view(tapped) == view(tapped))
+    #expect(view(threadCopy(of: tapped, likes: 7)) != view(tapped))
+  }
+
   // MARK: Cell
 
   @MainActor
-  @Test("ThreadRowCell sets a hosting configuration and clears it on reuse")
+  @Test("ThreadRowCell sets a hosting configuration and preserves it on reuse")
   func threadRowCellConfigurationAndReuse() async throws {
     guard #available(iOS 18.0, *) else { return }
     let cell = ThreadRowCell(frame: .zero)
@@ -472,7 +595,7 @@ struct ThreadReplyLayoutTests {
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:testuser", client: client)
-    let postView = CircleTestFixtures.makePostView(
+    let postView = PublicPostTestFixtures.makePostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/reply1"),
       authorDID: try DID(didString: "did:plc:testuser"),
       text: "Optimistic reply"
@@ -487,12 +610,126 @@ struct ThreadReplyLayoutTests {
       threadItem: threadItem,
       parentAuthor: nil,
       appState: appState,
+      sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()),
       path: .constant(NavigationPath())
     )
     #expect(cell.contentConfiguration != nil)
     #expect(!(cell.contentConfiguration is UIListContentConfiguration))
+    cell.layoutIfNeeded()
+    let initialHostingView = descendants(of: cell).first {
+      let typeName = String(describing: type(of: $0))
+      return typeName.contains("Hosting")
+    }
+    #expect(initialHostingView != nil)
 
     cell.prepareForReuse()
-    #expect(cell.contentConfiguration == nil)
+    // P081/P036 deliberately keep the hosting configuration on reuse to update in place
+    #expect(cell.contentConfiguration != nil)
+
+    let postView2 = PublicPostTestFixtures.makePostView(
+      uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/reply2"),
+      authorDID: try DID(didString: "did:plc:testuser"),
+      text: "Second optimistic reply"
+    )
+    let threadItem2 = AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: postView2, depth: 1)
+    let replyRow2 = try #require(
+      build([ThreadRowBuilder.Item(threadItem2)], mode: .tree).first
+    )
+
+    cell.configure(
+      row: replyRow2,
+      threadItem: threadItem2,
+      parentAuthor: nil,
+      appState: appState,
+      sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()),
+      path: .constant(NavigationPath())
+    )
+    #expect(cell.contentConfiguration != nil)
+    #expect(!(cell.contentConfiguration is UIListContentConfiguration))
+    cell.layoutIfNeeded()
+    let reusedHostingView = descendants(of: cell).first {
+      let typeName = String(describing: type(of: $0))
+      return typeName.contains("Hosting")
+    }
+    #expect(reusedHostingView === initialHostingView)
+#if compiler(>=6.4)
+    if #available(anyAppleOS 26.0, *) {
+      let expectedURI = AppEntityAnnotationIdentifiers.postURI(replyRow2.id)
+      #expect(cell.appEntityIdentifier == expectedURI.map { EntityIdentifier(for: PostEntity.self, identifier: $0) })
+    }
+#endif
+  }
+
+  @MainActor
+  @Test("A thread row's content identity changes with the row or scene, not on a same-row reconfigure")
+  func threadRowContentIdentity() async throws {
+    guard #available(iOS 18.0, *) else { return }
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+    let otherScene = SceneNavigationContext(appState: appState, sceneID: UUID())
+    let rows = build([anchor, post("a", depth: 1, parent: "anchor"), post("b", depth: 1, parent: "anchor")], mode: .tree)
+    let first = try row("a", in: rows)
+    let second = try row("b", in: rows)
+
+    #expect(ThreadRowCell.contentIdentity(row: first, sceneContext: scene) == ThreadRowCell.contentIdentity(row: first, sceneContext: scene))
+    #expect(ThreadRowCell.contentIdentity(row: first, sceneContext: scene) != ThreadRowCell.contentIdentity(row: second, sceneContext: scene))
+    #expect(ThreadRowCell.contentIdentity(row: first, sceneContext: scene) != ThreadRowCell.contentIdentity(row: first, sceneContext: otherScene))
+  }
+
+  @MainActor
+  @Test("A reused ThreadRowCell lays out its new reply at once, not the reply it showed before")
+  func reusedThreadRowCellLaysOutTheNewReplyAtOnce() async throws {
+    guard #available(iOS 18.0, *) else { return }
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+
+    func reply(_ rkey: String, _ text: String) throws -> (row: ThreadRow, item: AppBskyUnspeccedGetPostThreadV2.ThreadItem) {
+      let postView = PublicPostTestFixtures.makePostView(
+        uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/\(rkey)"),
+        authorDID: try DID(didString: "did:plc:testuser"),
+        text: text
+      )
+      let item = AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: postView, depth: 1)
+      return (try #require(build([ThreadRowBuilder.Item(item)], mode: .tree).first), item)
+    }
+    func show(_ reply: (row: ThreadRow, item: AppBskyUnspeccedGetPostThreadV2.ThreadItem), in cell: ThreadRowCell) {
+      cell.configure(
+        row: reply.row, threadItem: reply.item, parentAuthor: nil, appState: appState,
+        sceneContext: scene, path: .constant(NavigationPath()))
+    }
+    // No await between configuring and measuring, so PostView's async post swap can't run first.
+    func height(of cell: ThreadRowCell) -> CGFloat {
+      cell.contentView.systemLayoutSizeFitting(
+        CGSize(width: 390, height: 0),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .fittingSizeLevel
+      ).height
+    }
+
+    let short = try reply("reuse-short", "One line.")
+    let long = try reply(
+      "reuse-long",
+      String(repeating: "A reply long enough to wrap across many lines of the thread. ", count: 10)
+    )
+
+    let fresh = ThreadRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 100))
+    show(long, in: fresh)
+    let longHeight = height(of: fresh)
+
+    let reused = ThreadRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 100))
+    show(short, in: reused)
+    let shortHeight = height(of: reused)
+    #expect(longHeight > shortHeight + 40, "fixture: the long reply must be much taller (\(longHeight) vs \(shortHeight))")
+
+    reused.prepareForReuse()
+    show(long, in: reused)
+    let reusedHeight = height(of: reused)
+    #expect(abs(reusedHeight - longHeight) < 1, "reused cell measured \(reusedHeight), fresh cell \(longHeight), previous row \(shortHeight)")
+  }
+
+  private func descendants(of view: UIView) -> [UIView] {
+    [view] + view.subviews.flatMap { descendants(of: $0) }
   }
 }

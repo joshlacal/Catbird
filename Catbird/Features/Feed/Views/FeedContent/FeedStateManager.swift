@@ -16,6 +16,13 @@ import os
 import UIKit
 #endif
 
+extension Notification.Name {
+    /// Posted after a post is hidden or unhidden, so open feeds re-filter immediately.
+    static let feedPostVisibilityChanged = Notification.Name("FeedPostVisibilityChanged")
+    /// Posted after the user deletes one of their posts. `object` is the post's URI string.
+    static let feedPostDeleted = Notification.Name("FeedPostDeleted")
+}
+
 @MainActor @Observable
 final class FeedStateManager: StateInvalidationSubscriber {
     // MARK: - Types
@@ -39,34 +46,53 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
     }
     
-    struct ScrollAnchor {
-        let postID: String
-        let offsetFromTop: CGFloat
-        let timestamp: Date
-        
-        var isStale: Bool {
-            let maxAge: TimeInterval = FeedConstants.maxScrollAnchorAge
-            return Date().timeIntervalSince(timestamp) > maxAge
-        }
-    }
-    
     // MARK: - Published Properties
     
     /// Current posts in the feed
     private(set) var posts: [CachedFeedViewPost] = []
     
     /// Current loading state
-    private(set) var loadingState: LoadingState = .idle
+    private(set) var loadingState: LoadingState = .idle {
+        didSet {
+            if case .error(let error) = loadingState {
+                let isPathSatisfied = appState.networkMonitor.isConnected
+                reconnectRetryState.requestFailed(
+                    error,
+                    allowsAutomaticRetry: reconnectRetryTask == nil,
+                    isPathSatisfied: isPathSatisfied
+                )
+            }
+        }
+    }
     
     /// Whether we've reached the end of the feed
     var hasReachedEnd = false
     
     /// Error message for display
     private(set) var errorMessage: String?
+
+    /// The failure of the most recent page request, shown in the feed's footer.
+    private(set) var paginationError: Error?
     
-    /// Whether the feed is empty (no posts and not loading)
+    /// Shared full-screen presentation for UIKit and SwiftUI feeds.
+    var contentState: FeedContentState {
+        FeedContentState(
+            hasPosts: !posts.isEmpty,
+            hasLoadedInitialResponse: feedModel.hasLoadedInitialResponse,
+            isLoading: isLoading || feedModel.isLoading || feedModel.isLoadingMore || feedModel.isBackgroundRefreshing,
+            hasError: feedLoadError != nil
+        )
+    }
+
+    /// A failed refresh keeps existing rows visible; an empty feed exposes the error.
+    var feedLoadError: Error? {
+        if case .error(let error) = loadingState { return error }
+        return feedModel.error
+    }
+
+    /// Empty content is only established by a successful initial response.
     var isEmpty: Bool {
-        self.posts.isEmpty && !isLoading
+        contentState == .empty
     }
     
     /// New posts tracking for indicator
@@ -89,6 +115,18 @@ final class FeedStateManager: StateInvalidationSubscriber {
     var currentFeedType: FetchType {
         return feedType
     }
+
+    /// Where "Show More/Less Like This" and implicit interactions for this feed go.
+    /// Nil unless this is a custom feed whose generator accepts feedback; stays nil
+    /// while the generator info is loading.
+    var feedInteractionTarget: FeedInteractionTarget? {
+        FeedInteractionPolicy.target(for: feedType, info: feedModel.generatorInteractionInfo)
+    }
+
+    /// Whether this feed offers "Show More/Less Like This"
+    var supportsFeedInteractions: Bool {
+        feedInteractionTarget != nil
+    }
     
     // MARK: - Private Properties
     
@@ -97,29 +135,47 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Dependencies
     let appState: AppState
-    private let feedModel: FeedModel
+    let feedModel: FeedModel
     private var feedType: FetchType
     
     /// Account-scoped cache identifier for persistence helpers
     private var feedCacheIdentifier: String {
         "\(appState.userDID)-\(feedType.identifier)"
     }
-    
-    /// Scroll position tracking
-    private var scrollAnchor: ScrollAnchor?
+
+    var cacheKey: String {
+        let account = appState.userDID ?? "unknown-account"
+        return "\(account)-\(feedType.identifier)"
+    }
     
     /// Debouncing and coordination
     private var refreshTask: Task<Void, Error>?
     private var loadMoreTask: Task<Void, Error>?
     private var updateTask: Task<Void, Error>?
-    
+    nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
     /// Automatic refresh coordination
     private var autoRefreshTask: Task<Void, Never>?
+    private var reconnectRetryTask: Task<Void, Never>?
+    private var reconnectRetryToken: UUID?
+    private var reconnectRetryState: FeedReconnectRetryState
+
+    var reconnectRetryKey: FeedReconnectRetryKey {
+        FeedReconnectRetryKey(
+            restorationGeneration: appState.networkMonitor.restorationGeneration,
+            failureRevision: reconnectRetryState.failureRevision,
+            isEligible: !isAppInBackground && isAutoRefreshEligible && !isCleanedUp)
+    }
+
+    /// Only the feed the user most recently opened refreshes itself in the
+    /// background; FeedStateStore moves this flag as feeds are switched.
+    private var isAutoRefreshEligible = true
     
-    /// App lifecycle tracking
+    /// Only FeedStateStore's aggregate scene lifecycle may suspend shared work.
     private var isAppInBackground = false
-    private var backgroundNotificationObserver: NSObjectProtocol?
-    private var foregroundNotificationObserver: NSObjectProtocol?
+    private(set) var isCleanedUp = false
+
+    /// Initial loads run in their caller's task, not one of the cancellable slots.
+    private var isLoadingInitialData = false
     
     /// User action tracking to prevent unwanted automatic refreshes
     private var lastUserAction: Date = Date.distantPast
@@ -129,8 +185,6 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// New posts tracking
     private var postsBeforeRefresh: [CachedFeedViewPost] = []
     private var isTrackingNewPosts = false // Prevent multiple tracking calls
-    /// Callback for scrolling to top
-    var scrollToTopCallback: (() -> Void)?
     
     // MARK: - Logging
     
@@ -138,13 +192,24 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     // MARK: - Initialization
     
-    init(appState: AppState, feedModel: FeedModel, feedType: FetchType) {
+    init(appState: AppState, feedModel: FeedModel, feedType: FetchType,
+         initialScenePhase: ScenePhase = .active) {
         self.appState = appState
         self.feedModel = feedModel
         self.feedType = feedType
+        self.isAppInBackground = initialScenePhase == .background
+        self.reconnectRetryState = FeedReconnectRetryState(
+            restorationGeneration: appState.networkMonitor.restorationGeneration)
         
         // Initialize with current feed data
         self.posts = feedModel.posts
+        feedModel.onPostsChanged = { [weak self] in
+            guard let self, !self.isCleanedUp else { return }
+            if self.posts != self.feedModel.posts {
+                self.posts = self.feedModel.posts
+                self.cleanupViewModels()
+            }
+        }
         
         // Set up observers for feed model changes
         setupObservers()
@@ -152,21 +217,28 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // Subscribe to state invalidation events
         appState.stateInvalidationBus.subscribe(self)
         
-        // Setup app lifecycle observers
-        setupAppLifecycleObservers()
-        
         // Start automatic refresh monitoring
         startAutomaticRefreshMonitoring()
-        
         logger.debug("FeedStateManager initialized for feed type: \(feedType.identifier)")
     }
-
 
     // MARK: - Setup
     
     private func setupObservers() {
-        // Observe filter changes and reapply immediately
-        NotificationCenter.default.addObserver(
+        let deleteToken = NotificationCenter.default.addObserver(
+            forName: Notification.Name.feedPostDeleted,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let uri = notification.object as? String else { return }
+            Task { @MainActor in
+                self?.removePost(withURI: uri)
+            }
+        }
+        notificationTokens.append(deleteToken)
+
+        // Filter edits, quick filters and hidden posts take effect immediately on screen (P0)
+        let filterToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("FeedFiltersChanged"),
             object: nil,
             queue: .main
@@ -175,83 +247,48 @@ final class FeedStateManager: StateInvalidationSubscriber {
                 await self?.reapplyFilters()
             }
         }
-    }
-    
-    /// Setup app lifecycle observers (legacy support - main lifecycle now handled via SwiftUI scene phase)
-    private func setupAppLifecycleObservers() {
-        // Keep app lifecycle observers for compatibility but rely primarily on scene phase coordination
-        #if os(iOS)
-        backgroundNotificationObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.didEnterBackgroundNotification,
+        notificationTokens.append(filterToken)
+
+        let visibilityToken = NotificationCenter.default.addObserver(
+            forName: Notification.Name.feedPostVisibilityChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.handleAppDidEnterBackground()
+                await self?.reapplyFilters()
             }
         }
-        
-        foregroundNotificationObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willEnterForegroundNotification,
+        notificationTokens.append(visibilityToken)
+
+        let graphToken = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserGraphChanged"),
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            guard let self else { return }
+            let originDID = notification.userInfo?["accountDID"] as? String
+            guard originDID == nil || originDID == self.appState.userDID else { return }
             Task { @MainActor in
-                self?.handleAppWillEnterForeground()
+                await self.reapplyFilters()
             }
         }
-        #elseif os(macOS)
-        backgroundNotificationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification,
+        notificationTokens.append(graphToken)
+
+        let prefToken = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FeedPreferencesChanged"),
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            guard let self else { return }
+            let originDID = notification.userInfo?["accountDID"] as? String
+            guard originDID == nil || originDID == self.appState.userDID else { return }
+            let prefType = notification.userInfo?["preferenceType"] as? String
+            guard prefType == "hiddenPosts" || prefType == "mutedWords" else { return }
             Task { @MainActor in
-                self?.handleAppDidEnterBackground()
+                await self.reapplyFilters()
             }
         }
-        
-        foregroundNotificationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.handleAppWillEnterForeground()
-            }
-        }
-        #endif
-    }
-    
-    /// Handle app entering background - cancel ongoing tasks to prevent crashes
-    private func handleAppDidEnterBackground() {
-        isAppInBackground = true
-        
-        // Cancel all ongoing tasks when app goes to background
-        refreshTask?.cancel()
-        loadMoreTask?.cancel()
-        updateTask?.cancel()
-        autoRefreshTask?.cancel()
-        
-        logger.debug("App entered background - cancelled all tasks")
-    }
-    
-    /// Handle app entering foreground - resume normal operation
-    private func handleAppWillEnterForeground() {
-        isAppInBackground = false
-        logger.debug("App entering foreground")
-        
-        // Restart automatic refresh monitoring
-        startAutomaticRefreshMonitoring()
-        
-        // Don't automatically refresh when returning from navigation
-        // Only refresh if user hasn't taken any action recently
-        let timeSinceLastUserAction = Date().timeIntervalSince(lastUserAction)
-        if timeSinceLastUserAction > 30.0 { // 30 seconds
-            logger.debug("App returned to foreground after long time since user action, allowing potential refresh")
-        } else {
-            logger.debug("App returned to foreground recently after user action, skipping automatic refresh")
-        }
+        notificationTokens.append(prefToken)
     }
     
     // MARK: - ViewModel Management
@@ -283,11 +320,11 @@ final class FeedStateManager: StateInvalidationSubscriber {
             viewModelCache.removeValue(forKey: postID)
         }
         
-        // Clear cached properties for memory management
+        // Retained rows keep their decoded and presentation caches. Their
+        // content signature invalidates only the rows whose data actually changed.
         for viewModel in viewModelCache.values {
-            viewModel.clearCache()
+            viewModel.invalidateRelativeTime()
         }
-        
         if !toRemove.isEmpty {
             logger.debug("Cleaned up \(toRemove.count) ViewModels")
         }
@@ -304,6 +341,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
         // Check if account is available (with retry for transient state issues)
         for attempt in 1...maxAttempts {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return false }
             let validSession = await client.hasValidSession()
             if validSession {
                 // Also check if we can get the handle, which confirms the session is truly usable
@@ -315,7 +353,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
             if attempt < maxAttempts {
                 // Exponential backoff: 100ms, 200ms, 400ms... capped at 1s
                 let delay = UInt64(min(100_000_000.0 * pow(2.0, Double(attempt - 1)), 1_000_000_000.0))
-                try? await Task.sleep(nanoseconds: delay)
+                do { try await Task.sleep(nanoseconds: delay) }
+                catch { return false }
             }
         }
         
@@ -325,7 +364,20 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Performs initial load of the feed
     @MainActor
     func loadInitialData() async {
-        guard case .idle = loadingState else { return }
+        guard !isLoadingInitialData else { return }
+        switch loadingState {
+        case .idle, .error:
+            break
+        case .loading, .refreshing, .loadingMore:
+            return
+        }
+        guard await beginFeedRequest(), !isLoadingInitialData, !isLoading else { return }
+        isLoadingInitialData = true
+        defer {
+            isLoadingInitialData = false
+            if (Task.isCancelled || isCleanedUp || appState.isAccountSwitchSuspended),
+               loadingState == .loading { loadingState = .idle }
+        }
 
         // If we already have posts (likely from cache restoration), check if cache needs refresh
         // Only skip refresh if this manager has previously refreshed successfully (lastRefreshTime != distantPast)
@@ -367,6 +419,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Wait for account to be ready
         if !(await waitForAccountAvailability()) {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot load initial data: Account unavailable after retries")
             errorMessage = "Account unavailable. Please try again."
             loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
@@ -374,7 +427,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
 
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
 
+        // Accepted cached/prewarmed rows survive a failed supplemental request.
+        if posts != feedModel.posts {
+            posts = feedModel.posts
+            cleanupViewModels()
+        }
         // Check if feed load encountered an error
         if let error = feedModel.error {
             logger.error("Initial load failed: \(error.localizedDescription)")
@@ -397,7 +456,14 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Load initial data with system flag - bypasses user-initiated check for post-authentication loading
     func loadInitialDataWithSystemFlag() async {
-        guard case .idle = loadingState else { return }
+        guard !isLoadingInitialData, case .idle = loadingState else { return }
+        guard await beginFeedRequest(), !isLoadingInitialData, !isLoading else { return }
+        isLoadingInitialData = true
+        defer {
+            isLoadingInitialData = false
+            if (Task.isCancelled || isCleanedUp || appState.isAccountSwitchSuspended),
+               loadingState == .loading { loadingState = .idle }
+        }
 
         logger.debug("Loading initial data with system flag - post-authentication")
 
@@ -407,6 +473,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Wait for account to be ready
         if !(await waitForAccountAvailability()) {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot load system initial data: Account unavailable after retries")
             errorMessage = "Account unavailable. Please try again."
             loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
@@ -415,7 +482,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
         // For system-initiated loads (like post-auth), always force refresh even if posts exist
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
 
+        // Accepted cached/prewarmed rows survive a failed supplemental request.
+        if posts != feedModel.posts {
+            posts = feedModel.posts
+            cleanupViewModels()
+        }
         // Check if feed load encountered an error
         if let error = feedModel.error {
             logger.error("System initial load failed: \(error.localizedDescription)")
@@ -436,34 +509,80 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("System-initiated initial data loaded successfully - posts: \(self.posts.count), hasMore: \(self.feedModel.hasMore)")
     }
     
-    /// Refreshes the feed data (user-initiated via pull-to-refresh or button)
-    /// This bypasses background checks since user interaction proves app is active
+    /// Refreshes the feed data (user-initiated via pull-to-refresh or button).
     @MainActor
-    func refreshUserInitiated() async {
-        logger.debug("🔄 User-initiated refresh - forcing foreground state")
-        
-        // User interaction means we're definitely in foreground, reset the flag
-        isAppInBackground = false
-        
-        // Delegate to standard refresh
-        await refresh()
+    func refreshUserInitiated(displayScale: CGFloat) async {
+        logger.debug("🔄 User-initiated refresh")
+
+        // A pull that lands during another load must not be dropped: wait for that
+        // load, then either publish its fresh first page or run this refresh.
+        let postsBeforeWait = posts
+        let refreshTimeBeforeWait = feedModel.lastRefreshTime
+        if hasInFlightLoad {
+            logger.debug("🔄 User refresh waiting for in-flight feed load")
+            await waitForInFlightLoad()
+            guard !Task.isCancelled, !isCleanedUp, !isAppInBackground,
+                  !appState.isAccountSwitchSuspended else { return }
+        }
+
+        if !hasInFlightLoad, feedModel.lastRefreshTime != refreshTimeBeforeWait, feedModel.error == nil {
+            // The in-flight load fetched the top of the feed while we waited.
+            markUserAction()
+            postsBeforeRefresh = postsBeforeWait
+            isTrackingNewPosts = false
+            await updatePostsFromModel(immediate: true)
+            hasReachedEnd = !feedModel.hasMore
+            if case .error = loadingState {
+                errorMessage = nil
+                loadingState = .idle
+            }
+            await trackNewPostsAfterRefresh()
+        } else {
+            await refresh()
+        }
 
         // Pull-to-refresh is the explicit "show me something new" gesture, so it
-        // also replaces the trending set the feed is currently showing.
+        // also replaces the trending set the feed is currently showing. It loads
+        // independently so the refresh control ends as soon as posts are applied.
         if let trendingRequestID {
             trendingInvalidated = true
-            await loadTrendingIfNeeded(requestID: trendingRequestID)
+            trendingRefreshTask?.cancel()
+            trendingRefreshTask = Task { [weak self] in
+                await self?.loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale)
+            }
+        }
+    }
+
+    /// Whether a load owned by this manager or its model is still running.
+    private var hasInFlightLoad: Bool {
+        isLoadingInitialData || isLoading || feedModel.isLoading || feedModel.isBackgroundRefreshing
+    }
+
+    /// Waits up to `timeout` for the in-flight load to finish.
+    private func waitForInFlightLoad(timeout: Duration = .seconds(5)) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while hasInFlightLoad, clock.now < deadline {
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                return
+            }
         }
     }
     
     /// Refreshes the feed data (user-initiated)
     @MainActor
     func refresh() async {
+        guard !isLoadingInitialData, !isLoading,
+              !feedModel.isLoading, !feedModel.isBackgroundRefreshing else { return }
         // Don't start new tasks if app is in background
         guard !isAppInBackground else {
             logger.debug("Skipping refresh - app is in background")
             return
         }
+
+        guard await beginFeedRequest() else { return }
 
         // Validate account state before attempting refresh
         guard let client = appState.atProtoClient else {
@@ -475,11 +594,17 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
         // Check if account is available (with retry for transient state issues)
         if !(await waitForAccountAvailability(maxAttempts: 3)) {
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot refresh: Account manager state is inconsistent after retries")
             errorMessage = "Account session lost. Please try again or restart the app."
             loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
             return
         }
+
+        // Account validation can suspend; coalesce another refresh admitted meanwhile.
+        guard !Task.isCancelled, !isCleanedUp, !isAppInBackground,
+              !appState.isAccountSwitchSuspended, !isLoadingInitialData, !isLoading,
+              !feedModel.isLoading, !feedModel.isBackgroundRefreshing else { return }
 
         // Mark this as a user-initiated action
         markUserAction()
@@ -490,7 +615,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("🔍 NEW_POSTS_DEBUG: Stored \(self.postsBeforeRefresh.count) posts before refresh for comparison")
         logger.debug("🔍 NEW_POSTS_DEBUG: First 3 post IDs before refresh: \(self.postsBeforeRefresh.prefix(3).map { $0.id })")
 
-        // Cancel any existing refresh task
+        // Reserve the state before the task starts so simultaneous pulls coalesce.
+        loadingState = .refreshing
         refreshTask?.cancel()
 
         refreshTask = Task {
@@ -498,15 +624,17 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
             loadingState = .refreshing
             errorMessage = nil
+            paginationError = nil
             hasReachedEnd = false
-
-            // Capture scroll anchor before refresh
-            captureScrollAnchor()
 
             await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
 
             guard !Task.isCancelled && !isAppInBackground else { return }
 
+            if posts != feedModel.posts {
+                posts = feedModel.posts
+                cleanupViewModels()
+            }
             // Check if feed load encountered an error
             if let error = feedModel.error {
                 logger.error("Feed refresh failed: \(error.localizedDescription)")
@@ -515,10 +643,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
                 return
             }
 
-            await updatePostsFromModel()
+            await updatePostsFromModel(immediate: true)
+
+            guard !Task.isCancelled && !isAppInBackground else { return }
 
             // Track new posts after refresh
             await trackNewPostsAfterRefresh()
+            guard !Task.isCancelled && !isAppInBackground else { return }
 
             // Debug: Print current indicator state after tracking
             logger.debug("🔍 POST_TRACKING_FINAL: After trackNewPosts - hasNewPosts=\(self.hasNewPosts), count=\(self.newPostsCount), avatars=\(self.newPostsAuthorAvatars.count)")
@@ -534,8 +665,10 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Loads more posts for infinite scroll (user-initiated)
     @MainActor
     func loadMore() async {
-        // More specific check - only prevent if already loading more
-        guard loadingState != .loadingMore,
+        // A reconnect owns the first-page request until its account task completes.
+        guard reconnectRetryTask == nil,
+              !isLoadingInitialData,
+              loadingState != .loadingMore,
               !hasReachedEnd,
               !isAppInBackground else {
             logger.debug("loadMore skipped - state: \(String(describing: self.loadingState)), hasReachedEnd: \(self.hasReachedEnd)")
@@ -552,17 +685,21 @@ final class FeedStateManager: StateInvalidationSubscriber {
             guard !Task.isCancelled && !isAppInBackground else { return }
             
             loadingState = .loadingMore
+            paginationError = nil
             
             let previousCount = posts.count
             
             await feedModel.loadMore()
             
-            guard !Task.isCancelled && !isAppInBackground else { 
-                loadingState = .idle
-                return 
+            guard !Task.isCancelled && !isAppInBackground else { return }
+
+            if let error = feedModel.loadMoreError {
+                logger.error("Loading more posts failed: \(error.localizedDescription)")
+                paginationError = error
             }
-            
-            await updatePostsFromModel()
+
+            await updatePostsFromModel(immediate: true)
+            guard !Task.isCancelled && !isAppInBackground else { return }
             
             // Check if we've reached the end
             // Only set hasReachedEnd if feedModel says there's no more data
@@ -586,16 +723,116 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Retries the last failed operation
     @MainActor
     func retry() async {
-        switch loadingState {
-        case .error:
-            if posts.isEmpty {
-                await loadInitialData()
-            } else {
-                await refresh()
-            }
-        default:
-            break
+        guard feedLoadError != nil else { return }
+        if posts.isEmpty {
+            await loadInitialData()
+        } else {
+            await refresh()
         }
+    }
+
+    // MARK: - Connectivity Recovery
+
+    private func beginFeedRequest() async -> Bool {
+        let previousRetry = reconnectRetryTask
+        let previousToken = reconnectRetryToken
+        cancelReconnectRetry()
+        await previousRetry?.value
+        if reconnectRetryToken == previousToken {
+            reconnectRetryToken = nil
+            reconnectRetryTask = nil
+        }
+        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return false }
+        reconnectRetryState.requestStarted(
+            restorationGeneration: appState.networkMonitor.restorationGeneration)
+        return true
+    }
+
+    private var canRetryAfterReconnect: Bool {
+        !Task.isCancelled && !isCleanedUp && !isAppInBackground && isAutoRefreshEligible
+            && !isLoadingInitialData && !isLoading
+            && !feedModel.isLoading && !feedModel.isBackgroundRefreshing && !feedModel.isLoadingMore
+            && !appState.isAccountSwitchSuspended
+            && appState.networkMonitor.isConnected
+            && AppStateManager.shared.lifecycle.appState === appState
+            && appState.atProtoClient != nil
+    }
+
+    /// Called by the visible feed's task; ordinary requests are never path-gated.
+    func retryAfterConnectionRestored() async {
+        guard reconnectRetryTask == nil, canRetryAfterReconnect,
+              case .error(let originalError) = loadingState,
+              reconnectRetryState.consumeRestoration(appState.networkMonitor.restorationGeneration) else { return }
+
+        let token = UUID()
+        let expectedFeed = feedType.identifier
+        reconnectRetryToken = token
+        let task = appState.startAccountTask { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.reconnectRetryToken == token {
+                    // Cancellation preserves the failed state and its manual retry action.
+                    if self.loadingState == .loading || self.loadingState == .refreshing {
+                        self.errorMessage = originalError.localizedDescription
+                        self.loadingState = .error(originalError)
+                    }
+                    self.reconnectRetryToken = nil
+                    self.reconnectRetryTask = nil
+                }
+            }
+            guard self.canRetryAfterReconnect, self.feedType.identifier == expectedFeed else { return }
+            self.loadingState = self.posts.isEmpty ? .loading : .refreshing
+            self.errorMessage = nil
+
+            let previousRefreshTime = self.feedModel.lastRefreshTime
+            // Stay inside account-owned work so account suspension cancels and drains the request.
+            await self.feedModel.loadFeed(fetch: self.feedType, forceRefresh: true)
+            guard !Task.isCancelled, self.reconnectRetryToken == token,
+                  !self.isCleanedUp, !self.isAppInBackground, self.isAutoRefreshEligible,
+                  !self.appState.isAccountSwitchSuspended,
+                  AppStateManager.shared.lifecycle.appState === self.appState,
+                  self.feedType.identifier == expectedFeed else { return }
+            if self.posts != self.feedModel.posts {
+                self.posts = self.feedModel.posts
+                self.cleanupViewModels()
+            }
+            if let error = self.feedModel.error {
+                self.errorMessage = error.localizedDescription
+                self.loadingState = .error(error)
+                return
+            }
+            // A coalesced or superseded model request is not a successful retry.
+            guard self.feedModel.lastRefreshTime != previousRefreshTime else { return }
+            // Publish synchronously after the ownership checks; no unstructured debounce task.
+            self.posts = self.feedModel.posts
+            self.cleanupViewModels()
+            self.hasReachedEnd = !self.feedModel.hasMore
+            self.paginationError = nil
+            self.loadingState = .idle
+        }
+        reconnectRetryTask = task
+        guard let task else {
+            reconnectRetryToken = nil
+            return
+        }
+        defer {
+            // Account suspension can cancel its wrapper before our operation starts.
+            if reconnectRetryToken == token {
+                reconnectRetryToken = nil
+                reconnectRetryTask = nil
+            }
+        }
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func cancelReconnectRetry() {
+        reconnectRetryTask?.cancel()
+        // Keep the task registered until it finishes; its defer releases the slot.
+        reconnectRetryState.invalidate()
     }
     
     // MARK: - Trending Interstitial
@@ -608,6 +845,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private var trendingRequestID: String?
     private var trendingLoadedAt: Date?
     private var trendingInvalidated = false
+    private var trendingRefreshTask: Task<Void, Never>?
 
     /// How long a loaded trending set stays on screen before a reappear refetches it.
     static let trendingMaxAge: TimeInterval = 15 * 60
@@ -618,9 +856,12 @@ final class FeedStateManager: StateInvalidationSubscriber {
         trendingRequestID == requestID ? trendingContent : TrendingFeedContent()
     }
 
-    func loadTrendingIfNeeded(requestID: String) async {
-        guard shouldReloadTrending(for: requestID, now: Date()) else { return }
-        let content = await TrendingFeedContent.load(appState: appState)
+    func loadTrendingIfNeeded(requestID: String, displayScale: CGFloat) async {
+        guard shouldReloadTrending(for: requestID, now: Date()) else {
+            appState.prefetchTopicPreviews(trends: trendingContent.trends, displayScale: displayScale, owner: .timeline)
+            return
+        }
+        let content = await TrendingFeedContent.load(appState: appState, displayScale: displayScale)
         guard !Task.isCancelled else { return }
         trendingContent = content
         trendingRequestID = requestID
@@ -637,12 +878,23 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
     // MARK: - Data Updates
     
-    /// Updates posts from the feed model with debouncing
+    /// Updates posts from the feed model, debounced unless `immediate` (user-initiated refresh).
     @MainActor
-    private func updatePostsFromModel() async {
+    private func updatePostsFromModel(immediate: Bool = false) async {
         // Cancel any existing update task
         updateTask?.cancel()
-        
+
+        if immediate {
+            updateTask = nil
+            let oldCount = posts.count
+            let modelPosts = feedModel.posts
+            guard posts != modelPosts else { return }
+            posts = modelPosts
+            cleanupViewModels()
+            logger.debug("Updated posts from model immediately: \(oldCount) -> \(self.posts.count) posts")
+            return
+        }
+
         updateTask = Task {
             // Debounce rapid updates
             try await Task.sleep(nanoseconds: 50_000_000) // 50ms
@@ -659,7 +911,6 @@ final class FeedStateManager: StateInvalidationSubscriber {
             }
             
             posts = newPosts
-            
             // Clean up ViewModels for posts no longer in the feed
             cleanupViewModels()
             
@@ -677,6 +928,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Trigger FeedModel to re-process its posts with current filter settings
         let filteredPosts = feedModel.applyFilters(withSettings: appState.feedFilterSettings)
+        guard posts != filteredPosts else { return }
         
         // Update our display
         posts = filteredPosts
@@ -687,61 +939,19 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("Filter reapplication complete - now showing \(self.posts.count) posts")
     }
     
-    // MARK: - Scroll Position Management
-    
-    /// Captures the current scroll position for restoration
-    func captureScrollAnchor() {
-        // This will be called by the UIKit controller when needed
-        // We store the anchor for later restoration
-    }
-    
-    /// Captures scroll position from UICollectionView (called by controller)
-    #if os(iOS)
-    func captureScrollAnchor(from collectionView: UICollectionView) {
-        guard !posts.isEmpty else { return }
-        
-        let visibleIndexPaths = collectionView.indexPathsForVisibleItems.sorted()
-        guard let firstVisibleIndexPath = visibleIndexPaths.first,
-              firstVisibleIndexPath.item < posts.count else { return }
-        
-        let post = posts[firstVisibleIndexPath.item]
-        
-        // Calculate offset from the top of the visible cell
-        let cellFrame = collectionView.cellForItem(at: firstVisibleIndexPath)?.frame ?? .zero
-        let contentOffsetY = collectionView.contentOffset.y
-        let offsetFromTop = contentOffsetY - cellFrame.minY
-        
-        scrollAnchor = ScrollAnchor(
-            postID: post.id,
-            offsetFromTop: offsetFromTop,
-            timestamp: Date()
-        )
-        
-        logger.debug("📍 Captured scroll anchor for post: \(post.id), offset: \(offsetFromTop)")
-    }
-    #endif
-    
-    /// Sets a scroll anchor for position restoration
-    func setScrollAnchor(_ anchor: ScrollAnchor) {
-        scrollAnchor = anchor
-        logger.debug("Set scroll anchor for post: \(anchor.postID)")
-    }
-    
-    /// Gets the current scroll anchor if not stale
-    func getScrollAnchor() -> ScrollAnchor? {
-        guard let anchor = scrollAnchor,
-              !anchor.isStale else {
-            scrollAnchor = nil
-            return nil
+    /// Drops a deleted post from this feed without waiting for a refresh.
+    @MainActor
+    private func removePost(withURI uri: String) {
+        let matches: (CachedFeedViewPost) -> Bool = { cached in
+            (try? cached.feedViewPost.post.uri.uriString()) == uri
         }
-        return anchor
+        guard posts.contains(where: matches) else { return }
+        feedModel.posts.removeAll(where: matches)
+        posts.removeAll(where: matches)
+        cleanupViewModels()
+        logger.debug("Removed deleted post from feed")
     }
-    
-    /// Clears the scroll anchor
-    func clearScrollAnchor() {
-        scrollAnchor = nil
-    }
-    
+
     // MARK: - Utility Methods
     
     /// Gets a post by ID
@@ -769,35 +979,16 @@ final class FeedStateManager: StateInvalidationSubscriber {
             return
         }
         
-        // Filter out posts that can't be decoded (malformed cached data)
-        var validPosts: [CachedFeedViewPost] = []
-        var invalidPostIds: [String] = []
-        
-        for post in posts {
-            if (try? post.feedViewPost) != nil {
-                validPosts.append(post)
-            } else {
-                invalidPostIds.append(post.id)
-                logger.warning("Cached post \(post.id) cannot be decoded - will be removed from cache")
-            }
-        }
-        
-        // If we found invalid posts, remove them from the cache
-        if !invalidPostIds.isEmpty {
-            logger.info("Removing \(invalidPostIds.count) invalid cached posts")
-            Task.detached { [invalidPostIds] in
-                await PersistentFeedStateManager.shared.removeInvalidPosts(withIds: invalidPostIds)
-            }
-        }
-        
-        self.posts = validPosts
-        self.loadingState = .idle
+        self.posts = posts
+        // Restoration races the initial network load; cached rows may show early, but
+        // must not mark that in-flight load idle (which lets a duplicate load start).
+        if !isLoadingInitialData { self.loadingState = .idle }
         self.hasReachedEnd = false
         
         // Update feed model's posts to match
-        await feedModel.restorePersistedPosts(validPosts, cursor: cursor)
+        await feedModel.restorePersistedPosts(posts, cursor: cursor)
         
-        logger.debug("Restored \(validPosts.count) persisted posts (\(invalidPostIds.count) invalid posts filtered out)")
+        logger.debug("Restored \(posts.count) persisted posts")
     }
     
     // MARK: - iOS 18+ Smart Refresh Methods
@@ -806,19 +997,19 @@ final class FeedStateManager: StateInvalidationSubscriber {
     @MainActor
     func smartRefresh() async {
         // Don't start new tasks if app is in background
-        guard !isAppInBackground else {
-            logger.debug("Skipping smart refresh - app is in background")
+        guard !isAppInBackground, !isLoadingInitialData, !isLoading else {
+            logger.debug("Skipping smart refresh - app is backgrounded or already loading")
             return
         }
         
+        guard await beginFeedRequest(), !isLoadingInitialData, !isLoading,
+              !feedModel.isLoading, !feedModel.isBackgroundRefreshing else { return }
+
         // Cancel any existing tasks
         refreshTask?.cancel()
         
         refreshTask = Task {
             guard !Task.isCancelled && !isAppInBackground else { return }
-
-            // Capture current scroll position before refresh
-            captureScrollAnchor()
 
             // Use background refresh strategy to preserve UI continuity
             loadingState = .refreshing
@@ -830,11 +1021,12 @@ final class FeedStateManager: StateInvalidationSubscriber {
             // Load fresh data using the feed model
             await feedModel.loadFeed(fetch: feedType, forceRefresh: true, strategy: .backgroundRefresh)
 
-            guard !Task.isCancelled && !isAppInBackground else {
-                loadingState = .idle
-                return
-            }
+            guard !Task.isCancelled && !isAppInBackground else { return }
 
+            if posts != feedModel.posts {
+                posts = feedModel.posts
+                cleanupViewModels()
+            }
             // Check if feed load encountered an error
             if let error = feedModel.error {
                 logger.error("Smart refresh failed: \(error.localizedDescription)")
@@ -845,6 +1037,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
             // Update posts from the model
             await updatePostsFromModel()
+            guard !Task.isCancelled && !isAppInBackground else { return }
 
             // Reset pagination state if needed
             if !feedModel.hasMore {
@@ -865,7 +1058,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     @MainActor
     func backgroundRefresh() async {
         // Don't start if already refreshing or app is in background
-        guard !isAppInBackground, 
+        guard !isAppInBackground, !isLoadingInitialData,
               loadingState != .refreshing,
               loadingState != .loading else {
             logger.debug("Skipping background refresh - conditions not met")
@@ -1054,13 +1247,6 @@ final class FeedStateManager: StateInvalidationSubscriber {
         return hasNewPosts && scrollOffset <= -50 // More negative = higher up (past the top)
     }
     
-    /// Scrolls to top and clears new posts indicator
-    @MainActor
-    func scrollToTopAndClearNewPosts() {
-        clearNewPostsIndicator()
-        scrollToTopCallback?()
-    }
-    
     /// DEBUG: Manually trigger new posts indicator for testing
     @MainActor
     public func debugTriggerNewPostsIndicator(count: Int = 3) {
@@ -1109,81 +1295,49 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     // MARK: - Scene Phase Coordination (iOS 18+)
     
-    /// Handle scene phase transitions coordinated by FeedStateStore
+    /// Returns true only when this manager resumes work it actually suspended.
+    /// An active callback after an interrupted persistence save is not a resumption.
     @MainActor
-    func handleScenePhaseTransition(_ phase: ScenePhase) async {
-        logger.debug("🎭 Scene phase transition: \(String(describing: phase))")
-        
+    func handleScenePhaseTransition(_ phase: ScenePhase) async -> Bool {
+        guard !isCleanedUp else { return false }
         switch phase {
         case .background:
-            await handleScenePhaseBackground()
+            guard !isAppInBackground else { return false }
+            isAppInBackground = true
+            cancelReconnectRetry()
+
+            // Reset only a loading state owned by work canceled here. Initial
+            // loads remain owned by their callers across background/active cycles.
+            if !isLoadingInitialData {
+                if loadingState == .refreshing, refreshTask != nil {
+                    loadingState = .idle
+                } else if loadingState == .loadingMore, loadMoreTask != nil {
+                    loadingState = .idle
+                }
+                updateTask?.cancel()
+                updateTask = nil
+            }
+            refreshTask?.cancel()
+            refreshTask = nil
+            loadMoreTask?.cancel()
+            loadMoreTask = nil
+            stopAutomaticRefreshMonitoring()
+            logger.debug("Aggregate background suspended manager-owned feed work")
+            return false
         case .active:
-            await handleScenePhaseActive()
+            let resumed = isAppInBackground
+            isAppInBackground = false
+            startAutomaticRefreshMonitoring()
+            // Never clear caller-owned loading state merely because a scene activated.
+            return resumed
         case .inactive:
-            await handleScenePhaseInactive()
+            // Control Center and other temporary interruptions preserve shared work.
+            return false
         @unknown default:
-            logger.debug("⚠️ Unknown scene phase: \(String(describing: phase))")
+            return false
         }
     }
-    
-    /// Handle background scene phase - preserve state without disruption
-    @MainActor
-    private func handleScenePhaseBackground() async {
-        logger.debug("📱 Scene entering background - preserving state")
-        isAppInBackground = true
-        
-        // Cancel ongoing operations to prevent crashes
-        refreshTask?.cancel()
-        loadMoreTask?.cancel()
-        updateTask?.cancel()
-        autoRefreshTask?.cancel()
-        
-        // Capture current scroll anchor for restoration
-        captureScrollAnchor()
-        
-        logger.debug("✅ Background state preserved")
-    }
-    
-    /// Handle active scene phase - restore state intelligently
-    @MainActor  
-    private func handleScenePhaseActive() async {
-        logger.debug("📱 Scene becoming active - restoring state")
-        isAppInBackground = false
-        
-        // Restart automatic refresh monitoring
-        startAutomaticRefreshMonitoring()
-        
-        // State restoration is handled by the store's intelligent refresh logic
-        // Individual state managers don't need to refresh automatically
-        logger.debug("✅ Active state restored (refresh controlled by FeedStateStore)")
-    }
-    
-    /// Handle inactive scene phase - prepare for potential backgrounding
-    @MainActor
-    private func handleScenePhaseInactive() async {
-        logger.debug("📱 Scene becoming inactive - preparing for backgrounding")
-        
-        // Capture current scroll position proactively
-        captureScrollAnchor()
-        
-        // Don't cancel tasks here as inactive might be temporary (Control Center, etc.)
-        logger.debug("✅ Inactive state prepared")
-    }
-    
-    /// Restore UI state without triggering network refresh
-    @MainActor
-    func restoreUIStateWithoutRefresh() async {
-        logger.debug("🔄 Restoring UI state without refresh")
-        
-        // Ensure we're not in a loading state
-        if loadingState == .loading || loadingState == .refreshing {
-            loadingState = .idle
-        }
-        
-        // Don't trigger network operations - just ensure UI is consistent
-        logger.debug("✅ UI state restored without refresh")
-    }
-    
+
     /// Get associated UIKit controller for restoration coordination
     func getAssociatedUIKitController() -> FeedCollectionViewControllerIntegrated? {
         // This would be set by the UIKit controller when it's created
@@ -1214,23 +1368,42 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     // MARK: - Automatic Refresh
     
-    /// Starts background task to periodically check and perform automatic refresh
+    /// Enables or disables background auto-refresh for this feed. Feeds that are
+    /// no longer the active one keep their posts but stop polling the network.
+    func setAutomaticRefreshEligible(_ eligible: Bool) {
+        guard isAutoRefreshEligible != eligible else { return }
+        isAutoRefreshEligible = eligible
+        if eligible {
+            startAutomaticRefreshMonitoring()
+        } else {
+            cancelReconnectRetry()
+            stopAutomaticRefreshMonitoring()
+        }
+    }
+
+    /// Starts at most one monitor, including repeated active/inactive callbacks.
     private func startAutomaticRefreshMonitoring() {
-        logger.debug("🔄 Starting automatic refresh monitoring")
-        
-        autoRefreshTask = Task { @MainActor in
+        guard autoRefreshTask == nil, isAutoRefreshEligible, !isAppInBackground, !isCleanedUp else { return }
+        logger.debug("Starting automatic refresh monitoring")
+
+        autoRefreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                // Wait for check interval
-                try? await Task.sleep(nanoseconds: UInt64(FeedConstants.automaticRefreshCheckInterval * 1_000_000_000))
-                
-                guard !Task.isCancelled else { break }
-                
-                // Check conditions and potentially refresh
-                await checkAndPerformAutomaticRefresh()
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(FeedConstants.automaticRefreshCheckInterval * 1_000_000_000))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, let self else { return }
+                await self.checkAndPerformAutomaticRefresh()
             }
         }
     }
-    
+
+    private func stopAutomaticRefreshMonitoring() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+    }
+
     /// Checks conditions and performs automatic refresh if appropriate
     private func checkAndPerformAutomaticRefresh() async {
         // Don't refresh if app is in background
@@ -1247,7 +1420,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
         
         // Don't refresh if already loading
-        guard loadingState == .idle else {
+        guard loadingState == .idle, !isLoadingInitialData else {
             logger.debug("⏸️ Skipping auto-refresh: already loading")
             return
         }
@@ -1268,6 +1441,10 @@ final class FeedStateManager: StateInvalidationSubscriber {
         )
         
         if didRefresh {
+            guard !Task.isCancelled, !isCleanedUp, !isAppInBackground,
+                  !appState.isAccountSwitchSuspended else { return }
+            // Publish whatever the background load accepted into the model.
+            await updatePostsFromModel()
             logger.info("🔄 Automatic refresh completed successfully")
         }
     }
@@ -1276,52 +1453,52 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Clears all cached data and cancels ongoing tasks
     func cleanup() {
-        // Mark as background to prevent new tasks
+        // Retired managers cannot restart monitoring from a delayed phase callback.
+        isCleanedUp = true
         isAppInBackground = true
+        cancelReconnectRetry()
         
         // Cancel all tasks
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
-        autoRefreshTask?.cancel()
-        
+        trendingRefreshTask?.cancel()
+        stopAutomaticRefreshMonitoring()
+
         // Clear references
         refreshTask = nil
         loadMoreTask = nil
         updateTask = nil
-        autoRefreshTask = nil
-        
+
         viewModelCache.removeAll()
-        scrollAnchor = nil
-        
-        // Remove notification observers
-        if let backgroundObserver = backgroundNotificationObserver {
-            NotificationCenter.default.removeObserver(backgroundObserver)
-            backgroundNotificationObserver = nil
-        }
-        if let foregroundObserver = foregroundNotificationObserver {
-            NotificationCenter.default.removeObserver(foregroundObserver)
-            foregroundNotificationObserver = nil
-        }
         
         // Unsubscribe from state invalidation events
         appState.stateInvalidationBus.unsubscribe(self)
         
+        feedModel.onPostsChanged = nil
+        notificationTokens.forEach(NotificationCenter.default.removeObserver)
+        notificationTokens.removeAll()
+        
         logger.debug("FeedStateManager cleaned up")
     }
     
-    deinit {
-        // Note: Cannot access @MainActor properties from deinit
-        // Cleanup will be handled by the cleanup() method called from the parent view
-        // Tasks will be cancelled automatically when the object is deallocated
+    isolated deinit {
+        feedModel.onPostsChanged = nil
+        notificationTokens.forEach(NotificationCenter.default.removeObserver)
+        reconnectRetryTask?.cancel()
+        refreshTask?.cancel()
+        loadMoreTask?.cancel()
+        updateTask?.cancel()
+        trendingRefreshTask?.cancel()
+        autoRefreshTask?.cancel()
         logger.debug("FeedStateManager deallocated")
     }
     
     // MARK: - Feed Type Updates
     
-    /// Updates the fetch type while preserving scroll position (user-initiated)
+    /// Updates shared feed data. Viewport preservation belongs to the originating scene.
     @MainActor
-    func updateFetchType(_ newFetchType: FetchType, preserveScrollPosition: Bool = true) async {
+    func updateFetchType(_ newFetchType: FetchType) async {
         guard newFetchType.identifier != self.feedType.identifier else {
             logger.debug("Feed type unchanged, no update needed")
             return
@@ -1332,14 +1509,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // Mark this as a user-initiated action
         markUserAction()
         
-        // Save current scroll position if requested
-        let savedScrollAnchor = preserveScrollPosition ? scrollAnchor : nil
-        
         // Cancel any ongoing operations
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
         
+        cancelReconnectRetry()
+
         // Update the feed type
         self.feedType = newFetchType
         
@@ -1356,28 +1532,6 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Load new feed data
         await loadInitialData()
-        
-        // Restore scroll position if we had one and the posts support it
-        if preserveScrollPosition, 
-           let anchor = savedScrollAnchor,
-           !anchor.isStale,
-           let matchingPostIndex = posts.firstIndex(where: { $0.id == anchor.postID }) {
-            
-            // Create updated scroll anchor for the matching post
-            self.scrollAnchor = ScrollAnchor(
-                postID: anchor.postID,
-                offsetFromTop: anchor.offsetFromTop,
-                timestamp: Date()
-            )
-            
-            logger.debug("Restored scroll position to post \(anchor.postID) at index \(matchingPostIndex)")
-        } else {
-            // Clear scroll anchor if we can't restore position
-            self.scrollAnchor = nil
-            if preserveScrollPosition {
-                logger.debug("Could not restore scroll position - anchor post not found or stale")
-            }
-        }
     }
 }
 
@@ -1426,6 +1580,7 @@ extension FeedStateManager {
             logger.debug("Feed list changed, but skipping automatic refresh")
             
         case .accountSwitched:
+            cancelReconnectRetry()
             // Account switches are critical - always clear and reload
             logger.debug("Account switched, clearing and reloading feed")
             posts.removeAll()
@@ -1446,11 +1601,16 @@ extension FeedStateManager {
                 await loadInitialData()
             }
             
-        case .postCreated, .replyCreated:
-            // Don't automatically refresh for new posts - let user pull to refresh
-            // This prevents disrupting scroll position when user returns from post creation
-            logger.debug("New post created, but skipping automatic refresh to preserve scroll position")
-            
+        case .postCreated(let post):
+            if feedType == .timeline {
+                await feedModel.handleStateInvalidation(.postCreated(post))
+                if posts != feedModel.posts {
+                    posts = feedModel.posts
+                    cleanupViewModels()
+                }
+            }
+        case .replyCreated:
+            break
         default:
             // Other events don't require action for feed state
             break

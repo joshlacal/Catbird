@@ -35,15 +35,49 @@ enum FeedsStartPageLayoutMetrics {
   static func iconSize(itemWidth: CGFloat) -> CGFloat {
     max(64, min(itemWidth * 0.8, 110))
   }
+
+  static func bannerHeight(viewportSize: CGSize) -> CGFloat {
+    let preferredHeight: CGFloat
+    switch viewportSize.width {
+    case ..<360: preferredHeight = 90
+    case ..<480: preferredHeight = 108
+    default: preferredHeight = 126
+    }
+    return ContainerLayoutMetrics.bannerHeight(
+      viewportHeight: viewportSize.height,
+      preferredHeight: preferredHeight
+    )
+  }
+
+  static func columnCount(
+    width: CGFloat,
+    horizontalPadding: CGFloat,
+    spacing: CGFloat,
+    usesLargeText: Bool
+  ) -> Int {
+    guard width.isFinite, horizontalPadding.isFinite, spacing.isFinite else { return 1 }
+    let minimumWidth: CGFloat = usesLargeText ? 130 : 88
+    let usableWidth = max(0, width - horizontalPadding * 2)
+    let safeSpacing = max(0, spacing)
+    return max(1, min(4, Int((usableWidth + safeSpacing) / (minimumWidth + safeSpacing))))
+  }
 }
 
 // MARK: - FeedsStartPage
 struct FeedsStartPage: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   // Environment and State properties
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.displayScale) private var displayScale
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.containerViewportSize) private var parentViewportSize
+  @State private var measuredContainerSize = CGSize.zero
+  /// True once the banner has scrolled up under the drawer's top bar, when the
+  /// rows beneath it need the system scroll-edge fade.
+  @State private var hasScrolledPastBanner = false
   #if os(iOS)
   @Environment(\.inSideDrawer) private var inSideDrawer
   #else
@@ -55,7 +89,7 @@ struct FeedsStartPage: View {
   }
   @State private var isEditingFeeds = false
   @Binding var isDrawerOpen: Bool
-  @State private var viewModel: FeedsStartPageViewModel
+  @State private var viewModel: FeedsStartPageViewModel?
   @Binding var selectedFeed: FetchType
   @Binding var currentFeedName: String
 
@@ -65,6 +99,7 @@ struct FeedsStartPage: View {
   // UI State
   @State private var searchText = ""
   @State private var isSearchBarVisible = false
+  @FocusState private var isFeedSearchFocused: Bool
   @State private var isLoaded = false
   @State private var isInitialized = false
   @State private var currentUserDID: String?  // Track current account for change detection
@@ -86,6 +121,7 @@ struct FeedsStartPage: View {
   @State private var dropTargetItem: String?
   @State private var isDefaultFeedDropTarget = false
   @Namespace private var glassNamespace
+  @Namespace private var defaultFeedGlassNamespace
 
   // Profile state
   @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
@@ -114,66 +150,27 @@ struct FeedsStartPage: View {
   }
 
   // MARK: - Layout Calculations
-  private var safeAreaTop: CGFloat {
-#if os(iOS)
-    let window = UIApplication.shared.connectedScenes
-      .filter { $0.activationState == .foregroundActive }
-      .first(where: { $0 is UIWindowScene })
-      .flatMap { $0 as? UIWindowScene }?.windows
-      .first(where: { $0.isKeyWindow })
-
-    return window?.safeAreaInsets.top ?? 44
-#elseif os(macOS)
-    return 44  // Standard navigation bar height for macOS
-#endif
-  }
-  
-  private var navigationBarHeight: CGFloat {
-    // Standard navigation bar height + safe area top
-    return 44 + safeAreaTop
-  }
-  
-  // Responsive banner height based on screen size and drawer width
+  // The artwork is deliberately compact; account identity has its own row below.
   private var bannerHeight: CGFloat {
-    // Container-driven banner height. Wide drawers (large iPad / Mac, where
-    // drawerWidth reaches 480–600) get a taller banner so the header keeps its
-    // proportions. Never exceed a quarter of the screen height.
-    let baseHeight: CGFloat
-    switch drawerWidth {
-    case ..<360: baseHeight = 150
-    case ..<480: baseHeight = 190
-    default: baseHeight = 220
-    }
-    return min(baseHeight, screenHeight * 0.25)
+    FeedsStartPageLayoutMetrics.bannerHeight(viewportSize: viewportSize)
   }
 
-  // Interior insets for the profile row inside the banner. In the drawer the
-  // banner is clipped by a ~28pt concentric corner, so the avatar and handle
-  // need more clearance than the grid's horizontal padding or they crowd into
-  // the corner curvature and read as cut off.
-  private var bannerContentInset: CGFloat {
-    inSideDrawer ? DesignTokens.Spacing.section : horizontalPadding  // 24
-  }
-
-  private var bannerContentBottomInset: CGFloat {
-    inSideDrawer ? DesignTokens.Spacing.xxl : max(12, bannerHeight * 0.08)  // 21
-  }
-  
   // Responsive avatar size
   private var avatarSize: CGFloat {
     isNarrowDrawer ? 54 : 64
   }
 
   // Sizing properties
-  private let screenHeight = PlatformScreenInfo.height
-  private let isIPad = PlatformDeviceInfo.isIPad
+  private var viewportSize: CGSize { parentViewportSize ?? measuredContainerSize }
   private var drawerWidth: CGFloat {
-    PlatformScreenInfo.responsiveDrawerWidth
+    viewportSize.width
   }
   // Single threshold for the narrow (phone-width) vs. wide (iPad/Mac) drawer.
   private var isNarrowDrawer: Bool { drawerWidth < 360 }
   // Single source of truth for drawer card corner rounding (HIG: consistent shapes).
   private let cardCornerRadius: CGFloat = 12
+  // Concentric with the 12pt icon inside `FeedsGridFeedLabel`'s padding.
+  private var gridCellCornerRadius: CGFloat { cardCornerRadius + DesignTokens.Spacing.sm }
   private var gridSpacing: CGFloat {
     isNarrowDrawer ? DesignTokens.Spacing.sm : DesignTokens.Spacing.base  // 6 / 12
   }
@@ -181,20 +178,16 @@ struct FeedsStartPage: View {
     isNarrowDrawer ? DesignTokens.Spacing.base : DesignTokens.Spacing.xl  // 12 / 18
   }
   private var columns: Int {
-    switch drawerWidth {
-    case ..<300: return 3  // Very small screens
-    case ..<380: return 4  // Standard layout
-    case ..<500: return 4  // Still prefer 3 columns for readability
-    case ..<600: return 4  // Large iPad/Mac - can fit 4 nicely
-    default: return 4      // Very large displays
-    }
+    FeedsStartPageLayoutMetrics.columnCount(
+      width: drawerWidth,
+      horizontalPadding: horizontalPadding,
+      spacing: gridSpacing,
+      usesLargeText: dynamicTypeSize.isAccessibilitySize
+    )
   }
   private var itemWidth: CGFloat {
     let availableWidth = drawerWidth - (horizontalPadding * 2) - (gridSpacing * CGFloat(columns - 1))
-    let calculatedWidth = availableWidth / CGFloat(columns)
-    
-    // Ensure minimum and maximum item widths for usability
-    return max(80, min(calculatedWidth, 140))
+    return max(1, min(availableWidth / CGFloat(columns), 140))
   }
   private var iconSize: CGFloat {
     FeedsStartPageLayoutMetrics.iconSize(itemWidth: itemWidth)
@@ -210,18 +203,27 @@ struct FeedsStartPage: View {
     self._selectedFeed = selectedFeed
     self._currentFeedName = currentFeedName
     self._isDrawerOpen = isDrawerOpen
-    self._viewModel = State(wrappedValue: FeedsStartPageViewModel(appState: appState))
+    self._viewModel = State(initialValue: nil)
   }
 
   // MARK: - Helper Methods
-  private func isSelected(feedURI: String) -> Bool {
+  private var selectedFeedURIString: String? {
+    switch selectedFeed {
+    case .feed(let uri), .list(let uri):
+      return uri.uriString()
+    default:
+      return nil
+    }
+  }
+
+  private func isSelected(uri: ATProtocolURI? = nil, feedURI: String) -> Bool {
     if SystemFeedTypes.isTimelineFeed(feedURI) {
       return selectedFeed == .timeline
-    } else if let uri = try? ATProtocolURI(uriString: feedURI) {
-      // Consider both custom feeds and list feeds
-      return selectedFeed == .feed(uri) || selectedFeed == .list(uri)
     }
-    return false
+    if let uri {
+      return selectedFeedURIString == uri.uriString()
+    }
+    return selectedFeedURIString == feedURI
   }
 
   private func isDefaultFeedSelected() -> Bool {
@@ -243,7 +245,9 @@ struct FeedsStartPage: View {
         input: .init(actor: ATIdentifier(string: did))
       )
 
-      if responseCode == 200, let profileData = profileData {
+      // Drop a response that arrives after the account changed.
+      if responseCode == 200, let profileData = profileData,
+         profileData.did.description == appState.userDID {
         profile = profileData
       }
     } catch {
@@ -254,46 +258,46 @@ struct FeedsStartPage: View {
   }
 
   @MainActor
-  private func updateFilteredFeeds() async {
-    // Update the caches first - this will ensure proper timeline position
+  private func refreshFeedLists() async {
+    guard let viewModel else { return }
     await viewModel.updateCaches()
+    applyFilter(using: viewModel)
+  }
 
-    // Then use the sync properties
+  @MainActor
+  private func applySearchFilter() {
+    guard let viewModel else { return }
+    applyFilter(using: viewModel)
+  }
+
+  @MainActor
+  private func applyFilter(using viewModel: FeedsStartPageViewModel) {
     let pinnedFeeds = viewModel.cachedPinnedFeeds
     let savedFeeds = viewModel.cachedSavedFeeds
 
-    // Set the default feed (for big button) to the first pinned feed
     defaultFeed = pinnedFeeds.first
-
-    // Get the name of the default feed
     if let feed = defaultFeed,
       let uri = try? ATProtocolURI(uriString: feed)
     {
-      defaultFeedName =
-        viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
-    } else if defaultFeed != nil && SystemFeedTypes.isTimelineFeed(defaultFeed!) {
-      defaultFeedName = "Timeline"
+      defaultFeedName = viewModel.displayName(for: uri)
     } else {
       defaultFeedName = "Timeline"
     }
 
-    // Filter pinned feeds - IMPORTANT: Include all feeds in the grid
-    filteredPinnedFeeds = pinnedFeeds.compactMap { feed in
-      // Apply search filter if needed
-      if !searchText.isEmpty
-        && !viewModel.filteredFeeds([feed], searchText: searchText).contains(feed)
-      {
-        return nil
-      }
-
-      return feed
+    let pinnedSet = Set(pinnedFeeds)
+    if searchText.isEmpty {
+      filteredPinnedFeeds = pinnedFeeds
+      filteredSavedFeeds = savedFeeds.filter { !pinnedSet.contains($0) }
+    } else {
+      filteredPinnedFeeds = viewModel.filteredFeeds(pinnedFeeds, searchText: searchText)
+      let filteredSaved = viewModel.filteredFeeds(savedFeeds, searchText: searchText)
+      filteredSavedFeeds = filteredSaved.filter { !pinnedSet.contains($0) }
     }
+  }
 
-    // Filter saved feeds, excluding any that are already in pinned
-    let filteredSaved = viewModel.filteredFeeds(savedFeeds, searchText: searchText)
-    filteredSavedFeeds = filteredSaved.filter { feed in
-      !pinnedFeeds.contains(feed)
-    }
+  @MainActor
+  private func updateFilteredFeeds() async {
+    await refreshFeedLists()
   }
 
   private func resetDragState() {
@@ -309,8 +313,7 @@ struct FeedsStartPage: View {
   // Build a Nuke ImageRequest that decodes at the exact pixel size for avatars
   private func avatarImageRequest(from urlString: String?, sizeInPoints: CGFloat) -> ImageRequest? {
     guard let urlString, let url = URL(string: urlString) else { return nil }
-    let scale = PlatformScreenInfo.scale
-    let pixelSize = CGSize(width: sizeInPoints * scale, height: sizeInPoints * scale)
+    let pixelSize = CGSize(width: sizeInPoints * displayScale, height: sizeInPoints * displayScale)
     let processors: [any ImageProcessing] = [
       ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
     ]
@@ -327,38 +330,22 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private func sectionHeader(_ title: String) -> some View {
-    HStack {
+    HStack(spacing: DesignTokens.Spacing.sm) {
       if title == "Pinned" {
         Image(systemName: "pin.fill")
-          .font(
-            Font.customSystemFont(
-              size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-              relativeTo: .title3)
-          )
-          .foregroundColor(drawerPrimaryTextColor)
+          .accessibilityHidden(true)
       } else if title == "Saved" {
         Image(systemName: "bookmark.fill")
-          .font(
-            Font.customSystemFont(
-              size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-              relativeTo: .title3)
-          )
-          .foregroundColor(drawerPrimaryTextColor)
+          .accessibilityHidden(true)
       }
-
       Text(title)
-        .font(
-          Font.customSystemFont(
-            size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-            relativeTo: .title3)
-        )
-        .foregroundColor(drawerPrimaryTextColor)
-
       Spacer()
     }
+    .appFont(AppTextRole.headline)
+    .foregroundStyle(drawerSecondaryTextColor)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, DesignTokens.Spacing.lg)     // 15
-    .padding(.bottom, DesignTokens.Spacing.md)  // 9
+    .padding(.top, DesignTokens.Spacing.lg)
+    .padding(.bottom, DesignTokens.Spacing.md)
   }
 
   @ViewBuilder
@@ -367,25 +354,15 @@ struct FeedsStartPage: View {
       discoveryInitialQuery = ""
       showAddFeedSheet = true
     } label: {
-      HStack(spacing: 8) {
-        Image(systemName: "plus.circle.fill")
-        Text("Add Feed")
-      }
-      .foregroundStyle(drawerPrimaryTextColor)
-      .padding(.vertical, 12)
-      .padding(.horizontal, 16)
-      .frame(maxWidth: .infinity)
-      .background {
-        if !inSideDrawer {
-          RoundedRectangle(cornerRadius: cardCornerRadius)
-            .fill(.ultraThinMaterial)
-        }
-      }
-      .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
+      hitTarget44(
+        Image(systemName: "plus")
+          .appFont(size: 16)
+          .foregroundStyle(Color.accentColor)
+      )
+      .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
     }
-    .interactiveGlass()
-    .padding(.vertical, 8)
-    .accessibilityAddTraits(.isButton)
+    .accessibilityLabel("Add Feed")
+    .accessibilityHint("Discover and add a feed")
   }
 
   @ViewBuilder
@@ -404,7 +381,8 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private var bigDefaultFeedButton: some View {
-    Button {
+    let selected = isDefaultFeedSelected()
+    return Button {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
@@ -429,25 +407,12 @@ struct FeedsStartPage: View {
 
       isDrawerOpen = false
     } label: {
-      HStack(spacing: 21) {
-        ZStack {
-          HStack {
-            defaultFeedIcon(iconSize: iconSize)
-
-            // Feed name
-            Text(defaultFeedName)
-              .padding(.leading, 6)
-              .appFont(AppTextRole.headline)
-              .foregroundStyle(drawerPrimaryTextColor)
-              .multilineTextAlignment(.leading)
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-              .appFont(AppTextRole.caption)
-              .foregroundColor(drawerSecondaryTextColor)
-          }
+      HStack(spacing: DesignTokens.Spacing.base) {
+        FeedsDefaultFeedLabel(
+          name: defaultFeedName,
+          isSelected: selected
+        ) {
+          defaultFeedIcon(iconSize: DesignTokens.Size.avatarLG)
         }
         .padding(12)
         .background {
@@ -456,17 +421,26 @@ struct FeedsStartPage: View {
               .fill(.ultraThinMaterial)
               .overlay(
                 selectionBackground(
-                  isSelected: isDefaultFeedSelected(),
+                  isSelected: selected,
                   isDropTarget: isDefaultFeedDropTarget
                 )
               )
           }
         }
-        .modifier(LaunchpadGlassChip(cornerRadius: 24, isEnabled: inSideDrawer))
+        .modifier(LaunchpadGlassChip(
+          cornerRadius: 24,
+          isEnabled: inSideDrawer && !selected
+        ))
+        .modifier(LaunchpadSelectionGlass(
+          isSelected: selected,
+          isDropTarget: false,
+          cornerRadius: 24,
+          namespace: defaultFeedGlassNamespace,
+          isEnabled: inSideDrawer
+        ))
         .overlay {
           if inSideDrawer && isDefaultFeedDropTarget {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-              .stroke(Color.accentColor, lineWidth: 2)
           }
         }
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -475,26 +449,31 @@ struct FeedsStartPage: View {
     .buttonStyle(PlainButtonStyle())
     .padding(.vertical, 8)
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: DefaultFeedDropDelegate(
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          selectedFeed: $selectedFeed,
-          currentFeedName: $currentFeedName,
-          isDefaultFeedDropTarget: $isDefaultFeedDropTarget,
-          defaultFeed: $defaultFeed,
-          defaultFeedName: $defaultFeedName,
-          resetDragState: resetDragState
+      if let vm = viewModel {
+        content
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: DefaultFeedDropDelegate(
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            selectedFeed: $selectedFeed,
+            currentFeedName: $currentFeedName,
+            isDefaultFeedDropTarget: $isDefaultFeedDropTarget,
+            defaultFeed: $defaultFeed,
+            defaultFeedName: $defaultFeedName,
+            resetDragState: resetDragState
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .accessibility(label: Text("Open \(defaultFeedName) feed"))
-    .accessibility(hint: Text("Double tap to open this feed and close the menu"))
+    .accessibility(hint: Text("Your default feed. Double tap to open it and close the menu"))
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibilityAddTraits(.isButton)
   }
 
@@ -506,7 +485,7 @@ struct FeedsStartPage: View {
         #if os(iOS)
         PlatformHaptics.rigid()
         #endif
-        appState.navigationManager.navigate(to: .circlesFeed)
+        sceneContext.navigationManager.navigate(to: .circlesFeed)
         isDrawerOpen = false
       } label: {
         HStack(spacing: 21) {
@@ -565,7 +544,7 @@ struct FeedsStartPage: View {
         let uri = try? ATProtocolURI(uriString: feedURI)
       {
         if uri.uriString().contains("/app.bsky.graph.list/"),
-           let list = viewModel.listDetails[uri] {
+           let list = viewModel?.listDetails[uri] {
           // List avatar
           LazyImage(
             request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: iconSize)
@@ -582,7 +561,7 @@ struct FeedsStartPage: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
           }
-        } else if let generator = viewModel.feedGenerators[uri] {
+        } else if let generator = viewModel?.feedGenerators[uri] {
           // Custom feed avatar
           LazyImage(
             request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
@@ -690,24 +669,20 @@ struct FeedsStartPage: View {
               iconView: AnyView(timelineListIcon())
             )
           } else if let uri = try? ATProtocolURI(uriString: feed) {
-            let title: String = {
-              if uri.uriString().contains("/app.bsky.graph.list/") {
-                return viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri)
-              }
-              return viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
-            }()
+            let title = viewModel?.displayName(for: uri) ?? "Feed"
             let subtitle: String? = {
               if uri.uriString().contains("/app.bsky.graph.list/") {
-                return viewModel.listDetails[uri]?.description
+                return viewModel?.listDetails[uri]?.description
               }
-              return viewModel.feedGenerators[uri]?.description
+              return viewModel?.feedGenerators[uri]?.description
             }()
             listRow(
               feedURI: feed,
               category: category,
               title: title,
               subtitle: subtitle,
-              iconView: AnyView(feedListIcon(for: uri))
+              iconView: AnyView(feedListIcon(for: uri)),
+              uri: uri
             )
           }
         }
@@ -726,7 +701,7 @@ struct FeedsStartPage: View {
   private func timelineListIcon() -> some View {
     ZStack {
       LinearGradient(
-        gradient: Gradient(colors: [Color.blue.opacity(0.8), Color.blue.opacity(0.6)]),
+        gradient: Gradient(colors: [Color.accentColor.opacity(0.8), Color.accentColor.opacity(0.6)]),
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       )
@@ -741,7 +716,7 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func feedListIcon(for uri: ATProtocolURI) -> some View {
     Group {
-      if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel.listDetails[uri] {
+      if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel?.listDetails[uri] {
         LazyImage(
           request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: Self.listRowIconSize)
         ) { state in
@@ -751,7 +726,7 @@ struct FeedsStartPage: View {
             feedPlaceholder(for: list.name)
           }
         }
-      } else if let generator = viewModel.feedGenerators[uri] {
+      } else if let generator = viewModel?.feedGenerators[uri] {
         LazyImage(
           request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: Self.listRowIconSize)
         ) { state in
@@ -762,22 +737,23 @@ struct FeedsStartPage: View {
           }
         }
       } else {
-        feedPlaceholder(for: viewModel.extractTitle(from: uri))
+        feedPlaceholder(for: viewModel?.extractTitle(from: uri) ?? "")
       }
     }
     .frame(width: Self.listRowIconSize, height: Self.listRowIconSize)
     .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
-  @ViewBuilder
   private func listRow(
     feedURI: String,
     category: String,
     title: String,
     subtitle: String? = nil,
-    iconView: AnyView
+    iconView: AnyView,
+    uri: ATProtocolURI? = nil
   ) -> some View {
-    Button {
+    let selected = isSelected(uri: uri, feedURI: feedURI)
+    return Button {
       guard !isEditingFeeds else { return }
       #if os(iOS)
       PlatformHaptics.rigid()
@@ -818,7 +794,7 @@ struct FeedsStartPage: View {
 
         if isEditingFeeds {
           Button {
-            Task { await viewModel.removeFeed(feedURI) }
+            Task { await viewModel?.removeFeed(feedURI) }
           } label: {
             hitTarget44(
               Image(systemName: "minus.circle.fill")
@@ -829,16 +805,17 @@ struct FeedsStartPage: View {
           .buttonStyle(PlainButtonStyle())
           .accessibilityLabel("Remove feed")
         } else {
-          Image(systemName: "chevron.right")
+          Image(systemName: selected ? "checkmark.circle.fill" : "chevron.right")
             .appFont(AppTextRole.caption)
-            .foregroundStyle(drawerTertiaryTextColor)
+            .foregroundStyle(selected ? Color.accentColor : drawerTertiaryTextColor)
+            .accessibilityHidden(true)
         }
       }
       .padding(.vertical, 8)
       .padding(.horizontal, 10)
       .background(
         selectionBackground(
-          isSelected: isSelected(feedURI: feedURI),
+          isSelected: selected,
           isDropTarget: dropTargetItem == feedURI
         )
       )
@@ -847,38 +824,45 @@ struct FeedsStartPage: View {
     }
     .buttonStyle(PlainButtonStyle())
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
+      if let vm = viewModel {
+        content
+        .onDrag {
+          draggedFeedItem = feedURI
+          isDragging = true
+          draggedItemCategory = category
+          return NSItemProvider(object: feedURI as NSString)
+        }
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: FeedDropDelegate(
+            item: feedURI,
+            items: category == "pinned" ? (vm.cachedPinnedFeeds) : (vm.cachedSavedFeeds),
+            category: category,
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            resetDragState: resetDragState,
+            appSettings: appState.appSettings
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .accessibility(label: Text(title))
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibility(hint: Text(isEditingFeeds ? "Editing — tap minus to remove" : "Double tap to open this feed"))
     .accessibilityAddTraits(.isButton)
   }
 
   @ViewBuilder
   private func feedLink(for uri: ATProtocolURI, feedURI: String, category: String) -> some View {
-    Button {
+    let selected = isSelected(uri: uri, feedURI: feedURI)
+    let displayName = viewModel?.displayName(for: uri) ?? "Feed"
+    return Button {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
@@ -892,14 +876,18 @@ struct FeedsStartPage: View {
       } else {
         selectedFeed = .feed(uri)
       }
-      currentFeedName =
-        viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+      currentFeedName = displayName
       isDrawerOpen = false
     } label: {
-      VStack(spacing: 6) {
+      FeedsGridFeedLabel(
+        title: displayName,
+        isSelected: selected,
+        iconSize: iconSize,
+        itemWidth: itemWidth
+      ) {
         // Feed icon
         Group {
-          if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel.listDetails[uri] {
+          if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel?.listDetails[uri] {
             LazyImage(
               request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: iconSize)
             ) { state in
@@ -909,7 +897,7 @@ struct FeedsStartPage: View {
                 feedPlaceholder(for: list.name)
               }
             }
-          } else if let generator = viewModel.feedGenerators[uri] {
+          } else if let generator = viewModel?.feedGenerators[uri] {
             LazyImage(
               request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
             ) { state in
@@ -920,35 +908,15 @@ struct FeedsStartPage: View {
               }
             }
           } else {
-            feedPlaceholder(for: viewModel.extractTitle(from: uri))
+            feedPlaceholder(for: viewModel?.extractTitle(from: uri) ?? "")
           }
         }
-        .frame(width: iconSize, height: iconSize)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-
-        // Feed/List name
-        Text(
-          uri.uriString().contains("/app.bsky.graph.list/")
-            ? (viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri))
-            : (viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
-        )
-          .appFont(AppTextRole.caption2)
-          .foregroundStyle(drawerPrimaryTextColor)
-          .padding(.top, 4)
-          .lineLimit(2)
-          .frame(minHeight: 28, alignment: .top)
-          .multilineTextAlignment(.center)
-          .fixedSize(horizontal: false, vertical: true)
-
-        
       }
-      .padding(6)
-      .frame(width: itemWidth)
       .background(
         Group {
           if !inSideDrawer {
             selectionBackground(
-              isSelected: isSelected(feedURI: feedURI),
+              isSelected: selected,
               isDropTarget: dropTargetItem == feedURI
             )
           }
@@ -956,59 +924,63 @@ struct FeedsStartPage: View {
       )
       .modifier(
         LaunchpadSelectionGlass(
-          isSelected: isSelected(feedURI: feedURI),
+          isSelected: selected,
           isDropTarget: dropTargetItem == feedURI,
-          cornerRadius: cardCornerRadius,
+          cornerRadius: gridCellCornerRadius,
           namespace: glassNamespace,
           isEnabled: inSideDrawer
         )
       )
-      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
+      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: gridCellCornerRadius))
 
     }
     .buttonStyle(PlainButtonStyle())
-
 
     .modifier(FeedRemovalBadgeOverlay(
       isEditing: isEditingFeeds,
       iconSize: iconSize,
       iconTopInset: 6,
-      action: { Task { await viewModel.removeFeed(feedURI) } }
+      action: { Task { await viewModel?.removeFeed(feedURI) } }
     ))
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
+      if let vm = viewModel {
+        content
+        .onDrag {
+          draggedFeedItem = feedURI
+          isDragging = true
+          draggedItemCategory = category
+          return NSItemProvider(object: feedURI as NSString)
+        }
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: FeedDropDelegate(
+            item: feedURI,
+            items: category == "pinned" ? vm.cachedPinnedFeeds : vm.cachedSavedFeeds,
+            category: category,
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            resetDragState: resetDragState,
+            appSettings: appState.appSettings
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .accessibility(
-      label: Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
+      label: Text(displayName)
     )
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibility(hint: Text("Double tap to open this feed"))
     .accessibilityAddTraits(.isButton)
   }
 
-  @ViewBuilder
   private func timelineFeedLink(feedURI: String, category: String) -> some View {
-    Button {
+    let selected = (selectedFeed == .timeline)
+    return Button {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
@@ -1019,11 +991,16 @@ struct FeedsStartPage: View {
       currentFeedName = "Timeline"
       isDrawerOpen = false
     } label: {
-      VStack(spacing: 6) {
+      FeedsGridFeedLabel(
+        title: "Timeline",
+        isSelected: selected,
+        iconSize: iconSize,
+        itemWidth: itemWidth
+      ) {
         // Timeline icon
         ZStack {
           LinearGradient(
-            gradient: Gradient(colors: [Color.blue.opacity(0.8), Color.blue.opacity(0.6)]),
+            gradient: Gradient(colors: [Color.accentColor.opacity(0.8), Color.accentColor.opacity(0.6)]),
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           )
@@ -1032,26 +1009,12 @@ struct FeedsStartPage: View {
             .appFont(size: 24)
             .foregroundColor(.white)
         }
-        .frame(width: iconSize, height: iconSize)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-
-        // Feed name
-        Text("Timeline")
-          .appFont(AppTextRole.caption2)
-          .foregroundStyle(drawerPrimaryTextColor)
-          .padding(.top, 4)
-          .lineLimit(2)
-          .frame(minHeight: 28, alignment: .top)
-          .multilineTextAlignment(.center)
-          .fixedSize(horizontal: false, vertical: true)
       }
-      .padding(6)
-      .frame(width: itemWidth)
       .background(
         Group {
           if !inSideDrawer {
             selectionBackground(
-              isSelected: isSelected(feedURI: feedURI),
+              isSelected: selected,
               isDropTarget: dropTargetItem == feedURI
             )
           }
@@ -1059,43 +1022,48 @@ struct FeedsStartPage: View {
       )
       .modifier(
         LaunchpadSelectionGlass(
-          isSelected: isSelected(feedURI: feedURI),
+          isSelected: selected,
           isDropTarget: dropTargetItem == feedURI,
-          cornerRadius: cardCornerRadius,
+          cornerRadius: gridCellCornerRadius,
           namespace: glassNamespace,
           isEnabled: inSideDrawer
         )
       )
-      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
+      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: gridCellCornerRadius))
     }
     .buttonStyle(PlainButtonStyle())
     .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
+      if let vm = viewModel {
+        content
+        .onDrag {
+          draggedFeedItem = feedURI
+          isDragging = true
+          draggedItemCategory = category
+          return NSItemProvider(object: feedURI as NSString)
+        }
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: FeedDropDelegate(
+            item: feedURI,
+            items: category == "pinned" ? vm.cachedPinnedFeeds : vm.cachedSavedFeeds,
+            category: category,
+            viewModel: vm,
+            draggedItem: $draggedFeedItem,
+            isDragging: $isDragging,
+            draggedItemCategory: $draggedItemCategory,
+            dropTargetItem: $dropTargetItem,
+            resetDragState: resetDragState,
+            appSettings: appState.appSettings
+          )
         )
-      )
+      } else {
+        content
+      }
     }
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .scaleEffect(draggedFeedItem == feedURI && isDragging ? 0.95 : 1.0)
     .accessibility(label: Text("Timeline"))
+    .accessibilityValue(selected ? "Selected" : "")
     .accessibility(hint: Text("Double tap to open the Timeline feed"))
     .accessibilityAddTraits(.isButton)
   }
@@ -1141,9 +1109,27 @@ struct FeedsStartPage: View {
   // MARK: - Body
   var body: some View {
     mainContent
-    .modifier(FeedSearchPlacementModifier(text: $searchText, isPresented: $isSearchBarVisible))
+    .toolbar {
+      ToolbarItem(placement: .bottomBar) {
+        Button {
+          if isSearchBarVisible {
+            searchText = ""
+            isSearchBarVisible = false
+            isFeedSearchFocused = false
+          } else {
+            isSearchBarVisible = true
+          }
+        } label: {
+          Label("Search your feeds", systemImage: "magnifyingglass")
+        }
+        .opacity(inSideDrawer && !isDrawerOpen ? 0 : 1)
+        .allowsHitTesting(!inSideDrawer || isDrawerOpen)
+        .accessibilityHidden(inSideDrawer && !isDrawerOpen)
+        .accessibilityIdentifier("feeds.search.toggle")
+      }
+    }
     .task(id: searchText) {
-      await updateFilteredFeeds()
+      applySearchFilter()
     }
     .applyFeedsPageModifiers(
       viewModel: viewModel,
@@ -1168,18 +1154,31 @@ struct FeedsStartPage: View {
       onAccountSwitch: handleAccountSwitch,
       currentUserDID: currentUserDID
     )
-    
+    // The profile header always belongs to the account being shown.
+    .task(id: appState.userDID) {
+      if viewModel == nil {
+        viewModel = FeedsStartPageViewModel(appState: appState)
+      }
+      profile = nil
+      guard appState.isAuthenticated else { return }
+      await loadUserProfile()
+    }
   }
   
   @ViewBuilder
   private var mainContent: some View {
     GeometryReader { geometry in
       let availableWidth = geometry.size.width
-      let contentWidth = min(availableWidth, drawerWidth)
+      let contentWidth = availableWidth
 
-      standardContent(contentWidth: contentWidth, topInset: geometry.safeAreaInsets.top)
+      standardContent(contentWidth: contentWidth, topInset: max(0, geometry.safeAreaInsets.top))
     }
-    .frame(maxWidth: drawerWidth)
+    .onGeometryChange(for: CGSize.self) { geometry in
+      geometry.size
+    } action: { size in
+      measuredContainerSize = size
+    }
+    .frame(maxWidth: .infinity)
     .overlay {
       // Full-screen loading/initialization overlays
       loadingOverlay()
@@ -1191,12 +1190,7 @@ struct FeedsStartPage: View {
   private func standardContent(contentWidth: CGFloat, topInset: CGFloat) -> some View {
       ScrollView {
         VStack(spacing: 0) {
-          // The concentric clip must be inside `flexibleHeaderContent()` so
-          // the mask stretches and stays pinned with the image.
-          bannerHeaderView(topInset: topInset)
-            .modifier(DrawerBannerInset())
-            .flexibleHeaderContent(height: 200 + topInset)
-            .background(inSideDrawer ? Color.clear : Color.accentColor.opacity(0.05))
+          accountHeaderView(topInset: topInset)
 
           // Main content below the banner
           feedsContent()
@@ -1205,20 +1199,28 @@ struct FeedsStartPage: View {
         .frame(maxWidth: contentWidth, alignment: .center)
       }
       .flexibleHeaderScrollView()
+      .onScrollGeometryChange(for: Bool.self) { geometry in
+        // The top bar (status bar + close button) is roughly 56pt below the
+        // banner's top inset, so its bottom edge meets the account row here.
+        geometry.contentOffset.y + geometry.contentInsets.top > max(0, bannerHeight - 56)
+      } action: { _, scrolledPast in
+        hasScrolledPastBanner = scrolledPast
+      }
       .frame(width: contentWidth)
       .frame(maxWidth: drawerWidth)
       .clipped()
       .ignoresSafeArea(edges: [.top, .bottom])
-      .modifier(DrawerAwareScrollBackground())
+      .modifier(DrawerAwareScrollBackground(showsTopEdgeEffect: hasScrolledPastBanner))
       .refreshable {
         await handleRefresh()
       }
   }
 
   private func handleRefresh() async {
+    guard let viewModel else { return }
     await viewModel.fetchFeedGenerators()
     await viewModel.fetchListDetails()
-    await updateFilteredFeeds()
+    await refreshFeedLists()
     if appState.isAuthenticated {
       await loadUserProfile()
     }
@@ -1229,22 +1231,24 @@ struct FeedsStartPage: View {
       // Track current user for account switch detection
       currentUserDID = appState.userDID
 
-      await viewModel.initializeWithModelContext(modelContext)
-      await updateFilteredFeeds()
+      if viewModel == nil {
+        viewModel = FeedsStartPageViewModel(appState: appState)
+      }
+      guard let vm = viewModel else { return }
+      vm.startAuthObservation()
+
+      await vm.initializeWithModelContext(modelContext)
+      await refreshFeedLists()
       isInitialized = true
 
       withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
         isLoaded = true
       }
 
-      if appState.isAuthenticated {
-        await loadUserProfile()
-      }
-
       if stateInvalidationSubscriber == nil {
         stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
-          viewModel: viewModel,
-          updateFilteredFeeds: updateFilteredFeeds
+          viewModel: vm,
+          updateFilteredFeeds: { await refreshFeedLists() }
         )
         appState.stateInvalidationBus.subscribe(stateInvalidationSubscriber!)
       }
@@ -1258,18 +1262,17 @@ struct FeedsStartPage: View {
     profile = nil
     currentUserDID = appState.userDID
 
+    let newVM = FeedsStartPageViewModel(appState: appState)
+    viewModel = newVM
+
     // Re-run initialization for the new account
     Task {
-      await viewModel.initializeWithModelContext(modelContext)
-      await updateFilteredFeeds()
+      await newVM.initializeWithModelContext(modelContext)
+      await refreshFeedLists()
       isInitialized = true
 
       withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
         isLoaded = true
-      }
-
-      if appState.isAuthenticated {
-        await loadUserProfile()
       }
     }
   }
@@ -1279,81 +1282,44 @@ struct FeedsStartPage: View {
       appState.stateInvalidationBus.unsubscribe(subscriber)
       stateInvalidationSubscriber = nil
     }
+    viewModel?.cancel()
   }
 
   // (Drawer-level close/search/bookmarks moved to ContentView native toolbar)
 
   @ViewBuilder
-  private func bannerHeaderView(topInset: CGFloat) -> some View {
-    ZStack(alignment: .bottomLeading) {
+  private func accountHeaderView(topInset: CGFloat) -> some View {
+    VStack(spacing: 0) {
+      // Keep the concentric clip inside the stretch transform, and preserve
+      // the safe-area reflection behind the drawer's native top controls.
       FeedBannerArtwork(topInset: topInset) {
         bannerImageView
       }
-      .frame(maxWidth: drawerWidth)
+      .modifier(DrawerBannerInset())
+      .flexibleHeaderContent(height: bannerHeight + topInset)
+      .background(inSideDrawer ? Color.clear : Color.accentColor.opacity(0.05))
 
-      // Scrim overlay for text visibility
-      LinearGradient(
-        colors: [.black.opacity(0.6), .clear],
-        startPoint: .bottom,
-        endPoint: .center
-      )
-      .frame(maxWidth: drawerWidth)
-      
-      // Profile Info - responsive layout
-      HStack(spacing: max(8, horizontalPadding * 0.4)) {
-        // Avatar with responsive sizing
-        Group {
-          if let avatarURL = profile?.finalAvatarURL() {
-            AsyncProfileImage(url: avatarURL, size: avatarSize)
-          } else {
-            // Fallback avatar
-            ZStack {
-              Circle()
-                .fill(Color.white.opacity(0.9))
-                .frame(width: avatarSize, height: avatarSize)
-              
-              Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
-                .appFont(size: avatarSize * 0.4)
-                .foregroundColor(.accentColor)
-            }
-          }
-        }
-        .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: max(1.5, avatarSize * 0.025)))
-        .frame(width: avatarSize, height: avatarSize)
-        
-        // Display Name and Handle - responsive text sizing
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {  // 3
-          if let displayName = profile?.displayName, !displayName.isEmpty {
-            Text(displayName)
-              .appFont(AppTextRole.headline)
-              .foregroundStyle(.white)
-              .shadow(radius: 2)
-              .lineLimit(1)
-              .truncationMode(.tail)
-          }
-          if let handle = profile?.handle {
-            Text("@\(handle.description)")
-              .appFont(AppTextRole.subheadline)
-              .foregroundStyle(.white.opacity(0.9))
-              .shadow(radius: 2)
-              .lineLimit(1)
-              .truncationMode(.tail)
-          }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        
-        Spacer(minLength: 0)
+      FeedsAccountIdentity(
+        displayName: profile?.displayName,
+        handle: profile?.handle.description,
+        avatarSize: avatarSize
+      ) {
+        accountAvatar
       }
-      .padding(.horizontal, bannerContentInset)
-      .padding(.bottom, bannerContentBottomInset)
-      .frame(maxWidth: drawerWidth)
+      .padding(.horizontal, horizontalPadding)
+      .padding(.top, DesignTokens.Spacing.base)
+      .padding(.bottom, DesignTokens.Spacing.sm)
+      .background(
+        inSideDrawer
+          ? Color.clear
+          : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+      )
     }
     .frame(maxWidth: drawerWidth)
-    .clipped()
     .contentShape(Rectangle())
     .onTapGesture {
       let userDID = appState.userDID
-      appState.navigationManager.navigate(to: .profile(userDID))
+      sceneContext.navigationManager.navigate(to: .profile(userDID))
       isDrawerOpen = false
     }
     .onLongPressGesture {
@@ -1364,12 +1330,35 @@ struct FeedsStartPage: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel("My Profile")
+    .accessibilityValue(profile?.displayName ?? profile?.handle.description ?? "Your account")
     .accessibilityHint("Double tap to view your profile. Long press to switch accounts.")
+    .accessibilityAddTraits(.isButton)
+    .accessibilityAction(named: "Switch account") {
+      isShowingAccountSwitcher = true
+    }
+  }
+
+  @ViewBuilder
+  private var accountAvatar: some View {
+    if let avatarURL = profile?.finalAvatarURL() {
+      AsyncProfileImage(url: avatarURL, size: avatarSize, did: profile?.did.didString(), labels: profile?.labels)
+    } else {
+      Circle()
+        .fill(Color.accentColor.opacity(0.12))
+        .overlay {
+          Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
+            .appFont(size: avatarSize * 0.4)
+            .foregroundStyle(Color.accentColor)
+        }
+    }
   }
 
   @ViewBuilder
   private var feedsTitleRow: some View {
-    HStack {
+    let layout = dynamicTypeSize.isAccessibilitySize || drawerWidth < 320
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: DesignTokens.Spacing.base))
+      : AnyLayout(HStackLayout(spacing: DesignTokens.Spacing.base))
+    layout {
         Text("Feeds")
             .font(
                 Font.customSystemFont(
@@ -1378,9 +1367,9 @@ struct FeedsStartPage: View {
             )
             .foregroundStyle(drawerPrimaryTextColor)
             .frame(maxWidth: .infinity, alignment: .leading)
-        Spacer()
-
         HStack(spacing: 12) {
+            addFeedButton()
+
             // Layout-mode toggle (grid <-> list). Persisted via @AppStorage.
             Button {
                 #if os(iOS)
@@ -1398,7 +1387,6 @@ struct FeedsStartPage: View {
                 )
                 .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
             }
-            .tint(.accentColor.opacity(0.8))
             .accessibilityLabel(layoutMode.accessibilityLabel)
             .accessibilityAddTraits(.isButton)
 
@@ -1411,10 +1399,10 @@ struct FeedsStartPage: View {
                     hitTarget44(
                       Image(systemName: "checkmark")
                         .appFont(size: 16)
+                        .foregroundStyle(Color.accentColor)
                     )
                     .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
                 }
-                .tint(.accentColor.opacity(0.8))
                 .accessibilityLabel("Done Editing")
                 .accessibilityAddTraits(.isButton)
             } else {
@@ -1426,10 +1414,10 @@ struct FeedsStartPage: View {
                     hitTarget44(
                       Image(systemName: "pencil")
                         .appFont(size: 16)
+                        .foregroundStyle(Color.accentColor)
                     )
                     .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
                 }
-                .tint(.accentColor.opacity(0.8))
                 .accessibility(label: Text("Edit Feeds"))
                 .accessibility(hint: Text("Double tap to enter edit mode"))
                 .accessibilityAddTraits(.isButton)
@@ -1459,11 +1447,34 @@ struct FeedsStartPage: View {
               feedsTitleRow
             }
           }
-              .padding(.top, DesignTokens.Spacing.section)     // 24
-              .padding(.bottom, DesignTokens.Spacing.section)  // 24
+              .padding(.top, DesignTokens.Spacing.sm)
+              .padding(.bottom, DesignTokens.Spacing.base)
 
           VStack(spacing: gridSpacing) {
-              addFeedButton()
+              if isSearchBarVisible {
+                HStack(spacing: 8) {
+                  Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                  TextField("Search your feeds", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($isFeedSearchFocused)
+                    .submitLabel(.search)
+                    .accessibilityIdentifier("feeds.search.field")
+                  Button {
+                    searchText = ""
+                    isSearchBarVisible = false
+                    isFeedSearchFocused = false
+                  } label: {
+                    Image(systemName: "xmark.circle.fill")
+                      .foregroundStyle(.secondary)
+                  }
+                  .accessibilityLabel("Close feed search")
+                }
+                .padding(12)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: cardCornerRadius))
+                .task { isFeedSearchFocused = true }
+              }
 
               if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                  filteredPinnedFeeds.isEmpty, filteredSavedFeeds.isEmpty {
@@ -1498,15 +1509,15 @@ struct FeedsStartPage: View {
           }
           .modifier(FeedNativeReorderContainer { sources, category, before in
             Task {
-              await viewModel.applyFeedReorder(sources: sources, category: category, before: before)
+              await viewModel?.applyFeedReorder(sources: sources, category: category, before: before)
               if category == "default", let feed = sources.first,
-                 viewModel.cachedPinnedFeeds.first == feed {
+                 viewModel?.cachedPinnedFeeds.first == feed {
                 if SystemFeedTypes.isTimelineFeed(feed) {
                   selectedFeed = .timeline
                   currentFeedName = "Timeline"
                 } else if let uri = try? ATProtocolURI(uriString: feed) {
                   selectedFeed = feed.contains("/app.bsky.graph.list/") ? .list(uri) : .feed(uri)
-                  currentFeedName = viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+                  currentFeedName = viewModel?.displayName(for: uri) ?? "Feed"
                 }
               }
             }
@@ -1515,7 +1526,7 @@ struct FeedsStartPage: View {
           .animation(.easeInOut(duration: 0.25), value: layoutMode)
       }
       .padding(.horizontal, horizontalPadding)
-      .padding(.vertical, DesignTokens.Spacing.xl)  // 18
+      .padding(.bottom, DesignTokens.Spacing.xl)
       .frame(maxWidth: .infinity)
       .background(
         inSideDrawer
@@ -1527,13 +1538,13 @@ struct FeedsStartPage: View {
   // MARK: - Overlays
   @ViewBuilder
   private func loadingOverlay() -> some View {
-    if viewModel.isLoading {
+    if viewModel?.isLoading == true {
       (inSideDrawer
         ? Color.clear
         : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading feeds...")
+          ProgressView("Loading feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)
@@ -1548,7 +1559,7 @@ struct FeedsStartPage: View {
         : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading your feeds...")
+          ProgressView("Loading your feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)
@@ -1614,6 +1625,122 @@ struct FeedsStartPage: View {
   }
 }
 
+/// Readable account identity shared by the live header and visual fixtures.
+/// Artwork remains a separate surface so banner colors cannot obscure text.
+struct FeedsAccountIdentity<Avatar: View>: View {
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  let displayName: String?
+  let handle: String?
+  let avatarSize: CGFloat
+  @ViewBuilder var avatar: () -> Avatar
+
+  private var name: String {
+    if let displayName, !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return displayName
+    }
+    return handle.flatMap { $0.isEmpty ? nil : $0 } ?? "Your account"
+  }
+
+  var body: some View {
+    let layout = dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: DesignTokens.Spacing.base))
+      : AnyLayout(HStackLayout(alignment: .center, spacing: DesignTokens.Spacing.base))
+    layout {
+      avatar()
+        .frame(width: avatarSize, height: avatarSize)
+        .clipShape(Circle())
+        .accessibilityHidden(true)
+
+      HStack(spacing: DesignTokens.Spacing.sm) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+          Text(name)
+            .appFont(AppTextRole.headline)
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+          if let handle, !handle.isEmpty {
+            Text("@\(handle)")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Image(systemName: "chevron.right")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.tertiary)
+          .accessibilityHidden(true)
+      }
+    }
+  }
+}
+
+struct FeedsDefaultFeedLabel<Icon: View>: View {
+  let name: String
+  let isSelected: Bool
+  @ViewBuilder var icon: () -> Icon
+
+  var body: some View {
+    HStack(spacing: DesignTokens.Spacing.base) {
+      icon()
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        Text("Default Feed")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+        Text(name)
+          .appFont(AppTextRole.headline)
+          .foregroundStyle(.primary)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
+        .appFont(AppTextRole.subheadline)
+        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+        .accessibilityHidden(true)
+    }
+    .multilineTextAlignment(.leading)
+  }
+}
+
+struct FeedsGridFeedLabel<Icon: View>: View {
+  let title: String
+  let isSelected: Bool
+  let iconSize: CGFloat
+  let itemWidth: CGFloat
+  @ViewBuilder var icon: () -> Icon
+
+  var body: some View {
+    VStack(spacing: DesignTokens.Spacing.sm) {
+      icon()
+        .frame(width: iconSize, height: iconSize)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .bottomTrailing) {
+          if isSelected {
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 18, weight: .semibold))
+              .foregroundStyle(.white, Color.accentColor)
+              .background(Color.accentColor, in: Circle())
+              .padding(3)
+              .accessibilityHidden(true)
+          }
+        }
+      Text(title)
+        .appFont(AppTextRole.footnote)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .foregroundStyle(.primary)
+        .lineLimit(2)
+        .frame(minHeight: 32, alignment: .top)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(DesignTokens.Spacing.sm)
+    .frame(width: itemWidth)
+  }
+}
+
 // Helper Extensions
 extension Optional where Wrapped == String {
   var isNilOrEmpty: Bool {
@@ -1667,7 +1794,7 @@ nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
 // MARK: - View Modifier Extension
 extension View {
     func applyFeedsPageModifiers(
-        viewModel: FeedsStartPageViewModel,
+        viewModel: FeedsStartPageViewModel?,
         appState: AppState,
         isEditingFeeds: Binding<Bool>,
         isDrawerOpen: Binding<Bool>,
@@ -1733,6 +1860,7 @@ private struct DrawerAwareThemedBackground: ViewModifier {
 }
 
 private struct DrawerAwareScrollBackground: ViewModifier {
+    let showsTopEdgeEffect: Bool
     #if os(iOS)
     @Environment(\.inSideDrawer) private var inSideDrawer
     #else
@@ -1744,10 +1872,28 @@ private struct DrawerAwareScrollBackground: ViewModifier {
             content
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
+                .modifier(DrawerBannerScrollEdgeModifier(isHidden: !showsTopEdgeEffect))
         } else {
             content
         }
     }
+}
+
+/// While the banner is on screen it supplies its own blur behind the top
+/// controls, and the system scroll edge effect would cover that artwork with the
+/// drawer's backdrop color. Once the banner has scrolled away the effect returns,
+/// so rows passing under the status bar and close button fade instead of
+/// colliding with them.
+private struct DrawerBannerScrollEdgeModifier: ViewModifier {
+  let isHidden: Bool
+
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, macOS 26.0, *) {
+      content.scrollEdgeEffectHidden(isHidden, for: .top)
+    } else {
+      content
+    }
+  }
 }
 
 /// Clips the drawer banner to a uniform radius measured from its top corners.
@@ -1795,7 +1941,7 @@ private extension View {
                     onAccountSwitch()
                 }
             }
-            .alert("Error", isPresented: showErrorAlert) {
+            .alert("Something Went Wrong", isPresented: showErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(errorAlertMessage.wrappedValue)
@@ -1813,7 +1959,7 @@ private extension View {
         self
             .sheet(isPresented: showAddFeedSheet) {
                 AddFeedSheet(initialQuery: discoveryInitialQuery, onOpen: onOpenDiscoveredFeed)
-                    .presentationDetents([.medium, .large])
+                    .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(.thinMaterial)
             }
@@ -1831,37 +1977,41 @@ private extension View {
             }
     }
     
+    @ViewBuilder
     func configuredDataObservers(
-        viewModel: FeedsStartPageViewModel,
+        viewModel: FeedsStartPageViewModel?,
         errorAlertMessage: Binding<String>,
         showErrorAlert: Binding<Bool>
     ) -> some View {
-        self
-            .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
-                Task { await viewModel.updateCaches() }
-            }
-            .onChange(of: viewModel.cachedSavedFeeds) { _, _ in
-                Task { await viewModel.updateCaches() }
-            }
-            .task {
-                // Retry fetching generators if we don't have them after initial load
-                try? await Task.sleep(for: .seconds(1))
-                if viewModel.feedGenerators.isEmpty {
-                    await viewModel.fetchFeedGenerators()
+        if let viewModel {
+            self
+                .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
+                    Task { await viewModel.updateCaches() }
                 }
-            }
-            .onChange(of: viewModel.feedGenerators) { _, _ in
-                Task { await viewModel.updateCaches() }
-            }
-            .onChange(of: viewModel.errorMessage) { _, newError in
-                if let errorMsg = newError {
-                    errorAlertMessage.wrappedValue = errorMsg
-                    showErrorAlert.wrappedValue = true
+                .onChange(of: viewModel.cachedSavedFeeds) { _, _ in
+                    Task { await viewModel.updateCaches() }
                 }
-            }
+                .task {
+                    // Retry fetching generators if we don't have them after initial load
+                    try? await Task.sleep(for: .seconds(1))
+                    if viewModel.feedGenerators.isEmpty {
+                        await viewModel.fetchFeedGenerators()
+                    }
+                }
+                .onChange(of: viewModel.feedGenerators) { _, _ in
+                    Task { await viewModel.updateCaches() }
+                }
+                .onChange(of: viewModel.errorMessage) { _, newError in
+                    if let errorMsg = newError {
+                        errorAlertMessage.wrappedValue = errorMsg
+                        showErrorAlert.wrappedValue = true
+                    }
+                }
+        } else {
+            self
+        }
     }
 }
-
 #Preview("FeedsStartPage") {
   AsyncPreviewContent { appState in
     FeedsStartPage(
@@ -1870,36 +2020,6 @@ private extension View {
       currentFeedName: .constant("Following"),
       isDrawerOpen: .constant(false)
     )
-  }
-}
-
-/// Places feed search in the drawer's bottom toolbar on iOS 26+, collapsed to a
-/// glass magnifier beside the other toolbar items until tapped. Earlier iOS keeps
-/// an always-visible field under the navigation bar.
-private struct FeedSearchPlacementModifier: ViewModifier {
-  @Binding var text: String
-  @Binding var isPresented: Bool
-
-  private let prompt: LocalizedStringKey = "Search your feeds"
-
-  func body(content: Content) -> some View {
-    #if os(iOS)
-    if #available(iOS 26.0, *) {
-      content
-        .searchable(text: $text, isPresented: $isPresented, placement: .toolbar, prompt: prompt)
-        .searchToolbarBehavior(.minimize)
-    } else {
-      content
-        .searchable(
-          text: $text,
-          isPresented: $isPresented,
-          placement: .navigationBarDrawer(displayMode: .always),
-          prompt: prompt
-        )
-    }
-    #else
-    content.searchable(text: $text, isPresented: $isPresented, placement: .automatic, prompt: prompt)
-    #endif
   }
 }
 

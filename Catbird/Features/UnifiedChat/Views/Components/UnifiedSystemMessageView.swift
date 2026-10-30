@@ -60,14 +60,18 @@ struct UnifiedSystemMessageView: View {
         renderWithAnyReferencedName(event)
       }
     case .inviteLink:
-      Button {
-        onInviteLinkAction?()
-      } label: {
+      if let onInviteLinkAction {
+        Button {
+          onInviteLinkAction()
+        } label: {
+          Text(event.messageText)
+            .fontWeight(.medium)
+            .foregroundStyle(.primary)
+        }
+        .buttonStyle(.plain)
+      } else {
         Text(event.messageText)
-          .fontWeight(.medium)
-          .foregroundStyle(.primary)
       }
-      .buttonStyle(.plain)
     case .none:
       renderWithAnyReferencedName(event)
     }

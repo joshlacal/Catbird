@@ -20,7 +20,7 @@ struct UnblockProfileIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
 
         let did = account?.id ?? IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let client = try await IntentClientProvider.shared.client(for: did, purpose: .safety)
 
         let output = try unwrapIntentResponse(await client.app.bsky.actor.getProfiles(input: AppBskyActorGetProfiles.Parameters(actors: [try ATIdentifier(string: profile.id)])))
         guard let view = output.profiles.first else {
@@ -28,7 +28,7 @@ struct UnblockProfileIntent: AppIntent {
         }
 
         guard let existingURI = view.viewer?.blocking else {
-            return .result(dialog: IntentDialog(stringLiteral: "You haven't blocked them."))
+            return .result(dialog: IntentDialog("You haven't blocked them."))
         }
         let rkey = try IntentRecordWriteSupport.recordKey(fromViewerURI: existingURI)
         let userDID = try await client.getDid()
@@ -41,7 +41,7 @@ struct UnblockProfileIntent: AppIntent {
         guard (200..<300).contains(responseCode) else {
             throw IntentError.httpError(responseCode)
         }
-        return .result(dialog: IntentDialog(stringLiteral: "Unblocked."))
+        return .result(dialog: IntentDialog("Unblocked."))
 
     }
 }

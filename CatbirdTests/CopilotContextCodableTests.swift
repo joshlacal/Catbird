@@ -16,7 +16,7 @@ final class CopilotContextCodableTests: XCTestCase {
         let decoder = JSONDecoder()
         let context = try decoder.decode(CopilotContext.self, from: Data(legacyJSON.utf8))
 
-        guard case .post(let uri, let cid, let authorDID, let text) = context else {
+        guard case .post(let uri, let cid, let authorDID, let text, _) = context else {
             XCTFail("Expected .post context")
             return
         }
@@ -42,7 +42,7 @@ final class CopilotContextCodableTests: XCTestCase {
         let decoded = try decoder.decode(CopilotContext.self, from: data)
 
         XCTAssertEqual(decoded, original)
-        if case .post(let uri, let cid, let authorDID, let text) = decoded {
+        if case .post(let uri, let cid, let authorDID, let text, _) = decoded {
             XCTAssertEqual(uri, "at://did:plc:alice/app.bsky.feed.post/123")
             XCTAssertEqual(cid, "bafyreih7abc123")
             XCTAssertEqual(authorDID, "did:plc:alice")

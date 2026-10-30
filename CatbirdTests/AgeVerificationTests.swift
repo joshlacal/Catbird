@@ -29,15 +29,17 @@ struct AgeVerificationTests {
         #expect(AgePolicy.decision(for: .platform(signal), context: .matureContent) == .unavailableDueToConsent)
     }
 
-    @Test("Significant change consent requirement renders ordinary use unavailable")
-    func testSignificantChangeConsentRequired() {
+    @Test("Significant change flag does not invent an unscoped ordinary-use gate")
+    func testSignificantChangeFlagDoesNotCreateUnscopedGate() {
         let signal = PlatformAgeSignal(
             requirement: .none,
             ageBand: .adult,
             significantChangeConsentRequired: true
         )
-        #expect(AgePolicy.decision(for: .platform(signal), context: .ordinaryUse) == .unavailableDueToConsent)
-        #expect(AgePolicy.decision(for: .platform(signal), context: .matureContent) == .unavailableDueToConsent)
+        // A future significant-change gate must name the covered release/feature.
+        // The passive flag alone is not an account-wide age restriction.
+        #expect(AgePolicy.decision(for: .platform(signal), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .platform(signal), context: .matureContent) == .hideSensitiveContent)
     }
 
     @Test("Adult platform band never enables mature content at policy level")
@@ -188,7 +190,7 @@ struct AgeVerificationTests {
 
     // MARK: - Privacy Boundary / Data Model Invariants
 
-    @Test("AgeBand exposes only coarse bounds and no exact age or birth date")
+    @Test("Coarse bounds classify the standard under-13, teen and adult bands")
     func testAgeBandCoarseBoundsOnly() {
         let band = AgeBand(lowerBound: 13, upperBound: 17)
         #expect(band.lowerBound == 13)
@@ -205,7 +207,7 @@ struct AgeVerificationTests {
         #expect(adult.isAdult == true)
     }
 
-    @Test("Pre-iOS 26.2 or unavailable preflight signal is neutral")
+    @Test("An affirmative no-requirement signal permits ordinary use")
     func testNeutralPlatformSignal() {
         let neutralSignal = PlatformAgeSignal(
             requirement: .none,
@@ -218,121 +220,70 @@ struct AgeVerificationTests {
 
     // MARK: - Injected Regulatory Checking & Launch Preflight Behavioral Tests
 
-    final class SpyAgeRegulatoryChecker: AgeRegulatoryChecking, @unchecked Sendable {
-        private let lock = NSLock()
-        private var _preflightCount: Int = 0
-        private var _agePromptCount: Int = 0
-        private var preflightContinuations: [CheckedContinuation<Void, Never>] = []
-
-        var stubbedSignal: PlatformAgeSignal = .none
-
-        var preflightCount: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return _preflightCount
-        }
-
-        var agePromptCount: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return _agePromptCount
-        }
-
-        func preflight() async -> PlatformAgeSignal {
-            lock.lock()
-            _preflightCount += 1
-            let continuations = preflightContinuations
-            preflightContinuations.removeAll()
-            lock.unlock()
-            for cont in continuations {
-                cont.resume()
-            }
-            return stubbedSignal
-        }
-
-        func waitForPreflight() async {
-            await withCheckedContinuation { continuation in
-                lock.lock()
-                if _preflightCount > 0 {
-                    lock.unlock()
-                    continuation.resume()
-                } else {
-                    preflightContinuations.append(continuation)
-                    lock.unlock()
-                }
-            }
-        }
-
-        #if canImport(UIKit)
-        @MainActor
-        func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? {
-            lock.lock()
-            _agePromptCount += 1
-            lock.unlock()
-            return stubbedSignal.ageBand
-        }
-        #endif
-    }
-
-    @Test("AppState launch preflight executes passively with injected regulatory checker")
+    @Test("AppState launch consumes its injected preflight without retaining the returned band")
     @MainActor
     func testAppStateLaunchPreflightIntegration() async {
-        let spy = SpyAgeRegulatoryChecker()
-        let stubbedSignal = PlatformAgeSignal(
+        let checker = AgeAccessControlledChecker()
+        let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+        let appState = AppState(
+            userDID: "did:plc:testuser1234567890ab",
+            client: client,
+            regulatoryChecker: checker
+        )
+        defer { appState.cleanup() }
+
+        let joined = await ageAccessJoinedRefresh(appState.ageAccess)
+        await checker.waitForCalls(1)
+        #expect(appState.ageAccess.isCheckingRequirement)
+        #expect(!appState.ageAccess.allows(.generalContent))
+        await checker.resolve(1, with: PlatformAgeSignal(
             requirement: .ageCheckRequired,
             ageBand: .teen,
             significantChangeConsentRequired: false
-        )
-        spy.stubbedSignal = stubbedSignal
+        ))
+        await joined.value // Completion proves the coordinator committed the returned decision.
 
-        let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-        let appState = AppState(
-            userDID: "did:plc:testuser1234567890ab",
-            client: client,
-            regulatoryChecker: spy
-        )
-
-        // Wait deterministically for preflight to execute
-        await spy.waitForPreflight()
-
-        // Yield to let the MainActor task update AppState.platformAgeSignal
-        for _ in 0..<50 {
-            if appState.platformAgeSignal == stubbedSignal {
-                break
-            }
-            await Task.yield()
-        }
-
-        #expect(spy.preflightCount == 1)
-        #expect(spy.agePromptCount == 0)
-        #expect(appState.platformAgeSignal == stubbedSignal)
-        #expect(AgePolicy.decision(for: .platform(appState.platformAgeSignal), context: .ordinaryUse) == .allow)
-        #expect(AgePolicy.decision(for: .platform(appState.platformAgeSignal), context: .matureContent) == .hideSensitiveContent)
+        #expect(await checker.callCount == 1)
+        #expect(await checker.nativePromptCount == 0)
+        #expect(!appState.ageAccess.isCheckingRequirement)
+        #expect(appState.platformAgeSignal.requirement == .ageCheckRequired)
+        #expect(appState.platformAgeSignal.ageBand == nil)
+        #expect(appState.ageAccess.allows(.generalContent))
+        #expect(appState.ageAccess.restrictsMatureContent)
+        #expect(!appState.isAdultContentEnabled)
     }
 
-    @Test("AppState account-eviction cleanup resets platformAgeSignal to none")
+    @Test("AppState cleanup fences a late preflight and retains no age band")
     @MainActor
-    func testAppStateCleanupResetsPlatformAgeSignal() async {
-        let spy = SpyAgeRegulatoryChecker()
+    func testAppStateCleanupFencesPlatformAgeSignal() async {
+        let checker = AgeAccessControlledChecker()
         let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
         let appState = AppState(
             userDID: "did:plc:testuser1234567890ab",
             client: client,
-            regulatoryChecker: spy
+            regulatoryChecker: checker
         )
+        let joined = await ageAccessJoinedRefresh(appState.ageAccess)
+        await checker.waitForCalls(1)
+        await checker.resolve(1, with: .init(requirement: .ageCheckRequired, ageBand: .adult))
+        await joined.value
+        #expect(appState.ageAccess.allows(.generalContent))
+        #expect(appState.platformAgeSignal.ageBand == nil)
 
-        let coarseSignal = PlatformAgeSignal(
-            requirement: .ageCheckRequired,
-            ageBand: .adult,
-            significantChangeConsentRequired: false
-        )
-        appState.platformAgeSignal = coarseSignal
-        #expect(appState.platformAgeSignal == coarseSignal)
-
-        // Real account-eviction cleanup path (without calling refreshAfterAccountSwitch)
+        let pending = await ageAccessJoinedRefresh(appState.ageAccess)
+        await checker.waitForCalls(2)
         appState.cleanup()
+        let revision = appState.ageAccess.revision
+        await checker.resolve(2, with: .none)
+        await pending.value
 
-        #expect(appState.platformAgeSignal == .none)
+        #expect(appState.ageAccess.revision == revision)
+        #expect(appState.platformAgeSignal.requirement == .ageCheckRequired)
+        #expect(appState.platformAgeSignal.ageBand == nil)
+        #expect(!appState.ageAccess.allows(.generalContent))
+        #expect(appState.ageAccess.restrictsMatureContent)
+        #expect(!appState.ageAccess.isCheckingRequirement)
+        #expect(!appState.isAdultContentEnabled)
     }
 
     @Test("Injected platform age signal updates policy decision correctly")
@@ -346,7 +297,7 @@ struct AgeVerificationTests {
         #expect(decision == .unavailableDueToConsent)
     }
 
-    @Test("Preferences SwiftData model round-trips correctly without age data")
+    @Test("Existing preference fields survive a SwiftData round trip")
     func testPreferencesPersistenceRoundTrip() throws {
         let schema = Schema([Preferences.self])
         let configuration = ModelConfiguration(

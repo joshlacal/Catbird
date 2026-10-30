@@ -35,7 +35,7 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   var sortMode: FeedSortMode = .latest {
-    didSet { saveSettings() }
+    didSet { if !isLoadingStoredSettings { saveSettings() } }
   }
 
   // Tracking of active filters
@@ -45,9 +45,11 @@ struct FeedFilter: Identifiable, Hashable {
   private var contentProcessors: [PostContentProcessor] = []
   private var muteWordProcessor: MuteWordProcessor?
   private var languageProcessor: LanguageFilterProcessor?
+  private var hasLanguageObserver = false
 
   private let accountDID: String
-  private let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
+  private let defaults: UserDefaults
+  private var isLoadingStoredSettings = true
 
   private func key(_ base: String) -> String {
     AppSettingsModel.scopedKey(base, accountDID: accountDID)
@@ -66,7 +68,6 @@ struct FeedFilter: Identifiable, Hashable {
       return scopedValue
     }
     guard let legacyValue = legacyString(for: base) else { return nil }
-    defaults.set(legacyValue, forKey: key(base))
     return legacyValue
   }
 
@@ -75,18 +76,19 @@ struct FeedFilter: Identifiable, Hashable {
       return scopedValue
     }
     guard let legacyValue = legacyStringArray(for: base) else { return nil }
-    defaults.set(legacyValue, forKey: key(base))
     return legacyValue
   }
 
-  init(accountDID: String = "") {
+  init(accountDID: String = "", defaults: UserDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard) {
     self.accountDID = accountDID
+    self.defaults = defaults
     // Initialize with standard filters but disabled by default
     setupDefaultFilters()
+    activeFilterIds = Set(filters.filter(\.isEnabled).map(\.id))
     loadSavedSettings()
-    loadSortMode()
     loadMuteWords()
     loadLanguageFilter()
+    isLoadingStoredSettings = false
   }
 
   private func setupDefaultFilters() {
@@ -105,7 +107,7 @@ struct FeedFilter: Identifiable, Hashable {
       ),
       FeedFilter(
         name: "Hide Replies",
-        description: "Hide replies that aren't part of threads you're participating in",
+        description: "Hide reply posts except your own replies",
         isEnabled: false,
         filterBlock: { post in
           // Only filter out replies that aren't self-threads
@@ -274,6 +276,8 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   func enableOnlyFilter(name: String) {
+    let knownIDs = Set(filters.map(\.id))
+    activeFilterIds.subtract(knownIDs)
     // Disable all filters first
     for index in filters.indices {
       let filter = filters[index]
@@ -310,12 +314,18 @@ struct FeedFilter: Identifiable, Hashable {
         filterBlock: filter.filterBlock
       )
     }
-    activeFilterIds.removeAll()
-    activeFilterIds.insert("Hide Duplicate Posts")
+    let clearedIDs = Set(filters.filter { $0.id != "Hide Duplicate Posts" }.map(\.id))
+    activeFilterIds.subtract(clearedIDs)
+    if isFilterEnabled(name: "Hide Duplicate Posts") { activeFilterIds.insert("Hide Duplicate Posts") }
+    else { activeFilterIds.remove("Hide Duplicate Posts") }
     saveSettings()
   }
 
   func toggleFilter(id: String) {
+    setFilter(id: id, enabled: !isFilterEnabled(name: id))
+  }
+
+  func setFilter(id: String, enabled: Bool) {
     guard let index = filters.firstIndex(where: { $0.id == id }) else { return }
 
     // Create new filter with toggled state
@@ -323,7 +333,7 @@ struct FeedFilter: Identifiable, Hashable {
     let updatedFilter = FeedFilter(
       name: filter.name,
       description: filter.description,
-      isEnabled: !filter.isEnabled,
+      isEnabled: enabled,
       filterBlock: filter.filterBlock
     )
 
@@ -350,6 +360,23 @@ struct FeedFilter: Identifiable, Hashable {
         languageProcessor = nil
       }
     }
+  }
+
+  var contentType: FeedContentType {
+    FeedContentType(textOnly: onlyTextPosts, mediaOnly: onlyMediaPosts)
+  }
+
+  /// The conflicting stored pair is retained until a concrete replacement is chosen.
+  func setContentType(_ type: FeedContentType) {
+    guard type != .conflicting else { return }
+    for (id, enabled) in [("Only Text Posts", type == .text), ("Only Media Posts", type == .media)] {
+      guard let index = filters.firstIndex(where: { $0.id == id }) else { continue }
+      let filter = filters[index]
+      filters[index] = FeedFilter(name: filter.name, description: filter.description,
+        isEnabled: enabled, filterBlock: filter.filterBlock)
+      if enabled { activeFilterIds.insert(id) } else { activeFilterIds.remove(id) }
+    }
+    saveSettings()
   }
 
   private func loadSavedSettings() {
@@ -399,12 +426,15 @@ struct FeedFilter: Identifiable, Hashable {
     }
 
     // Listen for language preference changes
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(languagePreferencesChanged),
-      name: NSNotification.Name("LanguagePreferencesChanged"),
-      object: nil
-    )
+    if !hasLanguageObserver {
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(languagePreferencesChanged),
+        name: NSNotification.Name("LanguagePreferencesChanged"),
+        object: nil
+      )
+      hasLanguageObserver = true
+    }
   }
 
   @objc private func languagePreferencesChanged() {
@@ -412,8 +442,14 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   private func saveSettings() {
+    guard !isLoadingStoredSettings else { return }
+    // Keep unknown stored IDs while making known IDs match the actual visible switches.
+    activeFilterIds.subtract(Set(filters.map(\.id)))
+    activeFilterIds.formUnion(filters.filter(\.isEnabled).map(\.id))
     defaults.set(Array(activeFilterIds), forKey: key("FeedFilterActiveFilters"))
     defaults.set(sortMode.rawValue, forKey: key("FeedSortMode"))
+    NotificationCenter.default.post(name: NSNotification.Name("FeedFiltersChanged"), object: self,
+      userInfo: ["accountDID": accountDID])
   }
 
   // Update the mute word processor
@@ -434,6 +470,17 @@ struct FeedFilter: Identifiable, Hashable {
     // Add new processor
     contentProcessors.append(processor)
     languageProcessor = processor
+  }
+
+  /// Equal signatures filter identically: filter blocks are fixed per name and processors are replaced, never mutated.
+  struct ActiveFilterSignature: Equatable {
+    var filterIDs: [String] = []
+    var processors: [ObjectIdentifier] = []
+  }
+
+  var activeFilterSignature: ActiveFilterSignature {
+    ActiveFilterSignature(filterIDs: filters.filter(\.isEnabled).map(\.id),
+      processors: contentProcessors.map { ObjectIdentifier($0 as AnyObject) })
   }
 
   // Get active filters only

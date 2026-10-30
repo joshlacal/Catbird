@@ -12,6 +12,7 @@ enum BGTaskSchedulerManager {
   private static var didRegister = false
   private static var lastScheduleTime: Date?
 
+  @MainActor
   static func registerIfNeeded() {
     // Simple guard - called from main thread during app init
     guard !didRegister else { 
@@ -42,14 +43,26 @@ enum BGTaskSchedulerManager {
     didRegister = true
     logger.info("BGTask registration completed for identifier: \(taskIdentifier)")
   }
+  @MainActor
+  static func cancel() {
+    BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+  }
 
+
+  @MainActor
   static func schedule() {
+    // Only schedule if there are actually pending items in the outbox (P186/P314)
+    guard ComposerOutbox.shared.hasPendingItems else {
+      cancel()
+      logger.debug("BGTask not scheduled: ComposerOutbox is empty")
+      return
+    }
+
     // Only schedule if we successfully registered
     if !didRegister {
       logger.info("BGTask scheduling - lazily registering task")
       registerIfNeeded()
     }
-    
     // Throttle scheduling to avoid too frequent submissions
     let now = Date()
     if let lastTime = lastScheduleTime, now.timeIntervalSince(lastTime) < 60 {
@@ -80,9 +93,12 @@ enum BGTaskSchedulerManager {
     // RAII background task assertion — auto-released on scope exit.
     let bgTask = CatbirdBackgroundTask(name: "BGTask-\(taskIdentifier)")
 
-    // Schedule next execution
-    schedule()
-
+    // Schedule next execution only if items remain (P186/P314)
+    Task { @MainActor in
+      if ComposerOutbox.shared.hasPendingItems {
+        schedule()
+      }
+    }
     // Process outbox items with bounded work and cancellation support.
     let retryWork = Task<Bool, Never> {
       guard let activeState = await AppStateManager.shared.lifecycle.appState else {
@@ -106,6 +122,11 @@ enum BGTaskSchedulerManager {
 
     Task {
       let success = await retryWork.value
+      await MainActor.run {
+        if !ComposerOutbox.shared.hasPendingItems {
+          cancel()
+        }
+      }
       GRDBSuspensionCoordinator.endBackgroundWork(reason: "Posting BGTask \(taskIdentifier)")
       bgTask.end()
       task.setTaskCompleted(success: success)

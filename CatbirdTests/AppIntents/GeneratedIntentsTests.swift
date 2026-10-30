@@ -28,6 +28,9 @@ import Foundation
 import Testing
 import AppIntents
 import Petrel
+#if canImport(UIKit)
+import UIKit
+#endif
 @testable import Catbird
 
 // MARK: - Fixture builders
@@ -141,7 +144,8 @@ private enum Fixture {
     author: AppBskyActorDefs.ProfileViewBasic? = nil,
     text: String? = "Fixture post text",
     likeCount: Int? = nil,
-    indexedAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
+    indexedAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
+    rkey: String = "abc123"
   ) throws -> AppBskyFeedDefs.PostView {
     let record: ATProtocolValueContainer =
       text.map {
@@ -151,7 +155,7 @@ private enum Fixture {
           createdAt: ATProtocolDate(date: indexedAt)))
       } ?? .string("post-record-fixture")
     return AppBskyFeedDefs.PostView(
-      uri: try ATProtocolURI(uriString: "at://did:plc:author1234567890123456/app.bsky.feed.post/abc123"),
+      uri: try ATProtocolURI(uriString: "at://did:plc:author1234567890123456/app.bsky.feed.post/\(rkey)"),
       cid: CID.fromBlob(Data("post-fixture".utf8)),
       author: try author ?? profileViewBasic(),
       record: record,
@@ -168,6 +172,44 @@ private enum Fixture {
       debug: nil
     )
   }
+}
+
+// MARK: - Active account
+
+/// A passive age check with a fixed answer; it never prompts.
+private struct FixedAgeRequirement: AgeRegulatoryChecking {
+  let requirement: PlatformAgeSignal.Requirement
+  func preflight() async -> PlatformAgeSignal { PlatformAgeSignal(requirement: requirement) }
+  #if canImport(UIKit)
+  @MainActor
+  func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+  #endif
+}
+
+/// Runs `body` with an active account, as the app provides one to intent queries: the resolver
+/// reads its DID from a private store bound for the task (never the shared app group), and the
+/// account's `AppState` is the active one with a settled passive age check, whose decision
+/// `IntentClientProvider.requireCoveredUse` reuses.
+@MainActor
+private func withActiveAccount(
+  _ did: String, ageRequirement: PlatformAgeSignal.Requirement = .none,
+  _ body: () async throws -> Void
+) async throws {
+  let suiteName = "test.app-intents.active-account.\(UUID().uuidString)"
+  let store = try #require(UserDefaults(suiteName: suiteName))
+  defer { store.removePersistentDomain(forName: suiteName) }
+  store.set(did, forKey: IntentAccountResolver.activeAccountDIDKey)
+  let client = await ATProtoClient(baseURL: try #require(URL(string: "https://intents-fixture.invalid")))
+  let state = AppState(userDID: did, client: client, regulatoryChecker: FixedAgeRequirement(requirement: ageRequirement))
+  let previousLifecycle = AppStateManager.shared.lifecycle
+  AppStateManager.shared.setLifecycleForTesting(.authenticated(state))
+  defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+  defer { state.cleanup() }
+  for _ in 0..<200 where state.ageAccess.isCheckingRequirement || state.platformAgeSignal.requirement != ageRequirement {
+    try await Task.sleep(for: .milliseconds(10))
+  }
+  try #require(!state.ageAccess.isCheckingRequirement && state.platformAgeSignal.requirement == ageRequirement)
+  try await IntentAccountResolver.$store.withValue(store) { try await body() }
 }
 
 // All suites below are nested inside a single top-level `GeneratedIntentsTests`
@@ -223,19 +265,26 @@ struct GeneratedIntentsTests {
   @Suite("PostEntity DisplayRepresentation")
   struct PostEntityDisplayRepresentationTests {
 
-    @Test("Title is the post text when the record decodes")
-    func titleUsesText() throws {
-      let entity = PostEntity(from: try Fixture.postView(text: "Hello Bluesky"))
+    @Test("Title is the author, subtitle the post text, image the author's avatar")
+    func titleIsAuthorSubtitleIsText() throws {
+      let avatar: URI = "https://cdn.bsky.app/img/avatar/plain/author.jpg"
+      let author = try Fixture.profileViewBasic(avatar: avatar)
+      let entity = PostEntity(from: try Fixture.postView(author: author, text: "Hello Bluesky"))
+      let rep = entity.displayRepresentation
       #expect(entity.text == "Hello Bluesky")
-      #expect(String(localized: entity.displayRepresentation.title) == "Hello Bluesky")
-      #expect(entity.displayRepresentation.subtitle.map { String(localized: $0) } == "author.bsky.social")
+      #expect(String(localized: rep.title) == "Author Name")
+      #expect(rep.subtitle.map { String(localized: $0) } == "Hello Bluesky")
+      #expect(rep.image == avatar.url.map { DisplayRepresentation.Image(url: $0) })
     }
 
-    @Test("Title falls back to the author handle for opaque records")
+    @Test("Title falls back to the author handle without a display name")
     func titleFallsBackToHandle() throws {
-      let entity = PostEntity(from: try Fixture.postView(text: nil))
+      let author = try Fixture.profileViewBasic(displayName: nil)
+      let entity = PostEntity(from: try Fixture.postView(author: author, text: nil))
       #expect(entity.text == nil)
       #expect(String(localized: entity.displayRepresentation.title) == "author.bsky.social")
+      #expect(entity.displayRepresentation.subtitle == nil)
+      #expect(entity.displayRepresentation.image == nil)
     }
 
     @Test("Counts and rkey project from the view")
@@ -418,7 +467,9 @@ struct GeneratedIntentsTests {
       #expect(set.textContent == "Searchable words")
       #expect(set.contentDescription == "Searchable words")
       #expect(set.authorNames == ["Author Name"])
-      #expect(set.title == "Searchable words")  // merged from defaultAttributeSet
+      #expect(set.title == "Author Name")
+      #expect(set.keywords == ["author.bsky.social", "Author Name"])
+      #expect(set.url?.absoluteString == "https://bsky.app/profile/author.bsky.social/post/abc123")
     }
 
     @Test("webURL is the bsky.app permalink")
@@ -458,12 +509,32 @@ struct GeneratedIntentsTests {
     @Test("Cached posts resolve through the query without the network")
     func cacheHitResolution() async throws {
       let view = try Fixture.postView(text: "Cached for Siri")
-      await PostEntityStore.shared.store(view)
       // A full cache hit returns before the query ever bootstraps a client —
       // this would throw in the test environment if it fell through to XRPC.
-      let entities = try await PostEntityQuery().entities(for: [view.uri.uriString()])
-      #expect(entities.count == 1)
-      #expect(entities.first?.text == "Cached for Siri")
+      // The query still requires a signed-in account that passes the age check.
+      try await withActiveAccount("did:plc:intentpostcachefixture") {
+        await PostEntityStore.shared.store(view)
+        let entities = try await PostEntityQuery().entities(for: [view.uri.uriString()])
+        #expect(entities.count == 1)
+        #expect(entities.first?.text == "Cached for Siri")
+      }
+    }
+
+    @Test("A cached post is not returned to an account that requires an age check")
+    func cacheHitRequiresCoveredUse() async throws {
+      let view = try Fixture.postView(text: "Cached behind the age check")
+      try await withActiveAccount("did:plc:intentpostagefixture", ageRequirement: .ageCheckRequired) {
+        // Cached after the age decision settled (which purges exported posts), so the query's own
+        // gate is what withholds it.
+        await PostEntityStore.shared.store(view)
+        #expect(await PostEntityStore.shared.entities(for: [view.uri.uriString()]).count == 1)
+        do {
+          let entities = try await PostEntityQuery().entities(for: [view.uri.uriString()])
+          Issue.record("The query returned \(entities.count) cached post(s) without covered use")
+        } catch IntentError.serviceUnavailable {
+          // The covered-use gate withheld the cached post.
+        }
+      }
     }
 
     @Test("Unknown identifiers are omitted from store lookups")
@@ -494,11 +565,183 @@ struct GeneratedIntentsTests {
       let view = try Fixture.postView(text: "Persisted for Siri")
       let writer = PostEntityStore(defaults: defaults)
       await writer.store(view)
+      await writer.flushPendingWrites()
 
-      let reader = PostEntityStore(defaults: defaults)
+      // A separate UserDefaults instance stands in for the extension process:
+      // it shares the suite's stored data but none of the writer's buffer.
+      let readerDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let reader = PostEntityStore(defaults: readerDefaults)
       let entities = await reader.entities(for: [view.uri.uriString()])
       #expect(entities.count == 1)
       #expect(entities.first?.text == "Persisted for Siri")
+    }
+
+    @Test("Stores buffer the App Group write instead of writing through")
+    func writesAreBuffered() async throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let view = try Fixture.postView(text: "Buffered for Siri")
+      let writer = PostEntityStore(defaults: defaults)
+      await writer.store(view)
+
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) == nil)
+      let otherProcessDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let otherProcess = PostEntityStore(defaults: otherProcessDefaults)
+      #expect(await otherProcess.entities(for: [view.uri.uriString()]).isEmpty)
+
+      await writer.flushPendingWrites()
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) != nil)
+      #expect(await otherProcess.entities(for: [view.uri.uriString()]).count == 1)
+    }
+
+    @Test("removeAll forgets posts in memory, in the App Group and still buffered")
+    func removeAllForgetsPosts() async throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let flushed = try Fixture.postView(text: "Signed-out account's post", rkey: "flushed1")
+      let buffered = try Fixture.postView(text: "Signed-out account's unflushed post", rkey: "buffered1")
+      let writer = PostEntityStore(defaults: defaults)
+      await writer.store(flushed)
+      await writer.flushPendingWrites()
+      await writer.store(buffered)
+      let ids = [flushed.uri.uriString(), buffered.uri.uriString()]
+      #expect(await writer.entities(for: ids).count == 2)
+
+      await writer.removeAll()
+
+      #expect(await writer.entities(for: ids).isEmpty)
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) == nil)
+      await writer.flushPendingWrites()
+      let reader = PostEntityStore(defaults: try #require(UserDefaults(suiteName: suiteName)))
+      #expect(await reader.entities(for: ids).isEmpty)
+    }
+
+    @Test("Persisted reads in the writing process include unflushed entries")
+    func persistedReadsMergePendingEntries() throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let view = try Fixture.postView(text: "Seeded by a thread snapshot")
+      PostEntityCache.upsert([view], defaults: defaults)
+
+      #expect(defaults.data(forKey: PostEntityCache.storageKey) == nil)
+      let entities = PostEntityCache.entities(for: [view.uri.uriString()], defaults: defaults)
+      #expect(entities.map(\.text) == ["Seeded by a thread snapshot"])
+    }
+
+    @Test("A thread snapshot larger than the cache persists only its first entries")
+    func upsertKeepsNewestCapacityEntries() throws {
+      let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let views = try (0..<(PostEntityCache.capacity + 10)).map { index in
+        try Fixture.postView(text: "Row \(index)", rkey: "row\(index)")
+      }
+      PostEntityCache.upsert(views + [views[0]], defaults: defaults)
+      PostEntityCache.flushPendingWrites(defaults: defaults)
+
+      let otherProcess = try #require(UserDefaults(suiteName: suiteName))
+      let ids = views.map { $0.uri.uriString() }
+      let persisted = PostEntityCache.entities(for: ids, defaults: otherProcess)
+      #expect(persisted.map(\.id) == Array(ids.prefix(PostEntityCache.capacity)))
+    }
+  }
+
+  @Suite("AppGroupEntityWriteBuffer")
+  struct AppGroupEntityWriteBufferTests {
+    struct Entry: Codable, Equatable, Sendable {
+      let id: String
+      let value: Int
+    }
+
+    private func makeBuffer(
+      _ defaults: UserDefaults, flushDelay: TimeInterval = 60,
+      lifecycleNotifications: [Notification.Name] = []
+    ) -> AppGroupEntityWriteBuffer<Entry> {
+      AppGroupEntityWriteBuffer(
+        defaults: defaults, storageKey: "entries", capacity: 3, flushDelay: flushDelay,
+        lifecycleNotifications: lifecycleNotifications, id: { $0.id })
+    }
+
+    @Test("Batches merge newest first, de-duplicated and trimmed to capacity")
+    func mergeOrder() throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let buffer = makeBuffer(defaults)
+      buffer.enqueue([Entry(id: "a", value: 1), Entry(id: "b", value: 1)])
+      buffer.flush()
+      buffer.enqueue([Entry(id: "c", value: 1)])
+      buffer.enqueue([Entry(id: "a", value: 2), Entry(id: "c", value: 9), Entry(id: "c", value: 3)])
+
+      #expect(buffer.entries().map(\.id) == ["a", "c", "b"])
+      #expect(buffer.entries().map(\.value) == [2, 9, 1])
+      buffer.flush()
+      let stored = makeBuffer(try #require(UserDefaults(suiteName: suiteName))).entries()
+      #expect(stored == [Entry(id: "a", value: 2), Entry(id: "c", value: 9), Entry(id: "b", value: 1)])
+    }
+
+    @Test("Pending writes flush on their own after the delay")
+    func flushesAfterDelay() async throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let buffer = makeBuffer(defaults, flushDelay: 0.05)
+      buffer.enqueue([Entry(id: "a", value: 1)])
+      #expect(defaults.data(forKey: "entries") == nil)
+
+      for _ in 0..<40 where defaults.data(forKey: "entries") == nil {
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      #expect(defaults.data(forKey: "entries") != nil)
+    }
+
+    @Test("A lifecycle notification flushes synchronously")
+    func lifecycleNotificationFlushes() throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let notification = Notification.Name("test.app-intents.write-buffer.lifecycle.\(UUID().uuidString)")
+      let buffer = makeBuffer(defaults, lifecycleNotifications: [notification])
+      buffer.enqueue([Entry(id: "a", value: 1)])
+      #expect(defaults.data(forKey: "entries") == nil)
+
+      NotificationCenter.default.post(name: notification, object: nil)
+      #expect(defaults.data(forKey: "entries") != nil)
+    }
+
+    @Test("removeAll drops stored and buffered entries, and a scheduled flush writes nothing back")
+    func removeAllClearsEverything() async throws {
+      let suiteName = "test.app-intents.write-buffer.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let buffer = makeBuffer(defaults, flushDelay: 0.05)
+      buffer.enqueue([Entry(id: "a", value: 1)])
+      buffer.flush()
+      buffer.enqueue([Entry(id: "b", value: 1)])
+      #expect(defaults.data(forKey: "entries") != nil)
+
+      buffer.removeAll()
+
+      #expect(defaults.data(forKey: "entries") == nil)
+      #expect(buffer.entries().isEmpty)
+      // The flush "b" scheduled must not bring the signed-out entries back.
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(defaults.data(forKey: "entries") == nil)
+      buffer.enqueue([Entry(id: "c", value: 1)])
+      buffer.flush()
+      let stored = makeBuffer(try #require(UserDefaults(suiteName: suiteName))).entries()
+      #expect(stored == [Entry(id: "c", value: 1)])
     }
   }
 
@@ -508,11 +751,13 @@ struct GeneratedIntentsTests {
     @Test("Post-author (basic) profiles resolve through the query without the network")
     func cacheHitResolutionFromBasicView() async throws {
       let author = try Fixture.profileViewBasic()
-      await ProfileEntityStore.shared.store(ProfileEntity(from: author))
-      let entities = try await ProfileEntityQuery().entities(for: [author.did.didString()])
-      #expect(entities.count == 1)
-      #expect(entities.first?.handle == "author.bsky.social")
-      #expect(entities.first?.description == nil)  // basic views carry no bio
+      try await withActiveAccount("did:plc:intentprofilecachefixture") {
+        await ProfileEntityStore.shared.store(ProfileEntity(from: author))
+        let entities = try await ProfileEntityQuery().entities(for: [author.did.didString()])
+        #expect(entities.count == 1)
+        #expect(entities.first?.handle == "author.bsky.social")
+        #expect(entities.first?.description == nil)  // basic views carry no bio
+      }
     }
 
     @Test("A fresh store resolves profiles persisted by another process")
@@ -524,11 +769,51 @@ struct GeneratedIntentsTests {
       let profile = ProfileEntity(from: try Fixture.profileViewBasic())
       let writer = ProfileEntityStore(defaults: defaults)
       await writer.store(profile)
+      await writer.flushPendingWrites()
 
-      let reader = ProfileEntityStore(defaults: defaults)
+      let readerDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let reader = ProfileEntityStore(defaults: readerDefaults)
       let entities = await reader.entities(for: [profile.id])
       #expect(entities.count == 1)
       #expect(entities.first?.handle == "author.bsky.social")
+    }
+
+    @Test("removeAll forgets profiles in memory and in the App Group")
+    func removeAllForgetsProfiles() async throws {
+      let suiteName = "test.app-intents.profile-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let profile = ProfileEntity(from: try Fixture.profileViewBasic())
+      let writer = ProfileEntityStore(defaults: defaults)
+      await writer.store(profile)
+      await writer.flushPendingWrites()
+      #expect(await writer.entities(for: [profile.id]).count == 1)
+
+      await writer.removeAll()
+
+      #expect(await writer.entities(for: [profile.id]).isEmpty)
+      let reader = ProfileEntityStore(defaults: try #require(UserDefaults(suiteName: suiteName)))
+      #expect(await reader.entities(for: [profile.id]).isEmpty)
+    }
+
+    @Test("Profile stores buffer the App Group write instead of writing through")
+    func writesAreBuffered() async throws {
+      let suiteName = "test.app-intents.profile-cache.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: suiteName))
+      defer { defaults.removePersistentDomain(forName: suiteName) }
+
+      let profile = ProfileEntity(from: try Fixture.profileViewBasic())
+      let writer = ProfileEntityStore(defaults: defaults)
+      await writer.store(entities: [profile])
+
+      #expect(defaults.data(forKey: "recentProfileEntities.v1") == nil)
+      let otherProcessDefaults = try #require(UserDefaults(suiteName: suiteName))
+      let otherProcess = ProfileEntityStore(defaults: otherProcessDefaults)
+      #expect(await otherProcess.entities(for: [profile.id]).isEmpty)
+
+      await writer.flushPendingWrites()
+      #expect(await otherProcess.entities(for: [profile.id]).map(\.handle) == ["author.bsky.social"])
     }
   }
 
@@ -537,22 +822,19 @@ struct GeneratedIntentsTests {
   @Suite("IntentAccountResolver")
   struct IntentAccountResolverTests {
 
-    // `IntentAccountResolver.activeDID()` reads directly from
-    // `UserDefaults(suiteName: "group.blue.catbird.shared")` -- there is no
-    // injection seam (the suite name is a hardcoded `static let`, and the type
-    // has no initializer or protocol to substitute a test double). Unit tests
-    // run in-process inside the CatbirdTests host app, which shares the real
-    // app-group entitlement, so `UserDefaults(suiteName:)` for the real group
-    // *does* succeed here -- but mutating `activeAccountDID` in that live,
-    // shared app-group store to force the "absent" case would touch the same
-    // storage the main app, widgets, and NotificationServiceExtension read/
-    // write, with no safe way to snapshot/restore it around the test. That's
-    // an unacceptable side effect for an automated unit test, so per the task
-    // instructions this behavior is intentionally left uncovered here rather
-    // than exercised against production-shared state. Covering it properly
-    // would need `IntentAccountResolver` refactored to accept an injected
-    // `UserDefaults` (e.g. a suite name or store passed to `activeDID()`),
-    // which is a production-code change outside this test-only task.
+    // Each case binds a private store for its task, never the app group the app, widgets and
+    // extensions share.
+    @Test("The active account is read from the bound store, and an empty store has none")
+    func activeDIDFromStore() throws {
+      let suiteName = "test.app-intents.resolver.\(UUID().uuidString)"
+      let store = try #require(UserDefaults(suiteName: suiteName))
+      defer { store.removePersistentDomain(forName: suiteName) }
+      IntentAccountResolver.$store.withValue(store) {
+        #expect(IntentAccountResolver.activeDID() == nil)
+        store.set("did:plc:intentresolverfixture", forKey: IntentAccountResolver.activeAccountDIDKey)
+        #expect(IntentAccountResolver.activeDID() == "did:plc:intentresolverfixture")
+      }
+    }
   }
 
 } // GeneratedIntentsTests

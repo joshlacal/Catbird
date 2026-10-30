@@ -15,7 +15,6 @@ struct FeedView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
-  @Environment(\.scenePhase) private var scenePhase
   @Binding var path: NavigationPath
   @Binding var selectedTab: Int
 
@@ -53,7 +52,7 @@ struct FeedView: View {
         .opacity(appState.isTransitioningAccounts ? 0.0 : 1.0)
         .animation(.easeInOut(duration: 0.3), value: appState.isTransitioningAccounts)
       } else {
-        ProgressView("Loading feed...")
+        ProgressView("Loading feed…")
       }
     }
     // Search UI removed
@@ -61,10 +60,13 @@ struct FeedView: View {
     // CRITICAL FIX: Use .onAppear on the Group to ensure stateManager is initialized
     // BEFORE .task runs, preventing the race condition where .task sees nil stateManager
     .onAppear {
-      if stateManager == nil {
+      if stateManager == nil || stateManager?.isCleanedUp == true {
         logger.debug("Initializing stateManager synchronously on appear")
         stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
         currentFetch = fetch
+      }
+      if let manager = stateManager {
+        feedStateStore.attach(manager)
       }
       
       // CRITICAL: Always ensure we attempt to load data when the view appears
@@ -77,6 +79,11 @@ struct FeedView: View {
             await manager.loadInitialData()
           }
         }
+      }
+    }
+    .onDisappear {
+      if let manager = stateManager {
+        feedStateStore.detach(manager)
       }
     }
     .task {
@@ -109,10 +116,14 @@ struct FeedView: View {
       guard currentFetch != fetch else { return }
       
       logger.debug("Feed type changed from \(currentFetch?.identifier ?? "nil") to \(fetch.identifier)")
-      appState.feedFeedbackManager.disable()
+      Task { await appState.feedFeedbackManager.flushInteractions() }
 
+      if let oldManager = stateManager {
+        feedStateStore.detach(oldManager)
+      }
       // Switch to a dedicated state manager per feed to keep per-feed scroll state
       let newManager = feedStateStore.stateManager(for: fetch, appState: appState)
+      feedStateStore.attach(newManager)
       self.stateManager = newManager
       self.currentFetch = fetch
       
@@ -141,13 +152,6 @@ struct FeedView: View {
             await manager.loadInitialData()
           }
         }
-      }
-    }
-    .onChange(of: scenePhase) { oldPhase, newPhase in
-      logger.debug("Scene phase changed: \(String(describing: oldPhase)) -> \(String(describing: newPhase))")
-
-      Task { @MainActor in
-        await feedStateStore.handleScenePhaseChange(newPhase)
       }
     }
     .id((appState.userDID ?? "") + fetch.identifier) // Reset view when user or feed changes

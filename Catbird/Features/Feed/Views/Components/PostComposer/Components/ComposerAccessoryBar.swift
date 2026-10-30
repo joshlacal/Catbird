@@ -25,6 +25,8 @@ struct ComposerAccessoryBar: View {
   var isAddToThreadDisabled: Bool = false
   var arePhotosDisabled: Bool = false
   var isPublicMediaDisabled: Bool = false
+  /// Reply settings only apply to the first post of a thread, so replies hide them.
+  var showsThreadgate: Bool = true
   let threadgateValue: String
   let languageValue: String
   let actions: ComposerBarActions
@@ -81,12 +83,12 @@ struct ComposerAccessoryBar: View {
         Divider()
         settingsMenuItems
       } label: {
-        Image(systemName: "plus")
+        Image(systemName: "paperclip")
           .font(.system(size: 17, weight: .semibold))
           .frame(width: 44, height: 44)
       }
       .background(Circle().fill(.ultraThinMaterial))
-      .accessibilityLabel("Add attachment or post settings")
+      .accessibilityLabel("Attachments and Post Settings")
 
       Spacer()
 
@@ -97,14 +99,14 @@ struct ComposerAccessoryBar: View {
 
   private var plusButton: some View {
     Button(action: { setMenu(!isPlusMenuOpen) }) {
-      Image(systemName: "plus")
+      Image(systemName: isPlusMenuOpen ? "xmark" : "paperclip")
         .font(.system(size: 17, weight: .semibold))
-        .frame(width: 36, height: 36)
-        .rotationEffect(.degrees(isPlusMenuOpen ? 45 : 0))
+        .frame(width: 44, height: 44)
+        .contentTransition(.symbolEffect(.replace))
         .contentShape(Circle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(isPlusMenuOpen ? "Close menu" : "Add attachment or post settings")
+    .accessibilityLabel(isPlusMenuOpen ? "Close Menu" : "Attachments and Post Settings")
     .accessibilityValue(isPlusMenuOpen ? "Expanded" : "Collapsed")
   }
 
@@ -115,16 +117,16 @@ struct ComposerAccessoryBar: View {
         setMenu(false)
         actions.onAddToThread()
       } label: {
-        Image(systemName: "plus.square.on.square")
-          .font(.system(size: 16))
-          .frame(width: 36, height: 36)
-          .padding(4)
+        Image(systemName: "plus")
+          .font(.system(size: 17, weight: .semibold))
+          .frame(width: 44, height: 44)
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .disabled(isAddToThreadDisabled)
       .opacity(isAddToThreadDisabled ? 0.3 : 1.0)
-      .accessibilityLabel("Add another post to thread")
+      .accessibilityLabel("Add Post to Thread")
+      .accessibilityIdentifier("composer-add-thread-post")
       CharacterLimitIndicatorWrapper(currentCount: characterCount)
     }
     .padding(.horizontal, 10)
@@ -149,16 +151,18 @@ struct ComposerAccessoryBar: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
 
-      menuRow(
-        "Who can reply",
-        systemImage: "bubble.left.and.bubble.right",
-        value: threadgateValue,
-        action: actions.onThreadgate
-      )
+      if showsThreadgate {
+        menuRow(
+          "Who Can Reply",
+          systemImage: "bubble.left.and.bubble.right",
+          value: threadgateValue,
+          action: actions.onThreadgate
+        )
+      }
       menuRow("Language", systemImage: "globe", value: languageValue, action: actions.onLanguage)
       menuRow("Hashtags", systemImage: "number", action: actions.onTags)
       menuRow(
-        "Content label",
+        "Content Label",
         systemImage: "exclamationmark.triangle",
         action: actions.onLabels
       )
@@ -187,9 +191,11 @@ struct ComposerAccessoryBar: View {
 
   @ViewBuilder
   private var settingsMenuItems: some View {
-    Button(action: actions.onThreadgate) {
-      Label("Who can reply", systemImage: "bubble.left.and.bubble.right")
-      Text(threadgateValue)
+    if showsThreadgate {
+      Button(action: actions.onThreadgate) {
+        Label("Who Can Reply", systemImage: "bubble.left.and.bubble.right")
+        Text(threadgateValue)
+      }
     }
     Button(action: actions.onLanguage) {
       Label("Language", systemImage: "globe")
@@ -197,7 +203,7 @@ struct ComposerAccessoryBar: View {
     }
     Button(action: actions.onTags) { Label("Hashtags", systemImage: "number") }
     Button(action: actions.onLabels) {
-      Label("Content label", systemImage: "exclamationmark.triangle")
+      Label("Content Label", systemImage: "exclamationmark.triangle")
     }
   }
 

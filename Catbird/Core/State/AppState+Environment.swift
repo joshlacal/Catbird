@@ -16,6 +16,7 @@ extension View {
         self
             .environment(appState)
             .environment(\.appSettings, appState.appSettings)
-            .environment(\.adultContentEnabled, appState.isAdultContentEnabled)
+            .environment(\.moderationPolicy, appState.moderationPolicy)
+            .environment(\.adultContentEnabled, appState.moderationPolicy.adultContentEnabled)
     }
 }

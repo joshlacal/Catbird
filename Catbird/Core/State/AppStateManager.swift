@@ -36,17 +36,34 @@ enum AccountSwitchError: LocalizedError, Equatable {
   case databaseDrainFailed
   case authSwitchFailed(String)
   case clientUnavailable
+  case transitionInProgress
+  case authenticatedAccountMismatch
+  case accountRestricted
+  case recoveryFailed
+  /// The target account's saved session was rejected; the previous account stays active.
+  case reauthenticationRequired(did: String)
 
   var errorDescription: String? {
     switch self {
     case .invalidDID:
-      return "Invalid account identifier"
+      return "Couldn’t switch accounts. Try again."
     case .databaseDrainFailed:
-      return "Failed to close previous account database"
-    case .authSwitchFailed(let msg):
-      return "AuthManager failed to switch: \(msg)"
+      return "Couldn’t safely close the previous account’s data. Restart Catbird and try again."
+    case .authSwitchFailed:
+      // The underlying reason is logged where the switch fails.
+      return "Couldn’t switch to this account. If this keeps happening, sign in to it again."
     case .clientUnavailable:
-      return "Client not available after switch"
+      return "Couldn’t switch accounts. Try again."
+    case .transitionInProgress:
+      return "Another account switch is already in progress. Try again in a moment."
+    case .authenticatedAccountMismatch:
+      return "Sign-in finished for a different account. Try again."
+    case .accountRestricted:
+      return "This account is deactivated or suspended, so it can’t post right now."
+    case .recoveryFailed:
+      return "Restart Catbird to finish switching accounts."
+    case .reauthenticationRequired:
+      return "Your session for this account has expired. Sign in again to switch to it."
     }
   }
 }
@@ -85,6 +102,13 @@ final class AppStateManager {
   /// Current application lifecycle state
   private(set) var lifecycle: AppLifecycle = .launching {
     didSet {
+      if lifecycle.userDID != oldValue.userDID || lifecycle.isAuthenticated != oldValue.isAuthenticated {
+        settingsAccountContextRevision &+= 1
+      }
+      if !composerSwitchQueue.isSwitching,
+         !lifecycle.isAuthenticated || lifecycle.userDID != oldValue.userDID {
+        composerSwitchQueue.invalidate()
+      }
       guard lifecycle != oldValue else { return }
       let newDID = lifecycle.userDID
       Self.activeUserDIDBox.withLock { $0 = newDID }
@@ -113,8 +137,18 @@ final class AppStateManager {
   /// Users currently undergoing MLS storage maintenance (prevents DB access)
   private var storageMaintenanceUsers: Set<String> = []
 
-  /// Pending composer draft to be reopened after account switch
-  var pendingComposerDraft: PostComposerDraft?
+  /// Fences Settings callbacks when an account leaves and later returns.
+  private(set) var settingsAccountContextRevision: UInt64 = 0
+  private let composerSwitchQueue = ComposerAccountSwitchQueue()
+  private let accountSwitchOperationBarrier = AccountSwitchOperationBarrier()
+  private var isLoggingOut = false
+  private var accountSwitchRequiresRestart = false
+  private var retiredComposerSwitchAttempts: Set<UUID> = []
+  /// Preserve the source while the visible lifecycle is `.launching`, including logout races.
+  private var admittedSwitchSource: (attemptID: UUID, state: AppState)?
+
+  /// Observed by stable scene coordinators, including newly mounted account views.
+  var pendingComposerReopenRevision: UInt64 { composerSwitchQueue.revision }
 
   /// Maximum number of accounts to keep in memory (LRU eviction)
   private let maxCachedAccounts = 3
@@ -126,13 +160,42 @@ final class AppStateManager {
   /// Used to prevent operations during the transition window
   private(set) var isTransitioning: Bool = false
 
+  /// The account whose session ended without a logout (authenticationRequired, a catastrophic
+  /// auth failure). The auth observer moved to sign-in and kept its AppState cached so the same
+  /// account signing in again reuses it; a different account signing in retires it first.
+  @ObservationIgnored private var sessionEndedAccountDID: String?
+
   // MARK: - App Initialization State
   // These flags are stored here (instead of @State in CatbirdApp) because @State in App structs
   // does not persist reliably across background/foreground cycles - iOS can recreate the App struct
   // and reset all @State to initial values, causing full re-initialization on every foreground return.
   
   /// ModelContainer state for SwiftData
-  var modelContainerState: ModelContainerState = .loading
+  var modelContainerState: ModelContainerState = .loading {
+    didSet {
+      if case .loading = oldValue, !modelContainerContinuations.isEmpty {
+        let continuations = modelContainerContinuations
+        modelContainerContinuations.removeAll()
+        for cont in continuations {
+          cont.resume(returning: modelContainerState.container)
+        }
+      }
+    }
+  }
+
+  @ObservationIgnored
+  private var modelContainerContinuations: [CheckedContinuation<ModelContainer?, Never>] = []
+
+  /// Waits for ModelContainer initialization to resolve (ready or degraded) before proceeding
+  @MainActor
+  func waitForModelContainerReady() async -> ModelContainer? {
+    if case .loading = modelContainerState {
+      return await withCheckedContinuation { cont in
+        modelContainerContinuations.append(cont)
+      }
+    }
+    return modelContainerState.container
+  }
   
   /// Tracks if the app has been initialized (prevents duplicate initialization)
   var didInitialize: Bool = false
@@ -160,7 +223,9 @@ final class AppStateManager {
 
   private init() {
     logger.info("AppStateManager initialized")
-    
+
+    // Test-harness launch arguments are compiled out of release builds.
+    #if DEBUG
     // Detect E2E mode from launch arguments
     let args = ProcessInfo.processInfo.arguments
     
@@ -200,7 +265,8 @@ final class AppStateManager {
     } else {
       logger.info("[E2E-DEBUG] E2E mode not detected (--e2e-mode not in args)")
     }
-    
+    #endif
+
     Task { await MLSClient.shared.setStorageMaintenanceCoordinator(self) }
     MLSCoordinationStore.shared.setActiveUserProvider {
       AppStateManager.activeUserDIDBox.withLock { $0 }
@@ -215,8 +281,24 @@ final class AppStateManager {
     owner.markSuspensionInProgress(reason: reason)
   }
 
+  @ObservationIgnored
+  private var initializeTask: Task<Void, Never>?
+
   /// Initialize the app - check for saved session and transition to appropriate state
   func initialize() async {
+    if let existing = initializeTask {
+      await existing.value
+      return
+    }
+    let task = Task { @MainActor [weak self] in
+      guard let self else { return }
+      await self.performInitialize()
+    }
+    initializeTask = task
+    await task.value
+  }
+
+  private func performInitialize() async {
     logger.info("🚀 Initializing AppStateManager")
     
     // Log E2E mode startup if enabled
@@ -233,6 +315,12 @@ final class AppStateManager {
     if isE2EMode, ProcessInfo.processInfo.arguments.contains("--e2e-fixture-account") {
       let fixtureDID = "did:plc:alicee2efixture"
       let bobDID = "did:plc:bobe2efixture"
+      // The synthetic accounts' own profiles are served on device; every other request still
+      // uses the network.
+      E2EFixtureProfileProtocol.install(serving: [
+        .init(did: fixtureDID, handle: "alice.test", displayName: "Alice"),
+        .init(did: bobDID, handle: "bob.test", displayName: "Bob"),
+      ])
       let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
       authManager.setClientForTesting(client)
       authManager.storeHandle("alice.test", for: fixtureDID)
@@ -241,10 +329,11 @@ final class AppStateManager {
       authManager.cacheProfileData(for: bobDID, handle: "bob.test", displayName: "Bob", avatarURL: nil)
       authManager.updateAccountOrder([fixtureDID, bobDID])
 
-
       let store = E2ECircleStore()
-      setAppStateFactoryForTesting { [weak self] did, cli in
-        let state = AppState(userDID: did, client: cli)
+      setAppStateFactoryForTesting { did, cli in
+        // Like the app's other fixtures, the e2e accounts take a fixed passive age decision, so
+        // the simulator's own age requirement cannot replace Home with the age notice.
+        let state = AppState(userDID: did, client: cli, regulatoryChecker: E2EFixtureAgeChecker())
         if let targetDID = try? DID(didString: did) {
           let transport = E2ECircleTransport(accountDID: targetDID, store: store)
           state.installE2ECircleFixture(transport: transport)
@@ -328,6 +417,7 @@ final class AppStateManager {
     }
     #endif
 
+    #if DEBUG
     // E2E mode with credentials: prioritize fresh login over saved sessions
     // This ensures deterministic test behavior regardless of keychain state
     if isE2EMode, let user = e2eUser, let pass = e2ePass {
@@ -357,6 +447,7 @@ final class AppStateManager {
       startAuthStateObservationIfNeeded()
       return
     }
+    #endif
 
     // Normal mode: Initialize auth manager (checks for saved session, attempts token refresh)
     await authManager.initialize()
@@ -364,6 +455,16 @@ final class AppStateManager {
     // Check if we have an authenticated session
     if case .authenticated(let userDID) = authManager.state {
       logger.info("✅ Found authenticated session for: \(userDID)")
+      // Wait for ModelContainer before building AppState, as AppState requires modelContext
+      guard (await waitForModelContainerReady()) != nil else {
+        // No auth observation here on purpose: the app shows ErrorRecoveryView, whose retry
+        // reloads the container and runs initialize() again (initializeTask is cleared), and
+        // that run subscribes. Subscribing now would replay this authenticated state and
+        // build an AppState with no model container.
+        logger.error("ModelContainer unavailable or failed; deferring AppState construction")
+        initializeTask = nil
+        return
+      }
       do {
         try await transitionToAuthenticated(userDID: userDID)
       } catch {
@@ -381,16 +482,31 @@ final class AppStateManager {
   private func startAuthStateObservationIfNeeded() {
     guard authStateObservationTask == nil else { return }
 
+    // Subscribe now rather than when the task first runs, and start from the current state:
+    // launch only subscribes after initialize() and its own transition, so a sign-out that
+    // happened during those awaits (session expiry, a catastrophic auth failure) was already
+    // emitted. Replaying it moves the screen to sign-in. Replaying the state launch just
+    // published is a no-op (the lifecycle guards below). Both reads are main-actor isolated,
+    // like updateState, so no change can fall between them.
+    let authStates = authManager.currentAndFutureStates
     authStateObservationTask = Task { @MainActor [weak self] in
       guard let self else { return }
 
-      for await state in self.authManager.stateChanges {
+      for await state in authStates {
+        // Explicit switches own authentication and recovery until their outcome is final.
+        guard state == self.authManager.state,
+              !self.isTransitioning,
+              !self.isLoggingOut,
+              !self.accountSwitchRequiresRestart,
+              !self.composerSwitchQueue.isSwitching else { continue }
         switch state {
         case .authenticated(let userDID):
           guard self.lifecycle.userDID != userDID else { continue }
           self.logger.info("🔔 Auth became authenticated for: \(userDID) - transitioning")
           do {
             try await self.transitionToAuthenticated(userDID: userDID)
+          } catch AccountSwitchError.transitionInProgress {
+            continue
           } catch {
             self.logger.error("🔔 Failed to transition: \(error.localizedDescription)")
             await self.recoverFromSwitchFailure()
@@ -399,6 +515,10 @@ final class AppStateManager {
         case .unauthenticated:
           guard self.lifecycle != .unauthenticated else { continue }
           self.logger.info("🔔 Auth became unauthenticated - transitioning")
+          if let endedDID = self.lifecycle.userDID {
+            self.sessionEndedAccountDID = endedDID
+          }
+          self.composerSwitchQueue.invalidate()
           if #available(iOS 17.0, macOS 14.0, *) {
             withAnimation(.snappy(duration: 0.32, extraBounce: 0.0)) {
               self.lifecycle = .unauthenticated
@@ -429,14 +549,22 @@ final class AppStateManager {
   /// Transition to authenticated state with a specific user
   /// Creates or retrieves AppState for the user and updates lifecycle
   /// - Parameter userDID: The DID of the user to authenticate as
-  func transitionToAuthenticated(userDID: String, previousUserDID: String? = nil) async throws {
+  func transitionToAuthenticated(
+    userDID: String,
+    previousUserDID: String? = nil,
+    composerSwitchAttemptID: UUID? = nil
+  ) async throws {
+    guard !isTransitioning, !isLoggingOut else { throw AccountSwitchError.transitionInProgress }
+    guard !accountSwitchRequiresRestart else { throw AccountSwitchError.recoveryFailed }
+    try validateSwitchAttempt(composerSwitchAttemptID)
+    try checkSwitchTaskCancellation(composerSwitchAttemptID)
     guard let userDID = normalizedUserDID(userDID) else {
       logger.critical(
         "🚨 Refusing authenticated transition for invalid DID: \(userDID, privacy: .private)")
       authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
-        title: "Authentication Failed",
+        title: "Couldn’t Sign In",
         message:
-          "Catbird received an invalid account identifier and blocked authentication to protect account data."
+          "Catbird couldn’t confirm which account you signed in to, so it stopped to keep your data safe. Try signing in again."
       )
       lifecycle = .unauthenticated
       throw AccountSwitchError.invalidDID
@@ -444,63 +572,36 @@ final class AppStateManager {
 
     logger.info("🔐 Transitioning to authenticated state for: \(userDID)")
 
-    // Guard against re-entrancy - prevents duplicate calls from racing
-    guard !isTransitioning else {
-      logger.warning("⚠️ Already transitioning - skipping duplicate call for: \(userDID)")
-      return
-    }
-
     // Set transition flag to prevent operations during switch
     // Using defer ensures cleanup on ALL exit paths (normal return, early return, throw)
     isTransitioning = true
-    defer { isTransitioning = false }
+    accountSwitchOperationBarrier.begin()
+    defer {
+      isTransitioning = false
+      accountSwitchOperationBarrier.end()
+    }
 
     let effectivePreviousDID = previousUserDID ?? lifecycle.userDID
-    
-    // OOM FIX: Close the previous account's database BEFORE switching
-    // This prevents the race condition where two databases are open simultaneously
-    // with potential key mismatch or WAL corruption
-    if let oldUserDID = effectivePreviousDID, oldUserDID != userDID {
-      logger.info("🔒 Closing previous account's MLS database before switch: \(oldUserDID.prefix(20))")
-      
-      // Evict and prepare the previous AppState for storage reset if it exists
-      if let previousAppState = authenticatedStates.removeValue(forKey: oldUserDID) {
-        accessOrder.removeAll { $0 == oldUserDID }
-        #if os(iOS)
-        // FIX #5: Stop all streams and pause sync BEFORE database closure
-        previousAppState.stopMLSStreams()
+    // Stop source polling before the shared client's account changes, preserving its editor/storage.
+    // Suspension also stops the source account's MLS streams and closes its MLS context.
+    if let previousDID = effectivePreviousDID, previousDID != userDID {
+      try await authenticatedStates[previousDID]?.suspendForAccountSwitch()
+      try validateSwitchAttempt(composerSwitchAttemptID)
+      try checkSwitchTaskCancellation(composerSwitchAttemptID)
 
-        // DEFENSIVE TIMEOUT: Wrap MLS shutdown in 5-second timeout
-        let shutdownOk = await withTaskGroup(of: Bool.self) { group in
-          group.addTask {
-            await previousAppState.prepareMLSStorageReset()
-            return true
-          }
-          group.addTask {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            return false
-          }
-          let result = await group.next() ?? false
-          group.cancelAll()
-          return result
-        }
-        if !shutdownOk {
-          logger.critical("🚨 [transitionToAuthenticated] MLS shutdown timed out - forcing ahead")
-        }
-        #endif
-        previousAppState.cleanup()
-      }
-      
-      // Ensure the database is fully closed and checkpointed
+      // OOM FIX: Close the previous account's database BEFORE switching
+      // This prevents the race condition where two databases are open simultaneously
+      // with potential key mismatch or WAL corruption
+      logger.info("🔒 Closing previous account's MLS database before switch: \(previousDID.prefix(20))")
       #if DEBUG
       let closeSuccess: Bool
       if let override = AppStateManager.databaseDrainOverride {
-        closeSuccess = await override(oldUserDID, 5.0)
+        closeSuccess = await override(previousDID, 5.0)
       } else {
-        closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: oldUserDID, timeout: 5.0)
+        closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousDID, timeout: 5.0)
       }
       #else
-      let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: oldUserDID, timeout: 5.0)
+      let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousDID, timeout: 5.0)
       #endif
       if !closeSuccess {
         logger.critical("🚨 Previous database drain failed - aborting account transition to prevent corruption")
@@ -520,7 +621,18 @@ final class AppStateManager {
       logger.info("✅ AuthManager switched successfully")
     } catch {
       logger.error("❌ Failed to switch AuthManager: \(error.localizedDescription)")
+      if Self.isReauthenticationFailure(error) {
+        authManager.markAccountNeedsReauthentication(did: userDID)
+        throw AccountSwitchError.reauthenticationRequired(did: userDID)
+      }
       throw AccountSwitchError.authSwitchFailed(error.localizedDescription)
+    }
+
+    try validateSwitchAttempt(composerSwitchAttemptID)
+    try checkSwitchTaskCancellation(composerSwitchAttemptID)
+    guard case .authenticated(let authenticatedDID) = authManager.state,
+          authenticatedDID == userDID else {
+      throw AccountSwitchError.authenticatedAccountMismatch
     }
 
     // Now get the client for the target account
@@ -528,9 +640,70 @@ final class AppStateManager {
       logger.error("❌ Cannot transition to authenticated - no client available after switch")
       throw AccountSwitchError.clientUnavailable
     }
+    // A switch must read status first so a rejected or restricted target can roll back. With no
+    // account to roll back to (launch, fresh sign-in), the feed mounts now and status is checked after.
+    let checksStatusAfterPublish = effectivePreviousDID == nil
+    let targetStatus: AccountStatus =
+      checksStatusAfterPublish ? .active : await readAccountStatus(client: client, userDID: userDID)
+    try validateSwitchAttempt(composerSwitchAttemptID)
+    try checkSwitchTaskCancellation(composerSwitchAttemptID)
+    if targetStatus == .reauthRequired,
+       let previousDID = effectivePreviousDID, previousDID != userDID {
+      // The saved session was rejected. Fail before the previous account is retired so the
+      // switch rolls back to it, and remember the target so the sign-in prompt can name it.
+      logger.warning("Target account needs to sign in again; rolling back the switch")
+      authManager.markAccountNeedsReauthentication(did: userDID)
+      throw AccountSwitchError.reauthenticationRequired(did: userDID)
+    }
+    guard case .authenticated(let checkedDID) = authManager.state, checkedDID == userDID else {
+      throw AccountSwitchError.authenticatedAccountMismatch
+    }
+    if targetStatus == .deactivated || targetStatus == .takendown {
+      // A composer switch rolls back without ever publishing a restricted destination.
+      if let previousDID = effectivePreviousDID, previousDID != userDID {
+        throw AccountSwitchError.accountRestricted
+      }
+      let restrictedState = authenticatedStates[userDID] ?? makeAppState(userDID: userDID, client: client)
+      authenticatedStates[userDID] = restrictedState
+      setLifecycle(targetStatus == .deactivated ? .deactivated(restrictedState) : .takendown(restrictedState))
+      throw AccountSwitchError.accountRestricted
+    }
+    try checkSwitchTaskCancellation(composerSwitchAttemptID)
+    if let composerSwitchAttemptID,
+       !composerSwitchQueue.beginCommit(id: composerSwitchAttemptID) { throw CancellationError() }
+    if let previousDID = effectivePreviousDID, previousDID != userDID {
+      // Once admitted, retirement settles independently of the requesting picker's cancellation.
+      try await Task { @MainActor in
+        try await self.retireAccountAfterVerifiedSwitch(
+          previousDID, targetDID: userDID, composerSwitchAttemptID: composerSwitchAttemptID
+        )
+      }.value
+      try validateSwitchAttempt(composerSwitchAttemptID)
+      try checkSwitchTaskCancellation(composerSwitchAttemptID)
+      guard case .authenticated(let retiredDID) = authManager.state, retiredDID == userDID else {
+        throw AccountSwitchError.authenticatedAccountMismatch
+      }
+    }
+
+    // An account whose session ended without a logout stayed cached for its own sign-in.
+    // A different account signing in retires it, with logout's cleanups that need no session.
+    if let endedDID = sessionEndedAccountDID {
+      sessionEndedAccountDID = nil
+      if endedDID != userDID, endedDID != effectivePreviousDID {
+        await retireSessionEndedAccount(endedDID)
+        try validateSwitchAttempt(composerSwitchAttemptID)
+        try checkSwitchTaskCancellation(composerSwitchAttemptID)
+        guard case .authenticated(let currentDID) = authManager.state, currentDID == userDID else {
+          throw AccountSwitchError.authenticatedAccountMismatch
+        }
+      }
+    }
+
+    // Ensure ModelContainer is ready before building or updating AppState
+    _ = await waitForModelContainerReady()
+
     let appState: AppState
     let isCachedAccount: Bool
-
     if let existing = authenticatedStates[userDID] {
       // Reuse existing AppState
       logger.debug("♻️ Using existing AppState for: \(userDID)")
@@ -549,6 +722,7 @@ final class AppStateManager {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
         appState.configureDataServices(modelContainer: container)
+        appState.initializePreferencesManager(with: container.mainContext)
       }
 
       // Only show transition overlay for actual account switches, not initial launch
@@ -572,6 +746,7 @@ final class AppStateManager {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
         appState.configureDataServices(modelContainer: container)
+        appState.initializePreferencesManager(with: container.mainContext)
       }
       
       // Only show transition overlay for actual account switches, not initial launch
@@ -580,25 +755,20 @@ final class AppStateManager {
       }
     }
 
-    // Transfer pending draft if present
-    if let draft = pendingComposerDraft {
-      logger.info("📝 Transferring composer draft to new account")
-      appState.composerDraftManager.currentDraft = draft
-      // NOTE: Don't clear pendingComposerDraft here - let ContentView.onChange consume it
-      // This ensures the onChange fires reliably and reopens the composer
-      logger.debug("📝 pendingComposerDraft kept set for ContentView.onChange detection")
+    var authenticatedStatePublished = false
+    defer {
+      if !authenticatedStatePublished, !isCachedAccount,
+         authenticatedStates[userDID] === appState {
+        appState.cleanup()
+        authenticatedStates.removeValue(forKey: userDID)
+        accessOrder.removeAll { $0 == userDID }
+      }
     }
 
-    // Check account status with server before publishing authenticated lifecycle
-    let newLifecycle = await checkAccountStatus(for: appState)
-    setLifecycle(newLifecycle)
+    setLifecycle(.authenticated(appState))
+    authenticatedStatePublished = true
+    accountSwitchRequiresRestart = false
 
-    guard case .authenticated = newLifecycle else {
-      // Clear transitioning overlay if restricted
-      appState.isTransitioningAccounts = false
-      logger.info("Account is restricted (\(String(describing: newLifecycle))) - skipping normal authenticated initialization")
-      return
-    }
     // Ensure active account is published to coordination store before async AppState init
     Self.activeUserDIDBox.withLock { $0 = userDID }
     MLSCoordinationStore.shared.setActiveUserDID(userDID)
@@ -666,12 +836,19 @@ final class AppStateManager {
       }
     }
 
+    if checksStatusAfterPublish {
+      Task { [weak self, weak appState] in
+        guard let self, let appState else { return }
+        await self.applyRestrictedStatusAfterPublish(appState, client: client)
+      }
+    }
+
     // Configure widget data provider with active account DID
     FeedWidgetDataProvider.shared.configure(accountDID: userDID)
 
     // Write account list to App Group for widget extension
     writeAccountsToAppGroup()
-
+    ThreadManager.clearPrefillCache()
     logger.info("✅ Transitioned to authenticated state")
   }
 
@@ -679,16 +856,40 @@ final class AppStateManager {
   /// - Parameter isManual: If true, this is a user-initiated logout (from Settings).
   ///   This prevents auto-triggering re-authentication on the login screen.
   func logout(isManual: Bool = true) async {
+    guard !isLoggingOut else { return }
+    isLoggingOut = true
+    defer { isLoggingOut = false }
     logger.info("🚪 Logging out (isManual: \(isManual))")
-    if let currentUserDID = lifecycle.userDID {
+    let interruptedSwitchSource = admittedSwitchSource?.state
+    let loggingOutState = lifecycle.appState ?? interruptedSwitchSource
+    let loggingOutDID = loggingOutState?.userDID
+    if let loggingOutDID {
       NotificationCenter.default.post(
         name: .circleAccountInvalidated,
         object: nil,
-        userInfo: ["accountDID": currentUserDID]
+        userInfo: ["accountDID": loggingOutDID]
       )
-      if let currentState = authenticatedStates[currentUserDID] {
+    }
+    composerSwitchQueue.invalidate()
+    ThreadManager.clearPrefillCache()
+    lifecycle = .unauthenticated
+    // An older switch/rollback must settle before its retained source is retired.
+    await accountSwitchOperationBarrier.waitUntilIdle()
+    // Clear the outgoing account's app badge and push registration while its services still exist.
+    await loggingOutState?.notificationManager.cleanupNotifications(previousClient: authManager.client)
+    if let currentUserDID = loggingOutDID {
+      if let currentState = loggingOutState ?? authenticatedStates[currentUserDID] {
         await currentState.prepareMLSStorageReset()
-        currentState.cleanup()
+        if currentState === interruptedSwitchSource {
+          do {
+            try await currentState.retireAfterAccountSwitch()
+          } catch {
+            logger.error("Could not retire the interrupted switch source during logout: \(error.localizedDescription)")
+            accountSwitchRequiresRestart = true
+          }
+        } else {
+          currentState.cleanup()
+        }
       }
       authenticatedStates.removeValue(forKey: currentUserDID)
       accessOrder.removeAll { $0 == currentUserDID }
@@ -699,8 +900,8 @@ final class AppStateManager {
         userInfo: ["did": currentUserDID]
       )
     }
-    // Clear auth manager session - pass isManual to control re-auth behavior
     await authManager.logout(isManual: isManual)
+    lifecycle = .unauthenticated
 
     // Transition to unauthenticated
     Self.activeUserDIDBox.withLock { $0 = nil }
@@ -710,39 +911,170 @@ final class AppStateManager {
 
     // Update widget account list after logout
     writeAccountsToAppGroup()
+    // Stop showing the signed-out account's posts in widgets and Spotlight
+    if let loggingOutDID {
+      LabelerDefinitionsDiskCache.remove(accountDID: loggingOutDID)
+      FeedWidgetDataProvider.shared.clearWidgetData(for: loggingOutDID)
+      await SpotlightEntityDonator.shared.removeAll()
+    }
 
     logger.info("✅ Logged out successfully")
   }
 
+  /// What logout() does for the outgoing account that needs no session, for an account whose
+  /// session ended on its own and that another account is now replacing: stop its services,
+  /// drop it from the cache, and clear its widget data, labeler definitions and the Spotlight
+  /// index and App Intents stores, which would otherwise show it under the next account. Its
+  /// push registration cannot be removed without its session and stays on the server.
+  private func retireSessionEndedAccount(_ did: String) async {
+    logger.info("Retiring an account whose session ended, before another account signs in")
+    if let endedState = authenticatedStates.removeValue(forKey: did) {
+      await endedState.prepareMLSStorageReset()
+      endedState.cleanup()
+    }
+    accessOrder.removeAll { $0 == did }
+    await MLSImageCache.shared.purge(for: did)
+    LabelerDefinitionsDiskCache.remove(accountDID: did)
+    FeedWidgetDataProvider.shared.clearWidgetData(for: did)
+    ThreadManager.clearPrefillCache()
+    await SpotlightEntityDonator.shared.removeAll()
+  }
+
   // MARK: - Account Restriction & Reactivation
 
-  /// Checks account status with the server and returns the appropriate lifecycle state
-  func checkAccountStatus(for appState: AppState) async -> AppLifecycle {
-    guard let client = appState.atProtoClient else {
-      return .authenticated(appState)
-    }
+  enum AccountStatus: Equatable {
+    case active
+    case deactivated
+    case takendown
+    /// The server rejected the saved session; the account must sign in again.
+    case reauthRequired
+  }
 
+  /// This preflight performs no target AppState construction or service initialization.
+  private func readAccountStatus(client: ATProtoClient?, userDID: String) async -> AccountStatus {
+    guard let client else { return .active }
     do {
       let (code, session) = try await client.com.atproto.server.getSession()
-      if code >= 200 && code < 300, let session = session {
-        if session.active == false || session.status == "deactivated" {
-          logger.warning("Account is deactivated for DID: \(appState.userDID)")
-          return .deactivated(appState)
-        } else if session.status == "takendown" || session.status == "suspended" {
-          logger.warning("Account is taken down for DID: \(appState.userDID)")
-          return .takendown(appState)
-        }
+      let status = Self.accountStatus(
+        responseCode: code, isActive: session?.active, status: session?.status
+      )
+      switch status {
+      case .deactivated: logger.warning("Account is deactivated for DID: \(userDID)")
+      case .takendown: logger.warning("Account is taken down for DID: \(userDID)")
+      case .reauthRequired: logger.warning("Session check was rejected for DID: \(userDID)")
+      case .active: break
       }
+      return status
     } catch {
-      logger.debug("Session check failed: \(error.localizedDescription)")
+      let status = Self.accountStatus(forSessionCheckError: error)
+      logger.debug("Session check failed (\(String(describing: status))): \(error.localizedDescription)")
+      return status
     }
-
-    return .authenticated(appState)
   }
+
+  /// Maps a completed `getSession` response to an account status.
+  nonisolated static func accountStatus(responseCode: Int, isActive: Bool?, status: String?) -> AccountStatus {
+    if responseCode == 401 { return .reauthRequired }
+    guard (200..<300).contains(responseCode) else { return .active }
+    if isActive == false || status == "deactivated" { return .deactivated }
+    if status == "takendown" || status == "suspended" { return .takendown }
+    return .active
+  }
+
+  /// A failed session check only blocks a switch when the server rejected the session.
+  /// Offline and server errors keep the old behavior so switching still works without a network.
+  nonisolated static func accountStatus(forSessionCheckError error: Error) -> AccountStatus {
+    isReauthenticationFailure(error) ? .reauthRequired : .active
+  }
+
+  /// True when `error` means the account's saved session is no longer accepted.
+  nonisolated static func isReauthenticationFailure(_ error: Error) -> Bool {
+    if let networkError = error as? Petrel.NetworkError {
+      switch networkError {
+      case .authenticationRequired, .expiredToken, .unauthorized, .authenticationFailed:
+        return true
+      case .responseError(let statusCode):
+        return statusCode == 401
+      default:
+        return false
+      }
+    }
+    if let xrpcError = error as? ATProtoXRPCError {
+      return ["ExpiredToken", "InvalidToken", "AuthenticationRequired", "AuthMissing"]
+        .contains(xrpcError.error)
+    }
+    if let petrelAuthError = error as? Petrel.AuthError {
+      switch petrelAuthError {
+      case .noActiveAccount, .invalidCredentials:
+        return true
+      default:
+        // tokenRefreshFailed also covers circuit-breaker and transient failures.
+        return false
+      }
+    }
+    if let authError = error as? AuthError {
+      if case .invalidSession = authError { return true }
+      return false
+    }
+    if let accountSwitchError = error as? AccountSwitchError {
+      if case .reauthenticationRequired = accountSwitchError { return true }
+      return false
+    }
+    // Petrel keeps its gateway error type internal; match the cases that mean the nest
+    // session itself is gone, not the upstream-service 401s it reports as `authenticationRequired`.
+    if String(describing: type(of: error)).contains("GatewayError") {
+      let description = String(describing: error)
+      return ["sessionExpired", "invalidSession", "missingSession"].contains { description.contains($0) }
+    }
+    return false
+  }
+
+  /// Moves an already-published account to its restriction screen when the deferred status check
+  /// finds it deactivated or taken down, pausing its services first as a switch would.
+  private func applyRestrictedStatusAfterPublish(_ appState: AppState, client: ATProtoClient) async {
+    let status = await readAccountStatus(client: client, userDID: appState.userDID)
+    guard status == .deactivated || status == .takendown else { return }
+    func stillCurrent() -> Bool {
+      guard !isTransitioning, !isLoggingOut, case .authenticated(let current) = lifecycle else { return false }
+      return current === appState && authManager.client === client
+    }
+    guard stillCurrent() else { return }
+    do {
+      try await appState.suspendForAccountSwitch()
+    } catch {
+      logger.error("Could not pause restricted account services: \(error.localizedDescription)")
+    }
+    guard stillCurrent() else { return }
+    setLifecycle(status == .deactivated ? .deactivated(appState) : .takendown(appState))
+  }
+
+  func checkAccountStatus(for appState: AppState) async -> AppLifecycle {
+    switch await readAccountStatus(client: appState.atProtoClient, userDID: appState.userDID) {
+    case .active: return .authenticated(appState)
+    case .deactivated: return .deactivated(appState)
+    case .takendown: return .takendown(appState)
+    case .reauthRequired: return .authenticated(appState)
+    }
+  }
+
   /// Attempts to reactivate a deactivated account and verifies confirmed active status
   func reactivateAccount(appState: AppState) async throws {
     guard let client = appState.atProtoClient else {
       throw GatewayPermissionError.clientUnavailable
+    }
+
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart else { throw AccountSwitchError.transitionInProgress }
+    guard lifecycle.appState === appState,
+          case .authenticated(let sourceDID) = authManager.state,
+          sourceDID == appState.userDID,
+          authManager.client === client else { throw AccountSwitchError.authenticatedAccountMismatch }
+    // Reactivation owns source readiness until resume settles; logout waits for this operation.
+    isTransitioning = true
+    accountSwitchOperationBarrier.begin()
+    defer {
+      isTransitioning = false
+      accountSwitchOperationBarrier.end()
     }
 
     // Call com.atproto.server.activateAccount
@@ -772,7 +1104,16 @@ final class AppStateManager {
         ]
       )
     }
-    // Transition to active authenticated lifecycle
+    guard !isLoggingOut, lifecycle.appState === appState,
+          case .authenticated(let verifiedDID) = authManager.state,
+          verifiedDID == appState.userDID,
+          authManager.client === client else { throw AccountSwitchError.authenticatedAccountMismatch }
+    try await appState.resumeAfterInterruptedAccountSwitch(using: client)
+    guard !isLoggingOut, lifecycle.appState === appState,
+          case .authenticated(let resumedDID) = authManager.state,
+          resumedDID == appState.userDID,
+          authManager.client === client else { throw AccountSwitchError.authenticatedAccountMismatch }
+    // Transition to active authenticated lifecycle only after its retained services resume.
     setLifecycle(.authenticated(appState))
 
     // Initialize the app state now that the account is active
@@ -794,40 +1135,322 @@ final class AppStateManager {
 
   // MARK: - Account Management
 
-  /// Switch to a different authenticated account
-  /// - Parameters:
-  ///   - userDID: The DID of the account to switch to
-  ///   - draft: Optional composer draft to transfer
-  func switchAccount(to userDID: String, withDraft draft: PostComposerDraft? = nil) async {
+  private func retireAccountAfterVerifiedSwitch(
+    _ previousDID: String, targetDID: String, composerSwitchAttemptID: UUID?
+  ) async throws {
+    accountSwitchRequiresRestart = true
+    if let composerSwitchAttemptID { retiredComposerSwitchAttempts.insert(composerSwitchAttemptID) }
+    guard let previousState = authenticatedStates[previousDID] else {
+      throw AccountSwitchError.recoveryFailed
+    }
+    try await previousState.retireAfterAccountSwitch()
+    authenticatedStates.removeValue(forKey: previousDID)
+    accessOrder.removeAll { $0 == previousDID }
+  }
+
+  private func markAccountSwitchRestartRequired(
+    message: String = "Catbird couldn’t finish switching accounts. Your draft is saved. Quit and reopen Catbird to continue."
+  ) {
+    accountSwitchRequiresRestart = true
+    authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(title: "Restart Required", message: message)
+    lifecycle = .unauthenticated
+  }
+
+  /// Switch admission is synchronous, before lifecycle or pending handoffs change.
+  @discardableResult
+  func switchAccount(
+    to userDID: String,
+    composerTransfer: ComposerEditingSnapshot? = nil
+  ) async -> AccountSwitchOutcome {
+    let outcome = await performAccountSwitch(to: userDID, composerTransfer: composerTransfer)
+    await reconcileAuthenticationAfterSwitch()
+    return outcome
+  }
+
+  private func performAccountSwitch(
+    to userDID: String,
+    composerTransfer: ComposerEditingSnapshot?
+  ) async -> AccountSwitchOutcome {
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching else { return .busy }
+    guard !Task.isCancelled else { return .cancelled }
+    guard !accountSwitchRequiresRestart else {
+      return .failed("Restart Catbird before switching accounts again. Your draft has been preserved.")
+    }
     guard let userDID = normalizedUserDID(userDID) else {
-      logger.critical("🚨 Blocking account switch for invalid DID input")
-      authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
-        title: "Account Switch Failed",
-        message:
-          "Catbird blocked this account switch because the target account identifier was invalid."
+      return .failed(AccountSwitchError.invalidDID.localizedDescription)
+    }
+
+    guard SettingsAccountOperationGate.activeAccountDID == nil else { return .busy }
+
+    let admission = composerSwitchQueue.begin(
+      to: userDID,
+      transfer: composerTransfer,
+      authenticatedAccountDID: readyAuthenticatedAccountDID,
+      isTransitioning: isTransitioning
+    )
+    guard case .accepted(let attempt) = admission else {
+      if case .rejected(let outcome) = admission { return outcome }
+      return .busy
+    }
+    // A 401 seen while probing the target belongs to this switch's outcome, not to the
+    // account that ends up active; it is replayed or dropped once the switch settles.
+    authManager.beginDeferringAutoLogout()
+    defer { authManager.endDeferringAutoLogout() }
+    defer { retiredComposerSwitchAttempts.remove(attempt.id) }
+    let previousLifecycle = lifecycle
+    if let source = previousLifecycle.appState {
+      admittedSwitchSource = (attempt.id, source)
+    }
+    defer {
+      if admittedSwitchSource?.attemptID == attempt.id { admittedSwitchSource = nil }
+    }
+    lifecycle = .launching
+
+    do {
+      let attemptID = attempt.id
+      let previousUserDID = previousLifecycle.userDID
+      try await withTaskCancellationHandler {
+        try await MLSAccountSwitchSerializer.shared.serialize { [weak self] in
+          guard let self = self else { return }
+          try await self.performSwitchAccount(
+            to: userDID,
+            previousUserDID: previousUserDID,
+            composerSwitchAttemptID: attemptID
+          )
+        }
+      } onCancel: {
+        Task { @MainActor in self.composerSwitchQueue.requestCancellation(id: attemptID) }
+      }
+      try checkSwitchTaskCancellation(attempt.id)
+      guard readyAuthenticatedAccountDID == userDID else {
+        throw AccountSwitchError.authenticatedAccountMismatch
+      }
+      return composerSwitchQueue.finish(id: attempt.id, authenticatedAccountDID: userDID)
+    } catch {
+      logger.error("Failed to switch account: \(error.localizedDescription)")
+      // Logout or explicit invalidation may revoke this attempt while authentication suspends.
+      guard composerSwitchQueue.isCurrent(id: attempt.id) else { return .cancelled }
+      if accountSwitchRequiresRestart || retiredComposerSwitchAttempts.contains(attempt.id) {
+        markAccountSwitchRestartRequired()
+        composerSwitchQueue.fail(id: attempt.id)
+        return .failed("Catbird could not finish switching accounts safely. Restart the app; your draft has been preserved.")
+      }
+      // Recovery must finish even when the requesting picker task was cancelled.
+      await Task { @MainActor in
+        await self.recoverFromSwitchFailure(
+          previousLifecycle: previousLifecycle, switchAttemptID: attempt.id
+        )
+      }.value
+      guard composerSwitchQueue.isCurrent(id: attempt.id) else { return .cancelled }
+      composerSwitchQueue.fail(id: attempt.id)
+      if accountSwitchRequiresRestart {
+        return .failed("Catbird could not restore the previous account safely. Restart the app; your draft has been preserved.")
+      }
+      if case .reauthenticationRequired(let expiredDID) = error as? AccountSwitchError {
+        // The rollback kept the previous account; the target is remembered for the sign-in prompt.
+        authManager.markAccountNeedsReauthentication(did: expiredDID)
+        return .needsReauthentication(accountDID: expiredDID)
+      }
+      // Any other failure is not a sign-in problem, so a later sign-out must not start
+      // signing in to the account this switch was aiming at.
+      authManager.discardExpiredAccountInfo(for: userDID)
+      if error is SettingsAccountSwitchError {
+        return .blockedBySettings(error.localizedDescription)
+      }
+      return error is CancellationError ? .cancelled : .failed(error.localizedDescription)
+    }
+  }
+
+  /// Runs once an explicit switch has settled. Auth changes raised during the switch were
+  /// ignored by the auth observer, so they are applied here against the account now active.
+  private func reconcileAuthenticationAfterSwitch() async {
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart else { return }
+    await authManager.reconcileDeferredGatewaySessionFailure()
+    // Proof validation crosses actors; a newer switch may have started while awaiting it.
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart else { return }
+    if let deferred = authManager.takeDeferredAutoLogout() {
+      if let deferredDID = deferred.did, deferredDID == authManager.state.userDID {
+        logger.warning("Applying a sign-out that arrived during the account switch")
+        await authManager.handleAutoLogoutFromPetrel(did: deferredDID, reason: deferred.reason)
+      } else {
+        logger.info("Dropping a sign-out from the account switch that isn’t for the active account")
+      }
+    }
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart else { return }
+    // Lifecycle still shows an account but authentication was lost: hand off to the
+    // sign-in screen, which signs in to the expired account again automatically.
+    if lifecycle.appState != nil, case .unauthenticated = authManager.state {
+      logger.warning("Authentication was lost during the account switch; showing sign-in")
+      composerSwitchQueue.invalidate()
+      setLifecycle(.unauthenticated)
+    }
+  }
+
+  // MARK: - Re-authentication Prompt
+
+  /// Asks to sign in again to an account whose saved session expired.
+  struct ReauthenticationPrompt: Identifiable, Equatable {
+    let id = UUID()
+    let did: String
+    /// "@handle", or nil when no handle is known yet.
+    let accountLabel: String?
+
+    var message: String {
+      let account = accountLabel ?? "this account"
+      return "Your session for \(account) has expired. Sign in again to switch to this account."
+    }
+  }
+
+  /// What a switch started outside the account picker should show the person.
+  enum AccountSwitchFeedback: Equatable {
+    case promptReauthentication(did: String)
+    case toast(String)
+  }
+
+  /// Presented at the scene root while an account is still shown.
+  var pendingReauthenticationPrompt: ReauthenticationPrompt?
+
+  nonisolated static func feedback(for outcome: AccountSwitchOutcome) -> AccountSwitchFeedback? {
+    switch outcome {
+    case .needsReauthentication(let did):
+      return .promptReauthentication(did: did)
+    case .failed(let message), .blockedBySettings(let message):
+      return .toast(message)
+    case .busy:
+      return .toast("Another account is still switching. Try again in a moment.")
+    case .switched, .unchanged, .cancelled:
+      return nil
+    }
+  }
+
+  /// Shows the outcome of a switch started from the toolbar, a notification or a widget.
+  func presentAccountSwitchOutcome(_ outcome: AccountSwitchOutcome) {
+    switch Self.feedback(for: outcome) {
+    case .promptReauthentication(let did):
+      requestReauthenticationPrompt(for: did)
+    case .toast(let message):
+      lifecycle.appState?.toastManager.show(
+        ToastItem(message: message, icon: "exclamationmark.triangle.fill")
+      )
+    case nil:
+      break
+    }
+  }
+
+  func requestReauthenticationPrompt(for did: String) {
+    authManager.markAccountNeedsReauthentication(did: did)
+    let handle = authManager.loginHandle(forAccount: did)
+    pendingReauthenticationPrompt = ReauthenticationPrompt(
+      did: did, accountLabel: handle.map { "@\($0)" }
+    )
+  }
+
+  /// The person declined to sign in again; forget the expired target so nothing
+  /// starts signing in to it later.
+  func cancelReauthenticationPrompt() {
+    guard let prompt = pendingReauthenticationPrompt else { return }
+    pendingReauthenticationPrompt = nil
+    discardExpiredAccountIfInactive(prompt.did)
+  }
+
+  /// Forgets an expired target only while a different account is active, so the sign-in
+  /// screen's automatic re-sign-in for the active account is never disturbed.
+  func discardExpiredAccountIfInactive(_ did: String) {
+    guard lifecycle.appState != nil, lifecycle.userDID != did else { return }
+    authManager.discardExpiredAccountInfo(for: did)
+  }
+
+  /// Puts authentication back on the active account after a sign-in attempt was abandoned.
+  /// Starting OAuth leaves the auth state "authenticating"; without this the next switch
+  /// would find no ready account.
+  func restoreActiveAccountAfterAbandonedSignIn() async {
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          let activeDID = lifecycle.appState?.userDID,
+          authManager.state.userDID != activeDID else { return }
+    do {
+      try await authManager.switchToAccount(did: activeDID)
+    } catch {
+      logger.error("Could not restore the active account after sign-in was abandoned: \(error.localizedDescription)")
+    }
+  }
+
+  private var readyAuthenticatedAccountDID: String? {
+    guard !isTransitioning,
+          case .authenticated(let appState) = lifecycle,
+          case .authenticated(let authDID) = authManager.state,
+          appState.userDID == authDID else { return nil }
+    return authDID
+  }
+
+  private func validateSwitchAttempt(_ id: UUID?) throws {
+    guard !isLoggingOut else { throw CancellationError() }
+    if let id, !composerSwitchQueue.canContinue(id: id) { throw CancellationError() }
+  }
+
+  private func checkSwitchTaskCancellation(_ id: UUID?) throws {
+    if let id, composerSwitchQueue.hasBegunCommit(id: id) { return }
+    try Task.checkCancellation()
+  }
+
+  private func recoverFromSwitchFailure(
+    previousLifecycle: AppLifecycle? = nil,
+    switchAttemptID: UUID? = nil
+  ) async {
+    guard !isLoggingOut else { return }
+    guard !accountSwitchRequiresRestart else {
+      markAccountSwitchRestartRequired()
+      return
+    }
+    if let switchAttemptID, !composerSwitchQueue.isCurrent(id: switchAttemptID) { return }
+    accountSwitchOperationBarrier.begin()
+    defer { accountSwitchOperationBarrier.end() }
+    if let previousLifecycle, let previousState = previousLifecycle.appState {
+      if authManager.state.userDID != previousState.userDID {
+        do {
+          try await authManager.switchToAccount(did: previousState.userDID)
+        } catch {
+          logger.error("Could not restore the previous account: \(error.localizedDescription)")
+        }
+      }
+      if let switchAttemptID, !composerSwitchQueue.isCurrent(id: switchAttemptID) { return }
+      if case .authenticated(let authDID) = authManager.state,
+         authDID == previousState.userDID,
+         let client = authManager.client,
+         previousState.atProtoClient === client {
+        previousState.isTransitioningAccounts = false
+        authenticatedStates[authDID] = previousState
+        updateAccessOrder(authDID)
+        // Restricted source accounts retain their interstitial and cannot resume normal services.
+        lifecycle = previousLifecycle
+        if previousLifecycle.isAuthenticated {
+          do {
+            try await previousState.resumeAfterInterruptedAccountSwitch(using: client)
+          } catch {
+            markAccountSwitchRestartRequired(
+              message: "Catbird could not safely resume the previous account's services. Your draft has been preserved. Restart the app to continue."
+            )
+          }
+        }
+        return
+      }
+      markAccountSwitchRestartRequired(
+        message: "Catbird could not restore the original account after the switch failed. Your draft has been preserved. Restart the app to continue."
       )
       return
     }
 
-    let previousUserDID = lifecycle.userDID
-    // Synchronously enter a lifecycle state with no authenticated DID before first await
-    lifecycle = .launching
-
-    do {
-      try await MLSAccountSwitchSerializer.shared.serialize { [weak self] in
-        guard let self = self else { return }
-        try await self.performSwitchAccount(to: userDID, previousUserDID: previousUserDID, withDraft: draft)
-      }
-    } catch {
-      logger.error("❌ Failed to perform serialized account switch: \(error.localizedDescription)")
-      await recoverFromSwitchFailure()
-    }
-  }
-
-  private func recoverFromSwitchFailure() async {
     if case let .authenticated(authDID) = authManager.state, let client = authManager.client {
+      // Do not turn a restricted session into an unrestricted one during recovery.
+      if lifecycle.isRestricted, lifecycle.userDID == authDID { return }
       authenticatedStates.removeValue(forKey: authDID)
       let newAppState = makeAppState(userDID: authDID, client: client)
+      if let container = modelContainerState.container {
+        newAppState.composerDraftManager.setModelContext(container.mainContext)
+        newAppState.notificationManager.setModelContext(container.mainContext)
+      }
       authenticatedStates[authDID] = newAppState
       updateAccessOrder(authDID)
       lifecycle = .authenticated(newAppState)
@@ -836,10 +1459,11 @@ final class AppStateManager {
     }
   }
 
+  /// Runs one explicit switch with the MLS coordination the NSE and storage layers rely on.
   private func performSwitchAccount(
     to userDID: String,
     previousUserDID: String?,
-    withDraft draft: PostComposerDraft? = nil
+    composerSwitchAttemptID: UUID
   ) async throws {
     logger.info("🔄 Switching to account: \(userDID)")
     // ═══════════════════════════════════════════════════════════════════════════
@@ -873,14 +1497,30 @@ final class AppStateManager {
       )
     }
 
-    // Store draft for transfer
-    if let draft = draft {
-      pendingComposerDraft = draft
-      logger.info("📝 Stored composer draft for transfer - Text length: \(draft.postText.count)")
-    }
+    try await transitionToAuthenticated(
+      userDID: userDID,
+      previousUserDID: previousUserDID,
+      composerSwitchAttemptID: composerSwitchAttemptID
+    )
+  }
 
-    // Transition to the authenticated account with explicit previousUserDID
-    try await transitionToAuthenticated(userDID: userDID, previousUserDID: previousUserDID)
+  func pendingComposerReopen(sourceSceneID: UUID, accountDID: String) -> PendingComposerReopen? {
+    composerSwitchQueue.pendingReopen(
+      sourceSceneID: sourceSceneID,
+      accountDID: accountDID,
+      authenticatedAccountDID: readyAuthenticatedAccountDID
+    )
+  }
+
+  func claimComposerReopen(
+    id: UUID, sourceSceneID: UUID, accountDID: String
+  ) -> PendingComposerReopen? {
+    composerSwitchQueue.claim(
+      id: id,
+      sourceSceneID: sourceSceneID,
+      accountDID: accountDID,
+      authenticatedAccountDID: readyAuthenticatedAccountDID
+    )
   }
 
   /// Remove a specific account completely and destroy all persisted MLS data
@@ -915,6 +1555,9 @@ final class AppStateManager {
     )
     // Update widget account list after removal
     writeAccountsToAppGroup()
+    // Stop showing the removed account's posts in widgets and Spotlight
+    FeedWidgetDataProvider.shared.clearWidgetData(for: userDID)
+    await SpotlightEntityDonator.shared.removeAll()
   }
 
   /// Get AppState for a specific account without switching to it
@@ -1043,14 +1686,9 @@ final class AppStateManager {
     authManager
   }
 
-  /// Clear the pending composer draft (called after UI consumes it)
-  func clearPendingComposerDraft() {
-    logger.debug("Clearing pending composer draft")
-    pendingComposerDraft = nil
-  }
-  
   // MARK: - E2E Re-login
-  
+
+  #if DEBUG
   /// Perform a fresh login for E2E mode when tokens have expired
   /// This is needed for PDSs with very short token lifetimes where refresh tokens also expire
   /// - Returns: true if re-login succeeded, false otherwise
@@ -1085,6 +1723,7 @@ final class AppStateManager {
       return false
     }
   }
+  #endif
 
   // MARK: - Widget Data
 
@@ -1137,6 +1776,15 @@ final class AppStateManager {
   }
 
 #if DEBUG
+  /// The e2e fixture's passive age check: no requirement, and it never prompts.
+  private struct E2EFixtureAgeChecker: AgeRegulatoryChecking {
+    func preflight() async -> PlatformAgeSignal { PlatformAgeSignal(requirement: .none) }
+    #if canImport(UIKit)
+    @MainActor
+    func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+    #endif
+  }
+
   @ObservationIgnored
   private var appStateFactoryForTesting: (@MainActor (String, ATProtoClient) -> AppState)?
 

@@ -101,6 +101,38 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
+  /// Whether a push belongs to a feature that is switched off in this build.
+  private static func isGatedOff(pushType: String?, kind: String?) -> Bool {
+    if let pushType, pushType.hasPrefix("mls_"), !CatbirdFeatures.mlsChat {
+      return true
+    }
+    if kind == "circle_activity", !CatbirdFeatures.circlesSpaces {
+      return true
+    }
+    return false
+  }
+
+  /// Replaces a push's content with a quiet, generic alert that carries no message data.
+  private static func neutralized(_ original: UNMutableNotificationContent)
+    -> UNMutableNotificationContent
+  {
+    let content = UNMutableNotificationContent()
+    content.title = "Catbird"
+    content.body = "New activity"
+    content.sound = nil
+    content.interruptionLevel = .passive
+    content.threadIdentifier = "catbird-unsupported"
+    var userInfo: [AnyHashable: Any] = [:]
+    if let type = original.userInfo["type"] as? String {
+      userInfo["type"] = type
+    }
+    if let kind = original.userInfo["kind"] as? String {
+      userInfo["kind"] = kind
+    }
+    content.userInfo = userInfo
+    return content
+  }
+
   override func didReceive(
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
@@ -134,6 +166,13 @@ class NotificationService: UNNotificationServiceExtension {
 
     // Check push type
     let pushType = userInfo["type"] as? String
+
+    // A build that doesn't ship a feature never decrypts or enriches its pushes.
+    if Self.isGatedOff(pushType: pushType, kind: userInfo["kind"] as? String) {
+      logger.info("[NSE] Push for a feature this build doesn't ship (type=\(pushType ?? "nil", privacy: .public)) - neutralizing content")
+      contentHandler(Self.neutralized(bestAttemptContent))
+      return
+    }
 
     // Request pushes are metadata-only. Never enter legacy ciphertext/decrypt
     // or profile/media enrichment paths for an encrypted introduction.
@@ -1786,7 +1825,7 @@ class NotificationService: UNNotificationServiceExtension {
         logger.info("👤 [NSE] Resolved sender from profile cache: \(senderName ?? "unknown")")
       }
 
-      // Fallback: fetch from Bluesky API via standalone client
+      // Slow fallback: fetch from Bluesky API via standalone client
       if senderName == nil {
         // Resolve the recipient DID for client creation
         let recipientDid = resolveAnyLocalAccountDID()
@@ -1796,16 +1835,20 @@ class NotificationService: UNNotificationServiceExtension {
           senderName = profile.displayName ?? profile.handle
           senderAvatarURL = profile.avatarURL
           logger.info("👤 [NSE] Resolved sender via API: \(senderName ?? "unknown")")
+          await ProfileCacheDatabase.shared.write(
+            did: senderDid,
+            handle: profile.handle,
+            displayName: profile.displayName,
+            avatarURL: profile.avatarURL
+          )
         }
       }
     }
 
     // Enrich notification title
-    if let sender = senderName {
-      content.title = sender
-    } else if let senderDid, let shortDid = formatShortDID(senderDid) {
-      content.title = shortDid
-    } else {
+    if let senderName {
+      content.title = senderName
+    } else if content.title.isEmpty {
       content.title = "New Message"
     }
 
@@ -1999,67 +2042,147 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
-  /// Downloads and attaches profile photo to the notification
-  private func attachProfilePhoto(to content: UNMutableNotificationContent, from url: URL) async {
-    logger.debug(
-      "🖼️ [NSE] Attempting to download profile photo: \(url.absoluteString.prefix(50))...")
+  // MARK: - Attachments & Avatar Cache
+
+  /// Rewrites /img/avatar/ to /img/avatar_thumbnail/ for smaller payload size.
+  private static func thumbnailAvatarURL(from url: URL) -> URL {
+    let str = url.absoluteString
+    if str.contains("/img/avatar/") {
+      let rewritten = str.replacingOccurrences(of: "/img/avatar/", with: "/img/avatar_thumbnail/")
+      if let newURL = URL(string: rewritten) {
+        return newURL
+      }
+    }
+    return url
+  }
+
+  /// Base directory for the shared NSE avatar disk cache in the App Group.
+  private static var avatarCacheDirectory: URL {
+    let base = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: appGroupSuite
+    )?.appendingPathComponent("Library/Caches/NSEAvatarCache", isDirectory: true)
+      ?? FileManager.default.temporaryDirectory.appendingPathComponent("NSEAvatarCache", isDirectory: true)
+    try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    return base
+  }
+
+  /// Downloads and attaches the sender's profile photo using a thumbnail URL and a bounded disk cache.
+  private func attachProfilePhoto(
+    to content: UNMutableNotificationContent,
+    from rawURL: URL
+  ) async {
+    let thumbnailURL = Self.thumbnailAvatarURL(from: rawURL)
+    let fileKey = Self.sha256Hex(thumbnailURL.absoluteString)
+    let cacheDir = Self.avatarCacheDirectory
+
+    // Check disk cache
+    if let contents = try? FileManager.default.contentsOfDirectory(
+      at: cacheDir,
+      includingPropertiesForKeys: [.contentModificationDateKey]
+    ),
+      let match = contents.first(where: { $0.deletingPathExtension().lastPathComponent == fileKey })
+    {
+      try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: match.path)
+      let ext = match.pathExtension
+      let mime = ext == "png" ? "image/png" : (ext == "gif" ? "image/gif" : "image/jpeg")
+      if attachFile(at: match, to: content, mimeType: mime) {
+        return
+      }
+    }
+
+    // Download with 8s timeout and returnCacheDataElseLoad
+    var request = URLRequest(url: thumbnailURL)
+    request.timeoutInterval = 8
+    request.cachePolicy = .returnCacheDataElseLoad
 
     do {
-      let (data, response) = try await URLSession.shared.data(from: url)
-
-      guard let httpResponse = response as? HTTPURLResponse,
-        httpResponse.statusCode == 200
-      else {
-        logger.warning("⚠️ [NSE] Profile photo download failed - invalid response")
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        logger.warning("[NSE] Profile photo download failed - invalid response")
         return
       }
 
-      // Determine file extension from MIME type
       let mimeType = httpResponse.mimeType ?? "image/jpeg"
       let fileExtension: String
       switch mimeType {
-      case "image/png":
-        fileExtension = "png"
-      case "image/gif":
-        fileExtension = "gif"
-      default:
-        fileExtension = "jpg"
+      case "image/png": fileExtension = "png"
+      case "image/gif": fileExtension = "gif"
+      default: fileExtension = "jpg"
       }
 
-      // Write to temporary file
-      let tempDir = FileManager.default.temporaryDirectory
-      let fileName = "\(UUID().uuidString).\(fileExtension)"
-      let fileURL = tempDir.appendingPathComponent(fileName)
-
-      try data.write(to: fileURL)
-
-      // Create attachment
-      let attachment = try UNNotificationAttachment(
-        identifier: "avatar",
-        url: fileURL,
-        options: [
-          UNNotificationAttachmentOptionsTypeHintKey: mimeType
-        ]
-      )
-
-      content.attachments = [attachment]
-      logger.info("✅ [NSE] Profile photo attached successfully")
-
+      let cachedFileURL = cacheDir.appendingPathComponent("\(fileKey).\(fileExtension)")
+      do {
+        try data.write(to: cachedFileURL, options: .atomic)
+        Self.pruneAvatarCacheIfNeeded(in: cacheDir, maxEntries: 50)
+        _ = attachFile(at: cachedFileURL, to: content, mimeType: mimeType)
+      } catch {
+        logger.warning("[NSE] Failed to write avatar to cache: \(error.localizedDescription)")
+        let tempURL = FileManager.default.temporaryDirectory
+          .appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
+        try data.write(to: tempURL, options: .atomic)
+        do {
+          let attachment = try UNNotificationAttachment(
+            identifier: "avatar",
+            url: tempURL,
+            options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
+          )
+          content.attachments = [attachment]
+        } catch {
+          logger.warning("[NSE] Fallback UNNotificationAttachment failed: \(error.localizedDescription)")
+          try? FileManager.default.removeItem(at: tempURL)
+        }
+      }
     } catch {
-      logger.warning("⚠️ [NSE] Failed to attach profile photo: \(error.localizedDescription)")
+      logger.warning("[NSE] Failed to attach profile photo: \(error.localizedDescription)")
     }
   }
 
-  /// Format a DID for display when no profile info is available
-  /// Extracts the last segment and shortens it for readability
-  /// e.g., "did:plc:abc123xyz456" → "abc123..."
-  private func formatShortDID(_ did: String) -> String? {
-    let components = did.split(separator: ":")
-    guard let lastPart = components.last else { return nil }
+  /// Attaches a file to notification content.
+  /// Copies the source file to a temporary location first because UNNotificationAttachment
+  /// moves the source file into the system notification attachment store.
+  private func attachFile(
+    at sourceURL: URL,
+    to content: UNMutableNotificationContent,
+    mimeType: String = "image/jpeg"
+  ) -> Bool {
+    let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension
+    let tempURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(UUID().uuidString).\(ext)")
+    do {
+      try FileManager.default.copyItem(at: sourceURL, to: tempURL)
+      let attachment = try UNNotificationAttachment(
+        identifier: "avatar",
+        url: tempURL,
+        options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
+      )
+      content.attachments = [attachment]
+      return true
+    } catch {
+      logger.warning("[NSE] UNNotificationAttachment failed: \(error.localizedDescription)")
+      try? FileManager.default.removeItem(at: tempURL)
+      return false
+    }
+  }
 
-    // Take first 8 characters of the identifier
-    let identifier = String(lastPart.prefix(8))
-    return identifier.isEmpty ? nil : "\(identifier)..."
+  /// Keeps the avatar cache bounded to at most `maxEntries` items (LRU by modification date).
+  private static func pruneAvatarCacheIfNeeded(in directory: URL, maxEntries: Int) {
+    guard let files = try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.contentModificationDateKey],
+      options: .skipsHiddenFiles
+    ), files.count > maxEntries else { return }
+
+    let sorted = files.compactMap { url -> (URL, Date)? in
+      guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+        let date = values.contentModificationDate
+      else { return nil }
+      return (url, date)
+    }.sorted { $0.1 < $1.1 }  // oldest first
+
+    let toDelete = sorted.prefix(files.count - maxEntries)
+    for (url, _) in toDelete {
+      try? FileManager.default.removeItem(at: url)
+    }
   }
 
   // MARK: - Privacy-Preserving Account Matching
@@ -2087,5 +2210,9 @@ class NotificationService: UNNotificationServiceExtension {
       logger.error("❌ [NSE] Failed to resolve recipient_account hash: \(error.localizedDescription)")
       return nil
     }
+  }
+
+  private static func sha256Hex(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
   }
 }

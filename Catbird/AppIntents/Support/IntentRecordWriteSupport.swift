@@ -16,7 +16,7 @@ enum IntentRecordWriteSupport {
   static func recordKey(fromViewerURI uri: ATProtocolURI) throws -> RecordKey {
     guard let rkey = uri.recordKey, !rkey.isEmpty else {
       throw IntentError.invalidParameter(
-        "Catbird couldn't parse the existing record reference (\(uri.uriString())).")
+        "Catbird couldn’t find the existing like, repost or follow to undo.")
     }
     return try RecordKey(keyString: rkey)
   }

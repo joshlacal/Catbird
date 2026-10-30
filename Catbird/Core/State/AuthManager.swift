@@ -82,26 +82,26 @@ enum AuthProgress: Equatable, Sendable {
   var userDescription: String {
     switch self {
     case .initializingClient:
-      return "Initializing authentication client"
+      return "Getting ready to sign in"
     case .resolvingHandle(let handle):
-      return "Resolving handle \(handle)"
+      return "Looking up @\(handle)"
     case .fetchingMetadata(let url):
       let domain = URL(string: url)?.host ?? url
       return "Connecting to \(domain)"
     case .generatingAuthURL:
-      return "Preparing authentication"
+      return "Preparing a secure sign-in page"
     case .openingBrowser:
-      return "Opening browser for secure login"
+      return "Opening a secure sign-in page"
     case .waitingForCallback:
-      return "Waiting for authentication"
+      return "Waiting for you to finish signing in"
     case .exchangingTokens:
-      return "Processing authentication"
+      return "Finishing sign-in"
     case .creatingSession:
-      return "Creating secure session"
+      return "Setting up your account"
     case .finalizing:
-      return "Finalizing login"
-    case .retrying(let step, let attempt, let maxAttempts):
-      return "Retrying \(step) (attempt \(attempt)/\(maxAttempts))"
+      return "Almost done"
+    case .retrying(_, let attempt, let maxAttempts):
+      return "Trying again (attempt \(attempt) of \(maxAttempts))"
     }
   }
 
@@ -137,6 +137,9 @@ public enum AuthLogEvent: Sendable, Equatable {
   case initialized
   case stateUpdated
   case autoLogoutDuplicateTrigger
+  case autoLogoutDeferredDuringSwitch
+  case autoLogoutIgnoredInactiveAccount
+  case accountProfilesRefreshFailed
   case autoLogoutTriggered
   case autoLogoutExpiredAccountStored
   case autoLogoutSkipAlertReauth
@@ -271,6 +274,9 @@ public enum AuthLogEvent: Sendable, Equatable {
     case .initialized: "AUTH_INITIALIZED"
     case .stateUpdated: "AUTH_STATE_UPDATED"
     case .autoLogoutDuplicateTrigger: "AUTH_AUTO_LOGOUT_DUPLICATE_TRIGGER"
+    case .autoLogoutDeferredDuringSwitch: "AUTH_AUTO_LOGOUT_DEFERRED_DURING_SWITCH"
+    case .autoLogoutIgnoredInactiveAccount: "AUTH_AUTO_LOGOUT_IGNORED_INACTIVE_ACCOUNT"
+    case .accountProfilesRefreshFailed: "AUTH_ACCOUNT_PROFILES_REFRESH_FAILED"
     case .autoLogoutTriggered: "AUTH_AUTO_LOGOUT_TRIGGERED"
     case .autoLogoutExpiredAccountStored: "AUTH_AUTO_LOGOUT_EXPIRED_ACCOUNT_STORED"
     case .autoLogoutSkipAlertReauth: "AUTH_AUTO_LOGOUT_SKIP_ALERT_REAUTH"
@@ -529,10 +535,13 @@ final class AuthenticationManager: AuthProgressDelegate {
   private let handleStorageKey = "catbird_account_handles"
   private let accountOrderKey = "catbird_account_order"
   private let userDefaults: UserDefaults
-  // State change handling with async streams
+  // State change handling: one stream per subscriber (see AuthStateBroadcast)
   @ObservationIgnored
-  private let stateSubject = AsyncStream<AuthState>.makeStream()
+  private let stateBroadcast = AuthStateBroadcast()
 
+  deinit {
+    stateBroadcast.finishAll()
+  }
   // The ATProtoClient used for authentication and API calls
   private(set) var client: ATProtoClient?
 
@@ -709,24 +718,36 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   init(
     userDefaults: UserDefaults = .standard,
     logHandler: any AuthLogHandler = DefaultAuthLogHandler(),
-    dependencyOverrides: AuthenticationDependencyOverrides = .init()
+    dependencyOverrides: AuthenticationDependencyOverrides = .init(),
+    configureBiometrics: Bool = true
   ) {
     self.userDefaults = userDefaults
     self.logger = AuthLogger(handler: logHandler)
     self.dependencyOverrides = dependencyOverrides
     logger.debug(.initialized)
     // Configure biometric authentication asynchronously off the main actor
-    Task.detached(priority: .background) { [weak self] in
-      guard let self else { return }
-      await self.configureBiometricAuthentication()
+    if configureBiometrics {
+      Task.detached(priority: .background) { [weak self] in
+        guard let self else { return }
+        await self.configureBiometricAuthentication()
+      }
     }
   }
 
   // MARK: - State Management
 
-  /// Access state changes as an AsyncSequence
+  /// State changes from this point on. Each access returns a stream of its own,
+  /// so every subscriber sees every change; stop iterating to unsubscribe.
   var stateChanges: AsyncStream<AuthState> {
-    return stateSubject.stream
+    stateBroadcast.subscribe()
+  }
+
+  /// The current state followed by every later change, for subscribers that
+  /// start after launch has already authenticated. Main-actor isolated because
+  /// `updateState` is: reading `state` and subscribing then can't straddle a change.
+  @MainActor
+  var currentAndFutureStates: AsyncStream<AuthState> {
+    stateBroadcast.subscribe(startingWith: state)
   }
   #if DEBUG
   nonisolated(unsafe) static var switchAccountOverride: (@Sendable (String) async throws -> (did: String, handle: String))?
@@ -751,6 +772,16 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   /// has already been replaced. Validate its proof immediately before changing UI.
   @MainActor
   func handleGatewaySessionRejection(_ context: GatewaySessionFailureContext) async {
+    if autoLogoutDeferralDepth > 0 {
+      // An explicit switch is in flight; its settlement validates this proof afresh.
+      deferredGatewayFailures[context.did] = DeferredGatewayFailure(
+        did: context.did, reason: "session_rejected"
+      ) { client in
+        await client.isCurrentGatewaySessionFailure(context)
+      }
+      logger.warning(.autoLogoutDeferredDuringSwitch)
+      return
+    }
     guard state.userDID == context.did, let rejectedClient = client else { return }
     let validatedRevision = authSessionRevision
     #if DEBUG
@@ -790,83 +821,227 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     await CircleNotificationCache.shared.purge(accountDID: context.did)
   }
 
-  /// Called when Petrel detects a terminal auth failure (e.g., invalid_grant) and performs a logout.
+  /// Legacy events carry no session-generation proof. Gateway expiry is accepted only
+  /// through the scoped gateway handlers; an unscoped event cannot identify an account.
   @MainActor
   func handleAutoLogoutFromPetrel(did: String?, reason: String?) async {
-    // The SDK broadcasts across all clients, including anonymous public requests and
-    // inactive accounts. Only an event naming the active account may expire its UI.
-    guard let did, !did.isEmpty, state.userDID == did else { return }
-
-    // FAST PATH: Set invalid flag IMMEDIATELY to short-circuit pending requests
-    // This prevents "401 storms" where hundreds of requests fail before transitioning to login
-    isAuthInvalid = true
-
-    // DEBOUNCE: If we're already handling an auth expiration, skip duplicate triggers.
-    // This prevents the "death spiral" where dozens of parallel network requests all
-    // fail and each tries to trigger logout simultaneously.
-    if isHandlingAuthExpiration {
-      logger.warning(.autoLogoutDuplicateTrigger)
+    let reportedDID = did?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let knownDID = reportedDID, !knownDID.isEmpty else { return }
+    if autoLogoutDeferralDepth > 0 {
+      deferredAutoLogout = DeferredAutoLogout(did: knownDID, reason: reason)
+      logger.warning(.autoLogoutDeferredDuringSwitch)
       return
     }
-
-    logger.error(.autoLogoutTriggered)
-
-    // Mark that we're handling an expiration to block further triggers
-    isHandlingAuthExpiration = true
-
-    expiredAccountInfo = makeExpiredAccountInfo(for: did)
-    logger.info(.autoLogoutExpiredAccountStored)
-
-    if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
-      await appState.notificationManager.cleanupNotifications(previousClient: client)
+    guard state.userDID == knownDID, client != nil else {
+      logger.warning(.autoLogoutIgnoredInactiveAccount)
+      return
     }
+    // A delayed legacy event must not remove a healthy replacement session. Preserve
+    // transport failures as retryable, rather than converting every error into expiry.
+    await handleGatewaySessionFailure(did: knownDID, reason: reason ?? "legacy") { [weak self] client in
+      guard let self else { return false }
+      let sourceEpoch = self.authenticationContinuityEpoch
+      let authMode = await client.currentAuthMode
+      // The mode read crosses the SDK actor. Recheck before refreshing through a
+      // client whose selected account may have changed while this task suspended.
+      guard authMode != .gateway,
+            self.autoLogoutDeferralDepth == 0,
+            self.authenticationContinuityEpoch == sourceEpoch,
+            self.client === client,
+            self.state.userDID == knownDID else { return false }
+      do {
+        _ = try await client.refreshToken()
+        return false
+      } catch {
+        return AppStateManager.isReauthenticationFailure(error)
+      }
+    }
+  }
 
-    // Clear handle if this was the active account (check before state change)
-    let wasActiveAccount = state.userDID == did
+  /// Consumes a request-scoped SDK rejection. The SDK closure checks the exact stored
+  /// session generation; app continuity is checked again after that actor hop.
+  /// The closure seam also permits synthetic tests without real keychain or network IO.
+  @MainActor
+  func handleGatewaySessionFailure(
+    did: String,
+    reason: String,
+    isCurrent: @escaping @MainActor (ATProtoClient) async -> Bool
+  ) async {
+    guard !did.isEmpty else { return }
+    while true {
+      if autoLogoutDeferralDepth > 0 {
+        deferredGatewayFailures[did] = DeferredGatewayFailure(did: did, reason: reason, isCurrent: isCurrent)
+        logger.warning(.autoLogoutDeferredDuringSwitch)
+        return
+      }
+      guard state.userDID == did, let sourceClient = client, !isHandlingAuthExpiration else { return }
+      let sourceEpoch = authenticationContinuityEpoch
+      let proofIsCurrent = await isCurrent(sourceClient)
+      if autoLogoutDeferralDepth > 0 {
+        // A switch can start while the proof check crosses actors. Keep the proof even
+        // if that check saw the temporary target account; rollback must validate it afresh.
+        deferredGatewayFailures[did] = DeferredGatewayFailure(did: did, reason: reason, isCurrent: isCurrent)
+        logger.warning(.autoLogoutDeferredDuringSwitch)
+        return
+      }
+      if authenticationContinuityEpoch != sourceEpoch {
+        // The switch may already have settled (and reconciled) before we resumed.
+        // Re-enter validation now, rather than enqueueing work with no future consumer.
+        continue
+      }
+      guard client === sourceClient,
+            state.userDID == did,
+            !isHandlingAuthExpiration,
+            proofIsCurrent else { return }
 
-    NotificationCenter.default.post(
-      name: .circleAccountInvalidated,
-      object: nil,
-      userInfo: ["accountDID": did]
-    )
-
-    updateState(.unauthenticated)
-    await CircleFeedCache.shared.purge(accountDID: did)
-    await CircleMediaLoader.shared.purge(accountDID: did)
-    await CircleNotificationCache.shared.purge(accountDID: did)
-    replaceClient(nil)
-
-    if wasActiveAccount {
+      // No awaited work between the final continuity check and the state mutation.
+      // In particular, do not unregister APNs through the mutable shared client or drain
+      // a notification task here: that task may itself be awaiting this SDK observer.
+      // Automatic expiry never invokes explicit logout or account-data erasure.
+      isAuthInvalid = true
+      isHandlingAuthExpiration = true
+      expiredAccountInfo = makeExpiredAccountInfo(for: did)
+      logger.error(.autoLogoutTriggered)
+      updateState(.unauthenticated)
+      replaceClient(nil)
       handle = nil
-    }
-
-    updateAvailableAccountsFromStoredHandles(activeDID: nil)
-
-    // CRITICAL: Do NOT set pendingAuthAlert if we have expiredAccountInfo.
-    // We want ContentView to auto-trigger the browser flow immediately.
-    // Setting an alert here blocks the ASWebAuthenticationSession from presenting.
-    if expiredAccountInfo == nil {
-      let reasonText: String = {
-        switch (reason ?? "").lowercased() {
-        case "invalid_grant":
-          return "Your session expired or was revoked. Please sign in again."
-        case "invalid_token":
-          return "Your session token is no longer valid. Please sign in again."
-        default:
-          return "You were signed out. Please sign in again."
-        }
-      }()
-      pendingAuthAlert = AuthAlert(title: "Signed Out", message: reasonText)
-    } else {
-      // Clear any existing alert so it doesn't block the sheet
+      updateAvailableAccountsFromStoredHandles(activeDID: nil)
       pendingAuthAlert = nil
       logger.info(.autoLogoutSkipAlertReauth)
+
+      // Circle observers and cache purges run only after the expiry is committed.
+      NotificationCenter.default.post(
+        name: .circleAccountInvalidated,
+        object: nil,
+        userInfo: ["accountDID": did]
+      )
+      await CircleFeedCache.shared.purge(accountDID: did)
+      await CircleMediaLoader.shared.purge(accountDID: did)
+      await CircleNotificationCache.shared.purge(accountDID: did)
+      return
     }
+  }
+
+  @MainActor
+  func reconcileDeferredGatewaySessionFailure() async {
+    guard autoLogoutDeferralDepth == 0 else { return }
+    let failure = state.userDID.flatMap { deferredGatewayFailures[$0] }
+    deferredGatewayFailures.removeAll()
+    guard let failure else { return }
+    await handleGatewaySessionFailure(
+      did: failure.did, reason: failure.reason, isCurrent: failure.isCurrent
+    )
   }
 
   @MainActor
   func clearPendingAuthAlert() {
     pendingAuthAlert = nil
+  }
+
+  // MARK: - Account Switch Re-authentication
+
+  struct DeferredAutoLogout: Equatable {
+    let did: String?
+    let reason: String?
+  }
+
+  private struct DeferredGatewayFailure {
+    let did: String
+    let reason: String
+    let isCurrent: @MainActor (ATProtoClient) async -> Bool
+  }
+
+  @ObservationIgnored private var authenticationContinuityEpoch: UInt64 = 0
+  @ObservationIgnored private var deferredGatewayFailures: [String: DeferredGatewayFailure] = [:]
+  @ObservationIgnored private var autoLogoutDeferralDepth = 0
+  @ObservationIgnored private var deferredAutoLogout: DeferredAutoLogout?
+
+  /// Holds Petrel sign-outs while an explicit account switch is in flight.
+  @MainActor
+  func beginDeferringAutoLogout() {
+    authenticationContinuityEpoch &+= 1
+    autoLogoutDeferralDepth += 1
+  }
+
+  @MainActor
+  func endDeferringAutoLogout() {
+    autoLogoutDeferralDepth = max(0, autoLogoutDeferralDepth - 1)
+  }
+
+  /// The most recent sign-out held during a switch, handed over once.
+  @MainActor
+  func takeDeferredAutoLogout() -> DeferredAutoLogout? {
+    guard autoLogoutDeferralDepth == 0 else { return nil }
+    defer { deferredAutoLogout = nil }
+    return deferredAutoLogout
+  }
+
+  /// Remembers `did` as the account to sign in to again.
+  @MainActor
+  func markAccountNeedsReauthentication(did: String) {
+    let isActive = state.userDID == did
+    expiredAccountInfo = makeExpiredAccountInfo(for: did, isActive: isActive)
+    logger.info(.expiredAccountInfoPrepared)
+  }
+
+  /// Forgets the expired account only when it is `did`.
+  @MainActor
+  func discardExpiredAccountInfo(for did: String) {
+    guard expiredAccountInfo?.did == did else { return }
+    expiredAccountInfo = nil
+  }
+
+  /// A handle usable to sign in to `did` (never a DID), from any saved source.
+  @MainActor
+  func loginHandle(forAccount did: String) -> String? {
+    if let expired = expiredAccountInfo, expired.did == did, let handle = expired.loginHandle {
+      return handle
+    }
+    if let account = availableAccounts.first(where: { $0.did == did }), let handle = account.loginHandle {
+      return handle
+    }
+    return makeExpiredAccountInfo(for: did).loginHandle
+  }
+
+  /// Refreshes the cached name, handle and avatar of every saved account.
+  /// - Returns: The fetched profiles keyed by DID.
+  @MainActor
+  @discardableResult
+  func refreshCachedAccountProfiles(
+    using client: ATProtoClient
+  ) async -> [String: AppBskyActorDefs.ProfileViewDetailed] {
+    let accounts = availableAccounts
+    guard !accounts.isEmpty else { return [:] }
+    do {
+      let actors = try accounts.map { try ATIdentifier(string: $0.did) }
+      let (responseCode, output) = try await client.app.bsky.actor.getProfiles(
+        input: .init(actors: actors)
+      )
+      guard responseCode == 200, let output else { return [:] }
+      var profiles: [String: AppBskyActorDefs.ProfileViewDetailed] = [:]
+      for profile in output.profiles {
+        let did = profile.did.description
+        profiles[did] = profile
+        cacheProfileData(
+          for: did,
+          handle: profile.handle.description,
+          displayName: profile.displayName,
+          avatarURL: profile.finalAvatarURL()
+        )
+      }
+      availableAccounts = availableAccounts.map { account in
+        guard let profile = profiles[account.did] else { return account }
+        var updated = account
+        updated.cachedHandle = AccountInfo.loginHandleCandidate(profile.handle.description)
+        updated.cachedDisplayName = profile.displayName
+        updated.cachedAvatarURL = profile.finalAvatarURL()
+        return updated
+      }
+      return profiles
+    } catch {
+      logger.warning(.accountProfilesRefreshFailed)
+      return [:]
+    }
   }
 
   /// Clear expired account info
@@ -902,10 +1077,15 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   func updateState(_ newState: AuthState) {
     guard newState != state else { return }
     advanceAuthSessionRevision()
+    authenticationContinuityEpoch &+= 1
     logger.debug(.stateUpdated)
+    if case .authenticated = newState {
+      // A sign-out explanation is stale once any account is signed in again.
+      pendingAuthAlert = nil
+    }
     self.state = newState
-    // Emit synchronously - no Task wrapper to eliminate race windows
-    stateSubject.continuation.yield(newState)
+    // Emit synchronously to all active subscribers - no Task wrapper to eliminate race windows
+    stateBroadcast.yield(newState)
   }
 
   @MainActor
@@ -999,11 +1179,11 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 #endif
       // Update state on main actor
       replaceClient(newClient)
-      await client?.applicationDidBecomeActive()
+      // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
 
       if client == nil {
         logger.critical(.clientCreationFailed)
-        updateState(.error(message: "Failed to initialize client"))
+        updateState(.error(message: Self.userFacingMessage(for: AuthError.clientNotInitialized)))
         return
       } else {
         logger.info(.clientCreated)
@@ -1304,7 +1484,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         ))
 
         #endif
-      await client?.applicationDidBecomeActive()
+      // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
       if let client = client { await client.setAuthenticationDelegate(self) }
@@ -1316,7 +1496,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
     guard let client = client else {
       let error = AuthError.clientNotInitialized
-      updateState(.error(message: error.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: error)))
       throw error
     }
 
@@ -1397,13 +1577,14 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }
 
       logger.error(.oauthFlowFailed)
-      updateState(.error(message: finalError.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
 
   // MARK: - E2E Testing Support
-  
+
+  #if DEBUG
   /// Login with username/password for E2E testing only
   /// This bypasses OAuth and uses direct password authentication (legacy mode)
   /// - Parameters:
@@ -1470,7 +1651,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       // Replace the main client with the authenticated legacy client
       replaceClient(legacyClient)
-      await client?.applicationDidBecomeActive()
+      // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
       await client?.setAuthenticationDelegate(self)
@@ -1538,6 +1719,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       logger.warning(.e2eKeychainQueryFailed)
     }
   }
+  #endif
 
   /// Handle the OAuth callback after web authentication with timeout support
   @MainActor
@@ -1557,7 +1739,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     guard let client = client else {
       logger.error(.callbackClientUnavailable)
       let error = AuthError.clientNotInitialized
-      updateState(.error(message: error.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: error)))
       throw error
     }
     logger.debug(.callbackClientAvailable)
@@ -1675,7 +1857,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       await client.cancelOAuthFlow()
       logger.error(.callbackFailed)
-      updateState(.error(message: finalError.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
@@ -1695,7 +1877,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       guard client != nil else {
         logger.error(.gatewayCallbackClientUnavailable)
         let error = AuthError.clientNotInitialized
-        updateState(.error(message: error.localizedDescription))
+        updateState(.error(message: Self.userFacingMessage(for: error)))
         throw error
       }
     }
@@ -1773,7 +1955,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       await client?.cancelOAuthFlow()
       logger.error(.gatewayCallbackFailed)
-      updateState(.error(message: finalError.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
@@ -1801,12 +1983,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         userInfo: ["accountDID": departingDID]
       )
     }
-    // Cleanup notifications before logging out
-    Task {
-      if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
-        await appState.notificationManager.cleanupNotifications(previousClient: client)
-      }
-    }
+    // Notification cleanup runs in AppStateManager.logout, which still holds the outgoing AppState.
 
     // Purge memory-only Circle caches for the logged-out account so a future
     // login never reuses a previous account's permissioned responses.
@@ -2506,6 +2683,13 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   func removeAccount(did: String) async throws {
     logger.info(.accountRemovalStarted)
 
+    // Removing the signed-in account signs it out first, so no screen keeps using its suspended
+    // services and the shared client never silently continues as another stored account.
+    if case .authenticated(let currentDID) = state, currentDID == did {
+      await AppStateManager.shared.logout(isManual: true)
+      await ensureClientInitializedForAccountOperations()
+    }
+
     NotificationCenter.default.post(
       name: .circleAccountInvalidated,
       object: nil,
@@ -2667,7 +2851,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       ))
       #endif
       
-    await client?.applicationDidBecomeActive()
+    // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
     await client?.setAuthProgressDelegate(self)
     await client?.setFailureDelegate(self)
     if let client = client { await client.setAuthenticationDelegate(self) }
@@ -2900,15 +3084,10 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       logger.info(.accountSwitchClientSwitchCompleted)
 
       logger.debug(.accountSwitchSessionValid)
-      let hasValidSession = await client.hasValidSession()
-      if !hasValidSession {
-        logger.warning(.accountSwitchSessionInvalid)
-        expiredAccountInfo = makeExpiredAccountInfo(for: targetDID)
-        logger.info(.expiredAccountInfoPrepared)
-        isSwitchingAccount = false
-        updateState(.unauthenticated)
-        throw AuthError.invalidSession
-      }
+      // The Bool session check swallows transport/server errors. Preserve the actual
+      // refresh error so the switch can roll back without calling an offline session expired.
+      // false means refresh was unnecessary, not that authentication failed.
+      _ = try await client.refreshToken()
       logger.info(.accountSwitchSessionValid)
 
       logger.debug(.callbackDIDResolved)
@@ -2936,10 +3115,12 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       // Reset switching flag since we failed
       isSwitchingAccount = false
 
-      // Set expired account info so LoginView/AccountSwitcherView can trigger re-authentication
-      // This allows automatic re-auth flow when switching to an account with expired tokens
-      expiredAccountInfo = makeExpiredAccountInfo(for: targetDID)
-      logger.info(.expiredAccountInfoPrepared)
+      if AppStateManager.isReauthenticationFailure(error) {
+        expiredAccountInfo = makeExpiredAccountInfo(for: targetDID)
+        logger.info(.expiredAccountInfoPrepared)
+      } else {
+        discardExpiredAccountInfo(for: targetDID)
+      }
 
       // Set state to unauthenticated so the auth UI can handle re-auth
       logger.debug(.stateUpdated)
@@ -2964,7 +3145,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
     guard let client = client else {
       let error = AuthError.clientNotInitialized
-      updateState(.error(message: error.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: error)))
       throw error
     }
 
@@ -2990,7 +3171,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }
 
       logger.error(.addAccountFailed)
-      updateState(.error(message: "Failed to add account: \(finalError.localizedDescription)"))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
@@ -3078,20 +3259,24 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     }
   }
 
-  /// Authenticate using biometrics
+  /// Authenticate using biometrics.
+  /// - Parameter policy: `.deviceOwnerAuthentication` lets the system offer the device passcode
+  ///   after a failed attempt or a biometric lockout; the default accepts biometrics only.
   @MainActor
-  func authenticateWithBiometrics(reason: String) async -> Bool {
+  func authenticateWithBiometrics(
+    reason: String,
+    policy: LAPolicy = .deviceOwnerAuthenticationWithBiometrics
+  ) async -> Bool {
     guard biometricType != .none else {
       logger.warning(.biometricAuthNotAvailable)
       return false
     }
 
     let context = LAContext()
-    context.localizedFallbackTitle = "Use Password"
 
     do {
       let success = try await context.evaluatePolicy(
-        .deviceOwnerAuthenticationWithBiometrics,
+        policy,
         localizedReason: reason
       )
 
@@ -3132,7 +3317,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       return true  // No biometric auth required, proceed
     }
 
-    return await authenticateWithBiometrics(reason: "Unlock Catbird")
+    return await authenticateWithBiometrics(reason: "Unlock Catbird", policy: .deviceOwnerAuthentication)
   }
 
   // MARK: - Biometric Preferences
@@ -3247,8 +3432,8 @@ extension AuthenticationManager: AuthFailureDelegate {
 
     if isRetryable {
       if pendingAuthAlert == nil {
-        let message = "The server is temporarily unavailable. Please try again shortly."
-        pendingAuthAlert = AuthAlert(title: "Authentication Unavailable", message: message)
+        let message = "Your server is temporarily unavailable. Try again shortly."
+        pendingAuthAlert = AuthAlert(title: "Sign-In Unavailable", message: message)
       }
     } else {
       // Terminal failure - prefer auto-reauth without alert if possible
@@ -3269,10 +3454,74 @@ extension AuthenticationManager: AuthFailureDelegate {
     logger.warning(.circuitBreakerOpen)
     if pendingAuthAlert == nil {
       pendingAuthAlert = AuthAlert(
-        title: "Authentication Temporarily Paused",
+        title: "Sign-In Paused",
         message:
           "We’re seeing repeated failures contacting your server. We’ll retry shortly, or you can sign in again now."
       )
+    }
+  }
+}
+
+// MARK: - User-Facing Sign-In Messages
+
+extension AuthenticationManager {
+  /// Plain-language copy for sign-in and account failures shown in the UI.
+  /// Technical details (status codes, server errors) belong in logs only.
+  static func userFacingMessage(for error: Error) -> String {
+    guard let authError = error as? AuthError else {
+      return userFacingMessage(forUnderlying: error)
+    }
+    switch authError {
+    case .networkError:
+      return "Couldn’t reach the server. Check your connection and try again."
+    case .timeout:
+      return "Signing in took too long. Try again."
+    case .badResponse(let code) where code == 429:
+      return "Too many attempts. Wait a moment and try again."
+    case .badResponse(let code) where code >= 500:
+      return "Your server is having trouble right now. Try again in a moment."
+    case .badResponse:
+      return "Your server couldn’t finish signing you in. Try again."
+    case .invalidHandle:
+      return "That handle doesn’t look right. Check it and try again."
+    case .invalidSession:
+      return "Your session has expired. Sign in again to continue."
+    case .invalidCredentials:
+      return "Sign-in didn’t finish. Check your details and try again."
+    case .accountSwitchInProgress:
+      return "Another account is still switching. Try again in a moment."
+    case .databaseDrainFailed:
+      return "Couldn’t safely close the database. Restart the app and try again."
+    case .cancelled:
+      return "Sign-in was canceled."
+    case .unknown(let underlying):
+      return userFacingMessage(forUnderlying: underlying)
+    case .clientNotInitialized, .invalidCallbackURL, .invalidUserDID:
+      return "Sign-in didn’t finish. Try again."
+    }
+  }
+
+  private static func userFacingMessage(forUnderlying error: Error) -> String {
+    if let authError = error as? AuthError {
+      return userFacingMessage(for: authError)
+    }
+    switch UserFacingError.kind(of: error) {
+    case .offline:
+      return "Couldn’t reach the server. Check your connection and try again."
+    case .timedOut:
+      return "Signing in took too long. Try again."
+    case .rateLimited:
+      return "Too many attempts. Wait a moment and try again."
+    case .server:
+      return "Your server is having trouble right now. Try again in a moment."
+    case .notFound:
+      return "Couldn’t find that account. Check the handle and try again."
+    case .signInRequired:
+      return "Your session has expired. Sign in again to continue."
+    case .cancelled:
+      return "Sign-in was canceled."
+    case .notAllowed, .other:
+      return "Sign-in didn’t finish. Try again."
     }
   }
 }

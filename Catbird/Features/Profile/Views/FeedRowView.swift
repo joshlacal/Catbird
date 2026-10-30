@@ -4,11 +4,13 @@ import SwiftUI
 
 struct FeedRowView: View {
     let feed: AppBskyFeedDefs.GeneratorView
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         HStack(spacing: 14) {
             if let avatarURL = feed.avatar {
-                LazyImage(url: URL(string: avatarURL.uriString())) { state in
+                let url = URL(string: avatarURL.uriString())
+                LazyImage(request: ImageRequestFactory.image(url, pointSize: CGSize(width: 50, height: 50), scale: displayScale)) { state in
                     if let image = state.image {
                         image
                             .resizable()
@@ -45,7 +47,7 @@ struct FeedRowView: View {
                 }
 
                 if let likeCount = feed.likeCount, likeCount > 0 {
-                    Text("\(likeCount) likes")
+                    Text("^[\(likeCount) like](inflect: true)")
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }

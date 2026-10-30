@@ -6,114 +6,42 @@ import UIKit
 #endif
 @testable import Catbird
 
-// MARK: - Spy Regulatory Checker
-
-final class SpyRegulatoryChecker: AgeRegulatoryChecking, @unchecked Sendable {
-    private let lock = NSLock()
-    private var _preflightCount = 0
-    private var _agePromptCount = 0
-    private var _providerRequestCount = 0
-    private var preflightContinuations: [CheckedContinuation<Void, Never>] = []
-
-    var signalToReturn: PlatformAgeSignal = PlatformAgeSignal(
-        requirement: .none,
-        ageBand: nil,
-        significantChangeConsentRequired: false
-    )
-
-    var preflightCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _preflightCount
-    }
-
-    var agePromptCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _agePromptCount
-    }
-
-    var providerRequestCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _providerRequestCount
-    }
-
-    func preflight() async -> PlatformAgeSignal {
-        lock.lock()
-        _preflightCount += 1
-        let continuations = preflightContinuations
-        preflightContinuations.removeAll()
-        lock.unlock()
-        for cont in continuations {
-            cont.resume()
-        }
-        return signalToReturn
-    }
-
-    func waitForPreflight() async {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if _preflightCount > 0 {
-                lock.unlock()
-                continuation.resume()
-            } else {
-                preflightContinuations.append(continuation)
-                lock.unlock()
-            }
-        }
-    }
-
-    #if canImport(UIKit)
-    @MainActor
-    func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? {
-        lock.lock()
-        _agePromptCount += 1
-        lock.unlock()
-        return signalToReturn.ageBand
-    }
-    #endif
-}
-
 // MARK: - Onboarding & Intent Integration Tests
 
 @Suite("OnboardingAgeAssuranceIntegrationTests")
 struct OnboardingAgeAssuranceIntegrationTests {
     
-    @Test("Passive regulatory preflight runs on AppState launch without prompts or provider network calls")
+    @Test("Passive AppState launch commits a no-requirement result without an age prompt")
     @MainActor
     func passiveRegulatoryPreflight() async {
-        let spy = SpyRegulatoryChecker()
-        let expectedSignal = PlatformAgeSignal(
-            requirement: .none,
-            ageBand: nil,
-            significantChangeConsentRequired: false
-        )
-        spy.signalToReturn = expectedSignal
-
+        let checker = AgeAccessControlledChecker()
         let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
         let appState = AppState(
             userDID: "did:plc:testuseronboarding123",
             client: client,
-            regulatoryChecker: spy
+            regulatoryChecker: checker
         )
+        defer { appState.cleanup() }
 
-        await spy.waitForPreflight()
+        let joined = await ageAccessJoinedRefresh(appState.ageAccess)
+        await checker.waitForCalls(1)
+        // The initial signal is already .none; checking admission proves this assertion cannot
+        // accidentally pass before the startup task has committed its result.
+        #expect(appState.ageAccess.isCheckingRequirement)
+        #expect(!appState.ageAccess.allows(.generalContent))
+        await checker.resolve(1, with: .none)
+        await joined.value
 
-        for _ in 0..<50 {
-            if appState.platformAgeSignal == expectedSignal {
-                break
-            }
-            await Task.yield()
-        }
-
-        #expect(spy.preflightCount == 1)
-        #expect(spy.agePromptCount == 0)
-        #expect(spy.providerRequestCount == 0)
-        #expect(appState.platformAgeSignal.requirement == .none)
+        #expect(await checker.callCount == 1)
+        #expect(await checker.nativePromptCount == 0)
+        #expect(!appState.ageAccess.isCheckingRequirement)
+        #expect(appState.ageAccess.allows(.generalContent))
+        #expect(appState.platformAgeSignal == .none)
         #expect(appState.platformAgeSignal.ageBand == nil)
+        // Network absence is not claimed: this AppState integration uses the normal test host.
+        // The isolated coordinator suite injects all interactions and constructs no client.
     }
-    
+
     @Test("External age assurance URL intent is ignored and returns nil")
     func ageAssuranceIntentIsIgnored() {
         let ageURL = URL(string: "bluesky://intent/age-assurance?state=xyz&code=123")!

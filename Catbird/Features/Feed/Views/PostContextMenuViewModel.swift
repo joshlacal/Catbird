@@ -13,25 +13,27 @@ import OSLog
 
 @Observable
 final class PostContextMenuViewModel {
-    let appState: AppState
-    let post: AppBskyFeedDefs.PostView
-    let allowsThreadSummary: Bool
-    let visibilityContext: PostVisibilityContext
+    private(set) var appState: AppState
+    private(set) var post: AppBskyFeedDefs.PostView
+    private(set) var allowsThreadSummary: Bool
+    private(set) var visibilityContext: PostVisibilityContext
     
     private let logger = Logger(subsystem: "blue.catbird", category: "PostContextMenu")
     
-    // Reporting callback - will be set by PostView
-    var onReportPost: (() -> Void)?
-    
-    // Add to list callback - will be set by PostView
-    var onAddAuthorToList: (() -> Void)?
-    
-    // Bookmark callback - will be set by PostView
-    var onToggleBookmark: (() -> Void)?
-    
+    // Callbacks wired by PostView each time a row appears. Nothing renders from them, so
+    // they are not observed: assigning them would otherwise re-render the row.
 
-    // Thread summarization callback - wired by PostView when supported
-    var onSummarizeThread: (() -> Void)?
+    // Reporting callback
+    @ObservationIgnored var onReportPost: (() -> Void)?
+
+    // Add to list callback
+    @ObservationIgnored var onAddAuthorToList: (() -> Void)?
+
+    // Bookmark callback
+    @ObservationIgnored var onToggleBookmark: (() -> Void)?
+
+    // Thread summarization callback, when supported
+    @ObservationIgnored var onSummarizeThread: (() -> Void)?
 
     // Thread moderation and context
     var rootPostURI: ATProtocolURI?
@@ -94,6 +96,26 @@ final class PostContextMenuViewModel {
         self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
     }
 
+    func configure(
+        appState: AppState,
+        post: AppBskyFeedDefs.PostView,
+        allowsThreadSummary: Bool = false,
+        visibilityContext: PostVisibilityContext = .public,
+        rootPostURI: ATProtocolURI? = nil,
+        rootAuthorDID: String? = nil,
+        isReplyHiddenByThreadgate: Bool = false
+    ) {
+        self.appState = appState
+        self.post = post
+        self.allowsThreadSummary = allowsThreadSummary
+        self.visibilityContext = visibilityContext
+        self.rootPostURI = rootPostURI
+        self.rootAuthorDID = rootAuthorDID
+        self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
+        self.isPinnedOverride = nil
+        self.isQuoteDetachedOverride = nil
+    }
+
     func deletePost(visibilityContext: PostVisibilityContext? = nil) async {
         let effectiveContext = visibilityContext ?? self.visibilityContext
         switch effectiveContext {
@@ -115,8 +137,9 @@ final class PostContextMenuViewModel {
                     }
                     
                     // Show deletion toast and notify invalidations
+                    let deletedURI = post.uri.uriString()
                     await MainActor.run {
-                        appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
+                        NotificationCenter.default.post(name: .feedPostDeleted, object: deletedURI)
                         appState.stateInvalidationBus.notify(.profileUpdated(did: did))
                         if let rootURI = resolvedRootPostURI?.uriString() {
                             appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI))
@@ -129,9 +152,15 @@ final class PostContextMenuViewModel {
                             )
                         )
                     }
+                } else {
+                    logger.error("Deleting post returned status \(responseCode ?? -1)")
+                    await showFailureToast("Couldn’t delete this post. Try again.")
                 }
             } catch {
-                logger.debug("Error deleting post: \(error)")
+                logger.error("Error deleting post: \(error)")
+                await showFailureToast(
+                    UserFacingError.message(for: error, action: "delete this post")
+                )
             }
         case let .circle(circle):
             let did = appState.userDID
@@ -162,85 +191,38 @@ final class PostContextMenuViewModel {
 
     func blockUser() async {
         let targetDid = post.author.did.didString()
-
-        // Prefer the MLS-aware coordinator when available — it publishes the
-        // block record AND auto-leaves any shared MLS groups. Falls back to
-        // the raw createRecord path on non-MLS installs so that existing
-        // behavior is preserved.
-        let coordinator = await MainActor.run { appState.mlsBlockCoordinator }
-        if let coord = coordinator {
-            do {
-                try await coord.block(did: targetDid)
-                logger.debug("User blocked successfully via MLSBlockCoordinator")
-                await MainActor.run {
-                    appState.toastManager.show(
-                        ToastItem(
-                            message: "User blocked",
-                            icon: "hand.raised.fill",
-                            duration: 2.5
-                        )
-                    )
-                }
-            } catch {
-                logger.debug("Error blocking user via coordinator: \(error)")
-            }
-            return
-        }
-
-        // Fallback: publish the block record directly.
-        let did = appState.userDID
-        let block = AppBskyGraphBlock(subject: post.author.did, createdAt: ATProtocolDate(date: Date()))
         do {
-            let input = ComAtprotoRepoCreateRecord.Input(
-                repo: try ATIdentifier(string: did),
-                collection: try NSID(nsidString: "app.bsky.graph.block"),
-                record: ATProtocolValueContainer.knownType(block)
-            )
-
-            let result = try await appState.atProtoClient?.com.atproto.repo.createRecord(input: input)
-            if let (responseCode, _) = result {
-                if responseCode == 200 {
-
-                    logger.debug("User blocked successfully")
-
-                    // Show block toast
-                    await MainActor.run {
-                        appState.toastManager.show(
-                            ToastItem(
-                                message: "User blocked",
-                                icon: "hand.raised.fill",
-                                duration: 2.5
-                            )
-                        )
-                    }
+            // The MLS-aware coordinator publishes the block record and then leaves
+            // every MLS conversation shared with the blocked account.
+            if let coordinator = await MainActor.run(body: { appState.mlsBlockCoordinator }) {
+                try await coordinator.block(did: targetDid)
+            } else {
+                guard try await appState.graphManager.block(did: targetDid) else {
+                    await showFailureToast("Couldn’t block this account. Try again.")
+                    return
                 }
             }
+            appState.toastManager.show(ToastItem(message: "User blocked", icon: "hand.raised.fill", duration: 2.5))
         } catch {
-            logger.debug("Error blocking user: \(error)")
+            logger.error("Error blocking user: \(error)")
+            await showFailureToast(
+                UserFacingError.message(for: error, action: "block this account")
+            )
         }
     }
 
     func muteUser() async {
         do {
-            let input = AppBskyGraphMuteActor.Input(actor: try ATIdentifier(string: post.author.did.didString()))
-
-            let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteActor(input: input)
-            if responseCode == 200 {
-                logger.debug("User muted successfully")
-                
-                // Show mute toast
-                await MainActor.run {
-                    appState.toastManager.show(
-                        ToastItem(
-                            message: "User muted",
-                            icon: "speaker.slash.fill",
-                            duration: 2.5
-                        )
-                    )
-                }
+            guard try await appState.graphManager.mute(did: post.author.did.didString()) else {
+                await showFailureToast("Couldn’t mute this account. Try again.")
+                return
             }
+            appState.toastManager.show(ToastItem(message: "User muted", icon: "speaker.slash.fill", duration: 2.5))
         } catch {
-            logger.debug("Error muting user: \(error)")
+            logger.error("Error muting user: \(error)")
+            await showFailureToast(
+                UserFacingError.message(for: error, action: "mute this account")
+            )
         }
     }
 
@@ -249,47 +231,63 @@ final class PostContextMenuViewModel {
             logger.debug("muteThread skipped: private circle post context")
             return
         }
-        let input = AppBskyGraphMuteThread.Input(root: post.uri)
         do {
-            let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteThread(input: input)
-            if responseCode == 200 {
-                logger.debug("Thread muted successfully")
-                
-                // Show thread mute toast
-                await MainActor.run {
-                    appState.toastManager.show(
-                        ToastItem(
-                            message: "Thread muted",
-                            icon: "bell.slash.fill",
-                            duration: 2.5
-                        )
-                    )
-                }
+            guard try await appState.graphManager.muteThread(threadRootUri: resolvedRootPostURI ?? post.uri) else {
+                await showFailureToast("Couldn’t mute this thread. Try again.")
+                return
             }
+            appState.toastManager.show(ToastItem(message: "Thread muted", icon: "bell.slash.fill", duration: 2.5))
         } catch {
-            logger.debug("Error muting thread: \(error)")
+            logger.error("Error muting thread: \(error)")
+            await showFailureToast(
+                UserFacingError.message(for: error, action: "mute this thread")
+            )
         }
     }
-    
+
+    /// Shows a failure toast; a `nil` message (a cancelled request) shows nothing.
+    private func showFailureToast(_ message: String?) async {
+        guard let message else { return }
+        await MainActor.run {
+            appState.toastManager.show(
+                ToastItem(
+                    message: message,
+                    icon: "exclamationmark.triangle.fill",
+                    duration: 3
+                )
+            )
+        }
+    }
+
     func hidePost() async {
         let postURI = post.uri.uriString()
-        await appState.postHidingManager.hidePost(postURI)
-        logger.debug("Post hidden: \(postURI)")
+        let saved = await appState.postHidingManager.hidePost(postURI)
+        logger.debug("Post hidden: \(postURI), saved: \(saved)")
         
         // Show confirmation toast
         await MainActor.run {
-            appState.toastManager.show(ToastItem(message: "Post hidden", icon: "checkmark.circle.fill"))
+            if saved {
+                NotificationCenter.default.post(name: .feedPostVisibilityChanged, object: nil)
+            }
+            appState.toastManager.show(saved
+                ? ToastItem(message: "Post hidden", icon: "checkmark.circle.fill")
+                : ToastItem(message: "Couldn’t hide post. Try again.", icon: "exclamationmark.triangle.fill"))
         }
     }
     
     func unhidePost() async {
         let postURI = post.uri.uriString()
-        await appState.postHidingManager.unhidePost(postURI)
-        logger.debug("Post unhidden: \(postURI)")
+        let saved = await appState.postHidingManager.unhidePost(postURI)
+        logger.debug("Post unhidden: \(postURI), saved: \(saved)")
         
         // Show confirmation toast
         await MainActor.run {
-            appState.toastManager.show(ToastItem(message: "Post unhidden", icon: "checkmark.circle.fill"))
+            if saved {
+                NotificationCenter.default.post(name: .feedPostVisibilityChanged, object: nil)
+            }
+            appState.toastManager.show(saved
+                ? ToastItem(message: "Post unhidden", icon: "checkmark.circle.fill")
+                : ToastItem(message: "Couldn’t unhide post. Try again.", icon: "exclamationmark.triangle.fill"))
         }
     }
     
@@ -316,7 +314,6 @@ final class PostContextMenuViewModel {
                     isPinnedOverride = false
                     appState.stateInvalidationBus.notify(.profileUpdated(did: did))
                     appState.stateInvalidationBus.notify(.feedUpdated(.author(did)))
-                    appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
                     appState.toastManager.show(
                         ToastItem(
                             message: "Post unpinned from profile",
@@ -357,7 +354,6 @@ final class PostContextMenuViewModel {
                     isPinnedOverride = true
                     appState.stateInvalidationBus.notify(.profileUpdated(did: did))
                     appState.stateInvalidationBus.notify(.feedUpdated(.author(did)))
-                    appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
                     appState.toastManager.show(
                         ToastItem(
                             message: "Post pinned to profile",
@@ -372,7 +368,8 @@ final class PostContextMenuViewModel {
             await MainActor.run {
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Failed to update pinned post",
+                        message: UserFacingError.message(for: error, action: "update your pinned post")
+                            ?? "Couldn’t update your pinned post. Try again.",
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -480,14 +477,13 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error detaching quote: \(error)")
             await MainActor.run {
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Failed to detach quote",
+                        message: "Couldn’t detach the quote. Try again.",
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -518,14 +514,13 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error reattaching quote: \(error)")
             await MainActor.run {
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Failed to re-attach quote",
+                        message: "Couldn’t re-attach the quote. Try again.",
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -554,14 +549,14 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI.uriString()))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error hiding reply for everyone: \(error)")
             await MainActor.run {
                 appState.toastManager.show(
                     ToastItem(
-                        message: error.localizedDescription,
+                        message: UserFacingError.message(for: error, action: "hide this reply")
+                            ?? "Couldn’t hide this reply. Try again.",
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -588,14 +583,14 @@ final class PostContextMenuViewModel {
                     )
                 )
                 appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI.uriString()))
-                appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
             }
         } catch {
             logger.error("Error showing reply for everyone: \(error)")
             await MainActor.run {
                 appState.toastManager.show(
                     ToastItem(
-                        message: error.localizedDescription,
+                        message: UserFacingError.message(for: error, action: "show this reply")
+                            ?? "Couldn’t show this reply. Try again.",
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -615,10 +610,10 @@ final class PostContextMenuViewModel {
     }
     
 
-    /// Send "show more like this" feedback
-    func sendShowMore() {
-        guard appState.feedFeedbackManager.isEnabled else { return }
-        appState.feedFeedbackManager.sendShowMore(postURI: post.uri)
+    /// Send "show more like this" feedback to the feed the post is shown in
+    @MainActor
+    func sendShowMore(target: FeedInteractionTarget) {
+        appState.feedFeedbackManager.sendShowMore(postURI: post.uri, target: target)
         logger.debug("Sent 'show more' feedback for post: \(self.post.uri.uriString())")
         
         // Show confirmation toast
@@ -630,10 +625,10 @@ final class PostContextMenuViewModel {
         )
     }
     
-    /// Send "show less like this" feedback
-    func sendShowLess() {
-        guard appState.feedFeedbackManager.isEnabled else { return }
-        appState.feedFeedbackManager.sendShowLess(postURI: post.uri)
+    /// Send "show less like this" feedback to the feed the post is shown in
+    @MainActor
+    func sendShowLess(target: FeedInteractionTarget) {
+        appState.feedFeedbackManager.sendShowLess(postURI: post.uri, target: target)
         logger.debug("Sent 'show less' feedback for post: \(self.post.uri.uriString())")
         
         // Show confirmation toast
@@ -643,11 +638,6 @@ final class PostContextMenuViewModel {
                 icon: "checkmark.circle.fill"
             )
         )
-    }
-    
-    /// Whether feed feedback is available for the current feed
-    var isFeedbackEnabled: Bool {
-        appState.feedFeedbackManager.isEnabled
     }
     
     /// Creates a report subject for this post

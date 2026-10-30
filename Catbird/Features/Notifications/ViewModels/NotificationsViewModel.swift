@@ -19,14 +19,14 @@ enum NotificationType: String, CaseIterable {
     case .followBack: return "person.2.fill"
     case .mention: return "at"
     case .reply: return "arrowshape.turn.up.left.fill"
-    case .quote: return "quote.bubble"
+    case .quote: return "quote.bubble.fill"
     case .likeViaRepost: return "heart.fill"
     case .repostViaRepost: return "arrow.2.squarepath"
     case .activitySubscription: return "bell.badge.fill"
-    case .starterpackJoined: return "person.2.badge.plus"
+    case .starterpackJoined: return "person.2.badge.plus.fill"
     case .verified: return "checkmark.seal.fill"
     case .unverified: return "xmark.seal.fill"
-    case .contactMatch: return "person.crop.circle.badge.checkmark"
+    case .contactMatch: return "person.crop.circle.fill.badge.checkmark"
     case .feedgenLike: return "heart.fill"
     }
   }
@@ -47,7 +47,7 @@ enum NotificationType: String, CaseIterable {
     case .verified: return .blue
     case .unverified: return .secondary
     case .contactMatch: return .green
-    case .feedgenLike: return .pink
+    case .feedgenLike: return .red
     }
   }
 
@@ -74,7 +74,7 @@ struct GroupedNotification: Identifiable {
   let pageNumber: Int
 
   var latestNotification: AppBskyNotificationListNotifications.Notification {
-    notifications.max(by: { $0.indexedAt.date < $1.indexedAt.date })!
+    notifications.first ?? notifications.max(by: { $0.indexedAt.date < $1.indexedAt.date })!
   }
 
   /// Determines if this group contains any unread notifications
@@ -95,6 +95,11 @@ private actor PostCacheActor {
   
   func set(_ uri: ATProtocolURI, post: AppBskyFeedDefs.PostView, timestamp: Date) {
     cache[uri] = (post: post, timestamp: timestamp)
+  }
+  func setBatch(_ posts: [AppBskyFeedDefs.PostView], timestamp: Date) {
+    for post in posts {
+      cache[post.uri] = (post: post, timestamp: timestamp)
+    }
   }
   
   func getCachedPosts(for uris: [ATProtocolURI], now: Date) -> [ATProtocolURI: AppBskyFeedDefs.PostView] {
@@ -128,15 +133,79 @@ private actor FollowRecordCreatedAtCacheActor {
 
 // MARK: - ViewModel
 
-@Observable final class NotificationsViewModel {
+@MainActor @Observable final class NotificationsViewModel {
   // MARK: - Properties
 
+  /// One page of `listNotifications`, as the client returns it. Injected by
+  /// tests; production reads the client.
+  typealias PageLoader = @Sendable (_ reasons: [String]?, _ cursor: String?) async throws
+    -> (Int, AppBskyNotificationListNotifications.Output?)
+
+  /// How many visible groups a first load or refresh fills the screen with.
+  static let minimumVisibleGroups = 5
+  /// A row within this many of the end of the visible list requests the next page.
+  static let pageLookahead = 5
+  /// How many pages one load-more follows while every group they add is
+  /// filtered, so a run of filtered pages cannot stall the list (the official
+  /// app's notification query keeps paginating the same way, with a failsafe).
+  static let autoPaginationPageLimit = 8
+
+  /// The account's moderation policy. Groups it filters are not part of
+  /// `groupedNotifications`, so pagination, the fill loop and the empty state
+  /// all see the list the viewer sees. The view keeps it current.
+  var moderationPolicy: ModerationPolicy {
+    didSet {
+      guard oldValue != moderationPolicy else { return }
+      recomputeVisible()
+    }
+  }
+
+  // Retain every fetched member so preference edits and rollback can restore hidden rows.
+  private var unfilteredGroupedNotifications: [GroupedNotification] = [] {
+    didSet {
+      recomputeVisible()
+    }
+  }
   private(set) var groupedNotifications: [GroupedNotification] = []
+
+  private(set) var lastFetchDate: Date?
+
+  var isStale: Bool {
+    guard let lastFetchDate else { return true }
+    return Date().timeIntervalSince(lastFetchDate) > 300
+  }
+
+  var hasLoadedOnce: Bool {
+    lastFetchDate != nil || !unfilteredGroupedNotifications.isEmpty
+  }
+
+  private static let signposter = OSSignposter(subsystem: "blue.catbird.performance", category: "Notifications")
+
+  func preferencesDidChange() {
+    recomputeVisible()
+  }
+
+  private func recomputeVisible() {
+    let policy = moderationPolicy
+    let visible = NotificationListVisibilityPolicy.visibleGroups(
+      unfilteredGroupedNotifications,
+      preferences: notificationManager?.preferences ?? NotificationPreferences()
+    ).compactMap { NotificationModeration.visibleGroup($0, policy: policy) }
+    groupedNotifications = visible
+    if Self.signposter.isEnabled {
+      Self.signposter.emitEvent("GroupProjection", "count: \(visible.count)")
+    }
+  }
   private(set) var isLoading = false
   private(set) var isRefreshing = false
   private(set) var isLoadingMore = false
   private(set) var hasMoreNotifications = false
   private(set) var error: Error?
+  /// Set when loading the next page fails; the loaded list stays on screen.
+  private(set) var paginationError: Error?
+
+  /// Bumped when the filter changes so responses for the previous filter are discarded.
+  private var fetchGeneration = 0
 
   // Separate pagination state for each filter
   private var cursorForAll: String?
@@ -144,35 +213,9 @@ private actor FollowRecordCreatedAtCacheActor {
   private var pageForAll = 0
   private var pageForMentions = 0
 
-  // Computed properties for current filter's pagination state
+  // Pagination cursor for the current filter
   private var cursor: String? {
-    get {
-      switch currentFilter {
-      case .all: return cursorForAll
-      case .mentions: return cursorForMentions
-      }
-    }
-    set {
-      switch currentFilter {
-      case .all: cursorForAll = newValue
-      case .mentions: cursorForMentions = newValue
-      }
-    }
-  }
-
-  private var currentPage: Int {
-    get {
-      switch currentFilter {
-      case .all: return pageForAll
-      case .mentions: return pageForMentions
-      }
-    }
-    set {
-      switch currentFilter {
-      case .all: pageForAll = newValue
-      case .mentions: pageForMentions = newValue
-      }
-    }
+    storedCursor(for: currentFilter)
   }
 
   // Thread-safe post cache using actor
@@ -180,6 +223,8 @@ private actor FollowRecordCreatedAtCacheActor {
   private let followRecordCreatedAtCache = FollowRecordCreatedAtCacheActor()
 
   private let client: ATProtoClient?
+  @ObservationIgnored private let notificationManager: NotificationManager?
+  @ObservationIgnored private let pageLoader: PageLoader?
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsViewModel")
 
   // Add a new enum for filter types
@@ -202,15 +247,23 @@ private actor FollowRecordCreatedAtCacheActor {
 
   // MARK: - Initialization
 
-  init(client: ATProtoClient?) {
+  init(
+    client: ATProtoClient?,
+    notificationManager: NotificationManager? = nil,
+    moderationPolicy: ModerationPolicy = .failClosed,
+    pageLoader: PageLoader? = nil
+  ) {
     self.client = client
+    self.notificationManager = notificationManager
+    self.moderationPolicy = moderationPolicy
+    self.pageLoader = pageLoader
   }
 
   // MARK: - Public Methods
 
   /// Loads initial notifications
   func loadNotifications() async {
-    guard !isLoading else { return }
+    guard !isLoading, !Task.isCancelled else { return }
 
     isLoading = true
     error = nil
@@ -221,12 +274,15 @@ private actor FollowRecordCreatedAtCacheActor {
     isLoading = false
   }
 
-  /// Refreshes the notification list
-  func refreshNotifications() async {
-    guard !isRefreshing else { return }
+  /// Refreshes the notification list.
+  /// - Parameter force: Start a new refresh even if one is running (used when the filter changes).
+  func refreshNotifications(force: Bool = false) async {
+    guard force || !isRefreshing, !Task.isCancelled else { return }
 
+    let generation = fetchGeneration
     isRefreshing = true
     error = nil
+    paginationError = nil
 
     // Clean up cache on refresh
     await cleanupCache()
@@ -234,39 +290,77 @@ private actor FollowRecordCreatedAtCacheActor {
     await fetchNotifications(resetCursor: true)
     await ensureEnoughNotifications()
 
-    isRefreshing = false
+    // A newer forced refresh owns the refreshing state.
+    if generation == fetchGeneration {
+      isRefreshing = false
+    }
   }
 
-  /// Loads more notifications (pagination)
+  /// Loads more notifications (pagination). The next page is followed by
+  /// further pages while the visible list has not grown, up to
+  /// `autoPaginationPageLimit`, so pages whose groups the preferences or the
+  /// moderation policy filter entirely never leave the list waiting.
   func loadMoreNotifications() async {
-    guard !isLoadingMore, hasMoreNotifications, cursor != nil else { return }
+    guard !isLoadingMore, hasMoreNotifications, cursor != nil, !Task.isCancelled else { return }
 
     isLoadingMore = true
+    paginationError = nil
 
-    await fetchNotifications(resetCursor: false)
+    await fetchPages(untilVisibleCount: groupedNotifications.count + 1, pageLimit: Self.autoPaginationPageLimit)
 
     isLoadingMore = false
   }
 
+  /// Whether showing the row at `index` of `groupedNotifications` should
+  /// request the next page: it is within `pageLookahead` of the end of the
+  /// visible list. Filtered groups are not in that list, so they cannot push
+  /// the trigger out of reach.
+  func shouldLoadMore(afterShowingIndex index: Int) -> Bool {
+    let thresholdIndex = max(0, groupedNotifications.count - Self.pageLookahead)
+    return index >= thresholdIndex && hasMoreNotifications && !isLoadingMore && paginationError == nil
+  }
+
   /// Makes sure we have enough notifications to fill the screen
   private func ensureEnoughNotifications() async {
+    guard !isLoadingMore else { return }
+    isLoadingMore = true
     // Empty/filtered pages must not keep the loading state alive indefinitely.
-    var remainingPages = 3
-    while groupedNotifications.count < 5, hasMoreNotifications,
-      !isLoadingMore, error == nil, remainingPages > 0 {
+    await fetchPages(untilVisibleCount: Self.minimumVisibleGroups, pageLimit: 3)
+    isLoadingMore = false
+  }
+
+  /// Fetches next pages until the visible list holds `wanted` groups, the
+  /// pages run out, a page fails, or `pageLimit` pages were fetched.
+  private func fetchPages(untilVisibleCount wanted: Int, pageLimit: Int) async {
+    let generation = fetchGeneration
+    var remainingPages = pageLimit
+    while groupedNotifications.count < wanted, hasMoreNotifications, generation == fetchGeneration,
+      error == nil, paginationError == nil, remainingPages > 0, !Task.isCancelled {
       let previousCursor = cursor
       guard previousCursor != nil else { break }
-      await loadMoreNotifications()
+      await fetchNotifications(resetCursor: false)
       remainingPages -= 1
       guard cursor != previousCursor else { break }
     }
   }
 
   /// Marks notifications as seen
-  func markNotificationsAsSeen() async throws {
+  func markNotificationsAsSeen(force: Bool = false) async throws {
     guard let client = client else {
       logger.error("Client is nil in markNotificationsAsSeen")
       return
+    }
+
+    if !force {
+      let hasUnreadInList = groupedNotifications.contains { $0.hasUnreadNotifications }
+      let unreadCount = notificationManager?.unreadCount ?? 0
+      guard hasUnreadInList || unreadCount > 0 else {
+        // Nothing to mark on the server, but still clear the app badge: a push
+        // can set it while the app is suspended after everything was read on
+        // another device, and unreadCount is already 0 then.
+        notificationManager?.updateUnreadCountAfterSeen()
+        return
+      }
     }
 
     do {
@@ -274,14 +368,6 @@ private actor FollowRecordCreatedAtCacheActor {
         input: .init(seenAt: ATProtocolDate(date: Date()))
       )
       logger.info("Successfully marked notifications as seen")
-
-      // Update all local notifications as read
-      for i in 0..<groupedNotifications.count {
-        for _ in 0..<groupedNotifications[i].notifications.count {
-          // We can't mutate the notifications directly as they're immutable,
-          // but they'll be refreshed as read on the next fetch
-        }
-      }
 
       // Tell the notification manager to update badge count
       NotificationCenter.default.post(
@@ -296,15 +382,18 @@ private actor FollowRecordCreatedAtCacheActor {
   func setFilter(_ filter: NotificationFilter) async {
     guard filter != currentFilter else { return }
 
+    fetchGeneration += 1
     currentFilter = filter
-    // Clear notifications to show filtered view immediately
-    groupedNotifications = []
-    await refreshNotifications()
+    // Cached groups belong to the prior reason filter and cursor chain.
+    unfilteredGroupedNotifications = []
+    hasMoreNotifications = false
+    await refreshNotifications(force: true)
   }
   
   /// Clears the current error state
   func clearError() {
     error = nil
+    paginationError = nil
   }
 
   // MARK: - Private Methods
@@ -317,29 +406,30 @@ private actor FollowRecordCreatedAtCacheActor {
 
   /// Fetches notifications from the API
   private func fetchNotifications(resetCursor: Bool) async {
-    guard let client = client else {
+    guard !Task.isCancelled else { return }
+    guard let loadPage = pageLoader ?? client.map(Self.clientPageLoader) else {
       logger.error("Client is nil in fetchNotifications")
       return
     }
 
-    do {
-      // Use the filter reasons when creating parameters
-      let params = AppBskyNotificationListNotifications.Parameters(
-        reasons: currentFilter.reasonFilters,
-        limit: 50,  // Increased from 30 to batch more notifications
-        cursor: resetCursor ? nil : cursor
-      )
+    // Responses are only applied if the filter they were requested for is still current.
+    let filter = currentFilter
+    let generation = fetchGeneration
 
+    do {
       let requestStarted = ContinuousClock.now
-      let (responseCode, output) = try await client.app.bsky.notification.listNotifications(
-        input: params
-      )
+      let (responseCode, output) = try await loadPage(
+        filter.reasonFilters, resetCursor ? nil : storedCursor(for: filter))
+      try Task.checkCancellation()
 
       guard responseCode == 200, let output = output else {
-        let errorMessage = "Failed to load notifications (HTTP \(responseCode))"
         logger.error("Bad response from notifications API: \(responseCode)")
+        let failure = NSError(
+          domain: "NotificationsError", code: responseCode,
+          userInfo: [NSLocalizedDescriptionKey: "Bluesky didn’t respond. Pull to refresh or try again in a moment."])
         await MainActor.run {
-          self.error = NSError(domain: "NotificationsError", code: responseCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+          guard generation == self.fetchGeneration, filter == self.currentFilter else { return }
+          self.recordFailure(failure, resetCursor: resetCursor)
         }
         return
       }
@@ -347,49 +437,88 @@ private actor FollowRecordCreatedAtCacheActor {
       logger.info("Notification API completed in \(String(describing: requestStarted.duration(to: .now)), privacy: .public)")
       let groupingStarted = ContinuousClock.now
 
-      // Reset page counter when doing a full refresh
-      if resetCursor {
-        currentPage = 0
-      } else {
-        currentPage += 1
-      }
+      let nextPage = resetCursor ? 0 : storedPage(for: filter) + 1
 
       
       // Process the fetched notifications
       let newGroupedNotifications = await groupNotifications(
-        output.notifications, pageNumber: currentPage)
+        output.notifications, pageNumber: nextPage)
+      try Task.checkCancellation()
 
       logger.info("Notification hydration/grouping completed in \(String(describing: groupingStarted.duration(to: .now)), privacy: .public)")
       await MainActor.run {
+        guard !Task.isCancelled, generation == self.fetchGeneration, filter == self.currentFilter else { return }
+        self.setPagination(for: filter, cursor: output.cursor, page: nextPage)
         if resetCursor {
-          if self.groupedNotifications.isEmpty {
-            // Initial load, just set the notifications
-            self.groupedNotifications = newGroupedNotifications
-          } else {
-            // Refresh - merge with existing notifications
-            // Take the first page of new notifications
-            let newFirstPage = newGroupedNotifications
-
-            // Keep all notifications beyond the first page
-            let existingLaterPages = self.groupedNotifications.filter { $0.pageNumber > 0 }
-
-            // Combine new first page with existing later pages
-            self.groupedNotifications = newFirstPage + existingLaterPages
-          }
+          // A refresh starts a new cursor chain; old later pages must not be appended again.
+          self.unfilteredGroupedNotifications = newGroupedNotifications
         } else {
-          // Simply append the new notifications for pagination
-          self.groupedNotifications.append(contentsOf: newGroupedNotifications)
+          self.unfilteredGroupedNotifications.append(contentsOf: newGroupedNotifications)
         }
 
-        self.cursor = output.cursor
+        self.lastFetchDate = Date()
         self.hasMoreNotifications = output.cursor != nil
       }
 
     } catch {
+      guard !Task.isCancelled, !error.isCancellation else { return }
       logger.error("Error fetching notifications: \(error.localizedDescription)")
+      let message = UserFacingError.message(for: error, action: "load notifications")
+        ?? "Couldn’t load notifications. Try again."
+      let failure = NSError(
+        domain: "NotificationsError", code: (error as NSError).code,
+        userInfo: [NSLocalizedDescriptionKey: message])
       await MainActor.run {
-        self.error = error
+        guard generation == self.fetchGeneration, filter == self.currentFilter else { return }
+        self.recordFailure(failure, resetCursor: resetCursor)
       }
+    }
+  }
+
+  /// The production page loader: one `listNotifications` call on the client.
+  private nonisolated static func clientPageLoader(_ client: ATProtoClient) -> PageLoader {
+    { reasons, cursor in
+      // Use the filter reasons when creating parameters
+      let params = AppBskyNotificationListNotifications.Parameters(
+        reasons: reasons,
+        limit: 50,  // Increased from 30 to batch more notifications
+        cursor: cursor
+      )
+      return try await client.app.bsky.notification.listNotifications(input: params)
+    }
+  }
+
+  /// Refresh failures go to `error`; next-page failures go to `paginationError` and keep the cursor.
+  private func recordFailure(_ failure: Error, resetCursor: Bool) {
+    if resetCursor {
+      error = failure
+    } else {
+      paginationError = failure
+    }
+  }
+
+  private func storedCursor(for filter: NotificationFilter) -> String? {
+    switch filter {
+    case .all: return cursorForAll
+    case .mentions: return cursorForMentions
+    }
+  }
+
+  private func storedPage(for filter: NotificationFilter) -> Int {
+    switch filter {
+    case .all: return pageForAll
+    case .mentions: return pageForMentions
+    }
+  }
+
+  private func setPagination(for filter: NotificationFilter, cursor: String?, page: Int) {
+    switch filter {
+    case .all:
+      cursorForAll = cursor
+      pageForAll = page
+    case .mentions:
+      cursorForMentions = cursor
+      pageForMentions = page
     }
   }
 
@@ -401,7 +530,6 @@ private actor FollowRecordCreatedAtCacheActor {
 
     // Collect URIs to fetch for post subjects and parent posts
     var urisToFetch = Set<ATProtocolURI>()
-    var parentUrisToFetch = Set<ATProtocolURI>() // For reply parent posts
 
     for notification in notifications {
       switch notification.reason {
@@ -423,32 +551,46 @@ private actor FollowRecordCreatedAtCacheActor {
                   let repostRecord = record as? AppBskyFeedRepost {
           urisToFetch.insert(repostRecord.subject.uri)
         }
-      case "reply", "mention", "quote":
+      case "reply":
         urisToFetch.insert(notification.uri)
-      case "subscribed-post":
+        // Extract parent URI directly from the reply record
+        if case .knownType(let record) = notification.record,
+           let feedPost = record as? AppBskyFeedPost,
+           let replyRef = feedPost.reply {
+          urisToFetch.insert(replyRef.parent.uri)
+        }
+      case "mention", "quote", "subscribed-post":
         urisToFetch.insert(notification.uri)
       default:
         break
       }
     }
 
-    // Fetch posts that are referenced by notifications
-    let fetchedPosts = await fetchPosts(uris: Array(urisToFetch))
+    // Fetch posts and viewer follow records concurrently
+    let urisSnapshot = Array(urisToFetch)
+    async let fetchedPostsTask = fetchPosts(uris: urisSnapshot)
+    async let viewerFollowCreatedAtTask = fetchViewerFollowCreatedAtByURI(for: notifications)
+    var fetchedPosts = await fetchedPostsTask
+    let viewerFollowCreatedAtByURI = await viewerFollowCreatedAtTask
 
-    // Now collect parent URIs from reply posts
+    // Fallback: check if any reply parent was not decoded from notification.record
+    var missingParentUris = Set<ATProtocolURI>()
     for notification in notifications where notification.reason == "reply" {
       if let replyPost = fetchedPosts[notification.uri],
          case .knownType(let record) = replyPost.record,
          let feedPost = record as? AppBskyFeedPost,
-         let replyRef = feedPost.reply {
-        parentUrisToFetch.insert(replyRef.parent.uri)
+         let replyRef = feedPost.reply,
+         fetchedPosts[replyRef.parent.uri] == nil {
+        missingParentUris.insert(replyRef.parent.uri)
       }
     }
-
-    // Fetch parent posts for replies
-    let fetchedParentPosts = await fetchPosts(uris: Array(parentUrisToFetch))
-    let viewerFollowCreatedAtByURI = await fetchViewerFollowCreatedAtByURI(for: notifications)
-
+    if !missingParentUris.isEmpty {
+      let missingParents = await fetchPosts(uris: Array(missingParentUris))
+      for (uri, post) in missingParents {
+        fetchedPosts[uri] = post
+      }
+    }
+    let fetchedParentPosts = fetchedPosts
     // Sort raw notifications newest-first so grouping anchors are the newest notifications
     let sortedRawNotifications = notifications.sorted {
       $0.indexedAt.date > $1.indexedAt.date
@@ -491,8 +633,10 @@ private actor FollowRecordCreatedAtCacheActor {
         let key: String
 
         switch type {
-        case .like, .repost, .likeViaRepost, .repostViaRepost, .feedgenLike:
+        case .like, .repost, .feedgenLike:
           key = "\(type.rawValue)_\(notification.reasonSubject?.uriString() ?? "")"
+        case .likeViaRepost, .repostViaRepost:
+          key = "\(type.rawValue)_\(Self.viaRepostGroupingSubject(for: notification))"
         case .starterpackJoined:
           key = "\(type.rawValue)_\(notification.reasonSubject?.uriString() ?? "")"
         case .follow:
@@ -516,7 +660,7 @@ private actor FollowRecordCreatedAtCacheActor {
     }
 
     // Create grouped notifications
-    var groupedNotifications: [GroupedNotification] = []
+    var newGroups: [GroupedNotification] = []
 
     for (key, notificationGroup) in notificationGroups {
       guard let firstNotification = notificationGroup.first else {
@@ -588,16 +732,32 @@ private actor FollowRecordCreatedAtCacheActor {
         pageNumber: pageNumber
       )
 
-      groupedNotifications.append(groupedNotification)
+      newGroups.append(groupedNotification)
     }
 
     // Sort by most recent first
-    return groupedNotifications.sorted {
+    return newGroups.sorted {
       $0.latestNotification.indexedAt.date > $1.latestNotification.indexedAt.date
     }
   }
 
-  static func classifyFollowNotification(
+  /// Match the hydrated original post, even when the server omits reasonSubject.
+  nonisolated static func viaRepostGroupingSubject(
+    for notification: AppBskyNotificationListNotifications.Notification
+  ) -> String {
+    if case .knownType(let record) = notification.record {
+      if let like = record as? AppBskyFeedLike {
+        return like.subject.uri.uriString()
+      }
+      if let repost = record as? AppBskyFeedRepost {
+        return repost.subject.uri.uriString()
+      }
+    }
+    return notification.reasonSubject?.uriString()
+      ?? "\(notification.uri.uriString())_\(notification.cid)"
+  }
+
+  nonisolated static func classifyFollowNotification(
     inboundFollowCreatedAt: Date?,
     viewerFollowCreatedAt: Date?
   ) -> NotificationType {
@@ -642,7 +802,7 @@ private actor FollowRecordCreatedAtCacheActor {
     default: return nil
     }
   }
-  private static func followRecordCreatedAt(
+  private nonisolated static func followRecordCreatedAt(
     in notification: AppBskyNotificationListNotifications.Notification
   ) -> Date? {
     guard case .knownType(let record) = notification.record,
@@ -677,12 +837,18 @@ private actor FollowRecordCreatedAtCacheActor {
         createdAtByURI[uri] = cachedDate
         continue
       }
-
       guard let recordKey = uri.recordKey else {
         logger.warning("Skipping viewer follow record without rkey: \(uri.uriString())")
         continue
       }
 
+      // Fast path: parse creation timestamp directly from the TID record key without network calls
+      if let tid = try? TID(tidString: recordKey) {
+        let createdAt = tid.date
+        await followRecordCreatedAtCache.set(uri, createdAt: createdAt)
+        createdAtByURI[uri] = createdAt
+        continue
+      }
       do {
         let params = ComAtprotoRepoGetRecord.Parameters(
           repo: try ATIdentifier(string: uri.authority),
@@ -745,35 +911,43 @@ private actor FollowRecordCreatedAtCacheActor {
       Array(uniqueUrisToFetch[$0..<min($0 + batchSize, uniqueUrisToFetch.count)])
     }
 
-    // Process each batch
-    var allFetchedPosts: [ATProtocolURI: AppBskyFeedDefs.PostView] = [:]
+    // Process batches concurrently with TaskGroup
+    let fetchedBatchPosts: [[AppBskyFeedDefs.PostView]] = await withTaskGroup(
+      of: [AppBskyFeedDefs.PostView].self,
+      returning: [[AppBskyFeedDefs.PostView]].self
+    ) { group in
+      for batch in batches {
+        group.addTask {
+          do {
+            let params = AppBskyFeedGetPosts.Parameters(uris: batch)
+            let (responseCode, output) = try await client.app.bsky.feed.getPosts(input: params)
 
-    for batch in batches {
-      do {
-        let params = AppBskyFeedGetPosts.Parameters(uris: batch)
-        let (responseCode, output) = try await client.app.bsky.feed.getPosts(input: params)
-
-        guard responseCode == 200, let posts = output?.posts else {
-          logger.warning("Failed to fetch posts batch. Response code: \(responseCode)")
-          continue
+            guard responseCode == 200, let posts = output?.posts else {
+              return []
+            }
+            return posts
+          } catch {
+            return []
+          }
         }
-
-        // Update cache with newly fetched posts in a thread-safe way
-        let fetchTime = Date()
-        for post in posts {
-          await postCache.set(post.uri, post: post, timestamp: fetchTime)
-          allFetchedPosts[post.uri] = post
-        }
-
-      } catch {
-        logger.error("Error fetching posts batch: \(error.localizedDescription)")
       }
+
+      var results: [[AppBskyFeedDefs.PostView]] = []
+      for await batchPosts in group {
+        results.append(batchPosts)
+      }
+      return results
     }
 
+    let allFetchedPosts = fetchedBatchPosts.flatMap { $0 }
+    let fetchTime = Date()
+    if !allFetchedPosts.isEmpty {
+      await postCache.setBatch(allFetchedPosts, timestamp: fetchTime)
+    }
     // Combine cached and newly fetched posts
     var result = cachedPosts
-    for (uri, post) in allFetchedPosts {
-      result[uri] = post
+    for post in allFetchedPosts {
+      result[post.uri] = post
     }
 
     return result

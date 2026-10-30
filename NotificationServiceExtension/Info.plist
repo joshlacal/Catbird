@@ -2,6 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CatbirdFeatures</key>
+	<dict>
+		<key>CirclesSpaces</key>
+		<string>$(CATBIRD_FEATURE_CIRCLES_SPACES)</string>
+		<key>Live</key>
+		<string>$(CATBIRD_FEATURE_LIVE)</string>
+		<key>MLSChat</key>
+		<string>$(CATBIRD_FEATURE_MLS_CHAT)</string>
+		<key>RepositoryTools</key>
+		<string>$(CATBIRD_FEATURE_REPOSITORY_TOOLS)</string>
+	</dict>
+	<key>AppIdentifierPrefix</key>
+	<string>$(AppIdentifierPrefix)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>

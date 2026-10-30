@@ -25,6 +25,14 @@ import os.log
 actor IntentClientProvider {
   static let shared = IntentClientProvider()
 
+  enum Purpose: Sendable, Equatable {
+    case coveredUse
+    /// Only block/unblock and their profile parameter resolution may use this.
+    case safety
+    /// Only unlike/unrepost/unfollow and their target resolution may use this.
+    case removal
+  }
+
   /// One-time registration of blue.catbird.* / place.stream.* lexicon types with
   /// Petrel's decoder registry. App Intents can run in a process that never
   /// executes the main app's launch path (CatbirdApp.swift), so this can't
@@ -35,8 +43,11 @@ actor IntentClientProvider {
 
   private var clientsByDID: [String: ATProtoClient] = [:]
   private var inFlightByDID: [String: Task<ATProtoClient, Error>] = [:]
-
-  private init() {
+  private let regulatoryChecker: any AgeRegulatoryChecking
+  private var accountsRequiringAgeCheck: Set<String> = []
+  private var preflightsByDID: [String: Task<Void, Never>] = [:]
+  init(regulatoryChecker: any AgeRegulatoryChecking = AppleAgeRangeAdapter.shared) {
+    self.regulatoryChecker = regulatoryChecker
     _ = Self.lexiconRegistration
   }
 
@@ -46,14 +57,15 @@ actor IntentClientProvider {
   /// Concurrent first-time callers for the same DID share one in-flight
   /// bootstrap task (actor reentrancy would otherwise let each caller pass the
   /// cache-miss check and build a duplicate client).
-  func client(for did: String?) async throws -> ATProtoClient {
-    let resolvedDID: String
-    if let did {
-      resolvedDID = did
-    } else if let activeDID = IntentAccountResolver.activeDID() {
-      resolvedDID = activeDID
-    } else {
-      throw IntentError.notSignedIn
+  func client(for did: String?, purpose: Purpose = .coveredUse) async throws -> ATProtoClient {
+    let resolvedDID = try resolveDID(did)
+    if purpose == .coveredUse {
+      try await requireCoveredUse(for: resolvedDID)
+    }
+
+    // Reuse the app's active ATProtoClient when available for this DID (P235)
+    if let appClient = await resolveAppClient(for: resolvedDID) {
+      return appClient
     }
 
     if let cached = clientsByDID[resolvedDID] {
@@ -61,7 +73,11 @@ actor IntentClientProvider {
     }
 
     if let inFlight = inFlightByDID[resolvedDID] {
-      return try await inFlight.value
+      let client = try await inFlight.value
+      if purpose == .coveredUse {
+        try await requireCoveredUse(for: resolvedDID)
+      }
+      return client
     }
 
     let bootstrap = Task { try await self.makeStandaloneClient(for: resolvedDID) }
@@ -70,17 +86,90 @@ actor IntentClientProvider {
 
     let client = try await bootstrap.value
     clientsByDID[resolvedDID] = client
+    if purpose == .coveredUse {
+      try await requireCoveredUse(for: resolvedDID)
+    }
     return client
+  }
+
+  /// Performs only a passive OS check; a headless process cannot satisfy a
+  /// required age check. No age band or successful verification is retained.
+  /// Call again immediately before a covered write after asynchronous preparation.
+  func requireCoveredUse(for did: String?) async throws {
+    let resolvedDID = try resolveDID(did)
+    try Task.checkCancellation()
+
+    // If the active AppState already evaluated age access for this account, reuse its decision
+    let activeRequirement: PlatformAgeSignal.Requirement? = await MainActor.run {
+      guard let appState = AppStateManager.shared.lifecycle.appState,
+            appState.userDID == resolvedDID,
+            !appState.ageAccess.isCheckingRequirement else { return nil }
+      let requirement = appState.ageAccess.signal.requirement
+      return requirement == .unavailable ? nil : requirement
+    }
+
+    if let activeRequirement {
+      recordRequirement(activeRequirement, for: resolvedDID)
+    } else if let preflight = preflightsByDID[resolvedDID] {
+      await preflight.value
+    } else {
+      // Share concurrent checks for this account so an older response cannot
+      // overwrite a newer requirement. The task records its result before any
+      // waiter resumes; waiters never reapply an older result.
+      let preflight = Task {
+        let requirement = await self.regulatoryChecker.preflight().requirement
+        self.recordRequirement(requirement, for: resolvedDID)
+      }
+      preflightsByDID[resolvedDID] = preflight
+      defer { preflightsByDID.removeValue(forKey: resolvedDID) }
+      await preflight.value
+    }
+
+    try Task.checkCancellation()
+    guard !accountsRequiringAgeCheck.contains(resolvedDID) else {
+      throw IntentError.serviceUnavailable(
+        "This shortcut is unavailable under your device’s age requirements. Open Catbird to continue.")
+    }
+  }
+
+  private func resolveAppClient(for did: String) async -> ATProtoClient? {
+    await MainActor.run {
+      guard let appState = AppStateManager.shared.lifecycle.appState,
+            appState.userDID == did,
+            let client = appState.atProtoClient else {
+        return nil
+      }
+      return client
+    }
+  }
+
+  private func recordRequirement(_ requirement: PlatformAgeSignal.Requirement, for did: String) {
+    switch requirement {
+    case .ageCheckRequired:
+      accountsRequiringAgeCheck.insert(did)
+    case .none:
+      accountsRequiringAgeCheck.remove(did)
+    case .unavailable:
+      break
+    }
+  }
+
+  private func resolveDID(_ did: String?) throws -> String {
+    if let did { return did }
+    guard let activeDID = IntentAccountResolver.activeDID() else {
+      throw IntentError.notSignedIn
+    }
+    return activeDID
   }
 
   /// Drops a cached client so the next `client(for:)` call rebuilds it from
   /// scratch, e.g. after an auth failure surfaced by the intent that used it.
   func invalidateClient(for did: String) {
+    // Auth invalidation must not erase an already-observed OS requirement.
     clientsByDID.removeValue(forKey: did)
     inFlightByDID[did]?.cancel()
     inFlightByDID.removeValue(forKey: did)
   }
-
   // MARK: - Client Bootstrap
 
   private func makeStandaloneClient(for did: String) async throws -> ATProtoClient {

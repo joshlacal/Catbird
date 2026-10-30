@@ -15,6 +15,7 @@ public struct ExploreInterestsCard: View {
   public let onDismiss: () -> Void
 
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.fontManager) private var fontManager
   @Environment(AppState.self) private var appState
 
   public init(
@@ -36,12 +37,12 @@ public struct ExploreInterestsCard: View {
               .foregroundColor(.accentColor)
               .font(.subheadline)
             Text("Your Interests")
-              .appFont(AppTextRole.headline)
+              .appFont(fontManager.scaledCustomFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
               .foregroundColor(.primary)
           }
 
-          Text("Select topics you're interested in to help customize your recommendations across Catbird.")
-            .appFont(AppTextRole.caption)
+          Text("Choose the topics you love to shape your recommendations.")
+            .appFont(AppTextRole.subheadline)
             .foregroundColor(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -52,7 +53,7 @@ public struct ExploreInterestsCard: View {
           Image(systemName: "xmark")
             .font(.caption.weight(.semibold))
             .foregroundColor(.secondary)
-            .padding(6)
+            .frame(width: 44, height: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -63,7 +64,7 @@ public struct ExploreInterestsCard: View {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 6) {
             ForEach(userInterests, id: \.self) { interest in
-              Text(interest)
+              Text(BlueskyInterest.displayName(for: interest))
                 .appFont(AppTextRole.caption)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -84,15 +85,17 @@ public struct ExploreInterestsCard: View {
             .appFont(AppTextRole.caption)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.vertical, 9)
         .background(Color.accentColor)
         .foregroundColor(.white)
         .clipShape(Capsule())
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .padding(.top, 4)
     }
-    .padding(DesignTokens.Spacing.md)
+    .padding(DesignTokens.Spacing.base)
     .background(
       RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD)
         .fill(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))

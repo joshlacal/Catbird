@@ -1,4 +1,5 @@
 import Foundation
+import os
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -9,6 +10,7 @@ import DeclaredAgeRange
 /// Protocol for platform-level age regulatory checking and coarse age acquisition.
 protocol AgeRegulatoryChecking: Sendable {
     /// Passively queries on-device regulatory requirements without network calls or user prompts.
+    /// An unavailable lookup is distinct from an affirmative absence of requirements.
     func preflight() async -> PlatformAgeSignal
 
     #if canImport(UIKit)
@@ -24,9 +26,30 @@ protocol AgeRegulatoryChecking: Sendable {
 final class AppleAgeRangeAdapter: AgeRegulatoryChecking, Sendable {
     static let shared = AppleAgeRangeAdapter()
 
-    init() {}
+    private let initialPreflightTask: Task<PlatformAgeSignal, Never>
+    private let initialPreflightConsumed = OSAllocatedUnfairLock(initialState: false)
+
+    init() {
+        self.initialPreflightTask = Task {
+            await Self.performPreflight()
+        }
+    }
 
     func preflight() async -> PlatformAgeSignal {
+        let shouldConsumeInitial = initialPreflightConsumed.withLock { consumed -> Bool in
+            if !consumed {
+                consumed = true
+                return true
+            }
+            return false
+        }
+        if shouldConsumeInitial {
+            return await initialPreflightTask.value
+        }
+        return await Self.performPreflight()
+    }
+
+    private static func performPreflight() async -> PlatformAgeSignal {
         #if canImport(DeclaredAgeRange)
         if #available(iOS 26.4, macOS 26.4, *) {
             do {
@@ -40,9 +63,9 @@ final class AppleAgeRangeAdapter: AgeRegulatoryChecking, Sendable {
                     significantChangeConsentRequired: consentRequired
                 )
             } catch {
-                // Unsupported or unavailable returns no affirmative requirement
+                // The lifecycle owner must not mistake an error for a cleared requirement.
                 return PlatformAgeSignal(
-                    requirement: .none,
+                    requirement: .unavailable,
                     ageBand: nil,
                     significantChangeConsentRequired: false
                 )
@@ -58,7 +81,7 @@ final class AppleAgeRangeAdapter: AgeRegulatoryChecking, Sendable {
                 )
             } catch {
                 return PlatformAgeSignal(
-                    requirement: .none,
+                    requirement: .unavailable,
                     ageBand: nil,
                     significantChangeConsentRequired: false
                 )

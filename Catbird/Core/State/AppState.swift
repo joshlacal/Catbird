@@ -90,6 +90,97 @@ final class MLSServiceState {
     }
 }
 
+/// Owns AppState account tasks and admitted asynchronous service entry points.
+/// Closing admission precedes cancellation; a failed drain keeps the account closed.
+@MainActor
+final class AccountServiceWork {
+    enum BarrierError: LocalizedError {
+        case drainTimedOut, accountChanged, serviceResumeFailed, retirementFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .drainTimedOut: return "The previous account is still finishing a request. Try switching again."
+            case .accountChanged: return "The original account could not be verified after the interrupted switch."
+            case .serviceResumeFailed: return "The original account's services could not be safely resumed."
+            case .retirementFailed: return "The previous account's storage could not be safely closed."
+            }
+        }
+    }
+
+    private(set) var isSuspended = false
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var operations: Set<UUID> = []
+
+    @discardableResult
+    func start(
+        priority: TaskPriority? = nil,
+        operation: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never>? {
+        guard !isSuspended else { return nil }
+        let id = UUID()
+        let task = Task(priority: priority) { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.tasks.removeValue(forKey: id) }
+            guard !self.isSuspended, !Task.isCancelled else { return }
+            await operation()
+        }
+        tasks[id] = task
+        return task
+    }
+
+    func beginOperation() -> UUID? {
+        guard !isSuspended, !Task.isCancelled else { return nil }
+        let id = UUID()
+        operations.insert(id)
+        return id
+    }
+
+    func endOperation(_ id: UUID) { operations.remove(id) }
+    func isCurrent(_ id: UUID) -> Bool { !isSuspended && operations.contains(id) && !Task.isCancelled }
+
+    func suspend() {
+        isSuspended = true
+        for task in tasks.values { task.cancel() }
+    }
+
+    func drain(timeout: Duration = .seconds(2)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !tasks.isEmpty || !operations.isEmpty {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else { throw BarrierError.drainTimedOut }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func resume() { isSuspended = false }
+}
+
+/// Retains the real completion task independently of the caller's deadline.
+/// Timing out never cancels away the evidence that services are still draining.
+@MainActor
+final class AccountServiceDrainReceipt {
+    private(set) var isComplete = false
+    private var task: Task<Void, Never>?
+
+    init(operation: @escaping @MainActor () async -> Void) {
+        task = Task { @MainActor [weak self] in
+            await operation()
+            self?.isComplete = true
+        }
+    }
+
+    func wait(timeout: Duration = .seconds(2)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !isComplete {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else {
+                throw AccountServiceWork.BarrierError.drainTimedOut
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
 // MARK: - AppState
 
 /// Central state container for the Catbird app
@@ -165,6 +256,19 @@ final class AppState {
         return .defaultMode
     }
 
+    /// What a successful label-definitions load covered: the subscribed labelers and the client.
+    /// It mirrors the identity `ContentLabelDefinitionLookup` caches by, so an unchanged key needs no load.
+    private struct ModerationDefinitionsKey: Equatable {
+        let labelerDIDs: [String]
+        let client: ObjectIdentifier
+    }
+
+    private struct ModerationDefinitionsLoad {
+        let id: UUID
+        let key: ModerationDefinitionsKey
+        let task: Task<Void, Never>
+    }
+
     // MARK: - Core Properties
 
     /// User DID for this AppState instance (one AppState per account)
@@ -190,12 +294,13 @@ final class AppState {
     /// so its cache never straddles two different `ATProtoClient` instances or accounts.
     @ObservationIgnored private(set) var blockedAuthorHydrator: BlockedAuthorHydrator?
 
-    /// URL handling for deep links
-    @ObservationIgnored private(set) var urlHandler: URLHandler
 
 
-    /// Current sanitized platform age signal from on-device regulatory checking
-    var platformAgeSignal: PlatformAgeSignal = .none
+    /// Account-scoped derived access; raw Apple age bands never live on AppState.
+    let ageAccess: PlatformAgeAccess
+
+    @MainActor
+    var platformAgeSignal: PlatformAgeSignal { ageAccess.signal }
 
     /// Regulatory checker for on-device platform regulatory preflight
     @ObservationIgnored let regulatoryChecker: any AgeRegulatoryChecking
@@ -211,8 +316,15 @@ final class AppState {
     /// Shared renderer for inline Bluemoji custom emoji (verify + forge + cache).
     @ObservationIgnored let bluemojiRenderer = BluemojiRenderer()
 
-    /// User preference settings
-    var isAdultContentEnabled: Bool = false
+    /// Moderation policy for this account, rebuilt by `refreshModerationPolicy()` from the account's
+    /// server-confirmed preferences and its subscribed labelers' label definitions. It starts fail-closed.
+    private(set) var moderationPolicy: ModerationPolicy = .failClosed
+    /// Preserves confirmed preference values while a temporary platform ceiling applies.
+    @ObservationIgnored private var baseModerationPolicy: ModerationPolicy = .failClosed
+
+    /// Whether adult content may be shown for this account. It is derived from `moderationPolicy`, so it
+    /// is never stored, restored or written anywhere else.
+    var isAdultContentEnabled: Bool { moderationPolicy.adultContentEnabled }
 
     /// Chat mode preference, scoped per-account
     var chatMode: String {
@@ -221,12 +333,20 @@ final class AppState {
         }
     }
 
-    /// Used to track which tab was tapped twice to trigger scroll to top
-    /// NOTE: This needs to be observable so UIKit controllers can react to it
-    var tabTappedAgain: Int?
+    /// Last successfully loaded label value definitions of this account's subscribed labelers.
+    @ObservationIgnored private var moderationDefinitions: ContentLabelDefinitionLookup.Definitions = [:]
+    /// Subscribed labeler DIDs the current policy was built for, in subscription order.
+    @ObservationIgnored private var moderationLabelerDIDs: [String] = []
+    /// The labelers and client the last successful definitions load covered.
+    @ObservationIgnored private var loadedModerationDefinitionsKey: ModerationDefinitionsKey?
+    @ObservationIgnored private var moderationDefinitionsLoad: ModerationDefinitionsLoad?
+    /// The normalized labeler set the on-disk definitions cache was last consulted or written for.
+    @ObservationIgnored private var moderationDefinitionsDiskKey: [String]?
 
-    /// Current user's profile data for optimistic updates
-    @ObservationIgnored var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
+
+    /// Current user's profile data for optimistic updates.
+    /// Observed so the toolbar avatar and other account chrome update when it loads.
+    var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
 
     // Account switching transition state for smooth UX
     // NOTE: Do NOT use @ObservationIgnored here - SwiftUI must observe this to dismiss the loading overlay
@@ -253,10 +373,23 @@ final class AppState {
 
     /// Preferences manager for handling user preferences
     @ObservationIgnored let preferencesManager = PreferencesManager()
+    private struct PreferencesBootstrapKey: Equatable {
+        let userDID: String
+        let containerID: ObjectIdentifier
+    }
+    @ObservationIgnored private var lastPreferencesBootstrapKey: PreferencesBootstrapKey?
     @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
-    @ObservationIgnored let feedFeedbackManager = FeedFeedbackManager()
+    /// Scoped to this account: suspension for a switch or sign-out discards what it queued.
+    @MainActor @ObservationIgnored lazy var feedFeedbackManager = FeedFeedbackManager(
+        accountDID: userDID,
+        accountServiceWork: accountServiceWork,
+        clientProvider: { [weak self] in self?.atProtoClient }
+    )
+
+    /// Feed generator info by feed URI, so feeds know at once whether they accept feedback
+    @MainActor @ObservationIgnored lazy var feedGeneratorInfoCache = FeedGeneratorInfoCache()
 
     /// App-specific settings that aren't synced with the server
     @ObservationIgnored let appSettings = AppSettings()
@@ -284,6 +417,15 @@ final class AppState {
     /// Observable font state that triggers SwiftUI updates
     var fontDidChange: Int = 0
 
+    /// Font settings last pushed through `fontDidChange`. The debounced settings path fires for any
+    /// settings edit; bumping the counter when fonts did not change rebuilds every feed controller.
+    @ObservationIgnored private var appliedFontSignature: String?
+
+    private var currentFontSignature: String {
+        "\(appSettings.fontStyle)|\(appSettings.fontSize)|\(appSettings.lineSpacing)|\(appSettings.letterSpacing)|"
+            + "\(appSettings.dynamicTypeEnabled)|\(appSettings.maxDynamicTypeSize)"
+    }
+
     /// Public access to theme manager
     var themeManager: ThemeManager {
         _themeManager
@@ -294,11 +436,6 @@ final class AppState {
         _fontManager
     }
 
-    /// Navigation manager for handling navigation
-    @ObservationIgnored let navigationManager = AppNavigationManager()
-
-    /// Pending search request to be handled by the dedicated search tab
-    @ObservationIgnored var pendingSearchRequest: SearchRequest?
 
     /// Pending reauthentication request when account switching fails due to expired tokens
     @ObservationIgnored var pendingReauthenticationRequest: ReauthenticationRequest?
@@ -452,8 +589,8 @@ final class AppState {
         backupManagerStorage
     }
 
-    /// Network monitor for tracking connectivity status
-    @ObservationIgnored let networkMonitor = NetworkMonitor()
+    /// Connectivity belongs to the app, including retained account states.
+    @MainActor @ObservationIgnored let networkMonitor = NetworkMonitor.shared
 
     /// Onboarding manager for tracking user onboarding progress
     @ObservationIgnored let onboardingManager = OnboardingManager()
@@ -462,12 +599,18 @@ final class AppState {
 
     /// Cache of prefetched feeds by type
     @ObservationIgnored private let prefetchedFeedCache = PrefetchedFeedCache()
+    @MainActor @ObservationIgnored let trendingTopicMediaStore = TrendingTopicMediaStore()
 
     /// Flag to track if AuthManager initialization is complete
     @ObservationIgnored private var isAuthManagerInitialized = false
 
     // For task cancellation when needed
     @ObservationIgnored private var backgroundPollingTask: Task<Void, Never>?
+    @MainActor @ObservationIgnored private let accountServiceWork = AccountServiceWork()
+    @MainActor var isAccountSwitchSuspended: Bool { accountServiceWork.isSuspended }
+    @MainActor @ObservationIgnored private var accountRetirementTask: Task<Void, Error>?
+    @MainActor @ObservationIgnored private var accountPollerSuspension: AccountServiceDrainReceipt?
+    @MainActor @ObservationIgnored private var mlsStartupTask: Task<Void, Never>?
 
     // MARK: - Initialization
 
@@ -494,16 +637,31 @@ final class AppState {
     }
 
 
+    /// Opens an MLS conversation in the most recently active scene showing this account.
     @MainActor
-    func navigateToMLSConversation(_ conversationID: String) {
+    @discardableResult
+    func navigateToMLSConversation(
+        _ conversationID: String,
+        preferredSceneID: UUID? = nil
+    ) -> SceneRouteCoordinator.DeliveryResult {
         let chatTab = AppNavigationManager.chatTabIndex
         chatMode = "Catbird Groups"
-        navigationManager.targetMLSConversationId = conversationID
-        navigationManager.tabSelection?(chatTab)
-        navigationManager.updateCurrentTab(chatTab)
         #if os(iOS)
-        navigationManager.navigate(to: .mlsConversation(conversationID), in: chatTab)
+        let command = SceneRouteCommand.navigate(.mlsConversation(conversationID), tabIndex: chatTab)
+        #else
+        let command = SceneRouteCommand.showTab(chatTab, resetPath: false)
         #endif
+        let accountDID = userDID
+        return SceneRouteCoordinator.shared.submit(
+            SceneRouteRequest(accountDID: accountDID, command: command, preferredSceneID: preferredSceneID),
+            beforeDelivery: { context in
+                guard !context.isInvalidated, context.accountDID == accountDID else { return false }
+                #if !os(iOS)
+                context.navigationManager.targetMLSConversationId = conversationID
+                #endif
+                return true
+            }
+        )
     }
 
     @MainActor
@@ -515,6 +673,7 @@ final class AppState {
         self.userDID = userDID
         self.client = client
         self.regulatoryChecker = regulatoryChecker
+        self.ageAccess = PlatformAgeAccess(checker: regulatoryChecker)
         let authorityMode = Self.configuredMLSProtocolAuthorityMode()
         MLSAuthorityModeSharedState.setCurrentMode(authorityMode)
         logger.info("AppState initializing for account: \(userDID)")
@@ -531,7 +690,6 @@ final class AppState {
             chatMode = "Bluesky DMs"
         }
 
-        urlHandler = URLHandler()
         liveStatusManager = LiveStatusManager(appState: nil)
         liveEventService = LiveEventService(appState: nil)
         nuxPresenter = NuxAnnouncementPresenter(appState: nil)
@@ -556,7 +714,7 @@ final class AppState {
         // Initialize list manager with authenticated client
         listManager = ListManager(client: client, appState: nil)
 
-        // Initialize post hiding manager (preferences manager will be set after auth)
+        // Initialize post hiding manager (connected to preferences after initialization)
         postHidingManager = PostHidingManager()
 
         // Initialize chat manager with authenticated client
@@ -567,16 +725,6 @@ final class AppState {
         liveStatusManager.configure(with: self)
         liveEventService.configure(with: self)
         nuxPresenter.configure(with: self)
-        urlHandler.configure(with: self)
-        urlHandler.externalIntentPresenter.flushPendingIntent(with: self)
-        // Load user settings
-        if let storedContentSetting = AppSettingsModel.boolValue(
-            for: "isAdultContentEnabled",
-            accountDID: userDID,
-            defaults: sharedDefaults
-        ) {
-            isAdultContentEnabled = storedContentSetting
-        }
 
         // Configure notification manager with app state reference (skip for FaultOrdering)
         notificationManager.configure(with: self)
@@ -594,6 +742,34 @@ final class AppState {
         composerDraftManager.updateAppState(self)
         chatManager.updateAppState(self)
 
+        // Settings requests and post-save effects belong to the actual source-account drain.
+        preferencesManager.beginSettingsAccountOperation = { [weak self] in
+            self?.accountServiceWork.beginOperation()
+        }
+        preferencesManager.endSettingsAccountOperation = { [weak self] token in
+            self?.accountServiceWork.endOperation(token)
+        }
+        postHidingManager.updatePreferencesManager(preferencesManager, accountDID: userDID)
+        appSettings.persistence.startEffect = { [weak self] action in
+            guard let self else { return false }
+            return self.accountServiceWork.start(operation: action) != nil
+        }
+
+        // The moderation policy follows this account's stored preferences: every successful fetch and
+        // confirmed write rebuilds it. Until preferences are readable it is this account's fail-closed policy.
+        preferencesManager.storedPreferencesDidChange = { [weak self] accountDID in
+            guard let self, accountDID == self.userDID else { return }
+            self.refreshModerationPolicy()
+        }
+        ageAccess.decisionDidChange = { [weak self] in
+            guard let self else { return }
+            self.applyModerationPolicy(self.baseModerationPolicy)
+            NotificationCenter.default.post(
+                name: .platformAgeAccessDidChange, object: nil,
+                userInfo: ["accountDID": self.userDID])
+        }
+        refreshModerationPolicy()
+
         // Apply initial theme settings immediately from UserDefaults
         // This ensures proper theme is applied even before SwiftData is fully initialized
         appSettings.applyInitialThemeSettings(to: _themeManager)
@@ -606,12 +782,14 @@ final class AppState {
             setupThemeAndFontObservation()
         }
 
-        // Passive on-device regulatory preflight without network calls or user prompts
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let signal = await self.regulatoryChecker.preflight()
-            self.platformAgeSignal = signal
+        // Export observers must exist before the first derived-access invalidation.
+        _ = FeedWidgetDataProvider.shared
+        if #available(iOS 18.0, macOS 15.0, *) {
+            _ = SpotlightEntityDonator.shared
         }
+        // This passive task is owned and fenced by the account's age-access coordinator.
+        // A visible scene supplies a presenter only after an affirmative requirement.
+        ageAccess.startPreflight()
         // NOTE: Settings observation is set up later in initializePreferencesManager
         // to avoid duplicate observers
 
@@ -624,17 +802,198 @@ final class AppState {
         backgroundPollingTask?.cancel()
     }
 
+    /// Pause account-bound work before the shared client changes its credentials.
+    /// No service, editing session, cached model, or database is retired here.
+    @MainActor
+    func suspendForAccountSwitch() async throws {
+        guard appSettings.suspendLocalChanges(for: userDID) else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
+        accountServiceWork.suspend()
+        ageAccess.suspend()
+        feedFeedbackManager.discardPending()
+        trendingTopicMediaStore.invalidateForGraphChange()
+        settingsUpdateDebounceTimer?.invalidate()
+        settingsUpdateDebounceTimer = nil
+        backgroundPollingTask?.cancel()
+        backgroundPollingTask = nil
+        // The definitions load holds the settings account-I/O lease the drain below waits for. Cancel it
+        // before draining so its request aborts instead of running to the drain deadline.
+        moderationDefinitionsLoad?.task.cancel()
+        moderationDefinitionsLoad = nil
+        #if os(iOS)
+        // MLS writers stop and the MLS context closes before the drain, so the database
+        // close that follows a switch never races an in-flight MLS operation.
+        stopMLSStreams()
+        let mlsShutdownCompleted = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                await self.prepareMLSStorageReset()
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+        if !mlsShutdownCompleted {
+            logger.critical("🚨 MLS shutdown timed out while suspending account services")
+        }
+        #endif
+        try await suspendAccountPollers()
+        try await accountServiceWork.drain()
+        guard appSettings.flushPendingChangesForAccountSwitch(for: userDID) else {
+            throw SettingsAccountSwitchError.localSaveRefused(
+                appSettings.accountSwitchFlushFailure?.localizedDescription
+                    ?? "Your Settings changes could not be saved. Retry or discard them in Settings before switching accounts."
+            )
+        }
+    }
+
+    @MainActor
+    private func suspendAccountPollers() async throws {
+        let receipt: AccountServiceDrainReceipt
+        if let pending = accountPollerSuspension, !pending.isComplete {
+            receipt = pending
+        } else {
+            let notifications = notificationManager
+            let chat = chatManager
+            receipt = AccountServiceDrainReceipt {
+                async let notificationDrain: Void = notifications.suspendForAccountSwitch()
+                async let chatDrain: Void = chat.suspendForAccountSwitch()
+                _ = await (notificationDrain, chatDrain)
+            }
+            accountPollerSuspension = receipt
+        }
+        try await receipt.wait()
+    }
+
+    /// Reopen only the same retained account after authentication has been restored.
+    /// A failed proof or partial service resume leaves admission closed.
+    @MainActor
+    func resumeAfterInterruptedAccountSwitch(using expectedClient: ATProtoClient? = nil) async throws {
+        guard accountRetirementTask == nil else { throw AccountServiceWork.BarrierError.retirementFailed }
+        // Authentication switches credentials on the shared client in place. Keep
+        // the suspended service graph intact; updateClient would discard it.
+        let originalClient = client
+        if let expectedClient, originalClient !== expectedClient {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
+        guard accountServiceWork.isSuspended else { return }
+        try await accountPollerSuspension?.wait()
+        try await accountServiceWork.drain()
+        let authenticatedDID = try await originalClient.getDid()
+        guard authenticatedDID == userDID, client === originalClient else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
+        do {
+            guard await notificationManager.resumeAfterInterruptedAccountSwitch(accountDID: userDID),
+                  await chatManager.resumeAfterInterruptedAccountSwitch(accountDID: userDID),
+                  client === originalClient,
+                  try await originalClient.getDid() == userDID else {
+                throw AccountServiceWork.BarrierError.serviceResumeFailed
+            }
+            guard appSettings.resumeLocalChanges(for: userDID) else {
+                throw AccountServiceWork.BarrierError.accountChanged
+            }
+        } catch {
+            try? await suspendAccountPollers()
+            throw error
+        }
+        accountPollerSuspension = nil
+        accountServiceWork.resume()
+        ageAccess.startPreflight()
+        startBackgroundPolling()
+        // The drain above finished every admitted task, including a startup cancelled before it ran.
+        mlsStartupTask = nil
+        startMLSIfEnabled()
+    }
+
+    /// MLS starts only while this account admits work, so suspension cancels and drains it.
+    @MainActor
+    private func startMLSIfEnabled() {
+        guard mlsStartupTask == nil else { return }
+        guard ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
+            || ProcessInfo.processInfo.arguments.contains("--e2e-mode")
+            || CatbirdGatewayConfiguration.current.isRuntimeFixture else { return }
+        mlsStartupTask = accountServiceWork.start(priority: .utility) { [self] in
+            defer { mlsStartupTask = nil }
+            do {
+                try await initializeMLS()
+            } catch {
+                logger.error("MLS init failed from AppState startup: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Successful switches permanently retire this container; rollback must use
+    /// resumeAfterInterruptedAccountSwitch before this point instead.
+    @MainActor
+    func retireAfterAccountSwitch() async throws {
+        if let retirement = accountRetirementTask {
+            try await retirement.value
+            return
+        }
+        let retirement = Task { @MainActor [self] in
+            try await suspendForAccountSwitch()
+            ageAccess.suspend()
+        }
+        accountRetirementTask = retirement
+        try await retirement.value
+    }
+
+    /// Start a task only while this account admits work; suspension cancels and drains it.
+    @MainActor
+    @discardableResult
+    func startAccountTask(
+        priority: TaskPriority? = nil,
+        operation: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never>? {
+        accountServiceWork.start(priority: priority, operation: operation)
+    }
+
+    /// Direct preview reads finish before the shared client's account credentials may change.
+    @MainActor
+    func withTopicPreviewAccountOperation(_ operation: @MainActor () async -> Void) async {
+        guard let lease = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(lease) }
+        await operation()
+    }
+
+    /// Settings I/O is registered until its actual body ends, including cancellation.
+    @MainActor
+    func performSettingsAccountOperation<Value>(
+        _ operation: @escaping @MainActor () async throws -> Value
+    ) async throws -> Value {
+        guard AppStateManager.shared.lifecycle.appState === self,
+              let token = accountServiceWork.beginOperation() else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
+        defer { accountServiceWork.endOperation(token) }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
     /// Cleanup method called when this AppState is evicted from cache
     /// This cancels long-running tasks and releases resources without deallocating the object
     @MainActor
     func cleanup() {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
-
-        platformAgeSignal = .none
+        _ = appSettings.suspendLocalChanges(for: userDID)
+        accountServiceWork.suspend()
+        ageAccess.suspend()
+        feedFeedbackManager.discardPending()
+        trendingTopicMediaStore.invalidateForGraphChange()
+        settingsUpdateDebounceTimer?.invalidate()
+        settingsUpdateDebounceTimer = nil
 
         // Cancel long-running tasks
         backgroundPollingTask?.cancel()
         backgroundPollingTask = nil
+        moderationDefinitionsLoad?.task.cancel()
+        moderationDefinitionsLoad = nil
 
         // Stop the list poller AND every per-conversation message poller; a
         // surviving message poll loop retains self and keeps polling with the
@@ -715,68 +1074,60 @@ final class AppState {
 
     // MARK: - Background Polling
 
+    @MainActor
     private func startBackgroundPolling() {
-        backgroundPollingTask = Task(priority: .background) {
+        guard !accountServiceWork.isSuspended, backgroundPollingTask == nil else { return }
+        backgroundPollingTask = accountServiceWork.start(priority: .background) { [self] in
             var pollingCycleCount = 0
 
             while !Task.isCancelled {
                 pollingCycleCount += 1
 
-                await withTaskGroup(of: Void.self) { group in
-                    // Prune old feed models
-                    group.addTask {
-                        FeedModelContainer.shared.pruneOldModels(olderThan: 1800)
+                // Prune old feed models
+                FeedModelContainer.shared.pruneOldModels(olderThan: 1800)
+
+                // ═══════════════════════════════════════════════════════════════════════════
+                // PERIODIC WAL HEALTH CHECK (2024-12): Monitor database health every 6 cycles
+                // ═══════════════════════════════════════════════════════════════════════════
+                // Every 30 minutes (6 * 5 min cycles), check WAL file health and log metrics.
+                // This helps detect growing WAL files before they cause problems.
+                // ═══════════════════════════════════════════════════════════════════════════
+                if pollingCycleCount % 6 == 0 {
+                    let healthStatuses = await MLSGRDBManager.shared.checkAllWALHealth()
+                    let criticalCount = healthStatuses.filter { $0.status == .critical }.count
+                    let warningCount = healthStatuses.filter { $0.status == .warning }.count
+
+                    if criticalCount > 0 || warningCount > 0 {
+                        logger.warning("📊 WAL Health Check: \(criticalCount) critical, \(warningCount) warning")
+
+                        // Attempt passive checkpoint for problematic databases
+                        await MLSGRDBManager.shared.performIdleMaintenance(aggressiveCheckpoint: false)
                     }
 
-                    // Refresh preferences
-                    group.addTask {
-                        if await self.isAuthenticated {
-                            do {
-                                try await self.preferencesManager.fetchPreferences(forceRefresh: true)
-                                await MainActor.run {
-                                    self.nuxPresenter.evaluateAndPresentIfNeeded(
-                                        isWelcomeShowing: self.onboardingManager.showWelcomeSheet
-                                    )
-                                }
-                            } catch {
-                                self.logger.error(
-                                    "Error during periodic preferences refresh: \(error.localizedDescription)"
-                                )
-                            }
-                        }
-                    }
-
-                    // ═══════════════════════════════════════════════════════════════════════════
-                    // PERIODIC WAL HEALTH CHECK (2024-12): Monitor database health every 6 cycles
-                    // ═══════════════════════════════════════════════════════════════════════════
-                    // Every 30 minutes (6 * 5 min cycles), check WAL file health and log metrics.
-                    // This helps detect growing WAL files before they cause problems.
-                    // ═══════════════════════════════════════════════════════════════════════════
-                    if pollingCycleCount % 6 == 0 {
-                        group.addTask {
-                            let healthStatuses = await MLSGRDBManager.shared.checkAllWALHealth()
-                            let criticalCount = healthStatuses.filter { $0.status == .critical }.count
-                            let warningCount = healthStatuses.filter { $0.status == .warning }.count
-
-                            if criticalCount > 0 || warningCount > 0 {
-                                self.logger.warning("📊 WAL Health Check: \(criticalCount) critical, \(warningCount) warning")
-
-                                // Attempt passive checkpoint for problematic databases
-                                await MLSGRDBManager.shared.performIdleMaintenance(aggressiveCheckpoint: false)
-                            }
-
-                            // Log connection pool metrics
-                            let metrics = await MLSGRDBManager.shared.getConnectionPoolMetrics()
-                            if metrics.status != .healthy {
-                                self.logger.warning("📊 Connection Pool: \(metrics.status.rawValue) - \(metrics.openDatabaseCount) open, \(metrics.recentForceCloseCount) recent force closes")
-                            }
-                        }
+                    // Log connection pool metrics
+                    let metrics = await MLSGRDBManager.shared.getConnectionPoolMetrics()
+                    if metrics.status != .healthy {
+                        logger.warning("📊 Connection Pool: \(metrics.status.rawValue) - \(metrics.openDatabaseCount) open, \(metrics.recentForceCloseCount) recent force closes")
                     }
                 }
 
-                // Wait for 5 minutes before the next poll
+                // Wait before next check (no forced 5-min preferences poll; refreshed on foreground when stale)
                 try? await Task.sleep(for: .seconds(300))
             }
+        }
+    }
+
+    /// Refreshes server preferences on foreground or demand when stale (15 min window)
+    @MainActor
+    func refreshPreferencesIfStale(staleThreshold: TimeInterval = 900) async {
+        guard await isAuthenticated else { return }
+        do {
+            try await preferencesManager.refreshIfStale(staleThreshold: staleThreshold)
+            self.nuxPresenter.evaluateAndPresentIfNeeded(
+                isWelcomeShowing: self.onboardingManager.showWelcomeSheet
+            )
+        } catch {
+            logger.debug("Stale preferences refresh skipped or failed: \(error.localizedDescription)")
         }
     }
 
@@ -790,7 +1141,6 @@ final class AppState {
         // Configure Nuke image pipeline with GIF support
         configureImagePipeline()
 
-        configureURLHandler()
 
         // NOTE: Auth initialization removed - client is already authenticated and passed in init
         // All managers were initialized with the client in init
@@ -804,7 +1154,13 @@ final class AppState {
 
         postManager.updateClient(client)
         preferencesManager.updateClient(client)
-        await notificationManager.updateClient(client)
+        // Seed accept-labelers from the stored confirmed preferences before any feed request.
+        // No-op until `initializePreferencesManager` has configured the account's row.
+        await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
+        // P128: notification-client setup moved off launch critical path
+        accountServiceWork.start { [self] in
+            await notificationManager.updateClient(client)
+        }
         graphManager = GraphManager(atProtoClient: client)
         blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(client)
@@ -814,28 +1170,15 @@ final class AppState {
         await chatManager.updateClient(client)
         updateChatUnreadCount()
 
-        Task { [weak self] in
-            await self?.probeCircleCapabilities()
+        accountServiceWork.start { [self] in
+            await probeCircleCapabilities()
         }
 
         // Setup other components as needed (skip for FaultOrdering)
         startBackgroundPolling()
         setupNotifications()
         setupChatObservers()
-
-        let shouldStartMLS = ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
-            || ProcessInfo.processInfo.arguments.contains("--e2e-mode")
-            || CatbirdGatewayConfiguration.current.isRuntimeFixture
-        if shouldStartMLS {
-            Task(priority: .utility) { [weak self] in
-                guard let self else { return }
-                do {
-                    try await self.initializeMLS()
-                } catch {
-                    self.logger.error("MLS init failed from AppState startup: \(error.localizedDescription)")
-                }
-            }
-        }
+        startMLSIfEnabled()
 
         // Apply current theme settings (this will now use SwiftData if available, UserDefaults fallback otherwise)
         _themeManager.applyTheme(
@@ -849,20 +1192,23 @@ final class AppState {
         )
 
         if isAuthenticated {
-            Task {
-                // Load current user profile for optimistic updates
-                await self.loadCurrentUserProfile(did: userDID)
-
-                await AppStateManager.shared.authentication.refreshAvailableAccounts()
+            accountServiceWork.start { [self] in
+                // Load current user profile for optimistic updates, concurrently with the preferences
+                // fetch: the feed's moderation policy and accept-labelers header wait on preferences.
+                async let profileLoad: Void = self.loadCurrentUserProfile(did: userDID)
 
                 // Synchronize server preferences with app settings
                 do {
-                    try await preferencesManager.fetchPreferences(forceRefresh: true)
+                    try await preferencesManager.fetchPreferences(forceRefresh: true, sharingQueuedRead: true)
+                    await postHidingManager.loadFromPreferences()
                     try await preferencesManager.syncPreferencesWithAppSettings(self)
                     logger.info("Successfully synchronized server preferences with app settings")
                 } catch {
                     logger.error("Failed to synchronize preferences: \(error.localizedDescription)")
                 }
+
+                await profileLoad
+                await AppStateManager.shared.authentication.refreshAvailableAccounts()
 
                 await self.activitySubscriptionService.refreshSubscriptions()
                 self.nuxPresenter.evaluateAndPresentIfNeeded(
@@ -885,6 +1231,8 @@ final class AppState {
     func refreshAfterAccountSwitch() async {
         logger.info("Refreshing data after account switch")
         MLSDeviceUUIDCache.shared.invalidate()
+        // Before any network work, the policy becomes this account's own confirmed state (or fail-closed).
+        refreshModerationPolicy()
         isTransitioningAccounts = true
         _circleNotificationsModel = nil
         _circleNotificationService = nil
@@ -895,16 +1243,10 @@ final class AppState {
         if let transport = e2eCircleTransport { installE2ECircleFixture(transport: transport) }
         #endif
 
-        Task { [weak self] in
-            await self?.probeCircleCapabilities()
+        accountServiceWork.start { [self] in
+            await probeCircleCapabilities()
         }
-        platformAgeSignal = .none
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let signal = await self.regulatoryChecker.preflight()
-            self.platformAgeSignal = signal
-        }
+        ageAccess.startPreflight()
         // Clear old prefetched data and any shadowed interactions
         await prefetchedFeedCache.clear()
         await postShadowManager.clearAll()
@@ -912,7 +1254,13 @@ final class AppState {
         // Update client references in all managers before kicking off parallel refresh work
         postManager.updateClient(client)
         preferencesManager.updateClient(client)
-        await notificationManager.updateClient(client)
+        // The shared client still carries the previous account's labelers; seed this account's
+        // confirmed ones before the feed load below.
+        await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
+        // P128: notification-client setup moved off account-switch critical path
+        accountServiceWork.start { [self] in
+            await notificationManager.updateClient(client)
+        }
 
         chatManager.updateAppState(self) // Wire AppState reference to ChatManager
         await chatManager.updateClient(client) // Update ChatManager client
@@ -943,7 +1291,7 @@ final class AppState {
         listManager.updateAppState(self)
 
         // Run the heavyweight refresh in the background to keep the UI responsive
-        Task(priority: .userInitiated) { [weak self] in
+        accountServiceWork.start(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             await self.runPostSwitchRefreshWork()
         }
@@ -954,20 +1302,22 @@ final class AppState {
 
     @MainActor
     private func runPostSwitchRefreshWork() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         logger.info("🔐 Setting up MLS database for account: \(self.userDID)")
         async let mlsDatabaseTask: Void = setupMLSDatabase(for: userDID)
         async let preferencesTask: Void = refreshPreferencesAfterAccountSwitch()
         async let profileTask: Void = loadCurrentUserProfile(did: userDID)
 
         // Pre-warm following feed without blocking the main transition
-        Task(priority: .userInitiated) { [weak self] in
+        accountServiceWork.start(priority: .userInitiated) { [weak self] in
             await self?.prewarmFollowingFeed()
         }
 
         // Trigger explicit feed data load for all active feeds
         // This ensures that even if we preserved cache, we check for new content
         // and that the UI has data to show if the cache was empty.
-        Task(priority: .userInitiated) {
+        accountServiceWork.start(priority: .userInitiated) {
             await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
         }
 
@@ -980,8 +1330,11 @@ final class AppState {
 
     @MainActor
     private func refreshPreferencesAfterAccountSwitch() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         do {
-            try await preferencesManager.fetchPreferences(forceRefresh: true)
+            try await preferencesManager.fetchPreferences(forceRefresh: true, sharingQueuedRead: true)
+            await postHidingManager.loadFromPreferences()
             logger.info("Successfully refreshed preferences after account switch")
 
             try await preferencesManager.syncPreferencesWithAppSettings(self)
@@ -1143,6 +1496,8 @@ final class AppState {
     /// Pre-warms the Following feed for the new account to enable smooth crossfade
     @MainActor
     private func prewarmFollowingFeed() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         // Use this AppState's authenticated client
         let client = self.client
 
@@ -1165,6 +1520,7 @@ final class AppState {
                 prewarmingFeedData = nil
                 return
             }
+            guard accountServiceWork.isCurrent(operation) else { return }
             // Store for potential crossfade transition
             prewarmingFeedData = output.feed
 
@@ -1189,14 +1545,6 @@ final class AppState {
     func forceUpdateAuthState(_ isAuthenticated: Bool) {
         logger.warning("Force updating auth state to: \(isAuthenticated)")
         // This is a safety mechanism, prefer not to use it
-    }
-
-    // MARK: - User Settings
-
-    /// Toggles adult content setting
-    func toggleAdultContent() {
-        isAdultContentEnabled.toggle()
-        sharedDefaults.set(isAdultContentEnabled, forKey: scopedSharedDefaultsKey("isAdultContentEnabled"))
     }
 
     // MARK: - Feed Methods
@@ -1227,7 +1575,7 @@ final class AppState {
         didSet { if circleCapability != .supported { circleSupportsImages = false } }
     }
     private(set) var circleSupportsImages = false
-    var circlesEnabled: Bool { circleCapability == .supported }
+    var circlesEnabled: Bool { CatbirdFeatures.circlesSpaces && circleCapability == .supported }
     @ObservationIgnored private var circleCapabilityProbeID: UUID?
     @ObservationIgnored private var circleCapabilityPDSURL: URL?
 
@@ -1307,6 +1655,10 @@ final class AppState {
     /// Unknown errors hide entry points without classifying the PDS as unsupported.
     @MainActor
     func probeCircleCapabilities() async {
+        guard CatbirdFeatures.circlesSpaces else {
+            circleCapability = .unknown
+            return
+        }
         guard AppStateManager.shared.lifecycle.appState === self else { return }
         let probeID = UUID()
         circleCapabilityProbeID = probeID
@@ -2106,6 +2458,8 @@ final class AppState {
     /// Load the current user's profile for optimistic updates
     @MainActor
     private func loadCurrentUserProfile(did: String) async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         guard let client = atProtoClient else {
             logger.error("❌ Cannot load profile - atProtoClient is nil")
             return
@@ -2116,6 +2470,7 @@ final class AppState {
                 input: .init(actor: ATIdentifier(string: did))
             )
 
+            guard accountServiceWork.isCurrent(operation) else { return }
             if responseCode == 200, let profile = profileData {
                 // Convert ProfileViewDetailed to ProfileViewBasic
                 currentUserProfile = AppBskyActorDefs.ProfileViewBasic(
@@ -2142,13 +2497,6 @@ final class AppState {
 
     // MARK: Navigation
 
-    @MainActor
-    func configureURLHandler() {
-        urlHandler.navigateAction = { [weak self] destination, tabIndex in
-            self?.navigationManager.navigate(to: destination, in: tabIndex)
-        }
-    }
-
     /// Configure Nuke image pipeline with GIF animation support
     private func configureImagePipeline() {
         Task {
@@ -2166,10 +2514,25 @@ final class AppState {
     /// Initializes the preferences manager with a model context
     @MainActor
     func initializePreferencesManager(with modelContext: ModelContext) {
+        let key = PreferencesBootstrapKey(userDID: userDID, containerID: ObjectIdentifier(modelContext.container))
+        if lastPreferencesBootstrapKey == key {
+            logger.debug("Skipping duplicate preferences bootstrap for \(self.userDID)")
+            return
+        }
+        lastPreferencesBootstrapKey = key
+
         preferencesManager.configure(accountDID: userDID)
         preferencesManager.setModelContext(modelContext)
         appSettings.initialize(with: modelContext, accountDID: userDID)
         logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
+
+        // The persisted row is readable now: use this account's own confirmed preferences, if any.
+        refreshModerationPolicy()
+        // Seed the accept-labelers header from the same confirmed row before any feed request; the
+        // server preferences fetch keeps it current. No-op until the client is set in `initialize()`.
+        accountServiceWork.start { [self] in
+            await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
+        }
 
         // Apply theme settings (now that SwiftData is available, this will use the persisted values)
         _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode, accentColor: appSettings.accentColor)
@@ -2186,6 +2549,7 @@ final class AppState {
             dynamicTypeEnabled: appSettings.dynamicTypeEnabled,
             maxDynamicTypeSize: appSettings.maxDynamicTypeSize
         )
+        if appliedFontSignature == nil { appliedFontSignature = currentFontSignature }
 
         // Set up proper reactive observation for settings changes
         setupSettingsObservation()
@@ -2279,8 +2643,10 @@ final class AppState {
             forName: NSNotification.Name("AppSettingsChanged"),
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
+        ) { [weak self] notification in
+            guard let self, !self.accountServiceWork.isSuspended,
+                  AppStateManager.shared.lifecycle.appState === self,
+                  notification.userInfo?["accountDID"] as? String == self.userDID else { return }
 
             // Create a hash of current settings to detect actual changes
             let currentSettingsHash = self.createSettingsHash()
@@ -2297,7 +2663,8 @@ final class AppState {
             // Debounce rapid setting changes
             self.settingsUpdateDebounceTimer?.invalidate()
             self.settingsUpdateDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
+                guard let self, !self.accountServiceWork.isSuspended,
+                      AppStateManager.shared.lifecycle.appState === self else { return }
 
                 self.logger.debug("Applying debounced settings change")
 
@@ -2318,12 +2685,14 @@ final class AppState {
                     maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
                 )
 
-                // Trigger SwiftUI updates
+                // Trigger SwiftUI updates. ThemeManager posts ThemeChanged itself when the theme
+                // really changed; fonts only rebuild views when their settings moved.
                 self.themeDidChange += 1
-                self.fontDidChange += 1
-
-                // Update URL handler with new browser preference
-                self.urlHandler.useInAppBrowser = self.appSettings.useInAppBrowser
+                let fontSignature = self.currentFontSignature
+                if fontSignature != self.appliedFontSignature {
+                    self.appliedFontSignature = fontSignature
+                    self.fontDidChange += 1
+                }
 
                 // Update VideoCoordinator with new autoplay preference
                 VideoCoordinator.shared.appSettings = self.appSettings
@@ -2342,6 +2711,7 @@ final class AppState {
         var hasher = Hasher()
         hasher.combine(appSettings.theme)
         hasher.combine(appSettings.darkThemeMode)
+        hasher.combine(appSettings.accentColor)
         hasher.combine(appSettings.fontStyle)
         hasher.combine(appSettings.fontSize)
         hasher.combine(appSettings.lineSpacing)
@@ -2393,25 +2763,18 @@ final class AppState {
     // MARK: - Push Notifications Setup
 
     /// Set up push notifications
+    @MainActor
     private func setupNotifications() {
         // Set the notification manager as the delegate for UNUserNotificationCenter
         UNUserNotificationCenter.current().delegate = notificationManager
 
-        // Ensure widget has initial data - force update after a delay to allow app to fully initialize
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            guard let self = self else { return }
-            self.notificationManager.updateWidgetUnreadCount(self.notificationManager.unreadCount)
-            self.logger.info(
-                "Initializing widget data at app startup with count: \(self.notificationManager.unreadCount)"
-            )
-        }
+        // P010/L6: removed delayed updateWidgetUnreadCount write; configure/checkUnread publish with dedup
 
         // Configure notification manager with app state reference for navigation
         notificationManager.configure(with: self)
 
         // Check current notification status
-        Task {
+        accountServiceWork.start { [self] in
             await notificationManager.checkNotificationStatus()
         }
 
@@ -2433,9 +2796,11 @@ final class AppState {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { [weak self] in
-                    await self?.notificationManager.checkUnreadNotifications()
-                    await self?.probeCircleCapabilities()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.notificationManager.scheduleUnreadCheck()
+                    await self.refreshPreferencesIfStale()
+                    await self.probeCircleCapabilities()
                 }
             }
         #elseif os(macOS)
@@ -2444,9 +2809,11 @@ final class AppState {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { [weak self] in
-                    await self?.notificationManager.checkUnreadNotifications()
-                    await self?.probeCircleCapabilities()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.notificationManager.scheduleUnreadCheck()
+                    await self.refreshPreferencesIfStale()
+                    await self.probeCircleCapabilities()
                 }
             }
         #endif
@@ -2972,11 +3339,13 @@ final class AppState {
     }
 
     /// Setup chat observers and background polling for unread messages
+    @MainActor
     private func setupChatObservers() {
         // Set up callback for when chat unread count changes
         chatManager.onUnreadCountChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.updateChatUnreadCount()
+                guard let self, !self.accountServiceWork.isSuspended else { return }
+                self.updateChatUnreadCount()
             }
         }
 
@@ -2985,20 +3354,23 @@ final class AppState {
         // backoff); each tick drives the unread badge and MLS list refresh here.
         chatManager.onConversationsPolled = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self = self, case .authenticated = self.authState else { return }
+                guard let self, !self.accountServiceWork.isSuspended,
+                      case .authenticated = self.authState else { return }
                 self.updateChatUnreadCount()
-                await self.loadMLSConversations()
+                self.accountServiceWork.start { [weak self] in
+                    await self?.loadMLSConversations()
+                }
             }
         }
         chatManager.startConversationsPolling()
 
         // Update chat unread count initially
-        Task { @MainActor in
+        accountServiceWork.start { [self] in
             updateChatUnreadCount()
         }
 
         // Load MLS conversations initially
-        Task { @MainActor in
+        accountServiceWork.start { [self] in
             await loadMLSConversations()
         }
 
@@ -3014,13 +3386,16 @@ final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                self.chatManager.startConversationsPolling()
-                await self.chatManager.loadConversations(refresh: true)
-                self.updateChatUnreadCount()
+                guard let self else { return }
+                self.accountServiceWork.start { [weak self] in
+                    guard let self else { return }
+                    self.chatManager.startConversationsPolling()
+                    await self.chatManager.loadConversations(refresh: true)
+                    self.updateChatUnreadCount()
 
-                // Also reload MLS conversations
-                await self.loadMLSConversations()
+                    // Also reload MLS conversations
+                    await self.loadMLSConversations()
+                }
             }
         }
     }
@@ -3030,7 +3405,10 @@ final class AppState {
     }
 
     /// Syncs notification-related user data with the server
+    @MainActor
     func syncNotificationData() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         await notificationManager.syncAllUserData()
     }
 
@@ -3081,12 +3459,14 @@ final class AppState {
     @MainActor
     func updateClient(_ newClient: ATProtoClient) {
         logger.info("Updating AppState client reference for user: \(self.userDID)")
+        ageAccess.suspend()
         circleCapabilityProbeID = nil
         circleCapability = .unknown
         _circleService = nil
         _circleNotificationService = nil
         _circleNotificationsModel = nil
         client = newClient
+        ageAccess.startPreflight()
         #if DEBUG
         if let transport = e2eCircleTransport { installE2ECircleFixture(transport: transport) }
         #endif
@@ -3094,18 +3474,25 @@ final class AppState {
         // Update all managers that hold client references
         postManager.updateClient(newClient)
         preferencesManager.updateClient(newClient)
+        // Re-read this account's own stored policy for the new client before any request uses it.
+        refreshModerationPolicy()
+        // The new client starts without this account's accept-labelers header; seed it from the
+        // confirmed stored row so feed requests made before the next preferences fetch carry it.
+        accountServiceWork.start { [self] in
+            await preferencesManager.applyAcceptLabelersHeaderFromConfirmedPreferences()
+        }
         graphManager = GraphManager(atProtoClient: newClient)
         // Token refresh / re-login: fresh hydrator so stale-token failures don't
         // poison the identity cache for the (unchanged) account.
         blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(newClient)
         // Update notification manager (async operation)
-        Task {
+        accountServiceWork.start { [self] in
             await notificationManager.updateClient(newClient)
         }
 
         // Update chat manager (async operation)
-        Task {
+        accountServiceWork.start { [self] in
             await chatManager.updateClient(newClient)
         }
 
@@ -3170,64 +3557,6 @@ final class AppState {
         )
     }
 
-    // MARK: - Post Composer Presentation
-
-    /// Present the post composer for creating a new post, reply, or quote post
-    @MainActor
-    func presentPostComposer(
-        parentPost: AppBskyFeedDefs.PostView? = nil,
-        quotedPost: AppBskyFeedDefs.PostView? = nil
-    ) {
-        presentPostComposer(initialText: nil, parentPost: parentPost, quotedPost: quotedPost)
-    }
-
-    /// Present the post composer with optional prefilled initial text, preserving reply or quote context
-    @MainActor
-    func presentPostComposer(
-        initialText: String?,
-        parentPost: AppBskyFeedDefs.PostView? = nil,
-        quotedPost: AppBskyFeedDefs.PostView? = nil
-    ) {
-        // Track quote interaction for feed feedback
-        if let quotedPost = quotedPost {
-            feedFeedbackManager.trackQuote(postURI: quotedPost.uri)
-        }
-
-        // Create the UIKit-backed post composer view with either a parent post (for reply) or quoted post
-        let composerView = PostComposerViewUIKit(
-            parentPost: parentPost,
-            quotedPost: quotedPost,
-            initialText: initialText,
-            appState: self
-        )
-        .applyAppStateEnvironment(self)
-
-        #if os(iOS)
-            // Create a UIHostingController for the SwiftUI view
-            let hostingController = UIHostingController(rootView: composerView)
-
-            // Configure presentation style
-            hostingController.modalPresentationStyle = .formSheet
-            // Allow swipe-to-dismiss to enable draft auto-persist on dismiss
-            hostingController.isModalInPresentation = false
-
-            // Present the composer using the appropriate window system
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                rootViewController.present(hostingController, animated: true)
-            }
-        #elseif os(macOS)
-            // On macOS, present as a new window
-            let hostingController = NSHostingController(rootView: composerView)
-            let window = NSWindow(contentViewController: hostingController)
-            window.title = "Post"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 600, height: 400))
-            window.center()
-            window.makeKeyAndOrderFront(nil)
-        #endif
-    }
-
     // MARK: - Performance Optimization Methods
 
     /// Waits for the next refresh cycle of the app state
@@ -3284,6 +3613,7 @@ final class AppState {
     @MainActor
     func notifyAccountSwitched() {
         logger.info("Account switched notification")
+        ThreadManager.clearPrefillCache()
         stateInvalidationBus.notifyAccountSwitched()
     }
 
@@ -3315,62 +3645,214 @@ final class AppState {
         stateInvalidationBus.notifyThreadUpdated(rootUri)
     }
 
+    // MARK: - Platform-required age access
+
+    #if os(iOS)
+    /// The scene supplies only its presenter. Apple bands stay inside the coordinator's
+    /// immediate decision; a switched account or replaced client cannot accept a result.
+    @MainActor
+    func requestPlatformAgeBand(
+        from presenter: UIViewController,
+        isCurrent: @escaping @MainActor () -> Bool
+    ) async {
+        let manager = AppStateManager.shared
+        let accountRevision = manager.settingsAccountContextRevision
+        let requestClient = client
+        let ownsRequest: @MainActor () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !Task.isCancelled
+                && manager.lifecycle.appState === self
+                && manager.settingsAccountContextRevision == accountRevision
+                && self.client === requestClient
+                && !self.accountServiceWork.isSuspended
+                && isCurrent()
+        }
+        guard ownsRequest() else { return }
+        await ageAccess.request(
+            using: { [regulatoryChecker] in
+                guard ownsRequest() else { throw CancellationError() }
+                return try await regulatoryChecker.requestAgeBand(from: presenter)
+            },
+            isCurrent: ownsRequest)
+    }
+    #endif
+
+    // MARK: - Moderation Policy
+
+    /// Rebuilds `moderationPolicy` for this account from its server-confirmed preferences.
+    ///
+    /// The policy is built from the account's stored `Preferences` row only when that row belongs to
+    /// `userDID` and `hasConfirmedServerPreferences` is true: `adultContentEnabled`, `contentLabelPrefs`
+    /// and `labelers`. Without such a row it is this account's fail-closed policy: adult content off,
+    /// builtin label defaults, and only the Bluesky moderation service. A row that cannot be read leaves
+    /// an existing policy for this account in place and never borrows another account's value.
+    ///
+    /// Subscribed labelers' label definitions load in the background. The policy is built at once with the
+    /// last successful definitions and rebuilt when a load completes for the same labelers. A failed load
+    /// keeps those definitions.
+    @MainActor
+    func refreshModerationPolicy() {
+        guard let subscriptions = rebuildModerationPolicy() else { return }
+        loadModerationDefinitions(for: subscriptions)
+    }
+
+    /// Waits for the label-definitions load in flight, if any. The load never throws; a result that no
+    /// longer applies is dropped. Callers use this to sequence work after the background load.
+    @MainActor
+    func awaitModerationDefinitionsLoad() async {
+        await moderationDefinitionsLoad?.task.value
+    }
+
+    /// Returns the confirmed row's labeler subscriptions, or `nil` when the policy is fail-closed or kept.
+    @MainActor
+    @discardableResult
+    private func rebuildModerationPolicy() -> [LabelerPreference]? {
+        let stored: Preferences?
+        do {
+            stored = try preferencesManager.confirmedFeedFilterPreferences()
+        } catch {
+            logger.debug("Stored preferences are not readable yet: \(error.localizedDescription)")
+            if moderationPolicy.accountDID != userDID { applyModerationPolicy(failClosedModerationPolicy()) }
+            return nil
+        }
+        guard let stored, stored.accountDID == userDID else {
+            moderationLabelerDIDs = []
+            applyModerationPolicy(failClosedModerationPolicy())
+            return nil
+        }
+        let subscriptions = stored.labelers
+        let labelerDIDs = subscriptions.map { $0.did.didString() }
+        moderationLabelerDIDs = labelerDIDs
+        seedModerationDefinitionsFromDisk(labelerDIDs: labelerDIDs)
+        applyModerationPolicy(ModerationPolicy(
+            accountDID: userDID,
+            serverAdultContentEnabled: stored.adultContentEnabled,
+            contentLabelPrefs: stored.contentLabelPrefs,
+            labelerDIDs: labelerDIDs,
+            labelerDefinitions: moderationDefinitions,
+            isConfirmed: stored.hasConfirmedServerPreferences))
+        return subscriptions
+    }
+
+    private func failClosedModerationPolicy() -> ModerationPolicy {
+        ModerationPolicy(
+            accountDID: userDID,
+            serverAdultContentEnabled: false,
+            contentLabelPrefs: [],
+            labelerDIDs: [],
+            labelerDefinitions: [:],
+            isConfirmed: false)
+    }
+
+    /// Before the first network load for a labeler set, uses the definitions stored on disk for exactly
+    /// this account and set, so custom labels resolve on the first frame. Only raw labeler definitions
+    /// come from disk; preferences and the age restriction are applied at runtime as always. Called only
+    /// with server-confirmed subscriptions. The network load still runs and overwrites the entry.
+    @MainActor
+    private func seedModerationDefinitionsFromDisk(labelerDIDs: [String]) {
+        let key = LabelerDefinitionsDiskCache.normalizedLabelerDIDs(labelerDIDs)
+        guard moderationDefinitionsDiskKey != key else { return }
+        moderationDefinitionsDiskKey = key
+        // Definitions already loaded from the network for this set are newer than the disk copy.
+        if let loaded = loadedModerationDefinitionsKey,
+           LabelerDefinitionsDiskCache.normalizedLabelerDIDs(loaded.labelerDIDs) == key { return }
+        guard let cached = LabelerDefinitionsDiskCache.load(accountDID: userDID, labelerDIDs: key) else { return }
+        moderationDefinitions = cached
+    }
+
+    @MainActor
+    private func applyModerationPolicy(_ policy: ModerationPolicy) {
+        baseModerationPolicy = policy
+        let effective = policy.restrictingMatureContent(ageAccess.restrictsMatureContent)
+        guard effective != moderationPolicy else { return }
+        moderationPolicy = effective
+        NotificationCenter.default.post(
+            name: .moderationPolicyDidChange, object: nil, userInfo: ["accountDID": userDID])
+    }
+
+    @MainActor
+    private func loadModerationDefinitions(for subscriptions: [LabelerPreference]) {
+        let client = self.client
+        let key = ModerationDefinitionsKey(
+            labelerDIDs: subscriptions.map { $0.did.didString() }, client: ObjectIdentifier(client))
+        guard loadedModerationDefinitionsKey != key else { return }
+        if let load = moderationDefinitionsLoad, load.key == key, !load.task.isCancelled { return }
+        moderationDefinitionsLoad?.task.cancel()
+        moderationDefinitionsLoad = nil
+        // The lookup reads the subscriptions from a value it owns, so the stored row can change meanwhile.
+        let snapshot = Preferences(accountDID: userDID, labelers: subscriptions)
+        let id = UUID()
+        guard let task = startAccountTask(priority: .utility, operation: { [weak self] in
+            await self?.performModerationDefinitionsLoad(id: id, key: key, snapshot: snapshot, client: client)
+        }) else { return }
+        moderationDefinitionsLoad = ModerationDefinitionsLoad(id: id, key: key, task: task)
+    }
+
+    @MainActor
+    private func performModerationDefinitionsLoad(
+        id: UUID, key: ModerationDefinitionsKey, snapshot: Preferences, client: ATProtoClient
+    ) async {
+        defer { if moderationDefinitionsLoad?.id == id { moderationDefinitionsLoad = nil } }
+        do {
+            let definitions = try await ContentLabelDefinitionLookup.subscribedDefinitions(
+                appState: self, preferences: snapshot, client: client)
+            guard !Task.isCancelled, self.client === client, moderationLabelerDIDs == key.labelerDIDs else { return }
+            moderationDefinitions = definitions
+            loadedModerationDefinitionsKey = key
+            moderationDefinitionsDiskKey = LabelerDefinitionsDiskCache.normalizedLabelerDIDs(key.labelerDIDs)
+            LabelerDefinitionsDiskCache.store(definitions, accountDID: userDID, labelerDIDs: key.labelerDIDs)
+            rebuildModerationPolicy()
+        } catch {
+            logger.error("Could not load labeler definitions for the moderation policy: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Content Filtering Helper
 
     /// Build FeedTunerSettings from current user preferences
     /// This ensures consistent filtering across feeds, threads, profiles, and search
     @MainActor
     func buildFilterSettings() async -> FeedTunerSettings {
-        // Get current user DID (AppState represents single account)
-        let currentUserDid = userDID
-
-        // Get moderation preferences from PreferencesManager
-        var contentLabelPrefs: [ContentLabelPreference] = []
-        var adultContentEnabled = false
-        var preferredLanguages: [String] = []
-        var feedViewPref: FeedViewPreference?
-
-        let preferences = try? await preferencesManager.getPreferences()
-        contentLabelPrefs = preferences?.contentLabelPrefs ?? []
-        adultContentEnabled = preferences?.adultContentEnabled ?? false
-        preferredLanguages = preferences?.contentLanguages ?? ["en"]
-        feedViewPref = preferences?.feedViewPref
-
-        // Get muted and blocked users from GraphManager
-        let mutedUsers = graphManager.muteCache
-        let blockedUsers = graphManager.blockCache
-
-        // Get feed filter settings (quick filters - these override server prefs)
-        let hideRepliesQuick = feedFilterSettings.hideReplies
-        let hideRepostsQuick = feedFilterSettings.hideReposts
-        let hideQuotePostsQuick = feedFilterSettings.hideQuotePosts
-        let hideLinks = feedFilterSettings.hideLinks
-        let onlyTextPosts = feedFilterSettings.onlyTextPosts
-        let onlyMediaPosts = feedFilterSettings.onlyMediaPosts
-
-        // Get hidden posts from PostHidingManager
-        let hiddenPosts = postHidingManager.hiddenPosts
-
-        // Build settings - combine quick filters with server-synced preferences
-        return FeedTunerSettings(
-            hideReplies: hideRepliesQuick || (feedViewPref?.hideReplies ?? false),
-            hideRepliesByUnfollowed: feedViewPref?.hideRepliesByUnfollowed ?? false,
-            hideRepliesByLikeCount: feedViewPref?.hideRepliesByLikeCount,
-            hideReposts: hideRepostsQuick || (feedViewPref?.hideReposts ?? false),
-            hideQuotePosts: hideQuotePostsQuick || (feedViewPref?.hideQuotePosts ?? false),
-            hideNonPreferredLanguages: !preferredLanguages.isEmpty && preferredLanguages != ["en"],
-            preferredLanguages: preferredLanguages,
-            mutedUsers: mutedUsers,
-            blockedUsers: blockedUsers,
-            hideLinks: hideLinks,
-            onlyTextPosts: onlyTextPosts,
-            onlyMediaPosts: onlyMediaPosts,
-            contentLabelPreferences: contentLabelPrefs,
-            hideAdultContent: !adultContentEnabled,
-            hiddenPosts: hiddenPosts,
-            currentUserDid: currentUserDid
-        )
+        let confirmed = (try? preferencesManager.confirmedFeedFilterPreferences()).map(FeedPreferenceSnapshot.init)
+        let retainedLocal = confirmed == nil
+            ? (try? preferencesManager.retainedLocalFeedFilterPreferences()).map(FeedPreferenceSnapshot.init) : nil
+        let snapshot = FeedPreferenceSnapshotStore.shared.resolve(accountDID: userDID,
+            confirmed: confirmed, retainedLocal: retainedLocal)
+        return makeFilterSettings(snapshot: snapshot)
     }
+
+    /// A side-effect-free snapshot shared by feed and search consumers.
+    @MainActor
+    func makeFilterSettings(preferences suppliedPreferences: Preferences?, localFilters: FeedFilterSettings? = nil) -> FeedTunerSettings {
+        makeFilterSettings(snapshot: suppliedPreferences.map(FeedPreferenceSnapshot.init), localFilters: localFilters)
+    }
+
+    @MainActor
+    func makeFilterSettings(snapshot suppliedSnapshot: FeedPreferenceSnapshot?, localFilters: FeedFilterSettings? = nil) -> FeedTunerSettings {
+        let preferences = suppliedSnapshot?.accountDID == userDID ? suppliedSnapshot : nil
+        let feed = preferences?.feedViewPref
+        let filters = localFilters ?? feedFilterSettings
+        var settings = FeedTunerSettings(
+            hideReplies: filters.hideReplies || (feed?.hideReplies ?? false),
+            hideRepliesByUnfollowed: feed?.hideRepliesByUnfollowed ?? false,
+            hideRepliesByLikeCount: feed?.hideRepliesByLikeCount,
+            hideReposts: filters.hideReposts || (feed?.hideReposts ?? false),
+            hideQuotePosts: filters.hideQuotePosts || (feed?.hideQuotePosts ?? false),
+            hideNonPreferredLanguages: appSettings.hideNonPreferredLanguages || filters.isFilterEnabled(name: "Filter by Language"),
+            preferredLanguages: appSettings.contentLanguages,
+            mutedUsers: graphManager.muteCache,
+            blockedUsers: graphManager.blockCache,
+            hideLinks: filters.hideLinks,
+            onlyTextPosts: filters.onlyTextPosts,
+            onlyMediaPosts: filters.onlyMediaPosts,
+            hiddenPosts: postHidingManager.hiddenPosts,
+            currentUserDid: userDID
+        )
+        settings.mutedWords = preferences?.mutedWords ?? []
+        settings.moderationPolicy = moderationPolicy
+        return settings
+    }
+
 }
 
 // MARK: - MLS Initialization Errors
@@ -3404,15 +3886,12 @@ actor PrefetchedFeedCache {
     }
 }
 
+// Derived-access invalidation carries account identity only, never an age result.
+extension Notification.Name {
+    static let platformAgeAccessDidChange = Notification.Name("platformAgeAccessDidChange")
+}
+
 private extension AppState {
-    var sharedDefaults: UserDefaults {
-        AppSettingsModel.sharedDefaults()
-    }
-
-    func scopedSharedDefaultsKey(_ baseKey: String) -> String {
-        AppSettingsModel.scopedKey(baseKey, accountDID: userDID)
-    }
-
     func scopedStandardDefaultsKey(_ baseKey: String) -> String {
         AppSettingsModel.scopedKey(baseKey, accountDID: userDID)
     }

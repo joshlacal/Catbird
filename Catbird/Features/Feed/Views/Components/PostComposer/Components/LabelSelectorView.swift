@@ -11,10 +11,10 @@ import Petrel
 struct LabelSelectorView: View {
   @Binding var selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>
   @Environment(\.dismiss) private var dismiss
-  @ObservationIgnored @Environment(AppState.self) private var appState
 
-  // Define only the allowed self-labels
-  private let allowedSelfLabels: [ComAtprotoLabelDefs.LabelValue] = [
+  /// The self-labels an author can put on a post. All of them are offered whatever the
+  /// author's own adult-content setting: they warn other viewers about the post's media.
+  static let selfLabelOptions: [ComAtprotoLabelDefs.LabelValue] = [
     .exclamationnodashunauthenticated,
     .porn,
     .sexual,
@@ -34,54 +34,39 @@ struct LabelSelectorView: View {
     }
   }
 
-  // Adult-only labels that require adult content enabled
-  private let adultOnlyLabelValues: Set<String> = ["porn", "sexual", "nudity"]
-
-  // Compute effective label list based on adult content setting
-  private var effectiveAllowedLabels: [ComAtprotoLabelDefs.LabelValue] {
-    if appState.isAdultContentEnabled { return allowedSelfLabels }
-    return allowedSelfLabels.filter { !adultOnlyLabelValues.contains($0.rawValue) }
-  }
-
   var body: some View {
     NavigationStack {
-      List(effectiveAllowedLabels, id: \.self) { label in
-        Button(action: { toggleLabel(label) }) {
-          HStack {
-            Text(displayName(for: label))
-            Spacer()
-            if selectedLabels.contains(label) {
-              Image(systemName: "checkmark")
+      List {
+        Section {
+          ForEach(Self.selfLabelOptions, id: \.self) { label in
+            Button(action: { toggleLabel(label) }) {
+              HStack {
+                Text(displayName(for: label))
+                  .foregroundStyle(.primary)
+                Spacer()
+                if selectedLabels.contains(label) {
+                  Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                }
+              }
             }
+            .accessibilityAddTraits(selectedLabels.contains(label) ? .isSelected : [])
           }
         }
       }
       .navigationTitle("Content Labels")
+      .platformInlineNavigationTitle()
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "checkmark")
-            }
-        }
-      }
-      .overlay(alignment: .bottomLeading) {
-        if !appState.isAdultContentEnabled {
-          Text("Adult labels can be added after enabling adult content in the Bluesky app.")
-            .appFont(AppTextRole.caption)
-            .foregroundStyle(.secondary)
-            .padding([.horizontal, .bottom])
+          Button("Done") {
+            dismiss()
+          }
         }
       }
     }
   }
 
   private func toggleLabel(_ label: ComAtprotoLabelDefs.LabelValue) {
-    // If adult content is disabled, disallow toggling adult-only labels
-    if !appState.isAdultContentEnabled && adultOnlyLabelValues.contains(label.rawValue) {
-      return
-    }
     if selectedLabels.contains(label) {
       selectedLabels.remove(label)
     } else {

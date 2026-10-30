@@ -8,10 +8,13 @@ struct ValidatingTextField: View {
     @Binding var text: String
     var prompt: String
     var icon: String
+    /// Name VoiceOver reads for the field; defaults to the placeholder.
+    var label: String? = nil
     var validationError: String?
     var isDisabled: Bool
     #if os(iOS)
     var keyboardType: UIKeyboardType = .default
+    var textContentType: UITextContentType? = nil
     #endif
     var submitLabel: SubmitLabel = .done
     var onSubmit: (() -> Void)?
@@ -21,18 +24,20 @@ struct ValidatingTextField: View {
             HStack {
                 Image(systemName: icon)
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
 
                 #if os(iOS)
-                TextField("", text: $text, prompt: Text(prompt))
+                TextField(label ?? prompt, text: $text, prompt: Text(prompt))
                     .autocorrectionDisabled(true)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(keyboardType)
+                    .textContentType(textContentType)
                     #endif
                     .submitLabel(submitLabel)
                     .onSubmit { onSubmit?() }
                 #else
-                TextField("", text: $text, prompt: Text(prompt))
+                TextField(label ?? prompt, text: $text, prompt: Text(prompt))
                     .autocorrectionDisabled(true)
                     .submitLabel(submitLabel)
                     .onSubmit { onSubmit?() }
@@ -44,6 +49,7 @@ struct ValidatingTextField: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear Text")
                 }
             }
             .padding()

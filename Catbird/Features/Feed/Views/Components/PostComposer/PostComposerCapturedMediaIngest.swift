@@ -17,6 +17,7 @@ extension PostComposerViewModel {
   @MainActor
   func ingestCapturedPhoto(_ data: Data) {
     videoItem = nil
+    selectedGif = nil
     guard mediaItems.count < maxImagesAllowed else {
       logger.debug("ingestCapturedPhoto: at image limit, ignoring capture")
       return
@@ -25,12 +26,10 @@ extension PostComposerViewModel {
     var item = MediaItem()
     item.rawData = data
     item.isLoading = false
-    #if os(iOS)
-    if let image = UIImage(data: data) {
-      item.image = Image(uiImage: image)
-      item.aspectRatio = image.size
+    // A thumbnail decode, not the full camera bitmap.
+    if let preview = ComposerImagePreparation.makePreviewSynchronously(from: data) {
+      item.applyPreview(preview)
     }
-    #endif
     mediaItems.append(item)
     syncMediaStateToCurrentThread()
     saveDraftIfNeeded()
@@ -39,6 +38,7 @@ extension PostComposerViewModel {
   @MainActor
   func ingestCapturedVideo(_ url: URL) async {
     mediaItems.removeAll()
+    selectedGif = nil
     let item = MediaItem.capturedVideo(url: url)
     videoItem = item
     syncMediaStateToCurrentThread()

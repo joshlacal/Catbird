@@ -63,10 +63,19 @@ final class ComposerOutbox {
   private let logger = Logger(subsystem: "blue.catbird", category: "ComposerOutbox")
   private var items: [ComposerOutboxItem] = []
   private let queueURL: URL
+  var hasPendingItems: Bool {
+    !items.isEmpty
+  }
+
+  /// Where the queue is stored. Draft photo cleanup searches it, so an outbox that starts
+  /// carrying media keeps its files (DraftImageFileJanitor).
+  nonisolated static var queueFileURL: URL {
+    let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    return dir.appendingPathComponent("composer_outbox.json")
+  }
 
   private init() {
-    let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-    queueURL = dir.appendingPathComponent("composer_outbox.json")
+    queueURL = Self.queueFileURL
     load()
   }
 

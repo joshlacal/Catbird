@@ -315,10 +315,6 @@ final class GraphManager {
       // Update cache with new relationship
       await updateFollowingCache(did: did, uri: response.uri)
       
-      // Invalidate related caches since relationships changed
-      await MainActor.run {
-        invalidateCache(for: .relationshipChanged, cacheTypes: .following)
-      }
       if let targetDid = try? DID(didString: did) {
         await relationshipCache.removeAll(target: targetDid)
       }
@@ -327,10 +323,6 @@ final class GraphManager {
       return true
     } catch {
       logger.error("Error following user: \(error.localizedDescription)")
-      // Invalidate cache on error to ensure fresh data on next attempt
-      await MainActor.run {
-        invalidateCache(for: .errorOccurred, cacheTypes: .following)
-      }
       throw error
     }
   }
@@ -370,23 +362,103 @@ final class GraphManager {
 
       // Remove from cache
       await removeFromFollowingCache(uri: followingUri)
-      
-      // Invalidate related caches since relationships changed
-      await MainActor.run {
-        invalidateCache(for: .relationshipChanged, cacheTypes: .following)
-      }
       await relationshipCache.removeAll()
 
       logger.debug("Successfully unfollowed user using URI")
       return true
     } catch {
       logger.error("Error unfollowing user: \(error.localizedDescription)")
-      // Invalidate cache on error to ensure fresh data on next attempt
-      await MainActor.run {
-        invalidateCache(for: .errorOccurred, cacheTypes: .following)
-      }
       throw error
     }
+  }
+  /// Batched follow operation using `com.atproto.repo.applyWrites` in groups of ≤50.
+  /// - Parameter dids: Array of user DIDs to follow.
+  /// - Returns: Dictionary mapping successfully followed DIDs to their follow record URIs.
+  @discardableResult
+  func followAll(dids: [String]) async throws -> [String: ATProtocolURI] {
+    guard !dids.isEmpty else { return [:] }
+    guard let client = atProtoClient else {
+      logger.error("ATProtoClient is nil, cannot follow users")
+      throw GraphError.clientNotInitialized
+    }
+
+    let userDID = try await client.getDid()
+    let repoIdentifier = try ATIdentifier(string: userDID)
+    let followCollection = try NSID(nsidString: "app.bsky.graph.follow")
+
+    // Filter out self and deduplicate while preserving order
+    var seen = Set<String>()
+    var uniqueDIDs: [String] = []
+    for did in dids where !did.isEmpty && did != userDID {
+      if seen.insert(did).inserted {
+        uniqueDIDs.append(did)
+      }
+    }
+
+    var followedMap: [String: ATProtocolURI] = [:]
+
+    for chunk in uniqueDIDs.chunked(into: 50) {
+      var writes: [ComAtprotoRepoApplyWrites.InputWritesUnion] = []
+      var validChunkDIDs: [String] = []
+
+      for did in chunk {
+        guard let subjectDID = try? DID(didString: did) else { continue }
+        let follow = AppBskyGraphFollow(
+          subject: subjectDID,
+          createdAt: ATProtocolDate(date: Date()),
+          via: nil
+        )
+        let create = ComAtprotoRepoApplyWrites.Create(
+          collection: followCollection,
+          rkey: nil,
+          value: .knownType(follow)
+        )
+        writes.append(.comAtprotoRepoApplyWritesCreate(create))
+        validChunkDIDs.append(did)
+      }
+
+      guard !writes.isEmpty else { continue }
+
+      let input = ComAtprotoRepoApplyWrites.Input(
+        repo: repoIdentifier,
+        validate: nil,
+        writes: writes
+      )
+
+      let (responseCode, output) = try await client.com.atproto.repo.applyWrites(input: input)
+
+      guard responseCode >= 200 && responseCode < 300 else {
+        logger.error("Failed to batch follow users with response code \(responseCode)")
+        continue
+      }
+
+      if let results = output?.results {
+        for (index, result) in results.enumerated() {
+          guard index < validChunkDIDs.count else { break }
+          let did = validChunkDIDs[index]
+          if case let .comAtprotoRepoApplyWritesCreateResult(createResult) = result {
+            let uri = createResult.uri
+            followedMap[did] = uri
+            await updateFollowingCache(did: did, uri: uri)
+            if let targetDid = try? DID(didString: did) {
+              await relationshipCache.removeAll(target: targetDid)
+            }
+          }
+        }
+      } else {
+        for did in validChunkDIDs {
+          if let targetDid = try? DID(didString: did) {
+            await relationshipCache.removeAll(target: targetDid)
+          }
+        }
+      }
+    }
+
+    if !followedMap.isEmpty {
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
+    }
+
+    return followedMap
   }
 
   /// Unfollows a user by their DID - requires looking up the follow record first
@@ -1097,6 +1169,7 @@ final class GraphManager {
         return false
       }
 
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
       logger.debug("Successfully muted thread")
       return true
     } catch {
@@ -1128,6 +1201,7 @@ final class GraphManager {
         return false
       }
 
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
       logger.debug("Successfully unmuted thread")
       return true
     } catch {
@@ -1562,6 +1636,11 @@ extension AppState {
   func unmuteThread(threadRootUri: ATProtocolURI) async throws -> Bool {
     try await graphManager.unmuteThread(threadRootUri: threadRootUri)
   }
+  /// Batched follow operation using `com.atproto.repo.applyWrites` in groups of ≤50.
+  @discardableResult
+  func followAll(dids: [String]) async throws -> [String: ATProtocolURI] {
+    try await graphManager.followAll(dids: dids)
+  }
 
   /// Refreshes cached social graph information
   func refreshSocialGraph() async {
@@ -1575,6 +1654,13 @@ extension AppState {
 
     Task {
       _ = try? await graphManager.refreshMuteCache()  // Added try?
+    }
+  }
+}
+private extension Array {
+  func chunked(into size: Int) -> [[Element]] {
+    stride(from: startIndex, to: endIndex, by: size).map {
+      Array(self[$0..<Swift.min($0 + size, endIndex)])
     }
   }
 }

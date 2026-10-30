@@ -26,6 +26,7 @@ struct MLSGroupDetailView: View {
   var onDeleted: (() -> Void)? = nil
 
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.dismiss) private var dismiss
   @Environment(\.toastManager) private var toastManager
 
@@ -157,7 +158,7 @@ struct MLSGroupDetailView: View {
       }
       .sheet(item: $invitationNote) { draft in
         MLSDirectComposeView(draft: draft) { conversationID in
-          appState.navigationManager.targetMLSConversationId = conversationID
+          appState.navigateToMLSConversation(conversationID, preferredSceneID: sceneContext.sceneID)
           dismiss()
         }
       }

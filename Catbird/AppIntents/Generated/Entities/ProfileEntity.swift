@@ -75,29 +75,65 @@ struct ProfileEntity: AppEntity {
 
 @available(iOS 18.0, *)
 struct ProfileEntityQuery: EntityQuery, EntityStringQuery {
+    @IntentParameterDependency<BlockProfileIntent>(\.$account)
+    private var blockIntent
+
+    @IntentParameterDependency<UnblockProfileIntent>(\.$account)
+    private var unblockIntent
+
+    @IntentParameterDependency<UnfollowProfileIntent>(\.$account)
+    private var unfollowIntent
+
     init() {}
 
+    /// The exemption is scoped to the exact safety/removal intent requesting a profile.
+    /// Ordinary profile searches and message-recipient queries remain covered.
+    private var clientContext: (did: String?, purpose: IntentClientProvider.Purpose) {
+        if let blockIntent {
+            return (blockIntent.account.id, .safety)
+        }
+        if let unblockIntent {
+            return (unblockIntent.account.id, .safety)
+        }
+        if let unfollowIntent {
+            return (unfollowIntent.account.id, .removal)
+        }
+        return (IntentAccountResolver.activeDID(), .coveredUse)
+    }
+
     func entities(for identifiers: [String]) async throws -> [ProfileEntity] {
+        let context = clientContext
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         let cached = await ProfileEntityStore.shared.entities(for: identifiers)
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         if cached.count == identifiers.count { return cached }
         let cachedIDs = Set(cached.map(\.id))
         let missing = identifiers.filter { !cachedIDs.contains($0) }
-        let did = IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let client = try await IntentClientProvider.shared.client(for: context.did, purpose: context.purpose)
         var results: [ProfileEntity] = cached
         for start in stride(from: 0, to: missing.count, by: 25) {
             let chunk = Array(missing[start..<min(start + 25, missing.count)])
             let output = try unwrapIntentResponse(await client.app.bsky.actor.getProfiles(input: AppBskyActorGetProfiles.Parameters(actors: try chunk.map { try ATIdentifier(string: $0) })))
             results.append(contentsOf: output.profiles.map { ProfileEntity(from: $0) })
         }
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         return results
     }
 
 
     func entities(matching string: String) async throws -> [ProfileEntity] {
-        let did = IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let context = clientContext
+        let client = try await IntentClientProvider.shared.client(for: context.did, purpose: context.purpose)
         let output = try unwrapIntentResponse(await client.app.bsky.actor.searchActors(input: AppBskyActorSearchActors.Parameters(q: string)))
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         return output.actors.map { ProfileEntity(from: $0) }
     }
 

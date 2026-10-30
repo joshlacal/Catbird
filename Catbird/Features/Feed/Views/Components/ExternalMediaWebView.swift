@@ -31,6 +31,15 @@ struct ExternalMediaWebView: Equatable {
 // MARK: - Platform-specific conformances
 
 #if os(iOS)
+/// Subclass that automatically pauses media when detached from the window (P282)
+final class AutoPausingWKWebView: WKWebView {
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            pauseAllMediaPlayback()
+        }
+    }
+}
 extension ExternalMediaWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -42,7 +51,7 @@ extension ExternalMediaWebView: UIViewRepresentable {
         // Enable user interaction
         configuration.suppressesIncrementalRendering = false
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = AutoPausingWKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
@@ -75,6 +84,12 @@ extension ExternalMediaWebView: UIViewRepresentable {
         } else {
             webView.load(URLRequest(url: url))
         }
+    }
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.pauseAllMediaPlayback()
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
     }
 
     func makeCoordinator() -> Coordinator {
@@ -208,6 +223,7 @@ struct EmbeddedMediaWebView: View {
     let url: URL
     let embedType: ExternalMediaType
     let shouldBlur: Bool
+    private let youtubeHTML: String?
     @State private var isBlurred: Bool
     @State private var isLoading = true
     @State private var hasError = false
@@ -218,6 +234,12 @@ struct EmbeddedMediaWebView: View {
         self.embedType = embedType
         self.shouldBlur = shouldBlur
         self._isBlurred = State(initialValue: shouldBlur)
+        switch embedType {
+        case .youtube(let videoId), .youtubeShorts(let videoId):
+            self.youtubeHTML = Self.youtubePlayerHTML(videoId: videoId)
+        default:
+            self.youtubeHTML = nil
+        }
     }
     
     var body: some View {
@@ -260,14 +282,6 @@ struct EmbeddedMediaWebView: View {
         }
     }
     
-    private var youtubeHTML: String? {
-        switch embedType {
-        case .youtube(let videoId), .youtubeShorts(let videoId):
-            return Self.youtubePlayerHTML(videoId: videoId)
-        default:
-            return nil
-        }
-    }
 
     private static func youtubePlayerHTML(videoId: String) -> String {
         """
@@ -415,7 +429,7 @@ struct EmbeddedMediaWebView: View {
             ProgressView()
                 .scaleEffect(0.8)
                 .progressViewStyle(CircularProgressViewStyle(tint: .secondary))
-            Text("Loading...")
+            Text("Loading…")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }

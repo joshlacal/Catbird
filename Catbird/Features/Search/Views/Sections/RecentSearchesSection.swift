@@ -8,72 +8,69 @@
 
 import SwiftUI
 
-/// A section displaying recent search queries with active filter badges and swipe-to-delete (G05).
+/// Recent search queries as compact rows with active filter badges and swipe-to-delete (G05).
 public struct RecentSearchesSection: View {
   public let entries: [RecentSearchEntry]
   public let onSelect: (RecentSearchEntry) -> Void
+  public let onFill: ((RecentSearchEntry) -> Void)?
   public let onDelete: (RecentSearchEntry) -> Void
   public let onClear: () -> Void
 
   @State private var showClearConfirmation = false
-  @State private var revealedEntryId: UUID?
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
 
-  private static let deleteRevealWidth: CGFloat = 80
+  private static let maximumVisibleEntries = 10
 
   public init(
     entries: [RecentSearchEntry],
     onSelect: @escaping (RecentSearchEntry) -> Void,
+    onFill: ((RecentSearchEntry) -> Void)? = nil,
     onDelete: @escaping (RecentSearchEntry) -> Void,
     onClear: @escaping () -> Void
   ) {
     self.entries = entries
     self.onSelect = onSelect
+    self.onFill = onFill
     self.onDelete = onDelete
     self.onClear = onClear
   }
 
+  private var visibleEntries: [RecentSearchEntry] {
+    Array(entries.prefix(Self.maximumVisibleEntries))
+  }
+
   public var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack {
-        HStack(spacing: 6) {
-          Image(systemName: "clock.arrow.circlepath")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.accentColor)
-
-          Text("Recent Searches")
-            .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
-        }
-
-        Spacer()
-
-        Button {
-          showClearConfirmation = true
-        } label: {
-          Label("Clear", systemImage: "xmark.circle.fill")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.accentColor)
-            .labelStyle(.titleOnly)
-        }
-        .disabled(entries.isEmpty)
-      }
-      .padding(.horizontal, 16)
-      .padding(.bottom, 8)
-
-      if !entries.isEmpty {
+    // Each query is a native suggestion row so the list owns scroll and swipe arbitration.
+    Group {
+      header
+      ForEach(visibleEntries) { entry in
         VStack(spacing: 0) {
-          ForEach(entries.prefix(10)) { entry in
-            searchRow(entry)
+          searchRow(entry)
+          if entry.id != visibleEntries.last?.id {
+            Divider().padding(.leading, 52)
           }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.systemBackground)
-      } else {
-        emptyStateView
+        .modifier(SearchSuggestionRowModifier())
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+          Button(role: .destructive) { delete(entry) } label: {
+            Label("Delete", systemImage: "trash")
+          }
+          .accessibilityLabel("Delete \(entry.query)")
+        }
       }
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private var header: some View {
+    SearchHistoryHeader(title: "Recent Searches", clearLabel: "Clear recent searches") {
+      showClearConfirmation = true
+    }
+    .disabled(entries.isEmpty)
+    .padding(.top, 8)
+    .padding(.bottom, 4)
+    .modifier(SearchSuggestionRowModifier())
+    .accessibilityIdentifier("search.history.queries")
     .confirmationDialog(
       "Clear Recent Searches",
       isPresented: $showClearConfirmation,
@@ -88,127 +85,92 @@ public struct RecentSearchesSection: View {
     } message: {
       Text("This will remove all recent searches from this device.")
     }
-    .onChange(of: entries) { _, newValue in
-      if let current = revealedEntryId, !newValue.contains(where: { $0.id == current }) {
-        revealedEntryId = nil
-      }
-    }
   }
 
-  @ViewBuilder
   private func searchRow(_ entry: RecentSearchEntry) -> some View {
-    let isRevealed = revealedEntryId == entry.id
-    let filterCount = entry.filters.activeFilterCount
-
-    ZStack(alignment: .trailing) {
-      // Underlay delete action
+    HStack(spacing: 0) {
       Button {
-        withAnimation(.easeInOut(duration: 0.2)) {
-          revealedEntryId = nil
-          onDelete(entry)
-        }
+        onSelect(entry)
       } label: {
-        Label("Delete", systemImage: "trash")
-          .labelStyle(.iconOnly)
-          .foregroundStyle(.white)
-          .frame(width: Self.deleteRevealWidth)
-          .frame(maxHeight: .infinity)
-          .background(Color.red)
+        rowLabel(entry)
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("Delete \(entry.query)")
-      .opacity(isRevealed ? 1 : 0)
+      .accessibilityHint("Searches again")
+      .accessibilityAction(named: "Delete") { delete(entry) }
 
-      Button {
-        if isRevealed {
-          withAnimation(.easeInOut(duration: 0.2)) { revealedEntryId = nil }
-        } else {
-          onSelect(entry)
-        }
-      } label: {
-        HStack(spacing: 12) {
-          Image(systemName: "magnifyingglass")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.secondary)
-            .frame(width: 20, height: 20)
-
-          Text(entry.query)
-            .appFont(AppTextRole.body)
-            .lineLimit(1)
-            .foregroundColor(
-              Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-
-          if filterCount > 0 {
-            HStack(spacing: 3) {
-              Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                .font(.system(size: 11))
-              Text("\(filterCount)")
-                .font(.system(size: 11, weight: .semibold))
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .foregroundColor(.accentColor)
-            .background(Color.accentColor.opacity(0.15))
-            .clipShape(Capsule())
-            .accessibilityLabel("\(filterCount) active filters")
-          }
-
-          Spacer()
-
-          Image(systemName: "arrow.up.left")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
-        }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 16)
-        .background(Color.systemBackground)
-        .contentShape(Rectangle())
+      if let onFill {
+        fillButton(entry, onFill: onFill)
       }
-      .buttonStyle(.plain)
-      .offset(x: isRevealed ? -Self.deleteRevealWidth : 0)
-      .simultaneousGesture(
-        DragGesture(minimumDistance: 12)
-          .onEnded { value in
-            let horizontal = value.translation.width
-            let vertical = value.translation.height
-            guard abs(horizontal) > abs(vertical) else { return }
-            withAnimation(.easeInOut(duration: 0.2)) {
-              if horizontal < -40 {
-                revealedEntryId = entry.id
-              } else if horizontal > 40 {
-                revealedEntryId = nil
-              }
-            }
-          }
-      )
     }
-    .clipped()
-
-    if entry.id != entries.prefix(10).last?.id {
-      Divider()
+    .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+    .contextMenu {
+      Button(role: .destructive) { delete(entry) } label: {
+        Label("Remove from History", systemImage: "trash")
+      }
     }
   }
 
-  private var emptyStateView: some View {
-    HStack(spacing: 12) {
-      Image(systemName: "magnifyingglass")
-        .appFont(size: 24)
-        .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
+  /// Puts the query back in the field without searching, like Safari's history rows.
+  private func fillButton(_ entry: RecentSearchEntry, onFill: @escaping (RecentSearchEntry) -> Void) -> some View {
+    Button {
+      onFill(entry)
+    } label: {
+      Image(systemName: "arrow.up.left")
+        .appFont(AppTextRole.footnote)
+        .foregroundStyle(.tertiary)
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .padding(.trailing, 4)
+    .accessibilityLabel("Edit \(entry.query)")
+    .accessibilityHint("Places this search in the search field")
+  }
 
-      VStack(alignment: .leading, spacing: 4) {
-        Text("No Recent Searches")
-          .appFont(AppTextRole.subheadline.weight(.medium))
-          .foregroundColor(.secondary)
+  private func rowLabel(_ entry: RecentSearchEntry) -> some View {
+    let filterCount = entry.filters.activeFilterCount
+    return HStack(spacing: 12) {
+      Image(systemName: "clock.arrow.circlepath")
+        .appFont(AppTextRole.body)
+        .foregroundStyle(.secondary)
+        .frame(width: 24)
+        .accessibilityHidden(true)
 
-        Text("Your search history will appear here")
-          .appFont(AppTextRole.caption)
-          .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
+      Text(entry.query)
+        .appFont(AppTextRole.body)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+
+      if filterCount > 0 {
+        HStack(spacing: 3) {
+          Image(systemName: "line.3.horizontal.decrease")
+            .appFont(AppTextRole.caption2)
+          Text("\(filterCount)")
+            .appFont(AppTextRole.caption2)
+            .fontWeight(.semibold)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .foregroundStyle(Color.accentColor)
+        .background(Color.accentColor.opacity(0.12), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(filterCount == 1 ? "1 active filter" : "\(filterCount) active filters")
       }
 
-      Spacer()
+      Spacer(minLength: 0)
     }
-    .padding(16)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.systemBackground)
+    .padding(.leading, 16)
+    .padding(.trailing, onFill == nil ? 16 : 0)
+    .frame(minHeight: 44)
+    .padding(.vertical, 2)
+    .contentShape(Rectangle())
+  }
+
+  private func delete(_ entry: RecentSearchEntry) {
+    withAnimation(.easeInOut(duration: 0.2)) {
+      onDelete(entry)
+    }
   }
 }

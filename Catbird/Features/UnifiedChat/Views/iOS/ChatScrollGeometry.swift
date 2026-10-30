@@ -2,6 +2,17 @@ import Foundation
 
 /// Geometry shared by self-sizing invalidations and transcript snapshot restoration.
 enum ChatScrollGeometry {
+  /// A layout pass caused solely by scrolling has no geometry correction.
+  /// Preserve elastic offsets during a gesture/deceleration; UIKit owns settling.
+  static func readingOffset(
+    target: CGFloat, current: CGFloat, bottom: CGFloat, top: CGFloat,
+    isInteracting: Bool
+  ) -> CGFloat? {
+    guard target.isFinite, abs(target - current) > 0.5 else { return nil }
+    if isInteracting || current < top || current > bottom { return target }
+    return min(bottom, max(top, target))
+  }
+
   static func resizeAdjustment(
     oldHeight: CGFloat,
     newHeight: CGFloat,

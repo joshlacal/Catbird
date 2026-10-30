@@ -10,6 +10,7 @@ struct LiveEventBanner: View {
     let event: LiveEventFeed
     let style: Style
     @Environment(AppState.self) private var appState
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @State private var showingUndo = false
     @State private var showErrorAlert = false
     @State private var errorMessage: String? = nil
@@ -162,7 +163,7 @@ struct LiveEventBanner: View {
 
     private func openEventFeed() {
         if let url = URL(string: event.url) {
-            _ = appState.urlHandler.handle(url)
+            _ = sceneContext.urlHandler.handle(url)
         }
     }
 

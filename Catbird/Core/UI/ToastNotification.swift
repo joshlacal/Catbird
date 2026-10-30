@@ -7,6 +7,7 @@
 
 import SwiftUI
 import OSLog
+import Accessibility
 
 // MARK: - Toast Model
 
@@ -15,37 +16,65 @@ final class ToastManager {
   private let logger = Logger(subsystem: "blue.catbird", category: "Toast")
   
   var currentToast: ToastItem?
-  private var dismissTask: Task<Void, Never>?
+  /// Toast hosts (the root scene content plus any sheet that installs one), in
+  /// presentation order. Only the most recently presented host draws the toast,
+  /// so a toast raised while a sheet is up appears on the sheet, not behind it.
+  private(set) var containerStack: [UUID] = []
+  @ObservationIgnored private var dismissTask: Task<Void, Never>?
   
   func show(_ toast: ToastItem) {
-    // Cancel any existing dismiss task
-    dismissTask?.cancel()
-    
-    // Check for duplicate - if the message and icon are the same, don't show again
+    // Re-showing the toast that is already visible just restarts its timer.
     if let current = currentToast,
        current.message == toast.message,
        current.icon == toast.icon {
-      logger.debug("🍞 Skipping duplicate toast: \(toast.message)")
+      logger.debug("🍞 Extending duplicate toast: \(toast.message)")
+      scheduleDismiss(for: current)
       return
     }
     
     logger.debug("🍞 ToastManager.show() called: \(toast.message)")
     currentToast = toast
-    logger.debug("🍞 currentToast set, value: \(String(describing: self.currentToast?.message))")
-    
-    dismissTask = Task { @MainActor in
-      try? await Task.sleep(for: .seconds(toast.duration))
-      if currentToast?.id == toast.id {
-        currentToast = nil
-        logger.debug("🍞 Toast auto-dismissed")
-      }
-    }
+    scheduleDismiss(for: toast)
+    announce(toast.message)
   }
   
   func dismiss() {
     dismissTask?.cancel()
     dismissTask = nil
     currentToast = nil
+  }
+
+  func registerContainer(_ id: UUID) {
+    containerStack.removeAll { $0 == id }
+    containerStack.append(id)
+  }
+
+  func unregisterContainer(_ id: UUID) {
+    containerStack.removeAll { $0 == id }
+  }
+
+  func isActiveContainer(_ id: UUID) -> Bool {
+    containerStack.last == id
+  }
+
+  private func scheduleDismiss(for item: ToastItem) {
+    dismissTask?.cancel()
+    dismissTask = Task { @MainActor in
+      // A cancelled sleep means a newer toast (or a manual dismiss) took over.
+      guard (try? await Task.sleep(for: .seconds(item.duration))) != nil else { return }
+      if currentToast?.id == item.id {
+        currentToast = nil
+        logger.debug("🍞 Toast auto-dismissed")
+      }
+    }
+  }
+
+  private func announce(_ message: String) {
+    Task { @MainActor in
+      // Give VoiceOver a moment to finish reading the control that triggered the toast.
+      try? await Task.sleep(for: .milliseconds(150))
+      AccessibilityNotification.Announcement(message).post()
+    }
   }
 }
 
@@ -67,29 +96,37 @@ struct ToastItem: Identifiable, Equatable {
 struct ToastView: View {
   let toast: ToastItem
   let onDismiss: () -> Void
-  @State private var isVisible = false
   @State private var dragOffset: CGFloat = 0
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   
-  private let toastHeight: CGFloat = 62  // Same as FAB height
+  private let toastMinHeight: CGFloat = 52
   
   var body: some View {
     HStack(spacing: 12) {
       Image(systemName: toast.icon)
-        .font(.system(size: 20, weight: .medium))
+        .appFont(AppTextRole.headline)
         .foregroundStyle(.white)
+        .accessibilityHidden(true)
       
       Text(toast.message)
-        .font(.system(size: 15, weight: .medium))
+        .appFont(AppTextRole.subheadline)
+        .fontWeight(.medium)
         .foregroundStyle(.white)
-        .lineLimit(1)
+        .lineLimit(3)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
     .padding(.horizontal, 20)
-    .frame(height: toastHeight)
+    .padding(.vertical, 10)
+    .frame(minHeight: toastMinHeight)
     .background(
       Group {
-        // Only iOS 26+/macOS 15+ has the real glass effect; older OSes need a visible fallback.
+        // Only iOS 26+/macOS 26+ has the real glass effect; older OSes need a visible fallback.
         if #available(iOS 26.0, macOS 26.0, *) {
           Color.clear
+        } else if reduceTransparency {
+          Capsule()
+            .fill(Color.accentColor)
         } else {
           Capsule()
             .fill(.ultraThinMaterial)
@@ -101,56 +138,75 @@ struct ToastView: View {
       }
     )
     .clipShape(Capsule())
-    .glassEffectCompatibility()
+    .glassEffectCompatibility(reduceTransparency: reduceTransparency)
     .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
-    .offset(x: dragOffset)
-    .offset(x: isVisible ? 0 : -300)  // Slide from left instead of right
-    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isVisible)
+    .offset(y: dragOffset)
     .animation(.spring(response: 0.3, dampingFraction: 0.9), value: dragOffset)
+    .accessibilityElement(children: .combine)
+    .accessibilityAddTraits(.isStaticText)
+    .accessibilityAction(named: "Dismiss") { onDismiss() }
+    .onTapGesture { onDismiss() }
     .gesture(
       DragGesture()
         .onChanged { value in
-          if value.translation.width < 0 {  // Swipe left to dismiss
-            dragOffset = value.translation.width
+          if value.translation.height < 0 {  // Swipe up to dismiss
+            dragOffset = value.translation.height
           }
         }
         .onEnded { value in
-          if value.translation.width < -50 || value.predictedEndTranslation.width < -100 {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-              dragOffset = -300  // Dismiss to the left
-            }
-            Task { @MainActor in
-              try? await Task.sleep(for: .milliseconds(300))
-              onDismiss()
-            }
+          if value.translation.height < -30 || value.predictedEndTranslation.height < -80 {
+            onDismiss()
           } else {
             dragOffset = 0
           }
         }
     )
-    .onAppear {
-      withAnimation {
-        isVisible = true
-      }
-    }
   }
 }
 
 // MARK: - Toast Container View Modifier
 
+/// Draws the current toast at the top of the content it is applied to. Apply it once at
+/// the scene root and once on each sheet that can raise toasts while it is open; only the
+/// most recently presented container draws, so a toast never shows twice.
 struct ToastContainerModifier: ViewModifier {
-  @Environment(\.toastManager) private var toastManager
+  let manager: ToastManager?
+  @Environment(\.toastManager) private var environmentManager
+  @State private var containerID = UUID()
+
+  private var toastManager: ToastManager { manager ?? environmentManager }
   
   func body(content: Content) -> some View {
-    // Toast display is now handled by FAB component
-    // This modifier just ensures the environment is set up
     content
+      .overlay(alignment: .top) {
+        if let toast = toastManager.currentToast, toastManager.isActiveContainer(containerID) {
+          ToastView(toast: toast) {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+              toastManager.dismiss()
+            }
+          }
+          .padding(.horizontal, 16)
+          .padding(.top, 8)
+          .transition(.move(edge: .top).combined(with: .opacity))
+          .id(toast.id)
+        }
+      }
+      .animation(.spring(response: 0.4, dampingFraction: 0.85), value: toastManager.currentToast?.id)
+      .onAppear { toastManager.registerContainer(containerID) }
+      .onDisappear { toastManager.unregisterContainer(containerID) }
   }
 }
 
 extension View {
+  /// Hosts toasts from the `toastManager` in the environment.
   func toastContainer() -> some View {
-    modifier(ToastContainerModifier())
+    modifier(ToastContainerModifier(manager: nil))
+  }
+
+  /// Hosts toasts from an explicit manager, for sheets presented above the view that
+  /// injects `toastManager` into the environment.
+  func toastContainer(using manager: ToastManager) -> some View {
+    modifier(ToastContainerModifier(manager: manager))
   }
 }
 
@@ -182,10 +238,15 @@ extension View {
 
 private extension View {
   // Applies the new glassEffect when available; otherwise returns self.
+  // Reduce Transparency swaps the clear glass for `.regular` so the white text keeps its contrast.
   @ViewBuilder
-  func glassEffectCompatibility() -> some View {
-      if #available(iOS 26.0, macOS 26.0, *) {
-      self.glassEffect(.clear.tint(.accentColor).interactive(), in: .capsule)
+  func glassEffectCompatibility(reduceTransparency: Bool) -> some View {
+    if #available(iOS 26.0, macOS 26.0, *) {
+      if reduceTransparency {
+        self.glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
+      } else {
+        self.glassEffect(.clear.tint(.accentColor).interactive(), in: .capsule)
+      }
     } else {
       self
     }

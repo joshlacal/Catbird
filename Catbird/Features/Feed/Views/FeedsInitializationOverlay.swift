@@ -14,7 +14,7 @@ struct FeedsInitializationOverlay: View {
       Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading your feeds...")
+          ProgressView("Loading your feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)

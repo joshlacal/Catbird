@@ -10,19 +10,23 @@ import UIKit
 import AppKit
 #endif
 
+@MainActor
 @Observable final class ProfileViewModel: StateInvalidationSubscriber, Hashable, Equatable {
   // MARK: - Properties
 
   // CRITICAL: Reduced observable properties to prevent Swift metadata cache corruption
   // Only the most essential properties are observable
   private(set) var profile: AppBskyActorDefs.ProfileViewDetailed?
-  private(set) var posts: [AppBskyFeedDefs.FeedViewPost] = []
-  private(set) var replies: [AppBskyFeedDefs.FeedViewPost] = []
-  private(set) var postsWithMedia: [AppBskyFeedDefs.FeedViewPost] = []
+  // The post tabs render straight from these rows, each boxed once when its page arrives and
+  // kept only here. A row id appears at most once per tab (see `appendingUnique`).
+  private(set) var boxedPosts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
+  private(set) var boxedReplies: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
+  private(set) var boxedPostsWithMedia: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] = []
   private(set) var isLoading = false
   private(set) var error: Error?
   var selectedProfileTab: ProfileTab = .posts
-  private(set) var pinnedPost: AppBskyFeedDefs.FeedViewPost?
+  /// Boxed once per first page, so the list compares the pinned row by pointer.
+  private(set) var pinnedPost: EquatableBox<AppBskyFeedDefs.FeedViewPost>?
 
   // Non-observable properties to reduce metadata cache pressure
   private var _likes: [AppBskyFeedDefs.FeedViewPost] = []
@@ -33,6 +37,7 @@ import AppKit
   private var _knownFollowers: [AppBskyActorDefs.ProfileView] = []
   private var _isLoadingMorePosts = false
   private var _isLoadingLikes = false
+  private var _isLoadingSection = false
   private var _isLoadingKnownFollowers = false
   
   // Labeler-specific properties
@@ -40,6 +45,7 @@ import AppKit
   private(set) var isSubscribedToLabeler = false
   private(set) var isLabelerLiked = false
   private(set) var labelerLikeCount = 0
+  private var labelerLikeURI: ATProtocolURI?
   
   // Computed properties for non-observable data
   var likes: [AppBskyFeedDefs.FeedViewPost] { _likes }
@@ -50,6 +56,8 @@ import AppKit
   var knownFollowers: [AppBskyActorDefs.ProfileView] { _knownFollowers }
   var isLoadingMorePosts: Bool { _isLoadingMorePosts }
   var isLoadingLikes: Bool { _isLoadingLikes }
+  /// True while lists, starter packs or feeds are loading.
+  var isLoadingSection: Bool { _isLoadingSection }
   var isLoadingKnownFollowers: Bool { _isLoadingKnownFollowers }
   
   /// Check if this profile is a labeler
@@ -59,6 +67,9 @@ import AppKit
     if labelerDetails != nil {
       return true
     }
+    if userDID == ModerationPrefs.blueskyModerationDID {
+      return true
+    }
     // Check if associated.labeler is explicitly true (not just present)
     if let labeler = profile?.associated?.labeler, labeler == true {
       return true
@@ -66,8 +77,25 @@ import AppKit
     return false
   }
 
-  // Pagination tracking
+  /// The Follow button's write state, kept here because the header's own state resets when
+  /// its list cell is reused. See ProfileFollowWrites.
+  let followWrites = ProfileFollowWrites()
+
+  // Pagination tracking. Each flag turns false once the server stops returning a cursor.
   private(set) var hasMoreStarterPacks = false
+  private(set) var hasMorePosts = true
+  private(set) var hasMoreReplies = true
+  private(set) var hasMoreMedia = true
+  /// Post tabs whose first page has come back, even empty. A return to the screen loads again
+  /// only the others (a first page that failed or was cancelled): an account whose latest 150
+  /// items hold no reply to others ends with no replies and a cursor, and must not page five
+  /// times on every return.
+  @ObservationIgnored private var tabsWithFirstPage: Set<ProfileTab> = []
+  /// Whether getKnownFollowers has answered for this profile, even with nobody.
+  @ObservationIgnored private(set) var hasLoadedKnownFollowers = false
+  private(set) var hasMoreLikes = true
+  private(set) var hasMoreLists = true
+  private(set) var hasMoreFeeds = true
 
   // Pagination cursors
   private var postsCursor: String?
@@ -77,17 +105,13 @@ import AppKit
   private var listsCursor: String?
   private var starterPacksCursor: String?
   private var feedsCursor: String?
-  private var knownFollowersCursor: String?
 
   // Dependencies
   private let client: ATProtoClient?
   let userDID: String  // This is the DID of the profile we're viewing (made public for stable view ID)
-  private let currentUserDID: String?  // This is the logged-in user's DID
+  let currentUserDID: String?  // This is the logged-in user's DID
   private let logger = Logger(subsystem: "blue.catbird", category: "ProfileViewModel")
   private weak var stateInvalidationBus: StateInvalidationBus?
-  
-  // Content filtering service
-  private let contentFilterService = ContentFilterService()
   
   // Task management to prevent crashes
   private var activeLoadTasks: Set<Task<Void, Never>> = []
@@ -98,10 +122,26 @@ import AppKit
   // Serial queue for synchronized property access to prevent metadata cache corruption
   private let propertyQueue = DispatchQueue(label: "ProfileViewModel.properties", qos: .userInitiated)
 
+  /// The ProfileOpen interval, open from the first load until the first post row appears or
+  /// the screen shows that none will. Only the first load of a view model is measured.
+  @ObservationIgnored private var openSignpost: OSSignpostID?
+  @ObservationIgnored private var hasBegunOpenSignpost = false
+  @ObservationIgnored private var hasMarkedOpenHeaderReady = false
+
+  /// Whether a successful header load has already chosen the opening tab. Only the first one
+  /// does: later loads (pull to refresh, the reload after a follow, the refresh of a stale header
+  /// on return, a mute or block) must not move a reader who chose Posts back to Labels.
+  @ObservationIgnored private var hasAppliedDefaultTab = false
+
   // Check if this is the current user's profile - comparing correctly
   var isCurrentUser: Bool {
-    guard let profile = profile else { return false }
-    return profile.did.didString() == currentUserDID
+    if let profile = profile {
+      return profile.did.didString() == currentUserDID
+    }
+    if let currentUserDID = currentUserDID, !currentUserDID.isEmpty {
+      return userDID == currentUserDID
+    }
+    return false
   }
 
   // MARK: - Initialization
@@ -111,27 +151,28 @@ import AppKit
     self.userDID = userDID
     self.currentUserDID = currentUserDID
     self.stateInvalidationBus = stateInvalidationBus
+    if userDID == ModerationPrefs.blueskyModerationDID {
+      self.selectedProfileTab = .labelerInfo
+    }
     
       logger.debug("ProfileViewModel[\(self.instanceId)]: Initializing for userDID: \(userDID)")
     
     // Subscribe to state invalidation events if bus is provided with safety check
     // Use a completely deferred subscription to avoid any metadata cache conflicts during init
     if let bus = stateInvalidationBus {
-      Task.detached { [weak self, weak bus] in
+      Task { @MainActor [weak self] in
         // Wait longer to ensure object is fully initialized
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
-        
-        await MainActor.run {
-          guard let self = self, let bus = bus else { return }
-          bus.subscribe(self)
-          self.logger.debug("ProfileViewModel[\(self.instanceId)]: Deferred subscription completed")
-        }
+        guard let self else { return }
+        bus.subscribe(self)
+        self.logger.debug("ProfileViewModel[\(self.instanceId)]: Deferred subscription completed")
       }
     }
   }
   
-  deinit {
-      logger.debug("ProfileViewModel[\(self.instanceId)]: Deinitializing")
+  isolated deinit {
+    logger.debug("ProfileViewModel[\(self.instanceId)]: Deinitializing")
+    endOpenSignpost(.left)
     
     // Cancel all active tasks to prevent crashes
     for task in activeLoadTasks {
@@ -143,26 +184,100 @@ import AppKit
     stateInvalidationBus?.unsubscribe(self)
   }
 
-  // MARK: - Content Filtering
-  
-  /// Apply content filtering to profile posts based on user preferences
-  func applyContentFiltering(filterSettings: FeedTunerSettings) async {
-    // Filter posts
-    let filteredPosts = await contentFilterService.filterFeedViewPosts(posts, settings: filterSettings)
-    
-    // Filter replies
-    let filteredReplies = await contentFilterService.filterFeedViewPosts(replies, settings: filterSettings)
-    
-    // Filter media posts
-    let filteredMediaPosts = await contentFilterService.filterFeedViewPosts(postsWithMedia, settings: filterSettings)
-    
-    await MainActor.run {
-      self.posts = filteredPosts
-      self.replies = filteredReplies
-      self.postsWithMedia = filteredMediaPosts
+  // MARK: - Open Signpost
+
+  /// Starts the ProfileOpen interval. Only the first load of this view model is measured.
+  func beginOpenSignpost() {
+    guard !hasBegunOpenSignpost else { return }
+    hasBegunOpenSignpost = true
+    openSignpost = PerformanceSignposts.beginProfileOpen()
+  }
+
+  /// Whether a ProfileOpen interval is still open.
+  var isOpenSignpostActive: Bool { openSignpost != nil }
+
+  /// Ends ProfileOpen when the first post row, or the pinned post, appears. Every row calls
+  /// this as it appears; only the first call does anything.
+  func markFirstPostVisible() {
+    endOpenSignpost(.firstRow)
+  }
+
+  /// Called when the first load finishes. Ends ProfileOpen if the screen will show no post row;
+  /// a tab with rows waits for its first row to appear (it may be below a long header).
+  func endOpenSignpostIfNothingToShow() {
+    guard openSignpost != nil else { return }
+    let outcome = Self.openOutcomeWithoutRows(
+      hasProfile: profile != nil, tab: selectedProfileTab, tabIsEmpty: selectedTabIsEmpty
+    )
+    if let outcome { endOpenSignpost(outcome) }
+  }
+
+  /// Ends ProfileOpen when the user leaves before any row appeared.
+  func abandonOpenSignpost() {
+    endOpenSignpost(.left)
+  }
+
+  /// How ProfileOpen ends when its first load finishes, or nil while a row is still to appear.
+  nonisolated static func openOutcomeWithoutRows(
+    hasProfile: Bool, tab: ProfileTab, tabIsEmpty: Bool
+  ) -> ProfileOpenOutcome? {
+    // The error screen replaces the tabs, even when the first page did load.
+    guard hasProfile else { return .failed }
+    switch tab {
+    case .posts, .replies, .media:
+      return tabIsEmpty ? .noRows : nil
+    default:
+      return .nonPostTab
     }
-    
-      logger.debug("Applied content filtering to profile posts: \(self.posts.count) posts, \(self.replies.count) replies, \(self.postsWithMedia.count) media posts")
+  }
+
+  private var selectedTabIsEmpty: Bool {
+    switch selectedProfileTab {
+    case .posts: boxedPosts.isEmpty && pinnedPost == nil
+    case .replies: boxedReplies.isEmpty
+    case .media: boxedPostsWithMedia.isEmpty
+    default: true
+    }
+  }
+
+  private func endOpenSignpost(_ outcome: ProfileOpenOutcome) {
+    guard let openSignpost else { return }
+    self.openSignpost = nil
+    PerformanceSignposts.endProfileOpen(id: openSignpost, outcome: outcome)
+  }
+
+  // MARK: - Rows
+
+  /// `existing` followed by the rows of `page` whose id it does not already hold, in API order.
+  /// An author feed can return a post again on a later page, and the same post twice in one page.
+  /// A repost has its own id (Petrel `FeedViewPost.id`), so it stays next to its original. The
+  /// pinned post is not part of `existing`: on another account's profile the AppView also returns
+  /// it in time order, and that copy is kept.
+  nonisolated static func appendingUnique(
+    _ page: [EquatableBox<AppBskyFeedDefs.FeedViewPost>],
+    to existing: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]
+  ) -> [EquatableBox<AppBskyFeedDefs.FeedViewPost>] {
+    var seen = Set(existing.map { $0.value.id })
+    var combined = existing
+    combined.reserveCapacity(existing.count + page.count)
+    for box in page where seen.insert(box.value.id).inserted {
+      combined.append(box)
+    }
+    return combined
+  }
+
+  /// Whether an author-feed item belongs on the Replies tab: a reply, not a repost, whose
+  /// parent is by someone else (or can't be shown). Without reposts every item is by the
+  /// profile, so the item's own author stands in for the profile's DID. That holds even when
+  /// the screen was opened by handle and the profile has not loaded yet.
+  nonisolated static func isReplyToOthers(_ post: AppBskyFeedDefs.FeedViewPost) -> Bool {
+    guard post.reason == nil, let reply = post.reply else { return false }
+    switch reply.parent {
+    case .appBskyFeedDefsPostView(let parentPost):
+      return parentPost.author.did != post.post.author.did
+    case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
+      return true
+    }
   }
 
   // MARK: - Public Methods
@@ -196,44 +311,54 @@ import AppKit
         input: .init(actor: try ATIdentifier(string: userDID))
       )
 
-      if responseCode == 200, let profile = profileData {
-        await SpotlightEntityDonator.shared.donate(profiles: [profile])
-      }
-
       await MainActor.run {
-        // Double-check that we're still valid and not cancelled
-        guard !Task.isCancelled else { 
+        // A cancelled load keeps the profile already shown, but must not leave the screen
+        // loading: empty tabs would show a spinner until some later load finished.
+        guard !Task.isCancelled else {
+          self.isLoading = false
           logger.debug("ProfileViewModel[\(self.instanceId)]: Task cancelled during profile load")
-          return 
+          return
         }
         
         if responseCode == 200, let profile = profileData {
           self.profile = profile
           self.error = nil
+          if !self.hasMarkedOpenHeaderReady, let openSignpost = self.openSignpost {
+            self.hasMarkedOpenHeaderReady = true
+            PerformanceSignposts.profileOpenHeaderReady(id: openSignpost)
+          }
           logger.debug("ProfileViewModel[\(self.instanceId)]: Successfully loaded profile for \(profile.handle)")
           
-          // Set default tab based on profile type
-          if self.isLabeler && self.selectedProfileTab == .posts {
-            self.selectedProfileTab = .labelerInfo
-          }
+          self.applyDefaultTabForLoadedProfile()
         } else {
-          let profileError = ProfileError.httpError(responseCode)
+          // Petrel drops the XRPC error body, so map by status: getProfile answers 400 for
+          // deactivated, suspended and unknown accounts.
+          let profileError: ProfileError = (responseCode == 400 || responseCode == 404)
+            ? .unavailable
+            : .httpError(responseCode)
           self.error = profileError
           logger.error("ProfileViewModel[\(self.instanceId)]: Failed to load profile - HTTP \(responseCode)")
         }
         self.isLoading = false
       }
-      
+
+      // Donate after the header has its data, never ahead of it. Not awaited.
+      if responseCode == 200, let profile = profileData {
+        Task(priority: .utility) {
+          await SpotlightEntityDonator.shared.donate(profiles: [profile])
+        }
+      }
+
       // Load labeler details if this is a labeler profile
       if isLabeler {
         await loadLabelerDetails()
       }
     } catch {
       await MainActor.run {
-        // Check if object is still valid to prevent crash during deallocation
-        guard !Task.isCancelled else { 
+        guard !Task.isCancelled else {
+          self.isLoading = false
           logger.debug("ProfileViewModel[\(self.instanceId)]: Task cancelled during error handling")
-          return 
+          return
         }
         
         self.error = error
@@ -243,196 +368,239 @@ import AppKit
     }
   }
 
-  /// Loads user's posts
-  func loadPosts() async {
-    await loadFeed(type: .posts, resetCursor: postsCursor == nil)
-    // Persist to SwiftData for profile posts feed
-    await cacheCurrentTabPosts(for: .posts)
-  }
-
-  /// Loads user's replies
-  func loadReplies() async {
-    await loadFeed(type: .replies, resetCursor: repliesCursor == nil)
-    await cacheCurrentTabPosts(for: .replies)
-  }
-
-  /// Loads user's posts with media
-  func loadMediaPosts() async {
-    await loadFeed(type: .media, resetCursor: mediaPostsCursor == nil)
-    await cacheCurrentTabPosts(for: .media)
-  }
-
-  /// Loads user's liked posts
-  func loadLikes() async {
-    guard let client = client, let profile = profile, !_isLoadingLikes else { return }
-    _isLoadingLikes = true
-
-    do {
-      if isCurrentUser {
-        let params = AppBskyFeedGetActorLikes.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
-          limit: 20,
-          cursor: likesCursor
-        )
-
-        let (responseCode, output) = try await client.app.bsky.feed.getActorLikes(input: params)
-
-        if responseCode == 200, let feed = output?.feed {
-          await MainActor.run {
-            if self.likesCursor == nil {
-              self._likes = feed
-            } else {
-              self._likes.append(contentsOf: feed)
-            }
-            self.likesCursor = output?.cursor
-          }
-        } else if responseCode == 400 {
-          logger.warning("PDS returned 400 for getActorLikes, likes may not be available")
-        }
-      } else {
-        let result = try await ActorLikesRecordFetcher.fetchLikedPosts(
-          client: client,
-          actorDID: profile.did.didString(),
-          cursor: likesCursor,
-          limit: 25
-        )
-
-        await MainActor.run {
-          if self.likesCursor == nil {
-            self._otherUserLikes = result.posts
-          } else {
-            self._otherUserLikes.append(contentsOf: result.posts)
-          }
-          self.likesCursor = result.cursor
-        }
-      }
-
-      await MainActor.run { self._isLoadingLikes = false }
-    } catch {
-      logger.error("Error loading likes: \(error.localizedDescription)")
-      await MainActor.run { self._isLoadingLikes = false }
+  /// Opens a labeler on Labels instead of Posts, on the first successful header load only.
+  func applyDefaultTabForLoadedProfile() {
+    guard !hasAppliedDefaultTab else { return }
+    hasAppliedDefaultTab = true
+    if isLabeler && selectedProfileTab == .posts {
+      selectedProfileTab = .labelerInfo
     }
   }
 
-  /// Loads known followers - people who follow this profile and are also followed by the current user
-  func loadKnownFollowers() async {
-    guard let client = client, let profile = profile, !self.isCurrentUser, !isLoadingKnownFollowers else { return }
+  /// Reloads the header once the AppView has had a moment to index a follow or unfollow, so
+  /// the counts and `viewer.following` catch up. A newer write replaces a reload still waiting.
+  func refreshHeaderAfterFollowWrite() {
+    followWrites.scheduleRefresh { [weak self] in
+      await self?.loadProfile()
+    }
+  }
 
+  /// Loads the first page of the user's posts, replacing anything already loaded.
+  func loadPosts() async {
+    await loadFeed(type: .posts, resetCursor: true)
+  }
+
+  /// Appends the next page of posts, if there is one.
+  func loadMorePosts() async {
+    guard hasMorePosts, postsCursor != nil else { return }
+    await loadFeed(type: .posts, resetCursor: false)
+  }
+
+  /// Loads the first page of the user's replies, replacing anything already loaded.
+  func loadReplies() async {
+    await loadFeed(type: .replies, resetCursor: true)
+  }
+
+  /// Appends the next page of replies, if there is one.
+  func loadMoreReplies() async {
+    guard hasMoreReplies, repliesCursor != nil else { return }
+    await loadFeed(type: .replies, resetCursor: false)
+  }
+
+  /// Loads the first page of the user's media posts, replacing anything already loaded.
+  func loadMediaPosts() async {
+    await loadFeed(type: .media, resetCursor: true)
+  }
+
+  /// Appends the next page of media posts, if there is one.
+  func loadMoreMediaPosts() async {
+    guard hasMoreMedia, mediaPostsCursor != nil else { return }
+    await loadFeed(type: .media, resetCursor: false)
+  }
+
+  /// Loads the first page of liked posts, replacing anything already loaded.
+  func refreshLikes() async throws {
+    try await fetchLikes(reset: true)
+  }
+
+  /// Appends the next page of liked posts, if there is one.
+  func loadMoreLikes() async {
+    guard hasMoreLikes, likesCursor != nil else { return }
+    do {
+      try await fetchLikes(reset: false)
+    } catch {
+      logger.error("Error loading more likes: \(error.localizedDescription)")
+    }
+  }
+
+  private func fetchLikes(reset: Bool) async throws {
+    guard let client = client, let profile = profile, !_isLoadingLikes else { return }
+    _isLoadingLikes = true
+    defer { _isLoadingLikes = false }
+    let cursor = reset ? nil : likesCursor
+
+    if isCurrentUser {
+      let params = AppBskyFeedGetActorLikes.Parameters(
+        actor: try ATIdentifier(string: profile.did.didString()),
+        limit: 20,
+        cursor: cursor
+      )
+
+      let (responseCode, output) = try await client.app.bsky.feed.getActorLikes(input: params)
+
+      guard responseCode == 200, let feed = output?.feed else {
+        logger.warning("getActorLikes returned HTTP \(responseCode)")
+        throw ProfileError.httpError(responseCode)
+      }
+      await MainActor.run {
+        if reset {
+          self._likes = feed
+        } else {
+          self._likes.append(contentsOf: feed)
+        }
+        self.likesCursor = output?.cursor
+        self.hasMoreLikes = output?.cursor != nil
+      }
+    } else {
+      let result = try await ActorLikesRecordFetcher.fetchLikedPosts(
+        client: client,
+        actorDID: profile.did.didString(),
+        cursor: cursor,
+        limit: 25
+      )
+
+      await MainActor.run {
+        if reset {
+          self._otherUserLikes = result.posts
+        } else {
+          self._otherUserLikes.append(contentsOf: result.posts)
+        }
+        self.likesCursor = result.cursor
+        self.hasMoreLikes = result.cursor != nil
+      }
+    }
+  }
+
+  /// Loads known followers: people who follow this profile and whom the current user follows.
+  /// The header shows only the first page, so a load replaces it. Without `reset`, a profile
+  /// that already has them keeps them.
+  func loadKnownFollowers(reset: Bool = false) async {
+    let actor = profile?.did.didString() ?? userDID
+    guard let client = client, !actor.isEmpty, actor != "fallback", actor != "unknown", actor != currentUserDID, !self.isCurrentUser, !isLoadingKnownFollowers else { return }
+
+    if !reset && !_knownFollowers.isEmpty {
+      return
+    }
+
+    // Cleared on every exit, cancellation included: a flag left set would refuse every later
+    // load of this screen, pull to refresh too.
     _isLoadingKnownFollowers = true
+    defer { _isLoadingKnownFollowers = false }
 
     do {
       let params = AppBskyGraphGetKnownFollowers.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
-        limit: 20,
-        cursor: knownFollowersCursor
+        actor: try ATIdentifier(string: actor),
+        limit: 20
       )
 
       let (responseCode, output) = try await client.app.bsky.graph.getKnownFollowers(input: params)
 
-      if responseCode == 200, let followers = output?.followers {
-        await MainActor.run {
-          // Check if object is still valid to prevent crash during deallocation
-          guard !Task.isCancelled else { return }
-          
-          if self.knownFollowersCursor == nil {
-            self._knownFollowers = followers
-          } else {
-            self._knownFollowers.append(contentsOf: followers)
-          }
-          self.knownFollowersCursor = output?.cursor
-          self._isLoadingKnownFollowers = false
-        }
-      } else {
+      guard responseCode == 200, let followers = output?.followers else {
         logger.warning("Failed to load known followers: HTTP \(responseCode)")
-        await MainActor.run { 
-          guard !Task.isCancelled else { return }
-          self._isLoadingKnownFollowers = false 
-        }
+        return
       }
+      guard !Task.isCancelled else { return }
+      _knownFollowers = followers
+      hasLoadedKnownFollowers = true
     } catch {
       logger.error("Error loading known followers: \(error.localizedDescription)")
-      await MainActor.run { 
-        guard !Task.isCancelled else { return }
-        self._isLoadingKnownFollowers = false 
-      }
     }
   }
 
-  /// Loads user's starter packs
+  /// Loads the first page of starter packs, replacing anything already loaded.
+  func refreshStarterPacks() async throws {
+    try await fetchStarterPacks(reset: true)
+  }
+
+  /// Appends the next page of starter packs, if there is one.
   func loadStarterPacks() async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
-
-    _isLoadingMorePosts = true
-
+    guard hasMoreStarterPacks, starterPacksCursor != nil else { return }
     do {
-      let params = AppBskyGraphGetActorStarterPacks.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
-        limit: 20,
-        cursor: starterPacksCursor
-      )
-
-      let (responseCode, output) = try await client.app.bsky.graph.getActorStarterPacks(
-        input: params)
-
-      if responseCode == 200, let packs = output?.starterPacks {
-        await MainActor.run {
-          if self.starterPacksCursor == nil {
-            self._starterPacks = packs
-          } else {
-            self._starterPacks.append(contentsOf: packs)
-          }
-          self.starterPacksCursor = output?.cursor
-          self.hasMoreStarterPacks = output?.cursor != nil
-          self._isLoadingMorePosts = false
-        }
-      } else {
-        logger.warning("Failed to load starter packs: HTTP \(responseCode)")
-        await MainActor.run {
-          self._isLoadingMorePosts = false
-          self.hasMoreStarterPacks = false
-        }
-      }
+      try await fetchStarterPacks(reset: false)
     } catch {
-      logger.error("Error loading starter packs: \(error.localizedDescription)")
-      await MainActor.run {
-        self._isLoadingMorePosts = false
-        self.hasMoreStarterPacks = false
-      }
+      logger.error("Error loading more starter packs: \(error.localizedDescription)")
     }
   }
 
-  /// Loads user's lists
-  func loadLists() async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
+  private func fetchStarterPacks(reset: Bool) async throws {
+    guard let client = client, let profile = profile, !_isLoadingSection else { return }
+    _isLoadingSection = true
+    defer { _isLoadingSection = false }
 
-    _isLoadingMorePosts = true
+    let params = AppBskyGraphGetActorStarterPacks.Parameters(
+      actor: try ATIdentifier(string: profile.did.didString()),
+      limit: 20,
+      cursor: reset ? nil : starterPacksCursor
+    )
 
-    do {
-      let params = AppBskyGraphGetLists.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
-        limit: 20,
-        cursor: listsCursor
-      )
+    let (responseCode, output) = try await client.app.bsky.graph.getActorStarterPacks(
+      input: params)
 
-      let (responseCode, output) = try await client.app.bsky.graph.getLists(input: params)
-
-      if responseCode == 200, let lists = output?.lists {
-        await MainActor.run {
-          if self.listsCursor == nil {
-            self._lists = lists
-          } else {
-            self._lists.append(contentsOf: lists)
-          }
-          self.listsCursor = output?.cursor
-          self._isLoadingMorePosts = false
-        }
+    guard responseCode == 200, let packs = output?.starterPacks else {
+      logger.warning("Failed to load starter packs: HTTP \(responseCode)")
+      throw ProfileError.httpError(responseCode)
+    }
+    await MainActor.run {
+      if reset {
+        self._starterPacks = packs
       } else {
-        logger.warning("Failed to load lists: HTTP \(responseCode)")
-        await MainActor.run { self._isLoadingMorePosts = false }
+        self._starterPacks.append(contentsOf: packs)
       }
+      self.starterPacksCursor = output?.cursor
+      self.hasMoreStarterPacks = output?.cursor != nil
+    }
+  }
+
+  /// Loads the first page of lists, replacing anything already loaded.
+  func refreshLists() async throws {
+    try await fetchLists(reset: true)
+  }
+
+  /// Appends the next page of lists, if there is one.
+  func loadMoreLists() async {
+    guard hasMoreLists, listsCursor != nil else { return }
+    do {
+      try await fetchLists(reset: false)
     } catch {
-      logger.error("Error loading lists: \(error.localizedDescription)")
-      await MainActor.run { self._isLoadingMorePosts = false }
+      logger.error("Error loading more lists: \(error.localizedDescription)")
+    }
+  }
+
+  private func fetchLists(reset: Bool) async throws {
+    guard let client = client, let profile = profile, !_isLoadingSection else { return }
+    _isLoadingSection = true
+    defer { _isLoadingSection = false }
+
+    let params = AppBskyGraphGetLists.Parameters(
+      actor: try ATIdentifier(string: profile.did.didString()),
+      limit: 20,
+      cursor: reset ? nil : listsCursor
+    )
+
+    let (responseCode, output) = try await client.app.bsky.graph.getLists(input: params)
+
+    guard responseCode == 200, let lists = output?.lists else {
+      logger.warning("Failed to load lists: HTTP \(responseCode)")
+      throw ProfileError.httpError(responseCode)
+    }
+    await MainActor.run {
+      if reset {
+        self._lists = lists
+      } else {
+        self._lists.append(contentsOf: lists)
+      }
+      self.listsCursor = output?.cursor
+      self.hasMoreLists = output?.cursor != nil
     }
   }
 
@@ -440,15 +608,31 @@ import AppKit
 
   /// Load different types of feeds
   private func loadFeed(type: FeedType, resetCursor: Bool) async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
+    let actor = profile?.did.didString() ?? userDID
+    guard let client = client, !actor.isEmpty, actor != "fallback", actor != "unknown", !isLoadingMorePosts else { return }
 
     _isLoadingMorePosts = true
 
+    // ProfilePage measures one "load more" request until its rows are applied, and only a
+    // request that really starts (past the shared in-flight guard above).
+    let pageSignpost = resetCursor ? nil : PerformanceSignposts.beginProfilePage()
+    let rowsBefore = rowCount(for: type)
+    var pageApplied = false
+    defer {
+      if let pageSignpost {
+        PerformanceSignposts.endProfilePage(
+          id: pageSignpost, tab: type.rawValue, added: rowCount(for: type) - rowsBefore,
+          success: pageApplied
+        )
+      }
+    }
+
     do {
+      let actorIdentifier = try ATIdentifier(string: actor)
       switch type {
       case .posts:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
+          actor: actorIdentifier,
           limit: 50,
           cursor: resetCursor ? nil : postsCursor,
           filter: "posts_and_author_threads",
@@ -478,61 +662,68 @@ import AppKit
             logger.debug("ProfileViewModel[\(self.instanceId)]: Found pinned post: \(pinned.post.uri.uriString())")
           }
           
+          let boxedPage = regularPosts.map { EquatableBox($0) }
+          let boxedPinned = pinned.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
-              self.pinnedPost = pinned
-              self.posts = regularPosts
+              self.pinnedPost = boxedPinned
+              self.boxedPosts = Self.appendingUnique(boxedPage, to: [])
             } else {
               // When paginating, don't update pinned post
-              self.posts.append(contentsOf: regularPosts)
+              self.boxedPosts = Self.appendingUnique(boxedPage, to: self.boxedPosts)
             }
             self.postsCursor = output?.cursor
+            self.hasMorePosts = output?.cursor != nil
           }
+          pageApplied = true
         }
 
       case .replies:
-        let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
-          limit: 20,
-          cursor: resetCursor ? nil : repliesCursor,
-          filter: "posts_with_replies"
-        )
+        // Most of an author feed is often top-level posts, so keep paging (within a small
+        // budget) until enough replies to other people turn up to fill the screen.
+        var cursor = resetCursor ? nil : repliesCursor
+        var repliesToOthers: [AppBskyFeedDefs.FeedViewPost] = []
+        var requestCount = 0
+        var didReceivePage = false
 
-        let (responseCode, output) = try await client.app.bsky.feed.getAuthorFeed(input: params)
+        repeat {
+          let params = AppBskyFeedGetAuthorFeed.Parameters(
+            actor: actorIdentifier,
+            limit: 30,
+            cursor: cursor,
+            filter: "posts_with_replies"
+          )
 
-        if responseCode == 200, let feed = output?.feed {
-          // Filter to only include replies
-          let repliesToOthers = feed.filter { post in
-            // Check if post has a reply
-            if let reply = post.reply {
-              // Handle the parent union type without optional binding
-              switch reply.parent {
-              case .appBskyFeedDefsPostView(let parentPost):
-                // If it's a reply to someone else's post
-                return parentPost.author.did != profile.did
-              case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
-                // For other parent types, include them in the result
-                return true
-}
-            }
-            return false
-          }
+          let (responseCode, output) = try await client.app.bsky.feed.getAuthorFeed(input: params)
+          requestCount += 1
 
+          guard responseCode == 200, let feed = output?.feed else { break }
+          didReceivePage = true
+          cursor = output?.cursor
+
+          repliesToOthers.append(contentsOf: feed.filter(Self.isReplyToOthers))
+        } while repliesToOthers.count < 10 && cursor != nil && requestCount < 5
+
+        if didReceivePage {
+          let nextCursor = cursor
+          let boxedPage = repliesToOthers.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
-              self.replies = repliesToOthers
+              self.boxedReplies = Self.appendingUnique(boxedPage, to: [])
             } else {
-              self.replies.append(contentsOf: repliesToOthers)
+              self.boxedReplies = Self.appendingUnique(boxedPage, to: self.boxedReplies)
             }
-            self.repliesCursor = output?.cursor
+            self.repliesCursor = nextCursor
+            self.hasMoreReplies = nextCursor != nil
           }
+          pageApplied = true
         }
-
       case .media:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
-          limit: 20,
-          cursor: resetCursor ? nil : mediaPostsCursor
+          actor: actorIdentifier,
+          limit: 30,
+          cursor: resetCursor ? nil : mediaPostsCursor,
+          filter: "posts_with_media"
         )
 
         let (responseCode, output) = try await client.app.bsky.feed.getAuthorFeed(input: params)
@@ -542,7 +733,7 @@ import AppKit
           let postsWithMedia = feed.filter { post in
             if let embed = post.post.embed {
               switch embed {
-              case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView, .appBskyEmbedExternalView:
+              case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView:
                 return true
               case .appBskyEmbedRecordWithMediaView:
                 return true
@@ -553,18 +744,23 @@ import AppKit
             return false
           }
 
+          let boxedPage = postsWithMedia.map { EquatableBox($0) }
           await MainActor.run {
             if resetCursor {
-              self.postsWithMedia = postsWithMedia
+              self.boxedPostsWithMedia = Self.appendingUnique(boxedPage, to: [])
             } else {
-              self.postsWithMedia.append(contentsOf: postsWithMedia)
+              self.boxedPostsWithMedia = Self.appendingUnique(boxedPage, to: self.boxedPostsWithMedia)
             }
             self.mediaPostsCursor = output?.cursor
+            self.hasMoreMedia = output?.cursor != nil
           }
+          pageApplied = true
         }
-
       }
 
+      if resetCursor, pageApplied {
+        tabsWithFirstPage.insert(type.tab)
+      }
       await MainActor.run {
         self._isLoadingMorePosts = false
       }
@@ -580,91 +776,80 @@ import AppKit
 
   // MARK: - Helper Types
 
-  private enum FeedType {
+  /// The raw value names the tab in ProfilePage signposts.
+  private enum FeedType: String {
     case posts, replies, media
+
+    var tab: ProfileTab {
+      switch self {
+      case .posts: .posts
+      case .replies: .replies
+      case .media: .media
+      }
+    }
   }
 
-  // MARK: - SwiftData Caching for Profile Tabs
-
-  /// Computes a unique feed key for this profile tab for SwiftData persistence
-  func profileFeedKey(for tab: ProfileTab) -> String {
-    let base = "author:\(userDID)"
-    let baseKey: String
+  /// Whether a return to the screen should load `tab`'s first page again: it shows nothing and
+  /// its first page never came back (it failed, or a push cancelled it).
+  func needsFirstPageRetry(for tab: ProfileTab) -> Bool {
+    guard !tabsWithFirstPage.contains(tab) else { return false }
     switch tab {
-    case .posts: baseKey = base + ":posts"
-    case .replies: baseKey = base + ":replies"
-    case .media: baseKey = base + ":media"
-    case .likes: baseKey = base + ":likes"
-    default: baseKey = base + ":other"
+    case .posts: return boxedPosts.isEmpty && pinnedPost == nil
+    case .replies: return boxedReplies.isEmpty
+    case .media: return boxedPostsWithMedia.isEmpty
+    default: return false
     }
-    let account = currentUserDID ?? "unknown-account"
-    return "\(account)-\(baseKey)"
   }
 
-  /// Creates CachedFeedViewPost entries for the current tab and saves them via PersistentFeedStateManager
-  @MainActor
-  private func cacheCurrentTabPosts(for type: FeedType) async {
-    let tab: ProfileTab
-    let source: [AppBskyFeedDefs.FeedViewPost]
+  private func rowCount(for type: FeedType) -> Int {
     switch type {
-    case .posts:
-      tab = .posts
-      source = posts
-    case .replies:
-      tab = .replies
-      source = replies
-    case .media:
-      tab = .media
-      source = postsWithMedia
+    case .posts: boxedPosts.count
+    case .replies: boxedReplies.count
+    case .media: boxedPostsWithMedia.count
     }
-
-    let key = profileFeedKey(for: tab)
-
-    // Map to CachedFeedViewPost with this tab-specific feed key, preserving feed order
-    let cached = source.enumerated().compactMap { (index, post) in
-      CachedFeedViewPost(from: post, feedType: key, feedOrder: index)
-    }
-
-    // Persist using the ModelActor
-    await PersistentFeedStateManager.shared.saveFeedData(cached, for: key)
   }
 
-  /// Loads user's feeds (feed generators)
-  func loadFeeds() async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
 
-    _isLoadingMorePosts = true
+  /// Loads the first page of feeds, replacing anything already loaded.
+  func refreshFeeds() async throws {
+    try await fetchFeeds(reset: true)
+  }
 
+  /// Appends the next page of feeds, if there is one.
+  func loadMoreFeeds() async {
+    guard hasMoreFeeds, feedsCursor != nil else { return }
     do {
-      let params = AppBskyFeedGetActorFeeds.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
-        limit: 20,
-        cursor: feedsCursor
-      )
-
-      let (responseCode, output) = try await client.app.bsky.feed.getActorFeeds(input: params)
-
-      if responseCode == 200, let fetchedFeeds = output?.feeds {
-        await MainActor.run {
-          if self.feedsCursor == nil {
-            self._feeds = fetchedFeeds
-          } else {
-            self._feeds.append(contentsOf: fetchedFeeds)
-          }
-          self.feedsCursor = output?.cursor
-          self._isLoadingMorePosts = false
-        }
-      } else {
-        logger.warning("Failed to load feeds: HTTP \(responseCode)")
-        await MainActor.run {
-          self._isLoadingMorePosts = false
-        }
-      }
+      try await fetchFeeds(reset: false)
     } catch {
-      logger.error("Error loading feeds: \(error.localizedDescription)")
-      await MainActor.run {
-        self._isLoadingMorePosts = false
+      logger.error("Error loading more feeds: \(error.localizedDescription)")
+    }
+  }
+
+  private func fetchFeeds(reset: Bool) async throws {
+    guard let client = client, let profile = profile, !_isLoadingSection else { return }
+    _isLoadingSection = true
+    defer { _isLoadingSection = false }
+
+    let params = AppBskyFeedGetActorFeeds.Parameters(
+      actor: try ATIdentifier(string: profile.did.didString()),
+      limit: 20,
+      cursor: reset ? nil : feedsCursor
+    )
+
+    let (responseCode, output) = try await client.app.bsky.feed.getActorFeeds(input: params)
+
+    guard responseCode == 200, let fetchedFeeds = output?.feeds else {
+      logger.warning("Failed to load feeds: HTTP \(responseCode)")
+      throw ProfileError.httpError(responseCode)
+    }
+    await MainActor.run {
+      if reset {
+        self._feeds = fetchedFeeds
+      } else {
+        self._feeds.append(contentsOf: fetchedFeeds)
       }
+      self.feedsCursor = output?.cursor
+      self.hasMoreFeeds = output?.cursor != nil
     }
   }
 
@@ -696,6 +881,11 @@ import AppKit
   }
 
   // MARK: Update Profile
+
+  /// Updates the signed-in user's profile record.
+  ///
+  /// For the text fields, `nil` keeps the existing value and an empty (or whitespace-only)
+  /// string clears it. `avatar` and `banner` keep the existing images when `nil`.
   func updateProfile(displayName: String? = nil, description: String? = nil, pronouns: String? = nil, website: String? = nil, avatar: Blob? = nil, banner: Blob? = nil) async throws {
     guard let client = client else {
       throw NSError(
@@ -733,15 +923,15 @@ import AppKit
       }
 
       let websiteURI: URI? = if let website {
-        try? URI(uriString: website)
+        Self.nilIfBlank(website).flatMap { try? URI(uriString: $0) }
       } else {
         existingProfile.website
       }
 
       updatedProfile = AppBskyActorProfile(
-        displayName: displayName ?? existingProfile.displayName,
-        description: description ?? existingProfile.description,
-        pronouns: pronouns ?? existingProfile.pronouns,
+        displayName: displayName.map(Self.nilIfBlank) ?? existingProfile.displayName,
+        description: description.map(Self.nilIfBlank) ?? existingProfile.description,
+        pronouns: pronouns.map(Self.nilIfBlank) ?? existingProfile.pronouns,
         website: websiteURI,
         avatar: avatar ?? existingProfile.avatar,
         banner: banner ?? existingProfile.banner,
@@ -773,16 +963,12 @@ import AppKit
       }
     } else if getRecordCode == 400 {
       // Create a new profile record
-      let newWebsiteURI: URI? = if let website {
-        try? URI(uriString: website)
-      } else {
-        nil
-      }
+      let newWebsiteURI: URI? = website.flatMap(Self.nilIfBlank).flatMap { try? URI(uriString: $0) }
 
       updatedProfile = AppBskyActorProfile(
-        displayName: displayName,
-        description: description,
-        pronouns: pronouns,
+        displayName: displayName.flatMap(Self.nilIfBlank),
+        description: description.flatMap(Self.nilIfBlank),
+        pronouns: pronouns.flatMap(Self.nilIfBlank),
         website: newWebsiteURI,
         avatar: avatar,
         banner: banner,
@@ -818,10 +1004,15 @@ import AppKit
     }
   }
   
+  nonisolated private static func nilIfBlank(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
   // MARK: - StateInvalidationSubscriber
   
   /// Check if this subscriber is interested in a specific event
-  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+  nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
     switch event {
     case .postCreated(let post):
       // Only interested if:
@@ -881,15 +1072,18 @@ import AppKit
       // Clear all data when account is switched
       logger.debug("ProfileViewModel: Account switched, clearing profile data...")
       profile = nil
-      posts = []
-      replies = []
-      postsWithMedia = []
+      boxedPosts = []
+      boxedReplies = []
+      boxedPostsWithMedia = []
+      pinnedPost = nil
       _likes = []
       _otherUserLikes = []
       _lists = []
       _starterPacks = []
       _feeds = []
       _knownFollowers = []
+      hasLoadedKnownFollowers = false
+      tabsWithFirstPage = []
       error = nil
       
     default:
@@ -913,6 +1107,7 @@ import AppKit
           await MainActor.run {
             self.labelerDetails = detailed
             self.isLabelerLiked = detailed.viewer?.like != nil
+            self.labelerLikeURI = detailed.viewer?.like
             self.labelerLikeCount = detailed.likeCount ?? 0
           }
         }
@@ -1068,8 +1263,9 @@ import AppKit
       )
     )
     
-    if response?.uri != nil {
+    if let likeURI = response?.uri {
       await MainActor.run {
+        self.labelerLikeURI = likeURI
         self.isLabelerLiked = true
         self.labelerLikeCount += 1
       }
@@ -1078,9 +1274,9 @@ import AppKit
   
   /// Unlike this labeler
   func unlikeLabeler() async throws {
-    guard let client = client, let labelerDetails = labelerDetails else { return }
+    guard let client = client, labelerDetails != nil else { return }
     guard let currentUserDID = currentUserDID else { return }
-    guard let likeUri = labelerDetails.viewer?.like else { return }
+    guard let likeUri = labelerLikeURI else { return }
     
     // Extract rkey from the like URI
     guard let rkey = likeUri.recordKey else { return }
@@ -1094,6 +1290,7 @@ import AppKit
     )
     
     await MainActor.run {
+      self.labelerLikeURI = nil
       self.isLabelerLiked = false
       self.labelerLikeCount = max(0, self.labelerLikeCount - 1)
     }
@@ -1101,12 +1298,12 @@ import AppKit
   
   // MARK: - Hashable & Equatable conformance to prevent Swift metadata cache conflicts
   
-  func hash(into hasher: inout Hasher) {
+  nonisolated func hash(into hasher: inout Hasher) {
     hasher.combine(instanceId)
     hasher.combine(userDID)
   }
   
-  static func == (lhs: ProfileViewModel, rhs: ProfileViewModel) -> Bool {
+  nonisolated static func == (lhs: ProfileViewModel, rhs: ProfileViewModel) -> Bool {
     return lhs.instanceId == rhs.instanceId && lhs.userDID == rhs.userDID
   }
 
@@ -1117,15 +1314,19 @@ enum ProfileError: LocalizedError {
   case clientNotAvailable
   case invalidUserDID
   case httpError(Int)
+  /// The account is deactivated, suspended, deleted or otherwise not viewable.
+  case unavailable
   
   var errorDescription: String? {
     switch self {
     case .clientNotAvailable:
-      return "Network client not available"
+      return "You’re signed out. Sign in and try again."
     case .invalidUserDID:
-      return "Invalid user identifier"
-    case .httpError(let code):
-      return "HTTP error: \(code)"
+      return "This profile link isn’t valid."
+    case .httpError:
+      return "Couldn’t load this profile. Try again."
+    case .unavailable:
+      return "This account may have been deactivated, suspended or deleted."
     }
   }
 }

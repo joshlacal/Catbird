@@ -100,14 +100,15 @@ final class FeedManager {
         return (response.feed, response.cursor)
     }
     
-    private func fetchCustomFeed(
+    public static func fetchCustomFeed(
         client: ATProtoClient,
         generatorUri: ATProtocolURI,
-        cursor: String?
+        cursor: String? = nil,
+        limit: Int = 50
     ) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
         let params = AppBskyFeedGetFeed.Parameters(
             feed: generatorUri,
-            limit: 50,
+            limit: limit,
             cursor: cursor
         )
         
@@ -118,6 +119,15 @@ final class FeedManager {
         }
         
         return (response.feed, response.cursor)
+    }
+    
+    public func fetchCustomFeed(
+        client: ATProtoClient,
+        generatorUri: ATProtocolURI,
+        cursor: String? = nil,
+        limit: Int = 50
+    ) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
+        try await Self.fetchCustomFeed(client: client, generatorUri: generatorUri, cursor: cursor, limit: limit)
     }
     
     private func fetchAuthorFeed(
@@ -196,9 +206,12 @@ enum FeedError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .clientNotAvailable:
-            return "ATProto client is not available"
+            return "You’re signed out. Sign in again to see this feed."
         case .requestFailed(let statusCode):
-            return "Feed request failed with status code: \(statusCode)"
+            if statusCode == 429 {
+                return "Too many requests. Try again in a moment."
+            }
+            return "This feed couldn’t be loaded. Try again."
         }
     }
 }

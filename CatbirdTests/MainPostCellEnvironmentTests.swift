@@ -48,7 +48,7 @@ struct MainPostCellEnvironmentTests {
       #expect(cell.contentConfiguration == nil)
       let post = try makeImagePost(imageCount: imageCount, text: sentinel)
       cell.traitCollection.performAsCurrent {
-        cell.configure(post: post, appState: appState, path: .constant(NavigationPath()))
+        cell.configure(post: post, appState: appState, sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()), path: .constant(NavigationPath()))
       }
       #expect(cell.contentConfiguration != nil)
 

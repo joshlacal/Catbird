@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Petrel
 import SwiftUI
@@ -47,7 +48,7 @@ struct TenorMediaItem: Codable, Hashable {
 // MARK: - Thread Models
 
 struct ThreadEntry: Identifiable, Hashable {
-    let id = UUID()
+    var id = UUID()
     var text: String = ""
     var mediaItems: [PostComposerViewModel.MediaItem] = []
     var videoItem: PostComposerViewModel.MediaItem?
@@ -61,6 +62,9 @@ struct ThreadEntry: Identifiable, Hashable {
     var selectedLanguages: [LanguageCodeContainer] = []
     var outlineTags: [String] = []
     var quotedPost: AppBskyFeedDefs.PostView?
+    // Keep the strong reference while its display metadata is loading.
+    var draftQuotedPostURI: String?
+    var draftQuotedPostCID: String?
 }
 
 // MARK: - Submit Validation
@@ -82,10 +86,17 @@ struct PostComposerSubmitValidationState: Equatable {
     enum Reason: Equatable {
         case emptyContent
         case overCharacterLimit(current: Int, max: Int)
+        case threadPostOverCharacterLimit(postNumber: Int, over: Int)
         case posting
         case videoPreparing
+        case mediaPreparing
+        case mediaUnavailable
         case videoBlocked(String)
         case missingAltText
+        case replyLoading
+        case replyUnavailable
+        case quoteLoading
+        case pendingAudio
         case circleImagesUnavailable
         case circleUnsupportedMedia
     }
@@ -98,9 +109,16 @@ struct PostComposerSubmitValidationState: Equatable {
         case .emptyContent:
             return "Add text or media before posting."
         case .overCharacterLimit(let current, let max):
-            return "\(current - max) characters over the limit."
+            let over = current - max
+            return "\(over) character\(over == 1 ? "" : "s") over the limit."
+        case .threadPostOverCharacterLimit(let postNumber, let over):
+            return "Post \(postNumber) is \(over) character\(over == 1 ? "" : "s") over the limit."
         case .posting:
-            return "Posting..."
+            return "Posting…"
+        case .mediaPreparing:
+            return "Media is still preparing."
+        case .mediaUnavailable:
+            return "An attachment couldn’t be loaded. Retry it or remove it before posting."
         case .videoPreparing:
             return "Video is still preparing."
         case .videoBlocked(let reason):
@@ -111,6 +129,14 @@ struct PostComposerSubmitValidationState: Equatable {
             return "Images are unavailable for this Circle. Remove the attachments to post text."
         case .missingAltText:
             return "Add alt text to every media attachment before posting."
+        case .replyLoading:
+            return "Loading the original post…"
+        case .replyUnavailable:
+            return "The post you’re replying to is unavailable."
+        case .quoteLoading:
+            return "The quoted post must load before this draft can be posted."
+        case .pendingAudio:
+            return "Finish or remove your audio attachment before posting."
         case nil:
             return nil
         }
@@ -118,7 +144,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .circleImagesUnavailable, .circleUnsupportedMedia:
+        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio, .circleImagesUnavailable, .circleUnsupportedMedia:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -162,11 +188,47 @@ struct PostComposerDraft: Codable, Hashable {
   let currentThreadIndex: Int
   let parentPostURI: String?
   let quotedPostURI: String?
+  var quotedPostCID: String? = nil
+  var draftPostgateEmbeddingRules: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]? = nil
+  var draftThreadgateAllow: [AppBskyDraftDefs.DraftThreadgateAllowUnion]? = nil
+  // Distinguishes an explicitly unrestricted draft from a legacy draft with no settings.
+  var hasDraftInteractionSettings: Bool? = nil
+  var pendingAudioURLString: String? = nil
+  var pendingAudioThreadEntryID: UUID? = nil
 }
 
 // MARK: - Codable Wrappers for Draft State
 
+/// The result of writing a photo's draft file. `created` is false when a file with the same
+/// content was already on disk.
+struct DraftImageWrite: Sendable, Equatable {
+  let urlString: String
+  let created: Bool
+}
+
+/// The draft file written for one image attachment's bytes.
+struct DraftImageFile {
+  let data: Data
+  let urlString: String
+
+  /// A stat call, so a file removed from disk is written again on the next save.
+  var exists: Bool {
+    guard let url = URL(string: urlString) else { return false }
+    return FileManager.default.fileExists(atPath: url.path)
+  }
+
+  /// The file written for `item`'s current bytes, if any.
+  static func urlString(
+    for item: PostComposerViewModel.MediaItem, in files: [UUID: DraftImageFile]
+  ) -> String? {
+    guard let data = item.rawData, let file = files[item.id], file.data == data else { return nil }
+    return file.urlString
+  }
+}
+
 struct CodableMediaItem: Codable, Hashable {
+  // Optional for compatibility with drafts saved before attachment IDs were persisted.
+  var attachmentID: UUID? = nil
   let altText: String
   let aspectRatio: CGSize?
   let isLoading: Bool
@@ -178,6 +240,13 @@ struct CodableMediaItem: Codable, Hashable {
   let caption: VideoCaption?
 
   init(from mediaItem: PostComposerViewModel.MediaItem) {
+    self.init(from: mediaItem, persistedImageURLString: nil)
+  }
+
+  /// `persistedImageURLString` is a draft file already written for `mediaItem.rawData`.
+  /// Without one, the bytes are hashed and written here.
+  init(from mediaItem: PostComposerViewModel.MediaItem, persistedImageURLString: String?) {
+    self.attachmentID = mediaItem.id
     self.altText = mediaItem.altText
     self.aspectRatio = mediaItem.aspectRatio
     self.isLoading = mediaItem.isLoading
@@ -187,34 +256,60 @@ struct CodableMediaItem: Codable, Hashable {
     self.caption = mediaItem.caption
     // Persist image data to a temp file so it survives draft serialization (e.g. account switch)
     if let rawData = mediaItem.rawData {
-      self.rawImageURLString = CodableMediaItem.persistImageData(rawData)
+      self.rawImageURLString = persistedImageURLString
+        ?? CodableMediaItem.persistImageData(rawData)
+        ?? mediaItem.rawImageURL?.absoluteString
     } else {
-      self.rawImageURLString = nil
+      self.rawImageURLString = mediaItem.rawImageURL?.absoluteString
     }
   }
 
-  /// Write image data to a temp file in the shared drafts directory, returning the file URL string
-  private static func persistImageData(_ data: Data) -> String? {
+  /// Write image data to a file in the shared drafts directory, returning the file URL string.
+  /// Files are named by content, so autosaves and thread copies of the same image reuse one file.
+  /// Safe to call off the main actor.
+  static func persistImageData(_ data: Data) -> String? {
+    writeImageData(data)?.urlString
+  }
+
+  /// `persistImageData`, also reporting whether this call created the file. Only a composition
+  /// that created a file may later remove it (DraftImageFileJanitor); a file that was already
+  /// there belongs to whoever wrote it first.
+  static func writeImageData(_ data: Data) -> DraftImageWrite? {
+    guard let draftsDir = draftImagesDirectory else { return nil }
+    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    let filename = "draft_image_\(digest).jpg"
+    let fileURL = draftsDir.appendingPathComponent(filename)
+    if FileManager.default.fileExists(atPath: fileURL.path) {
+      return DraftImageWrite(urlString: fileURL.absoluteString, created: false)
+    }
+    do {
+      try data.write(to: fileURL, options: .atomic)
+      return DraftImageWrite(urlString: fileURL.absoluteString, created: true)
+    } catch {
+      // The directory may have been removed since it was created.
+      guard (try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)) != nil,
+            (try? data.write(to: fileURL, options: .atomic)) != nil else { return nil }
+      return DraftImageWrite(urlString: fileURL.absoluteString, created: true)
+    }
+  }
+
+  /// The App Group folder draft photos are written to.
+  static let draftImagesDirectory: URL? = {
     guard let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
     ) else { return nil }
     let draftsDir = container.appendingPathComponent("SharedDrafts", isDirectory: true)
     try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
-    let filename = "draft_image_\(UUID().uuidString).jpg"
-    let fileURL = draftsDir.appendingPathComponent(filename)
-    do {
-      try data.write(to: fileURL)
-      return fileURL.absoluteString
-    } catch {
-      return nil
-    }
-  }
+    return draftsDir
+  }()
   
   func toMediaItem() -> PostComposerViewModel.MediaItem {
-    var item = PostComposerViewModel.MediaItem()
+    var item = PostComposerViewModel.MediaItem(id: attachmentID ?? UUID())
     item.altText = altText
     item.aspectRatio = aspectRatio
-    item.isLoading = isLoading
+    // A serialized flag does not restore the task that owned it.
+    item.isLoading = false
+    item.rawImageURL = rawImageURLString.flatMap(URL.init(string:))
     item.isAudioVisualizerVideo = isAudioVisualizerVideo
     item.isGifConversion = isGifConversion
     if let rawVideoURLString, let url = URL(string: rawVideoURLString) {
@@ -222,14 +317,13 @@ struct CodableMediaItem: Codable, Hashable {
     }
     if let rawImageURLString, let url = URL(string: rawImageURLString),
        let data = try? Data(contentsOf: url) {
-      item.rawData = data
-      if let platformImage = PlatformImage(data: data) {
-        #if os(iOS)
-        item.image = Image(uiImage: platformImage)
-        #elseif os(macOS)
-        item.image = Image(nsImage: platformImage)
-        #endif
-        item.aspectRatio = CGSize(width: platformImage.imageSize.width, height: platformImage.imageSize.height)
+      if isGifConversion && rawVideoURLString == nil {
+        // Failed GIF preparation remains a retryable video source, never a still image post.
+        item.rawData = data
+      } else if let preview = ComposerImagePreparation.makePreviewSynchronously(from: data) {
+        // Decode a thumbnail only; the full image is decoded at upload, off the main actor.
+        item.rawData = data
+        item.applyPreview(preview)
         item.isLoading = false
       }
     }
@@ -272,23 +366,33 @@ struct CodableThreadEntry: Codable, Hashable {
   let hashtags: [String]
   let parentPostURI: String?
   let quotedPostURI: String?
+  var quotedPostCID: String? = nil
+  var draftEntryID: UUID? = nil
   
-  init(from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?) {
+  init(
+    from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?,
+    parentPostURI: String? = nil,
+    encodeMedia: (PostComposerViewModel.MediaItem) -> CodableMediaItem = CodableMediaItem.init(from:)
+  ) {
+    self.draftEntryID = threadEntry.id
     self.text = threadEntry.text
-    self.mediaItems = threadEntry.mediaItems.map(CodableMediaItem.init)
-    self.videoItem = threadEntry.videoItem.map(CodableMediaItem.init)
+    self.mediaItems = threadEntry.mediaItems.map(encodeMedia)
+    self.videoItem = threadEntry.videoItem.map(encodeMedia)
     self.selectedGif = threadEntry.selectedGif
     self.detectedURLs = threadEntry.detectedURLs
     self.urlCards = threadEntry.urlCards
     self.selectedEmbedURL = threadEntry.selectedEmbedURL
     self.urlsKeptForEmbed = threadEntry.urlsKeptForEmbed
     self.hashtags = threadEntry.hashtags
-    self.parentPostURI = parentPost?.uri.uriString()
-    self.quotedPostURI = quotedPost?.uri.uriString()
+    self.parentPostURI = parentPost?.uri.uriString() ?? parentPostURI
+    let quote = threadEntry.quotedPost ?? quotedPost
+    self.quotedPostURI = threadEntry.draftQuotedPostURI ?? quote?.uri.uriString()
+    self.quotedPostCID = threadEntry.draftQuotedPostCID ?? quote?.cid.string
   }
   
   func toThreadEntry() -> ThreadEntry {
     var entry = ThreadEntry()
+    entry.id = draftEntryID ?? UUID()
     entry.text = text
     entry.mediaItems = mediaItems.map { $0.toMediaItem() }
     entry.videoItem = videoItem?.toMediaItem()
@@ -298,6 +402,8 @@ struct CodableThreadEntry: Codable, Hashable {
     entry.selectedEmbedURL = selectedEmbedURL
     entry.urlsKeptForEmbed = urlsKeptForEmbed
     entry.hashtags = hashtags
+    entry.draftQuotedPostURI = quotedPostURI
+    entry.draftQuotedPostCID = quotedPostCID
     return entry
   }
 }

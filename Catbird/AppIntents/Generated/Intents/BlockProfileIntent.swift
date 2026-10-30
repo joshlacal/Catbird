@@ -22,7 +22,7 @@ struct BlockProfileIntent: AppIntent {
         try await requestConfirmation()
 
         let did = account?.id ?? IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let client = try await IntentClientProvider.shared.client(for: did, purpose: .safety)
 
         let output = try unwrapIntentResponse(await client.app.bsky.actor.getProfiles(input: AppBskyActorGetProfiles.Parameters(actors: [try ATIdentifier(string: profile.id)])))
         guard let view = output.profiles.first else {
@@ -30,7 +30,7 @@ struct BlockProfileIntent: AppIntent {
         }
 
         if view.viewer?.blocking != nil {
-            return .result(dialog: IntentDialog(stringLiteral: "You already blocked them."))
+            return .result(dialog: IntentDialog("You already blocked them."))
         }
         let record = AppBskyGraphBlock(subject: view.did, createdAt: ATProtocolDate(date: Date()))
         let userDID = try await client.getDid()
@@ -40,7 +40,7 @@ struct BlockProfileIntent: AppIntent {
             record: .knownType(record)
         )
         _ = try unwrapIntentResponse(await client.com.atproto.repo.createRecord(input: input))
-        return .result(dialog: IntentDialog(stringLiteral: "Blocked."))
+        return .result(dialog: IntentDialog("Blocked."))
 
     }
 }

@@ -7,6 +7,7 @@ import XCTest
 import Petrel
 @testable import Catbird
 
+@MainActor
 final class NotificationParityTests: XCTestCase {
 
   private func makeProfile(did: String, handle: String) -> AppBskyActorDefs.ProfileView {
@@ -90,7 +91,7 @@ final class NotificationParityTests: XCTestCase {
       notification: starterPackNotification
     )
     XCTAssertEqual(starterPackType, NotificationType.starterpackJoined)
-    XCTAssertEqual(starterPackType?.icon, "person.2.badge.plus")
+    XCTAssertEqual(starterPackType?.icon, "person.2.badge.plus.fill")
 
     let verifiedType = viewModel.mapReasonToNotificationType(
       verifiedNotification.reason,
@@ -111,7 +112,7 @@ final class NotificationParityTests: XCTestCase {
       notification: contactMatchNotification
     )
     XCTAssertEqual(contactMatchType, NotificationType.contactMatch)
-    XCTAssertEqual(contactMatchType?.icon, "person.crop.circle.badge.checkmark")
+    XCTAssertEqual(contactMatchType?.icon, "person.crop.circle.fill.badge.checkmark")
 
     let groups = await viewModel.groupNotifications(
       [starterPackNotification, verifiedNotification, unverifiedNotification, contactMatchNotification],

@@ -3,6 +3,7 @@ import Petrel
 import OSLog
 import NukeUI
 
+@MainActor
 @Observable
 final class ListMemberManagementViewModel {
   // MARK: - Properties
@@ -15,14 +16,17 @@ final class ListMemberManagementViewModel {
   var listDetails: AppBskyGraphDefs.ListView?
   var members: [AppBskyActorDefs.ProfileView] = []
   var searchResults: [AppBskyActorDefs.ProfileView] = []
+  private var memberItemURIs: [String: ATProtocolURI] = [:]
   
   // State
   var isLoading = false
+  var isLoadingMoreMembers = false
+  var hasMoreMembers = true
+  private var membersCursor: String?
   var isSearching = false
   var searchText = ""
   var errorMessage: String?
   var showingError = false
-  
   // Operations tracking
   private var operationsInProgress: Set<String> = []
   
@@ -83,10 +87,17 @@ final class ListMemberManagementViewModel {
       
       // Load list details and members concurrently
       async let listDetailsTask = appState.listManager.getListDetails(listURI)
-      async let membersTask = appState.listManager.getListMembers(listURI)
+      async let membersPageTask = appState.listManager.getListMembersPage(listURI, cursor: nil, limit: 50)
       
       listDetails = try await listDetailsTask
-      members = try await membersTask
+      let page = try await membersPageTask
+      members = page.members
+      memberItemURIs.removeAll()
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
       
       logger.info("Successfully loaded list data: \(self.members.count) members for list '\(self.listDetails?.name ?? "Unknown")'")
       
@@ -100,11 +111,45 @@ final class ListMemberManagementViewModel {
   }
   
   @MainActor
+  func loadMoreMembersIfNeeded() async {
+    guard !isLoadingMoreMembers, hasMoreMembers, !isLoading else { return }
+    isLoadingMoreMembers = true
+    defer { isLoadingMoreMembers = false }
+    
+    do {
+      let page = try await appState.listManager.getListMembersPage(
+        listURI,
+        cursor: membersCursor,
+        limit: 50
+      )
+      let existingDIDs = Set(members.map { $0.did.didString() })
+      let newMembers = page.members.filter { !existingDIDs.contains($0.did.didString()) }
+      members.append(contentsOf: newMembers)
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
+    } catch {
+      logger.error("Failed to load more members: \(error.localizedDescription)")
+    }
+  }
+  
+  @MainActor
   func refreshData() async {
     do {
       // Force refresh from server
       listDetails = try await appState.listManager.getListDetails(listURI, forceRefresh: true)
-      members = try await appState.listManager.getListMembers(listURI, forceRefresh: true)
+      membersCursor = nil
+      hasMoreMembers = true
+      let page = try await appState.listManager.getListMembersPage(listURI, cursor: nil, limit: 50)
+      members = page.members
+      memberItemURIs.removeAll()
+      for item in page.items {
+        memberItemURIs[item.subject.did.didString()] = item.uri
+      }
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.items.isEmpty
       
       logger.info("Refreshed list data: \(self.members.count) members")
       
@@ -179,11 +224,32 @@ final class ListMemberManagementViewModel {
     operationsInProgress.insert(userDID)
     defer { operationsInProgress.remove(userDID) }
     
+    let candidate = searchResults.first(where: { $0.did.didString() == userDID })
+    
     do {
-      try await appState.listManager.addMember(userDID: userDID, to: listURI)
+      // Search results are filtered against loaded member pages only. With more
+      // pages unloaded, ask the server so a second listitem is never created.
+      if hasMoreMembers, !members.contains(where: { $0.did.didString() == userDID }),
+         let existingURI = try await appState.listManager.existingListItemURI(of: userDID, in: listURI) {
+        memberItemURIs[userDID] = existingURI
+        searchResults.removeAll { $0.did.didString() == userDID }
+        logger.info("Skipped adding \(userDID): already a member")
+        return
+      }
+      let createdURI = try await appState.listManager.addMember(userDID: userDID, to: listURI, skipDuplicateCheck: true)
       
-      // Refresh members list
-      members = try await appState.listManager.getListMembers(listURI, forceRefresh: true)
+      // Apply add locally
+      if let createdURI {
+        memberItemURIs[userDID] = createdURI
+      }
+      if let candidate, !members.contains(where: { $0.did.didString() == userDID }) {
+        withAnimation {
+          members.insert(candidate, at: 0)
+        }
+      }
+      if let count = listDetails?.listItemCount {
+        listDetails = listDetails?.updatingListItemCount(count + 1)
+      }
       
       // Remove from search results
       searchResults.removeAll { $0.did.didString() == userDID }
@@ -204,15 +270,38 @@ final class ListMemberManagementViewModel {
     operationsInProgress.insert(userDID)
     defer { operationsInProgress.remove(userDID) }
     
+    let itemURI = memberItemURIs[userDID]
+    let removedIndex = members.firstIndex(where: { $0.did.didString() == userDID })
+    let removedMember = removedIndex.map { members[$0] }
+    
+    // Apply remove locally
+    if let removedIndex {
+      withAnimation {
+        _ = members.remove(at: removedIndex)
+      }
+    }
+    memberItemURIs.removeValue(forKey: userDID)
+    if let count = listDetails?.listItemCount {
+      listDetails = listDetails?.updatingListItemCount(max(0, count - 1))
+    }
+    
     do {
-      try await appState.listManager.removeMember(userDID: userDID, from: listURI)
-      
-      // Refresh members list
-      members = try await appState.listManager.getListMembers(listURI, forceRefresh: true)
-      
+      try await appState.listManager.removeMember(userDID: userDID, from: listURI, listItemURI: itemURI)
       logger.info("Successfully removed member: \(userDID)")
       
     } catch {
+      // Rollback on failure
+      if let removedMember, let removedIndex {
+        withAnimation {
+          members.insert(removedMember, at: min(removedIndex, members.count))
+        }
+      }
+      if let itemURI {
+        memberItemURIs[userDID] = itemURI
+      }
+      if let count = listDetails?.listItemCount {
+        listDetails = listDetails?.updatingListItemCount(count + 1)
+      }
       logger.error("Failed to remove member: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
       showingError = true
@@ -225,8 +314,10 @@ final class ListMemberManagementViewModel {
 }
 
 struct ListMemberManagementView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.listsUseLocalNavigation) private var usesLocalNavigation
   @State private var viewModel: ListMemberManagementViewModel?
   @State private var showingMemberOptions = false
   @State private var selectedMember: AppBskyActorDefs.ProfileView?
@@ -241,54 +332,35 @@ struct ListMemberManagementView: View {
   }
   
   var body: some View {
-    NavigationStack {
-      Group {
-        if initializationFailed {
-          errorView
-        } else if let viewModel = viewModel {
-          contentView(viewModel: viewModel)
-        } else {
-          loadingView
-        }
+    // Always pushed onto an existing stack, so it doesn't wrap itself in a NavigationStack.
+    Group {
+      if initializationFailed {
+        errorView
+      } else if let viewModel = viewModel {
+        contentView(viewModel: viewModel)
+      } else {
+        loadingView
       }
-      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-      .navigationTitle("Manage Members")
-#if os(iOS)
-      .toolbarTitleDisplayMode(.inline)
-#endif
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-            }
-            .keyboardShortcut(.escape, modifiers: [])
-        }
-      }
-      .onAppear {
-        Task { @MainActor in
-          await initializeView()
-        }
-      }
+    }
+    .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+    .navigationTitle("Manage Members")
+    .modifier(ManageMembersTitleDisplayModifier())
+    .task {
+      guard viewModel == nil else { return }
+      await initializeView()
     }
   }
   
   @ViewBuilder
   private func contentView(viewModel: ListMemberManagementViewModel) -> some View {
-    VStack(spacing: 0) {
-      // Search Section
-      if viewModel.canAddMembers {
-        searchSection
-      }
-      
-      // Content
+    Group {
       if viewModel.isLoading && viewModel.members.isEmpty {
         loadingView
       } else {
         membersListView
       }
     }
+    .modifier(MemberSearchModifier(viewModel: viewModel))
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         if !viewModel.members.isEmpty {
@@ -300,26 +372,17 @@ struct ListMemberManagementView: View {
             }
           } label: {
             Image(systemName: "ellipsis.circle")
+              .accessibilityLabel("More Options")
           }
         }
       }
     }
-    .alert("Error", isPresented: Binding(
+    .alert("Something Went Wrong", isPresented: Binding(
       get: { viewModel.showingError },
       set: { _ in viewModel.showingError = false }
     )) {
       Button("OK") {
         viewModel.showingError = false
-      }
-      
-      // Add retry button for client initialization errors
-      if viewModel.errorMessage?.contains("ATProto client not initialized") == true {
-        Button("Retry") {
-          viewModel.showingError = false
-          Task {
-            await viewModel.loadData()
-          }
-        }
       }
     } message: {
       if let errorMessage = viewModel.errorMessage {
@@ -337,7 +400,7 @@ struct ListMemberManagementView: View {
         .font(.system(size: 48))
         .foregroundStyle(.red)
       
-      Text("Failed to Initialize")
+      Text("Couldn’t Load Members")
         .font(.title2)
         .fontWeight(.semibold)
       
@@ -348,7 +411,7 @@ struct ListMemberManagementView: View {
           .multilineTextAlignment(.center)
       }
       
-      Button("Retry") {
+      Button("Try Again") {
         Task { @MainActor in
           await initializeView()
         }
@@ -420,41 +483,14 @@ struct ListMemberManagementView: View {
     }
   }
   
-  // MARK: - Search Section
+  // MARK: - Members List
   
   @ViewBuilder
-  private var searchSection: some View {
+  private var membersListView: some View {
     if let viewModel = viewModel {
-      VStack(spacing: 12) {
-        // Search bar
-        HStack {
-          Image(systemName: "magnifyingglass")
-            .foregroundStyle(.secondary)
-          
-          TextField("Search users to add...", text: Binding(
-            get: { viewModel.searchText },
-            set: { newValue in
-              viewModel.searchText = newValue
-              viewModel.searchUsers()
-            }
-          ))
-          .textFieldStyle(.plain)
-          .onSubmit {
-            viewModel.searchUsers()
-          }
-          
-          if viewModel.isSearching {
-            ProgressView()
-              .scaleEffect(0.8)
-          }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        
-        // Search Results
-        if !viewModel.filteredSearchResults.isEmpty {
-          LazyVStack(spacing: 8) {
+      List {
+        if viewModel.canAddMembers && !viewModel.filteredSearchResults.isEmpty {
+          Section("Add People") {
             ForEach(viewModel.filteredSearchResults, id: \.did) { user in
               SearchResultRow(
                 user: user,
@@ -466,21 +502,8 @@ struct ListMemberManagementView: View {
               }
             }
           }
-          .padding(.top, 8)
         }
-      }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 12)
-      .background(.ultraThinMaterial)
-    }
-  }
-  
-  // MARK: - Members List
-  
-  @ViewBuilder
-  private var membersListView: some View {
-    if let viewModel = viewModel {
-      List {
+
         if viewModel.members.isEmpty {
           emptyStateView
         } else {
@@ -489,18 +512,29 @@ struct ListMemberManagementView: View {
               MemberRow(
                 member: member,
                 canRemove: viewModel.canAddMembers,
-                isRemovingInProgress: viewModel.isOperationInProgress(for: member.did.didString())
-              ) {
-                Task {
-                  await viewModel.removeMember(member.did.didString())
+                isRemovingInProgress: viewModel.isOperationInProgress(for: member.did.didString()),
+                onRemove: {
+                  Task {
+                    await viewModel.removeMember(member.did.didString())
+                  }
+                },
+                // Profiles open in the main app, not inside Settings.
+                onTap: usesLocalNavigation ? nil : {
+                  sceneContext.navigationManager.navigate(to: .profile(member.did.didString()), in: nil)
                 }
-              } onTap: {
-                // Navigate to profile
-                appState.navigationManager.navigate(to: .profile(member.did.didString()), in: nil)
-              }
+              )
+            }
+            if viewModel.hasMoreMembers {
+              ProgressView()
+                .frame(maxWidth: .infinity)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .task {
+                  await viewModel.loadMoreMembersIfNeeded()
+                }
             }
           } header: {
-            Text("\(viewModel.members.count) Members")
+            Text(MemberCountFormatter.format(count: viewModel.listDetails?.listItemCount ?? viewModel.members.count))
           }
         }
       }
@@ -521,7 +555,9 @@ struct ListMemberManagementView: View {
       Text("No Members Yet")
         .font(.headline)
       
-      Text("Start building your list by searching for and adding users")
+      Text(viewModel?.canAddMembers == true
+        ? "Search for people above to add them to this list."
+        : "This list doesn’t have anyone on it yet.")
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -536,15 +572,9 @@ struct ListMemberManagementView: View {
       ProgressView()
         .scaleEffect(1.5)
       
-      if let viewModel = viewModel, viewModel.isLoading {
-        Text("Loading members...")
-          .font(.headline)
-          .foregroundStyle(.secondary)
-      } else {
-        Text("Initializing...")
-          .font(.headline)
-          .foregroundStyle(.secondary)
-      }
+      Text("Loading…")
+        .font(.headline)
+        .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -606,9 +636,6 @@ struct SearchResultRow: View {
       .controlSize(.small)
       .disabled(isAddingInProgress)
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
   }
 }
 
@@ -617,7 +644,7 @@ struct MemberRow: View {
   let canRemove: Bool
   let isRemovingInProgress: Bool
   let onRemove: () -> Void
-  let onTap: () -> Void
+  let onTap: (() -> Void)?
   
   var body: some View {
     HStack(spacing: 12) {
@@ -671,11 +698,50 @@ struct MemberRow: View {
         }
         .buttonStyle(.plain)
         .disabled(isRemovingInProgress)
+        .accessibilityLabel("Remove \(member.displayName ?? member.handle.description)")
       }
     }
     .contentShape(Rectangle())
     .onTapGesture {
-      onTap()
+      onTap?()
+    }
+  }
+}
+
+// MARK: - Modifiers
+
+private struct ManageMembersTitleDisplayModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbarTitleDisplayMode(.inline)
+    #else
+    content
+    #endif
+  }
+}
+
+/// Adds the "search people to add" field for list owners.
+private struct MemberSearchModifier: ViewModifier {
+  let viewModel: ListMemberManagementViewModel
+
+  func body(content: Content) -> some View {
+    if viewModel.canAddMembers {
+      content
+        .searchable(
+          text: Binding(
+            get: { viewModel.searchText },
+            set: { newValue in
+              viewModel.searchText = newValue
+              viewModel.searchUsers()
+            }
+          ),
+          prompt: "Search people to add"
+        )
+        .onSubmit(of: .search) {
+          viewModel.searchUsers()
+        }
+    } else {
+      content
     }
   }
 }
@@ -687,12 +753,12 @@ enum InitializationError: LocalizedError {
   
   var errorDescription: String? {
     switch self {
-    case .invalidURI(let uri):
-      return "Invalid list URI: \(uri)"
+    case .invalidURI:
+      return "This list couldn’t be found."
     case .notAuthenticated:
-      return "Please log in to manage list members"
+      return "Sign in to manage this list."
     case .clientNotAvailable:
-      return "Network client not available. Please try again."
+      return "Couldn’t connect. Try again."
     }
   }
 }
