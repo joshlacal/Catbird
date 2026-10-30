@@ -1499,8 +1499,8 @@ private extension CatbirdApp {
   } else if (scheme == "blue.catbird" || scheme == "catbird") && Self.widgetRouteHosts.contains(host) {
     handleWidgetURL(url, components: components, host: host, in: scene)
   } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
-    // Handle E2E testing commands (only in E2E mode)
-    #if os(iOS) || (DEBUG && os(macOS))
+    // Handle E2E testing commands (DEBUG builds, E2E mode only)
+    #if DEBUG
     logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
     if appStateManager.isE2EMode {
       let receivingContext = scene.context
@@ -2635,7 +2635,7 @@ private extension CatbirdApp {
   }
 #endif
 
-#if os(iOS) || (DEBUG && os(macOS))
+#if DEBUG
   // MARK: - E2E Testing URL Handlers
 
   /// Handle E2E testing URL commands
