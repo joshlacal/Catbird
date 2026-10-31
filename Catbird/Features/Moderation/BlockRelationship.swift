@@ -60,8 +60,9 @@ struct BlockRelationship: Equatable, Sendable {
   }
 
   /// The viewer may reveal the hidden post only when their own block is the
-  /// (or a) reason it is hidden. For `.blockedYou` the server withholds content.
-  var canReveal: Bool { direction == .youBlocked || direction == .mutual }
+  /// sole reason it is hidden. When the author has blocked the viewer
+  /// (`.blockedYou` or `.mutual`), the post stays hidden.
+  var canReveal: Bool { direction == .youBlocked }
 
   /// Unblock is offered whenever the viewer has a direct block record.
   var canUnblockDirectly: Bool { directBlockUri != nil }

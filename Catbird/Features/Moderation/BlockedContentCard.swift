@@ -328,14 +328,12 @@ struct BlockedContentCard: View {
     Task {
       defer { isRevealing = false }
       do {
-        let (_, output) = try await client.app.bsky.feed.getPosts(
-          input: AppBskyFeedGetPosts.Parameters(uris: [postUri])
+        revealedPost = try await BlockedPostLoader.load(
+          uri: postUri,
+          authorDid: authorDid,
+          client: client,
+          hydrator: appState.blockedAuthorHydrator
         )
-        if let post = output?.posts.first {
-          revealedPost = post
-        } else {
-          revealFailed = true
-        }
       } catch {
         logger.error("reveal fetch failed: \(error.localizedDescription)")
         revealFailed = true
