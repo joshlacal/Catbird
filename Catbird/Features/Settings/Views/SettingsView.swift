@@ -1,5 +1,4 @@
 import SwiftUI
-import OSLog
 import Petrel
 
 struct SettingsView: View {
@@ -22,7 +21,6 @@ struct SettingsView: View {
     /// The account whose settings were last loaded; a change of account resets navigation.
     @State private var loadedDID: String?
     private enum Departure { case close, accounts }
-    private let logger = Logger(subsystem: "blue.catbird", category: "Settings")
     /// True when pushed onto an existing navigation stack (a settings link opened in a tab) rather than presented as its own sheet.
     let isEmbedded: Bool
 
@@ -74,25 +72,6 @@ struct SettingsView: View {
                         SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope", family: .advanced)
                     }
                 }
-                #if os(iOS)
-                if CatbirdFeatures.mlsChat {
-                Section("Experimental") {
-                    Toggle(isOn: Binding(
-                        get: { ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID) },
-                        set: { newValue in
-                            if newValue {
-                                Task { await optInToMLS() }
-                            } else {
-                                ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
-                                Task { await optOutFromMLS() }
-                            }
-                        }
-                    )) {
-                        SettingsNavigationRow(title: "Catbird Groups", summary: "End-to-end encrypted group chat", systemImage: "lock.shield", family: .privacy)
-                    }
-                }
-                }
-                #endif
             } else {
                 Section("Search Results") {
                     let results = SettingsCatalog.search(searchQuery).filter { $0.target.control?.rawValue != "account.appLock" || AppStateManager.shared.authentication.biometricType != .none }
@@ -289,44 +268,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - MLS Opt-In/Out
-
-    #if os(iOS)
-    /// Registers this device and uploads key packages before marking the account available on the server,
-    /// so other people can add it to conversations as soon as it is opted in.
-    private func optInToMLS() async {
-        let userDID = appState.userDID
-        do {
-            try await appState.initializeMLS()
-            guard let apiClient = await appState.getMLSAPIClient() else { return }
-            _ = try await apiClient.optIn()
-            if let conversationManager = await appState.getMLSConversationManager() {
-                do {
-                    try await conversationManager.ensureDeviceRecordPublished()
-                } catch {
-                    logger.error("Device record publish after opt-in failed: \(error.localizedDescription)")
-                }
-            }
-            // The local flag follows the server; a failed opt-in leaves it off so the person can try again.
-            ExperimentalSettings.shared.enableMLSChat(for: userDID)
-        } catch {
-            logger.error("MLS opt-in failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Opts out on the server after the local toggle is already off.
-    private func optOutFromMLS() async {
-        guard let apiClient = await appState.getMLSAPIClient() else { return }
-        do {
-            _ = try await apiClient.optOut()
-            if let conversationManager = await appState.getMLSConversationManager() {
-                try? await conversationManager.removeCurrentDeviceRecord()
-            }
-        } catch {
-            logger.error("MLS opt-out failed: \(error.localizedDescription)")
-        }
-    }
-    #endif
     private func symbol(for screen: SettingsScreenID) -> String {
         switch family(for: screen) {
         case .account: "person.fill"

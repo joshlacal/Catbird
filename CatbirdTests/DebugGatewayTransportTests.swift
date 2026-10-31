@@ -239,32 +239,26 @@ struct DebugGatewayTransportTests {
 
     // MARK: - Live Gateway Smoke Test
 
-    /// The live smoke test's required input: the fixture launch config an external gateway run
-    /// writes, at the path the launch arguments or environment name, else the default run's.
-    static var liveGatewayConfigPath: String? {
-        #if DEBUG
-        DebugGatewayTransport.resolveConfigPath() ?? "/tmp/catbird-apple-gateway-run-001/config.json"
-        #else
-        nil
-        #endif
-    }
-
-    static var hasLiveGatewayConfig: Bool {
-        liveGatewayConfigPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
-    }
+    /// The smoke test needs a running fixture gateway and its launch config, so ordinary test
+    /// runs skip it. Opt in with CATBIRD_LIVE_GATEWAY_SMOKE=1 in the test process environment
+    /// (from xcodebuild: TEST_RUNNER_CATBIRD_LIVE_GATEWAY_SMOKE=1).
+    private static let liveGatewaySmokeRequested =
+        ProcessInfo.processInfo.environment["CATBIRD_LIVE_GATEWAY_SMOKE"] == "1"
 
     @Test(
         "Live gateway smoke test on simulator",
         .enabled(
-            if: DebugGatewayTransportTests.hasLiveGatewayConfig,
-            "Needs the fixture launch config written by an external gateway run"
+            if: liveGatewaySmokeRequested,
+            "Set CATBIRD_LIVE_GATEWAY_SMOKE=1 to run against a live fixture gateway"
         )
     )
     func liveGatewaySmokeTest() async throws {
         #if DEBUG
-        // Without the config the trait reports this test as skipped, never as a pass without
-        // assertions; a config that is present but invalid fails it below.
-        let configPath = try #require(Self.liveGatewayConfigPath)
+        // Once opted in, the fixture launch config is a required input. A missing file fails the
+        // test instead of silently reporting success without running any assertion.
+        let configPath = try #require(
+            DebugGatewayTransport.resolveConfigPath() ?? "/tmp/catbird-apple-gateway-run-001/config.json"
+        )
         let transport = DebugGatewayTransport()
         let config = try transport.loadLaunchConfig(from: configPath)
         try transport.activate(with: config)

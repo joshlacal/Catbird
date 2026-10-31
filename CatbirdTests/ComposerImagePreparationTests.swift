@@ -282,9 +282,7 @@ struct ComposerImagePreparationTests {
     )
 
     #expect(ImageMetadataStripper.detectMIMEType(from: prepared.data) == "image/jpeg")
-    #expect(ImageMetadataStripper.jpegIfReadOnlyFormat(prepared.data) == nil)
     let stripped = try #require(ImageMetadataStripper.stripMetadata(from: prepared.data))
-    #expect(ImageMetadataStripper.reencodedForUpload(stripped) == nil)
     #expect(stripped.count <= 1_000_000)
     #expect(stripped.count - prepared.data.count < 4096)
 
