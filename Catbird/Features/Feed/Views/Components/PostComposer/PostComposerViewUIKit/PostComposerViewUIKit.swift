@@ -145,6 +145,10 @@ struct PostComposerViewUIKit: View {
             .onAppear {
               pcUIKitLogger.info("PostComposerViewUIKit: View appeared")
             }
+            // A restored Circle draft's checks wait until Circles are known for this account.
+            .task(id: vm.appState.circleCapability) {
+              vm.circleAvailabilityChanged()
+            }
         }
       } else if let initializationError {
         ContentUnavailableView {

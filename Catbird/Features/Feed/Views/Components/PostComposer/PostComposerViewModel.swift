@@ -197,6 +197,9 @@ final class PostComposerViewModel {
   private var replyParentSource: ReplyParentSource = .network
   /// The thread a restored Circle reply was saved with.
   private var restoredCircleReply: CircleDraftDestination.Reply?
+  /// A restored Circle not yet checked against this account's Circles. The check waits
+  /// while Circles are unavailable, as they are for a moment at launch and account switch.
+  private var unconfirmedCircleDestination: CircleDraftDestination?
   private var circleConfirmationTask: Task<Void, Never>?
   private var quoteRestorationTasks: [UUID: Task<Void, Never>] = [:]
   private var interactionDefaultsTask: Task<Void, Never>?
@@ -312,6 +315,10 @@ final class PostComposerViewModel {
     guard canChangeDestination else { return }
     self.destination = newDestination
     self.unresolvedCircleAudience = nil
+    // The author's choice ends the check of a restored Circle.
+    self.circleConfirmationTask?.cancel()
+    self.circleConfirmationTask = nil
+    self.unconfirmedCircleDestination = nil
     if case .circle = newDestination {
       // Quotes are unsupported in Circles
       self.quotedPost = nil
@@ -1099,6 +1106,7 @@ final class PostComposerViewModel {
     parentRestorationTask = nil
     circleConfirmationTask?.cancel()
     circleConfirmationTask = nil
+    unconfirmedCircleDestination = nil
     quoteRestorationTasks.values.forEach { $0.cancel() }
     quoteRestorationTasks.removeAll()
     interactionDefaultsTask?.cancel()
@@ -1135,14 +1143,34 @@ final class PostComposerViewModel {
     if let reply = saved.reply, reply.parentURI == draft.parentPostURI {
       restoredCircleReply = reply
     }
-    confirmRestoredCircle(saved, circle: circle)
+    unconfirmedCircleDestination = saved
+    confirmRestoredCircle()
+  }
+
+  /// Circles are not known yet for this account. Capability is checked at every launch
+  /// and account switch, and a check that ends inconclusively leaves it unknown.
+  private var circleCapabilityPending: Bool {
+    CatbirdFeatures.circlesSpaces && appState.circleCapability == .unknown
+  }
+
+  /// Runs the restored Circle draft's checks that waited for Circles: the Circle is
+  /// confirmed once they are available, and a reply's parent is read, or shown as
+  /// unavailable, once their availability is known.
+  func circleAvailabilityChanged() {
+    confirmRestoredCircle()
+    guard case .circle = replyParentSource, let uriString = pendingParentPostURI,
+          parentPost == nil, parentRestorationTask == nil, !parentRestoreFailed else { return }
+    startParentRestoration(uriString)
   }
 
   /// Checks that a restored Circle is still one of this account's Circles. One that is
   /// gone keeps the draft private and blocks posting until the author picks an audience.
-  /// Nothing is read while Circles are unavailable.
-  private func confirmRestoredCircle(_ saved: CircleDraftDestination, circle: CircleSummary) {
-    guard appState.circlesEnabled else { return }
+  /// Nothing is read while Circles are unavailable; the check runs once they are.
+  private func confirmRestoredCircle() {
+    guard appState.circlesEnabled, circleConfirmationTask == nil,
+          let saved = unconfirmedCircleDestination,
+          case .circle(let circle) = destination,
+          unresolvedCircleAudience == nil else { return }
     let service = circleService ?? appState.circleService
     let generation = draftRestorationGeneration
     let accountDID = appState.userDID
@@ -1151,19 +1179,25 @@ final class PostComposerViewModel {
       do {
         listed = try await service.listedCircle(circle.uri)
       } catch {
-        // A failed listing proves nothing; posting still goes only to this Circle.
+        // A failed listing proves nothing; posting still goes only to this Circle. The
+        // check runs again the next time Circles become available.
+        guard !Task.isCancelled, let self, self.draftRestorationGeneration == generation else { return }
+        self.circleConfirmationTask = nil
         return
       }
       guard !Task.isCancelled, let self,
             self.draftRestorationGeneration == generation,
             self.appState.userDID == accountDID,
-            self.activeSubmission == nil,
             self.unresolvedCircleAudience == nil,
             self.destination == .circle(circle) else { return }
       self.circleConfirmationTask = nil
+      self.unconfirmedCircleDestination = nil
       if let listed {
-        self.destination = .circle(listed)
+        // A post in flight keeps the destination it started with.
+        if self.activeSubmission == nil { self.destination = .circle(listed) }
       } else {
+        // Kept even while a post is in flight, so a failed attempt is not retried
+        // against a Circle that is gone.
         self.unresolvedCircleAudience = UnresolvedCircleAudience(
           saved: saved, issue: .circleUnavailable(name: circle.name)
         )
@@ -1173,13 +1207,19 @@ final class PostComposerViewModel {
 
   private func startParentRestoration(_ uriString: String) {
     parentRestorationTask?.cancel()
+    parentRestorationTask = nil
     switch replyParentSource {
     case .network:
       parentRestorationTask = restorePostFromURI(uriString, entryID: nil)
     case .circle(let circle):
+      guard !circleCapabilityPending else {
+        // Read once Circles are known; until then the reply is loading, not unavailable.
+        parentRestoreFailed = false
+        return
+      }
       parentRestorationTask = restoreCircleParent(uriString, circle: circle)
     case .unreadable:
-      parentRestorationTask = nil
+      break
     }
     parentRestoreFailed = parentRestorationTask == nil
   }

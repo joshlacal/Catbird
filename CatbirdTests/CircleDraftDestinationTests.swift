@@ -160,6 +160,12 @@ struct CircleDraftDestinationTests {
     let circle = try #require(saved.circle)
 
     model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    // Until Circles are known the reply is loading, not unavailable.
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+
+    appState.circleCapability = .unsupported
+    model.circleAvailabilityChanged()
 
     #expect(model.destination == .circle(circle))
     #expect(!model.canPostToDestination)
@@ -176,6 +182,83 @@ struct CircleDraftDestinationTests {
     try await Task.sleep(for: .milliseconds(100))
     #expect(await listings.count == 0)
     #expect(await transport.threadCallCount == 0)
+  }
+
+  @Test("A Circle reply restored before Circles are known loads its parent once they are available")
+  func circleReplyWaitsForCapability() async throws {
+    let appState = await makeAppState()
+    let transport = MockCircleTransport()
+    let listings = CallCounter()
+    await transport.setOnListCircles { await listings.increment() }
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    model.circleAvailabilityChanged()
+    #expect(model.destination == .circle(circle))
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await listings.count == 0)
+    #expect(await transport.threadCallCount == 0)
+
+    appState.circleCapability = .supported
+    model.circleAvailabilityChanged()
+    try await waitUntil { model.parentPost != nil }
+    #expect(model.parentPost?.uri.uriString() == parentURI)
+    #expect(!model.parentRestoreFailed)
+    #expect(model.unresolvedCircleAudience == nil)
+    guard case .circle(let confirmed) = model.destination else {
+      Issue.record("A confirmed Circle draft must stay in its Circle")
+      return
+    }
+    #expect(confirmed.uri == CircleTestFixtures.familyURI)
+
+    // Another availability change reads nothing again.
+    model.circleAvailabilityChanged()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await transport.threadCallCount == 1)
+    #expect(await listings.count == 1)
+  }
+
+  @Test("A Circle restored before Circles are known is checked once they are available")
+  func missingCircleCheckedOnceCirclesAreAvailable() async throws {
+    let appState = await makeAppState()
+    // The account's Circles list only Family.
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: nil)
+
+    model.restoreDraftState(makeDraft("Only for Work", destination: saved))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(model.unresolvedCircleAudience == nil)
+
+    appState.circleCapability = .supported
+    model.circleAvailabilityChanged()
+    try await waitUntil { model.unresolvedCircleAudience != nil }
+    #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
+    #expect(model.destination != .public)
+    #expect(!model.submitValidationState.canSubmit)
+  }
+
+  @Test("A Circle found gone while a post is in flight still blocks the next attempt")
+  func missingCircleFoundDuringSubmission() async throws {
+    let appState = await makeAppState(circlesEnabled: true)
+    // The account's Circles list only Family.
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: nil)
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Only for Work", destination: saved))
+    model.beginSubmission()
+    try await waitUntil { model.unresolvedCircleAudience != nil }
+    #expect(model.destination == .circle(circle))
+
+    model.endSubmission()
+    #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
+    #expect(!model.submitValidationState.canSubmit)
   }
 
   @Test("A Circle draft never restores under another account and its reply is never read")
