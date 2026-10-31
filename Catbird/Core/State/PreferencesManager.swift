@@ -387,6 +387,16 @@ final class PreferencesManager {
         logger.info(
           "Using complete local preferences - Pinned: \(localPreferences?.pinnedFeeds.count ?? 0), Saved: \(localPreferences?.savedFeeds.count ?? 0)"
         )
+        // Repair local lists written before the add-feed fix: a timeline left in Saved,
+        // or a value stored twice, is put back into the shape updateFeeds produces.
+        if let local = localPreferences {
+          let pinned = local.pinnedFeeds
+          let saved = local.savedFeeds
+          local.updateFeeds(pinned: pinned, saved: saved)
+          if local.pinnedFeeds != pinned || local.savedFeeds != saved {
+            try await savePreferences(local)
+          }
+        }
         // Cache these complete local preferences
         cachedServerPreferences = localPreferences
         state = .ready
@@ -909,7 +919,8 @@ final class PreferencesManager {
     }
     var newIDs: [String: String] = [SystemFeedTypes.following: await TIDGenerator.next()]
     for entry in pending { newIDs[entry.uri] = await TIDGenerator.next() }
-    feeds = FeedLibraryServerMerge.apply(pending, to: feeds, newIDs: newIDs)
+    feeds = FeedLibraryServerMerge.normalize(feeds)
+    feeds = FeedLibraryServerMerge.apply(pending, to: feeds, newIDs: newIDs, ensureTimeline: !hasV2)
     feeds = FeedLibraryServerMerge.applyPinnedOrder(pendingOrder, to: feeds)
     // An intervening local writer supersedes this captured operation.
     guard revision == feedLibraryWriteRevision else { throw PreferencesManagerError.invalidData }
@@ -927,8 +938,10 @@ final class PreferencesManager {
     guard (200..<300).contains(code), revision == feedLibraryWriteRevision else {
       throw PreferencesManagerError.invalidData
     }
-    preferences.pinnedFeeds = feeds.filter { $0.pinned }.map { $0.value }
-    preferences.savedFeeds = feeds.filter { !$0.pinned }.map { $0.value }
+    // Same local normalization as fetchPreferences: a timeline the server keeps unpinned
+    // stays pinned locally instead of appearing in Saved after every add.
+    preferences.updateFeeds(pinned: feeds.filter { $0.pinned }.map { $0.value },
+                            saved: feeds.filter { !$0.pinned }.map { $0.value })
     try await savePreferences(preferences)
     // Other pending URIs were included too, but only their exact captured revisions
     // may be acknowledged. A later edit remains pending.
@@ -983,30 +996,24 @@ final class PreferencesManager {
       logger.warning("Added missing timeline feed before syncing to server")
     }
 
-    // Create V2 saved feeds format
+    // Create V2 saved feeds format. Each value is written once, and only one timeline.
     var savedItems: [AppBskyActorDefs.SavedFeed] = []
+    let pinnedValues = OrderedSet(preferences.pinnedFeeds)
+    let savedValues = OrderedSet(preferences.savedFeeds).subtracting(pinnedValues)
+    var wroteTimeline = false
 
-    // Add pinned feeds in their exact order
-    for uri in preferences.pinnedFeeds {
-      let feedType = SystemFeedTypes.isTimelineFeed(uri) ? "timeline" : "feed"
+    for (uri, pinned) in pinnedValues.map({ ($0, true) }) + savedValues.map({ ($0, false) }) {
+      let feedType = SystemFeedTypes.savedFeedType(for: uri)
+      if feedType == "timeline" {
+        if wroteTimeline { continue }
+        wroteTimeline = true
+      }
       savedItems.append(
         AppBskyActorDefs.SavedFeed(
           id: await TIDGenerator.next(),  // Generate new ID for server consistency
           type: feedType,
           value: uri,
-          pinned: true
-        )
-      )
-    }
-
-    // Add saved feeds (order doesn't strictly matter as much for saved, but maintain consistency)
-    for uri in preferences.savedFeeds {
-      savedItems.append(
-        AppBskyActorDefs.SavedFeed(
-          id: await TIDGenerator.next(),  // Generate new ID
-          type: "feed",  // Assume saved are always custom feeds
-          value: uri,
-          pinned: false
+          pinned: pinned
         )
       )
     }
