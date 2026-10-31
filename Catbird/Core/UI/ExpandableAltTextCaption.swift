@@ -59,10 +59,6 @@ struct ExpandableAltTextCaption: View {
         isExpanded.toggle()
       }
     }
-    .onChange(of: text) { _, _ in
-      collapsedHeight = 0
-      fullHeight = 0
-    }
   }
 
   // MARK: - Truncation Measurement
