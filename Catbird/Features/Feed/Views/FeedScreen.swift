@@ -34,6 +34,10 @@ struct FeedScreen: View {
     .modifier(FeedHeaderInjector(
       header: headerAnyView
     ))
+    .navigationTitle(metadata.generator?.displayName ?? "")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Menu {
