@@ -55,7 +55,7 @@ struct TextReadabilitySettingsView: View {
       .disabled(!canEdit)
       #else
       Section {
-        Text("On this platform, Catbird uses App Text Size, Font Style and spacing. Your stored system text-size choice is kept in this account’s preferences.")
+        Text("On this platform, Catbird uses App Text Size, Font Style, and spacing. Your stored system text-size choice is kept in this account’s preferences.")
           .foregroundStyle(.secondary)
           .settingsControl(.init(rawValue: "text.dynamicType"))
         LabeledContent("Saved Maximum", value: AppTextSizeLimit.title(for: appState.appSettings.maxDynamicTypeSize))
@@ -74,7 +74,7 @@ struct TextReadabilitySettingsView: View {
       } header: {
         Text("Reading Aids")
       } footer: {
-        Text("Reading time estimates appear on posts with at least 100 words. Link appearance follows this account's accent color.")
+        Text("Reading time estimates appear on posts with at least 100 words. Link appearance follows this account’s accent color.")
       }
       .disabled(!canEdit)
     }
@@ -132,8 +132,8 @@ struct TextReadabilitySettingsView: View {
     let usesColor = highlights && (style == "color" || style == "both")
     let usesUnderline = highlights && (style == "underline" || style == "both")
     return VStack(alignment: .leading, spacing: 8) {
-      Text("Link Preview").appFont(AppTextRole.caption).foregroundStyle(.secondary)
-      Text("Check out this \(Text("example link").foregroundColor(usesColor ? linkAccent : .primary).underline(usesUnderline)) in a post.")
+      Text("Link Preview").appFont(AppTextRole.subheadline).foregroundStyle(.secondary)
+      Text("Check out this \(Text("example link").foregroundStyle(usesColor ? linkAccent : Color.primary).underline(usesUnderline)) in a post.")
         .appFont(AppTextRole.body)
     }
     .padding(.vertical, 8)

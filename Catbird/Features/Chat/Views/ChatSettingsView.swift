@@ -15,9 +15,9 @@ enum ChatPrivacyOption: String, CaseIterable, Identifiable, Sendable {
     case .all:
       return "Everyone"
     case .following:
-      return "People I follow"
+      return "People I Follow"
     case .none:
-      return "No one"
+      return "No One"
     }
   }
 }
@@ -141,7 +141,6 @@ struct ChatSettingsView: View {
           } label: {
             HStack {
               Text("Mark All Conversations as Read")
-                .foregroundStyle(Color.primary)
               Spacer()
               if isMarkingAllRead {
                 ProgressView()
@@ -157,7 +156,6 @@ struct ChatSettingsView: View {
           } label: {
             HStack {
               Text("Export Chat Data")
-                .foregroundStyle(Color.primary)
               Spacer()
               if isExporting {
                 ProgressView()
@@ -195,7 +193,7 @@ struct ChatSettingsView: View {
         } header: {
           Text("Delete Chat Data")
         } footer: {
-          Text("Permanently deletes your chat data, including conversations, messages and chat settings. This can’t be undone.")
+          Text("Permanently deletes your chat data, including conversations, messages, and chat settings. This can’t be undone.")
         }
       }
       .navigationTitle("Chat Settings")
@@ -217,14 +215,14 @@ struct ChatSettingsView: View {
       }
       .alert("Delete Chat Account?", isPresented: $showingDeleteAccountAlert) {
         Button("Cancel", role: .cancel) { }
-        Button("Delete", role: .destructive) {
+        Button("Delete Chat Account", role: .destructive) {
           deleteChatAccount()
         }
       } message: {
-        Text("This permanently deletes all of your conversations, messages and chat history. This can’t be undone.")
+        Text("This permanently deletes all of your conversations, messages, and chat history. This can’t be undone.")
       }
       .alert("Chat Account Deleted", isPresented: $showingDeletedConfirmation) {
-        Button("OK") { dismiss() }
+        Button("OK", role: .cancel) { dismiss() }
       } message: {
         Text("Your chat account has been deleted.")
       }
@@ -237,7 +235,7 @@ struct ChatSettingsView: View {
         get: { errorMessage != nil },
         set: { if !$0 { errorMessage = nil } }
       )) {
-        Button("OK") {
+        Button("OK", role: .cancel) {
           errorMessage = nil
         }
       } message: {
@@ -277,25 +275,25 @@ struct ChatSettingsView: View {
         case .loading:
           ProgressView("Loading chat privacy settings…")
         case .loadFailed:
-          Text("Chat privacy settings could not be loaded.")
-          Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
-          Button("Retry") { Task { await editor.load() } }
+          Text("Chat privacy settings couldn’t be loaded.")
+          Text(editor.errorMessage ?? "Try again.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
+          Button("Try Again") { Task { await editor.load() } }
               .settingsControl(.init(rawValue: "privacy.chatRetryLoad"))
         case .ready, .saving, .saveFailed:
-          privacyPicker("Messages from", groupInvites: false, editor: editor)
+          privacyPicker("Messages From", groupInvites: false, editor: editor)
             .settingsControl(.init(rawValue: "privacy.messages"))
-          privacyPicker("Group chat invitations from", groupInvites: true, editor: editor)
+          privacyPicker("Group Chat Invitations From", groupInvites: true, editor: editor)
             .settingsControl(.init(rawValue: "privacy.groupInvitations"))
           if editor.displayedValue?.allowGroupInvites == nil {
             Text("Group invitations follow your message rule until you save a separate invitation rule.")
-              .font(.footnote).foregroundStyle(.secondary)
+              .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
           }
           if editor.state == .saving {
             ProgressView("Saving chat privacy settings…")
           } else if editor.state == .saveFailed {
-            Text("This change could not be confirmed. The last loaded rules are shown.")
-            Text(editor.errorMessage ?? "Retry the change or reload the saved rules.").font(.footnote).foregroundStyle(.secondary)
-            Button("Retry This Change") { editor.retrySave() }
+            Text("This change couldn’t be confirmed. The last loaded rules are shown.")
+            Text(editor.errorMessage ?? "Try the change again or reload the saved rules.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
+            Button("Try This Change Again") { editor.retrySave() }
                 .settingsControl(.init(rawValue: "privacy.chatRetrySave"))
             Button("Reload Saved Rules") { Task { await editor.load() } }
           }
@@ -327,7 +325,7 @@ struct ChatSettingsView: View {
       }
     )) {
       if ChatPrivacyOption(rawValue: raw) == nil {
-        Text("Saved rule (unsupported)").tag(raw)
+        Text("Unsupported Saved Rule").tag(raw)
       }
       ForEach(ChatPrivacyOption.allCases) { Text($0.title).tag($0.rawValue) }
     }

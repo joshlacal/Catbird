@@ -28,7 +28,7 @@ struct DeviceManagementView: View {
                         Text(error.localizedDescription)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Button("Retry") {
+                        Button("Try Again") {
                             Task {
                                 await viewModel.loadDevices()
                             }
@@ -95,7 +95,7 @@ struct DeviceManagementView: View {
                 }
             }
         } message: { device in
-            Text("Are you sure you want to delete '\(device.deviceName)'? This will remove all key packages associated with this device.")
+            Text("Delete “\(device.deviceName)”? This removes the key packages for this device.")
         }
         .alert("Clear Garbage Devices", isPresented: $viewModel.showClearAllConfirmation) {
             Button("Cancel", role: .cancel) {}
@@ -107,7 +107,7 @@ struct DeviceManagementView: View {
         } message: {
             Text("Are you sure you want to delete all other device records? This will clear all garbage device registrations.")
         }
-        .alert("Error", isPresented: .constant(viewModel.deleteError != nil)) {
+        .alert("Couldn’t Delete Device", isPresented: Binding(get: { viewModel.deleteError != nil }, set: { if !$0 { viewModel.deleteError = nil } })) {
             Button("OK") {
                 viewModel.deleteError = nil
             }
@@ -184,7 +184,7 @@ struct DeviceRow: View {
             }
 
             if let deviceUUID = device.deviceUUID {
-                Text("UUID: \(deviceUUID.prefix(8))...")
+                Text("UUID: \(deviceUUID.prefix(8))…")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

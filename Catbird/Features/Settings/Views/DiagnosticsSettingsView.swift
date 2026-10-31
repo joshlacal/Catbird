@@ -12,27 +12,21 @@ struct DiagnosticsSettingsView: View {
     ResponsiveContentView {
       List {
         Section {
-          Text("Troubleshooting tools. These actions never run automatically.")
-            .foregroundStyle(.secondary)
-            .appFont(AppTextRole.caption)
+          NavigationLink(destination: MLSChatDiagnosticsView()) {
+            SettingsNavigationRow(
+              title: "Chat Diagnostics",
+              summary: "Recent send failures and recovery events",
+              systemImage: "bubble.left.and.exclamationmark.bubble.right",
+              family: .advanced
+            )
+          }
+        } header: {
+          Text("Encrypted Chat")
+        } footer: {
+          Text("These troubleshooting tools never run automatically.")
         }
 
-        Section("Encrypted Chat") {
-          NavigationLink(destination: MLSChatDiagnosticsView()) {
-            Label {
-              VStack(alignment: .leading, spacing: 2) {
-                Text("Chat Diagnostics")
-                Text("Recent send failures, coordinates, and recovery events")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-            } icon: {
-              Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
-                .foregroundStyle(.blue)
-            }
-          }
-        }
-        Section("MLS Storage") {
+        Section {
           Button(role: .destructive) {
             showResetConfirmation = true
           } label: {
@@ -44,10 +38,10 @@ struct DiagnosticsSettingsView: View {
             }
           }
           .disabled(isResetting)
-
+        } header: {
+          Text("MLS Storage")
+        } footer: {
           Text("Quarantines the encrypted MLS database files and recreates a fresh database. You may need to re-sync conversations.")
-            .foregroundStyle(.secondary)
-            .appFont(AppTextRole.caption)
         }
       }
     }
@@ -69,10 +63,10 @@ struct DiagnosticsSettingsView: View {
     } message: {
       Text("This will quarantine existing MLS storage files and create a new empty database. This cannot be undone inside the app.")
     }
-    .alert("Error", isPresented: .constant(error != nil)) {
-      Button("OK") { error = nil }
+    .alert("Couldn’t Reset MLS Storage", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+      Button("OK", role: .cancel) { error = nil }
     } message: {
-      Text(error?.localizedDescription ?? "Unknown error")
+      Text(error?.localizedDescription ?? "")
     }
   }
 

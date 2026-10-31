@@ -57,6 +57,8 @@ struct SettingsView: View {
                         }
                     }
                 }
+                // Diagnostics only covers encrypted chat, so Release builds without these features show no section.
+                if CatbirdFeatures.repositoryTools || CatbirdFeatures.mlsChat {
                 Section("Encrypted Chat & Data") {
                     if CatbirdFeatures.repositoryTools {
                         NavigationLink(destination: DataBackupSettingsView()) {
@@ -68,9 +70,12 @@ struct SettingsView: View {
                             SettingsNavigationRow(title: "Devices", systemImage: "ipad.landscape.and.iphone", family: .account)
                         }
                     }
-                    NavigationLink(destination: DiagnosticsSettingsView()) {
-                        SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope", family: .advanced)
+                    if CatbirdFeatures.mlsChat {
+                        NavigationLink(destination: DiagnosticsSettingsView()) {
+                            SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope", family: .advanced)
+                        }
                     }
+                }
                 }
             } else {
                 Section("Search Results") {
@@ -132,13 +137,15 @@ struct SettingsView: View {
     private var accountHeader: some View {
         let cached = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)
         let handle = profile?.handle.description ?? cached?.handle
-        let name = profile?.displayName ?? cached?.displayName ?? handle.map { "@" + $0 } ?? "Current account"
+        let displayName = (profile?.displayName ?? cached?.displayName).flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        // Without a display name the handle becomes the title, so it isn't repeated underneath.
+        let name = displayName ?? handle.map { "@" + $0 } ?? "Current Account"
         return Button { requestDeparture(.accounts) } label: {
             HStack(spacing: DesignTokens.Spacing.base) {
                 ProfileAvatarView(url: profile?.finalAvatarURL() ?? cached?.avatarURL, fallbackText: String((handle ?? "?").prefix(1)).uppercased(), size: 44)
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     Text(name).appFont(AppTextRole.headline).foregroundStyle(Color.primary)
-                    if let handle { Text("@" + handle).appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary) }
+                    if let handle, displayName != nil { Text("@" + handle).appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary) }
                     Text("Switch or add an account").appFont(AppTextRole.caption).foregroundStyle(Color.secondary)
                     if isLoadingProfile && handle == nil { Text("Loading account…").appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
                     if let profileError { Text(profileError).appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
@@ -253,7 +260,7 @@ struct SettingsView: View {
     }
     private func summary(for screen: SettingsScreenID) -> String {
         switch screen {
-        case .accountSecurity: "Handle, email, account protection"
+        case .accountSecurity: "Handle, hosted account, sign out"
         case .privacyInteractions: "Visibility, replies, messages"
         case .notifications: appState.notificationManager.settingsSummary
         case .feedsDiscovery: "Feed preferences, threads, interests"

@@ -259,6 +259,7 @@ struct ColorSchemePreview: View {
       VStack(alignment: .leading, spacing: 12) {
         Label {
           Text("@username")
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(textColor)
         } icon: {
           Circle().fill(accent).frame(width: 32, height: 32)
@@ -281,7 +282,7 @@ struct ColorSchemePreview: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(backgroundColor, in: .rect(cornerRadius: 12))
 
-      Text("Current Theme: \(isDarkMode ? (isBlackMode ? "True Black" : "Dark (Dim)") : "Light")")
+      Text("Current Theme: \(isDarkMode ? (isBlackMode ? "True Black" : "Dim") : "Light")")
         .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
     }

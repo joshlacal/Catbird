@@ -66,7 +66,7 @@ struct AboutSettingsView: View {
 
             if let contactURL {
                 Section("Contact") {
-                    externalLinkRow("Contact Support", destination: contactURL)
+                    externalLinkRow("Contact Catbird Support", destination: contactURL)
                 }
             }
 

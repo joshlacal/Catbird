@@ -215,7 +215,7 @@ struct LanguageSettingsView: View {
                     }
                     .settingsControl(.init(rawValue: "languages.interface"))
                 } header: { Text("This Device") } footer: {
-                    Text("Menu language applies to every account on this device. Available choices reflect the translations included in Catbird. Some interface text may remain in English.")
+                    Text("Interface language applies to every account on this device. Available choices reflect the translations included in Catbird. Some interface text may remain in English.")
                 }
             }
 
@@ -447,7 +447,7 @@ struct EnhancedLanguageSelectionView: View {
                             Spacer()
                             if selectedLanguage == system.id {
                                 Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(.tint)
                             }
                         }
                     }
@@ -486,12 +486,7 @@ struct EnhancedLanguageSelectionView: View {
                             showAllLanguages = true
                         }
                     } label: {
-                        HStack {
-                            Image(systemName: "globe")
-                                .foregroundStyle(.blue)
-                            Text("Show All Languages")
-                                .foregroundStyle(.blue)
-                        }
+                        Label("Show All Languages", systemImage: "globe")
                     }
                 }
             } else {
@@ -525,6 +520,7 @@ struct LanguageRow: View {
             HStack {
                 Text(language.flag)
                     .appFont(AppTextRole.title3)
+                    .accessibilityHidden(true)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(language.englishName)
@@ -540,7 +536,7 @@ struct LanguageRow: View {
                 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.tint)
                         .fontWeight(.semibold)
                 }
             }
@@ -620,7 +616,7 @@ struct EnhancedContentLanguagesView: View {
                                     }
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
-                                    .background(Color.blue.opacity(0.1))
+                                    .background(Color.accentColor.opacity(0.1))
                                     .clipShape(Capsule())
                                 }
                             }
@@ -691,6 +687,7 @@ struct ContentLanguageRow: View {
             HStack {
                 Text(language.flag)
                     .appFont(AppTextRole.title3)
+                    .accessibilityHidden(true)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
@@ -701,7 +698,7 @@ struct ContentLanguageRow: View {
                                 .appFont(AppTextRole.caption2)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.2))
+                                .background(Color.accentColor.opacity(0.2))
                                 .clipShape(Capsule())
                         }
                     }
@@ -715,11 +712,13 @@ struct ContentLanguageRow: View {
                 Spacer()
                 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? .blue : .secondary)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                     .appFont(AppTextRole.title3)
+                    .accessibilityHidden(true)
             }
         }
         .contentShape(Rectangle())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .disabled(isPrimary && isSelected) // Can't deselect primary language
     }
 }

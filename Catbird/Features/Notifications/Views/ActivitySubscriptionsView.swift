@@ -73,7 +73,7 @@ struct ActivitySubscriptionsView: View {
   }
 
   private var introductionSection: some View {
-    Section("How it works") {
+    Section("How It Works") {
       Text("Get an alert when people you subscribe to post. Change or turn off alerts here, and use the bell on any profile to add more people.")
         .appBody()
         .foregroundStyle(.secondary)
@@ -160,7 +160,7 @@ private struct ActivitySubscriptionRow: View {
       Button {
         updateSubscription(posts: true, replies: true)
       } label: {
-        Label("Posts and Replies", systemImage: currentState == .postsAndReplies ? "checkmark" : "bubble.left.and.bubble.right")
+        Label("Posts & Replies", systemImage: currentState == .postsAndReplies ? "checkmark" : "bubble.left.and.bubble.right")
       }
 
       if currentState != .none {
@@ -184,6 +184,8 @@ private struct ActivitySubscriptionRow: View {
       .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
       .clipShape(RoundedRectangle(cornerRadius: 8))
     }
+    .accessibilityLabel("Alerts for \(entry.profile.displayNameOrHandle)")
+    .accessibilityValue(currentState.title)
   }
 
   private var currentState: SubscriptionState {

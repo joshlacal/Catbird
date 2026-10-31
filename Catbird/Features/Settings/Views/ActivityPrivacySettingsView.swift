@@ -10,9 +10,9 @@ public enum ActivityPrivacyOption: String, CaseIterable, Identifiable {
 
   public var title: String {
     switch self {
-    case .followers: "Anyone who follows me"
-    case .mutuals: "Only followers who I follow"
-    case .none: "No one"
+    case .followers: "Anyone Who Follows Me"
+    case .mutuals: "Only Followers Who I Follow"
+    case .none: "No One"
     }
   }
 
@@ -62,12 +62,12 @@ struct ActivityPrivacySettingsView: View {
         if editor.state == .unavailable {
           Section { Text("This account is no longer active. Open Settings for the current account.") }
         } else if editor.state == .loading {
-          Section { ProgressView("Loading your subscription setting…") }
+          Section { ProgressView("Loading your subscription rule…") }
         } else if editor.state == .loadFailed {
           Section {
-            Text("Your subscription setting couldn’t be loaded.")
+            Text("Your subscription rule couldn’t be loaded.")
             Text(editor.errorMessage ?? "Try again.")
-              .font(.footnote).foregroundStyle(.secondary)
+              .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
             Button("Try Again") { Task { await editor.load() } }
               .settingsControl(.init(rawValue: "privacy.activityRetryLoad"))
           }
@@ -77,7 +77,7 @@ struct ActivityPrivacySettingsView: View {
             if let value = editor.displayedValue,
                ActivityPrivacyOption(rawValue: value.allowSubscriptions) == nil {
               Text("Your current rule isn’t supported by this version of Catbird. It stays unchanged unless you choose a rule below.")
-                .font(.footnote).foregroundStyle(.secondary)
+                .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
             }
             ForEach(ActivityPrivacyOption.allCases) { option in
               Button { select(option, in: editor) } label: {
@@ -88,7 +88,7 @@ struct ActivityPrivacySettingsView: View {
                     .accessibilityHidden(true)
                   VStack(alignment: .leading, spacing: 4) {
                     Text(option.title).foregroundStyle(.primary)
-                    Text(option.subtitle).font(.footnote).foregroundStyle(.secondary)
+                    Text(option.subtitle).appFont(AppTextRole.footnote).foregroundStyle(.secondary)
                   }
                 }
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -110,7 +110,7 @@ struct ActivityPrivacySettingsView: View {
             Section {
               Text("This change couldn’t be confirmed. Your last saved rule is shown.")
               Text(editor.errorMessage ?? "Try the change again or reload the saved rule.")
-                .font(.footnote).foregroundStyle(.secondary)
+                .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
               Button("Try This Change Again") { editor.retrySave() }
                 .settingsControl(.init(rawValue: "privacy.activityRetrySave"))
               Button("Reload Saved Rule") { Task { await editor.load() } }
@@ -118,7 +118,7 @@ struct ActivityPrivacySettingsView: View {
           }
         }
       } else {
-        Section { ProgressView("Loading your subscription setting…") }
+        Section { ProgressView("Loading your subscription rule…") }
       }
     }
     .navigationTitle("Who Can Subscribe to My Posts")
@@ -205,7 +205,7 @@ private enum ActivityPrivacySettingsError: LocalizedError {
     switch self {
     case .notAuthenticated: "Sign in to load this account’s subscription rule."
     case .accountChanged: "The account changed. Open these settings again."
-    case .response(let code): "The subscription rule could not be confirmed (status \(code)). Try again."
+    case .response(let code): "The subscription rule couldn’t be confirmed (status \(code)). Try again."
     }
   }
 }

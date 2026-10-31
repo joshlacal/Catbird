@@ -22,7 +22,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
     capture(app, "Appearance controls")
     let reset = app.buttons["Reset Appearance…"].firstMatch
     reveal(reset, in: app)
-    XCTAssertTrue(app.staticTexts["Current Theme: Dark (Dim)"].exists)
+    XCTAssertTrue(app.staticTexts["Current Theme: Dim"].exists)
     reset.tap()
     XCTAssertTrue(app.buttons["Reset Appearance"].waitForExistence(timeout: 3))
     capture(app, "Appearance reset confirmation and scope")
@@ -38,7 +38,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
       predicate: NSPredicate(format: "exists == false"), object: app.buttons["Reset Appearance"].firstMatch
     )
     XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 3), .completed)
-    XCTAssertTrue(app.staticTexts["Current Theme: Dark (Dim)"].exists,
+    XCTAssertTrue(app.staticTexts["Current Theme: Dim"].exists,
       "Dismissing the confirmation must preserve the selected theme")
     capture(app, "Appearance reset dismissed without changing the theme")
   }

@@ -130,7 +130,7 @@ struct AdvancedSettingsView: View {
       Button("Reload Saved Providers") { Task { _ = await loadCurrentSettings(reconcileRuntime: true); publishDraftGuard() } }
       Button("Keep Typed Choices", role: .cancel) { }
     } message: { Text("Replace your choices with the providers saved to this account.") }
-    .alert("Saved", isPresented: $showingSaveConfirmation) {
+    .alert("Service Providers Saved", isPresented: $showingSaveConfirmation) {
       Button("OK") {
         showingSaveConfirmation = false
       }
@@ -219,6 +219,7 @@ struct AdvancedSettingsView: View {
         .foregroundStyle(.secondary)
       
       TextField("did:web:example.com#bsky_appview", text: $customAppViewDID)
+        .accessibilityLabel("Custom AppView DID")
         .textFieldStyle(.roundedBorder)
         .autocorrectionDisabled()
         #if os(iOS)
@@ -242,7 +243,7 @@ struct AdvancedSettingsView: View {
           customChatField
         }
         
-        Text("The Chat service handles direct messages.")
+        Text("The chat service handles direct messages.")
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
@@ -266,6 +267,7 @@ struct AdvancedSettingsView: View {
         .foregroundStyle(.secondary)
       
       TextField("did:web:example.com#bsky_chat", text: $customChatDID)
+        .accessibilityLabel("Custom Chat DID")
         .textFieldStyle(.roundedBorder)
         .autocorrectionDisabled()
         #if os(iOS)
@@ -278,13 +280,8 @@ struct AdvancedSettingsView: View {
   
   private var resetSection: some View {
     Section {
-      Button {
+      Button("Use Default Providers", systemImage: "arrow.counterclockwise") {
         resetToDefaults()
-      } label: {
-        HStack {
-          Image(systemName: "arrow.counterclockwise")
-          Text("Use Default Providers")
-        }
       }
       .disabled(isSaving)
     }
@@ -326,7 +323,7 @@ struct AdvancedSettingsView: View {
             .foregroundStyle(.orange)
         }
         
-        Text("AppViews give different views of the Bluesky social network. Some functionality may or may not work depending on what your AppView has implemented. If you experience issues loading content, reset to the default Bluesky AppView.")
+        Text("AppViews offer different views of the Bluesky network, and some features may not work with every AppView. If content doesn’t load, choose Use Default Providers.")
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }

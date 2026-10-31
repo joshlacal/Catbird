@@ -31,7 +31,7 @@ public enum SettingsScreenID: String, CaseIterable, Sendable {
         case .feedFiltering: "Feed Filtering"
         case .threads: "Threads"
         case .discovery: "Discovery"
-        case .interests: "Interests"
+        case .interests: "Your Interests"
         case .feedLibrary: "Feed Library"
         case .verification: "Verification Badges"
         case .moderation: "Moderation"
@@ -79,8 +79,8 @@ struct SettingsSearchEntry: Identifiable {
 /// Only retained controls are indexed. Account names, muted words and private list contents are excluded.
 enum SettingsCatalog {
     static let homeGroups: [(String, [SettingsScreenID])] = [
-        ("Your account", [.accountSecurity, .privacyInteractions, .notifications]),
-        ("Your experience", [.feedsDiscovery, .moderation, .mediaLinks, .language, .appearance, .accessibility]),
+        ("Your Account", [.accountSecurity, .privacyInteractions, .notifications]),
+        ("Your Experience", [.feedsDiscovery, .moderation, .mediaLinks, .language, .appearance, .accessibility]),
         ("Support", [.helpAbout, .advanced])
     ]
 
@@ -114,16 +114,16 @@ enum SettingsCatalog {
         }
         add("Handle", .accountDetails, "account.handle", "Account & Security › Account Details", "Current account", ["username"])
         add("Manage Hosted Account", .accountDetails, "account.management", "Account & Security › Account Details", "Provider website", ["email", "sign-in codes", "2FA", "verification", "change handle"])
-        add("App Lock", .accountSecurity, "account.appLock", "Account & Security", "This device", ["Face ID", "Touch ID", "biometrics"])
+        add("Require App Unlock", .accountSecurity, "account.appLock", "Account & Security", "This device", ["app lock", "Face ID", "Touch ID", "biometrics"])
         add("Automation Label", .automationLabel, nil, "Account & Security › Account Details", "Current account", ["bot"])
         add("Export Public Account Data", .accountDetails, "account.export", "Account & Security › Account Details", "Current account", ["CAR", "backup"])
-        add("Account Deletion Options", .accountDetails, "account.delete", "Account & Security › Account Details", "Current account", ["delete", "remove account", "close account", "erase"])
+        add("Delete Account", .accountDetails, "account.delete", "Account & Security › Account Details", "Current account", ["account deletion options", "remove account", "close account", "erase"])
         add("Sign Out", .accountSecurity, "account.signOut", "Account & Security", "Current account", ["log out", "logout", "sign off"])
         add("Default Replies & Quotes", .defaultPostInteractions, nil, "Privacy & Interactions", "New posts", ["reply permissions", "quote permissions"])
         add("Direct Messages & Group Invitations", .messages, "privacy.messages", "Privacy & Interactions", "Current account", ["DM", "chat", "invites"])
         add("Who Can Subscribe to My Posts", .activityPrivacy, "privacy.activitySubscriptions", "Privacy & Interactions", "Current account", ["post notifications", "activity privacy", "subscribers", "who may subscribe"])
         add("Visible to Signed-Out Visitors", .visibility, "privacy.loggedOutVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["logged out", "public profile"])
-        add("Algorithmic Recommendations Request", .visibility, "privacy.algorithmicVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["hide posts", "discovery"])
+        add("Ask Apps to Exclude My Posts from Recommendations", .visibility, "privacy.algorithmicVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["algorithmic recommendations", "hide posts", "discovery"])
         add("Credit Repost Discovery", .visibility, "privacy.attribution", "Privacy & Interactions › Visibility & Attribution")
         add("Enable Adult Content", .moderation, "moderation.adultContent", "Moderation", "Current account", ["NSFW", "adult content"])
         // Builtin content filters use the names and control ids the Moderation screen shows.
@@ -156,12 +156,12 @@ enum SettingsCatalog {
         for (title, id) in [("YouTube", "youtube"), ("YouTube Shorts", "youtubeShorts"), ("Vimeo", "vimeo"), ("Twitch", "twitch"), ("Spotify", "spotify"), ("Apple Music", "appleMusic"), ("SoundCloud", "soundcloud"), ("GIPHY", "giphy"), ("Tenor", "tenor"), ("Klipy", "klipy"), ("Flickr", "flickr"), ("Bandcamp", "bandcamp")] {
             add(title + " Playback Permission", .externalMedia, "media.provider.\(id)", "Media & Links › External Media Permissions", "Current account", [title, "consent", "allow", "block"])
         }
-        let notificationRows: [(String, String, [String])] = [("Push Alerts on This Device", "push", ["push notifications"]), ("Open System Notification Settings", "systemPermission", ["system permission"]), ("Message Notifications", "messages", ["direct messages", "DM"]), ("Mentions", "mention", []), ("Replies", "reply", []), ("Likes", "like", []), ("New Followers", "follow", ["follows"]), ("Reposts", "repost", []), ("Quotes", "quote", []), ("Likes of Your Reposts", "likeViaRepost", ["likes via repost"]), ("Reposts of Your Reposts", "repostViaRepost", ["reposts via repost"]), ("Posts from Your Subscriptions", "subscribedPost", ["subscribed posts"]), ("Starter Pack Signups", "starterpackJoined", ["starter pack joins"]), ("Account Verified", "verified", ["verified activity"]), ("Verification Removed", "unverified", ["unverified activity"])]
+        let notificationRows: [(String, String, [String])] = [("Push Alerts on This Device", "push", ["push notifications"]), ("Open System Notification Settings", "systemPermission", ["system permission"]), ("Direct Message Push Alerts", "messages", ["message notifications", "direct messages", "DM"]), ("Mentions", "mention", []), ("Replies", "reply", []), ("Likes", "like", []), ("New Followers", "follow", ["follows"]), ("Reposts", "repost", []), ("Quotes", "quote", []), ("Likes of Your Reposts", "likeViaRepost", ["likes via repost"]), ("Reposts of Your Reposts", "repostViaRepost", ["reposts via repost"]), ("Posts from Your Subscriptions", "subscribedPost", ["subscribed posts"]), ("Starter Pack Signups", "starterpackJoined", ["starter pack joins"]), ("Account Verified", "verified", ["verified activity"]), ("Verification Removed", "unverified", ["unverified activity"])]
         for (title, id, aliases) in notificationRows {
             add(title, .notifications, "notifications.\(id)", "Notifications", id == "systemPermission" ? "This device" : "Current account", ["push", "alerts"] + aliases)
         }
         add("People I Subscribe To", .activitySubscriptions, nil, "Notifications", "Current account", ["post notification subscriptions", "people you subscribe to", "activity alerts"])
-        for (title, id) in [("Theme", "theme"), ("Dark Mode", "darkMode"), ("Accent Color", "accent"), ("Reset Appearance", "reset")] {
+        for (title, id) in [("App Theme", "theme"), ("Dark Mode Style", "darkMode"), ("Accent Color", "accent"), ("Reset Appearance", "reset")] {
             add(title, .appearance, "appearance.\(id)", "Appearance")
         }
         for (title, id) in [("Font Style", "fontStyle"), ("App Text Size", "fontSize"), ("Line Spacing", "lineSpacing"), ("Letter Spacing", "letterSpacing"), ("Use System Text Size", "dynamicType"), ("Maximum Text Size", "maxSize"), ("Show Reading Time Estimates", "readingTime"), ("Highlight Links", "highlightLinks"), ("Link Style", "linkStyle")] {
@@ -194,8 +194,8 @@ enum SettingsCatalog {
             }
             add(title, .language, "languages.\(id)", "Language", id == "interface" ? "This device" : "Current account", aliases)
         }
-        add("Default Reply Permissions", .defaultPostInteractions, "privacy.defaultPostInteractions", "Privacy & Interactions › Default Replies & Quotes", "New posts")
-        add("Default Quote Permissions", .defaultPostInteractions, "privacy.defaultQuotes", "Privacy & Interactions › Default Replies & Quotes", "New posts")
+        add("Who Can Reply", .defaultPostInteractions, "privacy.defaultPostInteractions", "Privacy & Interactions › Default Replies & Quotes", "New posts", ["default reply permissions"])
+        add("Allow Quote Posts", .defaultPostInteractions, "privacy.defaultQuotes", "Privacy & Interactions › Default Replies & Quotes", "New posts", ["default quote permissions"])
         add("AppView Provider", .providers, "advanced.appView", "Advanced › Service Providers", "Current account", ["server", "Blacksky", "content provider"])
         add("Chat Provider", .providers, "advanced.chatProvider", "Advanced › Service Providers", "Current account", ["server", "messages"])
         add("App Icon", .appIcon, nil, "Appearance", "This device")
