@@ -508,8 +508,11 @@ private struct BlockedContentRevealedPost: View {
             .accessibilityHint("Returns to the blocked-post placeholder")
         }
       }
+      // No engagement while temporarily revealed. Hit-testing stops touch;
+      // disabling also stops VoiceOver and keyboard activation.
       makePostView()
-        .allowsHitTesting(unblockSucceeded)  // no engagement while temporarily revealed
+        .allowsHitTesting(unblockSucceeded)
+        .disabled(!unblockSucceeded)
     }
   }
 
