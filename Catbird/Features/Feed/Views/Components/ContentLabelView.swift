@@ -203,6 +203,49 @@ struct ContentLabels {
      static let contentWarningLabels: Set<String> = adultContentLabels.union(warningContentLabels)
 }
 
+/// Remembers content-warning decisions outside of any one view instance.
+///
+/// Feed and thread rows are SwiftUI views hosted in reused collection view cells,
+/// so `@State` inside `ContentLabelManager` is thrown away whenever a cell is
+/// reused, and re-created views start from the conservative initial visibility
+/// until the async preference lookup finishes. Both change the row's height after
+/// it has been laid out, which shows up as the post re-rendering and the feed
+/// jumping. Keeping the user's reveal choice and the last resolved visibility here
+/// lets a re-created view lay out at its final height on the first pass.
+@MainActor
+final class ContentLabelDecisionStore {
+    static let shared = ContentLabelDecisionStore()
+
+    private static let maxEntries = 5_000
+
+    private var revealedKeys: Set<String> = []
+    private var resolvedVisibility: [String: ContentVisibility] = [:]
+
+    func isRevealed(_ key: String?) -> Bool {
+        guard let key else { return false }
+        return revealedKeys.contains(key)
+    }
+
+    func setRevealed(_ revealed: Bool, for key: String?) {
+        guard let key else { return }
+        if revealed {
+            if revealedKeys.count >= Self.maxEntries { revealedKeys.removeAll() }
+            revealedKeys.insert(key)
+        } else {
+            revealedKeys.remove(key)
+        }
+    }
+
+    func visibility(for key: String) -> ContentVisibility? {
+        resolvedVisibility[key]
+    }
+
+    func setVisibility(_ visibility: ContentVisibility, for key: String) {
+        if resolvedVisibility.count >= Self.maxEntries { resolvedVisibility.removeAll() }
+        resolvedVisibility[key] = visibility
+    }
+}
+
 /// A view that handles display decisions for labeled content
 struct ContentLabelManager<Content: View>: View {
 
@@ -211,20 +254,89 @@ struct ContentLabelManager<Content: View>: View {
     // Used only for visibility decisions; not displayed as badges.
     let selfLabelValues: [String]?
     let contentType: String
-    @State private var isBlurred: Bool
-    @State private var contentVisibility: ContentVisibility
+    /// Visibility resolved from the user's preferences, tagged with the key it was
+    /// resolved for so a stale result is ignored if the labels change.
+    @State private var resolved: ResolvedVisibility?
+    /// Reveal/re-blur done in this view instance. The shared store carries the
+    /// choice across cell reuse; this drives the immediate re-render.
+    @State private var localRevealOverride: Bool?
+    @State private var isCollapsed = false
     @Environment(AppState.self) private var appState
+    @Environment(\.postID) private var postID
     let content: Content
-    
+
+    private struct ResolvedVisibility {
+        let key: String
+        let visibility: ContentVisibility
+    }
+
+    private var decisions: ContentLabelDecisionStore { .shared }
+
     init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", @ViewBuilder content: () -> Content) {
         self.labels = labels
         self.selfLabelValues = selfLabelValues
         self.contentType = contentType
         self.content = content()
-        // Use a more conservative initial visibility that will be updated by async task
-        let initialVisibility = ContentLabelManager.getInitialContentVisibility(labels: labels)
-        self._contentVisibility = State(initialValue: initialVisibility)
-        self._isBlurred = State(initialValue: initialVisibility == .warn)
+    }
+
+    /// Identifies this label set for this account, so a cached visibility is never
+    /// reused under another account's moderation preferences.
+    private var visibilityKey: String {
+        let labelParts = (labels ?? []).map { "\($0.src.didString())|\($0.val.lowercased())" }.sorted()
+        let selfParts = (selfLabelValues ?? []).map { "self|\($0.lowercased())" }.sorted()
+        return ([appState.userDID ?? ""] + labelParts + selfParts).joined(separator: ",")
+    }
+
+    /// Identifies the labeled subject (the post or quoted record) so a reveal
+    /// survives cell reuse and also applies where the same post appears again.
+    private var revealKey: String? {
+        if let subject = labels?.first?.uri.uriString() {
+            return "\(contentType)|\(subject)"
+        }
+        if !postID.isEmpty {
+            return "\(contentType)|\(postID)"
+        }
+        return nil
+    }
+
+    /// Best visibility known right now: the result resolved for these labels, else
+    /// the last result for the same labels and account, else the conservative default.
+    private var contentVisibility: ContentVisibility {
+        if isCollapsed { return .hide }
+        let key = visibilityKey
+        if let resolved, resolved.key == key { return resolved.visibility }
+        if let cached = decisions.visibility(for: key) { return cached }
+        return Self.getInitialContentVisibility(labels: labels)
+    }
+
+    private var isRevealed: Bool {
+        localRevealOverride ?? decisions.isRevealed(revealKey)
+    }
+
+    private var isBlurred: Bool {
+        contentVisibility == .warn && !isRevealed
+    }
+
+    /// Changes reveal state without animation. The row lives in a self-sizing
+    /// collection view cell, which resizes immediately; animating the SwiftUI side
+    /// makes the whole post slide inside the already-resized cell.
+    private func setRevealed(_ revealed: Bool) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            localRevealOverride = revealed
+        }
+        decisions.setRevealed(revealed, for: revealKey)
+    }
+
+    private func collapse() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            localRevealOverride = false
+            isCollapsed = true
+        }
+        decisions.setRevealed(false, for: revealKey)
     }
     
     /// Conservative initial visibility determination without user preferences
@@ -342,9 +454,7 @@ struct ContentLabelManager<Content: View>: View {
                         .padding(.bottom, 12)
 
                     Button {
-                        withAnimation {
-                            isBlurred = false
-                        }
+                        setRevealed(true)
                     } label: {
                         Text("Show Content")
                             .appFont(AppTextRole.footnote)
@@ -391,9 +501,7 @@ struct ContentLabelManager<Content: View>: View {
                             strongBlurOverlay
                         }
                         .onTapGesture {
-                            withAnimation {
-                                isBlurred = false
-                            }
+                            setRevealed(true)
                         }
                     } else {
                         // When revealed under warn, allow collapsing again to a compact placeholder
@@ -404,9 +512,7 @@ struct ContentLabelManager<Content: View>: View {
                                         if labels != nil && !labels!.isEmpty {
                                             // Reblur button
                                             Button {
-                                                withAnimation {
-                                                    isBlurred = true
-                                                }
+                                                setRevealed(false)
                                             } label: {
                                                 Image(systemName: "eye.slash")
                                                     .appFont(AppTextRole.caption)
@@ -417,9 +523,7 @@ struct ContentLabelManager<Content: View>: View {
                                         }
                                         // Collapse button
                                         Button {
-                                            withAnimation {
-                                                contentVisibility = .hide
-                                            }
+                                            collapse()
                                         } label: {
                                             HStack(spacing: 6) {
                                                 Image(systemName: "chevron.up.square")
@@ -448,8 +552,9 @@ struct ContentLabelManager<Content: View>: View {
                 }
             }
         }
-        .task {
-            // Update visibility immediately when view appears
+        .task(id: visibilityKey) {
+            // Resolve against the user's preferences. This no longer touches the
+            // reveal state, so re-appearing does not re-blur revealed content.
             await updateContentVisibility()
         }
     }
@@ -481,11 +586,16 @@ struct ContentLabelManager<Content: View>: View {
     }
     
     private func updateContentVisibility() async {
+        let key = visibilityKey
         // Consider both canonical labels and any self-applied label values
         let visibility = await getEffectiveContentVisibility(for: labels ?? [], selfLabelValues: selfLabelValues ?? [])
         await MainActor.run {
-            self.contentVisibility = visibility
-            self.isBlurred = (visibility == .warn)
+            decisions.setVisibility(visibility, for: key)
+            // Only write state when the answer changes, so an unchanged result
+            // does not invalidate the row and re-measure the cell.
+            if resolved?.key != key || resolved?.visibility != visibility {
+                resolved = ResolvedVisibility(key: key, visibility: visibility)
+            }
         }
     }
     
