@@ -34,6 +34,10 @@ struct FeedScreen: View {
     .modifier(FeedHeaderInjector(
       header: headerAnyView
     ))
+    .navigationTitle(metadata.generator?.displayName ?? "")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Menu {
@@ -163,7 +167,8 @@ private struct FeedScreenMetadataHeader: View {
           feed: generator,
           onLikedByTap: { onLikedByTap(generator) },
           onAskCatbird: onAskCatbird,
-          onReportTap: onReportTap
+          onReportTap: onReportTap,
+          showsTitle: false
         )
       }
       if let error = metadata.error {
