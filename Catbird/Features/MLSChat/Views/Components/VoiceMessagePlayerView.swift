@@ -1,5 +1,4 @@
 import AVFoundation
-import CatbirdMLS
 import CatbirdMLSCore
 import OSLog
 import Petrel
@@ -127,26 +126,21 @@ struct VoiceMessagePlayerView: View {
     isLoading = true
     loadError = nil
 
-    // Step 1: Fetch encrypted blob
-    voicePlayerLogger.info("[play] fetching blob \(audioData.blobId)")
+    // Step 1: Fetch encrypted blob via com.atproto.space.getBlob (I14)
+    voicePlayerLogger.info("[play] fetching space blob \(audioData.blobId)")
     let encryptedData: Data
-    guard let deviceId = await resolveActorDeviceId() else {
-      voicePlayerLogger.error("[play] device ID is not available")
-      loadError = "Device not registered"
-      isLoading = false
-      return
-    }
     do {
-      let (code, response) = try await appState.client.blue.catbird.chat.getBlob(
-        input: .init(actorDeviceId: deviceId, blobId: audioData.blobId)
+      let fetchResult = try await MLSSpaceBlobLocator.fetchEncryptedBlob(
+        blobId: audioData.blobId,
+        using: appState.client
       )
-      guard (200..<300).contains(code), let output = response else {
-        voicePlayerLogger.error("[play] blob fetch failed: HTTP \(code)")
-        loadError = "fetch: HTTP \(code)"
+      guard (200..<300).contains(fetchResult.responseCode), let data = fetchResult.data else {
+        voicePlayerLogger.error("[play] blob fetch failed: HTTP \(fetchResult.responseCode)")
+        loadError = "fetch: HTTP \(fetchResult.responseCode)"
         isLoading = false
         return
       }
-      encryptedData = output.data
+      encryptedData = data
       voicePlayerLogger.info("[play] blob fetched: \(encryptedData.count) bytes")
     } catch {
       loadError = "fetch: \(error.localizedDescription)"
@@ -172,33 +166,9 @@ struct VoiceMessagePlayerView: View {
       return
     }
 
-    // Step 3: Decode Opus → PCM via free Rust FFI function
-    let pcmData: Data
+    // Step 3: Play decrypted audio container via AVAudioPlayer
     do {
-      pcmData = try ffiDecodeOpusToPcm(opusData: decrypted)
-      voicePlayerLogger.info("[play] decoded PCM: \(pcmData.count) bytes (\(pcmData.count / 2) samples)")
-    } catch {
-      voicePlayerLogger.error("[play] opus decode failed: \(error)")
-      loadError = "decode: \(error.localizedDescription)"
-      isLoading = false
-      return
-    }
-
-    // Step 4: Build WAV in memory
-    let sampleCount = pcmData.count / 2
-    guard sampleCount > 0 else {
-      voicePlayerLogger.error("[play] empty PCM data")
-      loadError = "decode: empty audio"
-      isLoading = false
-      return
-    }
-
-    let wavData = buildWAV(pcmData: pcmData, sampleRate: 48000, channels: 1, bitsPerSample: 16)
-    voicePlayerLogger.info("[play] WAV built: \(wavData.count) bytes, \(sampleCount) samples")
-
-    // Step 5: Create player and play — configure session RIGHT before play()
-    do {
-      let player = try AVAudioPlayer(data: wavData)
+      let player = try AVAudioPlayer(data: decrypted)
       player.prepareToPlay()
       voicePlayerLogger.info("[play] player ready: duration=\(player.duration)s")
 
@@ -239,59 +209,6 @@ struct VoiceMessagePlayerView: View {
       voicePlayerLogger.warning("[play] audio session config failed: \(error)")
     }
     #endif
-  }
-
-  /// Build a WAV file in memory from raw PCM Int16 LE data.
-  private func buildWAV(pcmData: Data, sampleRate: UInt32, channels: UInt16, bitsPerSample: UInt16) -> Data {
-    let byteRate = sampleRate * UInt32(channels) * UInt32(bitsPerSample) / 8
-    let blockAlign = channels * bitsPerSample / 8
-    let dataSize = UInt32(pcmData.count)
-    let fileSize = 36 + dataSize
-
-    var wav = Data(capacity: Int(44 + dataSize))
-    wav.append(contentsOf: "RIFF".utf8)
-    wav.append(contentsOf: withUnsafeBytes(of: fileSize.littleEndian) { Array($0) })
-    wav.append(contentsOf: "WAVE".utf8)
-    wav.append(contentsOf: "fmt ".utf8)
-    wav.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })  // chunk size
-    wav.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })   // PCM format
-    wav.append(contentsOf: withUnsafeBytes(of: channels.littleEndian) { Array($0) })
-    wav.append(contentsOf: withUnsafeBytes(of: sampleRate.littleEndian) { Array($0) })
-    wav.append(contentsOf: withUnsafeBytes(of: byteRate.littleEndian) { Array($0) })
-    wav.append(contentsOf: withUnsafeBytes(of: blockAlign.littleEndian) { Array($0) })
-    wav.append(contentsOf: withUnsafeBytes(of: bitsPerSample.littleEndian) { Array($0) })
-    wav.append(contentsOf: "data".utf8)
-    wav.append(contentsOf: withUnsafeBytes(of: dataSize.littleEndian) { Array($0) })
-    wav.append(pcmData)
-    return wav
-  }
-  private func resolveActorDeviceId() async -> String? {
-    if let deviceUuid = try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: appState.userDID),
-       !deviceUuid.isEmpty, UUID(uuidString: deviceUuid) != nil {
-      return deviceUuid
-    }
-    if let conversationManager = await appState.getMLSConversationManager() {
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        if let registered = try? await conversationManager.registeredDeviceInfoForPushTokenRegistration(),
-           !registered.deviceId.isEmpty, UUID(uuidString: registered.deviceId) != nil {
-          return registered.deviceId
-        }
-      } else {
-        if let registered = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID),
-           !registered.deviceId.isEmpty, UUID(uuidString: registered.deviceId) != nil {
-          return registered.deviceId
-        }
-      }
-    }
-    let normalizedUserDid = appState.userDID.trimmingCharacters(in: .whitespacesAndNewlines)
-    let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
-    if let data = sharedDefaults.data(forKey: "blue.catbird.mls.deviceInfoByUser"),
-       let decoded = try? JSONDecoder().decode([String: MLSDeviceManager.UserDeviceInfo].self, from: data),
-       let info = decoded[normalizedUserDid],
-       !info.deviceId.isEmpty, UUID(uuidString: info.deviceId) != nil {
-      return info.deviceId
-    }
-    return nil
   }
 
 

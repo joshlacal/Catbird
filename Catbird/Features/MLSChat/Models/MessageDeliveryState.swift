@@ -7,6 +7,30 @@
 //
 import Foundation
 import CatbirdMLSCore
+
+/// Pure value model representing a verified message delivery acknowledgment.
+public struct MLSDeliveryAckModel: Sendable, Codable, Equatable, Hashable {
+  public let messageId: String
+  public let conversationId: String
+  public let senderDID: String
+  public let ackedAt: Date
+  public let currentUserDID: String
+
+  public init(
+    messageId: String,
+    conversationId: String,
+    senderDID: String,
+    ackedAt: Date,
+    currentUserDID: String
+  ) {
+    self.messageId = messageId
+    self.conversationId = conversationId
+    self.senderDID = senderDID
+    self.ackedAt = ackedAt
+    self.currentUserDID = currentUserDID
+  }
+}
+
 /// The display state for an outgoing message's delivery indicator.
 public enum MessageDeliveryState: Equatable {
   /// Message is being sent (not yet confirmed by server).

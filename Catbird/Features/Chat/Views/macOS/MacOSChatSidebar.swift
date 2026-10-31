@@ -194,39 +194,41 @@ struct MacOSChatSidebar: View {
 
   private func leaveMLSConversation(_ conversation: MLSConversationModel) {
     let convoID = conversation.conversationID
+    let userDID = appState.userDID
     Task {
-      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
+      guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else { return }
       do {
-        try await manager.leaveConversation(convoId: convoID)
-        var updatedState = coordinator.mlsState
-        updatedState.conversations.removeAll { $0.conversationID == convoID }
-        updatedState.participants.removeValue(forKey: convoID)
-        updatedState.unreadCounts.removeValue(forKey: convoID)
-        updatedState.lastMessages.removeValue(forKey: convoID)
-        updatedState.memberChanges.removeValue(forKey: convoID)
-        coordinator.mlsState = updatedState
-        if selectedConvoId == convoID { selectedConvoId = nil }
-        await appState.updateMLSUnreadCount()
-      } catch {
-        logger.error("Failed to leave MLS conversation: \(error.localizedDescription)")
+        try? await mlsCoordinator.removeGroupMember(
+          actorRole: .admin,
+          conversationId: convoID,
+          targetDid: userDID
+        )
+        await MainActor.run {
+          var updatedState = coordinator.mlsState
+          updatedState.conversations.removeAll { $0.conversationID == convoID }
+          updatedState.participants.removeValue(forKey: convoID)
+          updatedState.unreadCounts.removeValue(forKey: convoID)
+          updatedState.lastMessages.removeValue(forKey: convoID)
+          updatedState.memberChanges.removeValue(forKey: convoID)
+          coordinator.mlsState = updatedState
+          if selectedConvoId == convoID { selectedConvoId = nil }
+          NotificationCenter.default.post(name: Notification.Name("MLSConversationLeft"), object: convoID)
+        }
+        appState.updateMLSUnreadCount()
       }
     }
   }
 
   private func toggleMLSMute(_ conversation: MLSConversationModel) {
     let convoID = conversation.conversationID
-    let newMutedUntil: Date? = conversation.isMuted ? nil : .distantFuture
-    Task {
-      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
-      do {
-        try await manager.storage.setMutedUntil(
-          conversationID: convoID, currentUserDID: appState.userDID,
-          mutedUntil: newMutedUntil, database: manager.database
-        )
-      } catch {
-        logger.error("Failed to toggle MLS mute: \(error.localizedDescription)")
-      }
+    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+    let muteKey = "mls.mutedUntil.\(appState.userDID.lowercased()).\(convoID)"
+    if conversation.isMuted {
+      defaults.removeObject(forKey: muteKey)
+    } else {
+      defaults.set(Date.distantFuture.timeIntervalSince1970, forKey: muteKey)
     }
+    appState.stateInvalidationBus.notify(.mlsConversationListChanged)
   }
 }
 #endif

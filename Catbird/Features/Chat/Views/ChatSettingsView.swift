@@ -396,22 +396,13 @@ struct ChatSettingsView: View {
   }
 
   private func toggleOptInStatus(_ optIn: Bool) {
-    // Prevent re-entrancy: if already toggling, ignore the change
     guard !isTogglingOptIn else {
       logger.debug("Ignoring toggle - already in progress")
       return
     }
-    
+
     Task {
-      let userDID = appState.userDID 
-      
-      guard let mlsClient = await appState.getMLSAPIClient() else {
-        logger.error("MLS client not available")
-        await MainActor.run {
-          errorMessage = "MLS chat is not available"
-        }
-        return
-      }
+      let userDID = appState.userDID
 
       await MainActor.run {
         isTogglingOptIn = true
@@ -419,49 +410,37 @@ struct ChatSettingsView: View {
 
       do {
         if optIn {
-          // CRITICAL FIX: Initialize MLS (device registration + key packages) BEFORE calling optIn
-          // This ensures other users can find and add this user to conversations
-          logger.info("Initializing MLS before opt-in (device registration + key packages)...")
-          try await appState.initializeMLS()
-          
-          // CRITICAL: Wait for key packages to be uploaded before marking as opted-in
-          // This prevents the "no active keypackages" issue where optIn is called
-          // but key packages are still being uploaded in a detached task
-          if let conversationManager = await appState.getMLSConversationManager() {
-            logger.info("Uploading key packages synchronously before opt-in...")
-            try await conversationManager.uploadKeyPackageBatchSmart(count: 100)
-            logger.info("Key packages uploaded successfully")
-          }
-          
-          // Now call optIn to mark the user as available on the server
-          _ = try await mlsClient.optIn()
-
-          if let conversationManager = await appState.getMLSConversationManager() {
-            do {
-              try await conversationManager.ensureDeviceRecordPublished()
-            } catch {
-              logger.error("Device record publish after opt-in failed: \(error.localizedDescription)")
-            }
-          }
-
+          logger.info("Initializing MLS via unified SDK (Spaces eligibility + PQ device enrollment)...")
           ExperimentalSettings.shared.enableMLSChat(for: userDID)
-          logger.info("Successfully opted in to MLS chat for account: \(userDID.prefix(20))...")
-        } else {
-          _ = try await mlsClient.optOut()
-          if let conversationManager = await appState.getMLSConversationManager() {
-            try? await conversationManager.removeCurrentDeviceRecord()
+          do {
+            try await appState.initializeMLS()
+            if let eligibility = appState.spacesEligibility, !eligibility.eligible {
+              throw NSError(
+                domain: "ChatSettings",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: eligibility.userMessage]
+              )
+            }
+          } catch {
+            ExperimentalSettings.shared.disableMLSChat(for: userDID)
+            await appState.prepareMLSStorageReset()
+            await appState.loadMLSConversations()
+            throw error
           }
+          logger.info("Successfully enabled MLS chat for account: \(userDID.prefix(20))...")
+        } else {
           ExperimentalSettings.shared.disableMLSChat(for: userDID)
-          logger.info("Successfully opted out of MLS chat for account: \(userDID.prefix(20))...")
+          await appState.prepareMLSStorageReset()
+          await appState.loadMLSConversations()
+          logger.info("Disabled MLS chat for account: \(userDID.prefix(20))...")
         }
         await MainActor.run {
-          isOptedIn = optIn  // Update state to reflect successful change
+          isOptedIn = optIn
           isTogglingOptIn = false
         }
       } catch {
         logger.error("Failed to toggle opt-in status: \(error.localizedDescription)")
         await MainActor.run {
-          // State remains unchanged since we didn't update isOptedIn during the toggle
           isTogglingOptIn = false
           errorMessage = "Failed to update MLS chat settings: \(error.localizedDescription)"
         }

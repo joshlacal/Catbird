@@ -1,5 +1,4 @@
 import CatbirdMLSCore
-import GRDB
 import OSLog
 import Petrel
 import SwiftUI
@@ -210,15 +209,27 @@ struct NewConversationView: View {
       Color.clear
 
     case (.catbirdGroup, .selectContacts) where mlsEnabled:
-      ContactSearchList(
-        selectionMode: .multi,
-        showMLSStatus: true,
-        selectedDIDs: $selectedDIDs,
-        selectionOrder: $selectionOrder,
-        selectedProfiles: $selectedProfiles
-      )
-      .safeAreaInset(edge: .bottom) {
-        selectionActionBar
+      if let eligibility = appState.spacesEligibility, !eligibility.eligible {
+        MLSSpacesRequiredGateView(
+          eligibility: eligibility,
+          onReauthorizeScopes: {
+            Task { await appState.reauthorizeSpacesForMLS() }
+          },
+          onRefreshCheck: {
+            try? await appState.initializeMLS()
+          }
+        )
+      } else {
+        ContactSearchList(
+          selectionMode: .multi,
+          showMLSStatus: true,
+          selectedDIDs: $selectedDIDs,
+          selectionOrder: $selectionOrder,
+          selectedProfiles: $selectedProfiles
+        )
+        .safeAreaInset(edge: .bottom) {
+          selectionActionBar
+        }
       }
 
     case (.catbirdGroup, .selectContacts):
@@ -456,48 +467,37 @@ struct NewConversationView: View {
     isCheckingExisting = true
     defer { isCheckingExisting = false }
 
-    guard let conversationManager = await appState.getMLSConversationManager() else {
+    guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
       guard !Task.isCancelled else { return }
-      errorMessage = "MLS service not available"
+      errorMessage = appState.spacesEligibility?.userMessage ?? "MLS service not available"
       showingError = true
       return
     }
 
-    do {
-      let did = try DID(didString: participantDid)
-      if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        do {
-          try await conversationManager.clearLocalConversationDeletion(convoId: existingConvoId)
-        } catch {
+    if let rows = try? await mlsCoordinator.listConversations(limit: 100) {
+      let targetLower = participantDid.lowercased()
+      for row in rows {
+        let msgs = (try? await mlsCoordinator.listMessages(conversationId: row.conversationId, limit: 20)) ?? []
+        let peerSenders = Set(msgs.map { $0.senderDid.lowercased() }.filter { $0 != accountDID.lowercased() })
+        if peerSenders == [targetLower] {
           guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-          logger.error("Failed to restore deleted 1:1 conversation: \(error.localizedDescription)")
-          errorMessage = "Failed to restore conversation: \(error.localizedDescription)"
-          showingError = true
+          let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+          let hiddenKey = "mls.deletedForMe.\(accountDID.lowercased())"
+          var hiddenIDs = Set(defaults.stringArray(forKey: hiddenKey) ?? [])
+          hiddenIDs.remove(row.conversationId)
+          defaults.set(Array(hiddenIDs).sorted(), forKey: hiddenKey)
+          dismiss()
+          sceneContext.navigationManager.targetMLSConversationId = row.conversationId
           return
         }
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        dismiss()
-        sceneContext.navigationManager.targetMLSConversationId = existingConvoId
-        return
       }
-    } catch {
-      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-      logger.error("Failed to check existing 1:1: \(error.localizedDescription)")
-      errorMessage = "Failed to check existing conversation: \(error.localizedDescription)"
-      showingError = true
-      return
     }
 
-    do {
-      guard let database = appState.mlsDatabase, appState.userDID == accountDID,
-            let recipient = selectedDIDs.first else { return }
-      directDraft = try await MLSDirectComposeDraftStore.open(
-        accountDID: accountDID, recipientDID: recipient, database: database)
-    } catch {
-      errorMessage = "Could not save this draft. Please try again."
-      showingError = true
-    }
+    guard !Task.isCancelled, appState.userDID == accountDID else { return }
+    directDraft = MLSDirectComposeDraftStore.open(
+      accountDID: accountDID,
+      recipientDID: participantDid
+    )
   }
 
   // MARK: - MLS Group Creation
@@ -506,14 +506,13 @@ struct NewConversationView: View {
   private func createMLSGroup() async {
     let accountDID = appState.userDID
     let membersSnapshot = Array(selectedDIDs)
-    let nameSnapshot = groupName
+    let nameSnapshot = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
     let noteSnapshot = introductionText
     errorTitle = "Couldn’t Create Group"
     guard !membersSnapshot.isEmpty,
-          let database = appState.mlsDatabase,
-          let conversationManager = await appState.getMLSConversationManager() else {
+          let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
       guard !Task.isCancelled else { return }
-      errorMessage = "MLS service not available"
+      errorMessage = appState.spacesEligibility?.userMessage ?? "MLS service not available"
       showingError = true
       return
     }
@@ -524,33 +523,25 @@ struct NewConversationView: View {
     step = .creating
 
     do {
-      creationProgress = "Fetching encryption keys..."
-
-      let viewModel = MLSNewConversationViewModel(
-        database: database,
-        conversationManager: conversationManager
-      )
-
-      if !nameSnapshot.isEmpty {
-        viewModel.conversationName = nameSnapshot
-      }
-
-      viewModel.selectedMembers = membersSnapshot
-
       creationProgress = "Setting up secure group..."
-      guard let created = await viewModel.createConversation(onProgress: { creationProgress = $0 }) else {
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        if let error = viewModel.error { throw error }
-        return
-      }
+      let conversationID = UUID().uuidString.lowercased()
+      let created = try await mlsCoordinator.createGroup(
+        conversationId: conversationID,
+        sequencerDid: appState.defaultMLSSequencerDID,
+        title: nameSnapshot.isEmpty ? nil : nameSnapshot,
+        description: nil
+      )
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
 
       if !noteSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        let notes = MLSGroupInvitationNotes(accountDID: accountDID,
-          conversationID: created.conversationId, recipients: membersSnapshot.sorted(), text: noteSnapshot)
+        let notes = MLSGroupInvitationNotes(
+          accountDID: accountDID,
+          conversationID: created.conversationId,
+          recipients: membersSnapshot.sorted(),
+          text: noteSnapshot
+        )
         invitationNotes = notes
-        do { try await MLSGroupInvitationNotesStore.save(notes, database: database) }
-        catch { logger.warning("Group created; optional notes require local save retry") }
+        MLSGroupInvitationNotesStore.save(notes)
         return
       }
 
@@ -558,7 +549,7 @@ struct NewConversationView: View {
       await appState.reloadMLSConversations()
 
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-      logger.info("Successfully created MLS conversation")
+      logger.info("Successfully created MLS conversation \(created.conversationId)")
       dismiss()
     } catch {
       guard !Task.isCancelled, !(error is CancellationError), AppStateManager.shared.lifecycle.userDID == accountDID else { return }

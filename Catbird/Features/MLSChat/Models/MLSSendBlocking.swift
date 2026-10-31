@@ -8,7 +8,6 @@
 
 import CatbirdMLSCore
 import Foundation
-import GRDB
 
 /// Local presentation evidence for one account and one generation of a conversation.
 /// A missing proof never means that a conversation has ended.
@@ -28,28 +27,6 @@ enum MLSConversationPipelineAccess: Equatable, Sendable {
   case requiresReadiness
   case pendingConsent
   case terminal(ConversationRecoveryState)
-
-  static func read(in db: Database, scope: Scope) throws -> Self {
-    guard let model = try MLSConversationModel.fetchOne(db,
-      sql: "SELECT * FROM MLSConversationModel WHERE currentUserDID = ? AND conversationID = ?",
-      arguments: [scope.userDID, scope.conversationID]) else { throw Failure.unavailable }
-    guard model.groupID == scope.groupID else { throw CancellationError() }
-    let terminal = try String.fetchOne(db,
-      sql: """
-        SELECT state FROM mls_orchestrator_terminal_access
-        WHERE user_did = ? AND conversation_id = ? AND group_id = ?
-        """,
-      arguments: [scope.userDID, scope.conversationID, scope.groupID])
-    guard terminal == nil || terminal == "closed" || terminal == "device_removed" else {
-      throw Failure.unavailable
-    }
-    if terminal == "closed" { return .terminal(.closed) }
-    // A verified newer invitation can coexist with this device's old terminal
-    // access. Its explicit consent UI takes precedence over automatic setup.
-    if try model.hasPendingConsent(in: db) { return .pendingConsent }
-    if terminal == "device_removed" { return .terminal(.deviceRemoved) }
-    return .requiresReadiness
-  }
 
   /// The detail pipeline uses this boundary before readiness and again after
   /// its awaited result. Terminal arrival must not become an initialization error.

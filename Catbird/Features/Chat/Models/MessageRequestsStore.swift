@@ -73,8 +73,7 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
   @ObservationIgnored private let appState: AppState
   @ObservationIgnored private var generation = UUID()
   @ObservationIgnored private var isLoadingEncrypted = false
-  @ObservationIgnored private var directRequests: [String: DirectRequestView] = [:]
-  @ObservationIgnored private var legacyRequests: [String: MLSConversationModel] = [:]
+  @ObservationIgnored private var pendingRowsByConvo: [String: CatbirdMLS.RequestRow] = [:]
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "MessageRequests")
   @ObservationIgnored private var cachedSource: [ChatBskyConvoDefs.ConvoView] = []
   @ObservationIgnored private var cachedMappedRequests: [MessageRequestItem] = []
@@ -124,71 +123,33 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     defer { if self.generation == generation { isLoadingEncrypted = false } }
 
     do {
-      let manager = try await currentManager(generation: generation)
-      let notes = try await MLSDirectComposeDraftStore.savedInvitationNotes(accountDID: accountDID, database: manager.database)
-      try ensureCurrent(manager, generation: generation)
-      let initialNotes = try await MLSGroupInvitationNotesStore.list(accountDID: accountDID, database: manager.database)
-      try ensureCurrent(manager, generation: generation)
+      let coordinator = try await currentCoordinator(generation: generation)
+      let notes = MLSDirectComposeDraftStore.savedInvitationNotes(accountDID: accountDID)
+      let initialNotes = MLSGroupInvitationNotesStore.list(accountDID: accountDID)
+      try ensureCurrent(coordinator, generation: generation)
 
-      let verifiedRequests = try await manager.listDirectRequestViews()
-      var incoming = verifiedRequests.filter { $0.consent == .incomingPending }
-      let verifiedIDs = Set(verifiedRequests.map(\.conversationId))
-      let candidates = try await manager.fetchPendingRequestConversations()
-        .filter { $0.currentUserDID == accountDID && !verifiedIDs.contains($0.conversationID) }
-      var legacy: [MLSConversationModel] = []
-      for candidate in candidates {
-        try ensureCurrent(manager, generation: generation)
-        switch try await manager.classifyDirectRequestConversation(conversationId: candidate.conversationID) {
-        case .legacyV1:
-          legacy.append(candidate)
-        case .verifiedRequest, .requestAwaitingProjection, .unknown:
-          let verified = try await manager.refreshRequestPreview(conversationId: candidate.conversationID)
-          if verified.consent == .incomingPending { incoming.append(verified) }
-        }
-      }
-      for request in incoming {
-        try ensureCurrent(manager, generation: generation)
-        try await MLSRequestNotificationPreviewCache.project(request, accountDID: accountDID, database: manager.database)
-      }
-
-      var membersByConvo: [String: [String]] = [:]
-      for request in legacy {
-        try ensureCurrent(manager, generation: generation)
-        membersByConvo[request.conversationID] = try await manager
-          .fetchConversationMembers(convoId: request.conversationID).map(\.did)
-      }
-      let inviters = Dictionary(uniqueKeysWithValues: legacy.map { request in
-        (request.conversationID, inviterDID(of: request.conversationID, manager: manager, members: membersByConvo[request.conversationID] ?? []))
-      })
-      let profileDIDs = Set(
-        membersByConvo.values.flatMap { $0 } + incoming.compactMap { $0.introduction?.senderDid }
-      ).subtracting([accountDID])
+      let allRequests = try await coordinator.listRequests()
+      let incoming = allRequests.filter { Self.isIncomingPending($0.consent) }
+      let profileDIDs = Set(incoming.map(\.senderDid)).subtracting([accountDID, ""])
       let profiles = await appState.mlsProfileEnricher.ensureProfiles(
-        for: Array(profileDIDs), using: appState.client, currentUserDID: accountDID)
-      try ensureCurrent(manager, generation: generation)
+        for: Array(profileDIDs),
+        using: appState.client,
+        currentUserDID: accountDID
+      )
+      try ensureCurrent(coordinator, generation: generation)
 
-      let groupIDs = Set(legacy.filter {
-        manager.conversations[$0.conversationID]?.conversationKind == .value_group
-      }.map(\.conversationID))
-
-      let directItems = incoming.map { request in
-        Self.item(direct: request, profiles: profiles)
-      }
-      let legacyItems = legacy.map { request in
-        Self.item(
-          legacy: request,
-          isGroup: groupIDs.contains(request.conversationID),
-          inviterDID: inviters[request.conversationID] ?? nil,
-          memberDIDs: (membersByConvo[request.conversationID] ?? []).filter { $0 != accountDID },
-          profiles: profiles)
+      let items = incoming.map { row in
+        Self.item(row: row, profiles: profiles)
       }
 
       savedInvitationNotes = notes
       groupInvitationNotes = initialNotes
-      directRequests = Dictionary(incoming.map { ($0.conversationId, $0) }, uniquingKeysWith: { _, latest in latest })
-      legacyRequests = Dictionary(uniqueKeysWithValues: legacy.map { ($0.conversationID, $0) })
+      pendingRowsByConvo = Dictionary(
+        incoming.map { ($0.conversationId, $0) },
+        uniquingKeysWith: { _, latest in latest }
+      )
       withAnimation {
-        encryptedRequests = (directItems + legacyItems).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        encryptedRequests = items.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
       }
     } catch is CancellationError {
     } catch {
@@ -196,18 +157,6 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
       logger.error("Failed to load encrypted chat requests: \(error.localizedDescription, privacy: .public)")
       errorMessage = "Could not load encrypted chat requests. Please try again."
     }
-  }
-
-  /// The member who invited the current user, from the server's participant
-  /// provenance. Falls back to the only other member of a two-person chat.
-  private func inviterDID(of conversationID: String, manager: MLSConversationManager, members: [String]) -> String? {
-    if let provenance = manager.conversations[conversationID]?.participants
-      .first(where: { $0.userDid.didString() == accountDID })?.invitationProvenance {
-      let inviter = provenance.invitedByDid.didString()
-      if inviter != accountDID { return inviter }
-    }
-    let others = members.filter { $0 != accountDID }
-    return others.count == 1 ? others.first : nil
   }
 
   // MARK: Actions
@@ -227,14 +176,13 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     case .encryptedDirect(let conversationID), .encryptedLegacy(let conversationID):
       let generation = self.generation
       do {
-        let manager = try await currentManager(generation: generation)
-        try await validateStillPending(item, manager: manager)
-        try await MLSChatRequestAcceptance.perform(
-          conversationID: conversationID,
-          isCurrent: { self.isCurrent(manager, generation: generation) },
-          accept: { try await manager.acceptConversationRequest(convoId: $0) },
-          didAccept: { _ in })
+        let coordinator = try await currentCoordinator(generation: generation)
+        let row = try await validateStillPending(conversationID: conversationID, coordinator: coordinator)
+        try ensureCurrent(coordinator, generation: generation)
+        try await coordinator.acceptDirectRequest(requestId: row.requestId)
+        try ensureCurrent(coordinator, generation: generation)
         withAnimation { encryptedRequests.removeAll { $0.id == item.id } }
+        await appState.loadMLSConversations()
         return .encrypted(conversationID: conversationID)
       } catch is CancellationError {
         return nil
@@ -266,11 +214,11 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     case .encryptedDirect(let conversationID), .encryptedLegacy(let conversationID):
       let generation = self.generation
       do {
-        let manager = try await currentManager(generation: generation)
-        try await validateStillPending(item, manager: manager)
-        try ensureCurrent(manager, generation: generation)
-        try await manager.declineConversationRequest(convoId: conversationID)
-        try ensureCurrent(manager, generation: generation)
+        let coordinator = try await currentCoordinator(generation: generation)
+        let row = try await validateStillPending(conversationID: conversationID, coordinator: coordinator)
+        try ensureCurrent(coordinator, generation: generation)
+        try await coordinator.declineDirectRequest(requestId: row.requestId)
+        try ensureCurrent(coordinator, generation: generation)
         withAnimation { encryptedRequests.removeAll { $0.id == item.id } }
         await reconcileEncrypted()
         return true
@@ -305,10 +253,10 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
         guard appState.userDID == accountDID else { return false }
         _ = await appState.chatManager.declineMessageRequest(convoId: convoID)
         return true
-      case .encryptedDirect(let conversationID):
-        let manager = try await currentManager(generation: generation)
-        guard let request = directRequests[conversationID], request.consent == .incomingPending,
-              request.introduction?.senderDid == senderDID else {
+      case .encryptedDirect(let conversationID), .encryptedLegacy(let conversationID):
+        let coordinator = try await currentCoordinator(generation: generation)
+        let row = try await validateStillPending(conversationID: conversationID, coordinator: coordinator)
+        guard row.senderDid == senderDID else {
           throw MessageRequestStoreError.senderUnverified
         }
         if !(await appState.graphManager.isBlocking(did: senderDID)) {
@@ -316,16 +264,12 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
             throw MessageRequestStoreError.blockFailed
           }
         }
-        try ensureCurrent(manager, generation: generation)
-        _ = try await manager.closeDirectRequest(conversationId: conversationID)
-        try ensureCurrent(manager, generation: generation)
+        try ensureCurrent(coordinator, generation: generation)
+        try await coordinator.declineDirectRequest(requestId: row.requestId)
+        try ensureCurrent(coordinator, generation: generation)
         withAnimation { encryptedRequests.removeAll { $0.id == item.id } }
         await reconcileEncrypted()
         return true
-      case .encryptedLegacy:
-        // Legacy requests block through `BlockChatSenderSheet`, which also
-        // records a reason with the delivery service.
-        return false
       }
     } catch is CancellationError {
       return false
@@ -356,7 +300,6 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     return await appState.getMLSAPIClient()
   }
 
-  /// Reloads after a decision so server-side state wins over the local removal.
   func reconcileEncrypted() async {
     await loadEncrypted()
   }
@@ -373,103 +316,89 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     inFlight[item.id] = nil
   }
 
-  private func currentManager(generation: UUID) async throws -> MLSConversationManager {
-    let candidate = await appState.getMLSConversationManager()
+  private func currentCoordinator(generation: UUID) async throws -> MLSClientCoordinator {
+    let candidate = await appState.getOrOpenMLSCoordinator()
     guard !Task.isCancelled, isCurrentAccount(generation: generation) else { throw CancellationError() }
-    guard let manager = candidate else { throw MLSAPIError.serverUnavailable }
-    try ensureCurrent(manager, generation: generation)
-    return manager
-  }
-
-  /// Re-reads pending state before acting so a request that was already
-  /// handled on another device is refreshed instead of acted on twice.
-  private func validateStillPending(_ item: MessageRequestItem, manager: MLSConversationManager) async throws {
-    switch item.origin {
-    case .bluesky:
-      return
-    case .encryptedDirect(let conversationID):
-      let latest = try await manager.refreshRequestPreview(conversationId: conversationID)
-      guard latest.consent == .incomingPending else { throw MessageRequestStoreError.noLongerPending }
-      directRequests[conversationID] = latest
-    case .encryptedLegacy(let conversationID):
-      let pending = try await manager.fetchPendingRequestConversations()
-      guard pending.contains(where: { $0.conversationID == conversationID && $0.currentUserDID == accountDID }) else {
-        throw MessageRequestStoreError.noLongerPending
-      }
+    guard let coordinator = candidate else {
+      throw CatbirdMLS.MlsError.Internal(message: "MLS coordinator unavailable")
     }
+    try ensureCurrent(coordinator, generation: generation)
+    return coordinator
   }
 
-  private func ensureCurrent(_ manager: MLSConversationManager, generation: UUID) throws {
-    guard isCurrent(manager, generation: generation) else { throw CancellationError() }
+  private func validateStillPending(
+    conversationID: String,
+    coordinator: MLSClientCoordinator
+  ) async throws -> CatbirdMLS.RequestRow {
+    let latest = try await coordinator.listRequests()
+    guard let row = latest.first(where: {
+      ($0.conversationId == conversationID || $0.requestId == conversationID)
+        && Self.isIncomingPending($0.consent)
+    }) else {
+      throw MessageRequestStoreError.noLongerPending
+    }
+    pendingRowsByConvo[conversationID] = row
+    return row
   }
 
-  private func isCurrent(_ manager: MLSConversationManager, generation: UUID) -> Bool {
+  private func ensureCurrent(_ coordinator: MLSClientCoordinator, generation: UUID) throws {
+    guard isCurrent(coordinator, generation: generation) else { throw CancellationError() }
+  }
+
+  private func isCurrent(_ coordinator: MLSClientCoordinator, generation: UUID) -> Bool {
     !Task.isCancelled && isCurrentAccount(generation: generation)
-      && manager.currentUserDID == accountDID && !manager.isShuttingDown
-      && appState.mlsConversationManager === manager
+      && coordinator.accountDid.lowercased() == accountDID.lowercased()
+      && !coordinator.isClosedForSession
+      && appState.mlsCoordinator === coordinator
   }
 
   private func isCurrentAccount(generation: UUID) -> Bool {
     appState.userDID == accountDID && self.generation == generation
   }
 
+  private static func isIncomingPending(_ consent: String) -> Bool {
+    let normalized = consent.lowercased()
+    return normalized == "incoming_pending" || normalized == "incomingpending" || normalized == "pending"
+  }
+
   // MARK: Item Mapping
 
   private static func item(
-    direct request: DirectRequestView,
+    row: CatbirdMLS.RequestRow,
     profiles: [String: MLSProfileEnricher.ProfileData]
   ) -> MessageRequestItem {
-    let sender = request.introduction.map { participant(did: $0.senderDid, profiles: profiles) }
+    let sender = row.senderDid.isEmpty ? nil : participant(did: row.senderDid, profiles: profiles)
+    let parsedText = parsePreviewText(from: row.payloadJson)
     let preview: MessageRequestPreview
-    if request.capabilities.canPreview, case .ready(let text, _) = request.preview,
-       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      preview = .message(text)
+    if let parsedText, !parsedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      preview = .message(parsedText)
     } else {
       preview = .description(MessageRequestPresentation.encryptedDirectDescription)
     }
-    var context: String?
-    if request.capabilities.canPreview, case .ready(_, .some) = request.preview {
-      context = "Includes a group invitation"
-    }
+    let date = row.updatedAtMs > 0
+      ? Date(timeIntervalSince1970: TimeInterval(row.updatedAtMs) / 1000.0)
+      : nil
     return MessageRequestItem(
-      id: "mls:\(request.conversationId)",
-      origin: .encryptedDirect(conversationID: request.conversationId),
+      id: "mls:\(row.conversationId)",
+      origin: .encryptedDirect(conversationID: row.conversationId),
       sender: sender,
       participants: sender.map { [$0] } ?? [],
       groupTitle: nil,
       memberCount: nil,
-      date: request.introduction.flatMap { MessageRequestPresentation.parseTimestamp($0.receivedAt) },
-      context: context,
+      date: date,
+      context: nil,
       preview: preview,
       isUnread: false
     )
   }
 
-  private static func item(
-    legacy request: MLSConversationModel,
-    isGroup: Bool,
-    inviterDID: String?,
-    memberDIDs: [String],
-    profiles: [String: MLSProfileEnricher.ProfileData]
-  ) -> MessageRequestItem {
-    let participants = memberDIDs.map { participant(did: $0, profiles: profiles) }
-    let sender = inviterDID.map { participant(did: $0, profiles: profiles) }
-    let memberCount = memberDIDs.count + 1
-    let groupTitle = isGroup ? MLSChatRequestPresentation.groupTitle(request.title) : nil
-    return MessageRequestItem(
-      id: "mls:\(request.conversationID)",
-      origin: .encryptedLegacy(conversationID: request.conversationID),
-      sender: sender,
-      participants: participants,
-      groupTitle: groupTitle,
-      memberCount: isGroup ? memberCount : nil,
-      date: request.lastMessageAt ?? request.createdAt,
-      context: nil,
-      preview: isGroup
-        ? .description(MessageRequestPresentation.groupInvitationDescription(title: request.title, memberCount: memberCount))
-        : .description(MessageRequestPresentation.encryptedDirectDescription),
-      isUnread: false
-    )
+  private static func parsePreviewText(from payloadJson: String) -> String? {
+    guard let data = payloadJson.data(using: .utf8),
+          let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    else {
+      return nil
+    }
+    return (dict["text"] as? String) ?? (dict["plaintext"] as? String)
   }
 
   private static func participant(did: String, profiles: [String: MLSProfileEnricher.ProfileData]) -> RequestParticipant {

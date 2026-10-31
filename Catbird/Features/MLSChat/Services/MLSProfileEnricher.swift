@@ -254,33 +254,22 @@ actor MLSProfileEnricher {
     }
   }
   
-  /// Persist profiles to the MLS member table in the database
-  ///
-  /// This enables the NSE to look up sender names when showing notifications.
-  /// The update only affects members that already exist in the database.
+  /// Persist profiles to the shared App Group profile cache so NSE can resolve display names.
   private func persistProfilesToDatabase(
     _ profiles: [(did: String, handle: String?, displayName: String?, avatarURL: String?)],
     currentUserDID: String
   ) async {
-    do {
-      // Use smart routing - auto-routes to lightweight Queue if needed
-      let updatedCount = try await MLSGRDBManager.shared.write(for: currentUserDID) { db in
-        try MLSStorageHelpers.batchUpdateMemberProfilesSync(
-          in: db,
-          profiles: profiles,
-          currentUserDID: currentUserDID
-        )
-      }
-      
-      if updatedCount > 0 {
-        logger.info("📝 Persisted \(updatedCount) profile(s) to MLS member table for NSE access")
-      }
-    } catch {
-      // Non-fatal - the in-memory cache and shared UserDefaults still work
-      logger.warning("Failed to persist profiles to database: \(error.localizedDescription)")
+    _ = currentUserDID
+    for profile in profiles {
+      guard let handle = profile.handle, !handle.isEmpty else { continue }
+      await ProfileCacheDatabase.shared.write(
+        did: profile.did,
+        handle: handle,
+        displayName: profile.displayName,
+        avatarURL: profile.avatarURL
+      )
     }
   }
-  
 }
 
 // MARK: - Array Extension

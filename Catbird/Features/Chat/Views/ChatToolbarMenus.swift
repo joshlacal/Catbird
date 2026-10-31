@@ -234,12 +234,16 @@ struct MessageRequestsButton: View {
     let generation = UUID()
     countGeneration = generation
     let userDID = appState.userDID
-    guard let manager = await appState.getMLSConversationManager(),
-          manager.currentUserDID == userDID, !manager.isShuttingDown else { return }
+    guard ExperimentalSettings.shared.isMLSChatEnabled(for: userDID),
+          let coordinator = await appState.getOrOpenMLSCoordinator(),
+          !coordinator.isClosedForSession else {
+      pendingCatbirdCount = 0
+      return
+    }
     do {
-      let count = try await manager.fetchPendingRequestConversations().count
+      let count = try await coordinator.listRequests(consentFilter: "incoming_pending").count
       guard !Task.isCancelled, countGeneration == generation, appState.userDID == userDID,
-            appState.mlsConversationManager === manager, !manager.isShuttingDown else { return }
+            appState.mlsCoordinator === coordinator, !coordinator.isClosedForSession else { return }
       pendingCatbirdCount = count
     } catch {
       // Keep the last known badge; the Inbox shows actionable load failures.

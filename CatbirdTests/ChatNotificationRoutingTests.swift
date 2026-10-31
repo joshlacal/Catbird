@@ -1,6 +1,7 @@
 @testable import Catbird
 import Foundation
 import Testing
+
 /// Tap-routing payload parsing for chat notifications (`NotificationManager.chatConversationID`).
 /// Covers the two real chat payload shapes (NSE `chat_message` push and local polling
 /// notification) plus the guard preserving the generic `uri`/`did` routing path.
@@ -92,5 +93,4 @@ struct ChatNotificationRoutingTests {
 
     #expect(NotificationManager.chatConversationID(fromUserInfo: userInfo) == nil)
   }
-
 }

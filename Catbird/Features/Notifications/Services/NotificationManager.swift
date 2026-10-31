@@ -1,10 +1,10 @@
 import CatbirdMLSCore
 import CryptoKit
 import Foundation
-import GRDB
 import Nuke
 import OSLog
 import Petrel
+import PetrelCatbird
 import SwiftData
 import SwiftUI
 import UserNotifications
@@ -738,7 +738,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       "app.bsky.notification.getPreferences",
       "app.bsky.notification.putPreferencesV2",
       "app.bsky.notification.listActivitySubscriptions",
-      "app.bsky.notification.putActivitySubscription"
+      "app.bsky.notification.putActivitySubscription",
+      "blue.catbird.push.registerKey"
     ]
 
     for endpoint in routedEndpoints {
@@ -1996,79 +1997,19 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
   }
 
-  /// Register device token with MLS server
+  /// Register device token via D2 Push Gateway (`nest` `blue.catbird.push.registerKey` + home `mls-ds` `blue.catbird.chat.registerPushGateway`).
   private func registerMLSDeviceToken(_ token: Data) async {
     guard CatbirdFeatures.mlsChat else { return }
     await updateSignedRequestPushRegistration()
-    #if os(iOS)
-      guard let appState = appState else { return }
-      guard let client = client else { return }
-
-      let tokenHex = hexString(from: token)
-
-      do {
-        // Validate that the session is authenticated before touching MLS.
-        _ = try await client.getDid()
-
-        guard let conversationManager = await appState.getMLSConversationManager() else {
-          notificationLogger.warning(
-            "⚠️ Cannot register MLS device token - conversation manager unavailable"
-          )
-          return
-        }
-
-        guard
-          let deviceInfo = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()
-        else {
-          notificationLogger.error("❌ Failed to retrieve MLS device info for push token registration")
-          return
-        }
-
-        do {
-          try await conversationManager.ensureDeviceRecordPublished()
-        } catch {
-          notificationLogger.error(
-            "❌ Failed to publish device record during token registration: \(error.localizedDescription)"
-          )
-        }
-
-        if let mlsClient = await appState.getMLSAPIClient() {
-          let success = try await mlsClient.registerDeviceToken(
-            deviceId: deviceInfo.deviceId,
-            pushToken: tokenHex,
-            deviceName: UIDevice.current.name
-          )
-          if success {
-            notificationLogger.info("✅ Successfully registered device token with MLS server")
-          } else {
-            notificationLogger.warning(
-              "⚠️ MLS device token registration failed"
-            )
-          }
-        }
-      } catch {
-        notificationLogger.error(
-          "❌ Error registering device token with MLS server: \(error.localizedDescription)"
-        )
-      }
-    #endif
   }
 
-  /// Unregister device token with MLS server
+  /// Disable device push binding on home `mls-ds` (`D2`).
   private func unregisterMLSDeviceToken(_ token: Data, expectedAccount: String? = nil) async {
     await updateSignedRequestPushRegistration(enabled: false, expectedAccount: expectedAccount)
-    #if os(iOS)
-      guard let appState = appState else { return }
-      guard let conversationManager = await appState.getMLSConversationManager() else { return }
-      guard let deviceInfo = try? await conversationManager.registeredDeviceInfoForPushTokenRegistration() else { return }
-      if let mlsClient = await appState.getMLSAPIClient() {
-        _ = try? await mlsClient.unregisterDeviceToken(deviceId: deviceInfo.deviceId)
-      }
-    #endif
   }
 
-  /// Request push authority is independent of legacy token registration.
-  /// Core retains exact signed bytes and validates the active device binding.
+  /// Registers the native APNs token exclusively with `nest` (`blue.catbird.push.registerKey`) and binds
+  /// only the opaque `pushKey` + `gatewayUrl` on the user's home `mls-ds` (`blue.catbird.chat.registerPushGateway`, `D2`).
   @MainActor
   private func updateSignedRequestPushRegistration(enabled override: Bool? = nil, expectedAccount: String? = nil) async {
     guard CatbirdFeatures.mlsChat else { return }
@@ -2077,30 +2018,96 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let account = appState.userDID
     guard expectedAccount == nil || expectedAccount == account else { return }
     let desired = override ?? (notificationsEnabled && isMasterPushEnabled() && mlsChatNotificationsEnabled)
+
     do {
-      guard try await client.getDid() == account,
-            let manager = await appState.getMLSConversationManager(), manager.currentUserDID == account,
-            appState.userDID == account, appState.mlsConversationManager === manager else { return }
-      if desired {
-        let receipt = try await manager.registerSignedPushToken(hexString(from: token), provider: .apns, appID: pushAppID)
-        guard receipt.enabled, appState.userDID == account, appState.mlsConversationManager === manager else { return }
-        // A changed token or preference is a new generation, never inferred from
-        // the old acknowledgement. Core's journal serializes the exact binding.
-        if deviceToken != token || !notificationsEnabled || !isMasterPushEnabled() || !mlsChatNotificationsEnabled {
-          await updateSignedRequestPushRegistration()
-          return
-        }
-        notificationLogger.info("Signed encrypted-request push registration confirmed")
-      } else {
-        _ = try await manager.disableSignedPushRegistration(provider: .apns, appID: pushAppID)
-        guard appState.userDID == account, appState.mlsConversationManager === manager else { return }
-        notificationLogger.info("Signed encrypted-request push registration disabled")
+      guard try await client.getDid() == account else { return }
+      let deviceId = appState.resolvedMLSDeviceID()
+      let accountDidHash = try MLSAppGroupStorage.accountDidHash(for: account)
+      let tokenHex = hexString(from: token)
+
+      #if DEBUG
+      let platform: BlueCatbirdPushRegisterKey.InputPlatform = .value_apnsSandbox
+      #else
+      let platform: BlueCatbirdPushRegisterKey.InputPlatform = .value_apns
+      #endif
+
+      await client.setServiceDID(notificationServiceDIDString, for: "blue.catbird.push.registerKey")
+      let (regCode, regOutput) = try await client.blue.catbird.push.registerKey(
+        input: BlueCatbirdPushRegisterKey.Input(
+          deviceId: deviceId,
+          appId: pushAppID,
+          platform: platform,
+          nativeToken: tokenHex
+        )
+      )
+      guard (200..<300).contains(regCode), let regOutput else {
+        notificationLogger.warning("Push gateway registerKey returned HTTP \(regCode)")
+        return
       }
+
+      guard let mlsClient = await appState.getMLSAPIClient(),
+            appState.userDID == account else { return }
+
+      let keyId = "sig-\(deviceId)"
+      let authGeneration = 1
+      let signedAtDate = ATProtocolDate(date: Date())
+      let signedAtString = signedAtDate.iso8601String
+
+      let signingSeed = try Self.loadOrCreatePushGatewaySigningSeed(accountDidHash: accountDidHash)
+      let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: signingSeed)
+
+      var transcriptMap = OrderedCBORMap()
+      transcriptMap = transcriptMap.adding(key: "appId", value: try pushAppID.toCBORValue())
+      transcriptMap = transcriptMap.adding(key: "authGeneration", value: try authGeneration.toCBORValue())
+      transcriptMap = transcriptMap.adding(key: "deviceId", value: try deviceId.toCBORValue())
+      transcriptMap = transcriptMap.adding(key: "enabled", value: try desired.toCBORValue())
+      transcriptMap = transcriptMap.adding(key: "gatewayUrl", value: try regOutput.gatewayUrl.uriString().toCBORValue())
+      transcriptMap = transcriptMap.adding(key: "keyId", value: try keyId.toCBORValue())
+      transcriptMap = transcriptMap.adding(key: "pushKey", value: try regOutput.pushKey.toCBORValue())
+      transcriptMap = transcriptMap.adding(key: "signedAt", value: try signedAtString.toCBORValue())
+
+      var transcriptBytes = Data("CATBIRD-CHAT-PUSH-GATEWAY\0".utf8)
+      transcriptBytes.append(try DAGCBOR.encodeValue(transcriptMap))
+      let signature = try privateKey.signature(for: transcriptBytes)
+
+      _ = try await mlsClient.registerPushGateway(
+        input: BlueCatbirdChatRegisterPushGateway.Input(
+          deviceId: deviceId,
+          keyId: keyId,
+          authGeneration: authGeneration,
+          gatewayUrl: regOutput.gatewayUrl,
+          appId: regOutput.appId,
+          pushKey: regOutput.pushKey,
+          enabled: desired,
+          signedAt: signedAtDate,
+          signature: Bytes(data: signature)
+        )
+      )
+      notificationLogger.info("Push gateway registration updated (enabled=\(desired))")
     } catch {
       guard appState.userDID == account else { return }
-      notificationLogger.warning("Signed request push registration remains unconfirmed; exact retry is retained")
+      notificationLogger.warning("Push gateway registration deferred: \(error.localizedDescription)")
     }
     #endif
+  }
+
+  private static func loadOrCreatePushGatewaySigningSeed(accountDidHash: String) throws -> Data {
+    let keystore = KeychainPlatformKeyStore()
+    let signerKeyId = "mls-signer:\(accountDidHash)"
+    if let signerJson = try keystore.loadSignatureKeypair(keyId: signerKeyId),
+       let parsed = try? JSONSerialization.jsonObject(with: signerJson) as? [String: Any],
+       let rawPrivate = parsed["private"] as? [UInt8],
+       rawPrivate.count >= 32
+    {
+      return Data(rawPrivate.prefix(32))
+    }
+    let fallbackKeyId = "mls-push-gw-signer:\(accountDidHash)"
+    if let existing = try keystore.loadSignatureKeypair(keyId: fallbackKeyId), existing.count == 32 {
+      return existing
+    }
+    let generated = Curve25519.Signing.PrivateKey().rawRepresentation
+    try keystore.storeSignatureKeypair(keyId: fallbackKeyId, keypairBytes: generated)
+    return generated
   }
 
   private func createNavigationDestination(from uriString: String, type: String) throws -> NavigationDestination {
@@ -2369,59 +2376,26 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   internal func resolveMLSConversationRoute(
     _ requestedID: String,
     recipientDID: String,
-    maxWaitTime: TimeInterval = 10.0
+    maxWaitTime _: TimeInterval = 10.0
   ) async -> (conversationID: String, groupID: Data)? {
-    let checkInterval: TimeInterval = 0.2
-    var elapsed: TimeInterval = 0
-
-    while elapsed < maxWaitTime {
-      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
-        notificationLogger.info("⏳ [MLS Route] Deferring route resolution while MLS suspension gate is active...")
-        do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
-        elapsed += checkInterval
-        continue
-      }
-
-      do {
-        let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDID) { db in
-          try CatbirdMLSCore.MLSConversationModel
-            .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDID)
-            .fetchAll(db)
-        }
-        let records = models.map {
-          MLSConversationIdentityBoundary.Record(
-            conversationID: $0.conversationID,
-            groupID: $0.groupID.hexEncodedString()
-          )
-        }
-        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(requestedID, in: records),
-              let model = models.first(where: { $0.conversationID == canonicalID }) else {
-          return nil
-        }
-        return (canonicalID, model.groupID)
-      } catch let error as MLSSQLCipherError {
-        if case .storageUnavailable(let reason) = error, reason.contains("suspension") {
-          notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended (\(reason))...")
-          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
-          elapsed += checkInterval
-          continue
-        }
-        notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
-        return nil
-      } catch {
-        let desc = error.localizedDescription
-        if desc.contains("suspension") || desc.contains("Database open blocked") {
-          notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended: \(desc)...")
-          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
-          elapsed += checkInterval
-          continue
-        }
-        notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
-        return nil
-      }
+    guard let recipientAppState = await getAppStateForUser(recipientDID),
+          let coordinator = await recipientAppState.getOrOpenMLSCoordinator(),
+          let rows = try? await coordinator.listConversations(limit: 200)
+    else {
+      return nil
     }
-    notificationLogger.warning("Refusing unresolved MLS notification route: timed out after \(maxWaitTime)s waiting for storage resumption")
-    return nil
+    let records = rows.map {
+      MLSConversationIdentityBoundary.Record(
+        conversationID: $0.conversationId,
+        groupID: $0.groupId.hexEncodedString()
+      )
+    }
+    guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(requestedID, in: records),
+          let match = rows.first(where: { $0.conversationId == canonicalID })
+    else {
+      return nil
+    }
+    return (canonicalID, match.groupId)
   }
 
   private func decryptAndPresentMLSNotification(
@@ -2434,327 +2408,83 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     originalNotification: UNNotification,
     completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) async {
-    guard let resolved = await resolveMLSConversationRoute(convoId, recipientDID: recipientDid) else {
+    let resolvedConvoID: String
+    if let resolved = await resolveMLSConversationRoute(convoId, recipientDID: recipientDid) {
+      resolvedConvoID = resolved.conversationID
+    } else if MLSConversationIdentityBoundary.isCanonicalStableID(convoId) {
+      resolvedConvoID = convoId
+    } else {
       notificationLogger.warning("Ignoring MLS notification with raw-only or unknown conversation route")
       completionHandler([.banner, .sound])
       return
     }
-    await decryptAndPresentMLSNotificationResolved(
-      ciphertext: ciphertext,
-      convoId: resolved.conversationID,
-      groupID: resolved.groupID,
-      messageId: messageId,
-      recipientDid: recipientDid,
-      epoch: epoch,
-      seq: seq,
-      originalNotification: originalNotification,
-      completionHandler: completionHandler
-    )
-  }
 
-  /// Decrypt an already-resolved route. `groupID` is read from the stored
-  /// conversation row and is used only as the low-level MLS crypto identity.
-  private func decryptAndPresentMLSNotificationResolved(
-    ciphertext: String,
-    convoId: String,
-    groupID: Data,
-    messageId: String,
-    recipientDid: String,
-    epoch: Int?,
-    seq: Int?,
-    originalNotification: UNNotification,
-    completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-  ) async {
-    func getCachedPlaintextByOrder() async -> (plaintext: String, senderDid: String?)? {
-      guard let epoch, let seq else { return nil }
-      do {
-        let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-          .lowercased()
-        let message = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) { db in
-          try CatbirdMLSCore.MLSMessageModel
-            .filter(CatbirdMLSCore.MLSMessageModel.Columns.conversationID == convoId)
-            .filter(CatbirdMLSCore.MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
-            .filter(CatbirdMLSCore.MLSMessageModel.Columns.epoch == Int64(epoch))
-            .filter(CatbirdMLSCore.MLSMessageModel.Columns.sequenceNumber == Int64(seq))
-            .fetchOne(db)
-        }
-
-        if let message {
-          let sender: String? = (!message.senderID.isEmpty && message.senderID != "unknown") ? message.senderID : nil
-
-          // Resolve the per-DID MlsContext so we can decrypt `payloadEncrypted` rows.
-          let messageMlsContext = try? await CatbirdMLSCore.MLSCoreContext.shared.getContext(
-            for: recipientDid)
-          let decryptedPayload: CatbirdMLSCore.MLSMessagePayload? = messageMlsContext.flatMap {
-            message.decryptedPayload(context: $0)
-          }
-
-          if let plaintext = decryptedPayload?.text { return (plaintext, sender) }
-          if let plaintext = message.plaintext { return (plaintext, sender) }
-
-          // Control messages (reactions/readReceipts/etc) often have nil plaintext; derive from payload.
-          if let payload = decryptedPayload ?? message.parsedPayload {
-            switch payload.messageType {
-            case .text:
-              if let text = payload.text { return (text, sender) }
-            case .reaction:
-              if let reaction = payload.reaction {
-                let verb = (reaction.action == .add) ? "Reacted with" : "Removed reaction"
-                return ("\(verb) \(reaction.emoji)", sender)
-              }
-              return ("Reaction update", sender)
-            case .readReceipt, .deliveryAck, .recoveryRequest:
-              return ("Read receipt", sender)
-            case .typing:
-              return ("Typing...", sender)
-            case .adminRoster, .adminAction:
-              return ("Group update", sender)
-            case .system:
-              return nil
-            case .edit, .delete, .unknown:
-              // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
-              return nil
-            }
-          }
-        }
-
-        return nil
-      } catch {
-        return nil
-      }
+    #if os(iOS)
+    if MLSActiveConversationTracker.shared.isActive(resolvedConvoID) {
+      notificationLogger.info("🔇 [FG] User viewing conversation \(resolvedConvoID.prefix(16))... - suppressing notification")
+      completionHandler([])
+      return
     }
-    func logCacheMissDetails(context: String) async {
-      do {
-        let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-          .lowercased()
-        let (messageById, messageByOrder) = try await CatbirdMLSCore.MLSGRDBManager.shared.read(
-          for: recipientDid
-        ) { db -> (CatbirdMLSCore.MLSMessageModel?, CatbirdMLSCore.MLSMessageModel?) in
-          let byId = try CatbirdMLSCore.MLSMessageModel
-            .filter(CatbirdMLSCore.MLSMessageModel.Columns.messageID == messageId)
-            .filter(CatbirdMLSCore.MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
-            .fetchOne(db)
+    #endif
 
-          var byOrder: CatbirdMLSCore.MLSMessageModel?
-          if byId == nil, let epoch, let seq {
-            byOrder = try CatbirdMLSCore.MLSMessageModel
-              .filter(CatbirdMLSCore.MLSMessageModel.Columns.conversationID == convoId)
-              .filter(
-                CatbirdMLSCore.MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid
-              )
-              .filter(CatbirdMLSCore.MLSMessageModel.Columns.epoch == Int64(epoch))
-              .filter(CatbirdMLSCore.MLSMessageModel.Columns.sequenceNumber == Int64(seq))
-              .fetchOne(db)
-          }
-
-          return (byId, byOrder)
-        }
-
-        if let message = messageById ?? messageByOrder {
-          let source = (messageById != nil) ? "message_id" : "epoch/seq"
-          let payloadState: String
-          if message.payloadEncrypted != nil || message.payloadJSON != nil {
-            payloadState = "present"
-          } else if message.payloadExpired {
-            payloadState = "expired"
-          } else {
-            payloadState = "missing"
-          }
-          notificationLogger.info(
-            "📦 [FG] Cache detail (\(context)) hit via \(source) - payload=\(payloadState), state=\(message.processingState), error=\(message.processingError ?? "nil")"
-          )
-        } else {
-          notificationLogger.info(
-            "📦 [FG] Cache detail (\(context)) no DB record found (messageId=\(messageId.prefix(16))...)"
-          )
-        }
-      } catch {
-        notificationLogger.warning(
-          "⚠️ [FG] Cache detail (\(context)) lookup failed: \(error.localizedDescription)"
-        )
-      }
-    }
-    notificationLogger.info(
-      "🔓 [FG] Starting MLS notification handling for message: \(messageId.prefix(16))...")
-    notificationLogger.info("🔓 [FG] Recipient DID: \(recipientDid.prefix(24))...")
-
-    // Check per-conversation mute before any decryption or cache work
     do {
-      let conversation = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) { db in
-        try CatbirdMLSCore.MLSConversationModel
-          .filter(CatbirdMLSCore.MLSConversationModel.Columns.conversationID == convoId)
-          .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDid)
-          .fetchOne(db)
-      }
-      if let conversation, conversation.isMuted {
-        notificationLogger.info("🔇 [FG] Conversation \(convoId.prefix(16))... muted until \(conversation.mutedUntil?.description ?? "forever") - suppressing notification")
-        completionHandler([])
-        return
-      }
-    } catch {
-      notificationLogger.warning("⚠️ [FG] Mute check failed: \(error.localizedDescription) - proceeding with notification")
-    }
+      let storageRoot = try MLSAppGroupStorage.defaultStorageRoot()
+      let accountDidHash = try MLSAppGroupStorage.accountDidHash(for: recipientDid)
+      let apiClient = await getOrCreateAPIClient(for: recipientDid)
+      let homeDsEndpoint = apiClient?.environment.endpointURL ?? MLSEnvironment.production.endpointURL
+      let inlineCiphertext = Data(base64Encoded: ciphertext)
+      let entrySeq = Int64(seq ?? 0)
+      let senderHint = originalNotification.request.content.userInfo["sender_did"] as? String
 
-    // If we already have the payload cached (by server order), avoid any decryption attempt.
-    if let cached = await getCachedPlaintextByOrder() {
-      CatbirdMLSCore.MLSNotificationMetrics.increment(
-        .cacheHitBeforeDecrypt,
-        source: "foreground_pre_route_order_cache"
-      )
-      notificationLogger.info("📦 [FG] Cache HIT by (epoch,seq) - using cached content")
-      await presentDecryptedNotification(
-        plaintext: cached.plaintext,
-        convoId: convoId,
+      let wake = PushWakePayload(
+        kind: "application",
+        conversationId: resolvedConvoID,
+        generation: Int64(epoch ?? 0),
+        entrySeq: entrySeq,
         messageId: messageId,
-        recipientDid: recipientDid,
-        senderDid: cached.senderDid,
-        originalNotification: originalNotification,
-        completionHandler: completionHandler
+        recipientAccountHash: accountDidHash,
+        fetchRequired: inlineCiphertext == nil,
+        senderDid: senderHint,
+        inlineCiphertext: inlineCiphertext
       )
-      return
-    }
 
-    if await CatbirdMLSCore.MLSCoreContext.shared.isStorageAccessSuspended(for: recipientDid) {
-      let suspensionDescription =
-        await CatbirdMLSCore.MLSCoreContext.shared.storageAccessSuspensionDescription(
-          for: recipientDid
-        )
-        ?? "MLS storage recovery in progress"
-      notificationLogger.warning(
-        "⏸️ [FG] Skipping foreground MLS decrypt while storage is suspended: \(suspensionDescription)"
+      let preview = MLSPushExtensionProcessor.process(
+        storageRoot: storageRoot,
+        accountDidHash: accountDidHash,
+        keystore: KeychainPlatformKeyStore(),
+        transport: PetrelPlatformTransport(
+          atProtoClient: apiClient?.client,
+          homeDsEndpoint: homeDsEndpoint
+        ),
+        wake: wake,
+        postDarwinNotification: false
       )
-      completionHandler([.banner, .sound])
-      return
-    }
 
-    // Route decryption ownership through the unified policy.
-    let isActiveUser = await checkIfActiveUser(recipientDid)
-    let processAuthorityMode = AppState.configuredMLSProtocolAuthorityMode(
-      environment: ProcessInfo.processInfo.environment,
-      arguments: ProcessInfo.processInfo.arguments
-    )
-    let processIsRustFull = processAuthorityMode == .rustFull
-    let activeManagerIsRustFull: Bool
-    if isActiveUser,
-      let conversationManager = await appState?.getMLSConversationManager() {
-      activeManagerIsRustFull = conversationManager.protocolAuthorityMode == .rustFull
-    } else {
-      activeManagerIsRustFull = false
-    }
-    let lowLevelForegroundMLSDisabled = processIsRustFull || activeManagerIsRustFull
-    let executionContext: CatbirdMLSCore.MLSNotificationExecutionContext =
-      isActiveUser ? .appForegroundActive : .appForegroundInactive
-    let routingDecision = CatbirdMLSCore.MLSNotificationCoordinator.routingDecision(
-      context: executionContext,
-      recipientUserDID: recipientDid
-    )
-
-    notificationLogger.info(
-      "🧭 [FG] routing_action=\(routingDecision.action.rawValue), policy_reason=\(routingDecision.reason.rawValue), decryption_owner=\(routingDecision.owner?.rawValue ?? "none"), context=\(executionContext.rawValue), process_authority=\(processAuthorityMode.rawValue), active_manager_rust_full=\(activeManagerIsRustFull)"
-    )
-
-    switch routingDecision.action {
-    case .skip:
-      notificationLogger.info("⏭️ [FG] Routing policy skipped decryption")
-      completionHandler([.banner, .sound])
-      return
-
-    case .cacheOnly:
-      notificationLogger.info("✅ [FG] Cache-only route selected for active foreground user")
-      let backoffDelaysMs: [UInt64] = [50, 100, 200, 400, 800, 1500, 2000]
-
-      for (attempt, delayMs) in backoffDelaysMs.enumerated() {
-        if let cached = await getCachedPlaintextByOrder() {
-          CatbirdMLSCore.MLSNotificationMetrics.increment(
-            .cacheHitBeforeDecrypt,
-            owner: .appSync,
-            context: .appForegroundActive,
-            source: "foreground_active_order_cache"
-          )
-          notificationLogger.info(
-            "📦 [FG] Cache HIT by (epoch,seq) (attempt \(attempt + 1)) - using cached content")
-          await presentDecryptedNotification(
-            plaintext: cached.plaintext,
-            convoId: convoId,
-            messageId: messageId,
-            recipientDid: recipientDid,
-            senderDid: cached.senderDid,
-            originalNotification: originalNotification,
-            completionHandler: completionHandler
-          )
-          return
+      if !preview.fallbackGeneric {
+        if let recipientState = await getAppStateForUser(recipientDid) {
+          await recipientState.loadMLSConversations()
         }
-
-        if let cachedPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
-          messageID: messageId, userDid: recipientDid
-        ) {
-          CatbirdMLSCore.MLSNotificationMetrics.increment(
-            .cacheHitBeforeDecrypt,
-            owner: .appSync,
-            context: .appForegroundActive,
-            source: "foreground_active_message_cache"
-          )
-          notificationLogger.info(
-            "📦 [FG] Cache HIT (attempt \(attempt + 1)) - using cached content")
-          var resolvedSender = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
-          if resolvedSender == nil {
-            resolvedSender = await getMLSSenderDIDByOrder(convoId: convoId, recipientDid: recipientDid, epoch: epoch, seq: seq)
-          }
-          await presentDecryptedNotification(
-            plaintext: cachedPlaintext,
-            convoId: convoId,
-            messageId: messageId,
-            recipientDid: recipientDid,
-            senderDid: resolvedSender,
-            originalNotification: originalNotification,
-            completionHandler: completionHandler
-          )
-          return
-        }
-
-        if attempt < backoffDelaysMs.count - 1 {
-          do { try await Task.sleep(nanoseconds: delayMs * 1_000_000) } catch {}
-        }
-      }
-
-      await logCacheMissDetails(context: "active-cache-only-miss")
-      if lowLevelForegroundMLSDisabled {
-        notificationLogger.warning(
-          "⏭️ [FG] rustFull authority: avoiding direct foreground MLS decrypt/sync/join after cache miss (process_rust_full=\(processIsRustFull), active_manager_rust_full=\(activeManagerIsRustFull)); relying on main sync/cache path"
+        await presentDecryptedNotification(
+          plaintext: preview.body,
+          convoId: resolvedConvoID,
+          messageId: preview.messageId,
+          recipientDid: recipientDid,
+          senderDid: preview.senderDid.isEmpty ? senderHint : preview.senderDid,
+          originalNotification: originalNotification,
+          completionHandler: completionHandler
         )
-        completionHandler([.banner, .sound])
         return
       }
-      notificationLogger.warning(
-        "⚠️ [FG] Cache-only route timed out - falling through to direct decryption")
-      // Fall through to direct decryption instead of showing "Decrypting..." placeholder
 
-    case .decrypt:
-      if lowLevelForegroundMLSDisabled {
-        notificationLogger.warning(
-          "⏭️ [FG] rustFull authority: policy requested direct foreground decrypt, but low-level MLS mutation is disabled (process_rust_full=\(processIsRustFull), active_manager_rust_full=\(activeManagerIsRustFull))"
-        )
-        completionHandler([.banner, .sound])
-        return
-      }
-      notificationLogger.info(
-        "🔄 [FG] Policy selected direct decrypt route for foreground notification")
-    }
-
-    do {
-      // Check if already cached first
-      if let cached = await getCachedPlaintextByOrder() {
-        CatbirdMLSCore.MLSNotificationMetrics.increment(
-          .cacheHitBeforeDecrypt,
-          owner: .appNotification,
-          context: .appForegroundInactive,
-          source: "foreground_inactive_order_cache"
-        )
-        notificationLogger.info("📦 [FG] Cache HIT by (epoch,seq) - using cached content")
+      if let recipientState = await getAppStateForUser(recipientDid),
+         let coordinator = await recipientState.getOrOpenMLSCoordinator(),
+         let messages = try? await coordinator.listMessages(conversationId: resolvedConvoID, limit: 50),
+         let cached = messages.first(where: { $0.messageId == messageId || (seq != nil && $0.seq == entrySeq) })
+      {
         await presentDecryptedNotification(
           plaintext: cached.plaintext,
-          convoId: convoId,
-          messageId: messageId,
+          convoId: resolvedConvoID,
+          messageId: cached.messageId,
           recipientDid: recipientDid,
           senderDid: cached.senderDid,
           originalNotification: originalNotification,
@@ -2763,635 +2493,35 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         return
       }
 
-      if let cachedPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
-        messageID: messageId, userDid: recipientDid
-      ) {
-        CatbirdMLSCore.MLSNotificationMetrics.increment(
-          .cacheHitBeforeDecrypt,
-          owner: .appNotification,
-          context: .appForegroundInactive,
-          source: "foreground_inactive_message_cache"
-        )
-        notificationLogger.info("📦 [FG] Cache HIT - using cached content")
-        var resolvedSender = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
-        if resolvedSender == nil {
-          resolvedSender = await getMLSSenderDIDByOrder(convoId: convoId, recipientDid: recipientDid, epoch: epoch, seq: seq)
-        }
-        await presentDecryptedNotification(
-          plaintext: cachedPlaintext,
-          convoId: convoId,
-          messageId: messageId,
-          recipientDid: recipientDid,
-          senderDid: resolvedSender,
-          originalNotification: originalNotification,
-          completionHandler: completionHandler
-        )
-        return
-      }
-
-      // Decode ciphertext from base64
-      guard let ciphertextData = Data(base64Encoded: ciphertext) else {
-        notificationLogger.error("❌ [FG] Invalid base64 ciphertext")
-        completionHandler([.banner, .sound])
-        return
-      }
-
-      // The route is canonical; use the persisted group ID only for MLS
-      // crypto. Never reinterpret a stable conversation UUID as group bytes.
-      let groupIdData = groupID
-
-      // Sync group state AND capture plaintext if target message is decrypted
-      notificationLogger.info(
-        "🔄 [FG] Syncing group state for recipient (may capture target message)...")
-      // Padding is stripped by catbird-mls process_message internally.
-      let targetCiphertext = ciphertextData
-      let syncResult = await syncGroupStateForRecipient(
-        convoId: convoId,
-        groupID: groupID,
-        recipientDid: recipientDid,
-        targetMessageId: messageId,
-        targetEpoch: epoch,
-        targetSeq: seq,
-        targetCiphertext: targetCiphertext
-      )
-
-      // If sync already decrypted our target message, use that plaintext
-      if let captured = syncResult {
-        notificationLogger.info(
-          "✅ [FG] Target message decrypted during sync - using captured plaintext")
-        // Use the SERVER message ID so sender lookup works (local pre-send UUID can differ).
-        await presentDecryptedNotification(
-          plaintext: captured.plaintext,
-          convoId: convoId,
-          messageId: captured.serverMessageId,
-          recipientDid: recipientDid,
-          senderDid: captured.senderDid,
-          originalNotification: originalNotification,
-          completionHandler: completionHandler
-        )
-        return
-      }
-
-      // Check cache again after sync (message may have been stored)
-      if let cached = await getCachedPlaintextByOrder() {
-        notificationLogger.info("📦 [FG] Cache HIT by (epoch,seq) after sync - using cached content")
-        await presentDecryptedNotification(
-          plaintext: cached.plaintext,
-          convoId: convoId,
-          messageId: messageId,
-          recipientDid: recipientDid,
-          senderDid: cached.senderDid,
-          originalNotification: originalNotification,
-          completionHandler: completionHandler
-        )
-        return
-      }
-
-      if let cachedPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
-        messageID: messageId, userDid: recipientDid
-      ) {
-        notificationLogger.info("📦 [FG] Cache HIT after sync - using cached content")
-        var resolvedSender = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
-        if resolvedSender == nil {
-          resolvedSender = await getMLSSenderDIDByOrder(convoId: convoId, recipientDid: recipientDid, epoch: epoch, seq: seq)
-        }
-        await presentDecryptedNotification(
-          plaintext: cachedPlaintext,
-          convoId: convoId,
-          messageId: messageId,
-          recipientDid: recipientDid,
-          senderDid: resolvedSender,
-          originalNotification: originalNotification,
-          completionHandler: completionHandler
-        )
-        return
-      }
-
-      // If we get here, the target message wasn't in the sync batch
-      // This can happen if it's a brand new message not yet on server
-      notificationLogger.info("🔓 [FG] Target message not in sync - attempting direct decryption...")
-      await logCacheMissDetails(context: "non-active-cache-miss")
-
-      // Use ephemeral path for non-active users
-      // This prevents "database locked" errors by NOT checkpointing the active user's DB
-      CatbirdMLSCore.MLSNotificationMetrics.increment(
-        .decryptAttempt,
-        owner: .appNotification,
-        context: .appForegroundInactive,
-        source: "foreground_inactive_direct_decrypt"
-      )
-      let decryptResult = try await CatbirdMLSCore.MLSCoreContext.shared.decryptForNotification(
-        userDid: recipientDid,
-        groupId: groupIdData,
-        ciphertext: ciphertextData,
-        conversationID: convoId,
-        messageID: messageId,
-        // Keep lightweight DB access for non-active users, but allow version signaling.
-        useEphemeralAccess: false
-      )
-
-      notificationLogger.info("✅ [FG] Decryption SUCCESS - showing decrypted notification")
-      signalInactiveAccountStateMutation(
-        for: recipientDid,
-        source: "foreground_direct_decrypt",
-        incrementVersion: false
-      )
-
-      await presentDecryptedNotification(
-        plaintext: decryptResult.plaintext,
-        convoId: convoId,
-        messageId: messageId,
-        recipientDid: recipientDid,
-        senderDid: decryptResult.senderDID,
-        originalNotification: originalNotification,
-        completionHandler: completionHandler
-      )
-
-    } catch let error as CatbirdMLSCore.MLSError {
-      if case .secretReuseSkipped = error {
-        CatbirdMLSCore.MLSNotificationMetrics.increment(
-          .secretReuseRecovery,
-          owner: .appNotification,
-          context: .appForegroundInactive,
-          source: "foreground_inactive_secret_reuse"
-        )
-        notificationLogger.info(
-          "🔄 [FG] SecretReuseError - message already processed, checking cache")
-
-        let backoffDelaysMs: [UInt64] = [50, 100, 200]
-        for (attempt, delayMs) in backoffDelaysMs.enumerated() {
-          var cached = await getCachedPlaintextByOrder()
-          var fallbackPlaintext: String?
-          if cached == nil {
-            fallbackPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
-              messageID: messageId, userDid: recipientDid
-            )
-          }
-
-          if let resolved = cached ?? fallbackPlaintext.map({ ($0, nil as String?) }) {
-            CatbirdMLSCore.MLSNotificationMetrics.increment(
-              .cacheHitBeforeDecrypt,
-              owner: .appNotification,
-              context: .appForegroundInactive,
-              source: "foreground_inactive_secret_reuse_cache"
-            )
-            notificationLogger.info(
-              "📦 [FG] Cache HIT after SecretReuse (attempt \(attempt + 1)) - using cached content")
-            await presentDecryptedNotification(
-              plaintext: resolved.plaintext,
-              convoId: convoId,
-              messageId: messageId,
-              recipientDid: recipientDid,
-              senderDid: resolved.senderDid,
-              originalNotification: originalNotification,
-              completionHandler: completionHandler
-            )
-            return
-          }
-
-          if attempt < backoffDelaysMs.count - 1 {
-            do { try await Task.sleep(nanoseconds: delayMs * 1_000_000) } catch {}
-          }
-        }
-        await logCacheMissDetails(context: "non-active-secret-reuse-miss")
-      }
-
-      notificationLogger.error("❌ [FG] Decryption FAILED: \(error.localizedDescription)")
-      // Show notification with placeholder text as fallback
       completionHandler([.banner, .sound])
     } catch {
-      notificationLogger.error("❌ [FG] Decryption FAILED: \(error.localizedDescription)")
-      // Show notification with placeholder text as fallback
+      notificationLogger.error("❌ [FG] MLS foreground push processing failed: \(error.localizedDescription)")
       completionHandler([.banner, .sound])
     }
   }
 
   /// Check if the given DID matches the currently active user
-  /// - Parameter recipientDid: The DID to check
-  /// - Returns: true if this DID is the currently active user
   private func checkIfActiveUser(_ recipientDid: String) async -> Bool {
     let normalizedRecipientDid = recipientDid.lowercased()
-
-    // Best-effort: verify the *currently authenticated* account matches the recipient.
-    // This prevents false positives during account-switch races (appState/db can be stale).
-    var authenticatedDid: String?
-    if let client {
-      authenticatedDid = try? await client.getDid()
-    }
-
-    if let authenticatedDid, authenticatedDid.lowercased() != normalizedRecipientDid {
-      notificationLogger.warning(
-        "⚠️ [FG] Active-user mismatch: authenticated=\(authenticatedDid), recipient=\(recipientDid)"
-      )
+    if let client, let authenticatedDid = try? await client.getDid(),
+       authenticatedDid.lowercased() != normalizedRecipientDid
+    {
       return false
     }
-
-    // First check against our local appState reference
     if let currentAppState = appState {
       let currentUserDID = await MainActor.run { currentAppState.userDID }
       if currentUserDID.lowercased() == normalizedRecipientDid {
         return true
       }
     }
-
-    // Also check against the database manager's tracking
-    return await CatbirdMLSCore.MLSGRDBManager.shared.isActiveUser(recipientDid)
+    return false
   }
-
-  /// Sync the group state for a recipient before attempting decryption
-  /// This ensures the recipient's MLS context has all pending commits processed
-  ///
-  /// CRITICAL FIX: This method now captures the plaintext if the target message is decrypted
-  /// during sync, preventing "SecretReuseError" from double-decryption.
-  ///
-  /// CRITICAL FIX: This method now handles GroupNotFound by fetching and processing
-  /// the Welcome message to join the group before retrying message processing.
-  ///
-  /// - Parameters:
-  ///   - convoId: The conversation ID
-  ///   - recipientDid: The recipient's DID
-  ///   - targetMessageId: The message ID we want to decrypt (if found during sync, its plaintext is returned)
-  /// - Returns: The decrypted plaintext if the target message was found and decrypted during sync, nil otherwise
-  private func syncGroupStateForRecipient(
-    convoId: String,
-    groupID: Data,
-    recipientDid: String,
-    targetMessageId: String,
-    targetEpoch: Int?,
-    targetSeq: Int?,
-    targetCiphertext: Data
-  ) async -> (plaintext: String, serverMessageId: String, senderDid: String?)? {
-    notificationLogger.info("🔄 [FG] Fetching pending messages for recipient's group sync...")
-    notificationLogger.info("🔄 [FG] Target message ID: \(targetMessageId.prefix(16))...")
-
-    do {
-      // Get or create API client for the recipient
-      let apiClient = await getOrCreateAPIClient(for: recipientDid)
-      guard let apiClient = apiClient else {
-        notificationLogger.warning(
-          "⚠️ [FG] Failed to create API client for recipient - skipping group sync")
-        return nil
-      }
-
-      // Get MLS context for the recipient
-      let context = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: recipientDid)
-
-      let groupIdData = groupID
-
-      // Check if the group exists locally
-      var groupExists = await checkGroupExists(context: context, groupId: groupIdData)
-
-      // If group doesn't exist, try to fetch and process the Welcome message
-      if !groupExists {
-        notificationLogger.info(
-          "🆕 [FG] Group not found locally - attempting to fetch Welcome message...")
-        groupExists = await attemptWelcomeJoin(
-          apiClient: apiClient,
-          context: context,
-          convoId: convoId,
-          groupID: groupID,
-          recipientDid: recipientDid
-        )
-
-        if !groupExists {
-          notificationLogger.warning(
-            "⚠️ [FG] Could not join group - Welcome may not be available yet")
-          return nil
-        }
-      }
-
-      // Fetch recent messages to process any commits we missed
-      let result = try await apiClient.getMessages(convoId: convoId, sinceSeq: nil)
-      notificationLogger.info("🔄 [FG] Fetched \(result.messages.count) messages for group sync")
-
-      var processedCount = 0
-      var capturedPlaintext: String?
-      var capturedServerMessageId: String?
-      var capturedSenderDid: String?
-
-      // No advisory lock needed - SQLite WAL handles concurrent access
-      // Cross-process coordination uses MLSNotificationCoordinator.
-
-      for message in result.messages {
-        guard let ciphertextData = message.ciphertext, let messageEpoch = message.epoch else {
-          notificationLogger.warning("⚠️ [FG] Skipping message \(message.id) with unsupported/malformed body variant")
-          continue
-        }
-        let actualCiphertext = ciphertextData
-
-        do {
-          let processResult = try context.processMessage(
-            groupId: groupIdData, messageData: actualCiphertext)
-          processedCount += 1
-
-          // ═══════════════════════════════════════════════════════════════════════════
-          // CRITICAL FIX (2024-12-22): Cache ALL application messages, not just target
-          // ═══════════════════════════════════════════════════════════════════════════
-          // MLS decryption consumes the secret key (forward secrecy). If we only cache
-          // the target message, other messages like reactions will fail with
-          // SecretReuseError when the notification handler tries to access them later.
-          // We must cache every successfully decrypted message to prevent this.
-          // ═══════════════════════════════════════════════════════════════════════════
-          if case .applicationMessage(let plaintextData, let senderCredential) = processResult {
-            let senderDid = String(data: senderCredential.identity, encoding: .utf8) ?? "unknown"
-
-            if let textContent = String(data: plaintextData, encoding: .utf8) {
-              // Check if this is our target message - capture for return value
-              // NOTE: push/message IDs can differ between local sender-generated IDs and server IDs,
-              // so we also match by ciphertext to avoid double-decrypt (SecretReuseError).
-              let isTargetByOrder =
-                (targetEpoch != nil && targetSeq != nil)
-                ? (messageEpoch == targetEpoch && message.seq == targetSeq)
-                : false
-              let isTargetByCiphertext = (actualCiphertext == targetCiphertext)
-              let isTarget =
-                isTargetByOrder || isTargetByCiphertext || message.id == targetMessageId
-              if isTarget {
-                if let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(plaintextData) {
-                  let displayText: String
-                  switch payload.messageType {
-                  case .text:
-                    displayText = payload.text ?? textContent
-                  case .reaction:
-                    if let reaction = payload.reaction {
-                      let verb = (reaction.action == .add) ? "Reacted with" : "Removed reaction"
-                      displayText = "\(verb) \(reaction.emoji)"
-                    } else {
-                      displayText = "Reaction update"
-                    }
-                  case .readReceipt, .deliveryAck, .recoveryRequest:
-                    displayText = "Read receipt"
-                  case .typing:
-                    displayText = "Typing..."
-                  case .adminRoster, .adminAction:
-                    displayText = "Group update"
-                  case .system:
-                    displayText = payload.text ?? ""
-                  case .edit, .delete, .unknown:
-                    // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
-                    displayText = ""
-                  }
-
-                  capturedPlaintext = displayText
-                  capturedServerMessageId = message.id
-                  capturedSenderDid = senderDid
-                  notificationLogger.info(
-                    "🎯 [FG] CAPTURED target message during sync! (type: \(payload.messageType.rawValue))"
-                  )
-                } else {
-                  capturedPlaintext = textContent
-                  capturedServerMessageId = message.id
-                  capturedSenderDid = senderDid
-                  notificationLogger.info("🎯 [FG] CAPTURED target message (raw text) during sync!")
-                }
-              }
-
-              // Cache ALL decrypted messages to prevent SecretReuseError
-              let serverEpoch = Int64(messageEpoch)
-              let serverSeq = Int64(message.seq)
-
-              do {
-                // Parse payload or create text payload
-                let payload =
-                  (try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(plaintextData))
-                  ?? CatbirdMLSCore.MLSMessagePayload.text(textContent, embed: nil)
-
-                // No advisory lock needed - SQLite WAL handles concurrent access
-                // Cross-process coordination uses MLSNotificationCoordinator.
-
-                let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(
-                  for: recipientDid)
-                try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) { db in
-                  try CatbirdMLSCore.MLSStorageHelpers.savePayloadSync(
-                    context: mlsContext,
-                    in: db,
-                    messageID: message.id,
-                    conversationID: convoId,
-                    currentUserDID: recipientDid,
-                    payload: payload,
-                    senderID: senderDid,
-                    epoch: serverEpoch,
-                    sequenceNumber: serverSeq
-                  )
-
-                  // Persist reactions during sync-group-state caching.
-                  // Otherwise, the first decrypt (notification path) burns MLS secrets and the app
-                  // can't decrypt later to reconstruct the reaction.
-                  if payload.messageType == .reaction,
-                    let reaction = payload.reaction,
-                    senderDid != "unknown" {
-                    switch reaction.action {
-                    case .add:
-                      let reactionID =
-                        "reaction:\(convoId):\(reaction.messageId):\(senderDid):\(reaction.emoji)"
-                      let model = CatbirdMLSCore.MLSReactionModel(
-                        reactionID: reactionID,
-                        messageID: reaction.messageId,
-                        conversationID: convoId,
-                        currentUserDID: recipientDid,
-                        actorDID: senderDid,
-                          emoji: reaction.emoji,
-                          action: "add",
-                          timestamp: Date()
-                        )
-                        try CatbirdMLSCore.MLSStorageHelpers.saveReactionSync(
-                          in: db, reaction: model)
-                      case .remove:
-                        try CatbirdMLSCore.MLSStorageHelpers.deleteReactionSync(
-                          in: db,
-                          messageID: reaction.messageId,
-                          actorDID: senderDid,
-                          emoji: reaction.emoji,
-                          currentUserDID: recipientDid
-                        )
-                      }
-                    }
-                  }
-                notificationLogger.info(
-                  "💾 [FG] Cached message \(message.id.prefix(8)) (epoch: \(serverEpoch), seq: \(serverSeq))"
-                )
-              } catch {
-                notificationLogger.warning(
-                  "⚠️ [FG] Failed to cache message \(message.id.prefix(8)): \(error.localizedDescription)"
-                )
-              }
-            }
-          } else if case .stagedCommit(let newEpoch, _) = processResult {
-            // Task #46: processMessage stages the commit; we must explicitly
-            // merge to advance the local epoch. On failure, best-effort
-            // discard so OpenMLS's staged handle doesn't linger.
-            do {
-              let mergedEpoch = try context.mergeIncomingCommit(
-                groupId: groupIdData, targetEpoch: newEpoch
-              )
-              notificationLogger.debug(
-                "🔄 [FG] Merged staged commit \(message.id.prefix(8)) → epoch \(mergedEpoch)"
-              )
-            } catch {
-              notificationLogger.warning(
-                "⚠️ [FG] mergeIncomingCommit failed for \(message.id.prefix(8)) epoch=\(newEpoch): \(error.localizedDescription) — discarding stage"
-              )
-              try? context.discardIncomingCommit(
-                groupId: groupIdData, targetEpoch: newEpoch
-              )
-            }
-          }
-
-          notificationLogger.debug(
-            "🔄 [FG] Processed message \(message.id.prefix(8))"
-          )
-        } catch {
-          let errorDescription = error.localizedDescription
-          if errorDescription.contains("SecretReuseError")
-            || errorDescription.contains("Decryption failed") {
-            notificationLogger.warning(
-              "⚠️ [FG] Message \(message.id.prefix(8)) triggered SecretReuseError/DecryptionFailed - attempting recovery from cache"
-            )
-
-            // CRITICAL RECOVERY: If message is already cached (SecretReuseError), validate calls to saveReaction missed by the throw
-            do {
-              // No advisory lock needed - SQLite WAL handles concurrent access
-              // Cross-process coordination uses MLSNotificationCoordinator.
-
-              // Pre-fetch the MlsContext outside the sync write closure so we
-              // can decrypt `payloadEncrypted` rows in-memory inside it.
-              let recoveryMlsContext = try? await CatbirdMLSCore.MLSCoreContext.shared.getContext(
-                for: recipientDid)
-
-              try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) {
-                [self] db in
-                // Fetch cached message to get senderID
-                if let cached = try CatbirdMLSCore.MLSMessageModel.fetchOne(db, id: message.id) {
-                  let senderDid = cached.senderID
-
-                  // Validate senderID not empty/unknown (Fix for reaction overwrite)
-                  let cachedPayload: CatbirdMLSCore.MLSMessagePayload?
-                  if let ctx = recoveryMlsContext {
-                    cachedPayload = cached.decryptedPayload(context: ctx)
-                  } else if let json = cached.payloadJSON {
-                    cachedPayload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(json)
-                  } else {
-                    cachedPayload = nil
-                  }
-                  if !senderDid.isEmpty && senderDid != "unknown",
-                    let payload = cachedPayload,
-                    payload.messageType == .reaction,
-                    let reaction = payload.reaction {
-
-                    notificationLogger.info(
-                      "🔄 [FG] Recovering reaction for \(message.id.prefix(8)) from sender \(senderDid)"
-                    )
-
-                    switch reaction.action {
-                    case .add:
-                      let reactionID =
-                        "reaction:\(convoId):\(reaction.messageId):\(senderDid):\(reaction.emoji)"
-                      let model = CatbirdMLSCore.MLSReactionModel(
-                        reactionID: reactionID,
-                        messageID: reaction.messageId,
-                        conversationID: convoId,
-                        currentUserDID: recipientDid,
-                        actorDID: senderDid,
-                        emoji: reaction.emoji,
-                        action: "add",
-                        timestamp: Date()
-                      )
-                      try CatbirdMLSCore.MLSStorageHelpers.saveReactionSync(
-                        in: db, reaction: model)
-                      notificationLogger.info(
-                        "✅ [FG] Recovered reaction add for \(message.id.prefix(8))")
-
-                    case .remove:
-                      try CatbirdMLSCore.MLSStorageHelpers.deleteReactionSync(
-                        in: db,
-                        messageID: reaction.messageId,
-                        actorDID: senderDid,
-                        emoji: reaction.emoji,
-                        currentUserDID: recipientDid
-                      )
-                      notificationLogger.info(
-                        "✅ [FG] Recovered reaction remove for \(message.id.prefix(8))")
-                    }
-                  }
-                }
-              }
-            } catch {
-              notificationLogger.error(
-                "❌ [FG] Recovery failed for \(message.id.prefix(8)): \(error.localizedDescription)")
-            }
-          }
-
-          // Ignore errors - might be already processed, or the target message we want to decrypt
-          notificationLogger.debug(
-            "🔄 [FG] Skipping message \(message.id.prefix(8)): \(error.localizedDescription)")
-        }
-      }
-
-      notificationLogger.info(
-        "✅ [FG] Group sync complete - processed \(processedCount)/\(result.messages.count) messages"
-      )
-      if processedCount > 0 {
-        signalInactiveAccountStateMutation(
-          for: recipientDid,
-          source: "foreground_sync",
-          incrementVersion: true
-        )
-      }
-
-      if let capturedPlaintext, let capturedServerMessageId {
-        notificationLogger.info("✅ [FG] Target message was captured during sync!")
-        return (capturedPlaintext, capturedServerMessageId, capturedSenderDid)
-      } else {
-        notificationLogger.info("ℹ️ [FG] Target message was NOT in the sync batch")
-        return nil
-      }
-
-    } catch {
-      notificationLogger.warning("⚠️ [FG] Group sync failed: \(error.localizedDescription)")
-      // Continue anyway - decryption might still work
-      return nil
-    }
-  }
-
-  /// Signal cross-process MLS mutations for non-active account foreground decoding.
-  ///
-  /// Darwin self-loop fix (2026-04): The cross-process `stateChanged` Darwin
-  /// notification and the disk version counter are NSE→app signals only. When
-  /// the main app posts/bumps them on its own mutations, the receiver-side
-  /// reload (and the in-process stale-context check) fires against ourselves —
-  /// causing a full MLSCoreContext teardown after every send/receive. We retain
-  /// the audit log via `publishMutation`, but pass `incrementVersion: false`
-  /// and `postStateChanged: false` regardless of the caller's request.
-  ///
-  /// Cross-process correctness for inactive users is preserved by SQLite WAL
-  /// persistence — NSE recreates `MLSCoreContext.shared` per invocation and
-  /// reads disk state from scratch, so it never consults the in-memory version.
-  private func signalInactiveAccountStateMutation(
-    for userDid: String,
-    source: String,
-    incrementVersion _: Bool
-  ) {
-    _ = CatbirdMLSCore.MLSNotificationCoordinator.publishMutation(
-      userDID: userDid,
-      source: source,
-      decryptionOwner: .appNotification,
-      incrementVersion: false,
-      postStateChanged: false
-    )
-    notificationLogger.info(
-      "📡 [FG] Signaled inactive-account MLS mutation (source=\(source), decryption_owner=app_notification)"
-    )
-  }
-
-  // MARK: - Group Join Helpers
 
   /// Get or create an MLS API client for a specific user
   private func getOrCreateAPIClient(for userDid: String) async -> MLSAPIClient? {
     #if os(iOS)
     if let recipientAppState = await getAppStateForUser(userDid),
       let existingClient = await recipientAppState.getMLSAPIClient() {
-      // IMPORTANT: The stored client can be authenticated as a *different* account
-      // if the active account has changed since it was created.
       let authenticated = await existingClient.authenticatedUserDID()
       if let authenticated, authenticated.lowercased() == userDid.lowercased() {
         notificationLogger.info("🔄 [FG] Using existing API client for recipient")
@@ -3403,7 +2533,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
     }
 
-    // Create a standalone ATProtoClient for the recipient
     notificationLogger.info("🔄 [FG] Creating standalone API client for recipient...")
 
     guard let standaloneClient = await createStandaloneClientForUser(userDid) else {
@@ -3424,216 +2553,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     #endif
   }
 
-  /// Check if a group exists in the MLS context
-  private func checkGroupExists(context: CatbirdMLS.MlsContext, groupId: Data) async -> Bool {
-    do {
-      // Try to get the epoch - if it fails, the group doesn't exist
-      _ = try context.getEpoch(groupId: groupId)
-      return true
-    } catch {
+  /// Check if a conversation exists in the recipient's MLS coordinator
+  private func checkGroupExists(conversationID: String, recipientDid: String) async -> Bool {
+    guard let recipientState = await getAppStateForUser(recipientDid),
+          let coordinator = await recipientState.getOrOpenMLSCoordinator(),
+          let rows = try? await coordinator.listConversations(limit: 200)
+    else {
       return false
     }
-  }
-
-  /// Attempt to join a group by fetching and processing the Welcome message
-  /// - Returns: true if the group was successfully joined, false otherwise
-  private func attemptWelcomeJoin(
-    apiClient: MLSAPIClient,
-    context: CatbirdMLS.MlsContext,
-    convoId: String,
-    groupID: Data,
-    recipientDid: String
-  ) async -> Bool {
-    do {
-      notificationLogger.info("📩 [FG] Fetching Welcome message for group: \(convoId.prefix(16))...")
-
-      // 🛡️ RACE CONDITION FIX: Coordinate with other processes (NSE)
-      // Wait if another process is currently processing the Welcome for this conversation
-      let welcomeReady = await MLSWelcomeGate.shared.waitForWelcomeIfPending(
-        for: convoId, userDID: recipientDid, timeout: .seconds(5))
-      guard welcomeReady else {
-        notificationLogger.warning("⚠️ [FG] Welcome still pending after wait - deferring join for retry")
-        return false
-      }
-
-      // Check if group appeared while we were waiting (processed by NSE)
-      if try context.groupExists(groupId: groupID) {
-        notificationLogger.info(
-          "✅ [FG] Group appeared after waiting for WelcomeGate - skipping processing")
-        return true
-      }
-
-      // Mark start of processing
-      try await MLSWelcomeGate.shared.beginWelcomeProcessing(for: convoId, userDID: recipientDid)
-      defer {
-        Task {
-          await MLSWelcomeGate.shared.completeWelcomeProcessing(for: convoId, userDID: recipientDid)
-        }
-      }
-
-      // Fetch Welcome message from server
-      let welcomeData = try await apiClient.getWelcome(convoId: convoId)
-      notificationLogger.info("📩 [FG] Received Welcome message: \(welcomeData.count) bytes")
-
-      // Get identity bytes for the user
-      let identityBytes = Data(recipientDid.utf8)
-
-      // Process the Welcome message to join the group
-      notificationLogger.info("🔐 [FG] Processing Welcome message...")
-      let welcomeResult = try context.processWelcome(
-        welcomeBytes: welcomeData,
-        identityBytes: identityBytes,
-        config: nil
-      )
-
-      notificationLogger.info(
-        "✅ [FG] Successfully joined group via Welcome! GroupID: \(welcomeResult.groupId.hexEncodedString().prefix(16))..."
-      )
-
-      // 🚨 ROOT CAUSE FIX: Create SQLCipher conversation record IMMEDIATELY after Welcome
-      // This prevents "FOREIGN KEY constraint failed" errors when messages are decrypted.
-      // Without this, the message INSERT fails, plaintext is lost, and Forward Secrecy
-      // means we can never decrypt the message again (keys are burned after first use).
-      do {
-        let groupIdHex = welcomeResult.groupId.hexEncodedString()
-        // Use smart routing - auto-routes to lightweight DatabaseQueue for inactive users
-        try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) { db in
-          // CRITICAL: Use ensureConversationExistsSync (Healing)
-          // This ensures if a placeholder exists (from NSE), it gets migrated to this real ID
-          try CatbirdMLSCore.MLSStorageHelpers.ensureConversationExistsSync(
-            in: db,
-            userDID: recipientDid,
-            conversationID: convoId,
-            groupID: groupIdHex
-          )
-        }
-        notificationLogger.info("✅ [FG] Created conversation record for new group (FK fix)")
-      } catch {
-        // Non-fatal - the safety net in savePlaintext will create a placeholder if needed
-        notificationLogger.warning(
-          "⚠️ [FG] Failed to pre-create conversation record: \(error.localizedDescription)")
-      }
-
-      // Confirm Welcome processing with server (best effort)
-      do {
-        try await apiClient.confirmWelcome(convoId: convoId, success: true, errorMessage: nil)
-        notificationLogger.info("✅ [FG] Confirmed Welcome processing with server")
-      } catch {
-        notificationLogger.warning(
-          "⚠️ [FG] Failed to confirm Welcome (non-critical): \(error.localizedDescription)")
-      }
-
-      return true
-
-    } catch let error as MLSAPIError {
-      // Check if Welcome is not available (404) or expired (410)
-      if case .httpError(let statusCode, _) = error {
-        if statusCode == 404 {
-          notificationLogger.info("ℹ️ [FG] No Welcome message available for this group (404)")
-          return false
-        }
-
-        if statusCode == 410 {
-          notificationLogger.info(
-            "ℹ️ [FG] Welcome expired for this group (410) - attempting External Commit fallback")
-          do {
-            if try context.groupExists(groupId: groupID) {
-              notificationLogger.info(
-                "⏭️ [FG] Group already exists locally after 410 - skipping External Commit")
-              return true
-            }
-            let groupIdData = try await MLSClient.shared.joinByExternalCommit(
-              for: recipientDid, convoId: convoId)
-            let groupIdHex = groupIdData.hexEncodedString()
-            try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) { db in
-              try CatbirdMLSCore.MLSStorageHelpers.ensureConversationExistsSync(
-                in: db,
-                userDID: recipientDid,
-                conversationID: convoId,
-                groupID: groupIdHex
-              )
-            }
-            notificationLogger.info("✅ [FG] External Commit fallback succeeded")
-            return true
-          } catch {
-            notificationLogger.warning(
-              "⚠️ [FG] External Commit fallback failed: \(error.localizedDescription)")
-            return false
-          }
-        }
-      }
-
-      notificationLogger.warning("⚠️ [FG] Failed to fetch Welcome: \(error.localizedDescription)")
-      return false
-    } catch let error as CatbirdMLS.MlsError {
-      // Handle specific MLS errors
-      switch error {
-      case .NoMatchingKeyPackage(let msg):
-        notificationLogger.warning(
-          "⚠️ [FG] NoMatchingKeyPackage - Welcome references unavailable key package: \(msg)")
-
-        // Best-effort: invalidate this stale Welcome and clean up server-side orphaned packages.
-        do {
-          _ = try await apiClient.invalidateWelcome(
-            convoId: convoId, reason: "NoMatchingKeyPackage")
-        } catch {
-          notificationLogger.warning(
-            "⚠️ [FG] Failed to invalidate Welcome (non-critical): \(error.localizedDescription)")
-        }
-
-          Task.detached(priority: .utility) { [self] in
-          do {
-            _ = try await MLSClient.shared.syncKeyPackageHashes(for: recipientDid)
-          } catch {
-            notificationLogger.warning(
-              "⚠️ [FG] Failed to sync key package hashes: \(error.localizedDescription)")
-          }
-
-          do {
-            _ = try await MLSClient.shared.monitorAndReplenishBundles(for: recipientDid)
-          } catch {
-            notificationLogger.warning(
-              "⚠️ [FG] Failed to replenish key packages: \(error.localizedDescription)")
-          }
-        }
-
-        // If we can't process Welcome, try joining via External Commit so we can decrypt immediately.
-        do {
-            if try context.groupExists(groupId: groupID) {
-            notificationLogger.info(
-              "⏭️ [FG] Group already exists after NoMatchingKeyPackage - skipping External Commit")
-            return true
-          }
-          let groupIdData = try await MLSClient.shared.joinByExternalCommit(
-            for: recipientDid, convoId: convoId)
-          let groupIdHex = groupIdData.hexEncodedString()
-          try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) { db in
-            try CatbirdMLSCore.MLSStorageHelpers.ensureConversationExistsSync(
-              in: db,
-              userDID: recipientDid,
-              conversationID: convoId,
-              groupID: groupIdHex
-            )
-          }
-          notificationLogger.info(
-            "✅ [FG] External Commit fallback succeeded after NoMatchingKeyPackage")
-          return true
-        } catch {
-          notificationLogger.warning(
-            "⚠️ [FG] External Commit fallback failed after NoMatchingKeyPackage: \(error.localizedDescription)"
-          )
-          return false
-        }
-
-      default:
-        notificationLogger.warning(
-          "⚠️ [FG] Failed to process Welcome: \(error.localizedDescription)")
-        return false
-      }
-    } catch {
-      notificationLogger.warning("⚠️ [FG] Failed to join group: \(error.localizedDescription)")
-      return false
-    }
+    return rows.contains(where: { $0.conversationId == conversationID })
   }
 
   /// Create a standalone ATProtoClient for a specific user
@@ -3645,14 +2573,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     #if targetEnvironment(simulator)
       let accessGroup: String? = nil
     #else
-      let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+      let accessGroup: String? = KeychainPlatformKeyStore.resolvedAccessGroup(
         suffix: "blue.catbird.shared")
     #endif
 
     let oauthConfig = OAuthConfiguration(
       clientId: "https://catbird.blue/oauth-client-metadata.json",
       redirectUri: "https://catbird.blue/oauth/callback",
-      scope: "atproto transition:generic transition:chat.bsky"
+      scope: MLSAppGroupStorage.requiredSpacesScopes.joined(separator: " ")
     )
 
     let client: ATProtoClient
@@ -3673,7 +2601,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return nil
     }
 
-    // Switch to the specific user's account to load their tokens
     do {
       try await client.switchToAccount(did: userDid)
       notificationLogger.info("✅ [FG] Standalone client switched to user: \(userDid.prefix(24))...")
@@ -3927,98 +2854,62 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   private func getMLSConversationTitle(convoId: String, recipientDid: String) async -> String? {
-    do {
-      // Use smart routing - auto-routes to lightweight DatabaseQueue for inactive users
-      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      let conversation = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) {
-        db in
-        try CatbirdMLSCore.MLSConversationModel
-          .filter(CatbirdMLSCore.MLSConversationModel.Columns.conversationID == convoId)
-          .filter(
-            CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == normalizedRecipientDid
-          )
-          .fetchOne(db)
-      }
-
-      return conversation?.title
-    } catch {
+    guard let recipientState = await getAppStateForUser(recipientDid),
+          let coordinator = await recipientState.getOrOpenMLSCoordinator(),
+          let rows = try? await coordinator.listConversations(limit: 200)
+    else {
       return nil
     }
+    return rows.first(where: { $0.conversationId == convoId })?.title
   }
 
   private func getMLSSenderDIDByOrder(
     convoId: String, recipientDid: String, epoch: Int?, seq: Int?
   ) async -> String? {
-    guard let epoch, let seq else { return nil }
-    do {
-      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-      let message = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) { db in
-        try CatbirdMLSCore.MLSMessageModel
-          .filter(CatbirdMLSCore.MLSMessageModel.Columns.conversationID == convoId)
-          .filter(CatbirdMLSCore.MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
-          .filter(CatbirdMLSCore.MLSMessageModel.Columns.epoch == Int64(epoch))
-          .filter(CatbirdMLSCore.MLSMessageModel.Columns.sequenceNumber == Int64(seq))
-          .fetchOne(db)
-      }
-      guard let senderID = message?.senderID, !senderID.isEmpty, senderID != "unknown" else {
-        return nil
-      }
-      return senderID
-    } catch {
+    guard let epoch, let seq,
+          let recipientState = await getAppStateForUser(recipientDid),
+          let coordinator = await recipientState.getOrOpenMLSCoordinator(),
+          let messages = try? await coordinator.listMessages(conversationId: convoId, limit: 100)
+    else {
       return nil
     }
+    guard let match = messages.first(where: { $0.epoch == UInt64(max(0, epoch)) && $0.seq == Int64(seq) }),
+          !match.senderDid.isEmpty,
+          match.senderDid != "unknown"
+    else {
+      return nil
+    }
+    return match.senderDid
   }
 
   private func getMLSSenderDID(messageId: String, recipientDid: String) async -> String? {
-    do {
-      // Use smart routing - auto-routes to lightweight DatabaseQueue for inactive users
-      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      let message = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) { db in
-        try CatbirdMLSCore.MLSMessageModel
-          .filter(CatbirdMLSCore.MLSMessageModel.Columns.messageID == messageId)
-          .filter(CatbirdMLSCore.MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
-          .fetchOne(db)
-      }
-
-      guard let senderID = message?.senderID, !senderID.isEmpty, senderID != "unknown" else {
-        return nil
-      }
-      return senderID
-    } catch {
+    guard let recipientState = await getAppStateForUser(recipientDid),
+          let coordinator = await recipientState.getOrOpenMLSCoordinator(),
+          let convos = try? await coordinator.listConversations(limit: 50)
+    else {
       return nil
     }
+    for convo in convos {
+      if let messages = try? await coordinator.listMessages(conversationId: convo.conversationId, limit: 50),
+         let match = messages.first(where: { $0.messageId == messageId }),
+         !match.senderDid.isEmpty,
+         match.senderDid != "unknown"
+      {
+        return match.senderDid
+      }
+    }
+    return nil
   }
 
   private func getMLSMemberInfo(
     senderDid: String,
-    convoId: String,
-    recipientDid: String
+    convoId _: String,
+    recipientDid _: String
   ) async -> (displayName: String?, handle: String?, avatarURL: String?)? {
-    do {
-      // Use smart routing - auto-routes to lightweight DatabaseQueue for inactive users
-      let normalizedSenderDid = senderDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      let member = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) { db in
-        try CatbirdMLSCore.MLSMemberModel
-          .filter(CatbirdMLSCore.MLSMemberModel.Columns.did == normalizedSenderDid)
-          .filter(CatbirdMLSCore.MLSMemberModel.Columns.conversationID == convoId)
-          .filter(CatbirdMLSCore.MLSMemberModel.Columns.currentUserDID == normalizedRecipientDid)
-          .fetchOne(db)
-      }
-
-      guard let member else { return nil }
-      return (displayName: member.displayName, handle: member.handle, avatarURL: member.avatarURL)
-    } catch {
+    guard let cached = await ProfileCacheDatabase.shared.read(did: senderDid) else {
       return nil
     }
+    return (displayName: cached.displayName, handle: cached.handle, avatarURL: cached.avatarURL)
   }
 
   private func attachProfilePhoto(to content: UNMutableNotificationContent, from url: URL) async {
@@ -4590,31 +3481,20 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     var resolved = await resolveMLSConversationRoute(convoId, recipientDID: currentAppState.userDID)
     if resolved == nil,
-      let manager = await currentAppState.getMLSConversationManager(timeout: 10)
+       await currentAppState.getOrOpenMLSCoordinator() != nil
     {
-      let deadline = ContinuousClock().now.advanced(by: .seconds(10))
-      while true {
-        do {
-          try await manager.syncWithServerFresh()
-          break
-        } catch MLSConversationError.operationFailed(let reason)
-          where reason == "Rust orchestrator runtime unavailable for syncWithServer"
-            && ContinuousClock().now < deadline
-        {
-          // Foreground resume can release the suspension gate before its Rust runtime is restored.
-          do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
-        } catch {
-          notificationLogger.warning("MLS notification sync before route resolution failed: \(error.localizedDescription)")
-          break
-        }
-      }
+      await currentAppState.loadMLSConversations()
       resolved = await resolveMLSConversationRoute(convoId, recipientDID: currentAppState.userDID)
     }
-    guard let resolved else {
+    let canonicalConvoID: String
+    if let resolved {
+      canonicalConvoID = resolved.conversationID
+    } else if MLSConversationIdentityBoundary.isCanonicalStableID(convoId) {
+      canonicalConvoID = convoId
+    } else {
       notificationLogger.warning("Refusing MLS notification navigation for unresolved route")
       return
     }
-    let canonicalConvoID = resolved.conversationID
 
     await MainActor.run {
       guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }

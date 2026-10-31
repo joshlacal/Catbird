@@ -38,9 +38,15 @@ struct ContactSearchList: View {
   @State private var searchError: String?
   @State private var searchTask: Task<Void, Never>?
   @State private var searchGeneration = UUID()
+  enum ContactMLSAvailability: Sendable, Equatable {
+    case available
+    case unavailable
+    case unknown
+  }
+
   /// DID of the contact whose conversation is being started, if any
   @State private var startingDID: String?
-  @State private var participantAvailability: [String: MLSAPIClient.MLSChatAvailability] = [:]
+  @State private var participantAvailability: [String: ContactMLSAvailability] = [:]
   @State private var checkingAvailability: Set<String> = []
   @State private var availabilityRequests: [String: UUID] = [:]
   @State private var blueskyChatAvailability: [String: Bool] = [:]
@@ -594,13 +600,22 @@ struct ContactSearchList: View {
         }
       }
     }
-    var resolved: [String: MLSAPIClient.MLSChatAvailability] = [:]
-    if let apiClient = await appState.getMLSAPIClient(), !Task.isCancelled, appState.userDID == accountDID {
-      let statuses = await apiClient.getChatAvailability(dids: didObjects)
-      if !Task.isCancelled, appState.userDID == accountDID {
-        for status in statuses { resolved[status.did.didString()] = status.availability }
+    let client = appState.atProtoClient
+    let didStrings = didObjects.map { $0.didString() }
+    let resolved = await Task.detached(priority: .userInitiated) {
+      let transport = PetrelPlatformTransport(atProtoClient: client)
+      var statuses: [String: ContactMLSAvailability] = [:]
+      for didString in didStrings {
+        guard !Task.isCancelled else { break }
+        do {
+          let keys = try transport.getAuthorizedDeviceKeys(did: didString, chatDpopToken: nil)
+          statuses[didString] = keys.isEmpty ? .unavailable : .available
+        } catch {
+          statuses[didString] = .unknown
+        }
       }
-    }
+      return statuses
+    }.value
 
     guard !Task.isCancelled, appState.userDID == accountDID else { return }
 

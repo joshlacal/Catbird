@@ -57,7 +57,7 @@ struct UnifiedProfileView: View {
   /// Conversations the current user would auto-leave if they block this profile.
   /// Populated just before presenting the block-confirmation alert so the
   /// dialog can warn "you'll leave N shared conversations".
-  @State private var blockAffectedConvos: [MLSConversationSnapshot] = []
+  @State private var blockAffectedConvos: [MLSConversationModel] = []
   @State private var isMuting = false
   @State private var profileForAddToList: AppBskyActorDefs.ProfileViewDetailed?
   @State private var hasAttemptedLoad = false

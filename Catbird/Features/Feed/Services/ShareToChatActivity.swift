@@ -1,4 +1,3 @@
-import CatbirdMLSCore
 //
 //  ShareToChatActivity.swift
 //  Catbird
@@ -13,7 +12,6 @@ import CatbirdMLSCore
   import OSLog
   import Observation
   import CatbirdMLSCore
-  import GRDB
 
   /// Custom UIActivity for sharing posts to chat
   class ShareToChatActivity: UIActivity {
@@ -1251,13 +1249,16 @@ import CatbirdMLSCore
       isLoading = true
       defer { isLoading = false }
 
-       let userDID = appState.userDID
+      let userDID = appState.userDID
+
+      guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
+        conversations = []
+        return
+      }
 
       do {
-        // Use smart routing - auto-routes to lightweight Queue if needed
-        let (loadedConversations, membersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembersUsingSmartRouting(
-          currentUserDID: userDID
-        )
+        let rows = try await mlsCoordinator.listConversations(limit: 100)
+        let loadedConversations = rows.map { MLSConversationModel(row: $0, currentUserDID: userDID) }
         let identityRecords = loadedConversations.map {
           MLSConversationIdentityBoundary.Record(
             conversationID: $0.conversationID,
@@ -1280,23 +1281,27 @@ import CatbirdMLSCore
           }
         }
 
-        func canonicalKey(_ requestedID: String) -> String? {
-          try? MLSConversationIdentityBoundary.resolve(requestedID, in: identityRecords)
-        }
-
         var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
-        for (requestedID, members) in membersByConvoID {
-          guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
-          canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
-        }
-
         var seenConvoIDs = Set<String>()
         conversations = loadedConversations.filter {
           canonicalIDs.contains($0.conversationID) && seenConvoIDs.insert($0.conversationID).inserted
         }
+        for conversation in conversations {
+          let convoID = conversation.conversationID
+          let msgRows = (try? await mlsCoordinator.listMessages(conversationId: convoID, limit: 20)) ?? []
+          var seenDIDs = Set<String>()
+          canonicalMembersByConvoID[convoID] = msgRows.compactMap { row in
+            guard seenDIDs.insert(row.senderDid).inserted else { return nil }
+            return MLSMemberModel(
+              memberID: "\(convoID):\(row.senderDid)",
+              conversationID: convoID,
+              currentUserDID: userDID,
+              did: row.senderDid
+            )
+          }
+        }
         logger.info("Loaded \(self.conversations.count) MLS conversations for sharing")
 
-        // Load participants (no additional DB queries needed)
         await loadConversationParticipants(membersByConvoID: canonicalMembersByConvoID, userDID: userDID)
       } catch {
         logger.error("Failed to load MLS conversations: \(error)")
@@ -1307,20 +1312,17 @@ import CatbirdMLSCore
     private func loadConversationParticipants(membersByConvoID: [String: [MLSMemberModel]], userDID: String) async {
       var allDIDs = Set<String>()
 
-      // Collect DIDs for profile fetching (no DB queries - data already loaded)
       for (_, members) in membersByConvoID {
         for member in members {
           allDIDs.insert(member.did)
         }
       }
 
-      // Fetch profiles from Bluesky (network call, not DB)
       var profilesByDID: [String: MLSProfileEnricher.ProfileData] = [:]
       if let client = appState.atProtoClient {
         profilesByDID = await fetchProfilesForDIDs(Array(allDIDs), client: client)
       }
 
-      // Convert members to participants with enriched profile data
       for (convoID, members) in membersByConvoID {
         let participants = members.map { member -> MLSParticipantViewModel in
           let profile = profilesByDID[member.did]
@@ -1374,22 +1376,28 @@ import CatbirdMLSCore
 
       Task {
         do {
-          // Create the post embed for MLS
-          let postEmbed = createPostEmbed(from: post)
-
-          // Get MLS conversation manager
-          guard let manager = await appState.getMLSConversationManager() else {
+          guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
             throw NSError(domain: "MLSChat", code: -1, userInfo: [NSLocalizedDescriptionKey: "MLS service not available"])
           }
 
-          // Send the message with embed
-          let (messageId, _, _, _) = try await manager.sendMessage(
-            convoId: conversation.conversationID,
-            plaintext: messageText.isEmpty ? "📝 Shared a post" : messageText,
-            embed: .post(postEmbed)
+          let postEmbed = createPostEmbed(from: post)
+          let baseText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+          let wireText: String
+          if let encoded = try? MLSMessagePayload.text(baseText, embed: .post(postEmbed)).encodeToJSON(),
+             let jsonString = String(data: encoded, encoding: .utf8)
+          {
+            wireText = jsonString
+          } else {
+            let postURI = post.uri.uriString()
+            wireText = baseText.isEmpty ? "📝 Shared a post\n\(postURI)" : "\(baseText)\n\(postURI)"
+          }
+
+          let sentRow = try await mlsCoordinator.sendMessage(
+            conversationId: conversation.conversationID,
+            text: wireText
           )
 
-          logger.info("Sent post to MLS conversation \(conversation.conversationID): \(messageId)")
+          logger.info("Sent post to MLS conversation \(conversation.conversationID): \(sentRow.messageId)")
 
           await MainActor.run {
             guard isValidOrigin, sceneContext.accountDID == accountDID else {

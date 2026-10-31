@@ -90,6 +90,24 @@ struct MLSChatSettingsView: View {
         .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
       }
+      // MARK: - Backup & Recovery
+
+      Section("Backup & Recovery") {
+        NavigationLink(destination: LabyrinthSettingsAndRestoreView(coordinator: appState.mlsCoordinator)) {
+          Label {
+            VStack(alignment: .leading, spacing: 2) {
+              Text("Labyrinth Backup & Recovery")
+              Text("Recovery code, passkey PRF, post-quantum device pairing, and history restore")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          } icon: {
+            Image(systemName: "key.icloud.fill")
+              .foregroundStyle(.green)
+          }
+        }
+      }
+
       // MARK: - Diagnostics
 
       Section("Diagnostics") {
@@ -173,35 +191,30 @@ struct MLSChatSettingsView: View {
 
   // MARK: - Data Loading
 
+  private var settingsKeyPrefix: String {
+    "blue.catbird.mls.privacy.\(appState.userDID.lowercased())"
+  }
+
   @MainActor
   private func loadSettings() async {
-    guard let apiClient = await appState.getMLSAPIClient() else {
-      errorMessage = "MLS client not available"
-      showingErrorAlert = true
-      isLoading = false
-      return
+    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+    let prefix = settingsKeyPrefix
+    if let rawWho = defaults.string(forKey: "\(prefix).whoCanMessageMe"),
+       let parsed = MLSWhoCanMessageMe(rawValue: rawWho) {
+      whoCanMessageMe = parsed
     }
-
-    do {
-      let settings = try await apiClient.getChatRequestSettings()
-      allowFollowersBypass = (settings["allowFollowersBypass"] == "true")
-      allowFollowingBypass = (settings["allowFollowingBypass"] == "true")
-      autoExpireDays = Int(settings["autoExpireDays"] ?? "") ?? 0
-
-      if let conversationManager = await appState.getMLSConversationManager() {
-        if let policy = await conversationManager.getChatPolicy() {
-          if let who = policy.whoCanMessageMe { whoCanMessageMe = who }
-          if let followers = policy.allowFollowersBypass { allowFollowersBypass = followers }
-          if let following = policy.allowFollowingBypass { allowFollowingBypass = following }
-          if let expire = policy.autoExpireDays { autoExpireDays = expire }
-        }
-      }
-      isLoading = false
-    } catch {
-      logger.error("Failed to load chat settings: \(error.localizedDescription)")
-      // Use defaults on error
-      isLoading = false
+    if defaults.object(forKey: "\(prefix).allowFollowersBypass") != nil {
+      allowFollowersBypass = defaults.bool(forKey: "\(prefix).allowFollowersBypass")
     }
+    if defaults.object(forKey: "\(prefix).allowFollowingBypass") != nil {
+      allowFollowingBypass = defaults.bool(forKey: "\(prefix).allowFollowingBypass")
+    }
+    let storedExpire = defaults.integer(forKey: "\(prefix).autoExpireDays")
+    if storedExpire > 0 {
+      autoExpireDays = storedExpire
+    }
+    _ = await appState.getOrOpenMLSCoordinator()
+    isLoading = false
   }
 
   // MARK: - Settings Updates
@@ -229,73 +242,34 @@ struct MLSChatSettingsView: View {
     autoExpireDays: Int?,
     whoCanMessageMe: MLSWhoCanMessageMe?
   ) async {
-    guard let apiClient = await appState.getMLSAPIClient() else { return }
-
     isSaving = true
     defer { isSaving = false }
-
-    do {
-      _ = try await apiClient.updateChatRequestSettings(
-        allowFollowersBypass: allowFollowersBypass,
-        allowFollowingBypass: allowFollowingBypass,
-        autoExpireDays: autoExpireDays
-      )
-      if let conversationManager = await appState.getMLSConversationManager() {
-        let effectiveFollowers = allowFollowersBypass ?? self.allowFollowersBypass
-        let effectiveFollowing = allowFollowingBypass ?? self.allowFollowingBypass
-        let effectiveAutoExpire = autoExpireDays ?? self.autoExpireDays
-        let effectiveWhoCanMessageMe = whoCanMessageMe ?? self.whoCanMessageMe
-
-        do {
-          try await conversationManager.publishChatPolicy(
-            whoCanMessageMe: effectiveWhoCanMessageMe,
-            allowFollowersBypass: effectiveFollowers,
-            allowFollowingBypass: effectiveFollowing,
-            autoExpireDays: effectiveAutoExpire
-          )
-        } catch {
-          logger.error("Failed to publish chat policy: \(error.localizedDescription)")
-        }
-      }
-      logger.debug("Chat settings saved successfully")
-    } catch {
-      logger.error("Failed to save chat settings: \(error.localizedDescription)")
-      errorMessage = "Failed to save settings. Please try again."
-      showingErrorAlert = true
-      // Reload to restore server state
-      await loadSettings()
+    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+    let prefix = settingsKeyPrefix
+    if let allowFollowersBypass {
+      defaults.set(allowFollowersBypass, forKey: "\(prefix).allowFollowersBypass")
     }
+    if let allowFollowingBypass {
+      defaults.set(allowFollowingBypass, forKey: "\(prefix).allowFollowingBypass")
+    }
+    if let autoExpireDays {
+      defaults.set(autoExpireDays, forKey: "\(prefix).autoExpireDays")
+    }
+    if let whoCanMessageMe {
+      defaults.set(whoCanMessageMe.rawValue, forKey: "\(prefix).whoCanMessageMe")
+    }
+    logger.debug("Chat settings saved locally")
   }
 
   // MARK: - Opt Out
 
   @MainActor
   private func optOutOfMLS() async {
-    guard let apiClient = await appState.getMLSAPIClient() else { return }
-
     isOptingOut = true
     defer { isOptingOut = false }
-
-    do {
-      let success = try await apiClient.optOut()
-      if success {
-        if let conversationManager = await appState.getMLSConversationManager() {
-          try? await conversationManager.removeCurrentDeviceRecord()
-        }
-        // Also update local settings
-        ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
-        logger.info("Successfully opted out of MLS chat")
-        // Navigate back after opt-out
-        dismiss()
-      } else {
-        errorMessage = "Failed to disable MLS chat. Please try again."
-        showingErrorAlert = true
-      }
-    } catch {
-      logger.error("Failed to opt out of MLS: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
-      showingErrorAlert = true
-    }
+    ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
+    logger.info("Disabled MLS chat for current account")
+    dismiss()
   }
 
 }

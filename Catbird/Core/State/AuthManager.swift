@@ -595,11 +595,14 @@ final class AuthenticationManager: AuthProgressDelegate {
   private(set) var biometricType: LABiometryType = .none
   private(set) var lastBiometricError: LAError?
 
-  // OAuth configuration
+  // OAuth configuration (includes Spaces & Labyrinth scopes per Spec §6.1 / I15)
   private let oauthConfig = OAuthConfiguration(
     clientId: "https://catbird.blue/oauth-client-metadata.json",
     redirectUri: "https://catbird.blue/oauth/callback",
-    scope: "atproto transition:generic transition:chat.bsky"
+    scope: (
+      ["atproto", "transition:generic", "transition:chat.bsky"]
+      + MLSAppGroupStorage.requiredSpacesScopes.filter { $0 != "atproto" }
+    ).joined(separator: " ")
   )
 
 
@@ -1151,7 +1154,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       #if targetEnvironment(simulator)
         let accessGroup: String? = nil
       #else
-        let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+        let accessGroup: String? = KeychainPlatformKeyStore.resolvedAccessGroup(
           suffix: "blue.catbird.shared")
       #endif
 
@@ -1464,7 +1467,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       #if targetEnvironment(simulator)
         let accessGroup: String? = nil
       #else
-        let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+        let accessGroup: String? = KeychainPlatformKeyStore.resolvedAccessGroup(
           suffix: "blue.catbird.shared")
       #endif
 
@@ -1612,7 +1615,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     #if targetEnvironment(simulator)
       let accessGroup: String? = nil
     #else
-      let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+      let accessGroup: String? = KeychainPlatformKeyStore.resolvedAccessGroup(
         suffix: "blue.catbird.shared")
     #endif
     
@@ -2833,7 +2836,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     #if targetEnvironment(simulator)
       let accessGroup: String? = nil
     #else
-      let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+      let accessGroup: String? = KeychainPlatformKeyStore.resolvedAccessGroup(
         suffix: "blue.catbird.shared")
     #endif
 
@@ -2961,87 +2964,10 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     logger.debug(.accountSwitchProceeding)
     isSwitchingAccount = true
     cancelInFlightPermissionUpgrade()
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CRITICAL FIX (2024-12): Close current user's MLS databases before switching
-    // ═══════════════════════════════════════════════════════════════════════════
-    //
-    // BOTH databases must be properly closed and checkpointed BEFORE opening
-    // the new user's database:
-    //
-    // 1. **MLS FFI Context (Rust layer)** - Contains OpenMLS cryptographic state
-    //    - Secret tree, epoch keys, ratchet state
-    //    - Uses its own SQLite database (via rusqlite)
-    //    - If not flushed: SecretReuseError on reload (ratchet advanced but not persisted)
-    //
-    // 2. **MLSGRDBManager (Swift layer)** - Contains message cache and metadata
-    //    - Decrypted plaintexts, conversation records
-    //    - Uses GRDB/SQLCipher
-    //    - If not checkpointed: WAL grows unbounded, "SQLite error 7"
-    //
-    // Without proper closing of BOTH:
-    // - WAL files grow unbounded (no checkpoint)
-    // - File descriptors exhausted ("SQLite error 7")
-    // - HMAC verification fails (reading wrong user's WAL)
-    // - SecretReuseError (MLS ratchet advanced in memory but not persisted)
-    //
-    // ═══════════════════════════════════════════════════════════════════════════
     if case .authenticated(let currentDid) = state {
-      // ═══════════════════════════════════════════════════════════════════════════
-      // Use MLSShutdownCoordinator for proper shutdown sequence
-      // ═══════════════════════════════════════════════════════════════════════════
-      // The coordinator enforces the correct order:
-      // 1. Close FFI context (flush Rust ratchet state)
-      // 2. Checkpoint WAL (flush Swift database writes)
-      // 3. Close Swift DB (close GRDB pool)
-      // 4. Sleep 200ms (let OS reclaim mlocked memory)
-      //
-      // This prevents SQLite error 21, SecretReuseError, and HMAC check failures.
-      // ═══════════════════════════════════════════════════════════════════════════
-
       logger.info(.accountSwitchMLSCleanupStarted)
-
-      // DEFENSIVE TIMEOUT: Wrap entire MLS cleanup in 10-second hard timeout
-      // If any operation hangs, we force ahead. Better degraded MLS than frozen app.
-      let mlsCleanupOk = await withTaskGroup(of: Bool.self) { group in
-        group.addTask {
-          // First bump generation to invalidate stale tasks
-          await MLSClient.shared.bumpGeneration(for: currentDid)
-
-          // Close app-layer MLSClient context (separate from core package)
-          let ffiClosed = await MLSClient.shared.closeContext(for: currentDid)
-          if ffiClosed {
-            self.logger.info(.accountSwitchMLSContextClosed)
-          }
-
-          // Use the centralized shutdown coordinator (single attempt, no retries)
-          let result = await MLSShutdownCoordinator.shared.shutdown(
-            for: currentDid, databaseManager: .shared, timeout: 5.0)
-
-          switch result {
-          case .success:
-            self.logger.info(.accountSwitchMLSCoreShutdownSuccess)
-          case .successWithWarnings:
-            self.logger.warning(.accountSwitchMLSCoreShutdownWarning)
-          case .timedOut:
-            self.logger.warning(.accountSwitchMLSCoreShutdownTimeout)
-          case .failed:
-            self.logger.error(.accountSwitchMLSCoreShutdownFailed)
-          }
-          return true
-        }
-        group.addTask {
-          try? await Task.sleep(nanoseconds: 10_000_000_000)  // 10 second hard timeout
-          return false
-        }
-        let result = await group.next() ?? false
-        group.cancelAll()
-        return result
-      }
-
-      if !mlsCleanupOk {
-        logger.critical(.accountSwitchMLSCleanupTimedOut)
-        // Don't abort - force ahead. User can restart if MLS is broken.
-      }
+      await AppStateManager.shared.prepareMLSStorageReset(for: currentDid)
+      logger.info(.accountSwitchMLSCoreShutdownSuccess)
     }
 
     // Purge memory-only Circle caches for the previous account so the target
@@ -3057,16 +2983,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       await CircleNotificationCache.shared.purge(accountDID: previousDID)
     }
 
-    // Prewarm the target account's database now that the previous account is fully drained.
-    // Set the target as active BEFORE prewarming to avoid OOM-blocking rejection.
-    do {
-      await MLSGRDBManager.shared.setActiveUser(targetDID)
-      _ = try await MLSGRDBManager.shared.getDatabasePool(for: targetDID)
-      logger.debug(.accountSwitchDatabasePrewarmed)
-    } catch {
-      logger.debug(.accountSwitchDatabasePrewarmFailed)
-    }
-
     cancelInFlightPermissionUpgrade()
     do {
       logger.debug(.accountSwitchProceeding)
@@ -3077,7 +2993,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         let (resolvedDID, resolvedHandle) = try await override(targetDID)
         self.handle = resolvedHandle
         updateState(.authenticated(userDID: resolvedDID))
-        MLSNotificationCoordinator.updateActiveUserDID(resolvedDID)
         logger.info(.accountSwitchSuccessful)
         isSwitchingAccount = false
         await refreshAvailableAccounts()
@@ -3116,7 +3031,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       logger.debug(.stateUpdated)
       updateState(.authenticated(userDID: newDid))
-      MLSNotificationCoordinator.updateActiveUserDID(newDid)
 
       logger.info(.accountSwitchSuccessful)
     } catch {

@@ -12,7 +12,6 @@
 
 import Foundation
 import CatbirdMLSCore
-import GRDB
 
 struct PendingChatDraft: Codable, Sendable, Equatable {
   let id: UUID
@@ -92,6 +91,10 @@ final class ChatDraftHandoff {
     }
     entries[draft.id] = Entry(staged: draft)
     order.append(draft.id)
+    if draft.accountDID.isEmpty && draft.sceneID == nil {
+      pendingMLSAccountDID = AppStateManager.shared.lifecycle.userDID
+      pendingMLSDraft = DurableChatDraft(conversationID: draft.conversationID, text: draft.text)
+    }
     return true
   }
 
@@ -218,31 +221,32 @@ final class ChatDraftHandoff {
     pendingMLSAccountDID = nil
     return pending.text
   }
-
   /// Persists an MLS draft for `accountDID`. The draft's own account and scene
   /// are not used: MLS conversation views claim drafts by account and
-  /// conversation from the encrypted store.
-  func storeDurably(_ draft: PendingChatDraft, accountDID: String, database: MLSDatabase) async throws {
+  /// conversation from the App Group store.
+  func storeDurably(_ draft: PendingChatDraft, accountDID: String) throws {
     let durable = DurableChatDraft(conversationID: draft.conversationID, text: draft.text)
-    try await database.write { db in
-      try db.execute(sql: "CREATE TABLE IF NOT EXISTS app_chat_draft_handoff (account_did TEXT PRIMARY KEY, payload BLOB)")
-      try db.execute(sql: "INSERT INTO app_chat_draft_handoff VALUES (?, ?) ON CONFLICT(account_did) DO UPDATE SET payload = excluded.payload", arguments: [accountDID, try JSONEncoder().encode(durable)])
-    }
+    let data = try JSONEncoder().encode(durable)
+    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+    defaults.set(data, forKey: "blue.catbird.chatDraftHandoff.\(accountDID.lowercased())")
     guard AppStateManager.shared.lifecycle.userDID == accountDID else { return }
     pendingMLSAccountDID = accountDID
     pendingMLSDraft = durable
     NotificationCenter.default.post(name: Self.didStoreDraft, object: self)
   }
 
-  func consumeDurably(for conversationID: String, accountDID: String, database: MLSDatabase) async throws -> String? {
+  func consumeDurably(for conversationID: String, accountDID: String) throws -> String? {
     guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationID) else { return nil }
-    let text: String? = try await database.write { db in
-      try db.execute(sql: "CREATE TABLE IF NOT EXISTS app_chat_draft_handoff (account_did TEXT PRIMARY KEY, payload BLOB)")
-      guard let data = try Data.fetchOne(db, sql: "SELECT payload FROM app_chat_draft_handoff WHERE account_did = ?", arguments: [accountDID]) else { return nil }
+    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+    let key = "blue.catbird.chatDraftHandoff.\(accountDID.lowercased())"
+    var text: String?
+    if let data = defaults.data(forKey: key) {
       let draft = try JSONDecoder().decode(DurableChatDraft.self, from: data)
-      guard draft.conversationID == nil || draft.conversationID == conversationID else { return nil }
-      try db.execute(sql: "UPDATE app_chat_draft_handoff SET payload = NULL WHERE account_did = ?", arguments: [accountDID])
-      return draft.text
+      guard draft.conversationID == nil || draft.conversationID == conversationID else {
+        return nil
+      }
+      defaults.removeObject(forKey: key)
+      text = draft.text
     }
     guard AppStateManager.shared.lifecycle.userDID == accountDID else { return nil }
     if let text {

@@ -19,7 +19,7 @@ import GeoToolbox
 
 @available(anyAppleOS 27.0, *)
 enum MessagesSchemaRuntime {
-  static func conversationManager() async throws -> MLSConversationManager {
+  static func coordinator() async throws -> MLSClientCoordinator {
     // Background intent launches run the app's init path, but lifecycle.appState
     // is populated asynchronously — poll briefly instead of failing the intent
     // the instant it's still nil.
@@ -34,13 +34,13 @@ enum MessagesSchemaRuntime {
       throw IntentError.notSignedIn
     }
 
-    guard let manager = await appState.getMLSConversationManager(timeout: 15.0) else {
+    guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
       throw IntentError.serviceUnavailable(
-        "Catbird's secure chat service is still starting. Open Catbird and try again."
+        "Catbird's secure chat service is unavailable or requires ATProto Spaces permissions. Open Catbird and try again."
       )
     }
 
-    return manager
+    return coordinator
   }
 
   static func text(from attributedString: AttributedString) throws -> String {
@@ -147,7 +147,7 @@ enum MessagesSchemaRuntime {
   /// Read-only resolution plus a local draft. No destination lookup creates MLS state.
   static func resolveDestination(
     recipients: [(did: String, displayName: String)],
-    manager: MLSConversationManager,
+    coordinator _: MLSClientCoordinator,
     directory: ChatDirectory
   ) async throws -> ComposeDestination {
     guard !recipients.isEmpty else { throw IntentError.invalidParameter("No recipients specified.") }
@@ -160,18 +160,18 @@ enum MessagesSchemaRuntime {
     guard recipients.count == 1 else {
       throw IntentError.invalidParameter("Create a group in Catbird before sending to multiple recipients.")
     }
-    return .recipientDraft(try await MLSDirectComposeDraftStore.open(
-      accountDID: directory.currentUserDID, recipientDID: recipients[0].did, database: manager.database))
+    return .recipientDraft(MLSDirectComposeDraftStore.open(
+      accountDID: directory.currentUserDID, recipientDID: recipients[0].did))
   }
 
   private static func isCanonicalStableID(_ value: String) -> Bool {
     MLSConversationIdentityBoundary.isCanonicalStableID(value)
   }
 
-  // MARK: - Name directory (GRDB-backed, profile-enriched)
+  // MARK: - Name directory (SDK-backed, profile-enriched)
 
   /// Process-lifetime cache of DID → (displayName, handle) resolved via
-  /// app.bsky.actor.getProfiles. Member rows in GRDB don't carry names, so
+  /// app.bsky.actor.getProfiles. Member rows carry no names, so
   /// without this Siri would try to match spoken names against DIDs.
   actor ProfileNameCache {
     static let shared = ProfileNameCache()
@@ -266,15 +266,11 @@ enum MessagesSchemaRuntime {
     }
   }
 
-  static func directory(manager: MLSConversationManager) async throws -> ChatDirectory {
-    guard let userDID = manager.userDid else {
-      throw IntentError.notSignedIn
-    }
-    let result = try await manager.storage.fetchConversationsWithMembers(
-      currentUserDID: userDID,
-      database: manager.database
-    )
-    let identityRecords = result.conversations.map {
+  static func directory(coordinator: MLSClientCoordinator) async throws -> ChatDirectory {
+    let userDID = await coordinator.accountDid
+    let rows = try await coordinator.listConversations(limit: 100)
+    let loadedConversations = rows.map { MLSConversationModel(row: $0, currentUserDID: userDID) }
+    let identityRecords = loadedConversations.map {
       MLSConversationIdentityBoundary.Record(
         conversationID: $0.conversationID,
         groupID: $0.groupID.hexEncodedString()
@@ -282,18 +278,25 @@ enum MessagesSchemaRuntime {
     }
     let canonicalRecords = try MLSConversationIdentityBoundary.canonicalize(identityRecords)
     let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
-    let canonicalConversations = result.conversations.filter {
+    let canonicalConversations = loadedConversations.filter {
       canonicalIDs.contains($0.conversationID)
     }
     var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
-    for (requestedID, members) in result.membersByConvoID {
-      guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
-        requestedID,
-        in: identityRecords
-      ) else {
-        continue
+    var memberDIDs = Set<String>()
+    for convo in canonicalConversations {
+      let convoID = convo.conversationID
+      let msgRows = (try? await coordinator.listMessages(conversationId: convoID, limit: 25)) ?? []
+      var seen = Set<String>()
+      canonicalMembersByConvoID[convoID] = msgRows.compactMap { row in
+        guard seen.insert(row.senderDid).inserted else { return nil }
+        memberDIDs.insert(row.senderDid)
+        return MLSMemberModel(
+          memberID: "\(convoID):\(row.senderDid)",
+          conversationID: convoID,
+          currentUserDID: userDID,
+          did: row.senderDid
+        )
       }
-      canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
     }
 
     var directory = ChatDirectory(
@@ -305,7 +308,6 @@ enum MessagesSchemaRuntime {
     // Best-effort profile enrichment: member rows carry no names, and Siri
     // matches spoken names against these entities. Failure degrades to
     // handle/DID-suffix display, never blocks resolution.
-    let memberDIDs = Set(result.membersByConvoID.values.flatMap { $0.map(\.did) })
     directory.namesByDID = await ProfileNameCache.shared.resolve(dids: Array(memberDIDs))
     return directory
   }
@@ -325,9 +327,9 @@ enum MessagesSchemaRuntime {
 
   static func resolveConversationID(
     _ requestedID: String,
-    manager: MLSConversationManager
+    coordinator: MLSClientCoordinator
   ) async throws -> String {
-    let directory = try await directory(manager: manager)
+    let directory = try await directory(coordinator: coordinator)
     return try resolveConversationID(requestedID, in: directory)
   }
 
@@ -357,7 +359,7 @@ enum MessagesSchemaRuntime {
       displayName: title,
       previewText: AttributedString("MLS chat"),
       conversationName: title,
-      isRead: true,
+      isRead: model.unreadCount == 0,
       attributes: members.count > 2 ? [.group] : [],
       dateLastActive: model.lastMessageAt
     )
@@ -377,6 +379,7 @@ enum MessagesSchemaRuntime {
         id: message.senderID, displayName: String(message.senderID.suffix(8)))
     }
     let preview = AttributedString("MLS Chat")
+    let bodyText = message.parsedPayload()?.text ?? "Encrypted message"
 
     let convoEntity = CatbirdMessagesConversationEntity(
       id: conversationIDOverride ?? message.conversationID,
@@ -384,7 +387,7 @@ enum MessagesSchemaRuntime {
       displayName: conversationTitle ?? "Conversation",
       previewText: preview,
       conversationName: conversationTitle,
-      isRead: message.isRead,
+      isRead: true,
       attributes: [],
       dateLastActive: message.timestamp
     )
@@ -393,12 +396,12 @@ enum MessagesSchemaRuntime {
       id: message.messageID,
       messageType: .text,
       author: sender,
-      isRead: message.isRead,
+      isRead: true,
       attributes: [],
       conversation: convoEntity,
       date: message.timestamp,
       subject: nil,
-      body: AttributedString(message.plaintext ?? "Encrypted message"),
+      body: AttributedString(bodyText),
       attachments: [],
       audioMessage: nil,
       customAttachments: [],
@@ -413,23 +416,17 @@ enum MessagesSchemaRuntime {
 
   static func fetchMessage(
     _ messageID: String,
-    manager: MLSConversationManager
+    coordinator: MLSClientCoordinator
   ) async throws -> MLSMessageModel {
-    guard let userDID = manager.userDid else {
-      throw IntentError.notSignedIn
+    let userDID = await coordinator.accountDid
+    let convos = try await coordinator.listConversations(limit: 100)
+    for convo in convos {
+      let rows = try await coordinator.listMessages(conversationId: convo.conversationId, limit: 100)
+      if let matchingRow = rows.first(where: { $0.messageId == messageID }) {
+        return MLSMessageModel(row: matchingRow, currentUserDID: userDID)
+      }
     }
-
-    guard
-      let message = try await manager.storage.fetchMessage(
-        messageID: messageID,
-        currentUserDID: userDID,
-        database: manager.database
-      )
-    else {
-      throw IntentError.invalidParameter("Catbird could not find that message.")
-    }
-
-    return message
+    throw IntentError.invalidParameter("Catbird could not find that message.")
   }
 }
 

@@ -174,7 +174,6 @@ struct SettingsView: View {
         .accessibilityIdentifier("settings.accountSwitcher")
         .accessibilityElement(children: .combine)
     }
-
     @MainActor private func loadProfile(for did: String) async {
         let revision = AppStateManager.shared.settingsAccountContextRevision
         guard SettingsAccountBoundary.isCurrent(did, revision: revision),

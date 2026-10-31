@@ -158,7 +158,8 @@ extension BlueCatbirdChatDefs.ApplicationEntry {
   var createdAt: ATProtocolDate { receivedAt }
 
   var parsedBody: BlueCatbirdChatDefs.ApplicationSendBody? {
-    guard case let .blueCatbirdChatDefsApplicationSendBody(body) = signedRequest.body else {
+    guard let signedRequest,
+          case let .blueCatbirdChatDefsApplicationSendBody(body) = signedRequest.body else {
       return nil
     }
     return body

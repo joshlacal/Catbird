@@ -77,8 +77,11 @@ struct DiagnosticsSettingsView: View {
     defer { isResetting = false }
 
     do {
+      if let coordinator = await appState.getOrOpenMLSCoordinator() {
+        try await coordinator.signOutAndWipe()
+      }
       await appState.prepareMLSStorageReset()
-      try await MLSClient.shared.clearStorage(for: appState.userDID)
+      _ = await appState.getOrOpenMLSCoordinator()
     } catch {
       self.error = error
     }

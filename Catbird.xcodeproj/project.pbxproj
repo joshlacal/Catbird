@@ -182,7 +182,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Core/Settings/CatbirdFeatures.swift,
-				Services/MLS/CursorStore.swift,
 			);
 			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
 		};

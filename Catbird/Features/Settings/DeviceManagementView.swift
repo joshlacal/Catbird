@@ -249,46 +249,31 @@ final class DeviceManagementViewModel {
 
     private var appState: AppState?
 
+    @MainActor
     func initialize(appState: AppState) async {
         self.appState = appState
-        if let manager = await appState.getMLSConversationManager() {
-            if let info = await manager.mlsClient.getDeviceInfo(for: appState.userDID) {
-                currentDeviceId = info.deviceId
-            }
-        }
+        self.currentDeviceId = appState.resolvedMLSDeviceID()
     }
 
     @MainActor
     func clearAllOtherDevices() async {
-        guard let client = appState?.client else { return }
         guard let currentId = currentDeviceId else {
             logger.error("Cannot clear other devices: current device ID is unknown")
             return
         }
 
         isLoading = true
-
         let otherDevices = devices.filter { $0.deviceId != currentId }
         for device in otherDevices {
-            do {
-                logger.info("Deleting garbage device: \(device.deviceId)")
-                if let conversationManager = await appState?.getMLSConversationManager() {
-                    _ = try? await conversationManager.deviceManager?.deleteDevice(for: appState?.userDID ?? "")
-                }
-                devices.removeAll { $0.deviceId == device.deviceId }
-            } catch {
-                logger.error("Failed to delete garbage device \(device.deviceId): \(error.localizedDescription)")
-            }
+            await deleteDevice(device)
         }
-
         isLoading = false
     }
 
     @MainActor
     func loadDevices() async {
         guard let client = appState?.client,
-              let appState,
-              let conversationManager = await appState.getMLSConversationManager()
+              let appState
         else {
             logger.error("No authenticated client available")
             return
@@ -299,25 +284,10 @@ final class DeviceManagementViewModel {
 
         do {
             logger.info("Loading devices...")
-            let actorDeviceId: String
-            if conversationManager.protocolAuthorityMode == .rustFull {
-                guard let registered = try await conversationManager.registeredDeviceInfoForPushTokenRegistration() else {
-                    throw NSError(
-                        domain: "MLSDeviceManagement",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "MLS device enrollment is not ready"]
-                    )
-                }
-                actorDeviceId = registered.deviceId
-            } else {
-                guard let registered = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID) else {
-                    throw NSError(
-                        domain: "MLSDeviceManagement",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "MLS device enrollment is not ready"]
-                    )
-                }
-                actorDeviceId = registered.deviceId
+            let actorDeviceId = currentDeviceId ?? appState.resolvedMLSDeviceID()
+            currentDeviceId = actorDeviceId
+            if let mlsClient = await appState.getMLSAPIClient() {
+                await client.setServiceDID(mlsClient.environment.serviceDID, for: "blue.catbird.chat")
             }
             let (_, output) = try await client.blue.catbird.chat.getOwnDevices(
                 input: .init(actorDeviceId: actorDeviceId)
@@ -334,19 +304,23 @@ final class DeviceManagementViewModel {
 
     @MainActor
     func deleteDevice(_ device: DeviceRowModel) async {
-        guard let client = appState?.client else {
+        guard let client = appState?.client, let appState else {
             logger.error("No authenticated client available")
             return
         }
 
         do {
             logger.info("Deleting device: \(device.deviceId)")
-
-            if let conversationManager = await appState?.getMLSConversationManager() {
-                _ = try await conversationManager.deviceManager?.deleteDevice(for: appState?.userDID ?? "")
+            if let coordinator = await appState.getOrOpenMLSCoordinator() {
+                _ = try? await coordinator.revokeLabyrinthDevice(targetDeviceId: device.deviceId)
             }
-
-            // Remove from local list
+            if let repo = try? ATIdentifier(string: appState.userDID),
+               let collection = try? NSID(nsidString: "blue.catbird.mlsChat.device"),
+               let rkey = try? RecordKey(keyString: device.deviceId) {
+                _ = try? await client.com.atproto.repo.deleteRecord(
+                    input: .init(repo: repo, collection: collection, rkey: rkey)
+                )
+            }
             devices.removeAll { $0.deviceId == device.deviceId }
         } catch {
             logger.error("Failed to delete device: \(error.localizedDescription)")

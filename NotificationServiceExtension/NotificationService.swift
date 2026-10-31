@@ -1,40 +1,19 @@
 import CatbirdMLSCore
 import CryptoKit
 import Foundation
-import GRDB
-import Petrel
-import PetrelCatbird
+import Intents
 import UserNotifications
-import os.log
 
+/// Clean-slate `NotificationServiceExtension` (`Spec §6.2`, `G1`, `I7`, `I10–I12`) +
+/// signed-out push suppression (`PR #60`).
+///
+/// Zero `GRDB`, zero Tokio pool, `< 15 MB` peak RSS: neutralizes gated-off or signed-out
+/// account pushes before touching storage, enriches plaintext Bluesky `chat_message` pushes
+/// from the read-only SQLite3 profile cache, and delegates MLS decryption, gap catch-up,
+/// SQLite `BEGIN IMMEDIATE` commit + handle close, and `blue.catbird.mls.nseDidCommit`
+/// Darwin wakeup to `MLSPushExtensionProcessor.process(...)`.
 class NotificationService: UNNotificationServiceExtension {
-
-  var contentHandler: ((UNNotificationContent) -> Void)?
-  var bestAttemptContent: UNMutableNotificationContent?
-
-  private let logger = Logger(
-    subsystem: "blue.catbird.notification-service", category: "NotificationService")
-
-  // MARK: - Database Manager (NSE-owned instance)
-  // NSE runs in a separate process from main app - each process needs its own instance.
-  // Cross-process coordination is handled by MLSNotificationCoordinator (Darwin + versioning).
-  private let databaseManager = MLSGRDBManager()
-  private var activeRecipientDID: String?
-  private var isObservingAppStop = false
-  private var activeProcessingTask: Task<Void, Error>?
-
-  // MARK: - Profile Cache (shared via App Group UserDefaults)
-
-  /// One-time registration of blue.catbird.* / place.stream.* lexicon types with
-  /// Petrel's decoder registry (NSE runs in a separate process from the main app).
-  private static let lexiconRegistration: Void = PetrelCatbirdLexicons.register()
-
-  /// App Group suite name for shared storage
-  private static let appGroupSuite = "group.blue.catbird.shared"
-
-  private static let mlsServiceDID = "did:web:chat.catbird.blue#atproto_mls"
-  private static let mlsServiceNamespace = "blue.catbird.mls"
-  private static let mlsChatNamespace = "blue.catbird.chat"
+  private static let appGroupSuite = MLSAppGroupStorage.appGroupIdentifier
 
   /// App Group keys the main app publishes for push presence (`SignedOutPushSuppression`).
   static let signedOutKey = "signedOutForPush"
@@ -42,6 +21,8 @@ class NotificationService: UNNotificationServiceExtension {
   static let sessionEndedAccountDIDsKey = "sessionEndedPushAccountDIDs"
 
   private let appGroupDefaults: UserDefaults?
+  private var contentHandler: ((UNNotificationContent) -> Void)?
+  private var bestAttemptContent: UNMutableNotificationContent?
 
   override init() {
     appGroupDefaults = UserDefaults(suiteName: Self.appGroupSuite)
@@ -53,72 +34,6 @@ class NotificationService: UNNotificationServiceExtension {
     super.init()
   }
 
-  deinit {
-    stopObservingAppStop()
-  }
-  private func startObservingAppStop() {
-    guard !isObservingAppStop else { return }
-    let center = CFNotificationCenterGetDarwinNotifyCenter()
-    CFNotificationCenterAddObserver(
-      center,
-      Unmanaged.passUnretained(self).toOpaque(),
-      { _, observer, _, _, _ in
-        guard let observer = observer else { return }
-        let service = Unmanaged<NotificationService>.fromOpaque(observer)
-          .takeUnretainedValue()
-        service.handleAppStopNotification()
-      },
-      kMLSNSEStopNotification,
-      nil,
-      .deliverImmediately
-    )
-    isObservingAppStop = true
-    logger.info("🔔 [NSE] Observing app stop notifications")
-  }
-
-  private func stopObservingAppStop() {
-    guard isObservingAppStop else { return }
-    let center = CFNotificationCenterGetDarwinNotifyCenter()
-    CFNotificationCenterRemoveObserver(
-      center,
-      Unmanaged.passUnretained(self).toOpaque(),
-      CFNotificationName(kMLSNSEStopNotification),
-
-      nil
-    )
-    isObservingAppStop = false
-  }
-
-  private func handleAppStopNotification() {
-    Task { @MainActor [weak self] in
-      guard let self else { return }
-      guard let userDID = self.activeRecipientDID else {
-        self.logger.info("🛑 [NSE] App stop received with no active recipient")
-        return
-      }
-
-      self.logger.warning(
-        "🛑 [NSE] App requested stop - cancelling in-flight work and releasing all handles for \(userDID.prefix(24))...")
-
-      // Cancel and await in-flight notification processing task
-      if let processingTask = self.activeProcessingTask {
-        processingTask.cancel()
-        _ = try? await processingTask.value
-        self.activeProcessingTask = nil
-      }
-
-      await MLSCoreContext.shared.removeContext(for: userDID)
-      let drained = await self.databaseManager.closeDatabaseAndDrain(for: userDID, timeout: 2.0)
-      if !drained {
-        self.logger.warning("⚠️ [NSE] closeDatabaseAndDrain timed out on app stop for \(userDID.prefix(24))...")
-      }
-      await self.databaseManager.closeDatabase(for: userDID)
-      self.logger.info("✅ [NSE] Closed all handles for \(userDID.prefix(24))...")
-      self.activeRecipientDID = nil
-    }
-  }
-
-  /// Whether a push belongs to a feature that is switched off in this build.
   private static func isGatedOff(pushType: String?, kind: String?) -> Bool {
     if let pushType, pushType.hasPrefix("mls_"), !CatbirdFeatures.mlsChat {
       return true
@@ -129,10 +44,6 @@ class NotificationService: UNNotificationServiceExtension {
     return false
   }
 
-  /// Whether a push is for an account that is not signed in on this device: every account signed
-  /// out, or a recipient whose session ended and that is not the active account, whether or not
-  /// any account is active. A stored account whose session never ended keeps its delivery on the
-  /// sign-in screen too, and a recipient that cannot be resolved is never guessed.
   static func isAddressedToSignedOutAccount(recipientDID: String?, defaults: UserDefaults?) -> Bool {
     guard let defaults else { return false }
     if defaults.bool(forKey: signedOutKey) {
@@ -147,9 +58,6 @@ class NotificationService: UNNotificationServiceExtension {
     return endedDIDs.contains(recipientDID)
   }
 
-  /// Replaces all displayable content with a neutralized alert marked with
-  /// `suppressedForSignedOutAccount = true`. Strips all private fields,
-  /// media attachments, sounds, badges, and routing data.
   private static func neutralizedForSignedOutAccount(_ original: UNMutableNotificationContent)
     -> UNMutableNotificationContent
   {
@@ -169,20 +77,13 @@ class NotificationService: UNNotificationServiceExtension {
     content.launchImageName = ""
     #endif
 
-    var userInfo: [AnyHashable: Any] = [
-      "suppressedForSignedOutAccount": true
-    ]
-    if let type = original.userInfo["type"] as? String {
-      userInfo["type"] = type
-    }
-    if let kind = original.userInfo["kind"] as? String {
-      userInfo["kind"] = kind
-    }
+    var userInfo: [AnyHashable: Any] = ["suppressedForSignedOutAccount": true]
+    if let type = original.userInfo["type"] as? String { userInfo["type"] = type }
+    if let kind = original.userInfo["kind"] as? String { userInfo["kind"] = kind }
     content.userInfo = userInfo
     return content
   }
 
-  /// Replaces a push's content with a quiet, generic alert that carries no message data.
   private static func neutralized(_ original: UNMutableNotificationContent)
     -> UNMutableNotificationContent
   {
@@ -193,12 +94,8 @@ class NotificationService: UNNotificationServiceExtension {
     content.interruptionLevel = .passive
     content.threadIdentifier = "catbird-unsupported"
     var userInfo: [AnyHashable: Any] = [:]
-    if let type = original.userInfo["type"] as? String {
-      userInfo["type"] = type
-    }
-    if let kind = original.userInfo["kind"] as? String {
-      userInfo["kind"] = kind
-    }
+    if let type = original.userInfo["type"] as? String { userInfo["type"] = type }
+    if let kind = original.userInfo["kind"] as? String { userInfo["kind"] = kind }
     content.userInfo = userInfo
     return content
   }
@@ -207,2118 +104,245 @@ class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
-    // Ensure custom lexicon types are registered before any decoding
-    _ = Self.lexiconRegistration
-
-    // Reset suspension flag from previous notification's cleanup (NSE process reuse)
-    MLSClient.clearSuspensionFlag(reason: "NSE didReceive entry (process reuse)")
-
     self.contentHandler = contentHandler
-    bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
-
-    let pid = ProcessInfo.processInfo.processIdentifier
-    logger.info("📬 [NSE/\(pid)] didReceive called - processing push notification")
-
-    // Log FFI build ID for verification (should match main app)
-    let ffiBuildId = getFfiBuildId()
-    logger.info("🔧 [NSE-FFI/\(pid)] Build ID: \(ffiBuildId)")
-
-    guard let bestAttemptContent = bestAttemptContent else {
-      logger.error("❌ [NSE] Failed to create mutable content copy")
+    guard let mutable = request.content.mutableCopy() as? UNMutableNotificationContent else {
+      contentHandler(request.content)
       return
     }
+    self.bestAttemptContent = mutable
 
     let userInfo = request.content.userInfo
+    let rawType = userInfo["type"] as? String
+    let rawKind = userInfo["kind"] as? String
 
-    // Log all received keys for debugging
-    let keys = userInfo.keys.compactMap { $0 as? String }
-    logger.info("📋 [NSE] Payload keys: \(keys.joined(separator: ", "))")
-
-    // Check push type
-    let pushType = userInfo["type"] as? String
-
-    // A build that doesn't ship a feature never decrypts or enriches its pushes.
-    if Self.isGatedOff(pushType: pushType, kind: userInfo["kind"] as? String) {
-      logger.info("[NSE] Push for a feature this build doesn't ship (type=\(pushType ?? "nil", privacy: .public)) - neutralizing content")
-      contentHandler(Self.neutralized(bestAttemptContent))
+    if Self.isGatedOff(pushType: rawType, kind: rawKind) {
+      contentHandler(Self.neutralized(mutable))
       return
     }
 
-    // A signed-out account shows no banners for any push kind, encrypted chat included, and
-    // the extension opens no MLS storage for it. Signed-in recipients continue below unchanged.
-    if Self.isAddressedToSignedOutAccount(
-      recipientDID: resolveChatRecipientDID(from: userInfo), defaults: appGroupDefaults
-    ) {
-      logger.info("[NSE] Push addressed to signed-out or ended account - neutralizing content")
-      contentHandler(Self.neutralizedForSignedOutAccount(bestAttemptContent))
+    let resolvedRecipientDID = resolveChatRecipientDID(from: userInfo)
+    if Self.isAddressedToSignedOutAccount(recipientDID: resolvedRecipientDID, defaults: appGroupDefaults) {
+      contentHandler(Self.neutralizedForSignedOutAccount(mutable))
       return
     }
 
-    // Request pushes are metadata-only. Never enter legacy ciphertext/decrypt
-    // or profile/media enrichment paths for an encrypted introduction.
-    if pushType == "mls_message_request" {
-      bestAttemptContent.title = "Message Request"
-      bestAttemptContent.body = "New encrypted message request"
-      guard userInfo["protocol_version"] as? String == "2",
-            let hash = userInfo["recipient_account"] as? String,
-            hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }),
-            let recipient = resolveRecipientDID(fromHash: hash),
-            let conversation = userInfo["convo_id"] as? String,
-            let message = userInfo["message_id"] as? String,
-            let requestID = userInfo["request_id"] as? String,
-            UUID(uuidString: conversation) != nil, UUID(uuidString: message) != nil,
-            UUID(uuidString: requestID) != nil else {
-        contentHandler(bestAttemptContent)
-        return
-      }
-      let defaults = UserDefaults(suiteName: Self.appGroupSuite)
-      let preference = "mlsChatNotificationsEnabled_\(recipient)"
-      if defaults?.object(forKey: preference) != nil && defaults?.bool(forKey: preference) == false {
-        bestAttemptContent.title = ""
-        bestAttemptContent.body = ""
-        bestAttemptContent.sound = nil
-        contentHandler(bestAttemptContent)
-        return
-      }
-      startObservingAppStop()
-      let generation = (try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0
-      let task = Task<Void, Error> { @MainActor in
-        self.activeRecipientDID = recipient
-        defer {
-          self.activeProcessingTask = nil
-          self.activeRecipientDID = nil
-          self.bestEffortNSECleanup(recipientDid: recipient)
-        }
-        if !MLSAppActivityState.isShuttingDown(for: recipient), !MLSStoragePaths.isResetActive(for: recipient),
-           let text = try? await self.databaseManager.nseRead(for: recipient, { db in
-             try String.fetchOne(db, sql: """
-               SELECT text FROM app_direct_request_notification_preview
-               WHERE account_did = ? AND conversation_id = ? AND message_id = ? AND expires_at >= ?
-               """, arguments: [recipient, conversation, message, Date().timeIntervalSince1970])
-           }), text.utf8.count <= 16_384,
-           !Task.isCancelled, !MLSStoragePaths.isResetActive(for: recipient),
-           ((try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0) == generation {
-          bestAttemptContent.body = text
-        }
-        guard !Task.isCancelled else { return }
-        contentHandler(bestAttemptContent)
-      }
-      activeProcessingTask = task
-      return
-    }
-
-    // Handle Bluesky chat_message push (plain text — no decryption needed)
+    let pushType = rawType ?? rawKind
     if pushType == "chat_message" {
-      logger.info("💬 [NSE] chat_message detected, enriching notification")
       Task {
-        await self.handleChatMessagePush(
-          content: bestAttemptContent,
+        await self.enrichBlueskyChatPush(
+          mutable,
           userInfo: userInfo,
+          resolvedRecipientDID: resolvedRecipientDID,
           contentHandler: contentHandler
         )
       }
       return
     }
 
-    // Check if this is an MLS message
-    guard pushType == "mls_message" else {
-      logger.info("ℹ️ [NSE] Not an MLS message (type=\(pushType ?? "nil")), delivering as-is")
-      contentHandler(bestAttemptContent)
+    guard let wake = Self.decodePushWakePayload(from: userInfo) else {
+      contentHandler(mutable)
       return
     }
 
-    logger.info("🔐 [NSE] MLS message detected, attempting decryption")
-    startObservingAppStop()
-
-    // Extract payload
-    // We expect:
-    // - ciphertext: Base64 encoded encrypted message
-    // - convo_id: Conversation ID (usually hex encoded group ID)
-    // - message_id: Unique message ID
-    // - recipient_account: SHA-256 hash of recipient DID (privacy-preserving)
-    // - recipient_did: Legacy field (fallback for backward compatibility)
-    // NOTE: sender_did is NOT included in push payload to preserve E2EE privacy
-    // The sender is only revealed after decryption from the MLS credentials
-    let ciphertext = userInfo["ciphertext"] as? String
-    let convoId = userInfo["convo_id"] as? String
-    let messageId = userInfo["message_id"] as? String
-    let recipientAccountHash = userInfo["recipient_account"] as? String
-    let legacyRecipientDid = userInfo["recipient_did"] as? String
-
-    // Resolve recipient DID: prefer hash-based lookup, fall back to legacy field
-    let recipientDid: String? = {
-      if let hash = recipientAccountHash {
-        if let resolved = resolveRecipientDID(fromHash: hash) {
-          return resolved
-        }
-        logger.warning("⚠️ [NSE] Could not resolve recipient_account hash to local account")
-      }
-      return legacyRecipientDid
-    }()
-
-    // Extract sequence number from push payload (server-side enhancement)
-    // NOTE: Server should include "seq" in push payload for message ordering
-    // Fallback: if seq not present, we'll process anyway with a warning
-    let sequenceNumber: Int64? = {
-      if let seqStr = userInfo["seq"] as? String, let seq = Int64(seqStr) {
-        return seq
-      } else if let seqNum = userInfo["seq"] as? Int64 {
-        return seqNum
-      }
-      return nil
-    }()
-
-    // Extract epoch from push payload (needed for message reconstruction)
-    // NOTE: Server should include "epoch" in push payload alongside "seq"
-    let epoch: Int64? = {
-      if let epochStr = userInfo["epoch"] as? String, let ep = Int64(epochStr) {
-        return ep
-      } else if let epochNum = userInfo["epoch"] as? Int64 {
-        return epochNum
-      }
-      return nil
-    }()
-
-    // Log which fields are present/missing
-    logger.info(
-      "📦 [NSE] Fields: ciphertext=\(ciphertext != nil), convo_id=\(convoId != nil), message_id=\(messageId != nil), recipient_account=\(recipientAccountHash != nil), recipient_did=\(recipientDid != nil), seq=\(sequenceNumber != nil ? String(sequenceNumber!) : "nil"), epoch=\(epoch != nil ? String(epoch!) : "nil")"
-    )
-
-    if let recipientDid = recipientDid,
-      let sharedDefaults = UserDefaults(suiteName: Self.appGroupSuite) {
-      let mlsKey = "mlsChatNotificationsEnabled_\(recipientDid)"
-      if sharedDefaults.object(forKey: mlsKey) != nil && !sharedDefaults.bool(forKey: mlsKey) {
-        logger.info("🔇 [NSE] MLS chat notifications disabled for \(recipientDid.prefix(24))... - suppressing")
-        bestAttemptContent.title = ""
-        bestAttemptContent.body = ""
-        bestAttemptContent.sound = nil
-        contentHandler(bestAttemptContent)
-        return
-      }
-    }
-
-    guard let ciphertext = ciphertext,
-      let convoId = convoId,
-      let messageId = messageId,
-      let recipientDid = recipientDid
-    else {
-
-      var missing: [String] = []
-      if ciphertext == nil { missing.append("ciphertext") }
-      if convoId == nil { missing.append("convo_id") }
-      if messageId == nil { missing.append("message_id") }
-      if recipientDid == nil { missing.append("recipient_account/recipient_did") }
-
-      logger.error("❌ [NSE] Missing required fields: \(missing.joined(separator: ", "))")
-      bestAttemptContent.title = "New Message"
-      bestAttemptContent.body = "New Encrypted Message"
-      contentHandler(bestAttemptContent)
+    if let wakeRecipient = resolvePublishedAccountDID(fromHash: wake.recipientAccountHash),
+       Self.isAddressedToSignedOutAccount(recipientDID: wakeRecipient, defaults: appGroupDefaults)
+    {
+      contentHandler(Self.neutralizedForSignedOutAccount(mutable))
       return
     }
 
-    logger.info(
-      "✅ [NSE] All required fields present - convoId=\(convoId.prefix(16))..., messageId=\(messageId.prefix(16))..., recipientDid=\(recipientDid.prefix(24))..."
-    )
-
-    let nseAuthorityMode = MLSAuthorityModeSharedState.currentMode()
-    logger.info("🧭 [NSE] authority_mode=\(nseAuthorityMode.rawValue, privacy: .public)")
-    if nseAuthorityMode == .rustFull {
-      logger.warning(
-        "⏭️ [NSE] rustFull authority: avoiding direct NSE MLS decrypt; using cache-only notification path"
-      )
-      let initialGen = (try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0
-      let rustFullTask = Task<Void, Error> { @MainActor in
-        self.activeRecipientDID = recipientDid
-        defer {
-          self.activeProcessingTask = nil
-          self.activeRecipientDID = nil
-          self.bestEffortNSECleanup(recipientDid: recipientDid)
-        }
-
-        // Cross-boundary reset gate: if the main app is shutting down / resetting
-        // storage (Swift or Rust), do NOT open any database resource. Deliver a
-        // generic notification and defer; the app will re-deliver after reset.
-        if MLSAppActivityState.isShuttingDown(for: recipientDid) || MLSStoragePaths.isResetActive(for: recipientDid) {
-          logger.warning("⏭️ [NSE] rustFull cache path skipped - storage reset in progress")
-          bestAttemptContent.title = "New Message"
-          bestAttemptContent.body = "New Encrypted Message"
-          contentHandler(bestAttemptContent)
-          return
-        }
-
-        for attempt in 0..<10 {
-          guard !Task.isCancelled else { return }
-          guard !MLSStoragePaths.isResetActive(for: recipientDid) else { return }
-          guard ((try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0) == initialGen else { return }
-
-          if await self.deliverCachedNotificationIfAvailable(
-            content: bestAttemptContent,
-            contentHandler: contentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
-        }
-
-        guard !Task.isCancelled else { return }
-        bestAttemptContent.title = "New Message"
-        bestAttemptContent.body = "New Encrypted Message"
-        contentHandler(bestAttemptContent)
-      }
-      self.activeProcessingTask = rustFullTask
+    guard let appGroupRoot = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: Self.appGroupSuite
+    ) else {
+      Self.applyFallback(to: mutable, wake: wake)
+      contentHandler(mutable)
       return
     }
 
-    let routingDecision = MLSNotificationCoordinator.routingDecision(
-      context: .nseBackground,
-      recipientUserDID: recipientDid
-    )
-    logger.info(
-      "🧭 [NSE] routing_action=\(routingDecision.action.rawValue), policy_reason=\(routingDecision.reason.rawValue), decryption_owner=\(routingDecision.owner?.rawValue ?? "none")"
-    )
-
-    guard routingDecision.action == .decrypt else {
-      logger.info("⏭️ [NSE] Routing policy skipped decryption")
-      bestAttemptContent.title = "New Message"
-      bestAttemptContent.body = "New Encrypted Message"
-      contentHandler(bestAttemptContent)
+    if let enabled = appGroupDefaults?.object(forKey: "mlsChatNotificationsEnabled_\(wake.recipientAccountHash)") as? Bool,
+       !enabled
+    {
+      contentHandler(mutable)
       return
     }
 
-    // Decrypt using shared MLS core context
-    // CRITICAL FIX: We must ensure the MLS context is for the correct recipient user.
-    // After account switching, the NSE may have a stale context cached for a different user.
-    // The ensureContext() method clears stale contexts and creates one for the recipient.
-    //
-    // IMPORTANT: We use Task.detached to avoid actor isolation issues, but we need to
-    // ensure contentHandler is called even if decryption takes too long.
-    let capturedContentHandler = contentHandler
-    let capturedBestAttemptContent = bestAttemptContent
-    let initialGeneration = (try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0
+    let homeDsURL = appGroupDefaults?
+      .string(forKey: "mlsHomeDsEndpoint_\(wake.recipientAccountHash)")
+      .flatMap(URL.init(string:)) ?? URL(string: "https://chat.catbird.blue")
 
-    let processingTask = Task<Void, Error> { @MainActor in
-      self.activeRecipientDID = recipientDid
-      defer {
-        self.activeProcessingTask = nil
-        self.activeRecipientDID = nil
-        self.bestEffortNSECleanup(recipientDid: recipientDid)
-      }
-      guard !Task.isCancelled else { return }
-      guard let currentGen = try? MLSCoordinationStore.shared.getState().coordinationGeneration,
-            currentGen == initialGeneration,
-            !MLSStoragePaths.isResetActive(for: recipientDid) else {
-        self.logger.warning("🛑 [NSE] Aborting notification processing - storage reset or generation mismatch")
-        return
-      }
-      // Check per-conversation mute before expensive decryption
-      do {
-        let conversation = try await self.databaseManager.nseRead(for: recipientDid) { db in
-          try MLSConversationModel
-            .filter(MLSConversationModel.Columns.conversationID == convoId)
-            .filter(MLSConversationModel.Columns.currentUserDID == recipientDid)
-            .fetchOne(db)
-        }
-        if let conversation, conversation.isMuted {
-          self.logger.info("🔇 [NSE] Conversation \(convoId.prefix(16))... muted until \(conversation.mutedUntil?.description ?? "forever") - suppressing")
-          capturedBestAttemptContent.title = ""
-          capturedBestAttemptContent.body = ""
-          capturedBestAttemptContent.sound = nil
-          capturedContentHandler(capturedBestAttemptContent)
-          return
-        }
-      } catch {
-        self.logger.warning("⚠️ [NSE] Mute check failed: \(error.localizedDescription) - proceeding with notification")
-      }
+    let preview = MLSPushExtensionProcessor.process(
+      storageRoot: appGroupRoot,
+      accountDidHash: wake.recipientAccountHash,
+      keystore: KeychainPlatformKeyStore(),
+      transport: PetrelPlatformTransport(homeDsEndpoint: homeDsURL),
+      wake: wake,
+      postDarwinNotification: true
+    )
 
-      // Cache-first (pre-lock): If the main app just decrypted the message, it may not
-      // be persisted yet; avoid taking the lock and consuming MLS secrets unnecessarily.
-      // Increase retries to 10 (2s total) to give Main App time to flush DB
-      for attempt in 0..<10 {
-        if await self.deliverCachedNotificationIfAvailable(
-          content: capturedBestAttemptContent,
-          contentHandler: capturedContentHandler,
-          messageId: messageId,
-          convoId: convoId,
-          recipientDid: recipientDid,
-          epoch: epoch,
-          sequenceNumber: sequenceNumber
-        ) {
-          return
-        }
-        if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
-      }
-
-      // Re-evaluate routing policy right before decrypting. This catches account-switch
-      // and shutdown windows that may have started after initial routing.
-      let inFlightDecision = MLSNotificationCoordinator.routingDecision(
-        context: .nseBackground,
-        recipientUserDID: recipientDid
-      )
-      if inFlightDecision.action != .decrypt {
-        self.logger.info(
-          "⏭️ [NSE] In-flight routing denied decrypt (action=\(inFlightDecision.action.rawValue), reason=\(inFlightDecision.reason.rawValue))"
-        )
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-        return
-      }
-
-      // Cache-first: If the message already exists in SQLCipher, avoid MLS decryption.
-      if await self.deliverCachedNotificationIfAvailable(
-        content: capturedBestAttemptContent,
-        contentHandler: capturedContentHandler,
-        messageId: messageId,
-        convoId: convoId,
-        recipientDid: recipientDid,
-        epoch: epoch,
-        sequenceNumber: sequenceNumber
-      ) {
-        return
-      }
-
-      // ═══════════════════════════════════════════════════════════════════════════
-      // MESSAGE ORDERING CHECK: Ensure messages are processed in sequence order
-      // ═══════════════════════════════════════════════════════════════════════════
-      // If sequence number is available, check if we should buffer this message.
-      // This prevents orphaned reactions and ensures messages are processed in order.
-      // ═══════════════════════════════════════════════════════════════════════════
-      if let seq = sequenceNumber {
-        self.logger.info(
-          "🔢 [NSE-SEQ] Checking message ordering: seq=\(seq), convo=\(convoId.prefix(16))..."
-        )
-
-        do {
-          let shouldBuffer = try await self.shouldBufferMessage(
-            messageID: messageId,
-            conversationID: convoId,
-            sequenceNumber: seq,
-            recipientDid: recipientDid
-          )
-
-          if shouldBuffer {
-            self.logger.info("📦 [NSE-SEQ] Message out of order - buffering: seq=\(seq)")
-
-            // Buffer the message for later processing by the main app
-            try await self.bufferMessageForLater(
-              messageID: messageId,
-              conversationID: convoId,
-              sequenceNumber: seq,
-              epoch: epoch ?? 0,  // Default to epoch 0 if not provided
-              ciphertext: ciphertext,
-              recipientDid: recipientDid
-            )
-
-            // Show generic notification (content will be revealed when processed in order)
-            capturedBestAttemptContent.title = "New Message"
-            capturedBestAttemptContent.body = "New Encrypted Message"
-            capturedContentHandler(capturedBestAttemptContent)
-            return
-          }
-
-          self.logger.info(
-            "✅ [NSE-SEQ] Message in order - proceeding with decryption: seq=\(seq)")
-        } catch {
-          self.logger.warning(
-            "⚠️ [NSE-SEQ] Ordering check failed: \(error.localizedDescription) - proceeding anyway"
-          )
-          // Fall through to decrypt - better to show content than fail silently
-        }
-      } else {
-        self.logger.warning(
-          "⚠️ [NSE-SEQ] No sequence number in push payload - server should include 'seq' field"
-        )
-        self.logger.info("   Proceeding with decryption (no ordering enforcement)")
-        // Fall through to decrypt
-      }
-
-      do {
-        self.logger.debug("📭 [NSE] Cache MISS - proceeding with decryption")
-
-        // WAL health probe BEFORE we touch the database — corruption baseline
-        MLSGRDBManager.probeWALHealth(for: recipientDid, label: "PRE_DECRYPT")
-
-        // CRITICAL FIX: Ensure MLS context is for the correct recipient user
-        // This handles account switching where the NSE may have stale context cached
-        self.logger.info(
-          "🔄 [NSE] Ensuring MLS context for recipient: \(recipientDid.prefix(24))...")
-        try await MLSCoreContext.shared.ensureContext(for: recipientDid)
-        self.logger.info("✅ [NSE] MLS context verified for recipient")
-
-        // Convert base64 ciphertext to Data
-        guard let ciphertextData = Data(base64Encoded: ciphertext) else {
-          self.logger.error(
-            "❌ [NSE] Invalid base64 ciphertext - length=\(ciphertext.count), first32=\(String(ciphertext.prefix(32)))..."
-          )
-          capturedBestAttemptContent.title = "New Message"
-          capturedBestAttemptContent.body = "New Encrypted Message"
-          capturedContentHandler(capturedBestAttemptContent)
-          return
-        }
-
-        self.logger.info("📊 [NSE] Ciphertext decoded: \(ciphertextData.count) bytes")
-
-        // Resolve groupId from conversation record or fallback to payload encoding.
-        var groupResolution = await self.resolveGroupIdData(
-          convoId: convoId,
-          recipientDid: recipientDid
-        )
-        var groupIdData = groupResolution.data
-        self.logger.info(
-          "🔢 [NSE] GroupId resolved (\(groupResolution.source.rawValue)): \(groupIdData.count) bytes"
-        )
-
-        // If the group is missing, try to fetch/process Welcome before decrypting.
-        if !(await MLSCoreContext.shared.groupExists(
-          userDid: recipientDid, groupId: groupIdData)) {
-          self.logger.warning("🆕 [NSE] Group missing locally - attempting Welcome join")
-          let joined = await self.ensureGroupStateForNotification(
-            convoId: convoId,
-            recipientDid: recipientDid,
-            groupIdData: groupIdData
-          )
-          if !joined {
-            self.logger.warning(
-              "⚠️ [NSE] Welcome join failed or unavailable - showing placeholder")
-            capturedBestAttemptContent.title = "New Message"
-            capturedBestAttemptContent.body = "New Encrypted Message"
-            capturedContentHandler(capturedBestAttemptContent)
-            return
-          }
-
-          // Re-resolve groupId after Welcome in case convoId is not the MLS groupId.
-          let updatedResolution = await self.resolveGroupIdData(
-            convoId: convoId,
-            recipientDid: recipientDid
-          )
-          if updatedResolution.data != groupIdData {
-            groupResolution = updatedResolution
-            groupIdData = updatedResolution.data
-            self.logger.info(
-              "🔢 [NSE] GroupId updated after Welcome (\(groupResolution.source.rawValue)): \(groupIdData.count) bytes"
-            )
-          }
-
-          if !(await MLSCoreContext.shared.groupExists(
-            userDid: recipientDid, groupId: groupIdData)) {
-            self.logger.warning(
-              "⚠️ [NSE] Group still missing after Welcome - showing placeholder")
-            capturedBestAttemptContent.title = "New Message"
-            capturedBestAttemptContent.body = "New Encrypted Message"
-            capturedContentHandler(capturedBestAttemptContent)
-            return
-          }
-        }
-
-        // Double-check cache immediately before decrypting.
-        // The main app may have persisted plaintext while we were doing preflight work.
-        if await self.deliverCachedNotificationIfAvailable(
-          content: capturedBestAttemptContent,
-          contentHandler: capturedContentHandler,
-          messageId: messageId,
-          convoId: convoId,
-          recipientDid: recipientDid,
-          epoch: epoch,
-          sequenceNumber: sequenceNumber
-        ) {
-          return
-        }
-
-        MLSNotificationMetrics.increment(
-          .decryptAttempt,
-          owner: .nse,
-          context: .nseBackground,
-          source: "nse_direct_decrypt"
-        )
-
-        self.logger.info(
-          "🔓 [NSE] Starting decryption for message=\(messageId.prefix(16))..., user=\(recipientDid.prefix(24))..."
-        )
-
-        // Use shared MLSCoreContext with EPHEMERAL access for notifications
-        // This prevents database lock contention with the main app
-        let decryptResult = try await MLSCoreContext.shared.decryptForNotification(
-          userDid: recipientDid,
-          groupId: groupIdData,
-          ciphertext: ciphertextData,
-          conversationID: convoId,
-          messageID: messageId,
-          sequenceNumber: sequenceNumber  // Pass sequence number for ordering tracking
-        )
-
-        self.logger.info(
-          "✅ [NSE] Decryption SUCCESS - plaintext length=\(decryptResult.plaintext.count), sender=\(decryptResult.senderDID?.prefix(24) ?? "unknown")..."
-        )
-
-        // WAL health probe AFTER decryption — detect if decrypt corrupted the WAL
-        MLSGRDBManager.probeWALHealth(for: recipientDid, label: "POST_DECRYPT")
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // CRITICAL FIX: Signal to foreground app that NSE advanced the ratchet
-        // ═══════════════════════════════════════════════════════════════════════════
-        // When the main app resumes, it should check this flag and reload MLS state
-        // from disk before processing any messages. This prevents SecretReuseError.
-        // ═══════════════════════════════════════════════════════════════════════════
-        MLSNotificationCoordinator.recordNSEProcessed(for: recipientDid)
-        self.logger.info("📡 [NSE] Signaled foreground to reload MLS state")
-
-        _ = MLSNotificationCoordinator.publishMutation(
-          userDID: recipientDid,
-          source: "nse_decrypt_success",
-          decryptionOwner: .nse,
-          routingAction: routingDecision.action,
-          routingReason: routingDecision.reason,
-          incrementVersion: false,
-          postStateChanged: false
-        )
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🛡️ READ-ONLY NSE (2024-12-24): Do not record epoch checkpoint
-        //
-        // Since the NSE is now read-only for the core database, it must NOT
-        // update the epoch checkpoint. Ratchet advancement remains non-durable
-        // in the NSE. The main app will handle durable epoch advancement.
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        // Build rich notification with sender info and conversation context
-        // This also checks for self-sent messages and returns false if we should suppress
-        let shouldShow = await self.configureRichNotification(
-          content: capturedBestAttemptContent,
-          decryptedText: decryptResult.plaintext,
-          senderDid: decryptResult.senderDID,
-          convoId: convoId,
-          recipientDid: recipientDid,
-          messageId: messageId
-        )
-
-        if shouldShow {
-          capturedContentHandler(capturedBestAttemptContent)
-        } else {
-          self.logger.info("🔇 [NSE] Notification suppressed (self-sent or filtered)")
-          // Don't call contentHandler - this effectively cancels the notification
-        }
-
-      } catch let error as MLSError {
-        // ═══════════════════════════════════════════════════════════════════════════
-        // CRITICAL FIX (2024-12-20): Handle expected MLS errors gracefully
-        // ═══════════════════════════════════════════════════════════════════════════
-        //
-        // SecretReuseSkipped: Message was already decrypted (by Main App or previous NSE run).
-        //                     The decryption key has been consumed - this is NOT an error.
-        // ═══════════════════════════════════════════════════════════════════════════
-        if case .secretReuseSkipped(let messageID) = error {
-          MLSNotificationMetrics.increment(
-            .secretReuseRecovery,
-            owner: .nse,
-            context: .nseBackground,
-            source: "nse_secret_reuse"
-          )
-
-          self.logger.info(
-            "ℹ️ [NSE] SecretReuseSkipped for message \(messageID) - already decrypted by Main App"
-          )
-          self.logger.info("   Checking cache after SecretReuseSkipped (with retries)")
-
-          // Retry up to 10 times (2 seconds) for the main app to finish the transactions
-          for attempt in 0..<10 {
-            if await self.deliverCachedNotificationIfAvailable(
-              content: capturedBestAttemptContent,
-              contentHandler: capturedContentHandler,
-              messageId: messageId,
-              convoId: convoId,
-              recipientDid: recipientDid,
-              epoch: epoch,
-              sequenceNumber: sequenceNumber
-            ) {
-              return
-            }
-            if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
-          }
-
-          self.logger.info(
-            "   Cache miss after SecretReuseSkipped retries - showing fallback")
-          capturedBestAttemptContent.title = "New Message"
-          capturedBestAttemptContent.body = "New Encrypted Message"
-          capturedContentHandler(capturedBestAttemptContent)
-          return
-        }
-
-        // Other MLS errors - log and try cache before fallback
-        self.logger.error("❌ [NSE] MLSError: \(error.localizedDescription)")
-        self.logger.info("   Attempting cache lookup after MLS error...")
-        for attempt in 0..<3 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: capturedBestAttemptContent,
-            contentHandler: capturedContentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
-        }
-        self.logger.info("   Cache miss after MLS error - showing fallback")
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-
-      } catch is CancellationError {
-        // Database access errors (shutdown in progress, drain timeout)
-        // These are expected during account switching - try cache before fallback
-        self.logger.info("ℹ️ [NSE] Database access cancelled - attempting cache lookup")
-        for attempt in 0..<3 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: capturedBestAttemptContent,
-            contentHandler: capturedContentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
-        }
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-
-      } catch let error as MLSGateError {
-        self.logger.info(
-          "ℹ️ [NSE] Database gate error: \(error.localizedDescription) - attempting cache lookup"
-        )
-        for attempt in 0..<3 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: capturedBestAttemptContent,
-            contentHandler: capturedContentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
-        }
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-
-      } catch let error as MLSExclusiveAccessError {
-        self.logger.info(
-          "ℹ️ [NSE] Exclusive access error: \(error.localizedDescription) - attempting cache lookup"
-        )
-        for attempt in 0..<3 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: capturedBestAttemptContent,
-            contentHandler: capturedContentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
-        }
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-
-      } catch let error as MLSSQLCipherError {
-        self.logger.info(
-          "ℹ️ [NSE] Database access error: \(error.localizedDescription) - attempting cache lookup"
-        )
-        for attempt in 0..<3 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: capturedBestAttemptContent,
-            contentHandler: capturedContentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
-        }
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-
-      } catch let error {
-        // Log detailed error information for non-MLS errors
-        self.logger.error("❌ [NSE] Decryption FAILED: \(error.localizedDescription)")
-        self.logger.error("❌ [NSE] Error type: \(String(describing: error))")
-
-        // Check for SecretReuseError in the error description (for MlsError from FFI)
-        let errorDesc = error.localizedDescription.lowercased()
-        if errorDesc.contains("secretreuse") || errorDesc.contains("secret_reuse") {
-          self.logger.info(
-            "ℹ️ [NSE] SecretReuseError detected in FFI error - message already processed"
-          )
-          for attempt in 0..<5 {
-            if await self.deliverCachedNotificationIfAvailable(
-              content: capturedBestAttemptContent,
-              contentHandler: capturedContentHandler,
-              messageId: messageId,
-              convoId: convoId,
-              recipientDid: recipientDid,
-              epoch: epoch,
-              sequenceNumber: sequenceNumber
-            ) {
-              return
-            }
-            if attempt < 4 { try? await Task.sleep(nanoseconds: 150_000_000) }
-          }
-
-          capturedBestAttemptContent.title = "New Message"
-          capturedBestAttemptContent.body = "New Encrypted Message"
-          capturedContentHandler(capturedBestAttemptContent)
-          return
-        }
-
-        // Try to extract more details from the error
-        if let nsError = error as NSError? {
-          self.logger.error("❌ [NSE] NSError domain=\(nsError.domain), code=\(nsError.code)")
-          if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
-            self.logger.error("❌ [NSE] Underlying error: \(underlying.localizedDescription)")
-          }
-        }
-
-        // Last resort: attempt cache lookup before showing fallback
-        self.logger.info("   Attempting cache lookup after unknown error...")
-        for attempt in 0..<3 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: capturedBestAttemptContent,
-            contentHandler: capturedContentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 2 { try? await Task.sleep(nanoseconds: 100_000_000) }
-        }
-        self.logger.info("   Cache miss after unknown error - showing fallback")
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-      }
-
-      // ═══════════════════════════════════════════════════════════════════════════
-      // PHASE 5-6: Enhanced NSE Close Sequence (2024-12)
-      // ═══════════════════════════════════════════════════════════════════════════
-      //
-      // This implements a coordinated close sequence to prevent HMAC check failures
-      // when the main app tries to open the database while NSE is closing:
-      //
-      // 1. Post nseWillClose notification - tells main app to release readers
-      // 2. Wait for app acknowledgment (with timeout)
-      // 3. Use MLSShutdownCoordinator for proper close sequence
-      // 4. Post stateChanged notification - tells app to reload
-      //
-      // ═══════════════════════════════════════════════════════════════════════════
-
-      // Step 1: Post nseWillClose notification
-      self.logger.info("📢 [NSE] Posting nseWillClose notification")
-      let token: UInt64
-      do {
-        token = try MLSNotificationCoordinator.prepareNSECloseHandshake(userDID: recipientDid)
-      } catch {
-        self.logger.warning("⚠️ [NSE] prepareNSECloseHandshake failed: \(error.localizedDescription)")
-        return
-      }
-      let acked = await MLSNotificationCoordinator.waitForAppAcknowledgment(
-        userDID: recipientDid,
-        token: token,
-        timeout: .milliseconds(1500)
-      )
-      if acked {
-        self.logger.info("✅ [NSE] App acknowledged - waiting for connection release")
-        // Give the app's connection a moment to fully close
-        // The app calls releaseConnectionWithoutCheckpoint which takes ~50ms
-        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms safety buffer
-      } else {
-        self.logger.warning("⏱️ [NSE] App acknowledgment timeout - skipping close sequence")
-        return
-      }
-
-      // Step 3: Use MLSShutdownCoordinator for proper close sequence
-      // This handles: FFI flush → WAL checkpoint → DB release (without 200ms delay for NSE)
-      self.logger.info("🔐 [NSE] Using shutdown coordinator for clean close...")
-      let result = await MLSShutdownCoordinator.shared.quickShutdownForNSE(
-        for: recipientDid, databaseManager: databaseManager)
-      switch result {
-      case .success(let durationMs):
-        self.logger.info("✅ [NSE] Quick shutdown complete in \(durationMs)ms")
-      case .successWithWarnings(let durationMs, let warnings):
-        self.logger.warning(
-          "⚠️ [NSE] Quick shutdown in \(durationMs)ms with \(warnings.count) warning(s)")
-      case .timedOut(let durationMs, let phase):
-        self.logger.warning(
-          "⏱️ [NSE] Quick shutdown timed out at \(phase.rawValue) after \(durationMs)ms")
-      case .failed(let error):
-        self.logger.error("❌ [NSE] Quick shutdown failed: \(error.localizedDescription)")
-      }
-
-      // Step 4: Post stateChanged notification - tells app to reload
-      MLSNotificationCoordinator.postStateChanged()
-      self.logger.info("📢 [NSE] Posted state change notification to main app")
-    }
-    self.activeProcessingTask = processingTask
+    contentHandler(Self.buildCommunicationNotification(base: mutable, preview: preview, wake: wake))
   }
 
   override func serviceExtensionTimeWillExpire() {
-    logger.warning(
-      "⏱️ [NSE] serviceExtensionTimeWillExpire called - system is terminating extension")
-
-    // Log WAL state at the moment iOS is killing us — critical for corruption diagnosis
-    if let recipientDid = activeRecipientDID {
-      MLSGRDBManager.probeWALHealth(for: recipientDid, label: "TIME_WILL_EXPIRE")
+    guard let handler = contentHandler, let content = bestAttemptContent else { return }
+    if content.body.isEmpty {
+      content.title = "Catbird"
+      content.body = MLSPushExtensionProcessor.genericFallbackBody
     }
-
-    // Emergency cleanup before system kills us
-    // CRITICAL: Interrupt all in-flight SQLite / Rust operations first to release locks immediately
-    MLSClient.interruptAllContexts()
-    MLSCoreContext.interruptAllContexts()
-
-    // CRITICAL: NSE must use PASSIVE checkpoint — TRUNCATE from NSE while main app
-    // has the DB open causes WAL corruption (two processes racing for exclusive WAL access).
-    MLSClient.emergencyCloseAllContexts(reason: "NSE expiration cleanup")
-    MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)
-
-    if let contentHandler = contentHandler, let bestAttemptContent = bestAttemptContent {
-      if bestAttemptContent.body.isEmpty || bestAttemptContent.body == "Decrypting..." {
-        bestAttemptContent.title = "New Message"
-        bestAttemptContent.body = "New Encrypted Message"
-        logger.warning("⏱️ [NSE] Delivering fallback content - decryption did not complete in time")
-      } else {
-        logger.info("✅ [NSE] Delivering already-decrypted content on expiry")
-      }
-      contentHandler(bestAttemptContent)
-    }
+    handler(content)
   }
 
-  // MARK: - NSE Cleanup
-
-  /// Best-effort cleanup of all process-local MLS state.
-  ///
-  /// Called from the processing task's `defer` block to ensure DB handles
-  /// are released even on early-return paths (cache hit, error, timeout).
-  /// Safe to call multiple times — the emergency close APIs are idempotent.
-  private func bestEffortNSECleanup(recipientDid: String) {
-    logger.info("🧹 [NSE] Best-effort cleanup for \(recipientDid.prefix(24))...")
-
-    // Log WAL state BEFORE cleanup — if corruption happens during cleanup, this is the "before" snapshot
-    MLSGRDBManager.probeWALHealth(for: recipientDid, label: "PRE_CLEANUP")
-
-    // 1. Close all Rust FFI contexts (flushes ratchet state to disk)
-    // NOTE: This sets suspensionInProgress = true internally.
-    MLSClient.emergencyCloseAllContexts(reason: "NSE deferred cleanup")
-
-    // 2. Close all GRDB DatabasePools registered in the static emergency list.
-    // The NSE's own databaseManager uses lightweight DatabaseQueues (nseRead/nseWrite)
-    // that self-close via defer — they are NOT in this list. The pools that ARE
-    // registered here come from MLSCoreContext's private databaseManager when it
-    // calls getEphemeralDatabasePool() (which caches pools in uncachedEphemeralPools
-    // and registers them via registerForEmergencyClose). This is the primary leak
-    // this cleanup is targeting.
-    //
-    // CRITICAL FIX: Use PASSIVE checkpoint mode. NSE must NEVER use TRUNCATE because:
-    // - TRUNCATE requires exclusive WAL access
-    // - The main app may have the same DB open with its own WAL connections
-    // - Two processes doing TRUNCATE on the same WAL file causes corruption
-    // - PASSIVE is safe: it checkpoints what it can without blocking
-    MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)
-
-    // Log WAL state AFTER cleanup — compare with PRE_CLEANUP to detect damage
-    MLSGRDBManager.probeWALHealth(for: recipientDid, label: "POST_CLEANUP")
-
-    // 3. CRITICAL: Clear the suspension flag immediately after cleanup.
-    // The NSE process is reused across notifications. If we leave the flag set,
-    // the next notification's getContext() call will be blocked — especially when
-    // this defer block runs concurrently with the next didReceive (which clears
-    // the flag early, but our deferred cleanup re-sets it via emergencyCloseAllContexts).
-    MLSClient.clearSuspensionFlag(reason: "NSE cleanup complete (process reuse)")
-
-    logger.info("✅ [NSE] Cleanup complete")
-  }
-
-  // MARK: - Cached Message Lookup
-
-  private enum CachedNotificationSource: String {
-    case messageId = "message_id"
-    case order = "epoch/seq"
-  }
-
-  private struct CachedNotificationLookup {
-    let messageId: String
-    let conversationId: String
-    let senderDid: String?
-    let payloadText: String?
-    let payloadExpired: Bool
-    let processingState: String
-    let processingError: String?
-    let source: CachedNotificationSource
-  }
-
-  // MARK: - Group ID Resolution
-
-  private enum GroupIdResolutionSource: String {
-    case conversationRecord = "conversation_record"
-    case payloadHex = "payload_hex"
-    case payloadUtf8 = "payload_utf8"
-  }
-
-  private struct GroupIdResolution {
-    let data: Data
-    let source: GroupIdResolutionSource
-  }
-
-  private func resolveGroupIdData(
-    convoId: String,
-    recipientDid: String
-  ) async -> GroupIdResolution {
-    let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased()
-
-    do {
-      if let conversation = try await databaseManager.nseRead(for: recipientDid) { db in
-        try MLSConversationModel
-          .filter(MLSConversationModel.Columns.conversationID == convoId)
-          .filter(MLSConversationModel.Columns.currentUserDID == normalizedRecipientDid)
-          .fetchOne(db)
-      } {
-        return GroupIdResolution(data: conversation.groupID, source: .conversationRecord)
-      }
-    } catch {
-      logger.warning("⚠️ [NSE] GroupId lookup failed: \(error.localizedDescription)")
-    }
-
-    if let hexData = Data(hexEncoded: convoId) {
-      return GroupIdResolution(data: hexData, source: .payloadHex)
-    }
-
-    return GroupIdResolution(data: Data(convoId.utf8), source: .payloadUtf8)
-  }
-
-  private func lookupCachedNotification(
-    messageId: String,
-    conversationId: String,
-    recipientDid: String,
-    epoch: Int64?,
-    sequenceNumber: Int64?
-  ) async -> CachedNotificationLookup? {
-    let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased()
-
-    do {
-      return try await databaseManager.nseRead(for: recipientDid) { db in
-        if let message =
-          try MLSMessageModel
-          .filter(MLSMessageModel.Columns.messageID == messageId)
-          .filter(MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
-          .fetchOne(db) {
-          let payloadText = message.payloadJSON.flatMap {
-            String(data: $0, encoding: .utf8)
-          }
-          if payloadText == nil, let epoch = epoch, let sequenceNumber = sequenceNumber {
-            if let orderedMessage =
-              try MLSMessageModel
-              .filter(MLSMessageModel.Columns.conversationID == conversationId)
-              .filter(
-                MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid
-              )
-              .filter(MLSMessageModel.Columns.epoch == epoch)
-              .filter(MLSMessageModel.Columns.sequenceNumber == sequenceNumber)
-              .fetchOne(db) {
-              let orderedPayloadText = orderedMessage.payloadJSON.flatMap {
-                String(data: $0, encoding: .utf8)
-              }
-              if orderedPayloadText != nil {
-                return CachedNotificationLookup(
-                  messageId: orderedMessage.messageID,
-                  conversationId: orderedMessage.conversationID,
-                  senderDid: orderedMessage.senderID,
-                  payloadText: orderedPayloadText,
-                  payloadExpired: orderedMessage.payloadExpired,
-                  processingState: orderedMessage.processingState,
-                  processingError: orderedMessage.processingError,
-                  source: .order
-                )
-              }
-            }
-          }
-          return CachedNotificationLookup(
-            messageId: message.messageID,
-            conversationId: message.conversationID,
-            senderDid: message.senderID,
-            payloadText: payloadText,
-            payloadExpired: message.payloadExpired,
-            processingState: message.processingState,
-            processingError: message.processingError,
-            source: .messageId
-          )
-        }
-
-        if let epoch = epoch, let sequenceNumber = sequenceNumber {
-          if let message =
-            try MLSMessageModel
-            .filter(MLSMessageModel.Columns.conversationID == conversationId)
-            .filter(MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
-            .filter(MLSMessageModel.Columns.epoch == epoch)
-            .filter(MLSMessageModel.Columns.sequenceNumber == sequenceNumber)
-            .fetchOne(db) {
-            let payloadText = message.payloadJSON.flatMap {
-              String(data: $0, encoding: .utf8)
-            }
-            return CachedNotificationLookup(
-              messageId: message.messageID,
-              conversationId: message.conversationID,
-              senderDid: message.senderID,
-              payloadText: payloadText,
-              payloadExpired: message.payloadExpired,
-              processingState: message.processingState,
-              processingError: message.processingError,
-              source: .order
-            )
-          }
-        }
-
-        return nil
-      }
-    } catch {
-      logger.warning("⚠️ [NSE] Cache lookup failed: \(error.localizedDescription)")
-      return nil
-    }
-  }
-
-  private func deliverCachedNotificationIfAvailable(
-    content: UNMutableNotificationContent,
-    contentHandler: @escaping (UNNotificationContent) -> Void,
-    messageId: String,
-    convoId: String,
-    recipientDid: String,
-    epoch: Int64?,
-    sequenceNumber: Int64?
-  ) async -> Bool {
-    guard
-      let cached = await lookupCachedNotification(
-        messageId: messageId,
-        conversationId: convoId,
-        recipientDid: recipientDid,
-        epoch: epoch,
-        sequenceNumber: sequenceNumber
-      )
-    else {
-      return false
-    }
-
-    logger.info("📦 [NSE] Cache HIT (\(cached.source.rawValue)) - message already stored")
-    MLSNotificationMetrics.increment(
-      .cacheHitBeforeDecrypt,
-      owner: .nse,
-      context: .nseBackground,
-      source: "nse_cache_lookup"
-    )
-
-    if let payloadText = cached.payloadText, !payloadText.isEmpty {
-      let shouldShow = await configureRichNotification(
-        content: content,
-        decryptedText: payloadText,
-        senderDid: cached.senderDid,
-        convoId: cached.conversationId,
-        recipientDid: recipientDid,
-        messageId: cached.messageId
-      )
-
-      if shouldShow {
-        contentHandler(content)
-      } else {
-        logger.info("🔇 [NSE] Cached message suppressed (self-sent or filtered)")
-      }
-    } else {
-      let payloadStatus = cached.payloadExpired ? "expired" : "missing"
-      logger.info(
-        "📦 [NSE] Cached message has no payload (\(payloadStatus)) - state=\(cached.processingState), error=\(cached.processingError ?? "nil")"
-      )
-      content.title = "New Message"
-      content.body = "New Encrypted Message"
-      contentHandler(content)
-    }
-
-    return true
-  }
-
-  // MARK: - Welcome Join (NSE)
-
-  private enum NSEWelcomeError: LocalizedError {
-    case httpError(statusCode: Int)
-    case invalidResponse
-    case invalidBase64
-
-    var errorDescription: String? {
-      switch self {
-      case .httpError(let statusCode):
-        return "HTTP \(statusCode)"
-      case .invalidResponse:
-        return "Invalid response"
-      case .invalidBase64:
-        return "Invalid base64"
-      }
-    }
-  }
-
-  private func ensureGroupStateForNotification(
-    convoId: String,
-    recipientDid: String,
-    groupIdData: Data
-  ) async -> Bool {
-    let welcomeReady = await MLSWelcomeGate.shared.waitForWelcomeIfPending(
-      for: convoId,
-      userDID: recipientDid,
-      timeout: .seconds(2)
-    )
-    if !welcomeReady {
-      logger.warning("⏱️ [NSE] Welcome gate timeout - deferring NSE join attempt for retry")
-      return false
-    }
-
-    if await MLSCoreContext.shared.groupExists(userDid: recipientDid, groupId: groupIdData) {
-      logger.info("✅ [NSE] Group appeared after Welcome gate wait")
-      return true
-    }
-
-    return await attemptWelcomeJoin(convoId: convoId, recipientDid: recipientDid)
-  }
-
-  private func attemptWelcomeJoin(
-    convoId: String,
-    recipientDid: String
-  ) async -> Bool {
-    do {
-      try await MLSWelcomeGate.shared.beginWelcomeProcessing(for: convoId, userDID: recipientDid)
-    } catch {
-      logger.warning("⚠️ [NSE] Welcome gate contention/error - deferring join for retry: \(error.localizedDescription)")
-      return false
-    }
-    defer {
-      Task {
-        await MLSWelcomeGate.shared.completeWelcomeProcessing(
-          for: convoId, userDID: recipientDid)
-      }
-    }
-
-    guard let client = await createStandaloneClientForUser(recipientDid) else {
-      logger.warning("⚠️ [NSE] Failed to create API client for Welcome fetch")
-      return false
-    }
-
-    await client.setServiceDID(Self.mlsServiceDID, for: Self.mlsServiceNamespace)
-    await client.setServiceDID(Self.mlsServiceDID, for: Self.mlsChatNamespace)
-
-    do {
-      logger.info("📩 [NSE] Fetching Welcome message for group: \(convoId.prefix(16))...")
-      let welcomeData = try await fetchWelcomeData(
-        convoId: convoId,
-        recipientDid: recipientDid,
-        client: client
-      )
-      logger.info("📩 [NSE] Received Welcome message: \(welcomeData.count) bytes")
-
-      try await MLSCoreContext.shared.ensureContext(for: recipientDid)
-      let context = try await MLSCoreContext.shared.getContext(for: recipientDid)
-
-      let identityBytes = Data(recipientDid.utf8)
-      logger.info("🔐 [NSE] Processing Welcome message...")
-      let welcomeResult = try context.processWelcome(
-        welcomeBytes: welcomeData,
-        identityBytes: identityBytes,
-        config: nil
-      )
-
-      logger.info(
-        "✅ [NSE] Successfully joined group via Welcome! GroupID: \(welcomeResult.groupId.hexEncodedString().prefix(16))..."
-      )
-
-      let groupIdHex = welcomeResult.groupId.hexEncodedString()
-      do {
-        try await databaseManager.nseWrite(for: recipientDid) { db in
-          try MLSStorageHelpers.ensureConversationExistsSync(
-            in: db,
-            userDID: recipientDid,
-            conversationID: convoId,
-            groupID: groupIdHex
-          )
-        }
-        logger.info("✅ [NSE] Created conversation record for new group (FK fix)")
-      } catch {
-        logger.warning(
-          "⚠️ [NSE] Failed to pre-create conversation record: \(error.localizedDescription)"
-        )
-      }
-
-      await confirmWelcome(convoId: convoId, client: client)
-      return true
-    } catch let error as NSEWelcomeError {
-      if case .httpError(let statusCode) = error {
-        if statusCode == 404 {
-          logger.info("ℹ️ [NSE] No Welcome message available for group (404)")
-        } else if statusCode == 410 {
-          logger.info("ℹ️ [NSE] Welcome expired for group (410)")
-        } else {
-          logger.warning("⚠️ [NSE] Welcome fetch failed: HTTP \(statusCode)")
-        }
-      } else {
-        logger.warning("⚠️ [NSE] Welcome fetch failed: \(error.localizedDescription)")
-      }
-      return false
-    } catch let error as MlsError {
-      switch error {
-      case .NoMatchingKeyPackage(let msg):
-        logger.warning(
-          "⚠️ [NSE] NoMatchingKeyPackage - Welcome references unavailable key package: \(msg)"
-        )
-      case .WelcomeConsumed(let msg):
-        logger.warning("⚠️ [NSE] Welcome consumed: \(msg)")
-      default:
-        logger.warning("⚠️ [NSE] Failed to process Welcome: \(error.localizedDescription)")
-      }
-      return false
-    } catch {
-      logger.warning("⚠️ [NSE] Failed to join group: \(error.localizedDescription)")
-      return false
-    }
-  }
-
-  private func fetchWelcomeData(
-    convoId: String,
-    recipientDid: String,
-    client: ATProtoClient
-  ) async throws -> Data {
-    guard
-      let actorDeviceId = try MLSOrchestratorCredentialAdapter()
-        .getDeviceUuid(userDid: recipientDid),
-      !actorDeviceId.isEmpty,
-      UUID(uuidString: actorDeviceId) != nil
-    else {
-      throw NSEWelcomeError.invalidResponse
-    }
-    let input = BlueCatbirdChatGetConversationState.Parameters(
-      actorDeviceId: actorDeviceId,
-      conversationId: convoId
-    )
-    let (responseCode, output) = try await client.blue.catbird.chat.getConversationState(input: input)
-
-    guard responseCode == 200, output != nil else {
-      throw NSEWelcomeError.httpError(statusCode: responseCode)
-    }
-
-    return Data()
-  }
-
-  private func confirmWelcome(
-    convoId: String,
-    client: ATProtoClient
-  ) async {
-    logger.info("✅ [NSE] Confirmed Welcome processing with server")
-  }
-
-  private func createStandaloneClientForUser(_ userDid: String) async -> ATProtoClient? {
-    logger.info("🔐 [NSE] Creating standalone ATProtoClient for: \(userDid.prefix(24))...")
-
-    #if targetEnvironment(simulator)
-      let accessGroup: String? = nil
-    #else
-      let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
-        suffix: "blue.catbird.shared")
-    #endif
-
-    let oauthConfig = OAuthConfiguration(
-      clientId: "https://catbird.blue/oauth-client-metadata.json",
-      redirectUri: "https://catbird.blue/oauth/callback",
-      scope: "atproto transition:generic transition:chat.bsky"
-    )
-
-    let client: ATProtoClient
-    do {
-        #if DEBUG
-      client = try await ATProtoClient(
-        oauthConfig: oauthConfig,
-        namespace: "blue.catbird",
-        authMode: .gateway,
-        gatewayURL: URL(string: "https://api.catbird.blue")!,
-//        gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
-        userAgent: "Catbird/1.0",
-        bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
-        bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
-        accessGroup: accessGroup
-      )
-        #else
-        client = try await ATProtoClient(
-          oauthConfig: oauthConfig,
-          namespace: "blue.catbird",
-          authMode: .gateway,
-          gatewayURL: URL(string: "https://api.catbird.blue")!,
-          userAgent: "Catbird/1.0",
-          bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
-          bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
-          accessGroup: accessGroup
-        )
-#endif
-    } catch {
-      logger.error("❌ [NSE] Failed to create ATProtoClient: \(error.localizedDescription)")
-      return nil
-    }
-
-    do {
-      try await client.switchToAccount(did: userDid)
-      logger.info("✅ [NSE] Standalone client switched to user: \(userDid.prefix(24))...")
-      return client
-    } catch {
-      logger.error(
-        "❌ [NSE] Failed to switch standalone client to user: \(error.localizedDescription)")
-      return nil
-    }
-  }
-
-  // MARK: - Message Ordering Helpers
-
-  /// Check if message should be buffered due to out-of-order arrival
-  /// - Returns: true if message should be buffered, false if it can be processed now
-  private func shouldBufferMessage(
-    messageID: String,
-    conversationID: String,
-    sequenceNumber: Int64,
-    recipientDid: String
-  ) async throws -> Bool {
-    // Use NSE-optimized lightweight read (DatabaseQueue instead of DatabasePool)
-    // This is critical for staying within NSE's ~24MB memory limit
-    let lastProcessed = try await databaseManager.nseRead(for: recipientDid) { db in
-      try MLSConversationSequenceState
-        .filter(MLSConversationSequenceState.Columns.conversationID == conversationID)
-        .filter(
-          MLSConversationSequenceState.Columns.currentUserDID == recipientDid.lowercased()
-        )
-        .fetchOne(db)
-    }
-
-    if let state = lastProcessed {
-      // If this message's seq <= lastProcessed, it's a duplicate — skip
-      if sequenceNumber <= state.lastProcessedSeq {
-        logger.info(
-          "[NSE-SEQ] Duplicate message: seq=\(sequenceNumber) already processed (lastProcessed=\(state.lastProcessedSeq))"
-        )
-        return true
-      }
-
-      // For gaps (seq > lastProcessed + 1): decrypt anyway.
-      // MLS can decrypt out of order within the same epoch.
-      // The main app will reconcile ordering when it syncs.
-      if sequenceNumber > state.lastProcessedSeq + 1 {
-        logger.info(
-          "[NSE-SEQ] Gap detected: expecting seq=\(state.lastProcessedSeq + 1), got seq=\(sequenceNumber) - decrypting anyway"
-        )
-      } else {
-        logger.debug(
-          "[NSE-SEQ] Message in sequence: seq=\(sequenceNumber), lastProcessed=\(state.lastProcessedSeq)"
-        )
-      }
-      return false
-    } else {
-      // No sequence state yet - this is the first message
-      logger.info("[NSE-SEQ] First message for conversation: seq=\(sequenceNumber)")
-      return false  // Process it
-    }
-  }
-
-  /// Buffer a message that arrived out of order for later processing by the main app
-  private func bufferMessageForLater(
-    messageID: String,
-    conversationID: String,
-    sequenceNumber: Int64,
-    epoch: Int64,
-    ciphertext: String,
-    recipientDid: String
-  ) async throws {
-    // Create a minimal MessageView JSON representation for buffering
-    // The main app will process this when it catches up
-    let messageViewJSON: [String: Any] = [
-      "id": messageID,
-      "convoId": conversationID,
-      "seq": sequenceNumber,
-      "epoch": epoch,
-      "ciphertext": ciphertext,
-      // Note: senderDid and other metadata will be filled in by main app during processing
-      "buffered_by": "nse",
-      "buffered_at": ISO8601DateFormatter().string(from: Date())
-    ]
-
-    guard let jsonData = try? JSONSerialization.data(withJSONObject: messageViewJSON) else {
-      logger.error("[NSE-SEQ] Failed to serialize message view for buffering")
-      throw NSError(
-        domain: "NotificationService", code: -1,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to serialize message view"])
-    }
-
-    // Create pending message model
-    let pending = MLSPendingMessageModel(
-      messageID: messageID,
-      currentUserDID: recipientDid.lowercased(),
-      conversationID: conversationID,
-      sequenceNumber: sequenceNumber,
-      epoch: epoch,
-      messageViewJSON: jsonData,
-      source: "nse"
-    )
-
-    // Use NSE-optimized lightweight write (DatabaseQueue instead of DatabasePool)
-    try await databaseManager.nseWrite(for: recipientDid) { db in
-      try pending.save(db, onConflict: .replace)
-    }
-
-    logger.info(
-      "[NSE-SEQ] Buffered message \(messageID.prefix(16)) seq=\(sequenceNumber) epoch=\(epoch) for later processing"
-    )
-  }
-
-  // MARK: - Rich Notification Configuration
-
-  /// Configures the notification with sender info, conversation title, and profile photo
-  /// The sender DID is retrieved from the decrypted message in the database (E2EE safe)
-  /// - Returns: true if notification should be shown, false if it should be suppressed (e.g., self-sent)
-  @discardableResult
-  private func configureRichNotification(
-    content: UNMutableNotificationContent,
-    decryptedText: String,
-    senderDid: String?,
-    convoId: String,
-    recipientDid: String,
-    messageId: String
-  ) async -> Bool {
-    // Try to get conversation info from local database
-    let conversationTitle = await getConversationTitle(convoId: convoId, recipientDid: recipientDid)
-
-    // Prefer sender DID from decryption result, but fall back to the stored message record.
-    // Some decryption paths may not surface senderDID even though it is written to the DB.
-    var actualSenderDid = senderDid
-    if actualSenderDid == nil {
-      actualSenderDid = await getSenderFromMessage(messageId: messageId, recipientDid: recipientDid)
-    }
-
-    // Sender identities may include a device fragment (e.g. did:plc:...#device).
-    // Our profile cache + member table are keyed by canonical DID.
-    let canonicalSenderDid = actualSenderDid.map { did in
-      did.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: true).first.map(
-        String.init) ?? did
-    }
-
-    // CRITICAL: Check if this is a self-sent message AFTER decryption (E2EE safe)
-    // We should NOT show notifications for messages we sent ourselves
-    if let senderDid = canonicalSenderDid {
-      let normalizedSender = senderDid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-      let normalizedRecipient = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      if normalizedSender == normalizedRecipient {
-        logger.info(
-          "🔇 [NSE] Self-sent message detected (sender == recipient) - suppressing notification")
-        return false  // Don't show notification
-      }
-    }
-
-    // Get sender profile from members table in shared MLS database
-    var senderName: String?
-    var senderAvatarURL: String?
-
-    if let senderDid = canonicalSenderDid {
-      if let memberInfo = await getMemberInfo(
-        senderDid: senderDid, convoId: convoId, recipientDid: recipientDid) {
-        senderName = memberInfo.displayName ?? memberInfo.handle
-        senderAvatarURL = memberInfo.avatarURL
-        logger.info("👤 [NSE] Found member info from database: \(senderName ?? "unknown")")
-      }
-
-      // Fallback: fetch from Bluesky API via standalone client
-      if senderName == nil {
-        if let profile = await fetchProfileViaClient(senderDid: senderDid, recipientDid: recipientDid) {
-          senderName = profile.displayName ?? profile.handle
-          senderAvatarURL = profile.avatarURL
-          logger.info("👤 [NSE] Resolved sender via public API: \(senderName ?? "unknown")")
-        } else {
-          logger.warning("👤 [NSE] Could not resolve sender: \(senderDid.prefix(24))...")
-        }
-      }
-    }
-
-    // Build notification title
-    // Format: "Sender Name" or "Sender Name in Group Name"
-    if let sender = senderName {
-      if let convTitle = conversationTitle, !convTitle.isEmpty {
-        content.title = "\(sender) in \(convTitle)"
-      } else {
-        content.title = sender
-      }
-    } else if let convTitle = conversationTitle, !convTitle.isEmpty {
-      content.title = convTitle
-    } else {
-      content.title = "New Message"
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Parse MLS message payload to determine notification content
-    // Encrypted reactions need special handling
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    // Try to parse as MLSMessagePayload JSON first
-    if let payloadData = decryptedText.data(using: .utf8),
-      let payload = try? MLSMessagePayload.decodeFromJSON(payloadData) {
-
-      switch payload.messageType {
-      case .text:
-        // Text message - use the text content
-        if let text = payload.text, !text.isEmpty {
-          content.body = text
-        } else {
-          content.body = "New Message"
-        }
-        logger.info("📝 [NSE] Text message notification")
-
-      case .reaction:
-        // Only show notifications for added reactions, suppress removed reactions
-        if let reaction = payload.reaction {
-          if reaction.action == .add {
-            content.body = "Reacted with \(reaction.emoji)"
-            logger.info("😀 [NSE] Reaction notification: \(reaction.emoji)")
-          } else {
-            // Removed reactions should not generate notifications
-            logger.info("🔇 [NSE] Removed reaction - suppressing notification")
-            return false
-          }
-        } else {
-          // Malformed reaction payload - suppress
-          logger.warning("⚠️ [NSE] Malformed reaction payload - suppressing")
-          return false
-        }
-
-      case .readReceipt, .deliveryAck, .recoveryRequest:
-        // Read receipts, delivery acks, and recovery requests should not generate notifications
-        logger.info("📖 [NSE] Read receipt/delivery ack/recovery - suppressing notification")
-        return false
-
-      case .edit, .delete, .unknown:
-        // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
-        // Non-displayable control message — suppress like readReceipt/deliveryAck.
-        logger.info("✏️ [NSE] Edit/delete/unknown payload - suppressing notification")
-        return false
-
-      case .typing:
-        // Typing indicators are disabled - suppress notification
-        logger.info(
-          "⌨️ [NSE] Typing indicator (disabled feature) - suppressing notification")
-        return false
-
-      case .adminRoster, .adminAction:
-        // Admin actions - generic notification
-        content.body = "Group settings updated"
-        logger.info("👑 [NSE] Admin action notification")
-
-      case .system:
-        // System messages (history boundary markers) - suppress notification
-        logger.info("🔧 [NSE] System message - suppressing notification")
-        return false
-      }
-    } else {
-      // Fallback: If not valid JSON payload, treat as plain text
-      // This handles legacy messages or edge cases
-      content.body = decryptedText
-      logger.info("📄 [NSE] Plain text notification (legacy or fallback)")
-    }
-
-    // Add userInfo for tap handling - allows app to navigate to correct conversation
-    var userInfo = content.userInfo
-    userInfo["type"] = "mls_message"
-    userInfo["convo_id"] = convoId
-    userInfo["recipient_did"] = recipientDid
-    userInfo["message_id"] = messageId
-    content.userInfo = userInfo
-
-    // Try to attach sender's profile photo
-    if let avatarURLString = senderAvatarURL,
-      let avatarURL = URL(string: avatarURLString) {
-      await attachProfilePhoto(to: content, from: avatarURL)
-    }
-
-    // Set category for notification actions if needed
-    content.categoryIdentifier = "MLS_MESSAGE"
-
-    // Set thread identifier for grouping notifications by conversation
-    content.threadIdentifier = "mls-\(convoId)"
-
-    logger.info(
-      "✅ [NSE] Rich notification configured - title: \(content.title), body length: \(content.body.count)"
-    )
-    return true  // Show notification
-  }
-
-  // MARK: - Bluesky Chat Message Push Handling
-
-  /// Handles a `chat_message` push notification by enriching it with profile data.
-  /// No decryption needed — the message text is in the push payload.
-  private func handleChatMessagePush(
-    content: UNMutableNotificationContent,
+  private func enrichBlueskyChatPush(
+    _ content: UNMutableNotificationContent,
     userInfo: [AnyHashable: Any],
+    resolvedRecipientDID: String?,
     contentHandler: @escaping (UNNotificationContent) -> Void
   ) async {
     let senderDid = userInfo["senderDid"] as? String
     let convoId = userInfo["convoId"] as? String
     let messageText = userInfo["messageText"] as? String
 
-    logger.info(
-      "💬 [NSE] chat_message fields: sender=\(senderDid?.prefix(24) ?? "nil"), convo=\(convoId?.prefix(16) ?? "nil")"
-    )
-
-    // Resolve sender profile for display name and avatar
-    var senderName: String?
-    var senderAvatarURL: String?
-
-    if let senderDid {
-      // Try shared profile cache first (written by main app ChatManager)
-      if let cached = await ProfileCacheDatabase.shared.read(did: senderDid) {
-        senderName = cached.displayName ?? cached.handle
-        senderAvatarURL = cached.avatarURL
-        logger.info("👤 [NSE] Resolved sender from profile cache: \(senderName ?? "unknown")")
-      }
-
-      // Slow fallback: fetch from Bluesky API via standalone client
-      if senderName == nil {
-        // Resolve the recipient DID for client creation
-        let recipientDid = resolveAnyLocalAccountDID()
-        if let recipientDid,
-          let profile = await fetchProfileViaClient(
-            senderDid: senderDid, recipientDid: recipientDid) {
-          senderName = profile.displayName ?? profile.handle
-          senderAvatarURL = profile.avatarURL
-          logger.info("👤 [NSE] Resolved sender via API: \(senderName ?? "unknown")")
-          await ProfileCacheDatabase.shared.write(
-            did: senderDid,
-            handle: profile.handle,
-            displayName: profile.displayName,
-            avatarURL: profile.avatarURL
-          )
-        }
-      }
-    }
-
-    // Enrich notification title
-    if let senderName {
-      content.title = senderName
+    if let senderDid, let cached = await ProfileCacheDatabase.shared.read(did: senderDid) {
+      content.title = cached.displayName ?? cached.handle
     } else if content.title.isEmpty {
       content.title = "New Message"
     }
-
-    // Enrich notification body
-    if let messageText, !messageText.isEmpty {
-      content.body = messageText
-    } else {
-      content.body = "Sent you a message"
-    }
-
-    // Thread grouping by conversation
-    if let convoId {
-      content.threadIdentifier = "chat:\(convoId)"
-    }
-
-    // Tap navigation info. recipientDid lets the main app switch to the target
-    // account before navigating (mirrors the MLS path); omitted when unresolvable
-    // so old payloads keep their existing tap behavior.
-    var updatedUserInfo = content.userInfo
-    updatedUserInfo["type"] = "chat_message"
-    if let convoId { updatedUserInfo["convoId"] = convoId }
-    if let senderDid { updatedUserInfo["senderDid"] = senderDid }
-    if let recipientDid = resolveChatRecipientDID(from: userInfo) {
-      updatedUserInfo["recipientDid"] = recipientDid
-    }
-    content.userInfo = updatedUserInfo
-
+    content.body = (messageText?.isEmpty == false) ? messageText! : "Sent you a message"
+    if let convoId { content.threadIdentifier = "chat:\(convoId)" }
     content.categoryIdentifier = "CHAT_MESSAGE"
 
-    // Attach avatar if available
-    if let avatarURLString = senderAvatarURL,
-      let avatarURL = URL(string: avatarURLString) {
-      await attachProfilePhoto(to: content, from: avatarURL)
+    var updatedInfo = content.userInfo
+    if let resolvedRecipientDID {
+      updatedInfo["recipientDid"] = resolvedRecipientDID
+    } else {
+      updatedInfo.removeValue(forKey: "recipientDid")
     }
-
-    logger.info(
-      "✅ [NSE] chat_message notification enriched - title: \(content.title), body length: \(content.body.count)"
-    )
+    content.userInfo = updatedInfo
     contentHandler(content)
   }
 
-  /// Resolves the target account DID for a `chat_message` push so the main app can
-  /// switch to it on tap. Only definitive sources are honored — explicit payload
-  /// fields or the `recipient_account` hash — never a guessed local account, since a
-  /// wrong DID here would switch the user to the wrong account.
   private func resolveChatRecipientDID(from userInfo: [AnyHashable: Any]) -> String? {
-    if let did = userInfo["recipientDid"] as? String {
+    if let did = userInfo["recipientDid"] as? String, !did.isEmpty {
       return did
     }
-    if let did = userInfo["recipient_did"] as? String {
+    if let did = userInfo["recipient_did"] as? String, !did.isEmpty {
       return did
     }
     if let hash = userInfo["recipient_account"] as? String {
-      return resolveRecipientDID(fromHash: hash) ?? resolvePublishedAccountDID(fromHash: hash)
+      return resolvePublishedAccountDID(fromHash: hash)
     }
     return nil
   }
 
-  /// Resolves any locally stored account DID for creating a standalone client.
-  /// Used when the push payload doesn't include the recipient DID.
-  private func resolveAnyLocalAccountDID() -> String? {
-    guard let defaults = appGroupDefaults else { return nil }
-
-    // Try to find any stored account DID from the shared defaults
-    // The main app stores account hashes; we need the actual DID.
-    // Fall back to the active recipient if set during this NSE session.
-    if let activeDid = activeRecipientDID {
-      return activeDid
-    }
-
-    // Check for stored DIDs in shared defaults
-    if let storedDids = defaults.stringArray(forKey: "knownAccountDIDs"),
-      let firstDid = storedDids.first {
-      return firstDid
-    }
-
-    return nil
-  }
-
-  /// Gets the sender DID from the stored message (after decryption)
-  /// This is E2EE safe because sender identity is only available post-decryption
-  /// from the cryptographically authenticated MLS credential
-  private func getSenderFromMessage(messageId: String, recipientDid: String) async -> String? {
-    do {
-      // Normalize the recipient DID for consistent lookup (DIDs are stored normalized)
-      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      // Use NSE-optimized lightweight read
-      let message = try await databaseManager.nseRead(for: recipientDid) { db in
-        try MLSMessageModel
-          .filter(MLSMessageModel.Columns.messageID == messageId)
-          .filter(MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
-          .fetchOne(db)
-      }
-
-      if let senderID = message?.senderID, !senderID.isEmpty, senderID != "unknown" {
-        logger.debug("👤 [NSE] Retrieved sender from message: \(senderID.prefix(24))...")
-        return senderID
-      }
-
-      logger.debug("⚠️ [NSE] No sender found in message record")
-      return nil
-
-    } catch {
-      logger.debug("⚠️ [NSE] Failed to get sender from message: \(error.localizedDescription)")
-      return nil
-    }
-  }
-
-  /// Gets the conversation title from local database
-  private func getConversationTitle(convoId: String, recipientDid: String) async -> String? {
-    do {
-      // Normalize the recipient DID for consistent lookup (DIDs are stored normalized)
-      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      // Use NSE-optimized lightweight read
-      let conversation = try await databaseManager.nseRead(for: recipientDid) { db in
-        try MLSConversationModel
-          .filter(MLSConversationModel.Columns.conversationID == convoId)
-          .filter(MLSConversationModel.Columns.currentUserDID == normalizedRecipientDid)
-          .fetchOne(db)
-      }
-
-      if let title = conversation?.title, !title.isEmpty {
-        logger.debug("📝 [NSE] Found conversation title: \(title)")
-        return title
-      }
-
-      // If no title, this might be a DM - we could infer from members
-      // but for now return nil to fall back to sender name
-      logger.debug("📝 [NSE] No conversation title found")
-      return nil
-
-    } catch {
-      logger.warning("⚠️ [NSE] Failed to get conversation title: \(error.localizedDescription)")
-      return nil
-    }
-  }
-
-  /// Gets member info from the MLS member table
-  private func getMemberInfo(senderDid: String, convoId: String, recipientDid: String) async -> (
-    displayName: String?, handle: String?, avatarURL: String?
-  )? {
-    do {
-      // Normalize the DID for consistent lookup (DIDs are stored normalized in the database)
-      let normalizedSenderDid = senderDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      // Normalize the recipient DID for consistent scoping (tables are per-user)
-      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-
-      // Use NSE-optimized lightweight read
-      let member = try await databaseManager.nseRead(for: recipientDid) { db in
-        try MLSMemberModel
-          .filter(MLSMemberModel.Columns.did == normalizedSenderDid)
-          .filter(MLSMemberModel.Columns.conversationID == convoId)
-          .filter(MLSMemberModel.Columns.currentUserDID == normalizedRecipientDid)
-          .fetchOne(db)
-      }
-
-      if let member = member {
-        return (displayName: member.displayName, handle: member.handle, avatarURL: member.avatarURL)
-      }
-
-      return nil
-
-    } catch {
-      logger.debug("⚠️ [NSE] Failed to get member info: \(error.localizedDescription)")
-      return nil
-    }
-  }
-
-  /// Fetch a Bluesky profile via the NSE's standalone ATProtoClient.
-  private func fetchProfileViaClient(senderDid: String, recipientDid: String) async -> (displayName: String?, handle: String, avatarURL: String?)? {
-    guard let client = await createStandaloneClientForUser(recipientDid) else { return nil }
-    do {
-      let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: senderDid))
-      let (_, profile) = try await client.app.bsky.actor.getProfile(input: params)
-      guard let profile else { return nil }
-      return (
-        displayName: profile.displayName,
-        handle: profile.handle.description,
-        avatarURL: profile.avatar?.uriString()
-      )
-    } catch {
-      logger.debug("⚠️ [NSE] Profile fetch failed: \(error.localizedDescription)")
-      return nil
-    }
-  }
-
-  // MARK: - Attachments & Avatar Cache
-
-  /// Rewrites /img/avatar/ to /img/avatar_thumbnail/ for smaller payload size.
-  private static func thumbnailAvatarURL(from url: URL) -> URL {
-    let str = url.absoluteString
-    if str.contains("/img/avatar/") {
-      let rewritten = str.replacingOccurrences(of: "/img/avatar/", with: "/img/avatar_thumbnail/")
-      if let newURL = URL(string: rewritten) {
-        return newURL
-      }
-    }
-    return url
-  }
-
-  /// Base directory for the shared NSE avatar disk cache in the App Group.
-  private static var avatarCacheDirectory: URL {
-    let base = FileManager.default.containerURL(
-      forSecurityApplicationGroupIdentifier: appGroupSuite
-    )?.appendingPathComponent("Library/Caches/NSEAvatarCache", isDirectory: true)
-      ?? FileManager.default.temporaryDirectory.appendingPathComponent("NSEAvatarCache", isDirectory: true)
-    try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-    return base
-  }
-
-  /// Downloads and attaches the sender's profile photo using a thumbnail URL and a bounded disk cache.
-  private func attachProfilePhoto(
-    to content: UNMutableNotificationContent,
-    from rawURL: URL
-  ) async {
-    let thumbnailURL = Self.thumbnailAvatarURL(from: rawURL)
-    let fileKey = Self.sha256Hex(thumbnailURL.absoluteString)
-    let cacheDir = Self.avatarCacheDirectory
-
-    // Check disk cache
-    if let contents = try? FileManager.default.contentsOfDirectory(
-      at: cacheDir,
-      includingPropertiesForKeys: [.contentModificationDateKey]
-    ),
-      let match = contents.first(where: { $0.deletingPathExtension().lastPathComponent == fileKey })
-    {
-      try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: match.path)
-      let ext = match.pathExtension
-      let mime = ext == "png" ? "image/png" : (ext == "gif" ? "image/gif" : "image/jpeg")
-      if attachFile(at: match, to: content, mimeType: mime) {
-        return
-      }
-    }
-
-    // Download with 8s timeout and returnCacheDataElseLoad
-    var request = URLRequest(url: thumbnailURL)
-    request.timeoutInterval = 8
-    request.cachePolicy = .returnCacheDataElseLoad
-
-    do {
-      let (data, response) = try await URLSession.shared.data(for: request)
-      guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-        logger.warning("[NSE] Profile photo download failed - invalid response")
-        return
-      }
-
-      let mimeType = httpResponse.mimeType ?? "image/jpeg"
-      let fileExtension: String
-      switch mimeType {
-      case "image/png": fileExtension = "png"
-      case "image/gif": fileExtension = "gif"
-      default: fileExtension = "jpg"
-      }
-
-      let cachedFileURL = cacheDir.appendingPathComponent("\(fileKey).\(fileExtension)")
-      do {
-        try data.write(to: cachedFileURL, options: .atomic)
-        Self.pruneAvatarCacheIfNeeded(in: cacheDir, maxEntries: 50)
-        _ = attachFile(at: cachedFileURL, to: content, mimeType: mimeType)
-      } catch {
-        logger.warning("[NSE] Failed to write avatar to cache: \(error.localizedDescription)")
-        let tempURL = FileManager.default.temporaryDirectory
-          .appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
-        try data.write(to: tempURL, options: .atomic)
-        do {
-          let attachment = try UNNotificationAttachment(
-            identifier: "avatar",
-            url: tempURL,
-            options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
-          )
-          content.attachments = [attachment]
-        } catch {
-          logger.warning("[NSE] Fallback UNNotificationAttachment failed: \(error.localizedDescription)")
-          try? FileManager.default.removeItem(at: tempURL)
-        }
-      }
-    } catch {
-      logger.warning("[NSE] Failed to attach profile photo: \(error.localizedDescription)")
-    }
-  }
-
-  /// Attaches a file to notification content.
-  /// Copies the source file to a temporary location first because UNNotificationAttachment
-  /// moves the source file into the system notification attachment store.
-  private func attachFile(
-    at sourceURL: URL,
-    to content: UNMutableNotificationContent,
-    mimeType: String = "image/jpeg"
-  ) -> Bool {
-    let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension
-    let tempURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("\(UUID().uuidString).\(ext)")
-    do {
-      try FileManager.default.copyItem(at: sourceURL, to: tempURL)
-      let attachment = try UNNotificationAttachment(
-        identifier: "avatar",
-        url: tempURL,
-        options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
-      )
-      content.attachments = [attachment]
-      return true
-    } catch {
-      logger.warning("[NSE] UNNotificationAttachment failed: \(error.localizedDescription)")
-      try? FileManager.default.removeItem(at: tempURL)
-      return false
-    }
-  }
-
-  /// Keeps the avatar cache bounded to at most `maxEntries` items (LRU by modification date).
-  private static func pruneAvatarCacheIfNeeded(in directory: URL, maxEntries: Int) {
-    guard let files = try? FileManager.default.contentsOfDirectory(
-      at: directory,
-      includingPropertiesForKeys: [.contentModificationDateKey],
-      options: .skipsHiddenFiles
-    ), files.count > maxEntries else { return }
-
-    let sorted = files.compactMap { url -> (URL, Date)? in
-      guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
-        let date = values.contentModificationDate
-      else { return nil }
-      return (url, date)
-    }.sorted { $0.1 < $1.1 }  // oldest first
-
-    let toDelete = sorted.prefix(files.count - maxEntries)
-    for (url, _) in toDelete {
-      try? FileManager.default.removeItem(at: url)
-    }
-  }
-
-  // MARK: - Privacy-Preserving Account Matching
-
-  /// Resolve a recipient DID from a SHA-256 hash using the Core database-owner mapping.
-  /// Validates hash syntax (64 lowercase hex characters) and looks up the exact mapping key in App Group defaults.
-  private func resolveRecipientDID(fromHash hash: String) -> String? {
-    let normalizedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    guard normalizedHash.count == 64,
-      normalizedHash.utf8.allSatisfy({ ($0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9")) || ($0 >= UInt8(ascii: "a") && $0 <= UInt8(ascii: "f")) })
-    else {
-      logger.warning("⚠️ [NSE] Invalid recipient_account hash format: \(hash)")
-      return nil
-    }
-
-    do {
-      if let did = try MLSStoragePaths.resolveDatabaseOwnerDID(forNormalizedDIDHash: normalizedHash) {
-        logger.info("✅ [NSE] Resolved recipient_account hash to local account")
-        return did
-      } else {
-        logger.warning("⚠️ [NSE] No local account matched recipient_account hash")
-        return nil
-      }
-    } catch {
-      logger.error("❌ [NSE] Failed to resolve recipient_account hash: \(error.localizedDescription)")
-      return nil
-    }
-  }
-
-  /// Matches a `recipient_account` hash against the account DIDs the main app publishes: signed-in
-  /// accounts (`knownAccountDIDs`) and accounts whose session ended, which leave the known list but
-  /// must still resolve so their pushes stay hidden. Accounts without MLS storage have no
-  /// database-owner mapping, so `resolveRecipientDID(fromHash:)` cannot match them.
   private func resolvePublishedAccountDID(fromHash hash: String) -> String? {
     let normalizedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     guard normalizedHash.count == 64 else { return nil }
-    for did in candidateAccountDIDsForHashMatching() {
-      let candidates = [did, did.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()]
-      for candidate in candidates where Self.sha256Hex(candidate) == normalizedHash {
+    var candidates = appGroupDefaults?.stringArray(forKey: "knownAccountDIDs") ?? []
+    if let ended = appGroupDefaults?.stringArray(forKey: Self.sessionEndedAccountDIDsKey) {
+      for did in ended where !candidates.contains(did) {
+        candidates.append(did)
+      }
+    }
+    for did in candidates {
+      let forms = [did, did.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()]
+      for form in forms where Self.sha256Hex(form) == normalizedHash {
         return did
       }
     }
     return nil
-  }
-
-  private func candidateAccountDIDsForHashMatching() -> [String] {
-    var dids = appGroupDefaults?.stringArray(forKey: "knownAccountDIDs") ?? []
-    if let ended = appGroupDefaults?.stringArray(forKey: Self.sessionEndedAccountDIDsKey) {
-      for did in ended where !dids.contains(did) {
-        dids.append(did)
-      }
-    }
-    return dids
   }
 
   private static func sha256Hex(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+
+  private static func decodePushWakePayload(from userInfo: [AnyHashable: Any]) -> PushWakePayload? {
+    let dict: [String: Any]
+    if let nested = userInfo["payload"] as? [String: Any] {
+      dict = nested
+    } else if let jsonStr = userInfo["payload"] as? String,
+              let data = jsonStr.data(using: .utf8),
+              let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    {
+      dict = parsed
+    } else {
+      dict = Dictionary(uniqueKeysWithValues: userInfo.compactMap { k, v in
+        (k as? String).map { ($0, v) }
+      })
+    }
+
+    guard let rawConvo = (dict["conversationId"] as? String) ?? (dict["convo_id"] as? String),
+          let rawHash = (dict["recipientAccountHash"] as? String) ?? (dict["recipient_account"] as? String),
+          !rawConvo.isEmpty,
+          !rawHash.isEmpty
+    else { return nil }
+
+    let kind = (dict["kind"] as? String) ?? (dict["type"] as? String) ?? "application"
+    let generation = (dict["generation"] as? Int64) ?? (dict["generation"] as? Int).map(Int64.init) ?? 0
+    let entrySeq = (dict["entrySeq"] as? Int64) ?? (dict["seq"] as? Int64) ?? (dict["seq"] as? String).flatMap(Int64.init) ?? 0
+    let messageId = (dict["messageId"] as? String) ?? (dict["message_id"] as? String) ?? "msg-\(entrySeq)"
+    let senderDid = (dict["senderDid"] as? String) ?? (dict["sender_did"] as? String)
+    let inlineCiphertext = (dict["ciphertext"] as? String).flatMap { Data(base64Encoded: $0) }
+    let fetchRequired = (dict["fetchRequired"] as? Bool) ?? (inlineCiphertext == nil)
+
+    return PushWakePayload(
+      kind: kind,
+      conversationId: rawConvo,
+      generation: generation,
+      entrySeq: entrySeq,
+      messageId: messageId,
+      recipientAccountHash: rawHash.lowercased(),
+      fetchRequired: fetchRequired,
+      senderDid: senderDid,
+      inlineCiphertext: inlineCiphertext
+    )
+  }
+
+  private static func applyFallback(to content: UNMutableNotificationContent, wake: PushWakePayload) {
+    content.title = wake.kind.contains("request") ? "Message Request" : "Catbird"
+    content.body = MLSPushExtensionProcessor.genericFallbackBody
+    content.threadIdentifier = "mls-\(wake.conversationId)"
+    content.categoryIdentifier = "MLS_MESSAGE"
+  }
+
+  private static func buildCommunicationNotification(
+    base: UNMutableNotificationContent,
+    preview: NotificationPreview,
+    wake: PushWakePayload
+  ) -> UNNotificationContent {
+    let senderName = preview.senderDisplayName ?? "Catbird"
+    base.title = preview.groupTitle ?? senderName
+    base.body = preview.body
+    base.threadIdentifier = "mls-\(preview.conversationId)"
+    base.categoryIdentifier = "MLS_MESSAGE"
+    var info = base.userInfo
+    info["type"] = wake.kind.contains("request") ? "mls_message_request" : "mls_message"
+    info["protocol_version"] = "2"
+    info["convo_id"] = preview.conversationId
+    info["message_id"] = preview.messageId
+    info["recipient_account"] = wake.recipientAccountHash
+    base.userInfo = info
+
+    guard !preview.fallbackGeneric else { return base }
+
+    let senderId = preview.senderDid.isEmpty ? preview.conversationId : preview.senderDid
+    let sender = INPerson(
+      personHandle: INPersonHandle(value: senderId, type: .unknown),
+      nameComponents: nil,
+      displayName: senderName,
+      image: nil,
+      contactIdentifier: nil,
+      customIdentifier: senderId
+    )
+    let intent = INSendMessageIntent(
+      recipients: nil,
+      outgoingMessageType: .outgoingMessageText,
+      content: preview.body,
+      speakableGroupName: preview.groupTitle.map(INSpeakableString.init(spokenPhrase:)),
+      conversationIdentifier: preview.conversationId,
+      serviceName: "Catbird",
+      sender: sender,
+      attachments: nil
+    )
+    return (try? base.updating(from: intent)) ?? base
   }
 }

@@ -97,16 +97,16 @@ struct MLSFullscreenImageView: View {
       return
     }
 
-    // 2. On disk miss, download and decrypt using authenticated path
-    guard let deviceId = await resolveActorDeviceId(effectiveDID: effectiveDID) else { return }
-
+    // 2. On disk miss, download and decrypt via com.atproto.space.getBlob (I14)
     do {
-      let (responseCode, output) = try await appState.client.blue.catbird.chat.getBlob(
-        input: .init(actorDeviceId: deviceId, blobId: imageEmbed.blobId)
+      let fetchResult = try await MLSSpaceBlobLocator.fetchEncryptedBlob(
+        blobId: imageEmbed.blobId,
+        using: appState.client
       )
 
-      guard (200...299).contains(responseCode), let output else { return }
-      let ciphertext = output.data
+      guard (200...299).contains(fetchResult.responseCode), let ciphertext = fetchResult.data else {
+        return
+      }
 
       let plaintext = try BlobCrypto.decrypt(
         ciphertext: ciphertext,
@@ -123,35 +123,6 @@ struct MLSFullscreenImageView: View {
     } catch {
       // Retain thumbnail display on download/decrypt failure
     }
-  }
-
-  private func resolveActorDeviceId(effectiveDID: String) async -> String? {
-    if let deviceUuid = try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: effectiveDID),
-       !deviceUuid.isEmpty, UUID(uuidString: deviceUuid) != nil {
-      return deviceUuid
-    }
-    if let conversationManager = await appState.getMLSConversationManager() {
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        if let registered = try? await conversationManager.registeredDeviceInfoForPushTokenRegistration(),
-           !registered.deviceId.isEmpty, UUID(uuidString: registered.deviceId) != nil {
-          return registered.deviceId
-        }
-      } else {
-        if let registered = await conversationManager.mlsClient.getDeviceInfo(for: effectiveDID),
-           !registered.deviceId.isEmpty, UUID(uuidString: registered.deviceId) != nil {
-          return registered.deviceId
-        }
-      }
-    }
-    let normalizedUserDid = effectiveDID.trimmingCharacters(in: .whitespacesAndNewlines)
-    let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
-    if let data = sharedDefaults.data(forKey: "blue.catbird.mls.deviceInfoByUser"),
-       let decoded = try? JSONDecoder().decode([String: MLSDeviceManager.UserDeviceInfo].self, from: data),
-       let info = decoded[normalizedUserDid],
-       !info.deviceId.isEmpty, UUID(uuidString: info.deviceId) != nil {
-      return info.deviceId
-    }
-    return nil
   }
 
   // MARK: - Controls

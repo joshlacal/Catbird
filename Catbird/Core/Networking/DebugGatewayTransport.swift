@@ -209,7 +209,9 @@ public final class DebugGatewayTransport: @unchecked Sendable {
             self.activeManifest = manifestInfo
             self.activeAccount = account
             self.underlyingTransport = transport
-            MLSStoragePaths.setBaseDirectoryOverride(URL(fileURLWithPath: config.profilePath))
+            _ = try? MLSAppGroupStorage.prepareStorageRoot(
+                URL(fileURLWithPath: config.profilePath, isDirectory: true)
+            )
             self.isActivated = true
         }
     }

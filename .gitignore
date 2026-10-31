@@ -276,3 +276,5 @@ PreviewSecrets.xcconfig
 
 # Local telemetry DSN (public repo; never commit)
 Telemetry.local.xcconfig
+/_trash/
+

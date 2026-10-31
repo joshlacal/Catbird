@@ -193,8 +193,8 @@ struct CatbirdMessagesConversationEntity: Identifiable, Hashable, Sendable {
 @available(anyAppleOS 27.0, *)
 struct CatbirdMessagesConversationQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesConversationEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let coordinator = try await MessagesSchemaRuntime.coordinator()
+    let directory = try await MessagesSchemaRuntime.directory(coordinator: coordinator)
     let byID = Dictionary(
       uniqueKeysWithValues: directory.conversations.map { ($0.conversationID, $0) })
 
@@ -206,8 +206,8 @@ struct CatbirdMessagesConversationQuery: EntityStringQuery {
   }
 
   func entities(matching string: String) async throws -> [CatbirdMessagesConversationEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let coordinator = try await MessagesSchemaRuntime.coordinator()
+    let directory = try await MessagesSchemaRuntime.directory(coordinator: coordinator)
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
 
     // Conversations arrive lastMessageAt-descending from storage. Match the
@@ -317,14 +317,14 @@ struct CatbirdMessagesMessageEntity: Identifiable, Hashable, Sendable {
 @available(anyAppleOS 27.0, *)
 struct CatbirdMessagesMessageQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesMessageEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let coordinator = try await MessagesSchemaRuntime.coordinator()
+    let directory = try await MessagesSchemaRuntime.directory(coordinator: coordinator)
     let byID = Dictionary(
       uniqueKeysWithValues: directory.conversations.map { ($0.conversationID, $0) })
 
     var entities: [CatbirdMessagesMessageEntity] = []
     for identifier in identifiers {
-      let message = try await MessagesSchemaRuntime.fetchMessage(identifier, manager: manager)
+      let message = try await MessagesSchemaRuntime.fetchMessage(identifier, coordinator: coordinator)
       guard let canonicalID = try? MessagesSchemaRuntime.resolveConversationID(
         message.conversationID,
         in: directory
@@ -360,24 +360,21 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
     conversationLimit: Int,
     messagesPerConversation: Int
   ) async throws -> [CatbirdMessagesMessageEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let coordinator = try await MessagesSchemaRuntime.coordinator()
+    let directory = try await MessagesSchemaRuntime.directory(coordinator: coordinator)
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let userDID = manager.userDid else {
-      throw IntentError.notSignedIn
-    }
+    let userDID = await coordinator.accountDid
 
     var matchingEntities: [CatbirdMessagesMessageEntity] = []
     for convo in directory.conversations.prefix(conversationLimit) {
-      let messages = try await manager.storage.fetchMessagesForConversation(
-        convo.conversationID,
-        currentUserDID: userDID,
-        database: manager.database,
-        limit: messagesPerConversation
+      let rows = try await coordinator.listMessages(
+        conversationId: convo.conversationID,
+        limit: UInt32(max(1, messagesPerConversation))
       )
 
-      for message in messages {
-        let plaintext = message.plaintext ?? ""
+      for row in rows {
+        let message = MLSMessageModel(row: row, currentUserDID: userDID)
+        let plaintext = message.parsedPayload()?.text ?? ""
         if trimmed.isEmpty || plaintext.localizedCaseInsensitiveContains(trimmed) {
           matchingEntities.append(
             MessagesSchemaRuntime.messageEntity(
@@ -445,8 +442,8 @@ extension CatbirdMessagesMessageEntity: Transferable {
 @available(anyAppleOS 27.0, *)
 struct CatbirdMessagesPersonQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesPersonEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let coordinator = try await MessagesSchemaRuntime.coordinator()
+    let directory = try await MessagesSchemaRuntime.directory(coordinator: coordinator)
 
     return identifiers.map { did in
       if let member = directory.member(withDID: did) {
@@ -457,8 +454,8 @@ struct CatbirdMessagesPersonQuery: EntityStringQuery {
   }
 
   func entities(matching string: String) async throws -> [CatbirdMessagesPersonEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let coordinator = try await MessagesSchemaRuntime.coordinator()
+    let directory = try await MessagesSchemaRuntime.directory(coordinator: coordinator)
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
 
     // Candidates are chat members (excluding self), recency-ordered. Siri

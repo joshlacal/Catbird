@@ -1,5 +1,4 @@
 import CatbirdMLSCore
-import GRDB
 import OSLog
 import Petrel
 import SwiftUI
@@ -289,6 +288,23 @@ struct ChatTabView: View {
       if !searchText.isEmpty {
         searchResultsContent
       } else {
+        if mlsChatEnabledForCurrentAccount,
+           let eligibility = appState.spacesEligibility,
+           !eligibility.eligible {
+          Section {
+            MLSSpacesRequiredGateView(
+              eligibility: eligibility,
+              onReauthorizeScopes: {
+                Task { await appState.reauthorizeSpacesForMLS() }
+              },
+              onRefreshCheck: {
+                try? await appState.initializeMLS()
+              }
+            )
+            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+          }
+        }
+
         Section {
           ForEach(coordinator.conversations) { item in
             unifiedRow(for: item)
@@ -791,10 +807,44 @@ struct ChatTabView: View {
     coordinator.mlsEnabled = true
 
     let userDID = appState.userDID
+    guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
+      var idleState = coordinator.mlsState
+      idleState.isLoading = false
+      coordinator.mlsState = idleState
+      return
+    }
 
     do {
-      let (loadedConversations, membersByConvoID) = try await MLSStorage.shared
-        .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID)
+      let rows = try await mlsCoordinator.listConversations(limit: 100)
+      let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+      let hiddenKey = "mls.deletedForMe.\(userDID.lowercased())"
+      let hiddenIDs = Set(defaults.stringArray(forKey: hiddenKey) ?? [])
+
+      let loadedConversations: [MLSConversationModel] = rows.compactMap { row in
+        guard !hiddenIDs.contains(row.conversationId) else { return nil }
+        let muteKey = "mls.mutedUntil.\(userDID.lowercased()).\(row.conversationId)"
+        let mutedSeconds = defaults.double(forKey: muteKey)
+        let mutedUntil = mutedSeconds > 0 ? Date(timeIntervalSince1970: mutedSeconds) : nil
+        let base = MLSConversationModel(row: row, currentUserDID: userDID)
+        return MLSConversationModel(
+          conversationID: base.conversationID,
+          currentUserDID: base.currentUserDID,
+          groupID: base.groupID,
+          epoch: base.epoch,
+          generation: base.generation,
+          sequencerDID: base.sequencerDID,
+          spaceURI: base.spaceURI,
+          joinMethod: base.joinMethod,
+          joinEpoch: base.joinEpoch,
+          title: base.title,
+          description: base.description,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt,
+          lastMessageAt: base.lastMessageAt,
+          unreadCount: base.unreadCount,
+          mutedUntil: mutedUntil
+        )
+      }
 
       let identityRecords = loadedConversations.map {
         MLSConversationIdentityBoundary.Record(
@@ -817,108 +867,59 @@ struct ChatTabView: View {
         }
       }
 
-      func canonicalKey(_ requestedID: String) -> String? {
-        try? MLSConversationIdentityBoundary.resolve(requestedID, in: identityRecords)
-      }
-
-      let pendingConsentIDs = try await MLSGRDBManager.shared.read(for: userDID) { db in
-        Set(try loadedConversations.filter { try $0.hasPendingConsent(in: db) }.map(\.conversationID))
-      }
       guard appState.userDID == userDID else { return }
       let acceptedConversations = loadedConversations.filter {
-        canonicalIDs.contains($0.conversationID) && !pendingConsentIDs.contains($0.conversationID)
+        canonicalIDs.contains($0.conversationID)
       }
 
       var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
-      for (requestedID, members) in membersByConvoID {
-        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
-        canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
-      }
-
-      let rawUnreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
-        try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(from: db, currentUserDID: userDID)
-      }
       var unreadCounts: [String: Int] = [:]
-      for (requestedID, count) in rawUnreadCounts {
-        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
-        unreadCounts[canonicalID, default: 0] += count
-      }
+      var canonicalLastMessages: [String: MLSLastMessagePreview] = [:]
+      var canonicalLatestActivity: [String: Date] = [:]
 
-      // Pull the per-DID MlsContext so the sync DB closure below can
-      // decrypt `payloadEncrypted` rows in-memory.
-      let previewMlsContext: MlsContext?
-      do {
-        previewMlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: userDID)
-      } catch {
-        previewMlsContext = nil
-      }
+      for conversation in acceptedConversations {
+        let convoID = conversation.conversationID
+        unreadCounts[convoID] = conversation.unreadCount
+        let messageRows = (try? await mlsCoordinator.listMessages(conversationId: convoID, limit: 20)) ?? []
+        let recentMessages = messageRows.map { MLSMessageModel(row: $0, currentUserDID: userDID) }
 
-      let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: MLSLastMessagePreview], [String: Date]) in
-        var previews: [String: MLSLastMessagePreview] = [:]
-        var latestActivity: [String: Date] = [:]
-        for conversation in acceptedConversations {
-          let convoID = conversation.conversationID
-          let recentMessages = try MLSMessageModel
-            .filter(MLSMessageModel.Columns.conversationID == convoID)
-            .filter(MLSMessageModel.Columns.currentUserDID == userDID)
-            .order(MLSMessageModel.Columns.timestamp.desc)
-            .limit(20)
-            .fetchAll(db)
+        if let newest = recentMessages.first {
+          canonicalLatestActivity[convoID] = newest.timestamp
+        }
 
-          if let newest = recentMessages.first {
-            latestActivity[convoID] = newest.timestamp
-          }
+        var seenMemberDIDs = Set<String>()
+        var convoMembers: [MLSMemberModel] = []
+        for message in recentMessages where seenMemberDIDs.insert(message.senderID).inserted {
+          convoMembers.append(
+            MLSMemberModel(
+              memberID: "\(convoID):\(message.senderID)",
+              conversationID: convoID,
+              currentUserDID: userDID,
+              did: message.senderID
+            )
+          )
+        }
+        canonicalMembersByConvoID[convoID] = convoMembers
 
-          for message in recentMessages {
-            let messagePayload: MLSMessagePayload?
-            if let ctx = previewMlsContext {
-              messagePayload = message.decryptedPayload(context: ctx)
-            } else {
-              messagePayload = message.parsedPayload
-            }
-            if message.processingError != nil {
-              let text = messagePayload?.text ?? ""
-              if text.isEmpty || text.contains("Message unavailable")
-                || text.contains("Decryption Failed") || text.contains("Self-sent message") {
-                continue
-              }
-            }
-            if let payload = messagePayload {
-              switch payload.messageType {
-              case .text, .system, nil:
-                if let plaintext = payload.text, !plaintext.isEmpty {
-                  previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: plaintext)
-                } else if case .some(.image(_)) = payload.embed {
-                  previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Sent a photo")
-                } else {
-                  continue
-                }
-              case .reaction:
-                previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
-              case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest,
-                   // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
-                   .edit, .delete, .unknown:
-                continue
-              }
+        for message in recentMessages {
+          guard let payload = message.parsedPayload() else { continue }
+          switch payload.messageType {
+          case .text, .system, nil:
+            if let plaintext = payload.text, !plaintext.isEmpty {
+              canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: plaintext)
+            } else if case .some(.image(_)) = payload.embed {
+              canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Sent a photo")
             } else {
               continue
             }
-            break
+          case .reaction:
+            canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
+          case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest,
+               .edit, .delete, .unknown:
+            continue
           }
+          break
         }
-        return (previews, latestActivity)
-      }
-
-      var canonicalLatestActivity: [String: Date] = [:]
-      for (requestedID, date) in latestActivityByConvo {
-        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
-        canonicalLatestActivity[canonicalID] = max(canonicalLatestActivity[canonicalID] ?? .distantPast, date)
-      }
-
-      var canonicalLastMessages: [String: MLSLastMessagePreview] = [:]
-      for (requestedID, msg) in lastMessages {
-        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
-        canonicalLastMessages[canonicalID] = msg
       }
 
       let sortedConversations = acceptedConversations.sorted { lhs, rhs in
@@ -936,32 +937,14 @@ struct ChatTabView: View {
         return
       }
 
-      // Build participants from DB-cached profiles
       var participants: [String: [MLSParticipantViewModel]] = [:]
-      var dbProfiles: [MLSProfileEnricher.ProfileData] = []
-      for members in canonicalMembersByConvoID.values {
-        for member in members where member.handle != nil || member.displayName != nil {
-          dbProfiles.append(MLSProfileEnricher.ProfileData(
-            did: member.did, handle: member.handle ?? "",
-            displayName: member.displayName, avatarURL: nil
-          ))
-        }
-      }
-      await appState.mlsProfileEnricher.seedFromDatabase(dbProfiles)
-
-      let dbProfilesByDID = Dictionary(
-        dbProfiles.map { (MLSProfileEnricher.canonicalDID($0.did), $0) },
-        uniquingKeysWith: { first, _ in first }
-      )
       for (convoID, members) in canonicalMembersByConvoID {
         participants[convoID] = members.map { member in
-          let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
-          let profile = dbProfilesByDID[canonicalDID]
-          return MLSParticipantViewModel(
+          MLSParticipantViewModel(
             id: member.did,
-            handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
-            displayName: profile?.displayName ?? member.displayName,
-            avatarURL: profile?.avatarURL
+            handle: member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
+            displayName: member.displayName,
+            avatarURL: nil
           )
         }
       }
@@ -1028,86 +1011,22 @@ struct ChatTabView: View {
 
   // MARK: - MLS Eager Refresh
 
-  /// Eagerly fetch + decrypt the latest message for the top-N most-recently-active
-  /// convos so previews + unread counts reflect server state when the list mounts
-  /// or the app returns to foreground. Bounded to `eagerRefreshTopN` to keep the
-  /// network/battery cost predictable.
-  ///
-  /// Invariants:
-  /// - No-op when MLS disabled, conversations cache empty (cold-start), or
-  ///   manager is unavailable (account switch / shutdown / maintenance).
-  /// - Skips the currently-open convo since its detail VM and per-convo WS already
-  ///   keep state fresh.
-  /// - Coalesces calls within `eagerRefreshThrottle`.
-  /// - Errors per-convo are swallowed inside `triggerCatchup`; the outer batch
-  ///   logs once and continues.
   @MainActor
   private func performEagerRefreshIfNeeded(reason: String) async {
     guard mlsChatEnabledForCurrentAccount else { return }
 
-    // Cold-start guard: if local cache hasn't populated yet, the existing
-    // initial-load path will fire `loadMLSConversations` again on its own;
-    // we skip this frame rather than racing against it.
     let allConversations = coordinator.mlsState.conversations
     guard !allConversations.isEmpty else {
       logger.debug("Eager refresh (\(reason)): skipped — conversation cache empty")
       return
     }
 
-    // Throttle: avoid redundant fetches when mount + scene-active fire close together.
     if let last = lastEagerRefreshAt, Date().timeIntervalSince(last) < eagerRefreshThrottle {
       logger.debug("Eager refresh (\(reason)): throttled (last fired \(Date().timeIntervalSince(last))s ago)")
       return
     }
     lastEagerRefreshAt = Date()
 
-    // Wait briefly for the manager to be available; bail on account switch / shutdown.
-    guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
-      logger.debug("Eager refresh (\(reason)): manager unavailable")
-      return
-    }
-
-    // Pick top-N most-recently-active convos (by latest message timestamp,
-    // falling back to convo createdAt for empty conversations). Exclude the
-    // currently-open convo — its detail VM keeps state fresh.
-    let latestActivity = coordinator.mlsState.latestActivity
-    let openConvoId = selectedConvoId
-    let candidates = allConversations
-      .filter { $0.conversationID != openConvoId }
-      .sorted { lhs, rhs in
-        let lhsDate = latestActivity[lhs.conversationID] ?? lhs.createdAt
-        let rhsDate = latestActivity[rhs.conversationID] ?? rhs.createdAt
-        return lhsDate > rhsDate
-      }
-      .prefix(eagerRefreshTopN)
-      .map { $0.conversationID }
-
-    guard !candidates.isEmpty else {
-      logger.debug("Eager refresh (\(reason)): no candidates after filtering")
-      return
-    }
-
-    let started = Date()
-    let convoCount = candidates.count
-
-    // Fan out concurrent catchups. `triggerCatchup` is non-throwing; per-convo
-    // failures are logged inside it. The bound on concurrency is implicit —
-    // we only enqueue `eagerRefreshTopN` tasks. Each subtask hops to MainActor
-    // for compatibility with the manager's isolation expectations (matches the
-    // existing `manager.triggerCatchup` call sites in CatbirdApp/onReconnected).
-    await withTaskGroup(of: Void.self) { group in
-      for convoId in candidates {
-        group.addTask { @MainActor in
-          await manager.triggerCatchup(for: convoId)
-        }
-      }
-    }
-
-    let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
-    logger.info("Eagerly refreshed \(convoCount) convo(s) (\(reason)) in \(elapsedMs)ms")
-
-    // Refresh the list from DB so newly-decrypted messages reflect in previews
-    // and unread counts, then update the tab badge.
     await loadMLSConversations()
     appState.updateMLSUnreadCount()
   }
@@ -1130,27 +1049,17 @@ struct ChatTabView: View {
 
       // Run event-driven refresh and slow fallback poll concurrently
       await withTaskGroup(of: Void.self) { group in
-        // Event-driven: reload on each WebSocket notification
         group.addTask {
           for await _ in stream {
             guard !Task.isCancelled else { break }
             await self.loadMLSConversations()
           }
         }
-        // Fallback: slow poll every 120s for resilience
         group.addTask {
-          var cycleCount = 0
           while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(120))
             guard !Task.isCancelled else { break }
             await self.loadMLSConversations()
-            cycleCount += 1
-            if cycleCount % 5 == 0 {
-              let userDID = self.appState.userDID
-              Task.detached(priority: .utility) {
-                try? await MLSGRDBManager.shared.checkpointDatabase(for: userDID)
-              }
-            }
           }
         }
       }
@@ -1168,60 +1077,40 @@ struct ChatTabView: View {
       logger.warning("Account switched before deleteMLSConversationForMe confirmed; dropping mutation")
       return
     }
-    Task {
-      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
-        await MainActor.run {
-          guard appState.userDID == targetDID else { return }
-          mlsConversationPrompt = .status(title: "Could Not Delete", message: "Secure chat is not available. Please try again in a moment.")
-        }
-        return
-      }
+    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+    let hiddenKey = "mls.deletedForMe.\(targetDID.lowercased())"
+    var hiddenIDs = Set(defaults.stringArray(forKey: hiddenKey) ?? [])
+    hiddenIDs.insert(convoID)
+    defaults.set(Array(hiddenIDs).sorted(), forKey: hiddenKey)
 
-      // Revalidate before manager mutation
-      guard await MainActor.run(body: { appState.userDID == targetDID }) else {
-        logger.warning("Account switched during manager resolution; dropping mutation")
-        return
-      }
+    var updatedState = coordinator.mlsState
+    updatedState.conversations.removeAll { $0.conversationID == convoID }
+    updatedState.participants.removeValue(forKey: convoID)
+    updatedState.unreadCounts.removeValue(forKey: convoID)
+    updatedState.lastMessages.removeValue(forKey: convoID)
+    updatedState.memberChanges.removeValue(forKey: convoID)
+    coordinator.mlsState = updatedState
+    if selectedConvoId == convoID { selectedConvoId = nil }
 
-      do {
-        try await manager.deleteConversationForMe(convoId: convoID, expectedUserDID: targetDID)
-        await MainActor.run {
-          guard appState.userDID == targetDID else { return }
-          var updatedState = coordinator.mlsState
-          updatedState.conversations.removeAll { $0.conversationID == convoID }
-          updatedState.participants.removeValue(forKey: convoID)
-          updatedState.unreadCounts.removeValue(forKey: convoID)
-          updatedState.lastMessages.removeValue(forKey: convoID)
-          updatedState.memberChanges.removeValue(forKey: convoID)
-          coordinator.mlsState = updatedState
-          if selectedConvoId == convoID { selectedConvoId = nil }
-
-          NotificationCenter.default.post(
-            name: Notification.Name("MLSConversationDeleted"),
-            object: convoID,
-            userInfo: ["userDID": targetDID]
-          )
-        }
-        if await MainActor.run(body: { appState.userDID == targetDID }) {
-          await appState.updateMLSUnreadCount()
-        }
-      } catch {
-        logger.error("Failed to delete MLS conversation for me: \(error.localizedDescription)")
-        await MainActor.run {
-          guard appState.userDID == targetDID else { return }
-          mlsConversationPrompt = .status(title: "Could Not Delete", message: error.localizedDescription)
-        }
-      }
-    }
+    NotificationCenter.default.post(
+      name: Notification.Name("MLSConversationDeleted"),
+      object: convoID,
+      userInfo: ["userDID": targetDID]
+    )
+    appState.updateMLSUnreadCount()
   }
 
   private func leaveMLSConversation(_ conversation: MLSConversationModel) {
     let convoID = conversation.conversationID
     let expectedUserDID = appState.userDID
     Task {
-      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
+      guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else { return }
       do {
-        try await manager.leaveConversation(convoId: convoID)
+        try await mlsCoordinator.removeGroupMember(
+          actorRole: .admin,
+          conversationId: convoID,
+          targetDid: expectedUserDID
+        )
         await MainActor.run {
           guard appState.userDID == expectedUserDID else { return }
           var updatedState = coordinator.mlsState
@@ -1234,7 +1123,7 @@ struct ChatTabView: View {
           if selectedConvoId == convoID { selectedConvoId = nil }
         }
         if await MainActor.run(body: { appState.userDID == expectedUserDID }) {
-          await appState.updateMLSUnreadCount()
+          appState.updateMLSUnreadCount()
         }
       } catch {
         logger.error("Failed to leave MLS conversation: \(error.localizedDescription)")
@@ -1244,18 +1133,15 @@ struct ChatTabView: View {
 
   private func toggleMLSMute(_ conversation: MLSConversationModel) {
     let convoID = conversation.conversationID
-    let newMutedUntil: Date? = conversation.isMuted ? nil : .distantFuture
+    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+    let muteKey = "mls.mutedUntil.\(appState.userDID.lowercased()).\(convoID)"
+    if conversation.isMuted {
+      defaults.removeObject(forKey: muteKey)
+    } else {
+      defaults.set(Date.distantFuture.timeIntervalSince1970, forKey: muteKey)
+    }
     Task {
-      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
-      do {
-        try await manager.storage.setMutedUntil(
-          conversationID: convoID, currentUserDID: appState.userDID,
-          mutedUntil: newMutedUntil, database: manager.database
-        )
-        await loadMLSConversations()
-      } catch {
-        logger.error("Failed to toggle MLS mute: \(error.localizedDescription)")
-      }
+      await loadMLSConversations()
     }
   }
 }
