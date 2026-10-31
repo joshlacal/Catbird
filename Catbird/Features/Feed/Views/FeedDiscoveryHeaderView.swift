@@ -20,9 +20,6 @@ struct FeedDiscoveryHeaderView: View {
   var onAskCatbird: (() -> Void)? = nil
   var onReportTap: (() -> Void)? = nil
   var onOpenFeed: (() -> Void)? = nil
-  /// When `false` the feed name is left out of the card, e.g. when the screen
-  /// already shows it as the navigation title.
-  var showsTitle: Bool = true
   @State private var isLiking = false
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
@@ -145,14 +142,12 @@ struct FeedDiscoveryHeaderView: View {
 
   private var feedInfo: some View {
     VStack(alignment: .leading, spacing: 3) {
-      if showsTitle {
-        Text(feed.displayName)
-          .appFont(AppTextRole.headline)
-          .foregroundStyle(.primary)
-          .lineLimit(libraryControlsTrailing ? nil : 1)
-          .multilineTextAlignment(.leading)
-          .fixedSize(horizontal: false, vertical: true)
-      }
+      Text(feed.displayName)
+        .appFont(AppTextRole.headline)
+        .foregroundStyle(.primary)
+        .lineLimit(libraryControlsTrailing ? nil : 1)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
 
       subtitleLine
 

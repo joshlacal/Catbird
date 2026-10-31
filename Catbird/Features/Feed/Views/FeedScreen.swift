@@ -170,8 +170,7 @@ private struct FeedScreenMetadataHeader: View {
           feed: generator,
           onLikedByTap: { onLikedByTap(generator) },
           onAskCatbird: onAskCatbird,
-          onReportTap: onReportTap,
-          showsTitle: false
+          onReportTap: onReportTap
         )
       }
       if let error = metadata.error {
