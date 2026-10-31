@@ -32,8 +32,6 @@ struct FeedDiscoveryBrowser: View {
     VStack(spacing: 0) {
       discoveryStatus
       if !model.items.isEmpty {
-        feedNavigator
-        Divider()
         feedPages
       }
     }
@@ -49,6 +47,12 @@ struct FeedDiscoveryBrowser: View {
           .disabled(model.isInitialLoading || model.isRefreshing)
       }
     }
+    // The title doubles as the feed picker, so no custom navigator row sits above the pages.
+    .toolbarTitleMenu { feedPicker }
+    .modifier(FeedPagerToolbar(isVisible: !model.items.isEmpty,
+                               canGoBack: (selectedIndex ?? 0) > 0,
+                               canAdvance: canAdvance && !model.isLoadingMore,
+                               previous: previous, advance: advance))
     .onChange(of: model.items.map(\.id), initial: true) { _, ids in
       if let previous = pendingAdvanceFrom,
          let index = ids.firstIndex(of: previous), ids.indices.contains(index + 1) {
@@ -99,54 +103,24 @@ extension FeedDiscoveryBrowser {
       }
     }
     .tabViewStyle(.page(indexDisplayMode: .never))
+    .accessibilityValue(selectionAccessibilityValue)
     #else
     if let feed = selectedFeed { feedPage(feed).id(feed.id) }
     #endif
   }
 
-  private var feedNavigator: some View {
-    HStack(spacing: 4) {
-      Button(action: previous) {
-        Image(systemName: "chevron.backward").frame(minWidth: 44, minHeight: 44)
-      }
-      .disabled(selectedIndex == nil || selectedIndex == 0)
-      .accessibilityLabel("Previous feed")
-      .accessibilityIdentifier("feed.discovery.previous")
-
-      // The resting label is just the feed name; library status lives in the summary.
-      Menu {
+  @ViewBuilder private var feedPicker: some View {
+    if let index = selectedIndex {
+      Section("Feed \(index + 1) of \(model.items.count)") {
         Picker("Feed", selection: selection) {
           ForEach(model.items) { feed in
             Label(feed.displayName, systemImage: membershipSymbol(for: feed)).tag(feed.id)
           }
         }
-      } label: {
-        HStack(spacing: 4) {
-          Text(selectedFeed?.displayName ?? "")
-            .appFont(AppTextRole.headline)
-            .lineLimit(1)
-          Image(systemName: "chevron.up.chevron.down")
-            .appFont(AppTextRole.caption)
-            .fontWeight(.semibold)
-            .foregroundStyle(.secondary)
-        }
-        .foregroundStyle(.primary)
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .contentShape(Rectangle())
+        .pickerStyle(.inline)
+        .accessibilityIdentifier("feed.discovery.selection")
       }
-      .accessibilityLabel("Feed")
-      .accessibilityIdentifier("feed.discovery.selection")
-      .accessibilityValue(selectionAccessibilityValue)
-
-      Button(action: advance) {
-        Image(systemName: "chevron.forward").frame(minWidth: 44, minHeight: 44)
-      }
-      .disabled(!canAdvance || model.isLoadingMore)
-      .accessibilityLabel("Next feed")
-      .accessibilityIdentifier("feed.discovery.next")
     }
-    .buttonStyle(.borderless)
-    .padding(.horizontal, 4)
   }
 
   private func membershipSymbol(for feed: AppBskyFeedDefs.GeneratorView) -> String {
@@ -386,5 +360,72 @@ extension FeedDiscoveryBrowser {
   private struct PreviewRequest: Hashable {
     let feedID: String?
     let retry: Int
+  }
+}
+
+/// Previous and Next live in the system toolbar instead of a custom row. On iOS 26
+/// they share the bottom bar with the search field as one Liquid Glass group.
+private struct FeedPagerToolbar: ViewModifier {
+  let isVisible: Bool
+  let canGoBack: Bool
+  let canAdvance: Bool
+  let previous: () -> Void
+  let advance: () -> Void
+
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    #if compiler(>=6.2)
+    if #available(iOS 26.0, *) {
+      content.toolbar {
+        if isVisible {
+          ToolbarItemGroup(placement: .bottomBar) { buttons }
+          ToolbarSpacer(.flexible, placement: .bottomBar)
+        }
+        DefaultToolbarItem(kind: .search, placement: .bottomBar)
+      }
+    } else {
+      legacy(content)
+    }
+    #else
+    legacy(content)
+    #endif
+    #else
+    content.toolbar {
+      if isVisible {
+        ToolbarItemGroup(placement: .navigation) { buttons }
+      }
+    }
+    #endif
+  }
+
+  #if os(iOS)
+  private func legacy(_ content: Content) -> some View {
+    content.toolbar {
+      if isVisible {
+        ToolbarItemGroup(placement: .bottomBar) {
+          previousButton
+          Spacer()
+          nextButton
+        }
+      }
+    }
+  }
+  #endif
+
+  @ViewBuilder private var buttons: some View {
+    previousButton
+    nextButton
+  }
+
+  private var previousButton: some View {
+    Button("Previous Feed", systemImage: "chevron.backward", action: previous)
+      .disabled(!canGoBack)
+      .accessibilityIdentifier("feed.discovery.previous")
+  }
+
+  private var nextButton: some View {
+    Button("Next Feed", systemImage: "chevron.forward", action: advance)
+      .disabled(!canAdvance)
+      .accessibilityIdentifier("feed.discovery.next")
   }
 }
