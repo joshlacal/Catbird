@@ -286,6 +286,12 @@ struct ExternalEmbedView: View {
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .frame(maxHeight: mediaMaximumHeight)
+        .overlay(alignment: .bottomTrailing) {
+            MediaBadgeLabel(text: "GIF", isLarge: appState.appSettings.largerAltTextBadges)
+                .padding(10)
+                .allowsHitTesting(false)
+                .accessibilityLabel("Animated GIF")
+        }
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
