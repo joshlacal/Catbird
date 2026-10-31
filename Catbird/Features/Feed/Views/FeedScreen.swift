@@ -36,7 +36,7 @@ struct FeedScreen: View {
       header: headerAnyView
     ))
     .navigationTitle(metadata.generator?.displayName ?? "Feed")
-    .toolbarTitleDisplayMode(.inline)
+    .modifier(FeedScreenTitleDisplayMode())
     // The header's own menu also offers Report, but the header only appears once
     // the feed has posts; this keeps reporting reachable while it is loading,
     // empty or failed.
@@ -170,7 +170,8 @@ private struct FeedScreenMetadataHeader: View {
           feed: generator,
           onLikedByTap: { onLikedByTap(generator) },
           onAskCatbird: onAskCatbird,
-          onReportTap: onReportTap
+          onReportTap: onReportTap,
+          showsIdentity: false
         )
       }
       if let error = metadata.error {
@@ -187,6 +188,17 @@ private struct FeedScreenMetadataHeader: View {
     }
     .padding(.horizontal)
     .padding(.top, 8)
+  }
+}
+
+/// The feed name is a large title on iOS, matching subscribed feeds on Home.
+private struct FeedScreenTitleDisplayMode: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbarTitleDisplayMode(.large)
+    #else
+    content.toolbarTitleDisplayMode(.inline)
+    #endif
   }
 }
 

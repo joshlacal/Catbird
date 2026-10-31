@@ -20,6 +20,9 @@ struct FeedDiscoveryHeaderView: View {
   var onAskCatbird: (() -> Void)? = nil
   var onReportTap: (() -> Void)? = nil
   var onOpenFeed: (() -> Void)? = nil
+  /// When `false`, the card shows only the description and the action row —
+  /// used by an already-open feed, whose name lives in the navigation title.
+  var showsIdentity = true
   @State private var isLiking = false
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
@@ -40,7 +43,7 @@ struct FeedDiscoveryHeaderView: View {
     Group {
       if libraryControlsTrailing {
         HStack(alignment: .top, spacing: 12) {
-          previewButton
+          previewOrDescription
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
           VStack(alignment: .trailing, spacing: 4) {
@@ -54,7 +57,7 @@ struct FeedDiscoveryHeaderView: View {
         }
       } else {
         VStack(alignment: .leading, spacing: 8) {
-          previewButton
+          previewOrDescription
           HStack(alignment: .top) {
             FeedLibraryControls(feed: feed, onOpen: onOpenFeed)
             Spacer(minLength: 8)
@@ -77,6 +80,17 @@ struct FeedDiscoveryHeaderView: View {
     }
     .task(id: feed.uri.uriString()) {
       seedFromFeedViewer()
+    }
+  }
+
+  /// The avatar and name preview, or only the description when the screen
+  /// already names the feed.
+  @ViewBuilder
+  private var previewOrDescription: some View {
+    if showsIdentity {
+      previewButton
+    } else {
+      feedDescription
     }
   }
 
@@ -151,16 +165,21 @@ struct FeedDiscoveryHeaderView: View {
 
       subtitleLine
 
-      if let description = feed.description, !description.isEmpty {
-        Text(description)
-          .appFont(AppTextRole.subheadline)
-          .foregroundStyle(.secondary)
-          .lineLimit(nil)
-          .multilineTextAlignment(.leading)
-          .fixedSize(horizontal: false, vertical: true)
-      }
+      feedDescription
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  @ViewBuilder
+  private var feedDescription: some View {
+    if let description = feed.description, !description.isEmpty {
+      Text(description)
+        .appFont(AppTextRole.subheadline)
+        .foregroundStyle(.secondary)
+        .lineLimit(nil)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
   }
 
   private var subtitleLine: some View {
