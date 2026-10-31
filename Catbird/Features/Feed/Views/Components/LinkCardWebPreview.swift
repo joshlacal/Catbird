@@ -26,7 +26,7 @@ struct LinkCardContextMenu: ViewModifier {
         if let url, url.scheme == "http" || url.scheme == "https" {
             #if os(iOS)
             content
-                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10))
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contextMenu {
                     menuItems(for: url)
                 } preview: {

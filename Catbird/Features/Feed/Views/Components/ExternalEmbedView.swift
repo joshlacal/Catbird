@@ -386,7 +386,7 @@ struct ExternalEmbedView: View {
         .linkCardContextMenu(
             url: destinationURL,
             opensInAppBrowser: appSettings.useInAppBrowser,
-            open: { url in _ = appState.urlHandler.handle(url) }
+            open: { url in _ = sceneContext.urlHandler.handle(url) }
         )
     }
     
