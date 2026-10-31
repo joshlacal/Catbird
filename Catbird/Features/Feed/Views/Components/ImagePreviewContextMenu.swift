@@ -16,10 +16,13 @@ struct ImagePreviewContextMenu: ViewModifier {
   /// Off while the image is hidden behind a content warning, so the preview can't reveal it.
   let isEnabled: Bool
   let onOpen: () -> Void
+  @Environment(\.containerViewportSize) private var containerViewportSize
+  @State private var hostingWindowSize: CGSize?
 
   func body(content: Content) -> some View {
     if isEnabled {
       content
+        .background(viewportReader)
         .contextMenu {
           Button(action: onOpen) {
             Label("Open Image", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -30,11 +33,22 @@ struct ImagePreviewContextMenu: ViewModifier {
             }
           }
         } preview: {
-          FullsizeImagePreview(image: image)
+          FullsizeImagePreview(image: image, viewportSize: containerViewportSize ?? hostingWindowSize)
         }
     } else {
       content
     }
+  }
+
+  /// Feed cells and the root drawer pass the viewport through the environment. Hosts
+  /// that don't, such as the UIKit thread cells, read the window the image sits in.
+  @ViewBuilder
+  private var viewportReader: some View {
+    #if os(iOS)
+    if containerViewportSize == nil {
+      WindowViewportReader { hostingWindowSize = $0 }
+    }
+    #endif
   }
 }
 
@@ -52,9 +66,11 @@ extension View {
 /// The fullsize image, sized to its aspect ratio. The thumbnail shows underneath until the fullsize arrives.
 private struct FullsizeImagePreview: View {
   let image: AppBskyEmbedImages.ViewImage
+  /// The window or container the image is shown in, when known.
+  let viewportSize: CGSize?
 
   var body: some View {
-    let size = Self.previewSize(for: image)
+    let size = Self.previewSize(for: image, viewportSize: viewportSize)
 
     ZStack {
       Color.black
@@ -86,13 +102,13 @@ private struct FullsizeImagePreview: View {
     .accessibilityAddTraits(.isImage)
   }
 
-  /// Fits the image's aspect ratio inside the screen width and the upper part of
-  /// the screen, leaving room for the menu below it.
+  /// Fits the image's aspect ratio inside the viewport width and the upper part of
+  /// the viewport, leaving room for the menu below it.
   @MainActor
-  static func previewSize(for image: AppBskyEmbedImages.ViewImage) -> CGSize {
-    let screen = PlatformScreenInfo.size
-    let maxWidth = min(screen.width - 32, 720)
-    let maxHeight = screen.height * 0.6
+  static func previewSize(for image: AppBskyEmbedImages.ViewImage, viewportSize: CGSize?) -> CGSize {
+    let viewport = viewportSize.flatMap { $0.width > 32 && $0.height > 0 ? $0 : nil } ?? fallbackViewportSize
+    let maxWidth = min(viewport.width - 32, 720)
+    let maxHeight = viewport.height * 0.6
 
     let ratio: CGFloat = image.aspectRatio.flatMap { ratio -> CGFloat? in
       guard ratio.width > 0, ratio.height > 0 else { return nil }
@@ -106,5 +122,16 @@ private struct FullsizeImagePreview: View {
       width = height * ratio
     }
     return CGSize(width: width.rounded(), height: height.rounded())
+  }
+
+  /// Used until the hosting window reports its size: the key window on macOS,
+  /// and the smallest supported iPhone on iOS.
+  @MainActor
+  private static var fallbackViewportSize: CGSize {
+    #if os(macOS)
+    return PlatformScreenInfo.size
+    #else
+    return CGSize(width: 375, height: 667)
+    #endif
   }
 }
