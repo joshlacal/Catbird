@@ -247,6 +247,60 @@ struct ModerationRevealState: Equatable, Sendable {
   }
 }
 
+/// Remembers content-warning reveals outside of any one gate view.
+///
+/// Feed and thread rows are SwiftUI views hosted in reused collection view
+/// cells, so a gate's view state is thrown away whenever its cell is reused,
+/// and a revealed post scrolled away and back came back concealed. A gate under
+/// a post (`\.postID` set) records Show and Hide here and starts from the
+/// recorded choice, so the row lays out revealed on its first pass. An entry is
+/// for one account, one post, one kind of gate and one set of causes, so a new
+/// cause or a cause the viewer may no longer override conceals again, as
+/// `ModerationRevealState` does.
+@MainActor
+final class ModerationRevealStore {
+  enum Gate: Hashable {
+    case body
+    case media
+  }
+
+  private struct Key: Hashable {
+    let accountDID: String
+    let postID: String
+    let gate: Gate
+    let causes: [ModerationCauseKey]
+  }
+
+  static let shared = ModerationRevealStore()
+
+  private static let maxEntries = 5_000
+
+  private var revealedKeys: Set<Key> = []
+
+  func isRevealed(_ ui: ModerationUI, gate: Gate, postID: String, accountDID: String) -> Bool {
+    guard !ui.noOverride, let key = Self.key(ui, gate: gate, postID: postID, accountDID: accountDID) else {
+      return false
+    }
+    return revealedKeys.contains(key)
+  }
+
+  func setRevealed(_ revealed: Bool, ui: ModerationUI, gate: Gate, postID: String, accountDID: String) {
+    guard let key = Self.key(ui, gate: gate, postID: postID, accountDID: accountDID) else { return }
+    if revealed {
+      if revealedKeys.count >= Self.maxEntries { revealedKeys.removeAll() }
+      revealedKeys.insert(key)
+    } else {
+      revealedKeys.remove(key)
+    }
+  }
+
+  /// No key without a post: a gate outside one keeps its reveal in view state only.
+  private static func key(_ ui: ModerationUI, gate: Gate, postID: String, accountDID: String) -> Key? {
+    guard !postID.isEmpty else { return nil }
+    return Key(accountDID: accountDID, postID: postID, gate: gate, causes: ui.blurs.map(\.key))
+  }
+}
+
 /// Labels on an external link card, evaluated with no self subject: only the
 /// Bluesky moderation service and subscribed labelers count.
 enum ExternalLinkModeration {

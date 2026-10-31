@@ -777,6 +777,8 @@ private struct PostContentLayout: View {
           path: $path
         )
       }
+      // The gate remembers a reveal for this post, so it survives cell reuse.
+      .environment(\.postID, postID)
     }
 
     if !isReadOnlyPreview {

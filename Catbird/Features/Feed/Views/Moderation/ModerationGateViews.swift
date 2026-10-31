@@ -2,9 +2,11 @@ import SwiftUI
 
 // The three ways a moderation decision shows on a post: a hidden row (a list
 // filter the surface did not apply), a body gate (`ContentHider` upstream) and
-// a media gate. Each holds its reveal in view state only, keyed by the causes
-// it was given (`ModerationRevealState`), so a different set of causes is
-// concealed again even when the hosting view is reused for another post.
+// a media gate. A reveal is keyed by the causes it was given
+// (`ModerationRevealState`), so a different set of causes is concealed again
+// even when the hosting view is reused for another post. The body and media
+// gates also record it for their post in `ModerationRevealStore`, so it
+// survives cell reuse and re-appearance.
 
 // MARK: - Hidden row
 
@@ -85,13 +87,17 @@ struct ModerationRevealedPostBar: View {
 struct ModerationContentGate<Content: View>: View {
   let ui: ModerationUI
   @ViewBuilder let content: () -> Content
-  @State private var reveal = ModerationRevealState()
+  /// Show or Hide chosen in this view. `nil` until the viewer chooses, so the
+  /// gate starts from `ModerationRevealStore`; setting it re-renders the gate.
+  @State private var localReveal: ModerationRevealState?
   @Environment(AppState.self) private var appState
   @Environment(\.postID) private var postID
   @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
-  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
-  private var revealed: Bool { reveal.isRevealed(ui) }
+  private var revealed: Bool {
+    if let localReveal { return localReveal.isRevealed(ui) }
+    return ModerationRevealStore.shared.isRevealed(ui, gate: .body, postID: postID, accountDID: appState.userDID)
+  }
 
   var body: some View {
     Group {
@@ -108,7 +114,7 @@ struct ModerationContentGate<Content: View>: View {
       }
     }
     .onChange(of: postID) { _, _ in
-      reveal.hide()
+      localReveal = nil
     }
   }
 
@@ -130,13 +136,7 @@ struct ModerationContentGate<Content: View>: View {
           .accessibilityHint(ModerationGateText.explanation(for: ui))
       } else {
         Button(revealed ? "Hide" : "Show") {
-          invalidateFeedRowHeight?()
-          withAnimation(PostRevealMotion.layoutAnimation(
-            reduceMotion: appState.appSettings.effectiveReduceMotion,
-            voiceOverEnabled: voiceOverEnabled
-          )) {
-            if revealed { reveal.hide() } else { reveal.show(ui) }
-          }
+          setRevealed(!revealed)
         }
         .appFont(AppTextRole.subheadline)
         .buttonStyle(.borderless)
@@ -150,6 +150,15 @@ struct ModerationContentGate<Content: View>: View {
     .background(Color(platformColor: .platformSystemGray6), in: RoundedRectangle(cornerRadius: 10))
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("moderation.contentGate")
+  }
+
+  private func setRevealed(_ isRevealed: Bool) {
+    invalidateFeedRowHeight?()
+    withoutRevealAnimation {
+      localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
+    }
+    ModerationRevealStore.shared.setRevealed(
+      isRevealed, ui: ui, gate: .body, postID: postID, accountDID: appState.userDID)
   }
 }
 
@@ -171,13 +180,17 @@ struct ModerationMediaGate<Content: View>: View {
   /// Opt in when the media's display ratio is known without building it.
   var reservedAspectRatio: CGFloat? = nil
   @ViewBuilder let content: () -> Content
-  @State private var reveal = ModerationRevealState()
+  /// Show or Hide chosen in this view. `nil` until the viewer chooses, so the
+  /// gate starts from `ModerationRevealStore`; setting it re-renders the gate.
+  @State private var localReveal: ModerationRevealState?
   @Environment(AppState.self) private var appState
   @Environment(\.postID) private var postID
   @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
-  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
-  private var revealed: Bool { reveal.isRevealed(ui) }
+  private var revealed: Bool {
+    if let localReveal { return localReveal.isRevealed(ui) }
+    return ModerationRevealStore.shared.isRevealed(ui, gate: .media, postID: postID, accountDID: appState.userDID)
+  }
 
   var body: some View {
     Group {
@@ -203,7 +216,7 @@ struct ModerationMediaGate<Content: View>: View {
       }
     }
     .onChange(of: postID) { _, _ in
-      reveal.hide()
+      localReveal = nil
     }
   }
 
@@ -289,13 +302,7 @@ struct ModerationMediaGate<Content: View>: View {
 
   private var hideControl: some View {
     Button {
-      invalidateFeedRowHeight?()
-      withAnimation(PostRevealMotion.layoutAnimation(
-        reduceMotion: appState.appSettings.effectiveReduceMotion,
-        voiceOverEnabled: voiceOverEnabled
-      )) {
-        reveal.hide()
-      }
+      setRevealed(false)
     } label: {
       Label("Hide", systemImage: "eye.slash")
         .appFont(AppTextRole.caption)
@@ -311,14 +318,37 @@ struct ModerationMediaGate<Content: View>: View {
   }
 
   private func show() {
-    invalidateFeedRowHeight?()
-    withAnimation(PostRevealMotion.layoutAnimation(
-      reduceMotion: appState.appSettings.effectiveReduceMotion,
-      voiceOverEnabled: voiceOverEnabled
-    )) {
-      reveal.show(ui)
-    }
+    setRevealed(true)
   }
+
+  private func setRevealed(_ isRevealed: Bool) {
+    invalidateFeedRowHeight?()
+    withoutRevealAnimation {
+      localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
+    }
+    ModerationRevealStore.shared.setRevealed(
+      isRevealed, ui: ui, gate: .media, postID: postID, accountDID: appState.userDID)
+  }
+}
+
+// MARK: - Reveal helpers
+
+private extension ModerationRevealState {
+  /// Revealed for `ui`'s causes, or concealed when `ui` is `nil`.
+  init(revealing ui: ModerationUI?) {
+    self.init()
+    if let ui { show(ui) }
+  }
+}
+
+/// Applies a gate's Show or Hide without animation. The row lives in a
+/// self-sizing collection view cell, which takes its new height at once;
+/// animating the SwiftUI side slid the whole post inside the resized cell.
+@MainActor
+private func withoutRevealAnimation(_ change: () -> Void) {
+  var transaction = Transaction()
+  transaction.disablesAnimations = true
+  withTransaction(transaction, change)
 }
 
 // MARK: - Shared copy
