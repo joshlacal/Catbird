@@ -155,14 +155,12 @@ struct BlockedContentCard: View {
     Task {
       defer { cardState.isRevealing = false }
       do {
-        let (_, output) = try await client.app.bsky.feed.getPosts(
-          input: AppBskyFeedGetPosts.Parameters(uris: [postUri.value])
-        )
-        if let post = output?.posts.first {
-          cardState.revealedPost = EquatableBox(post)
-        } else {
-          cardState.revealFailed = true
-        }
+        cardState.revealedPost = EquatableBox(try await BlockedPostLoader.load(
+          uri: postUri.value,
+          authorDid: authorDid,
+          client: client,
+          hydrator: appState.blockedAuthorHydrator
+        ))
       } catch {
         Self.logger.error("reveal fetch failed: \(error.localizedDescription)")
         cardState.revealFailed = true
@@ -510,8 +508,11 @@ private struct BlockedContentRevealedPost: View {
             .accessibilityHint("Returns to the blocked-post placeholder")
         }
       }
+      // No engagement while temporarily revealed. Hit-testing stops touch;
+      // disabling also stops VoiceOver and keyboard activation.
       makePostView()
-        .allowsHitTesting(unblockSucceeded)  // no engagement while temporarily revealed
+        .allowsHitTesting(unblockSucceeded)
+        .disabled(!unblockSucceeded)
     }
   }
 
