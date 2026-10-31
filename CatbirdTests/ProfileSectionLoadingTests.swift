@@ -123,7 +123,7 @@ struct ProfileSectionLoadingTests {
 
     // The first copy's view goes away, which cancels its request.
     first.cancel()
-    try await Self.waitUntil("the cancelled request to stop") { server.cancelledHeldRequestCount == 1 }
+    await Self.expectHeldRequestToStop(server)
     await #expect(throws: (any Error).self) { try await first.value }
     #expect(try await second.value == 1)
     #expect(server.requestCount(section) == 2)
@@ -193,9 +193,14 @@ struct ProfileSectionLoadingTests {
     // Another copy opens, or the section is pulled to refresh. Its first load neither waits for
     // that page nor takes it as its own content.
     let copy = Self.start { try await Self.refresh(section, on: viewModel) }
-    try await Self.waitUntil("the first load to return while the next page is held") { copy.hasEnded }
+    await withKnownIssue(Self.uncancellableRequests) {
+      try await Self.waitUntil("the first load to return while the next page is held") { copy.hasEnded }
+      #expect(server.cancelledHeldRequestCount == 1)
+    }
+    // Once the next page's request stops, nothing is held and this returns at once.
+    server.releaseHeldPages()
+    try await Self.waitUntil("the first load to return") { copy.hasEnded }
     #expect(copy.error == nil)
-    #expect(server.cancelledHeldRequestCount == 1)
     #expect(server.requestCount(section) == 3)
     await nextPage.value
     #expect(Self.count(of: section, in: viewModel) == 1)
@@ -212,7 +217,8 @@ struct ProfileSectionLoadingTests {
     let first = try await Self.startHeldFirstLoad(of: section, on: viewModel, server: server)
 
     await viewModel.handleStateInvalidation(.accountSwitched)
-    try await Self.waitUntil("the held request to stop") { server.cancelledHeldRequestCount == 1 }
+    await Self.expectHeldRequestToStop(server)
+    // Even when its request is answered, the page from before the switch does not land.
     await #expect(throws: (any Error).self) { try await first.value }
     #expect(Self.count(of: section, in: viewModel) == 0)
 
@@ -326,6 +332,24 @@ extension ProfileSectionLoadingTests {
       case .feeds: .feeds
       }
     return viewModel.sectionLoadWaiters[moreSection, default: 0]
+  }
+
+  /// The Petrel this app builds against shares a GET among its callers in a task that no
+  /// caller's cancellation stops, so a cancelled load's request runs on until the server answers
+  /// it. Petrel 38a76729f makes that request stop with its last caller. Once the Petrel pin
+  /// includes it, these issues stop recurring and Swift Testing fails each test that expects
+  /// them, so the `withKnownIssue` wrappers go with the pin bump.
+  private static let uncancellableRequests: Comment =
+    "Petrel's request deduplication lets a cancelled request run until it is answered"
+
+  /// Expects the held request of a load that was just cancelled to stop, a known issue with the
+  /// current Petrel pin (see `uncancellableRequests`), then answers whatever is still held, so
+  /// the cancelled load ends either way.
+  private static func expectHeldRequestToStop(_ server: ProfileSectionStubServer) async {
+    await withKnownIssue(uncancellableRequests) {
+      try await waitUntil("the cancelled request to stop") { server.cancelledHeldRequestCount == 1 }
+    }
+    server.releaseHeldPages()
   }
 
   private struct TimedOut: Error {}
