@@ -504,6 +504,8 @@ struct DraftPostViewModel: Identifiable {
   let thumbnailURLs: [URL]
   let mediaCount: Int
   let hasVideo: Bool
+  /// The Circle a private draft is for. Circle drafts stay on this device.
+  let circleName: String?
   
   private let draftData: Data
   
@@ -526,6 +528,7 @@ struct DraftPostViewModel: Identifiable {
     self.remoteId = draftPost.remoteId
     self.remoteMediaDeviceName = draftPost.remoteMediaDeviceName
     self.draftData = draftPost.draftData
+    self.circleName = content?.circleDestination?.name
     if let draft = content {
       let entries = draft.threadEntries
       self.postCount = draft.isThreadMode ? max(1, entries.count) : 1

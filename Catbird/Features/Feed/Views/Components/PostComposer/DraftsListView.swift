@@ -146,7 +146,7 @@ struct DraftsListView: View {
             }
           }
           .contextMenu {
-            if draft.recoveryReason != nil || draft.syncIssue != nil {
+            if draft.circleName == nil, draft.recoveryReason != nil || draft.syncIssue != nil {
               Button("Save New Copy to Bluesky", systemImage: "icloud.and.arrow.up") {
                 draftToCopy = draft
               }
@@ -270,13 +270,16 @@ private struct DraftRow: View {
   }
 
   private var hasBadges: Bool {
-    draft.isReply || draft.isQuote || draft.isThread
+    draft.circleName != nil || draft.isReply || draft.isQuote || draft.isThread
       || draft.remoteMediaDeviceName != nil
       || (draft.hasMedia && draft.thumbnailURLs.isEmpty)
   }
 
   private var badgeRow: some View {
     HStack(spacing: 10) {
+      if let circleName = draft.circleName {
+        DraftBadge(text: circleName, systemImage: "person.2.fill")
+      }
       if draft.isReply {
         DraftBadge(text: "Reply", systemImage: "arrowshape.turn.up.left")
       }
