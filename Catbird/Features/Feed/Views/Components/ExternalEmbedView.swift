@@ -383,6 +383,11 @@ struct ExternalEmbedView: View {
         .onTapGesture {
             handleCardTap(embedType: detectedEmbedType)
         }
+        .linkCardContextMenu(
+            url: destinationURL,
+            opensInAppBrowser: appSettings.useInAppBrowser,
+            open: { url in _ = appState.urlHandler.handle(url) }
+        )
     }
     
     @ViewBuilder
