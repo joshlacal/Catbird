@@ -939,9 +939,11 @@ final class PreferencesManager {
       throw PreferencesManagerError.invalidData
     }
     // Same local normalization as fetchPreferences: a timeline the server keeps unpinned
-    // stays pinned locally instead of appearing in Saved after every add.
-    preferences.updateFeeds(pinned: feeds.filter { $0.pinned }.map { $0.value },
-                            saved: feeds.filter { !$0.pinned }.map { $0.value })
+    // stays pinned locally instead of appearing in Saved after every add, and keeps its
+    // local slot so a reorder that put another feed first is not undone.
+    let pinned = FeedLibraryServerMerge.localPinnedValues(
+      server: feeds.filter { $0.pinned }.map { $0.value }, local: preferences.pinnedFeeds)
+    preferences.updateFeeds(pinned: pinned, saved: feeds.filter { !$0.pinned }.map { $0.value })
     try await savePreferences(preferences)
     // Other pending URIs were included too, but only their exact captured revisions
     // may be acknowledged. A later edit remains pending.

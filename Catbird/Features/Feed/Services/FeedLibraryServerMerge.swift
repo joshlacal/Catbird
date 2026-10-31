@@ -22,6 +22,18 @@ enum FeedLibraryServerMerge {
     }
   }
 
+  /// Local pinned values after a sync. Catbird keeps the timeline pinned locally even when the
+  /// server has it unpinned; it stays after the pinned feed it followed locally instead of moving
+  /// to the front, so a default chosen with Make Default or a drag survives the sync.
+  static func localPinnedValues(server: [String], local: [String]) -> [String] {
+    guard !server.contains(where: SystemFeedTypes.isTimelineFeed),
+          let index = local.firstIndex(where: SystemFeedTypes.isTimelineFeed) else { return server }
+    let anchor = local[..<index].last { server.contains($0) }.flatMap { server.firstIndex(of: $0) }
+    var pinned = server
+    pinned.insert(local[index], at: anchor.map { $0 + 1 } ?? 0)
+    return pinned
+  }
+
   static func migrateV1(pinned: [String], saved: [String], timelineIndex: Int?,
                         newIDs: [String: String]) -> [AppBskyActorDefs.SavedFeed] {
     var values = pinned

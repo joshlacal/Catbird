@@ -447,6 +447,32 @@ struct FeedLibraryActionsTests {
     #expect(prefs.savedFeeds == ["other"])
   }
 
+  @Test func makeDefaultSurvivesSyncWhenServerUnpinsTimeline() {
+    let order = FeedLibraryPendingStore.PinnedOrder(uris: ["x", "following", "a"], revision: UUID())
+    let server = FeedLibraryServerMerge.applyPinnedOrder(order, to: [
+      .init(id: "t", type: "timeline", value: "following", pinned: false),
+      .init(id: "a", type: "feed", value: "a", pinned: true),
+      .init(id: "x", type: "feed", value: "x", pinned: true)])
+    let prefs = Preferences(accountDID: did)
+    prefs.pinnedFeeds = ["x", "following", "a"]
+    let pinned = FeedLibraryServerMerge.localPinnedValues(
+      server: server.filter(\.pinned).map(\.value), local: prefs.pinnedFeeds)
+    prefs.updateFeeds(pinned: pinned, saved: server.filter { !$0.pinned }.map(\.value))
+    #expect(prefs.pinnedFeeds == ["x", "following", "a"])
+    #expect(prefs.savedFeeds.isEmpty)
+  }
+
+  @Test func localTimelineKeepsItsSlotAfterSync() {
+    #expect(FeedLibraryServerMerge.localPinnedValues(server: ["x", "a"], local: ["x", "a", "following"])
+      == ["x", "a", "following"])
+    #expect(FeedLibraryServerMerge.localPinnedValues(server: ["x", "new"], local: ["following", "x"])
+      == ["following", "x", "new"])
+    #expect(FeedLibraryServerMerge.localPinnedValues(server: ["remote", "x", "a"], local: ["x", "following", "a"])
+      == ["remote", "x", "following", "a"])
+    #expect(FeedLibraryServerMerge.localPinnedValues(server: ["a", "following"], local: ["following", "a"])
+      == ["a", "following"])
+  }
+
   @Test func wrongAccountCannotWrite() async throws {
     let prefs = Preferences(accountDID: "did:plc:another")
     var writes = 0
