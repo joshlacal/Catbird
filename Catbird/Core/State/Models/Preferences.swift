@@ -14,9 +14,17 @@ enum SystemFeedTypes {
     "timeline"  // Another possible identifier
   ]
 
+  /// Exact match only. A substring test misclassified custom feeds whose URI contains
+  /// "following" or "timeline" (e.g. `.../app.bsky.feed.generator/following-plus`), so
+  /// adding one showed and synced it as a second Timeline.
   static func isTimelineFeed(_ uri: String) -> Bool {
-    return protectedSystemFeeds.contains(uri) || uri.contains("timeline")
-      || uri.contains("following")
+    return protectedSystemFeeds.contains(uri)
+  }
+
+  /// savedFeedsPrefV2 item type for a stored feed value.
+  static func savedFeedType(for uri: String) -> String {
+    if isTimelineFeed(uri) { return "timeline" }
+    return uri.contains("/app.bsky.graph.list/") ? "list" : "feed"
   }
 }
 

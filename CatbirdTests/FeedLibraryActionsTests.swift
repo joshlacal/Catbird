@@ -339,6 +339,51 @@ struct FeedLibraryActionsTests {
     #expect(result.filter(\.pinned).map(\.value) == ["existing-default", "following", "new"])
   }
 
+  @Test func timelineClassifierMatchesOnlySystemValues() {
+    #expect(SystemFeedTypes.isTimelineFeed("following"))
+    #expect(SystemFeedTypes.isTimelineFeed("home"))
+    #expect(!SystemFeedTypes.isTimelineFeed("at://did:plc:creator/app.bsky.feed.generator/following-plus"))
+    #expect(!SystemFeedTypes.isTimelineFeed("at://did:plc:creator/app.bsky.feed.generator/quiet-timeline"))
+    #expect(SystemFeedTypes.savedFeedType(for: "at://did:plc:creator/app.bsky.graph.list/l") == "list")
+  }
+
+  @Test func addingFeedNamedLikeTimelineSavesItAsFeed() {
+    let feed = "at://did:plc:creator/app.bsky.feed.generator/following-plus"
+    let entry = FeedLibraryPendingStore.Entry(uri: feed, intent: .saved, revision: UUID())
+    let result = FeedLibraryServerMerge.apply([entry], to: [
+      .init(id: "t", type: "timeline", value: "following", pinned: true)],
+      newIDs: ["following": "unused", feed: "f"])
+    #expect(result.map(\.value) == ["following", feed])
+    #expect(result.map(\.type) == ["timeline", "feed"])
+  }
+
+  @Test func existingLibraryWithoutTimelineIsNotGivenOne() {
+    let entry = FeedLibraryPendingStore.Entry(uri: "new", intent: .saved, revision: UUID())
+    let result = FeedLibraryServerMerge.apply([entry], to: [
+      .init(id: "a", type: "feed", value: "existing", pinned: true)],
+      newIDs: ["following": "timeline-id", "new": "new-id"], ensureTimeline: false)
+    #expect(result.map(\.value) == ["existing", "new"])
+  }
+
+  @Test func normalizeRepairsMisTypedAndDuplicateTimelines() {
+    let feed = "at://did:plc:creator/app.bsky.feed.generator/following-plus"
+    let result = FeedLibraryServerMerge.normalize([
+      .init(id: "t1", type: "timeline", value: "following", pinned: true),
+      .init(id: "f", type: "timeline", value: feed, pinned: true),
+      .init(id: "t2", type: "timeline", value: "following", pinned: false),
+      .init(id: "s", type: "feed", value: "saved", pinned: false),
+      .init(id: "s2", type: "feed", value: "saved", pinned: false)])
+    #expect(result.map(\.id) == ["t1", "f", "s"])
+    #expect(result.map(\.type) == ["timeline", "feed", "feed"])
+  }
+
+  @Test func timelineUnpinnedOnServerStaysPinnedLocally() {
+    let prefs = Preferences(accountDID: did)
+    prefs.updateFeeds(pinned: ["custom"], saved: ["following", "other"])
+    #expect(prefs.pinnedFeeds == ["following", "custom"])
+    #expect(prefs.savedFeeds == ["other"])
+  }
+
   @Test func wrongAccountCannotWrite() async throws {
     let prefs = Preferences(accountDID: "did:plc:another")
     var writes = 0
