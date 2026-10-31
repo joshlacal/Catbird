@@ -298,6 +298,10 @@ final class PostComposerViewModel {
   /// A Circle destination waits while Circles are unavailable instead of posting publicly.
   var canPostToDestination: Bool { destination == .public || appState.circlesEnabled }
 
+  /// Threads post only to a Public audience the author chose. A restored audience still
+  /// waiting for a choice keeps the single-post composer, where its picker is shown.
+  var allowsThreads: Bool { destination == .public && unresolvedCircleAudience == nil }
+
   var canChangeDestination: Bool {
     guard activeSubmission == nil else { return false }
     guard !isReplyLockedToCircle else { return false }

@@ -577,7 +577,7 @@ struct PostComposerViewUIKit: View {
           onTags: { showingOutlineTagsEditor = true },
           onLabels: { showingLabelSelector = true },
           onAddToThread: {
-            guard vm.destination == .public else { return }
+            guard vm.allowsThreads else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
               if vm.isThreadMode {
                 vm.addNewThreadEntry()
@@ -738,7 +738,7 @@ struct PostComposerViewUIKit: View {
         onThreadAction: { 
           guard !hasPendingMediaIntent else { return }
           pcUIKitLogger.info("PostComposerViewUIKit: Thread action triggered - isThreadMode: \(viewModel?.isThreadMode ?? false)")
-          guard let vm = viewModel, vm.destination == .public else { return }
+          guard let vm = viewModel, vm.allowsThreads else { return }
           withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
             // Properly enter thread mode and add a new entry,
             // mirroring the legacy behavior.
@@ -902,7 +902,7 @@ private struct ComposerAccessoryBarLeaf: View {
       isPlusMenuOpen: $isPlusMenuOpen,
       characterCount: vm.postText.count,
       allowTenor: allowTenor,
-      isAddToThreadDisabled: isAddToThreadDisabled || vm.destination != .public,
+      isAddToThreadDisabled: isAddToThreadDisabled || !vm.allowsThreads,
       arePhotosDisabled: !vm.canAddMoreMedia,
       isPublicMediaDisabled: vm.destination != .public,
       showsThreadgate: !vm.isReply,

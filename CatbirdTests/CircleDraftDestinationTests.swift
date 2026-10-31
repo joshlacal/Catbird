@@ -219,6 +219,34 @@ struct CircleDraftDestinationTests {
     #expect(await transport.threadCallCount == 0)
   }
 
+  @Test("A draft waiting for an audience cannot become a thread, which would hide its picker")
+  func unresolvedAudienceBlocksThreadMode() async throws {
+    let appState = await makeAppState(circlesEnabled: true)
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: MockCircleTransport()))
+    let saved = CircleDraftDestination(
+      circle: CircleTestFixtures.family, accountDID: "did:plc:someoneelse", reply: nil
+    )
+
+    model.restoreDraftState(makeDraft("Their post", destination: saved))
+    #expect(model.unresolvedCircleAudience?.issue == .otherAccount)
+    #expect(model.canChangeDestination)
+    #expect(!model.allowsThreads)
+
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    #expect(!model.isThreadMode)
+    #expect(model.threadEntries.count == 1)
+    #expect(model.unresolvedCircleAudience != nil)
+
+    // Choosing Public is the author's decision; threads work from then on.
+    model.selectDestination(.public)
+    #expect(model.allowsThreads)
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    #expect(model.isThreadMode)
+    #expect(model.threadEntries.count == 2)
+  }
+
   @Test("Minimizing, scene recovery and the saved-drafts list keep the Circle")
   func sceneRecoveryKeepsCircle() async throws {
     let appState = await makeAppState()
