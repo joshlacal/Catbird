@@ -451,6 +451,23 @@ struct ModerationRevealStoreTests {
     #expect(!store.isRevealed(quoteBody, gate: .body, subject: F.quotedURI, accountDID: F.viewerDID))
   }
 
+  @Test("The generation moves only when the recorded reveals change")
+  func generationTracksChanges() throws {
+    let warn = try warnBody()
+    let store = ModerationRevealStore()
+    let start = store.generation
+    store.setRevealed(false, ui: warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID)
+    store.setRevealed(true, ui: warn, gate: .body, subject: "", accountDID: F.viewerDID)
+    #expect(store.generation == start, "hiding nothing and a gate with no subject change nothing")
+    store.setRevealed(true, ui: warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID)
+    let shown = store.generation
+    #expect(shown != start)
+    store.setRevealed(true, ui: warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID)
+    #expect(store.generation == shown, "showing a shown post again changes nothing")
+    store.setRevealed(false, ui: warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID)
+    #expect(store.generation != shown)
+  }
+
   @Test("A gate with no subject records nothing")
   func noSubjectRecordsNothing() throws {
     let warn = try warnBody()

@@ -280,6 +280,12 @@ final class ModerationRevealStore {
 
   private var revealedKeys: Set<Key> = []
 
+  /// Changes whenever the recorded reveals change. A gate restores its state
+  /// from here when its row is built, so the feed's row-height cache keys
+  /// heights by it: a height measured before a reveal changed never sizes a
+  /// row built after it.
+  private(set) var generation = 0
+
   func isRevealed(_ ui: ModerationUI, gate: Gate, subject: String, accountDID: String) -> Bool {
     guard !ui.noOverride, let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else {
       return false
@@ -291,10 +297,11 @@ final class ModerationRevealStore {
     guard let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else { return }
     if revealed {
       if revealedKeys.count >= Self.maxEntries { revealedKeys.removeAll() }
-      revealedKeys.insert(key)
+      guard revealedKeys.insert(key).inserted else { return }
     } else {
-      revealedKeys.remove(key)
+      guard revealedKeys.remove(key) != nil else { return }
     }
+    generation &+= 1
   }
 
   /// No key without a subject: such a gate keeps its reveal in view state only.

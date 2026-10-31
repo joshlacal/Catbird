@@ -62,7 +62,7 @@ import os
     }
   }
 
-  /// Thread-safe row height cache keyed by post ID + width + font generation + content size category + content signature (P068 / feed-perf step 1)
+  /// Thread-safe row height cache keyed by post ID + width + font generation + content size category + content signature + reveal generation (P068 / feed-perf step 1)
   final class FeedRowHeightCache {
     struct Key: Hashable {
       let postID: String
@@ -70,6 +70,8 @@ import os
       let fontGeneration: Int
       let contentSizeCategory: UIContentSizeCategory
       let contentSignature: FeedPostContentSignature
+      /// `ModerationRevealStore.generation` when the row was configured.
+      let revealGeneration: Int
     }
     private let capacity: Int = 1000
     private var cache: [Key: CGFloat] = [:]
@@ -77,17 +79,17 @@ import os
     private var keyAccessTimes: [Key: UInt64] = [:]
     private var accessCounter: UInt64 = 0
 
-    func height(for postID: String, width: Int, fontGeneration: Int, contentSizeCategory: UIContentSizeCategory, contentSignature: FeedPostContentSignature) -> CGFloat? {
-      let key = Key(postID: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature)
+    func height(for postID: String, width: Int, fontGeneration: Int, contentSizeCategory: UIContentSizeCategory, contentSignature: FeedPostContentSignature, revealGeneration: Int) -> CGFloat? {
+      let key = Key(postID: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature, revealGeneration: revealGeneration)
       guard let height = cache[key] else { return nil }
       accessCounter &+= 1
       keyAccessTimes[key] = accessCounter
       return height
     }
 
-    func store(height: CGFloat, for postID: String, width: Int, fontGeneration: Int, contentSizeCategory: UIContentSizeCategory, contentSignature: FeedPostContentSignature) {
+    func store(height: CGFloat, for postID: String, width: Int, fontGeneration: Int, contentSizeCategory: UIContentSizeCategory, contentSignature: FeedPostContentSignature, revealGeneration: Int) {
       guard height > 0 else { return }
-      let key = Key(postID: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature)
+      let key = Key(postID: postID, width: width, fontGeneration: fontGeneration, contentSizeCategory: contentSizeCategory, contentSignature: contentSignature, revealGeneration: revealGeneration)
       accessCounter &+= 1
       keyAccessTimes[key] = accessCounter
       cache[key] = height
@@ -132,10 +134,19 @@ import os
     var fontGeneration: Int = 0
     var contentSizeCategory: UIContentSizeCategory = .unspecified
     var contentSignature: FeedPostContentSignature?
+    /// `ModerationRevealStore.generation` when the row was configured. Moderation gates
+    /// start from the reveals recorded there, so a reveal or Hide anywhere (another row
+    /// showing the same post, another feed, the store clearing itself) can change this
+    /// row's height without touching its content signature. Keying by the generation
+    /// keeps a height measured before that change from sizing the row after it.
+    var revealGeneration: Int = 0
     weak var heightCache: FeedRowHeightCache?
     var isFreshlyConfigured: Bool = false
-    /// Set once the row toggles per-cell UI state (reveals, translation, gates). That state
-    /// resets when the cell is reused, so heights measured with it must never be cached.
+    /// Set once the row toggles per-cell UI state (reveals, translation, gates). Most of that
+    /// state resets on reuse, so heights measured with it must never be cached. A moderation
+    /// gate's reveal is instead restored from `ModerationRevealStore` on the next
+    /// configuration, and its Show or Hide moved the store's generation, so that
+    /// configuration's height is measured and cached under the new generation.
     private var hasTransientLayoutState = false
 
     func markConfigured() {
@@ -175,7 +186,8 @@ import os
              width: width,
              fontGeneration: fontGeneration,
              contentSizeCategory: contentSizeCategory,
-             contentSignature: contentSignature
+             contentSignature: contentSignature,
+             revealGeneration: revealGeneration
            ) {
           let attrs = layoutAttributes
           attrs.size.height = cached
@@ -194,7 +206,8 @@ import os
             width: width,
             fontGeneration: fontGeneration,
             contentSizeCategory: contentSizeCategory,
-            contentSignature: contentSignature
+            contentSignature: contentSignature,
+            revealGeneration: revealGeneration
           )
         }
       }
@@ -919,6 +932,7 @@ import os
         let viewModel = self.stateManager.viewModel(for: post)
         cell.postID = postId
         cell.contentSignature = viewModel.contentSignature
+        cell.revealGeneration = ModerationRevealStore.shared.generation
         cell.markConfigured()
 
         // Configure cell with UIHostingConfiguration and inject required environment.

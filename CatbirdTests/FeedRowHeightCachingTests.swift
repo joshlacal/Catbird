@@ -17,7 +17,7 @@ struct FeedRowHeightCachingTests {
   func cachedHeightServesOnlyTheFirstPass() throws {
     let fixture = try Fixture()
     fixture.cache.store(height: Self.staleHeight, for: fixture.postID, width: Self.width,
-      fontGeneration: 0, contentSizeCategory: .large, contentSignature: fixture.signature)
+      fontGeneration: 0, contentSizeCategory: .large, contentSignature: fixture.signature, revealGeneration: 0)
     fixture.cell.markConfigured()
 
     #expect(fixture.measure() == Self.staleHeight)
@@ -39,12 +39,26 @@ struct FeedRowHeightCachingTests {
     _ = fixture.measure()
     #expect(fixture.cachedHeight() == nil)
 
-    // Reuse starts from the post's default state, so its measurement is cacheable again.
+    // A new configuration rebuilds the row from what the key covers (content, fonts and the
+    // recorded moderation reveals), so its measurement is cacheable again.
     fixture.cell.prepareForReuse()
     fixture.configure()
     fixture.cell.markConfigured()
     _ = fixture.measure()
     #expect(fixture.cachedHeight() != nil)
+  }
+
+  @Test("A height measured before a recorded reveal changed never sizes the row after it")
+  func revealGenerationChangeMissesTheCache() throws {
+    let fixture = try Fixture()
+    fixture.cache.store(height: Self.staleHeight, for: fixture.postID, width: Self.width,
+      fontGeneration: 0, contentSizeCategory: .large, contentSignature: fixture.signature, revealGeneration: 0)
+    fixture.configure(revealGeneration: 1)
+    fixture.cell.markConfigured()
+
+    #expect(abs(fixture.measure() - Self.renderedHeight) < 1)
+    let stored = try #require(fixture.cachedHeight(revealGeneration: 1))
+    #expect(abs(stored - Self.renderedHeight) < 1)
   }
 
   // MARK: - Fixture
@@ -64,12 +78,13 @@ struct FeedRowHeightCachingTests {
       configure()
     }
 
-    func configure() {
+    func configure(revealGeneration: Int = 0) {
       cell.heightCache = cache
       cell.postID = postID
       cell.contentSignature = signature
       cell.fontGeneration = 0
       cell.contentSizeCategory = .large
+      cell.revealGeneration = revealGeneration
       cell.contentConfiguration = UIHostingConfiguration {
         Color.clear.frame(height: FeedRowHeightCachingTests.renderedHeight)
       }
@@ -82,9 +97,9 @@ struct FeedRowHeightCachingTests {
       return cell.preferredLayoutAttributesFitting(attributes).size.height
     }
 
-    func cachedHeight() -> CGFloat? {
+    func cachedHeight(revealGeneration: Int = 0) -> CGFloat? {
       cache.height(for: postID, width: FeedRowHeightCachingTests.width, fontGeneration: 0,
-        contentSizeCategory: .large, contentSignature: signature)
+        contentSizeCategory: .large, contentSignature: signature, revealGeneration: revealGeneration)
     }
 
     private static func makePost() throws -> CachedFeedViewPost {
