@@ -32,7 +32,7 @@ final class ThreadManager: StateInvalidationSubscriber {
 
   /// The blocked anchor payload when the thread's depth-0 item is a blocked
   /// post. A 200 response with a `threadItemBlocked` at depth 0 is a valid
-  /// (not error) state: the anchor is hidden but parents/replies still render.
+  /// (not error) state. The AppView returns only that item: no parents, no replies.
   var blockedAnchor: AppBskyUnspeccedDefs.ThreadItemBlocked?
 
   /// Hidden/other replies loaded via getPostThreadOtherV2
@@ -213,8 +213,8 @@ final class ThreadManager: StateInvalidationSubscriber {
         self.threadData = output
 
         // Detect a blocked anchor (200 with a blocked depth-0 item). This is a
-        // valid state, not an error — the views render the anchor tombstone card
-        // alongside whatever parents/replies the AppView returned.
+        // valid state, not an error — the views render the anchor tombstone card.
+        // The AppView returns no parents or replies alongside a blocked anchor.
         self.blockedAnchor = Self.detectBlockedAnchor(in: output.thread)
 
         // Save thread posts to cache for instant display on future visits
