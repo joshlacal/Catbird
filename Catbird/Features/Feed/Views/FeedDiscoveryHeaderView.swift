@@ -18,6 +18,9 @@ struct FeedDiscoveryHeaderView: View {
   var onAskCatbird: (() -> Void)? = nil
   var onReportTap: (() -> Void)? = nil
   var onOpenFeed: (() -> Void)? = nil
+  /// When `false`, the card shows only the description and the action row —
+  /// used by an already-open feed, whose name lives in the navigation title.
+  var showsIdentity = true
   @State private var isLiking = false
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
@@ -34,20 +37,24 @@ struct FeedDiscoveryHeaderView: View {
   
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      // Tappable content region — avatar + text. Disabled (non-tappable) when
-      // no onTap is provided, e.g. the header of an already-open feed.
-      Button {
-        onTap?()
-      } label: {
-        HStack(alignment: .top, spacing: 12) {
-          feedAvatar
-          feedInfo
-          Spacer(minLength: 8)
+      if showsIdentity {
+        // Tappable content region — avatar + text. Disabled (non-tappable) when
+        // no onTap is provided, e.g. the header of an already-open feed.
+        Button {
+          onTap?()
+        } label: {
+          HStack(alignment: .top, spacing: 12) {
+            feedAvatar
+            feedInfo
+            Spacer(minLength: 8)
+          }
+          .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .disabled(onTap == nil)
+      } else {
+        feedDescription
       }
-      .buttonStyle(.plain)
-      .disabled(onTap == nil)
 
       // Trailing actions are separate hit targets, so tapping them never
       // triggers row navigation.
@@ -116,14 +123,19 @@ struct FeedDiscoveryHeaderView: View {
 
       subtitleLine
 
-      if let description = feed.description, !description.isEmpty {
-        Text(description)
-          .appFont(AppTextRole.subheadline)
-          .foregroundStyle(.secondary)
-          .lineLimit(nil)
-          .multilineTextAlignment(.leading)
-          .fixedSize(horizontal: false, vertical: true)
-      }
+      feedDescription
+    }
+  }
+
+  @ViewBuilder
+  private var feedDescription: some View {
+    if let description = feed.description, !description.isEmpty {
+      Text(description)
+        .appFont(AppTextRole.subheadline)
+        .foregroundStyle(.secondary)
+        .lineLimit(nil)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
