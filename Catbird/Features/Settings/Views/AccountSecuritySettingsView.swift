@@ -37,7 +37,7 @@ struct AccountSecuritySettingsView: View {
                     .disabled(changingAppLock)
                     .settingsControl(.init(rawValue: "account.appLock"))
                     if changingAppLock { ProgressView("Updating app lock…") }
-                } header: { Text("This Device") } footer: {
+                } header: { Text("On This Device") } footer: {
                     Text("Use your device’s biometric authentication to unlock Catbird. This preference applies to the app on this device.")
                 }
             }
@@ -55,7 +55,7 @@ struct AccountSecuritySettingsView: View {
         .sheet(item: $accountDeletionTarget) { target in
             AccountDeletionSheet(target: target)
         }
-        .confirmationDialog("Sign out of this account?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+        .confirmationDialog("Sign Out of This Account?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) {
                 guard let did = signOutDID, SettingsAccountBoundary.isCurrent(did, revision: signOutRevision) else { return }
                 if let pending = appState.appSettings.pendingChangesSummary { pendingSignOutDID = pending.accountDID; showingPendingSignOut = true }

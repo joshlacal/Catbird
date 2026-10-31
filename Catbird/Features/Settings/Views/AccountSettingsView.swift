@@ -139,46 +139,25 @@ struct AccountSettingsView: View {
     var body: some View {
         Group {
             SettingsFocusedForm(initialFocus: initialFocus, isReady: hasLoadedOnce || !isLoading) {
-                SettingsScopeSection(scope: "This account")
+                SettingsScopeSection()
                 if CatbirdFeatures.circlesSpaces {
                     circlesSection
                 }
                 if isLoading && !hasLoadedOnce {
                     Section {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .listRowBackground(Color.clear)
+                        ProgressView("Loading account details…")
                     }
                 } else {
-                    Section("Handle") {
+                    Section {
                         if let profile = profile {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Current Handle")
-                                        .fontWeight(.medium)
-                                    
-                                    Text("@\(profile.handle.description)")
-                                        .appFont(AppTextRole.callout)
-                                        .foregroundStyle(.secondary)
-                                }
-                                
-                                Spacer()
-                                
-                                Image(systemName: "at")
-                                    .foregroundStyle(.tint)
-                            }
-                            .padding(.vertical, 4)
+                            LabeledContent("Handle", value: "@\(profile.handle.description)")
                         }
-                        
                     }
-                    
                     .settingsControl(.init(rawValue: "account.handle"))
                     
                     Section("Account Type") {
-                        SettingsLink(screen: .automationLabel, summary: hasConfirmedAccountType ? (isBotAccount ? "Bot" : "None") : "Unknown", systemImage: "person.crop.rectangle.badge.plus", family: .account)
-
+                        SettingsLink(screen: .automationLabel, summary: hasConfirmedAccountType ? (isBotAccount ? "On" : "Off") : "Unknown", systemImage: "person.crop.rectangle.badge.plus", family: .account)
                     }
-                    
                     .settingsControl(.init(rawValue: "account.automation"))
                     Section {
                         Button {
@@ -192,20 +171,14 @@ struct AccountSettingsView: View {
                                         .scaleEffect(0.8)
                                 }
                             } else {
-                                HStack {
-                                    Text("Export Public Account Data")
-                                    Spacer()
-                                    Image(systemName: "arrow.down.doc")
-                                }
+                                Label("Export Public Account Data", systemImage: "arrow.down.doc")
                             }
                         }
                         .disabled(isLoading || isExportingData || isDeactivating || isReactivating)
                     } header: {
                         Text("Data Export")
                     } footer: {
-                        Text("Download a copy of your public Bluesky data (posts, likes, follows and profile) as a .car file. Messages and drafts aren’t included.")
-                            .appFont(AppTextRole.footnote)
-                            .foregroundStyle(.secondary)
+                        Text("Download a copy of your public Bluesky data (posts, likes, follows, and profile) as a .car file. Messages and drafts aren’t included.")
                     }
                     .settingsControl(.init(rawValue: "account.export"))
                 }
@@ -225,7 +198,7 @@ struct AccountSettingsView: View {
                     .disabled(appState.userDID.isEmpty || isExportingData)
                     .accessibilityIdentifier("AccountDeletion.Delete")
                 } footer: {
-                    Text("Delete your hosted account on your provider and erase Catbird-held account data.")
+                    Text("Opens your provider’s website to delete your hosted account. You can also erase the data Catbird holds for this account.")
                 }
                 .settingsControl(.init(rawValue: "account.delete"))
             }
@@ -244,7 +217,7 @@ struct AccountSettingsView: View {
                 logger.info("Initial data load complete")
             }
             .alert("Something Went Wrong", isPresented: $showingFormError) {
-                Button("OK") { }
+                Button("OK", role: .cancel) { }
             } message: {
                 Text(formError ?? "Something went wrong. Try again.")
             }
@@ -286,7 +259,6 @@ struct AccountSettingsView: View {
                     reactivationTask?.cancel()
                     reactivationTask = nil
                 }
-                verificationPollingTask?.cancel()
                 verificationPollingTask?.cancel()
                 verificationPollingTask = nil
                 exportTask?.cancel()

@@ -12,6 +12,15 @@ struct NotificationSettingsView: View {
 
   private var manager: NotificationManager { appState.notificationManager }
 
+  /// Encrypted chat alerts are an iOS control, so other platforms show neither the toggle nor its copy.
+  private var showsEncryptedChatAlerts: Bool {
+    #if os(iOS)
+    CatbirdFeatures.mlsChat
+    #else
+    false
+    #endif
+  }
+
   var body: some View {
     SettingsFocusedForm(initialFocus: initialFocus) {
       SettingsScopeSection()
@@ -51,19 +60,17 @@ struct NotificationSettingsView: View {
           Text("Load saved preferences to see message alert settings.").foregroundStyle(.secondary)
             .settingsControl(.init(rawValue: "notifications.messages"))
         }
-        #if os(iOS)
-        if CatbirdFeatures.mlsChat {
+        if showsEncryptedChatAlerts {
           Toggle("Encrypted Message Push Alerts", isOn: Binding(
             get: { manager.mlsChatNotificationsEnabled },
             set: { manager.mlsChatNotificationsEnabled = $0 }
           ))
           .disabled(!manager.isPushRequested)
         }
-        #endif
       } header: {
         Text("Messages")
       } footer: {
-        Text(CatbirdFeatures.mlsChat
+        Text(showsEncryptedChatAlerts
           ? "Choose direct message and encrypted chat alerts for this account. Push delivery also needs device permission and a ready connection."
           : "Choose direct message alerts for this account. Push delivery also needs device permission and a ready connection.")
       }

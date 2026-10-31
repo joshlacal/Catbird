@@ -118,7 +118,7 @@ struct MLSChatSettingsView: View {
             if isOptingOut {
               ProgressView()
                 .controlSize(.small)
-              Text("Disabling...")
+              Text("Disabling…")
             } else {
               Text("Disable MLS Encrypted Chat")
             }
@@ -164,7 +164,7 @@ struct MLSChatSettingsView: View {
     }
     .overlay {
       if isLoading {
-        ProgressView("Loading settings...")
+        ProgressView("Loading settings…")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .background(.ultraThinMaterial)
       }

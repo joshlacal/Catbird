@@ -56,9 +56,7 @@ struct ModerationSettingsView: View {
                 loadedContent(prefs)
             } else if isLoading {
                 Section {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .listRowBackground(Color.clear)
+                    ProgressView("Loading moderation settings…")
                 }
             } else {
                 Section {

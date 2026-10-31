@@ -159,7 +159,7 @@ struct PrivacySecuritySettingsView: View {
                     Text("Couldn’t load the recommendation request. Your current setting is unchanged.").foregroundStyle(.secondary)
                     Button("Try Again") { algorithmicVisibilityTask = Task { await loadAlgorithmicVisibility() } }
                 }
-            } footer: { Text("Requests that Bluesky and third-party apps exclude your posts from algorithmic feeds and discovery. Apps decide whether to honor this request.") }
+            } footer: { Text("Turning this on asks Bluesky and other apps to exclude your posts from algorithmic feeds and discovery. Other apps may not honor this request.") }
             .settingsControl(.init(rawValue: "privacy.algorithmicVisibility"))
             Section {
                 Toggle("Credit Repost Discovery", isOn: Binding(
@@ -168,7 +168,7 @@ struct PrivacySecuritySettingsView: View {
                 ))
                 .disabled(!appState.appSettings.canEditPersistedSettings)
                 .settingsControl(.init(rawValue: "privacy.attribution"))
-            } footer: { Text("Shows attribution when you discover a post through another person’s repost.") }
+            } footer: { Text("When you like or repost a post you found through someone’s repost, Catbird credits that repost so its author is notified.") }
             #if os(iOS)
             if CatbirdFeatures.mlsChat {
             Section {

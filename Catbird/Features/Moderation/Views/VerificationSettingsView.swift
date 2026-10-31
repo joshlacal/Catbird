@@ -21,8 +21,7 @@ struct VerificationSettingsView: View {
             SettingsScopeSection()
             if isLoading {
                 Section {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, alignment: .center)
+                    ProgressView("Loading badge setting…")
                 }
             } else if loadFailed {
                 Section {
@@ -33,7 +32,7 @@ struct VerificationSettingsView: View {
                     }
                 }
             } else {
-                Section(header: Text("Verification Badges"), footer: Text("When enabled, verification badges appear on profiles, posts, search, and conversations to verify trusted identities. Turning this off hides all verification badges.")) {
+                Section(footer: Text("Verification badges appear on profiles, posts, search, and conversations for accounts verified by Bluesky or a trusted verifier. Turning this off hides them everywhere.")) {
                     Toggle("Show Verification Badges", isOn: Binding(
                         get: { showBadges },
                         set: { newValue in
@@ -49,13 +48,7 @@ struct VerificationSettingsView: View {
                 
                 if isSaving {
                     Section {
-                        HStack {
-                            ProgressView()
-                                .padding(.trailing, 8)
-                            Text("Saving…")
-                                .appFont(AppTextRole.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
+                        ProgressView("Saving…")
                     }
                 }
             }
