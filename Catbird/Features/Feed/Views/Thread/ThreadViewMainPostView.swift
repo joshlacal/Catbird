@@ -363,6 +363,9 @@ private struct ThreadMainPostLayout: View {
                 post: post, mediaModeration: moderation.media, visibilityContext: visibilityContext, path: $path)
             }
           }
+          // The anchor cell drops its hosted view on reuse; the body and media
+          // gates restore a reveal for this post from `ModerationRevealStore`.
+          .environment(\.moderationRevealSubject, post.value.uri.uriString())
           Text(ThreadViewMainPostView.dateTimeFormatter.string(from: summary.createdAt))
             .appSubheadline()
             .textScale(.secondary)

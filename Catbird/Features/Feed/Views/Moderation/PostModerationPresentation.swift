@@ -247,6 +247,70 @@ struct ModerationRevealState: Equatable, Sendable {
   }
 }
 
+/// Remembers content-warning reveals outside of any one gate view.
+///
+/// Feed and thread rows are SwiftUI views hosted in reused collection view
+/// cells, so a gate's view state is thrown away whenever its cell is reused,
+/// and a revealed post scrolled away and back came back concealed. A gate with
+/// a subject (`\.moderationRevealSubject`, the post's AT URI) records Show and
+/// Hide here and starts from the recorded choice, so the row lays out revealed
+/// on its first pass, and the same post in another row or on another screen
+/// starts revealed too. A quote card's subject is the quoted post, so showing
+/// a post never opens a post it quotes. An entry is for one account, one
+/// subject, one kind of gate and one set of causes, so a new cause or a cause
+/// the viewer may no longer override conceals again, as
+/// `ModerationRevealState` does.
+@MainActor
+final class ModerationRevealStore {
+  enum Gate: Hashable {
+    case body
+    case media
+  }
+
+  private struct Key: Hashable {
+    let accountDID: String
+    let subject: String
+    let gate: Gate
+    let causes: [ModerationCauseKey]
+  }
+
+  static let shared = ModerationRevealStore()
+
+  private static let maxEntries = 5_000
+
+  private var revealedKeys: Set<Key> = []
+
+  /// Changes whenever the recorded reveals change. A gate restores its state
+  /// from here when its row is built, so the feed's row-height cache keys
+  /// heights by it: a height measured before a reveal changed never sizes a
+  /// row built after it.
+  private(set) var generation = 0
+
+  func isRevealed(_ ui: ModerationUI, gate: Gate, subject: String, accountDID: String) -> Bool {
+    guard !ui.noOverride, let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else {
+      return false
+    }
+    return revealedKeys.contains(key)
+  }
+
+  func setRevealed(_ revealed: Bool, ui: ModerationUI, gate: Gate, subject: String, accountDID: String) {
+    guard let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else { return }
+    if revealed {
+      if revealedKeys.count >= Self.maxEntries { revealedKeys.removeAll() }
+      guard revealedKeys.insert(key).inserted else { return }
+    } else {
+      guard revealedKeys.remove(key) != nil else { return }
+    }
+    generation &+= 1
+  }
+
+  /// No key without a subject: such a gate keeps its reveal in view state only.
+  private static func key(_ ui: ModerationUI, gate: Gate, subject: String, accountDID: String) -> Key? {
+    guard !subject.isEmpty else { return nil }
+    return Key(accountDID: accountDID, subject: subject, gate: gate, causes: ui.blurs.map(\.key))
+  }
+}
+
 /// Labels on an external link card, evaluated with no self subject: only the
 /// Bluesky moderation service and subscribed labelers count.
 enum ExternalLinkModeration {

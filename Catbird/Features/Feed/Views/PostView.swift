@@ -777,6 +777,9 @@ private struct PostContentLayout: View {
           path: $path
         )
       }
+      // Reveals are remembered for the post, not the row, so they survive cell
+      // reuse and carry to other rows and screens that show it.
+      .environment(\.moderationRevealSubject, displayed.value.uri.uriString())
     }
 
     if !isReadOnlyPreview {
