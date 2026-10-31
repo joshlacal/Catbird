@@ -16,7 +16,10 @@ struct ProfileSectionView: View {
     var body: some View {
         Group {
             if tab == .videos {
-                StreamplaceVideoListView(userDID: viewModel.userDID)
+                // The section reuses the profile screen's view model, whose `userDID` is the
+                // identifier the screen was opened with and can be a handle. Streamplace resolves
+                // the repo's PDS from a DID document, so it needs the loaded profile's DID.
+                StreamplaceVideoListView(userDID: viewModel.profile?.did.didString() ?? viewModel.userDID)
             } else if isInitialLoading {
                 ProgressView("Loading…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
