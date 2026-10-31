@@ -65,8 +65,8 @@ struct FeedLibrarySettingsView: View {
     HStack {
       VStack(alignment: .leading, spacing: 4) {
         Text(title(raw))
-        if pinned && actions.pinnedFeeds.first == raw { Text("Default Feed").font(.caption).foregroundStyle(.secondary) }
-        if let creator = creators[raw] { Text(creator).font(.caption).foregroundStyle(.secondary) }
+        if pinned && actions.pinnedFeeds.first == raw { Text("Default Feed").appFont(AppTextRole.caption).foregroundStyle(.secondary) }
+        if let creator = creators[raw] { Text(creator).appFont(AppTextRole.caption).foregroundStyle(.secondary) }
       }
       Spacer()
       Menu {
@@ -93,9 +93,9 @@ struct FeedLibrarySettingsView: View {
     }
       if let uri = try? ATProtocolURI(uriString: raw) {
         switch actions.state(for: uri) {
-        case .saving: ProgressView("Saving…").font(.caption)
-        case .pendingSync: Text("Saved on this device · Sync pending").font(.caption).foregroundStyle(.secondary)
-        case .failed(let error): Text(error).font(.caption).foregroundStyle(.red)
+        case .saving: ProgressView("Saving…").appFont(AppTextRole.caption)
+        case .pendingSync: Text("Saved on this device · Sync pending").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+        case .failed(let error): Text(error).appFont(AppTextRole.caption).foregroundStyle(.red)
         default: EmptyView()
         }
       }

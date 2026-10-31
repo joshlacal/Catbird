@@ -92,7 +92,7 @@ struct DataBackupSettingsView: View {
       if isBackingUp {
         VStack(spacing: 8) {
           ProgressView(value: backupProgress)
-          Text("Backing up...")
+          Text("Backing up…")
             .font(.caption)
             .foregroundStyle(.secondary)
         }

@@ -62,8 +62,6 @@ struct AutomationLabelSettingsView: View {
                 Text("Preview")
             } footer: {
                 Text("When this is on, a Bot badge appears on your profile and posts to let people know this account is automated.")
-                    .appFont(AppTextRole.footnote)
-                    .foregroundStyle(.secondary)
             }
             
             Section {
@@ -85,8 +83,6 @@ struct AutomationLabelSettingsView: View {
                 }
             } footer: {
                 Text("Labeling your account as a bot helps people and feeds understand automated activity from your account.")
-                    .appFont(AppTextRole.footnote)
-                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Automation Label")
@@ -102,7 +98,7 @@ struct AutomationLabelSettingsView: View {
         }
         .onChange(of: appState.userDID) { _, _ in updateTask?.cancel() }
         .alert("Couldn’t Update Label", isPresented: $showErrorAlert) {
-            Button("OK") { }
+            Button("OK", role: .cancel) { }
         } message: {
             Text(errorMessage ?? "Something went wrong. Try again.")
         }
@@ -142,7 +138,7 @@ struct AutomationLabelSettingsView: View {
                     
                     if isBot {
                         Text("BOT")
-                            .font(.caption2.weight(.bold))
+                            .appFont(AppTextRole.caption2).fontWeight(.bold)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.secondary.opacity(0.2))

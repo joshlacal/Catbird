@@ -120,7 +120,7 @@ struct AccountDeletionSheet: View {
           }
         }
       }
-      .navigationTitle(flow.target.purpose == .manageAccount ? "Hosted Account" : "Delete Account")
+      .navigationTitle(flow.target.purpose == .manageAccount ? "Manage Hosted Account" : "Delete Account")
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
       #endif
@@ -139,7 +139,7 @@ struct AccountDeletionSheet: View {
       }
       #endif
       .confirmationDialog("Erase Catbird Data & Sign Out?", isPresented: $confirmingDataErasure, titleVisibility: .visible) {
-        Button("Erase All Data & Sign Out", role: .destructive) {
+        Button("Erase Catbird Data & Sign Out", role: .destructive) {
           eraseAccountData()
         }
         Button("Cancel", role: .cancel) {}

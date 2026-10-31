@@ -57,7 +57,7 @@ struct FeedFilterSettingsView: View {
           )).settingsControl(.init(rawValue: "feed.replyLikeThreshold"))
           if let minimum = editor.confirmed?.hideRepliesByLikeCount {
             if !(0...100).contains(minimum) {
-              Text("Saved minimum: \(minimum). Choose a value from 0 to 100 below to replace it.").font(.caption).foregroundStyle(.secondary)
+              Text("Saved minimum: \(minimum). Choose a value from 0 to 100 below to replace it.").appFont(AppTextRole.caption).foregroundStyle(.secondary)
             }
             Stepper(value: Binding(
               get: { min(100, max(0, minimum)) },
@@ -81,21 +81,21 @@ struct FeedFilterSettingsView: View {
         }.settingsControl(.init(rawValue: "feed.contentType"))
         if appState.feedFilterSettings.contentType == .conflicting {
           Text("Text Only and Images and Videos Only are both stored as enabled. Together they hide every post. Choose a post type to replace those two choices explicitly.")
-            .font(.footnote).foregroundStyle(.secondary)
+            .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
         }
         localToggle("Hide Link Posts", id: "Hide Link Posts", control: "feed.hideLinkPosts")
         localToggle("Hide Repeated Parent Posts", id: "Hide Duplicate Posts", control: "feed.duplicates")
-      } header: { Text("On This Device · Current Account") } footer: {
+      } header: { Text("Post Types & Links · On This Device") } footer: {
         Text("Post types and link filters apply to Catbird feeds on this device. Repeated parent filtering hides a standalone post when it already appears in a reply thread. Changes refresh loaded feeds.")
       }
       Section {
         NavigationLink {
           LanguageSettingsView(initialFocus: .init(rawValue: "languages.hideOtherLanguages"))
         } label: {
-          SettingsNavigationRow(title: "Reading Languages", summary: languageSummary, systemImage: "globe", family: .language)
+          SettingsNavigationRow(title: "Reading Languages", summary: languageSummary, systemImage: "character.bubble", family: .language)
         }.settingsControl(.init(rawValue: "feed.languageFilter"))
       } footer: {
-        Text("Choose which languages appear in your feeds in Language settings.")
+        Text("Language settings control which languages appear in your feeds.")
       }
       if let editor {
         if editor.isSaving { Section { ProgressView("Saving Bluesky preference…") } }
@@ -156,7 +156,7 @@ struct FeedFilterSettingsView: View {
     })) {
       VStack(alignment: .leading, spacing: 4) {
         Text("Hide \(title)")
-        Text(sources.description).font(.caption).foregroundStyle(.secondary)
+        Text(sources.description).appFont(AppTextRole.caption).foregroundStyle(.secondary)
       }
     }.settingsControl(.init(rawValue: control))
   }

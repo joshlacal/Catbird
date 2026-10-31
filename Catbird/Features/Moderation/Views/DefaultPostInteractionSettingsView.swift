@@ -60,7 +60,7 @@ struct DefaultPostInteractionSettingsView: View {
       SettingsScopeSection(scope: "New posts for this account")
       Section {
         Text("These defaults apply when you create a post. You can still choose different replies and quotes for an individual post.")
-          .font(.footnote).foregroundStyle(.secondary)
+          .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
       }
       if let editor {
         if editor.state == .unavailable {
@@ -70,7 +70,7 @@ struct DefaultPostInteractionSettingsView: View {
         } else if editor.state == .loadFailed {
           Section {
             Text("Default replies and quotes couldn’t be loaded.")
-            Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
+            Text(editor.errorMessage ?? "Try again.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
             Button("Try Again") { Task { await editor.load() } }
               .settingsControl(.init(rawValue: "privacy.defaultRulesRetryLoad"))
           }
@@ -82,7 +82,7 @@ struct DefaultPostInteractionSettingsView: View {
                 HStack(alignment: .top) {
                   VStack(alignment: .leading, spacing: 4) {
                     Text(mode.title).foregroundStyle(.primary)
-                    Text(mode.explanation).font(.footnote).foregroundStyle(.secondary)
+                    Text(mode.explanation).appFont(AppTextRole.footnote).foregroundStyle(.secondary)
                   }
                   Spacer()
                   if replyMode == mode {
@@ -108,16 +108,16 @@ struct DefaultPostInteractionSettingsView: View {
                 if case .unexpected = $0 { return true }; return false
               }) == true {
                 Text("Other saved reply rules are kept when you change a group or list. Choosing Everyone or No One replaces all reply rules.")
-                  .font(.footnote).foregroundStyle(.secondary)
+                  .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
               }
-              Text("The selected groups, lists and any other saved rules are combined.")
-                .font(.footnote).foregroundStyle(.secondary)
+              Text("The selected groups, lists, and any other saved rules are combined.")
+                .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
             }
             Section("Lists") {
               if isLoadingLists {
-                ProgressView("Loading my lists…")
+                ProgressView("Loading your lists…")
               } else if let listError {
-                Text(listError).font(.footnote).foregroundStyle(.secondary)
+                Text(listError).appFont(AppTextRole.footnote).foregroundStyle(.secondary)
                 Button("Try Again") { Task { await loadUserLists() } }
               } else if userLists.isEmpty {
                 Text("You have no lists.").foregroundStyle(.secondary)
@@ -152,7 +152,7 @@ struct DefaultPostInteractionSettingsView: View {
             if editor.displayedValue?.postgateEmbeddingRules?.contains(where: {
               if case .unexpected = $0 { return true }; return false
             }) == true {
-              Text("Other saved quote rules are kept.").font(.footnote).foregroundStyle(.secondary)
+              Text("Other saved quote rules are kept.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
             }
           } header: {
             Text("Quote Posts")
@@ -164,7 +164,7 @@ struct DefaultPostInteractionSettingsView: View {
           } else if editor.state == .saveFailed {
             Section {
               Text("This change couldn’t be confirmed.")
-              Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
+              Text(editor.errorMessage ?? "Try again.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
               Button("Try This Change Again") { editor.retrySave() }
                 .settingsControl(.init(rawValue: "privacy.defaultRulesRetrySave"))
               Button("Reload Saved Defaults") { Task { await editor.load() } }

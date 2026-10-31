@@ -50,7 +50,7 @@ struct AccessibilitySettingsView: View {
           .disabled(!appState.appSettings.effectiveReduceMotion)
           .settingsControl(.init(rawValue: "accessibility.crossfade"))
         if appState.appSettings.systemAccessibility.prefersCrossfade {
-          Text("The system also prefers crossfade transitions.").foregroundStyle(.secondary)
+          Label("Prefer Cross-Fade Transitions is on in system settings.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
         }
       } header: { Text("Motion") } footer: {
         Text("Reduce Motion limits supported interface animations. Turning this app choice off keeps the system accommodation. Crossfade replaces supported sliding transitions; video autoplay is managed in Media & Links.")
