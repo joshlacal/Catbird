@@ -79,6 +79,10 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   var onAddReaction: ((String) -> Void)?
   var onRequestEmojiPicker: ((String) -> Void)? = nil
   var onLongPress: ((CGRect) -> Void)?
+  var onMoreActions: (() -> Void)? = nil
+  #if os(iOS)
+  var onContextMenuAnchor: ((ChatMessageContextMenuAnchorView) -> Void)? = nil
+  #endif
   var onReactionLongPress: (() -> Void)? = nil
   var onReply: (() -> Void)? = nil
   var onReplyTapped: ((String) -> Void)? = nil
@@ -86,14 +90,16 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   /// Invoked when the user taps the retry affordance on a failed send (WS-6.5).
   var onRetry: (() -> Void)? = nil
   var showSenderInfo: Bool = true
+  /// Sender names label message runs in group chats; 1:1 chats already name
+  /// the other person in the title.
+  var showSenderName: Bool = true
   var groupPosition: UnifiedMessageGroupPosition = .single
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.displayScale) private var displayScale
 
   @State private var bubbleGlobalFrame: CGRect = .zero
   @State private var showingMLSErrorDetails = false
-  @State private var dragOffset: CGFloat = 0
-  @State private var hasTriggeredHaptic = false
   private let cornerRadius: CGFloat = 18
   private let maxBubbleWidth: CGFloat = 280
 
@@ -102,18 +108,31 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     return message.isFromCurrentUser ? "mls.messageText.outgoing" : "mls.messageText.incoming"
   }
 
-  /// True when the message is just a media embed (image or GIF) with no text and no MLS error.
-  /// Media-only bubbles drop the bubble chrome — the media surface IS the bubble.
+  /// True when the message is just an image, GIF or shared post with no text, reply or
+  /// MLS error. Media-only bubbles drop the bubble chrome — the embed surface IS the bubble.
   private var isMediaOnly: Bool {
     guard !message.isTombstone else { return false }
     guard message.text.isEmpty else { return false }
     if (message as? MLSMessageAdapter)?.debugInfo != nil { return false }
+    guard message.replyContext == nil else { return false }
     guard let embed = message.embed else { return false }
     switch embed {
-    case .image, .gif:
+    case .image, .gif, .blueskyRecord, .post:
       return true
     default:
       return false
+    }
+  }
+
+  /// A media-only shared post shows its own 12pt card chrome (`feedEmbedCardStyle()`),
+  /// so the surface clips to that radius instead of trimming the card's hairline.
+  private var surfaceCornerRadius: CGFloat {
+    guard isMediaOnly, let embed = message.embed else { return cornerRadius }
+    switch embed {
+    case .blueskyRecord, .post:
+      return 12
+    default:
+      return cornerRadius
     }
   }
 
@@ -166,7 +185,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       navigationPath.append(NavigationDestination.profile(message.senderID))
     } label: {
       if let avatarURL = message.senderAvatarURL {
-        LazyImage(url: avatarURL) { state in
+        let request = ImageRequestFactory.avatar(avatarURL, pointSize: 32, scale: displayScale)
+        LazyImage(request: request) { state in
           if let image = state.image {
             image
               .resizable()
@@ -182,6 +202,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       }
     }
     .buttonStyle(.plain)
+    .accessibilityLabel(message.senderDisplayName.map { "View \($0)’s profile" } ?? "View profile")
   }
 
   private var placeholderAvatar: some View {
@@ -196,9 +217,34 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       }
   }
 
+  private var bubbleAccessibilityLabel: String {
+    let sender = message.isFromCurrentUser ? "You" : (message.senderDisplayName ?? "")
+    let time = message.sentAt.formatted(date: .omitted, time: .shortened)
+    return [sender, message.text, time].filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+
   private var avatarPlaceholderSpacer: some View {
     Color.clear
       .frame(width: 32, height: 32)
+  }
+
+  private var accessibleMoreActions: (() -> Void)? {
+    guard !message.isTombstone else { return nil }
+    if let onMoreActions { return onMoreActions }
+    return onLongPress.map { callback in { callback(bubbleGlobalFrame) } }
+  }
+
+  @ViewBuilder
+  private func menuAnchoredSurface<Content: View>(_ content: Content) -> some View {
+    #if os(iOS)
+    content.background {
+      if let onContextMenuAnchor {
+        ChatMessageContextMenuAnchor(cornerRadius: surfaceCornerRadius, onUpdate: onContextMenuAnchor)
+      }
+    }
+    #else
+    content
+    #endif
   }
 
   // MARK: - Message Content
@@ -207,82 +253,63 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   private var messageContent: some View {
     VStack(alignment: message.isFromCurrentUser ? .trailing : .leading, spacing: 4) {
       // Sender name for group chats
-      if showSenderInfo, groupPosition.isFirstInGroup, !message.isFromCurrentUser, let name = message.senderDisplayName {
+      if showSenderInfo, showSenderName, groupPosition.isFirstInGroup, !message.isFromCurrentUser,
+         let name = message.senderDisplayName {
         Text(name)
           .font(.caption)
           .foregroundStyle(.secondary)
           .padding(.leading, 4)
       }
 
-      let bubbleSurface = bubbleContent
-        .bubbleBackground(
-          isCurrentUser: message.isFromCurrentUser,
-          cornerRadius: cornerRadius,
-          colorScheme: colorScheme,
-          showFill: !isMediaOnly
-        )
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .offset(x: dragOffset)
-
-      let gesturedSurface: some View = {
-        if onReply != nil, !message.isTombstone {
-          return AnyView(
-            bubbleSurface
-              .gesture(
-                DragGesture(minimumDistance: 15)
-                  .onChanged { value in
-                    let translation = value.translation.width
-                    if abs(value.translation.height) < abs(translation) {
-                      let isSelf = message.isFromCurrentUser
-                      let validTranslation = isSelf ? min(0, translation) : max(0, translation)
-                      let damped = validTranslation * 0.4
-                      dragOffset = damped
-                      let isArmed = isSelf ? damped <= -30 : damped >= 30
-                      if isArmed && !hasTriggeredHaptic {
-                        PlatformHaptics.light()
-                        hasTriggeredHaptic = true
-                      } else if !isArmed && hasTriggeredHaptic {
-                        hasTriggeredHaptic = false
-                      }
-                    }
-                  }
-                  .onEnded { _ in
-                    let isSelf = message.isFromCurrentUser
-                    let isArmed = isSelf ? dragOffset <= -30 : dragOffset >= 30
-                    if isArmed {
-                      onReply?()
-                    }
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                      dragOffset = 0
-                      hasTriggeredHaptic = false
-                    }
-                  }
-              )
+      let bubbleSurface = menuAnchoredSurface(
+        bubbleContent
+          .bubbleBackground(
+            isCurrentUser: message.isFromCurrentUser,
+            cornerRadius: cornerRadius,
+            colorScheme: colorScheme,
+            themeManager: appState.themeManager,
+            showFill: !isMediaOnly
           )
-        } else {
-          return AnyView(bubbleSurface)
-        }
-      }()
-
-      if onLongPress != nil, !message.isTombstone {
-        gesturedSurface
-          .background(
-            GeometryReader { proxy in
-              Color.clear
-                .preference(key: BubbleFramePreferenceKey.self, value: proxy.frame(in: .global))
-            }
-          )
-          .onPreferenceChange(BubbleFramePreferenceKey.self) { newFrame in
-            if bubbleGlobalFrame != newFrame {
-              bubbleGlobalFrame = newFrame
-            }
-          }
-          .onLongPressGesture {
-            onLongPress?(bubbleGlobalFrame)
-          }
-      } else {
-        gesturedSurface
+          .clipShape(RoundedRectangle(cornerRadius: surfaceCornerRadius, style: .continuous))
+      )
+      let gesturedSurface = SwipeToReplyContainer(
+        isFromCurrentUser: message.isFromCurrentUser,
+        enabled: onReply != nil && !message.isTombstone,
+        onReply: onReply
+      ) {
+        bubbleSurface
       }
+
+      Group {
+        if onLongPress != nil, !message.isTombstone {
+          gesturedSurface
+            .background(
+              GeometryReader { proxy in
+                Color.clear
+                  .preference(key: BubbleFramePreferenceKey.self, value: proxy.frame(in: .global))
+              }
+            )
+            .onPreferenceChange(BubbleFramePreferenceKey.self) { newFrame in
+              if bubbleGlobalFrame != newFrame {
+                bubbleGlobalFrame = newFrame
+              }
+            }
+            .onLongPressGesture {
+              onLongPress?(bubbleGlobalFrame)
+            }
+        } else {
+          gesturedSurface
+        }
+      }
+      // VoiceOver can't perform the swipe-to-reply or long-press gestures,
+      // so expose them as named actions on the bubble.
+      .modifier(BubbleAccessibilityModifier(
+        label: bubbleAccessibilityLabel,
+        combinesChildren: message.embed == nil,
+        onReply: message.isTombstone ? nil : onReply,
+        onMoreActions: accessibleMoreActions
+      ))
+      .accessibilityIdentifier("chat.message.\(message.diffableID)")
 
       // Reactions
       if !message.reactions.isEmpty, !message.isTombstone {
@@ -372,7 +399,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     let mlsDebugInfo = (message as? MLSMessageAdapter)?.debugInfo
 
     // Audio bubbles still want compact padding (the voice player has its own chrome),
-    // but image/gif bubbles drop padding entirely so the media fills the bubble.
+    // but other media-only bubbles drop padding entirely so the embed fills the bubble.
     let isAudioOnly: Bool = {
       guard !message.isTombstone else { return false }
       guard message.text.isEmpty, mlsDebugInfo == nil else { return false }
@@ -607,7 +634,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
 // MARK: - Layout Helpers
 
-private struct BubbleWidthLimiter: Layout {
+struct BubbleWidthLimiter: Layout {
   let maxWidth: CGFloat
 
   func sizeThatFits(
@@ -620,44 +647,34 @@ private struct BubbleWidthLimiter: Layout {
     let effectiveMaxWidth = min(maxWidth, proposal.width ?? maxWidth)
     guard effectiveMaxWidth.isFinite, effectiveMaxWidth > 0 else { return .zero }
 
-    // Measure unconstrained to get a natural (hugging) width.
+    // Use the ideal size only to choose a hugging width. Its height is not
+    // reliable for capped embeds until they receive a concrete width.
     let naturalSize = subview.sizeThatFits(.unspecified)
-    if
-      naturalSize.width.isFinite,
-      naturalSize.height.isFinite,
-      naturalSize.width <= effectiveMaxWidth
-    {
-      return CGSize(width: max(naturalSize.width, 0), height: max(naturalSize.height, 0))
-    }
-
-    // Re-measure with a max width to wrap multi-line text/embeds.
-    let constrainedSize = subview.sizeThatFits(
-      ProposedViewSize(width: effectiveMaxWidth, height: nil)
-    )
     let width: CGFloat
-    if constrainedSize.width.isFinite {
-      width = min(max(constrainedSize.width, 0), effectiveMaxWidth)
+    let constrainedHeight: CGFloat?
+    if naturalSize.width.isFinite, naturalSize.width < effectiveMaxWidth {
+      width = max(naturalSize.width, 0)
+      constrainedHeight = nil
     } else {
-      width = effectiveMaxWidth
+      let constrainedSize = subview.sizeThatFits(
+        ProposedViewSize(width: effectiveMaxWidth, height: nil)
+      )
+      width = constrainedSize.width.isFinite
+        ? min(max(constrainedSize.width, 0), effectiveMaxWidth)
+        : effectiveMaxWidth
+      constrainedHeight = (width == constrainedSize.width) ? constrainedSize.height : nil
     }
 
-    // Trust the constrained measurement. Only fall back to natural height when the
-    // content is *strictly* narrower than the max width — that means the content
-    // didn't need to wrap and its natural height is its ideal height (e.g. short
-    // text with fixedSize(vertical: true)). When natural width *equals* the max
-    // width, the content is either filling the cap (a wide image) or wrapping —
-    // in both cases natural height is unreliable and constrained height is correct.
-    var height: CGFloat = 0
-    if constrainedSize.height.isFinite {
-      height = max(constrainedSize.height, 0)
+    // Match placeSubviews exactly, including when constrained content reports
+    // a width below the cap. Measuring at the cap but placing more narrowly can
+    // add wrapped lines that extend beyond the bubble's rounded clipping mask.
+    let height: CGFloat
+    if let constrainedHeight, constrainedHeight.isFinite {
+      height = max(constrainedHeight, 0)
+    } else {
+      let placedSize = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+      height = placedSize.height.isFinite ? max(placedSize.height, 0) : 0
     }
-    if naturalSize.width.isFinite,
-       naturalSize.width < effectiveMaxWidth,
-       naturalSize.height.isFinite
-    {
-      height = max(height, naturalSize.height)
-    }
-
     return CGSize(width: width, height: height)
   }
 
@@ -677,6 +694,53 @@ private struct BubbleWidthLimiter: Layout {
   }
 }
 
+private struct SwipeToReplyContainer<Content: View>: View {
+  let isFromCurrentUser: Bool
+  let enabled: Bool
+  let onReply: (() -> Void)?
+  @ViewBuilder let content: () -> Content
+
+  @State private var dragOffset: CGFloat = 0
+  @State private var hasTriggeredHaptic = false
+
+  var body: some View {
+    if enabled, let onReply {
+      content()
+        .offset(x: dragOffset)
+        .gesture(
+          DragGesture(minimumDistance: 15)
+            .onChanged { value in
+              let translation = value.translation.width
+              if abs(value.translation.height) < abs(translation) {
+                let validTranslation = isFromCurrentUser ? min(0, translation) : max(0, translation)
+                let damped = validTranslation * 0.4
+                dragOffset = damped
+                let isArmed = isFromCurrentUser ? damped <= -30 : damped >= 30
+                if isArmed && !hasTriggeredHaptic {
+                  PlatformHaptics.light()
+                  hasTriggeredHaptic = true
+                } else if !isArmed && hasTriggeredHaptic {
+                  hasTriggeredHaptic = false
+                }
+              }
+            }
+            .onEnded { _ in
+              let isArmed = isFromCurrentUser ? dragOffset <= -30 : dragOffset >= 30
+              if isArmed {
+                onReply()
+              }
+              withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                dragOffset = 0
+                hasTriggeredHaptic = false
+              }
+            }
+        )
+    } else {
+      content()
+    }
+  }
+}
+
 // MARK: - iMessage-Style Reaction Bar
 
 private struct BubbleFramePreferenceKey: PreferenceKey {
@@ -687,9 +751,49 @@ private struct BubbleFramePreferenceKey: PreferenceKey {
   }
 }
 
+// MARK: - Bubble Accessibility
+
+/// Gives a message bubble one VoiceOver element (sender, text, time) plus
+/// named actions for the gesture-only Reply and long-press menu. Bubbles with
+/// embeds keep their children so shared posts and links stay reachable.
+private struct BubbleAccessibilityModifier: ViewModifier {
+  let label: String
+  let combinesChildren: Bool
+  let onReply: (() -> Void)?
+  let onMoreActions: (() -> Void)?
+
+  func body(content: Content) -> some View {
+    content
+      .accessibilityElement(children: combinesChildren ? .combine : .contain)
+      .modifier(LabelIfCombined(label: label, isCombined: combinesChildren))
+      .accessibilityActions {
+        if let onReply {
+          Button("Reply", action: onReply)
+        }
+        if let onMoreActions {
+          Button("React and More", action: onMoreActions)
+        }
+      }
+  }
+
+  private struct LabelIfCombined: ViewModifier {
+    let label: String
+    let isCombined: Bool
+
+    func body(content: Content) -> some View {
+      if isCombined {
+        content.accessibilityLabel(label)
+      } else {
+        content
+      }
+    }
+  }
+}
+
 // MARK: - Chat Rich Text
 
 struct ChatRichTextView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let attributedText: AttributedString
   let isCurrentUser: Bool
 
@@ -700,7 +804,7 @@ struct ChatRichTextView: View {
       .environment(
         \.openURL,
         OpenURLAction { url in
-          appState.urlHandler.handle(url)
+          sceneContext.urlHandler.handle(url)
         }
       )
   }
@@ -791,6 +895,7 @@ private extension View {
     isCurrentUser: Bool,
     cornerRadius: CGFloat,
     colorScheme: ColorScheme,
+    themeManager: ThemeManager,
     showFill: Bool = true
   ) -> some View {
     if showFill {
@@ -799,11 +904,24 @@ private extension View {
           .fill(
             isCurrentUser
               ? Color.accentColor
-              : (colorScheme == .dark ? Color(white: 0.22) : Color(white: 0.93))
+              : Color.incomingBubbleFill(themeManager, colorScheme: colorScheme)
           )
       )
     } else {
       self
+    }
+  }
+}
+
+private extension Color {
+  /// Incoming bubbles step up from the Dim and Black transcript backgrounds.
+  static func incomingBubbleFill(_ themeManager: ThemeManager, colorScheme: ColorScheme) -> Color {
+    guard themeManager.isDarkMode(for: colorScheme) else { return Color(white: 0.93) }
+    switch themeManager.darkThemeMode {
+    case .dim:
+      return .dynamicTertiaryBackground(themeManager, currentScheme: colorScheme)
+    case .black:
+      return Color(white: 0.17)
     }
   }
 }
@@ -838,4 +956,5 @@ private extension View {
     )
   }
   .padding()
+  .previewWithAuthenticatedState()
 }

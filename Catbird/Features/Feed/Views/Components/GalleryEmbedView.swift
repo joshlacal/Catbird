@@ -121,7 +121,7 @@ struct GalleryEmbedView: View {
     ScrollView(.horizontal, showsIndicators: false) {
       LazyHStack(spacing: Self.itemSpacing) {
         ForEach(Array(images.enumerated()), id: \.element.id) { index, image in
-          carouselItem(image: image, index: index, total: images.count, height: height)
+          carouselItem(image: image, index: index, allImages: images, height: height)
         }
       }
     }
@@ -140,8 +140,9 @@ struct GalleryEmbedView: View {
 
   @ViewBuilder
   private func carouselItem(
-    image: AppBskyEmbedImages.ViewImage, index: Int, total: Int, height: CGFloat
+    image: AppBskyEmbedImages.ViewImage, index: Int, allImages: [AppBskyEmbedImages.ViewImage], height: CGFloat
   ) -> some View {
+    let total = allImages.count
     let rawAspectRatio: CGFloat = {
       guard let ratio = image.aspectRatio, ratio.height > 0 else { return 1 }
       return CGFloat(ratio.width) / CGFloat(ratio.height)
@@ -154,6 +155,9 @@ struct GalleryEmbedView: View {
         .fill(Color.gray.opacity(0.1))
         .frame(width: width, height: height)
 
+      let thumbURL = URL(string: image.thumb.uriString()) ?? URL(string: "about:blank")!
+      let request = ImageLoadingManager.thumbnailRequest(for: thumbURL, targetSize: CGSize(width: width, height: height))
+
       if case .circle(let circle) = visibilityContext {
         CircleMediaView(
           viewImage: image,
@@ -163,11 +167,20 @@ struct GalleryEmbedView: View {
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+      } else if let cached = ImageLoadingManager.shared.pipeline.cache[request]?.image {
+        Image(platformImage: cached)
+          .resizable()
+          .aspectRatio(contentMode: .fill)
+          .frame(width: width, height: height)
+          .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+          .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: Self.cornerRadius))
+          .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+          .matchedTransitionSource(id: image.id, in: imageTransition) { source in
+            source
+              .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+          }
       } else {
-        LazyImage(request: ImageLoadingManager.imageRequest(
-          for: URL(string: image.thumb.uriString()) ?? URL(string: "about:blank")!,
-          targetSize: CGSize(width: width, height: height)
-        )) { state in
+        LazyImage(request: request) { state in
           if let loadedImage = state.image {
             loadedImage
               .resizable()
@@ -216,6 +229,18 @@ struct GalleryEmbedView: View {
         lastViewedIndex = index
         selectedImage = image
         activeTransitionID = image.id
+      }
+    }
+    .onAppear {
+      let nextIndices = [index + 1, index + 2]
+      let urlsToPrefetch = nextIndices.compactMap { idx -> URL? in
+        guard let nextImage = allImages[safe: idx] else { return nil }
+        return URL(string: nextImage.thumb.uriString())
+      }
+      if !urlsToPrefetch.isEmpty {
+        Task {
+          await ImageLoadingManager.shared.startPrefetching(urls: urlsToPrefetch)
+        }
       }
     }
   }

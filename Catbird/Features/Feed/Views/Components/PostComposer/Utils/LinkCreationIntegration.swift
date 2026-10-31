@@ -148,7 +148,7 @@ extension PostComposerViewModel: LinkCreationDelegate {
         if path.isEmpty || path == "/" { return host }
         let maxPath = 15
         if path.count > maxPath {
-            let truncated = String(path.prefix(maxPath)) + "..."
+            let truncated = String(path.prefix(maxPath)) + "…"
             return host + truncated
         }
         return host + path

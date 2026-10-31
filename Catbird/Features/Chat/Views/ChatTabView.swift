@@ -70,6 +70,7 @@ struct MLSConversationPrompt: Identifiable {
 // MARK: - Chat Tab View
 
 struct ChatTabView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.composerTransitionNamespace) private var composerNamespace
@@ -86,6 +87,7 @@ struct ChatTabView: View {
   @State private var isShowingErrorAlert = false
   @State private var lastErrorMessage: String?
   @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+  @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
   @State private var showingNewMessageSheet = false
   @State private var showingSettings = false
   @State private var coordinator = UnifiedChatCoordinator()
@@ -126,17 +128,17 @@ struct ChatTabView: View {
   }
 
   private var chatNavigationPath: Binding<NavigationPath> {
-    appState.navigationManager.pathBinding(for: 4)
+    sceneContext.navigationManager.pathBinding(for: 4)
   }
 
   private var shouldUseSplitView: Bool {
-    DeviceInfo.isIPad || horizontalSizeClass == .regular
+    horizontalSizeClass == .regular
   }
 
   // MARK: - Body
 
   var body: some View {
-    NavigationSplitView(columnVisibility: $columnVisibility) {
+    NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
       unifiedSidebarContent
     } detail: {
       unifiedDetailContent
@@ -153,9 +155,26 @@ struct ChatTabView: View {
     }
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
+      preferredCompactColumn = newValue != nil ? .detail : .sidebar
       if !shouldUseSplitView {
         columnVisibility = newValue != nil ? .detailOnly : .doubleColumn
       }
+    }
+    .onChange(of: preferredCompactColumn) { _, column in
+      guard !shouldUseSplitView, column == .sidebar, preferredCompactColumn == .sidebar else { return }
+      if sceneContext.navigationManager.targetConversationId != nil ||
+          sceneContext.navigationManager.targetMLSConversationId != nil ||
+          sceneContext.navigationManager.chatRootRequestID != nil {
+        consumeNavigationRequests()
+      } else {
+        returnToConversationList()
+      }
+    }
+    .onChange(of: lastTappedTab) { _, tab in
+      guard tab == AppNavigationManager.chatTabIndex, selectedTab == tab else { return }
+      lastTappedTab = nil
+      sceneContext.navigationManager.requestChatRoot()
+      consumeNavigationRequests()
     }
     .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in
       resetUnifiedListForCurrentAccountIfNeeded()
@@ -165,17 +184,14 @@ struct ChatTabView: View {
     .onChange(of: appState.userDID) { _, _ in
       handleAccountContextChanged()
     }
-    .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
-      if let convoId = newValue, convoId != selectedConvoId {
-        selectedConvoId = convoId
-        appState.navigationManager.targetConversationId = nil
-      }
+    .onChange(of: sceneContext.navigationManager.targetConversationId) { _, _ in
+      consumeNavigationRequests()
     }
-    .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
-      if let convoId = newValue, convoId != selectedConvoId {
-        selectedConvoId = convoId
-        appState.navigationManager.targetMLSConversationId = nil
-      }
+    .onChange(of: sceneContext.navigationManager.chatRootRequestID) { _, _ in
+      consumeNavigationRequests()
+    }
+    .onChange(of: sceneContext.navigationManager.targetMLSConversationId) { _, _ in
+      consumeNavigationRequests()
     }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
       handleErrorStateChange(oldError: oldError, newError: newError)
@@ -271,19 +287,23 @@ struct ChatTabView: View {
       if !searchText.isEmpty {
         searchResultsContent
       } else {
-        ForEach(coordinator.conversations) { item in
-          unifiedRow(for: item)
-        }
+        Section {
+          ForEach(coordinator.conversations) { item in
+            unifiedRow(for: item)
+              .listRowSeparator(item.id == coordinator.conversations.first?.id ? .hidden : .visible, edges: .top)
+          }
 
-        if shouldShowPagination {
-          paginationView
-        }
+          if shouldShowPagination {
+            paginationView
+          }
 
-        Spacer()
-          .frame(height: 80)
-          .listRowSeparator(.hidden)
-          .listRowInsets(EdgeInsets())
-          .listRowBackground(Color.clear)
+          Spacer()
+            .frame(height: 80)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+        }
+        .listSectionSeparator(.hidden, edges: .top)
       }
     }
     // Keyed on the account, not per row: explicit `.id()` on rows inside a List's
@@ -297,7 +317,7 @@ struct ChatTabView: View {
       appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.userDID)
     }
     .refreshable {
-      async let bsky: Void = appState.chatManager.loadConversations(refresh: true)
+      async let bsky: Void = appState.chatManager.loadConversations(refresh: true, userInitiated: true)
       async let mls: Void = {
         await appState.loadMLSConversations()
         await loadMLSConversations()
@@ -305,14 +325,7 @@ struct ChatTabView: View {
       _ = await (bsky, mls)
     }
     .overlay {
-      if coordinator.conversations.isEmpty && !appState.chatManager.loadingConversations {
-        ContentUnavailableView {
-          Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
-        } description: {
-          Text("You haven't started any chats yet.")
-            .enhancedAppBody()
-        }
-      }
+      listOverlay
     }
     .navigationTitle("Messages")
     #if os(iOS)
@@ -325,6 +338,15 @@ struct ChatTabView: View {
       ToolbarItem(placement: .cancellationAction) {
         MessageRequestsButton()
       }
+      if shouldUseSplitView {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            showingNewMessageSheet = true
+          } label: {
+            Label("New Message", systemImage: "square.and.pencil")
+          }
+        }
+      }
       ToolbarItem(placement: .primaryAction) {
         ChatToolbarMenu()
       }
@@ -335,6 +357,44 @@ struct ChatTabView: View {
       }
     }
     #endif
+  }
+
+  // MARK: - Empty, Loading and Error States
+
+  @ViewBuilder
+  private var listOverlay: some View {
+    let chatManager = appState.chatManager
+    if !searchText.isEmpty {
+      if chatManager.filteredProfiles.isEmpty && chatManager.filteredConversations.isEmpty {
+        ContentUnavailableView.search(text: searchText)
+      }
+    } else if coordinator.conversations.isEmpty {
+      if chatManager.loadingConversations || !chatManager.hasAttemptedConversationsLoad {
+        ProgressView()
+      } else if chatManager.lastConversationsLoadFailed {
+        ContentUnavailableView {
+          Label("Couldn’t Load Messages", systemImage: "wifi.exclamationmark")
+        } description: {
+          Text("Check your connection and try again.")
+            .enhancedAppBody()
+        } actions: {
+          Button("Try Again") {
+            Task { await chatManager.loadConversations(refresh: true, userInitiated: true) }
+          }
+        }
+      } else {
+        ContentUnavailableView {
+          Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
+        } description: {
+          Text("You haven’t started any chats yet.")
+            .enhancedAppBody()
+        } actions: {
+          Button("New Message") {
+            showingNewMessageSheet = true
+          }
+        }
+      }
+    }
   }
 
   // MARK: - Row Routing
@@ -386,22 +446,12 @@ struct ChatTabView: View {
   @ViewBuilder
   private var unifiedDetailContent: some View {
     NavigationStack(path: chatNavigationPath) {
-      if let convoId = selectedConvoId,
-         let item = coordinator.conversations.first(where: { $0.id == convoId }) {
-        switch item {
-        case .bluesky:
-          ConversationView(convoId: convoId)
-            .id(convoId)
-        case .mls:
-          MLSRequestConversationGate(conversationID: convoId) {
-            MLSConversationDetailView(conversationId: convoId)
-          }
-          .id("\(convoId):\(appState.userDID)")
-        }
-      } else if let convoId = selectedConvoId {
-        // Conversation selected but not yet in coordinator (e.g. deep-link before data loads)
-        // — route by id shape so MLS deep links don't open the Bluesky detail view
-        if UnifiedConversation.idLooksLikeMLSConversation(convoId) {
+      if let convoId = selectedConvoId {
+        // Keep the detail identity stable while a deep-linked conversation's
+        // sidebar row arrives; list membership must not replace its lifecycle.
+        // Before the row arrives, route by id shape so MLS deep links don't open
+        // the Bluesky detail view.
+        if isMLSConversation(convoId) {
           MLSRequestConversationGate(conversationID: convoId) {
             MLSConversationDetailView(conversationId: convoId)
           }
@@ -457,31 +507,34 @@ struct ChatTabView: View {
       HStack {
         ChatProfileAvatarView(profile: profileBasic, size: 40)
         VStack(alignment: .leading) {
-          Text(profileBasic.displayName ?? "")
+          Text(profileBasic.chatDisplayName)
             .appHeadline()
             .foregroundColor(.primary)
           Text("@\(profileBasic.handle.description)")
             .appSubheadline()
             .foregroundColor(.secondary)
+          if profileBasic.chatDisabled == true {
+            Text("Can’t be messaged")
+              .appCaption()
+              .foregroundColor(.secondary)
+          }
         }
       }
       .spacingSM(.vertical)
     }
     .buttonStyle(.plain)
+    .disabled(profileBasic.chatDisabled == true)
+    .opacity(profileBasic.chatDisabled == true ? 0.5 : 1)
     .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-    .listRowInsets(EdgeInsets())
   }
 
   // MARK: - Helper Properties
 
+  /// The floating New Message button only shows over the bare list; split
+  /// layouts use the sidebar toolbar button so it never covers the composer.
   private var shouldShowChatFAB: Bool {
-    guard selectedTab == 4 else { return false }
-
-    if DeviceInfo.isIPad {
-      return true
-    } else {
-      return selectedConvoId == nil && chatNavigationPath.wrappedValue.isEmpty
-    }
+    guard selectedTab == 4, !shouldUseSplitView else { return false }
+    return selectedConvoId == nil && chatNavigationPath.wrappedValue.isEmpty
   }
 
   private var shouldShowPagination: Bool {
@@ -492,7 +545,7 @@ struct ChatTabView: View {
 
   @ViewBuilder
   private var paginationView: some View {
-    ProgressView("Loading more...")
+    ProgressView("Loading more…")
       .frame(maxWidth: .infinity)
       .padding()
       .onAppear {
@@ -505,28 +558,15 @@ struct ChatTabView: View {
   // MARK: - Event Handlers
 
   private func handleOnAppear() {
+    appState.chatManager.setChatTabVisible(true)
     resetUnifiedListForCurrentAccountIfNeeded()
 
-    // DEEP-LINK FIX: a share/notification can set the target BEFORE this view
-    // mounts, so the .onChange(of: targetConversationId) below never fires
-    // (onChange only observes transitions).
-    if let pending = appState.navigationManager.targetConversationId {
-      if pending != selectedConvoId {
-        selectedConvoId = pending
-      }
-      appState.navigationManager.targetConversationId = nil
-    }
-    if let pendingMLS = appState.navigationManager.targetMLSConversationId {
-      if pendingMLS != selectedConvoId {
-        selectedConvoId = pendingMLS
-      }
-      appState.navigationManager.targetMLSConversationId = nil
-    }
-
+    // A root request or conversation link can arrive before this tab mounts.
+    consumeNavigationRequests()
     // Bluesky DMs
     Task {
       if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
-        await appState.chatManager.loadConversations(refresh: true)
+        await appState.chatManager.loadConversations(refresh: true, userInitiated: true)
       }
     }
     appState.chatManager.startConversationsPolling()
@@ -570,6 +610,7 @@ struct ChatTabView: View {
   }
 
   private func handleOnDisappear() {
+    appState.chatManager.setChatTabVisible(false)
     stopMLSPolling()
   }
 
@@ -623,6 +664,46 @@ struct ChatTabView: View {
     }
   }
 
+  private func consumeNavigationRequests() {
+    let navigation = sceneContext.navigationManager
+    if navigation.consumeChatRootRequest() {
+      returnToConversationList()
+    }
+    // Consume even an already-selected ID so a later appearance cannot replay it.
+    if let convoId = navigation.consumeTargetConversation() {
+      showConversation(convoId)
+    }
+    if let convoId = navigation.targetMLSConversationId {
+      navigation.targetMLSConversationId = nil
+      showConversation(convoId)
+    }
+  }
+
+  private func showConversation(_ convoId: String) {
+    selectedConvoId = convoId
+    preferredCompactColumn = .detail
+    if !shouldUseSplitView {
+      columnVisibility = .detailOnly
+    }
+  }
+
+  /// Routes by the coordinator's merged list once the row is present, and by id
+  /// shape for deep links that arrive before the lists load.
+  private func isMLSConversation(_ convoId: String) -> Bool {
+    if let item = coordinator.conversations.first(where: { $0.id == convoId }) {
+      return item.isMLS
+    }
+    return UnifiedConversation.idLooksLikeMLSConversation(convoId)
+  }
+
+  private func returnToConversationList() {
+    selectedConvoId = nil
+    sceneContext.navigationManager.targetConversationId = nil
+    chatNavigationPath.wrappedValue = NavigationPath()
+    columnVisibility = .doubleColumn
+    preferredCompactColumn = .sidebar
+  }
+
   private func handleErrorStateChange(oldError: ChatManager.ChatError?, newError: ChatManager.ChatError?) {
     if let error = newError, !isShowingErrorAlert {
       let errorMessage = error.localizedDescription
@@ -638,8 +719,8 @@ struct ChatTabView: View {
 
   private func createErrorAlert() -> Alert {
     Alert(
-      title: Text("Chat Error"),
-      message: Text(lastErrorMessage ?? "An unknown error occurred."),
+      title: Text("Messages"),
+      message: Text(lastErrorMessage ?? "Something went wrong. Try again."),
       dismissButton: .default(Text("OK")) {
         appState.chatManager.errorState = nil
         lastErrorMessage = nil
@@ -1151,6 +1232,7 @@ private struct ConditionalSwipeActions: ViewModifier {
   let enabled: Bool
   @Environment(AppState.self) private var appState
   @State private var showingOwnerLeaveAlert = false
+  @State private var showingLeaveAlert = false
 
   func body(content: Content) -> some View {
     if enabled {
@@ -1162,10 +1244,10 @@ private struct ConditionalSwipeActions: ViewModifier {
             if conversation.isOwnedGroupConversation(currentUserDID: appState.userDID) {
               showingOwnerLeaveAlert = true
             } else {
-              Task { await appState.chatManager.leaveConversation(convoId: conversation.id) }
+              showingLeaveAlert = true
             }
           } label: {
-            Label("Delete", systemImage: "trash")
+            Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
           }
 
           Button {
@@ -1178,6 +1260,14 @@ private struct ConditionalSwipeActions: ViewModifier {
             Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
           }
           .tint(conversation.muted ? .blue : .orange)
+        }
+        .alert("Leave Conversation?", isPresented: $showingLeaveAlert) {
+          Button("Cancel", role: .cancel) { }
+          Button("Leave", role: .destructive) {
+            Task { await appState.chatManager.leaveConversation(convoId: conversation.id) }
+          }
+        } message: {
+          Text("The conversation will be removed from your list. Your messages will be deleted for you, but not for the other participants.")
         }
         .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
           Button("Cancel", role: .cancel) { }

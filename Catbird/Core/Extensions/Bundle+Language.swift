@@ -48,6 +48,27 @@ private class LanguageBundle: Bundle, @unchecked Sendable {
     }
 }
 
+
+/// The interface language belongs to the device, independently of account reading preferences.
+struct InterfaceLanguagePreferences {
+    var defaults: UserDefaults = AppSettingsModel.sharedDefaults()
+    var apply: @MainActor (String) -> Void = { AppLanguageManager.shared.applyLanguage($0) }
+
+    var selectedLanguage: String {
+        defaults.string(forKey: "appLanguage") ?? Bundle.currentLanguage
+    }
+
+    @MainActor func select(_ language: String) {
+        defaults.set(language, forKey: "appLanguage")
+        apply(language)
+    }
+
+    static func availableLanguages(in bundle: Bundle = .main) -> [String] {
+        let codes = bundle.localizations + [bundle.developmentLocalization].compactMap { $0 }
+        return Set(codes.filter { $0 != "Base" && !$0.isEmpty }).sorted()
+    }
+}
+
 // MARK: - App Language Manager
 
 @MainActor
@@ -83,10 +104,14 @@ class AppLanguageManager {
                 window.rootViewController = currentRoot
                 
                 // Animate the transition
-                UIView.animate(withDuration: 0.3, animations: {
-                    snapshot.alpha = 0
-                }) { _ in
+                if UIAccessibility.isReduceMotionEnabled || (AppStateManager.shared.lifecycle.appState?.appSettings.effectiveReduceMotion ?? false) {
                     snapshot.removeFromSuperview()
+                } else {
+                    UIView.animate(withDuration: 0.3, animations: {
+                        snapshot.alpha = 0
+                    }) { _ in
+                        snapshot.removeFromSuperview()
+                    }
                 }
             }
         }

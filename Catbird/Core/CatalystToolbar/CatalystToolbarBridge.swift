@@ -4,6 +4,7 @@ import SwiftUI
 /// Syncs SwiftUI state to the CatalystToolbarCoordinator and routes
 /// toolbar actions back into SwiftUI.
 struct CatalystToolbarBridge: ViewModifier {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Binding var selectedTab: Int
   @Binding var isDrawerOpen: Bool
   @Binding var isRootView: Bool
@@ -46,7 +47,7 @@ struct CatalystToolbarBridge: ViewModifier {
 
     coordinator.onTabSelected = { tab in
       selectedTab = tab
-      appState.navigationManager.updateCurrentTab(tab)
+      sceneContext.navigationManager.updateCurrentTab(tab)
     }
     coordinator.onComposeTapped = {
       showingPostComposer = true

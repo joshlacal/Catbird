@@ -10,6 +10,7 @@ import SwiftUI
 
     struct MLSOrdinaryConversationDetailView: View {
         @Environment(AppState.self) var appState
+        @Environment(SceneNavigationContext.self) private var sceneContext
         @Environment(\.colorScheme) private var colorScheme
         @Environment(\.dismiss) var dismiss
         @Environment(\.scenePhase) private var scenePhase
@@ -133,11 +134,11 @@ import SwiftUI
         /// MLS conversations are presented inside the Chat tab's NavigationStack.
         /// Use that shared path so embeds can navigate to posts/threads.
         private var chatNavigationPath: Binding<NavigationPath> {
-            appState.navigationManager.pathBinding(for: 4)
+            sceneContext.navigationManager.pathBinding(for: 4)
         }
 
         private var isChatTabActive: Bool {
-            appState.navigationManager.currentTabIndex == 4
+            sceneContext.navigationManager.currentTabIndex == 4
         }
 
         /// Whether this conversation is a pending chat request that needs acceptance
@@ -1377,7 +1378,7 @@ import SwiftUI
                 guard id == convoId else { return }
                 logger.info("Conversation \(convoId) was \(event.description) — dismissing detail")
                 appState.mlsConversations.removeAll { $0.id == convoId }
-                appState.navigationManager.clearPath(for: 4)
+                sceneContext.navigationManager.clearPath(for: 4)
                 dismiss()
             default:
                 // Ignore other events
@@ -4052,7 +4053,7 @@ import SwiftUI
         private func finishLeavingConversationCleanup() {
             logger.info("Successfully left conversation: \(conversationId)")
             appState.mlsConversations.removeAll { $0.id == conversationId }
-            appState.navigationManager.clearPath(for: 4)
+            sceneContext.navigationManager.clearPath(for: 4)
             NotificationCenter.default.post(
                 name: Notification.Name("MLSConversationLeft"),
                 object: conversationId
@@ -4064,7 +4065,7 @@ import SwiftUI
             logger.info("Successfully deleted conversation for me: \(conversationId)")
             let targetDID = appState.userDID
             appState.mlsConversations.removeAll { $0.id == conversationId }
-            appState.navigationManager.clearPath(for: 4)
+            sceneContext.navigationManager.clearPath(for: 4)
             NotificationCenter.default.post(
                 name: Notification.Name("MLSConversationDeleted"),
                 object: conversationId,

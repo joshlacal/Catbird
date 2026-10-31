@@ -52,6 +52,9 @@ final class DraftPost {
   /// Timestamp of the last successful AppView sync
   var lastSyncedAt: Date?
 
+  /// Optional additive sync metadata; older local stores and drafts remain readable.
+  var syncMetadata: Data?
+
   /// Origin device for media that cannot be restored on this device.
   var remoteMediaDeviceName: String?
 
@@ -81,6 +84,7 @@ final class DraftPost {
     self.remoteId = remoteId
     self.lastSyncedAt = lastSyncedAt
     self.remoteMediaDeviceName = remoteMediaDeviceName
+    self.syncMetadata = nil
     
       DraftPost.logger.info("📝 DraftPost initialized - ID: \(id.uuidString), Account: \(accountDID), Preview: '\(previewText.prefix(50))...', HasMedia: \(hasMedia), IsReply: \(isReply), IsQuote: \(isQuote), IsThread: \(isThread)")
   }

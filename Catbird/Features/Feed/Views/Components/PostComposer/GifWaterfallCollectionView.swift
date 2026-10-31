@@ -199,7 +199,9 @@ struct GifWaterfallCollectionView: UIViewRepresentable {
             }
 
             let gif = gifs[indexPath.item]
-            cell.configure(with: gif)
+            let tileWidth = collectionView.layoutAttributesForItem(at: indexPath)?.size.width
+                ?? collectionView.bounds.width / 2
+            cell.configure(with: gif, tilePixelWidth: tileWidth * collectionView.traitCollection.displayScale)
 
             return cell
         }
@@ -268,13 +270,18 @@ final class GifCollectionViewCell: UICollectionViewCell {
         ])
     }
 
-    func configure(with gif: TenorGif) {
+    func configure(with gif: TenorGif, tilePixelWidth: CGFloat) {
         // Only update if the GIF actually changed
         guard currentGifId != gif.id else { return }
         
         currentGifId = gif.id
+
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = gif.content_description.isEmpty ? "GIF" : gif.content_description
         
-        let gifView = GifVideoView(gif: gif, onTap: {})
+        // Stream a rendition sized to this tile rather than the full-size clip.
+        let gifView = GifVideoView(gif: gif, onTap: {}, rendition: .tile(pixelWidth: tilePixelWidth))
             .allowsHitTesting(false) // Disable tap since we handle it at cell level
             .id(gif.id) // Force SwiftUI to recreate view when GIF changes
 

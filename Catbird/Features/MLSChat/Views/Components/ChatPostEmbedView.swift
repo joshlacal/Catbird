@@ -74,7 +74,12 @@ struct ChatPostEmbedView: View {
 
         // Embedded content (images, videos, links, etc.)
         if let embed = post.embed {
-          PostEmbed(embed: embed, labels: post.labels, path: $navigationPath)
+          PostEmbed(
+            embed: embed,
+            mediaModeration: appState.moderationPolicy.decide(post: post).ui(.contentMedia),
+            path: $navigationPath,
+            authorDID: post.author.did
+          )
             .environment(\.postID, post.uri.uriString())
         }
 

@@ -23,6 +23,7 @@ struct MessageRequestSheet<SheetContent: View>: ViewModifier {
 /// encrypted requests in one list. Accepting routes to the new conversation
 /// and closes the sheet; declining keeps the sheet open.
 struct UnifiedMessageRequestsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var store: LiveMessageRequestsStore?
@@ -57,7 +58,7 @@ struct UnifiedMessageRequestsView: View {
     guard appState.userDID == accountDID else { return }
     switch acceptance {
     case .bluesky(let convoID):
-      appState.navigationManager.targetConversationId = convoID
+      sceneContext.navigationManager.targetConversationId = convoID
       selectChatTabOnMac()
     case .encrypted(let conversationID):
       appState.navigateToMLSConversation(conversationID)
@@ -68,7 +69,7 @@ struct UnifiedMessageRequestsView: View {
 
   private func selectChatTabOnMac() {
     #if os(macOS)
-    appState.navigationManager.updateCurrentTab(AppNavigationManager.chatTabIndex)
+    sceneContext.navigationManager.updateCurrentTab(AppNavigationManager.chatTabIndex)
     #endif
   }
 }
@@ -171,9 +172,9 @@ struct MessageRequestsScreen: View {
     } message: { request in
       Text(request.item.source == .encrypted
         ? "Your Bluesky block is published first. The request closes only after the server confirms it."
-        : "They won't be able to message you, and this request will be removed.")
+        : "They won’t be able to message you, and this request will be removed.")
     }
-    .confirmationDialog("Decline all Bluesky requests?", isPresented: $showingDeclineAll, titleVisibility: .visible) {
+    .confirmationDialog("Decline All Bluesky Requests?", isPresented: $showingDeclineAll, titleVisibility: .visible) {
       Button("Decline All", role: .destructive) {
         Task { await store.declineAllBluesky() }
       }
@@ -513,7 +514,7 @@ struct MessageRequestsEmptyState: View {
     ContentUnavailableView {
       Label("No Message Requests", systemImage: "tray")
     } description: {
-      Text("When someone you don't follow messages you, their request waits here until you accept or decline it.")
+      Text("When someone you don’t follow messages you, their request waits here until you accept or decline it.")
     } actions: {
       Button("Who Can Message You", action: onOpenSettings)
         .buttonStyle(.bordered)

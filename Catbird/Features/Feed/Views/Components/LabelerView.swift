@@ -6,6 +6,20 @@
 //
 
 import SwiftUI
+private enum LabelerDateFormatter {
+    nonisolated(unsafe) private static let formatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+    private static let lock = NSLock()
+
+    static func string(for date: Date) -> String {
+        lock.withLock {
+            formatter.localizedString(for: date, relativeTo: Date())
+        }
+    }
+}
 import Petrel
 
 struct LabelerView: View {
@@ -27,7 +41,11 @@ struct LabelerView: View {
                 ProfileImageView(url: labeler.creator.finalAvatarURL(), size: 44)
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(labeler.creator.displayName ?? labeler.creator.handle.description)
+                    EmbeddedAuthorNameView(
+                        name: labeler.creator.displayName ?? labeler.creator.handle.description,
+                        verification: labeler.creator.verification,
+                        isAutomated: AutomationBadge.isSelfDeclared(labels: labeler.creator.labels, authorDID: labeler.creator.did)
+                    )
                         .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)
                     
@@ -41,25 +59,28 @@ struct LabelerView: View {
                 dateView
             }
             
-            // Labels section
-            if let labels = labeler.labels, !labels.isEmpty {
+            // Labels section (system labels starting with "!" are internal values)
+            let visibleLabels = (labeler.labels ?? []).filter { !$0.val.hasPrefix("!") }
+            if !visibleLabels.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Labels")
                         .appFont(AppTextRole.headline)
                         .fontWeight(.medium)
                     
-                    labelsView(labels: labels)
+                    labelsView(labels: visibleLabels)
                 }
                 .padding(.vertical, 4)
             }
             
-            // Action bar
-            HStack(spacing: 20) {
-                likeButton
-                
-                Spacer()
+            // Action bar, only where the host can actually record a like
+            if onLikeTapped != nil {
+                HStack(spacing: 20) {
+                    likeButton
+                    
+                    Spacer()
+                }
+                .padding(.top, 8)
             }
-            .padding(.top, 8)
         }
         .padding(16)
         .background(
@@ -76,9 +97,7 @@ struct LabelerView: View {
     }
     
     private var formattedDate: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: labeler.indexedAt.date, relativeTo: Date())
+        LabelerDateFormatter.string(for: labeler.indexedAt.date)
     }
     
     private func labelsView(labels: [ComAtprotoLabelDefs.Label]) -> some View {
@@ -152,7 +171,11 @@ struct LabelerDetailedView: View {
                 ProfileImageView(url: labeler.creator.finalAvatarURL(), size: 44)
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(labeler.creator.displayName ?? labeler.creator.handle.description)
+                    EmbeddedAuthorNameView(
+                        name: labeler.creator.displayName ?? labeler.creator.handle.description,
+                        verification: labeler.creator.verification,
+                        isAutomated: AutomationBadge.isSelfDeclared(labels: labeler.creator.labels, authorDID: labeler.creator.did)
+                    )
                         .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)
                     
@@ -220,9 +243,7 @@ struct LabelerDetailedView: View {
     }
     
     private var formattedDate: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: labeler.indexedAt.date, relativeTo: Date())
+        LabelerDateFormatter.string(for: labeler.indexedAt.date)
     }
     
     private func policiesView(policies: AppBskyLabelerDefs.LabelerPolicies) -> some View {

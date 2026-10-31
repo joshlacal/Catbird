@@ -28,7 +28,7 @@ struct ChatToolbarMenu: View {
         Label("Chat Settings", systemImage: "gear")
       }
     } label: {
-      Image(systemName: "ellipsis.circle")
+      Label("More", systemImage: "ellipsis")
     }
     .sheet(isPresented: $showingSettings) {
       ChatSettingsView()
@@ -73,7 +73,7 @@ struct ConversationToolbarMenu: View {
         }
       }
     } label: {
-      Image(systemName: "ellipsis.circle")
+      Label("More", systemImage: "ellipsis")
     }
     .sheet(isPresented: $showingSettings) {
       if let convo = conversation {
@@ -139,13 +139,13 @@ struct ConversationContextMenu: ViewModifier {
             showingDeleteAlert = true
           }
         } label: {
-          Label(isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation", systemImage: "trash")
+          Label(isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation", systemImage: "rectangle.portrait.and.arrow.right")
         }
       }
       .sheet(isPresented: $showingSettings) {
         ConversationManagementView(conversation: conversation)
       }
-      .alert("Leave Conversation", isPresented: $showingDeleteAlert) {
+      .alert("Leave Conversation?", isPresented: $showingDeleteAlert) {
         Button("Cancel", role: .cancel) { }
         Button("Leave", role: .destructive) {
           Task {
@@ -153,7 +153,7 @@ struct ConversationContextMenu: ViewModifier {
           }
         }
       } message: {
-        Text("Are you sure you want to leave this conversation?")
+        Text("The conversation will be removed from your list. Your messages will be deleted for you, but not for the other participants.")
       }
       .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
         Button("Cancel", role: .cancel) { }
@@ -199,7 +199,7 @@ struct MessageRequestsButton: View {
             .foregroundColor(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(unreadRequestsCount > 0 ? Color.red : Color.blue)
+            .background(unreadRequestsCount > 0 ? Color.red : Color.accentColor)
             .clipShape(Capsule())
             .offset(x: 12, y: -8)
         }

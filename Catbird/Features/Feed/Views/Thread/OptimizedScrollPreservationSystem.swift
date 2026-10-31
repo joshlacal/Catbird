@@ -65,24 +65,22 @@ final class OptimizedScrollPreservationSystem {
     private let logger = Logger(subsystem: "blue.catbird", category: "OptimizedScrollPreservation")
     private var activeUpdateLink: UIUpdateLink?
     private var activeUpdateContext: UpdateContext?
-    private let displayScale = PlatformScreenInfo.scale
     private let frameRateManager = AdaptiveFrameRateManager()
     
     // A/B Testing integration for scroll preservation strategies
     private weak var abTestingFramework: ABTestingFramework?
     
-    // ProMotion display detection
-    private let isProMotionDisplay: Bool
-    
     // MARK: - Initialization
     
     init(abTestingFramework: ABTestingFramework? = nil) {
         self.abTestingFramework = abTestingFramework
-        
-        // Detect ProMotion display capability
-        self.isProMotionDisplay = PlatformScreenInfo.isProMotionDisplay
-        
-        logger.info("📱 Initialized with ProMotion: \(self.isProMotionDisplay), max FPS: \(PlatformScreenInfo.maximumFramesPerSecond)")
+    }
+
+    /// Whether the display showing `view` refreshes above 60 Hz. Read per use from
+    /// the view's own scene, because a scene can move between displays.
+    private static func isProMotionDisplay(showing view: UIView) -> Bool {
+        guard let screen = view.window?.windowScene?.screen else { return false }
+        return PlatformScreenInfo.supportsProMotion(screen)
     }
     
     // MARK: - UIUpdateLink Management
@@ -125,7 +123,7 @@ final class OptimizedScrollPreservationSystem {
         // iOS 18: Adaptive frame rate based on display capabilities and scroll context
         let adaptiveFrameRate = frameRateManager.getOptimalFrameRate(
             for: .scrollRestoration,
-            isProMotionDisplay: isProMotionDisplay,
+            isProMotionDisplay: Self.isProMotionDisplay(showing: collectionView),
             batteryLevel: PlatformDeviceInfo.batteryLevel
         )
         updateLink.preferredFrameRateRange = adaptiveFrameRate
@@ -159,6 +157,8 @@ final class OptimizedScrollPreservationSystem {
         targetOffset: CGPoint,
         completion: @escaping (Bool) -> Void
     ) async {
+        let displayScale = collectionView.traitCollection.displayScale
+
         let currentTime = CACurrentMediaTime()
         let context = activeUpdateContext
         
@@ -239,7 +239,7 @@ final class OptimizedScrollPreservationSystem {
         // Enhanced frame synchronization for ProMotion displays
         return await withCheckedContinuation { continuation in
             // Use CADisplayLink for frame-perfect timing on ProMotion displays
-            if isProMotionDisplay {
+            if Self.isProMotionDisplay(showing: collectionView) {
                 performProMotionOptimizedScroll(
                     collectionView: collectionView,
                     targetOffset: targetOffset,
@@ -342,6 +342,8 @@ final class OptimizedScrollPreservationSystem {
         // Apply with enhanced precision for iOS 18
         collectionView.setContentOffset(targetOffset, animated: false)
         
+        let displayScale = collectionView.traitCollection.displayScale
+
         // Immediate verification and correction for sub-pixel accuracy
         let actualOffset = collectionView.contentOffset
         let yError = abs(actualOffset.y - targetOffset.y)
@@ -409,6 +411,8 @@ final class OptimizedScrollPreservationSystem {
             return nil
         }
         
+        let displayScale = collectionView.traitCollection.displayScale
+
         let contentOffset = collectionView.contentOffset
         let itemFrame = attributes.frame
         let visibleRect = CGRect(origin: contentOffset, size: collectionView.bounds.size)
@@ -500,6 +504,8 @@ final class OptimizedScrollPreservationSystem {
         // in the viewport matches what it was when the anchor was captured
         let targetOffsetY = newItemY - anchor.viewportRelativeY
         
+        let displayScale = collectionView.traitCollection.displayScale
+
         // Apply pixel alignment
         let pixelPerfectOffset = CGPoint(
             x: 0,
@@ -549,6 +555,8 @@ final class OptimizedScrollPreservationSystem {
         let newItemY = newAttributes.frame.origin.y
         let targetOffsetY = newItemY - anchor.viewportRelativeY
         
+        let displayScale = collectionView.traitCollection.displayScale
+
         // Apply pixel alignment
         let pixelPerfectOffset = CGPoint(
             x: 0,

@@ -613,11 +613,6 @@ extension Font {
         design: Font.Design = .default,
         relativeTo textStyle: Font.TextStyle? = nil
     ) -> Font {
-        // Define the OpenType variation axes as hex integers (4-char codes)
-        let wdthAxisID: Int = 0x77647468 // 'wdth' in hex
-        let wghtAxisID: Int = 0x77676874 // 'wght' in hex
-        let opszAxisID: Int = 0x6F70737A // 'opsz' in hex
-        
         // Convert SwiftUI weight to numeric weight
         let numericWeight: CGFloat = {
             switch weight {
@@ -633,56 +628,28 @@ extension Font {
             default:          return 400.0
             }
         }()
-        
-        // Create variations dictionary
-        var variations: [Int: Any] = [
-            wdthAxisID: width,
-            wghtAxisID: numericWeight
-        ]
-        
-        // Add optical size if enabled
-        if opticalSize {
-            variations[opszAxisID] = Double(size)
-        }
-        
-        // Start with the system font
-        let baseFont = UIFont.systemFont(ofSize: size)
-        let fontDesc = baseFont.fontDescriptor
-        
-        // Apply the variations to the font descriptor
-        let variableDescriptor = fontDesc.addingAttributes([
-            kCTFontVariationAttribute as UIFontDescriptor.AttributeName: variations
-        ])
-        
-        // Create the font with the modified descriptor
-        let customUIFont = UIFont(descriptor: variableDescriptor, size: 0)
-        
-        // If a text style is provided, scale using UIFontMetrics
-        if let textStyle = textStyle {
-            // Map SwiftUI Font.TextStyle to UIFont.TextStyle
-            let uiTextStyle: UIFont.TextStyle
+
+        // Map SwiftUI Font.TextStyle to UIFont.TextStyle
+        let uiTextStyle: UIFont.TextStyle? = textStyle.map { textStyle in
             switch textStyle {
-            case .largeTitle: uiTextStyle = .largeTitle
-            case .title:      uiTextStyle = .title1
-            case .title2:     uiTextStyle = .title2
-            case .title3:     uiTextStyle = .title3
-            case .headline:   uiTextStyle = .headline
-            case .subheadline: uiTextStyle = .subheadline
-            case .body:       uiTextStyle = .body
-            case .callout:    uiTextStyle = .callout
-            case .footnote:   uiTextStyle = .footnote
-            case .caption:    uiTextStyle = .caption1
-            case .caption2:   uiTextStyle = .caption2
-            default:          uiTextStyle = .body
+            case .largeTitle: return .largeTitle
+            case .title:      return .title1
+            case .title2:     return .title2
+            case .title3:     return .title3
+            case .headline:   return .headline
+            case .subheadline: return .subheadline
+            case .body:       return .body
+            case .callout:    return .callout
+            case .footnote:   return .footnote
+            case .caption:    return .caption1
+            case .caption2:   return .caption2
+            default:          return .body
             }
-            
-            let metrics = UIFontMetrics(forTextStyle: uiTextStyle)
-            let scaledFont = metrics.scaledFont(for: customUIFont)
-            return Font(scaledFont)
-        } else {
-            // Fallback to no scaling
-            return Font(customUIFont)
         }
+
+        return Font(UIFont.variableSystemFont(
+            size: size, weightValue: numericWeight, width: width,
+            opticalSize: opticalSize, scaledFor: uiTextStyle))
     }
     
     #elseif canImport(AppKit) && os(macOS) && !targetEnvironment(macCatalyst)
@@ -738,11 +705,13 @@ extension View {
 /// A view modifier that applies accessibility text settings
 struct AccessibleTextModifier: ViewModifier {
     let appState: AppState?
+    @Environment(\.legibilityWeight) private var legibilityWeight
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     func body(content: Content) -> some View {
         let settings = appState?.appSettings
-        let shouldIncreaseContrast = settings?.increaseContrast ?? false
-        let shouldUseBoldText = settings?.boldText ?? false
+        let shouldIncreaseContrast = accessibilityContrast == .increased || (settings?.effectiveIncreaseContrast ?? false)
+        let shouldUseBoldText = legibilityWeight == .bold || (settings?.effectiveBoldText ?? false)
         
         content
             .fontWeight(adjustedFontWeight(shouldUseBoldText: shouldUseBoldText))
@@ -762,11 +731,13 @@ struct AccessibleTextModifier: ViewModifier {
 /// A comprehensive view modifier that applies all accessibility settings
 struct ComprehensiveAccessibilityModifier: ViewModifier {
     let appState: AppState?
+    @Environment(\.legibilityWeight) private var legibilityWeight
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     func body(content: Content) -> some View {
         let settings = appState?.appSettings
-        let shouldIncreaseContrast = settings?.increaseContrast ?? false
-        let shouldUseBoldText = settings?.boldText ?? false
+        let shouldIncreaseContrast = accessibilityContrast == .increased || (settings?.effectiveIncreaseContrast ?? false)
+        let shouldUseBoldText = legibilityWeight == .bold || (settings?.effectiveBoldText ?? false)
         
         content
             .fontWeight(shouldUseBoldText ? .semibold : .regular)
@@ -960,3 +931,33 @@ extension Font {
     }
 }
 */
+
+#if canImport(UIKit) && (os(iOS) || targetEnvironment(macCatalyst))
+extension UIFont {
+    /// The system font with explicit OpenType `wdth`, `wght` and (optionally) `opsz` axis values,
+    /// scaled with Dynamic Type for `textStyle` when one is given. SwiftUI's
+    /// `Font.customSystemFont` and UIKit callers share this so both render identical glyphs.
+    static func variableSystemFont(
+        size: CGFloat,
+        weightValue: CGFloat,
+        width: CGFloat,
+        opticalSize: Bool = true,
+        scaledFor textStyle: UIFont.TextStyle?
+    ) -> UIFont {
+        // OpenType variation axes as 4-char codes: 'wdth', 'wght', 'opsz'.
+        let wdthAxisID: Int = 0x77647468
+        let wghtAxisID: Int = 0x77676874
+        let opszAxisID: Int = 0x6F70737A
+        var variations: [Int: Any] = [wdthAxisID: width, wghtAxisID: weightValue]
+        if opticalSize {
+            variations[opszAxisID] = Double(size)
+        }
+        let descriptor = UIFont.systemFont(ofSize: size).fontDescriptor.addingAttributes([
+            kCTFontVariationAttribute as UIFontDescriptor.AttributeName: variations
+        ])
+        let font = UIFont(descriptor: descriptor, size: 0)
+        guard let textStyle else { return font }
+        return UIFontMetrics(forTextStyle: textStyle).scaledFont(for: font)
+    }
+}
+#endif

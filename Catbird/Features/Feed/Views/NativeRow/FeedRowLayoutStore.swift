@@ -1,0 +1,98 @@
+#if os(iOS)
+import UIKit
+
+// MARK: - Feed Row Layout Store
+
+/// Caches `FeedRowLayout`s, including those computed off the main actor ahead of display.
+///
+/// A layout is only ever served for the exact inputs it was computed from. The key holds every
+/// input `FeedRowLayoutEngine` reads: the width, the typography generation, the header strings
+/// (display name, handle, time text), the badge symbol, and the content signature, which together
+/// with the typography determines the attributed text. A stale entry can therefore never give a
+/// cell a frame set that disagrees with what it draws (the gap/overlap bug class).
+///
+/// Layouts arrive from a row preparation (`insert`), which computed them off the main actor
+/// together with their key (`Prepared`); a miss in `layout(for:)` computes one on the calling
+/// thread.
+@MainActor
+final class FeedRowLayoutStore {
+  struct Key: Hashable, Sendable {
+    let postID: String
+    /// The exact requested width. It is not rounded: a layout computed for a neighbouring width
+    /// would not match the cell's bounds.
+    let width: CGFloat
+    let typographyKey: Int
+    let displayName: String
+    let handle: String
+    /// Changes with the clock ("9m", "10m", "1d") and sizes the name and handle.
+    let timeText: String
+    /// Follows the hide-verification-badges preference and decides whether a badge frame exists.
+    let verificationSymbol: String?
+    let signature: FeedPostContentSignature
+    let maxContentWidth: CGFloat?
+    let displayScale: CGFloat
+
+    nonisolated init(_ input: FeedRowLayoutInput) {
+      postID = input.postID
+      width = input.width
+      typographyKey = input.typography.generationKey
+      displayName = input.displayName
+      handle = input.handle
+      timeText = input.timeText
+      verificationSymbol = input.verificationSymbol
+      signature = input.contentSignature
+      maxContentWidth = input.maxContentWidth
+      displayScale = input.displayScale
+    }
+  }
+
+  /// A layout computed on any thread, with the key of the input it was computed from.
+  struct Prepared: Sendable {
+    let key: Key
+    let layout: FeedRowLayout
+
+    nonisolated init(_ input: FeedRowLayoutInput) {
+      key = Key(input)
+      layout = FeedRowLayoutEngine.layout(input)
+    }
+  }
+
+  /// `nonisolated` so `init`'s default argument, evaluated outside the main actor, can read it.
+  nonisolated static let defaultCapacity = 1000
+
+  private var layouts: [Key: FeedRowLayout] = [:]
+  private let capacity: Int
+
+  var cachedCount: Int { layouts.count }
+  /// How many layouts `layout(for:)` computed on the calling thread because none was cached.
+  private(set) var computedOnCallCount = 0
+
+  init(capacity: Int = FeedRowLayoutStore.defaultCapacity) {
+    self.capacity = max(1, capacity)
+  }
+
+  /// The cached layout for `input`, or one computed now on the calling thread.
+  func layout(for input: FeedRowLayoutInput) -> FeedRowLayout {
+    let key = Key(input)
+    if let cached = layouts[key] { return cached }
+    let layout = FeedRowLayoutEngine.layout(input)
+    computedOnCallCount += 1
+    store(layout, for: key)
+    return layout
+  }
+
+  /// Stores a layout a row preparation computed off the main actor.
+  func insert(_ prepared: Prepared) {
+    store(prepared.layout, for: prepared.key)
+  }
+
+  func invalidateAll() { layouts.removeAll(keepingCapacity: true) }
+
+  // MARK: - Storage
+
+  private func store(_ layout: FeedRowLayout, for key: Key) {
+    if layouts[key] == nil, layouts.count >= capacity { layouts.removeAll(keepingCapacity: true) }
+    layouts[key] = layout
+  }
+}
+#endif

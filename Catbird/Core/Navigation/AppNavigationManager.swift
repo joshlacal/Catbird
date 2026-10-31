@@ -26,7 +26,31 @@ import SwiftUI
     var tabSelection: ((Int) -> Void)?
     
     // Target conversation for deep-link navigation (Chat tab specific)
-    var targetConversationId: String?
+    var targetConversationId: String? {
+        didSet {
+            if targetConversationId != nil { chatRootRequestID = nil }
+        }
+    }
+    private(set) var chatRootRequestID: UUID?
+
+    /// A Messages root request must reset the split view's selection as well as its detail path.
+    func requestChatRoot() {
+        targetConversationId = nil
+        clearPath(for: Self.chatTabIndex)
+        chatRootRequestID = UUID()
+    }
+
+    func consumeChatRootRequest() -> Bool {
+        guard chatRootRequestID != nil else { return false }
+        chatRootRequestID = nil
+        return true
+    }
+
+    func consumeTargetConversation() -> String? {
+        let target = targetConversationId
+        targetConversationId = nil
+        return target
+    }
     
     // Target MLS conversation for deep-link navigation (Chat tab specific)
     var targetMLSConversationId: String?
@@ -35,6 +59,10 @@ import SwiftUI
     // when the matching conversation opens.
     var pendingChatShare: PendingChatShare?
 
+    // Presents Settings as a sheet for `.settings` destinations. Pushing Settings into a tab's
+    // stack would nest its own navigation stack, search field and Close button.
+    var settingsPresenter: ((SettingsRoute) -> Void)?
+
     // Set the current tab index - called when the user switches tabs
     func updateCurrentTab(_ index: Int) {
         currentTabIndex = index
@@ -42,11 +70,19 @@ import SwiftUI
 
     // Add a method to register the tab selection callback
     func registerTabSelectionCallback(_ callback: @escaping (Int) -> Void) {
-        self.tabSelection = callback
+        self.tabSelection = { [weak self] index in
+            self?.updateCurrentTab(index)
+            callback(index)
+        }
     }
     
     // Navigate to a destination in the current tab or a specified tab
     func navigate(to destination: NavigationDestination, in tabIndex: Int? = nil) {
+        if case .settings(let route) = destination, let settingsPresenter {
+            settingsPresenter(route)
+            return
+        }
+
         // Always use the current tab unless explicitly specified
         let targetTab = tabIndex ?? currentTabIndex
         

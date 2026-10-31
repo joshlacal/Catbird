@@ -12,7 +12,9 @@ import Petrel
 struct PostStatsView: View {
     let post: AppBskyFeedDefs.PostView
     @Binding var path: NavigationPath
-    
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+
     private static let baseUnit: CGFloat = 3
     
     // Only display if any stat is available
@@ -54,6 +56,7 @@ struct PostStatsView: View {
                             Text(statLabel(for: replyCount, singular: "reply", plural: "replies"))
                                 .foregroundColor(.secondary)
                         }
+                        .accessibilityElement(children: .combine)
                     }
 
                     // Reposts stat with tap gesture
@@ -68,6 +71,9 @@ struct PostStatsView: View {
                         .onTapGesture {
                             path.append(NavigationDestination.postReposts(post.uri.uriString()))
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Shows who reposted")
                     }
                     
                     // Likes stat with tap gesture
@@ -82,6 +88,9 @@ struct PostStatsView: View {
                         .onTapGesture {
                             path.append(NavigationDestination.postLikes(post.uri.uriString()))
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Shows who liked")
                     }
                     
                     // Quotes stat with tap gesture
@@ -96,12 +105,15 @@ struct PostStatsView: View {
                         .onTapGesture {
                             path.append(NavigationDestination.postQuotes(post.uri.uriString()))
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Shows quotes of this post")
                     }
                 }
                     .padding(.top, Self.baseUnit * 2)
                     .padding(.horizontal, Self.baseUnit * 2)
                     .padding(.vertical, Self.baseUnit * 3)
-                    .appFont(AppTextRole.headline)
+                    .appFont(AppTextRole.body)
                 }
                 Divider()
                     .padding(.horizontal, Self.baseUnit * 2)
@@ -141,7 +153,10 @@ private extension PostStatsView {
                     .frame(width: avatarSize, height: avatarSize)
                     .clipShape(Circle())
                     .overlay(
-                        Circle().stroke(Color(platformColor: .platformSystemBackground), lineWidth: 1.5)
+                        Circle().stroke(
+                            Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme),
+                            lineWidth: 1.5
+                        )
                     )
                     .zIndex(Double(maxAvatars - index))
                 }
@@ -162,6 +177,10 @@ private extension PostStatsView {
         .onTapGesture {
             path.append(NavigationDestination.postLikes(post.uri.uriString()))
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(knownLikersText(knownLikers))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Shows who liked")
     }
 
     func knownLikersText(_ knownLikers: AppBskyFeedDefs.KnownLikers) -> String {

@@ -166,6 +166,7 @@ struct MLSDirectComposeView: View {
 
 struct MLSDirectDraftPresentation: ViewModifier {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @State private var draft: MLSDirectComposeDraft?
   @State private var presentedAccount: String?
   @State private var presentedDatabase: MLSDatabase?
@@ -174,7 +175,7 @@ struct MLSDirectDraftPresentation: ViewModifier {
     content
       .sheet(item: $draft, onDismiss: clear) { draft in
         MLSDirectComposeView(draft: draft) { conversationID in
-          appState.navigationManager.targetMLSConversationId = conversationID
+          appState.navigateToMLSConversation(conversationID, preferredSceneID: sceneContext.sceneID)
         }
       }
       .task(id: appState.userDID) { draft = nil; await restore() }

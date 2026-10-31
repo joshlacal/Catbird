@@ -9,7 +9,8 @@ struct BlockAccountView: View {
     
     let profile: AppBskyActorDefs.ProfileViewBasic
     let mlsAffectedConvoCount: Int
-    let onConfirmBlock: () async -> Void
+    /// Performs the block; returns whether it was saved.
+    let onConfirmBlock: () async -> Bool
     
     @State private var mutualGroups: [ChatBskyConvoDefs.ConvoView] = []
     @State private var isLoading: Bool = true
@@ -157,7 +158,7 @@ struct BlockAccountView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle")
                         .foregroundStyle(.green)
-                    Text("No mutual Bluesky group chats")
+                    Text("No shared group chats")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -254,9 +255,14 @@ struct BlockAccountView: View {
             Button(role: .destructive) {
                 Task {
                     isBlocking = true
-                    await onConfirmBlock()
+                    errorMessage = nil
+                    let blocked = await onConfirmBlock()
                     isBlocking = false
-                    dismiss()
+                    if blocked {
+                        dismiss()
+                    } else {
+                        errorMessage = "Couldn’t block @\(profile.handle.description). Check your connection and try again."
+                    }
                 }
             } label: {
                 if isBlocking {
@@ -305,7 +311,7 @@ struct BlockAccountView: View {
         
         guard let client = appState.atProtoClient else {
             isLoading = false
-            mutualGroupsLoadError = "Unable to check mutual groups (not connected)."
+            mutualGroupsLoadError = "Couldn’t check for shared group chats."
             return
         }
         
@@ -319,9 +325,9 @@ struct BlockAccountView: View {
                 self.mutualGroupsLoadError = nil
             } else if code == 401 || code == 403 || code == 501 {
                 self.isFeatureUnavailable = true
-                self.mutualGroupsLoadError = "Mutual group inspection is currently unavailable for this account."
+                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
             } else {
-                self.mutualGroupsLoadError = "Failed to load mutual groups (HTTP \(code))."
+                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
             }
         } catch {
             let desc = error.localizedDescription
@@ -330,9 +336,9 @@ struct BlockAccountView: View {
                desc.localizedCaseInsensitiveContains("forbidden") ||
                desc.localizedCaseInsensitiveContains("scope") {
                 self.isFeatureUnavailable = true
-                self.mutualGroupsLoadError = "Mutual group inspection is currently unavailable for this account."
+                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
             } else {
-                self.mutualGroupsLoadError = "Failed to load mutual groups: \(desc)"
+                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
             }
         }
         
@@ -358,10 +364,10 @@ struct BlockAccountView: View {
                 self.mutualGroups.append(contentsOf: newConvos)
                 self.nextCursor = data.cursor
             } else {
-                errorMessage = "Failed to load more groups (HTTP \(code))."
+                errorMessage = "Couldn’t load more group chats. Try again."
             }
         } catch {
-            errorMessage = "Failed to load more groups: \(error.localizedDescription)"
+            errorMessage = UserFacingError.message(for: error, action: "load more group chats")
         }
         
         isLoadingMore = false
@@ -380,7 +386,7 @@ struct BlockAccountView: View {
         } catch {
             // Restore on error
             mutualGroups = originalGroups
-            errorMessage = "Failed to remove member: \(error.localizedDescription)"
+            errorMessage = UserFacingError.message(for: error, action: "remove this member")
         }
         
         actionInProgressConvoId = nil
@@ -403,7 +409,7 @@ struct BlockAccountView: View {
             errorMessage = "You must lock this group before leaving because you are the owner."
         case .failure:
             mutualGroups = originalGroups
-            errorMessage = appState.chatManager.errorState?.localizedDescription ?? "Failed to leave group."
+            errorMessage = "Couldn’t leave this group. Try again."
         }
         
         actionInProgressConvoId = nil

@@ -10,26 +10,24 @@ extension PostComposerViewModel {
     
     // MARK: - Real-time Text Parsing and Highlighting
     
+    /// Re-parses the text 300 ms after the last edit. The task holds the view model weakly, so
+    /// a pending pass never keeps a closed composer and its photos alive.
     func updatePostContent() {
-        // Use performance optimizer for debounced processing
-        if let optimizer = performanceOptimizer {
-            logger.trace("PostComposerTextProcessing: Using performance optimizer for debounced processing")
-            optimizer.debounceTextProcessing {
-                self.performUpdatePostContent()
-            }
-        } else {
-            logger.trace("PostComposerTextProcessing: No optimizer, performing immediate update")
-            performUpdatePostContent()
+        textProcessingDebounceTask?.cancel()
+        textProcessingDebounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.performUpdatePostContent()
         }
     }
     
     private func performUpdatePostContent() {
         logger.trace("PostComposerTextProcessing: updatePostContent start - length: \(self.postText.count), cursor: \(self.cursorPosition)")
-        suggestedLanguage = detectLanguage()
+        updateSuggestedLanguage()
         logger.trace("PostComposerTextProcessing: Detected language: \(self.suggestedLanguage?.lang.minimalIdentifier ?? "none")")
 
-        // Parse the text content to get URLs and update mentions
-        let (_, _, parsedFacets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+        // Parse the text content to get URLs and update mentions (skip duplicate language detection)
+        let (_, _, parsedFacets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles, detectLanguage: false)
         logger.trace("PostComposerTextProcessing: Parser results - facets: \(parsedFacets.count), URLs: \(urls.count), manualLinkFacets: \(self.manualLinkFacets.count)")
 
         // Merge in any manually created link facets (from the UIKit editor) so that:
@@ -67,11 +65,7 @@ extension PostComposerViewModel {
             postText = newText
             richAttributedText = nsAttributedText
             
-            // Update AttributedString for iOS 26+ compatibility
-            if #available(iOS 26.0, macOS 15.0, *) {
-                attributedPostText = AttributedString(nsAttributedText)
-                logger.trace("PostComposerTextProcessing: Updated AttributedString for iOS 26+")
-            }
+            // AttributedString is updated on-demand during facet export rather than every keystroke
             
             // Trigger standard post content update
             updatePostContent()
@@ -135,7 +129,7 @@ extension PostComposerViewModel {
         
         // Update language and mention suggestions. Do NOT generate URL cards from link facets
         // to avoid auto-creating external embeds when users add inline links.
-        suggestedLanguage = detectLanguage()
+        updateSuggestedLanguage()
         
         Task {
             await updateMentionSuggestions()
@@ -178,7 +172,9 @@ extension PostComposerViewModel {
         
         // Apply red background to characters beyond 300-char limit
         if postText.count > 300 {
-            let overflowRange = NSRange(location: 300, length: postText.count - 300)
+            // Characters are graphemes; the attributed string is indexed in UTF-16.
+            let overflowStart = postText.index(postText.startIndex, offsetBy: 300)
+            let overflowRange = NSRange(overflowStart..<postText.endIndex, in: postText)
             #if os(iOS)
             mutableAttrString.addAttribute(.backgroundColor, value: UIColor.systemRed.withAlphaComponent(0.3), range: overflowRange)
             #else
@@ -209,7 +205,7 @@ extension PostComposerViewModel {
         // For paths, show domain + truncated path
         let maxPathLength = 15
         if path.count > maxPathLength {
-            let truncatedPath = String(path.prefix(maxPathLength)) + "..."
+            let truncatedPath = String(path.prefix(maxPathLength)) + "…"
             return "\(host)\(truncatedPath)"
         }
         
@@ -217,6 +213,21 @@ extension PostComposerViewModel {
     }
     
     // MARK: - Language Detection
+
+    /// NLLanguageRecognizer is unreliable on very short text. Bluesky's native composer waits
+    /// for 10 characters and drops its suggestion below that (social-app SuggestedLanguage.tsx,
+    /// MIN_TEXT_LENGTH).
+    static let minimumLanguageDetectionLength = 10
+
+    /// Suggests a language once the text is long enough, clears the suggestion when the text
+    /// gets shorter again, and writes only a changed value.
+    private func updateSuggestedLanguage() {
+        let trimmed = postText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detected = trimmed.count >= Self.minimumLanguageDetectionLength ? detectLanguage() : nil
+        if detected != suggestedLanguage {
+            suggestedLanguage = detected
+        }
+    }
     
     func detectLanguage() -> LanguageCodeContainer? {
         guard !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -241,9 +252,10 @@ extension PostComposerViewModel {
             logger.info("PostComposerTextProcessing: Using saved default language: \(savedLanguageCode)")
             selectedLanguages = [LanguageCodeContainer(languageCode: savedLanguageCode)]
         } else {
-            // No saved preference - leave empty and let user choose or use detection
-            logger.info("PostComposerTextProcessing: No saved preference, leaving language unset")
-            selectedLanguages = []
+            // No saved preference - post in the device language, which is what the composer shows
+            let deviceLanguage = Locale.current.language.languageCode?.identifier ?? "en"
+            logger.info("PostComposerTextProcessing: No saved preference, using device language: \(deviceLanguage)")
+            selectedLanguages = [LanguageCodeContainer(languageCode: deviceLanguage)]
         }
     }
     
@@ -343,17 +355,13 @@ extension PostComposerViewModel {
                 Task {
                     await convertBskyPostURLToQuote(urlString: firstURL, handle: postInfo.handle, rkey: postInfo.rkey)
                 }
-            } else if let optimizer = performanceOptimizer {
-                // Use performance optimizer for debounced URL card loading
-                optimizer.debounceURLDetection(urls: [firstURL]) { urlsToProcess in
-                    Task {
-                        await self.loadURLCardsOptimized(urlsToProcess)
-                    }
-                }
             } else {
-                // Fallback to original behavior
-                Task {
-                    await loadURLCard(for: firstURL)
+                // Load the card 500 ms after the URL stops changing.
+                urlCardDebounceTask?.cancel()
+                urlCardDebounceTask = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled else { return }
+                    self?.startURLCardLoad(for: firstURL)
                 }
             }
         }
@@ -421,30 +429,15 @@ extension PostComposerViewModel {
         }
     }
     
+    /// Starts one card request per URL; later debounces for the same URL reuse it. The load
+    /// is not tied to the debounce, so further typing doesn't cancel a request in flight.
     @MainActor
-    private func loadURLCardsOptimized(_ urls: [String]) async {
-        for url in urls {
-            guard urlCards[url] == nil else { continue }
-            
-            if let optimizer = performanceOptimizer {
-                optimizer.coalesceURLCardRequest(for: url) {
-                    Task {
-                        await self.loadURLCardWithCoalescing(for: url)
-                    }
-                }
-            } else {
-                await loadURLCard(for: url)
-            }
+    private func startURLCardLoad(for urlString: String) {
+        guard urlCards[urlString] == nil, urlCardLoadsInFlight.insert(urlString).inserted else { return }
+        Task { [weak self] in
+            await self?.loadURLCard(for: urlString)
+            self?.urlCardLoadsInFlight.remove(urlString)
         }
-    }
-    
-    @MainActor
-    private func loadURLCardWithCoalescing(for urlString: String) async {
-        defer {
-            performanceOptimizer?.completeURLCardRequest(for: urlString)
-        }
-        
-        await loadURLCard(for: urlString)
     }
     
     @MainActor
@@ -458,10 +451,11 @@ extension PostComposerViewModel {
             var cardResponse = try await URLCardService.fetchURLCard(for: urlString)
             cardResponse.sourceURL = urlString
             urlCards[urlString] = cardResponse
+            // Start the thumbnail upload now if this card is already the embed (P176).
+            preUploadThumbnails()
         } catch {
             logger.error("Failed to load URL card for \(urlString): \(error)")
         }
-        
         isLoadingURLCard = false
     }
     
@@ -489,10 +483,12 @@ extension PostComposerViewModel {
     }
     
     private func getCurrentTypingMention() -> String? {
-        // Use cursor position to detect mention at current typing location
-        guard cursorPosition <= postText.count else { return nil }
+        // Use cursor position to detect mention at current typing location.
+        // The cursor position is a UTF-16 offset from the text view.
+        let nsText = postText as NSString
+        guard cursorPosition >= 0, cursorPosition <= nsText.length else { return nil }
         
-        let textUpToCursor = String(postText.prefix(cursorPosition))
+        let textUpToCursor = nsText.substring(to: cursorPosition)
         
         // Find the last @ symbol before the cursor
         guard let lastAtIndex = textUpToCursor.lastIndex(of: "@") else { return nil }
@@ -580,19 +576,22 @@ extension PostComposerViewModel {
     private func insertMentionDirectly(_ profile: AppBskyActorDefs.ProfileViewBasic, in textView: UITextView) -> Int {
         // Get current selection
         let currentRange = textView.selectedRange
-        let text = textView.text ?? ""
+        let nsText = (textView.text ?? "") as NSString
+        guard currentRange.location <= nsText.length else { return currentRange.location }
         
-        // Find the @ symbol before cursor
-        guard let lastAtIndex = text.prefix(currentRange.location).lastIndex(of: "@") else {
+        // Find the @ symbol before cursor (all offsets are UTF-16, matching NSRange)
+        let atRange = nsText.range(of: "@", options: .backwards, range: NSRange(location: 0, length: currentRange.location))
+        guard atRange.location != NSNotFound else {
             return currentRange.location
         }
         
-        let atPosition = text.distance(from: text.startIndex, to: lastAtIndex)
+        let atPosition = atRange.location
         let mentionText = "@\(profile.handle.description) "
+        let mentionLength = (mentionText as NSString).length
         
         // Calculate ranges
         let replaceRange = NSRange(location: atPosition, length: currentRange.location - atPosition)
-        let cursorPosition = atPosition + mentionText.count
+        let cursorPosition = atPosition + mentionLength
         
         // Store resolved profile for facet generation
         resolvedProfiles[profile.handle.description] = profile
@@ -609,7 +608,7 @@ extension PostComposerViewModel {
         mentionAttributedText.addAttributes([
             .font: font,
             .foregroundColor: UIColor.label
-        ], range: NSRange(location: 0, length: mentionText.count))
+        ], range: NSRange(location: 0, length: mentionLength))
         
         // Replace the range in the text view
         textView.textStorage.replaceCharacters(in: replaceRange, with: mentionAttributedText)
@@ -648,7 +647,7 @@ extension PostComposerViewModel {
         let newText = beforeMention + mentionText + afterMention
         
         // Calculate cursor position: right after the inserted mention (including the space)
-        let cursorPosition = beforeMention.count + mentionText.count
+        let cursorPosition = (beforeMention as NSString).length + (mentionText as NSString).length
         
         // Store resolved profile for facet generation
         resolvedProfiles[profile.handle.description] = profile

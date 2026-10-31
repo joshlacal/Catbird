@@ -118,6 +118,13 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     private let logger = Logger(subsystem: "blue.catbird", category: "FontManager")
     
     // MARK: - Properties
+    /// Incremented whenever font cache or settings change, allowing consumers to invalidate dependent caches
+    public private(set) var generation: Int = 0
+
+    /// Whether bold text accessibility accommodation is active
+    var effectiveBoldText: Bool = false {
+        didSet { invalidateFontCache() }
+    }
     
     /// Current font style setting
     var fontStyle: String = "system" {
@@ -130,10 +137,14 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     }
 
     /// Current line spacing setting
-    var lineSpacing: String = "normal"
+    var lineSpacing: String = "normal" {
+        didSet { invalidateFontCache() }
+    }
 
     /// Current letter spacing setting
-    var letterSpacing: String = "normal"
+    var letterSpacing: String = "normal" {
+        didSet { invalidateFontCache() }
+    }
 
     /// Whether Dynamic Type is enabled
     var dynamicTypeEnabled: Bool = true {
@@ -154,14 +165,16 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
 
     /// Identifies a resolved `Font` by every input that affects how it is built.
     /// Settings that only feed separate modifiers (`lineSpacing`, `letterSpacing`) are
-    /// deliberately excluded because they never change the `Font` value itself.
+    /// deliberately excluded because they never change the `Font` value itself, although
+    /// changing them still bumps `generation` so dependent layout caches are invalidated.
     private struct FontCacheKey: Hashable {
         let baseSize: CGFloat
         let weight: Font.Weight
         let design: Font.Design
+        let width: CGFloat
         let textStyle: Font.TextStyle?
         let sizeScale: CGFloat
-        let maxContentSizeCategory: CrossPlatformContentSizeCategory
+        let maxContentSizeCategory: CrossPlatformContentSizeCategory?
         let contentSizeCategory: CrossPlatformContentSizeCategory
     }
 
@@ -181,6 +194,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     /// covers `applyFontSettings`, the content-size-category handler, and direct
     /// assignments from outside this type.
     private func invalidateFontCache() {
+        generation &+= 1
         fontCacheLock.withLock {
             fontCache.removeAll(keepingCapacity: true)
         }
@@ -193,15 +207,17 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     private func resolvedFont(
         baseSize: CGFloat,
         weight: Font.Weight,
+        width: CGFloat = 100,
         relativeTo textStyle: Font.TextStyle?
     ) -> Font {
         let design = fontDesign
         let scale = sizeScale
-        let maxCategory = maxContentSizeCategory
+        let maxCategory = dynamicTypeLimit
         let key = FontCacheKey(
             baseSize: baseSize,
             weight: weight,
             design: design,
+            width: width,
             textStyle: textStyle,
             sizeScale: scale,
             maxContentSizeCategory: maxCategory,
@@ -214,7 +230,15 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
 
         let scaledSize = baseSize * scale
         let font: Font
-        if let textStyle {
+        if width != 100 {
+            font = Font.customSystemFont(
+                size: scaledSize,
+                weight: weight,
+                width: width,
+                design: design,
+                relativeTo: dynamicTypeEnabled ? textStyle : nil
+            )
+        } else if let textStyle {
             font = Font.customDynamicFont(
                 baseSize: scaledSize,
                 weight: weight,
@@ -232,6 +256,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             }
             fontCache[key] = font
         }
+
         return font
     }
 
@@ -279,10 +304,10 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         logger.info("Content size category change notification received on macOS (no automatic update)")
         #endif
 
-        // Always post notification for UI updates when content size changes
-        // This ensures the UI updates regardless of Dynamic Type setting
-        NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
-        NotificationCenter.default.post(name: NSNotification.Name("DynamicTypeChanged"), object: nil)
+        // Post notification when Dynamic Type is enabled
+        if dynamicTypeEnabled {
+            NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
+        }
     }
     
     // MARK: - Caching Properties
@@ -390,13 +415,18 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             return .accessibilityExtraLarge
         case "accessibility4":
             return .accessibilityExtraExtraLarge
-        case "accessibility5":
+        case "accessibility5", AppTextSizeLimit.fullSystemRange:
             return .accessibilityExtraExtraExtraLarge
         default:
             return .accessibilityMedium
         }
     }
     
+    /// Nil removes the limit without altering any existing saved cap.
+    var dynamicTypeLimit: CrossPlatformContentSizeCategory? {
+        maxDynamicTypeSize == AppTextSizeLimit.fullSystemRange ? nil : maxContentSizeCategory
+    }
+
     // MARK: - Methods
     
     /// Apply font settings from AppSettings
@@ -406,7 +436,8 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         lineSpacing: String,
         letterSpacing: String,
         dynamicTypeEnabled: Bool,
-        maxDynamicTypeSize: String
+        maxDynamicTypeSize: String,
+        effectiveBoldText: Bool = false
     ) {
         // Skip if settings haven't changed to prevent infinite loops
         if fontStyle == currentFontStyle &&
@@ -455,6 +486,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             self.letterSpacing = letterSpacing
             self.dynamicTypeEnabled = dynamicTypeEnabled
             self.maxDynamicTypeSize = maxDynamicTypeSize
+            self.effectiveBoldText = effectiveBoldText
         } else {
             Task { @MainActor in
                 self.fontStyle = fontStyle
@@ -463,13 +495,12 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
                 self.letterSpacing = letterSpacing
                 self.dynamicTypeEnabled = dynamicTypeEnabled
                 self.maxDynamicTypeSize = maxDynamicTypeSize
+                self.effectiveBoldText = effectiveBoldText
             }
         }
         
-        // Apply Dynamic Type constraints if enabled
-        if dynamicTypeEnabled {
-            applyDynamicTypeConstraints()
-        }
+        // Also remove an earlier override when system scaling is turned off.
+        applyDynamicTypeConstraints()
         
         // Post notification for any components that need manual updates
         Task { @MainActor in
@@ -480,25 +511,41 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     
     /// Apply font settings from AppSettings with accessibility features
     func applyAllFontSettings(from appSettings: AppSettingsModel) {
+        #if os(iOS)
+        let systemBold = UIAccessibility.isBoldTextEnabled
+        #else
+        let systemBold = false
+        #endif
+        let effectiveBold = systemBold || appSettings.boldText
         applyFontSettings(
             fontStyle: appSettings.fontStyle,
             fontSize: appSettings.fontSize,
             lineSpacing: appSettings.lineSpacing,
             letterSpacing: appSettings.letterSpacing,
             dynamicTypeEnabled: appSettings.dynamicTypeEnabled,
-            maxDynamicTypeSize: appSettings.maxDynamicTypeSize
+            maxDynamicTypeSize: appSettings.maxDynamicTypeSize,
+            effectiveBoldText: effectiveBold
         )
     }
     
     /// Apply Dynamic Type size constraints at the app level
     private func applyDynamicTypeConstraints() {
         guard dynamicTypeEnabled else {
+            #if os(iOS)
+            removeContentSizeCategoryOverride()
+            #endif
             logger.debug("Dynamic Type disabled, no constraints to apply")
             return
         }
         
         let currentCategory = CrossPlatformContentSizeCategory.current
-        let maxCategory = maxContentSizeCategory
+        guard let maxCategory = dynamicTypeLimit else {
+            #if os(iOS)
+            removeContentSizeCategoryOverride()
+            #endif
+            currentContentSizeCategory = currentCategory
+            return
+        }
         
         logger.info("Applying Dynamic Type constraints - current: \(currentCategory.rawValue), max allowed: \(maxCategory.rawValue)")
         
@@ -701,14 +748,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         width: CGFloat = 120,
         relativeTo textStyle: Font.TextStyle? = nil
     ) -> Font {
-        let scaledSize = self.scaledSize(size)
-        return Font.customSystemFont(
-            size: scaledSize,
-            weight: weight,
-            width: width,
-            design: fontDesign,
-            relativeTo: dynamicTypeEnabled ? textStyle : nil
-        )
+        resolvedFont(baseSize: size, weight: weight, width: width, relativeTo: textStyle)
     }
     
     /// Get line spacing for a given font size
@@ -734,32 +774,24 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         )
     }
     
-    /// Get appropriate font for a specific text role
-    func fontForTextRole(_ role: AppTextRole) -> Font {
-        switch role {
-        case .largeTitle:
-            return accessibleFont(size: Typography.Size.largeTitle, weight: .bold, relativeTo: .largeTitle)
-        case .title1:
-            return accessibleFont(size: Typography.Size.title1, weight: .bold, relativeTo: .title)
-        case .title2:
-            return accessibleFont(size: Typography.Size.title2, weight: .semibold, relativeTo: .title2)
-        case .title3:
-            return accessibleFont(size: Typography.Size.title3, weight: .semibold, relativeTo: .title3)
-        case .headline:
-            return accessibleFont(size: Typography.Size.headline, weight: .semibold, relativeTo: .headline)
-        case .subheadline:
-            return accessibleFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
-        case .body:
-            return accessibleFont(size: Typography.Size.body, weight: .regular, relativeTo: .body)
-        case .callout:
-            return accessibleFont(size: Typography.Size.callout, weight: .regular, relativeTo: .callout)
-        case .footnote:
-            return accessibleFont(size: Typography.Size.footnote, weight: .regular, relativeTo: .footnote)
-        case .caption:
-            return accessibleFont(size: Typography.Size.caption, weight: .medium, relativeTo: .caption)
-        case .caption2:
-            return accessibleFont(size: Typography.Size.micro, weight: .medium, relativeTo: .caption2)
-        }
+    /// Get appropriate font for a specific text role, optionally with an explicit weight
+    func fontForTextRole(_ role: AppTextRole, weight: Font.Weight? = nil) -> Font {
+        let (size, defaultWeight, textStyle): (CGFloat, Font.Weight, Font.TextStyle) = {
+            switch role {
+            case .largeTitle: return (Typography.Size.largeTitle, .bold, .largeTitle)
+            case .title1: return (Typography.Size.title1, .bold, .title)
+            case .title2: return (Typography.Size.title2, .semibold, .title2)
+            case .title3: return (Typography.Size.title3, .semibold, .title3)
+            case .headline: return (Typography.Size.headline, .semibold, .headline)
+            case .subheadline: return (Typography.Size.subheadline, .medium, .subheadline)
+            case .body: return (Typography.Size.body, .regular, .body)
+            case .callout: return (Typography.Size.callout, .regular, .callout)
+            case .footnote: return (Typography.Size.footnote, .regular, .footnote)
+            case .caption: return (Typography.Size.caption, .medium, .caption)
+            case .caption2: return (Typography.Size.micro, .medium, .caption2)
+            }
+        }()
+        return accessibleFont(size: size, weight: weight ?? defaultWeight, relativeTo: textStyle)
     }
 }
 
@@ -816,29 +848,21 @@ enum AppTextRole: CaseIterable {
 
 struct AppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
-    @Environment(AppState.self) private var appState: AppState?
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.legibilityWeight) private var legibilityWeight
 
     let role: AppTextRole
 
     func body(content: Content) -> some View {
         let baseWeight = getBaseWeight(for: role)
-        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: appState?.appSettings.boldText ?? false)
+        let bold = legibilityWeight == .bold || fontManager.effectiveBoldText
+        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: bold)
         
         content
-            .font(fontManager.fontForTextRole(role).weight(adjustedWeight))
+            .font(fontManager.fontForTextRole(role, weight: adjustedWeight))
             .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
             .tracking(fontManager.letterSpacingValue)
     }
     
-    private func getAccessibleTextColor() -> Color {
-        // Apply high contrast if enabled
-        if let appState = appState, appState.appSettings.increaseContrast {
-            return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
-        } else {
-            return Color.primary
-        }
-    }
     
     private func getBaseWeight(for role: AppTextRole) -> Font.Weight {
         switch role {
@@ -875,34 +899,26 @@ struct AppFontModifier: ViewModifier {
 
 struct CustomAppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
-    @Environment(AppState.self) private var appState: AppState?
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.legibilityWeight) private var legibilityWeight
 
     let size: CGFloat
     let weight: Font.Weight
     let textStyle: Font.TextStyle?
 
     func body(content: Content) -> some View {
-        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: appState?.appSettings.boldText ?? false)
+        let bold = legibilityWeight == .bold || fontManager.effectiveBoldText
+        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: bold)
         
         content
             .font(fontManager.scaledFont(
                 size: size,
                 weight: adjustedWeight,
-                relativeTo: textStyle ?? .body  // Always provide a textStyle for Dynamic Type
+                relativeTo: textStyle ?? .body
             ))
             .lineSpacing(fontManager.getLineSpacing(for: size))
             .tracking(fontManager.letterSpacingValue)
     }
     
-    private func getAccessibleTextColor() -> Color {
-        // Apply high contrast if enabled
-        if let appState = appState, appState.appSettings.increaseContrast {
-            return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
-        } else {
-            return Color.primary
-        }
-    }
     
     private func adjustFontWeight(baseWeight: Font.Weight, boldText: Bool) -> Font.Weight {
         guard boldText else { return baseWeight }

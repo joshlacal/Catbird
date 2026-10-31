@@ -1,0 +1,5 @@
+// Telemetry build settings for the Catbird app target.
+// The GlitchTip DSN is not committed. Put it in the gitignored Telemetry.local.xcconfig:
+//   CATBIRD_GLITCHTIP_DSN = https:/$()/<public-key>@diagnostics.catbird.blue/<project-id>
+// Without that file the DSN is empty and telemetry stays disabled.
+#include? "Telemetry.local.xcconfig"

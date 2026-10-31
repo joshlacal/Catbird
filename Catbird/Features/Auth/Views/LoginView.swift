@@ -3,20 +3,38 @@ import OSLog
 import Petrel
 import SwiftUI
 
+/// Source-account recovery must not finish a different account's sign-in.
+enum LoginAuthenticationCompletionPolicy {
+    nonisolated static func accepts(_ state: AuthState, reauthenticationDID: String?) -> Bool {
+        guard case .authenticated(let did) = state else { return false }
+        return reauthenticationDID == nil || did == reauthenticationDID
+    }
+}
+
 struct LoginView: View {
     // MARK: - Properties
     /// Indicates if this LoginView is being used to add a new account (vs initial login or re-authentication)
     let isAddingNewAccount: Bool
+    /// Shows a Cancel button when presented as a sheet, so there's an explicit way out.
+    let isPresentedModally: Bool
     
     // MARK: - Environment
     @Environment(AppStateManager.self) private var appStateManager
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.colorScheme) private var colorScheme
-    
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.skyAnimationPaused) private var skyAnimationPaused
+    @Environment(\.dismiss) private var dismiss
+
+    /// Shared static fallback so text field shake animations do not allocate a new
+    /// AppSettings model and observers on every keystroke when signed out.
+    @MainActor static let signedOutFallback = AppSettings()
     // MARK: - Initialization
-    init(isAddingNewAccount: Bool = false, initialAuthMode: AuthMode = .selection) {
+    init(isAddingNewAccount: Bool = false, initialAuthMode: AuthMode = .selection, isPresentedModally: Bool = false) {
         self.isAddingNewAccount = isAddingNewAccount
+        self.isPresentedModally = isPresentedModally
         self._authMode = State(initialValue: initialAuthMode)
     }
     
@@ -33,6 +51,7 @@ struct LoginView: View {
     @State private var loginProgress: LoginProgress = .idle
     @State private var showDebugInfo = false
     @State private var biometricAuthAvailable = false
+    @State private var showSavedAccounts = false
     
     // Advanced AppView configuration
     @State private var customAppViewDID = "did:web:api.bsky.app#bsky_appview"
@@ -41,11 +60,10 @@ struct LoginView: View {
     
     // Task cancellation support
     @State private var authenticationTask: Task<Void, Never>?
-    @State private var timeoutCountdown: Int = 60
-    @State private var showTimeoutCountdown = false
-    
     // Track if we've already started re-authentication to prevent multiple OAuth prompts
     @State private var hasStartedReAuthentication = false
+    // Capture the intended account independently of mutable global expiry state.
+    @State private var reauthenticationTargetDID: String?
     
     enum LoginProgress {
         case idle
@@ -76,43 +94,16 @@ struct LoginView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                /// Hyperrealistic clouds based on "Clouds" by drift
-                /// https://www.shadertoy.com/view/4tdSWr
-                /// Shader now renders the complete sky+clouds scene opaquely
-                CloudView(
-                    opacity: 1.0,          // Full opacity - shader handles complete scene
-                    cloudScale: 1.1,       // Match original Shadertoy scale
-                    animationSpeed: 1.0,   // Match original speed
-                    shaderMode: .basic     // Use basic shader that matches original closest
-                )
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
-                
+                SkyView(animated: !reduceMotion && scenePhase == .active && !isLoggingIn && !showSavedAccounts && !skyAnimationPaused && (isPresentedModally || StarterPackOnboardingManager.shared.activeFlowID == nil))
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea()
+                legalFooterScrim
+
                 // Main content scroll view
                 ScrollView {
                     VStack(spacing: adaptiveSpacing(geometry)) {
-                    // Logo/Header Area with integrated back button
+                    // Logo/Header Area
                     ZStack(alignment: .topLeading) {
-                        // Back button for non-selection modes
-                        if authMode != .selection {
-                            Button {
-                                withAnimation(.spring(duration: 0.4)) {
-                                    authMode = .selection
-                                    showAdvancedOptions = false
-                                    error = nil
-                                }
-                            } label: {
-                                Image(systemName: "chevron.left")
-                                    .imageScale(.medium)
-                                    .foregroundStyle(.secondary)
-                                    .padding(8)
-                                    .background(.ultraThinMaterial)
-                                    .clipShape(Circle())
-                            }
-                            .padding(.leading, 4)
-                            .zIndex(1) // Keep above other elements
-                        }
-                        
                         // Center logo and text
                         VStack(spacing: adaptiveSpacing(geometry, factor: 0.4)) {
                             // Hyperrealistic icon with multiple shadow layers
@@ -151,7 +142,8 @@ struct LoginView: View {
                                 
                                 Text("for Bluesky")
                                     .font(catbirdSubtitleFont(geometry: geometry))
-                                    .foregroundStyle(.secondary)
+                                    // Vibrant .secondary turns muddy over the sky.
+                                    .foregroundStyle(.primary.opacity(0.7))
                             }
                         }
                         .frame(maxWidth: .infinity) // Center the VStack
@@ -192,9 +184,10 @@ struct LoginView: View {
                             
                             validatingTextFieldWithBackground(geometry: geometry)
                             
-                            // Advanced AppView options toggle for login
+                            #if DEBUG
+                            // Advanced AppView options toggle for login (developer builds only)
                             Button {
-                                withAnimation(.spring(duration: 0.4)) {
+                                withAnimation(navigationAnimation) {
                                     showAppViewAdvancedOptions.toggle()
                                 }
                             } label: {
@@ -205,13 +198,17 @@ struct LoginView: View {
                                         .appFont(AppTextRole.footnote)
                                 }
                                 .foregroundStyle(.secondary)
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
                             }
+                            .disabled(isLoggingIn)
                             .padding(.top, 8)
                             
                             // Advanced AppView fields
                             if showAppViewAdvancedOptions {
                                 appViewAdvancedFields(geometry: geometry)
                             }
+                            #endif
                         }
                         
                         // PDS URL field (for advanced mode)
@@ -227,7 +224,7 @@ struct LoginView: View {
                         // Advanced toggle (only in signup mode)
                         if authMode == .signup {
                             Button {
-                                withAnimation(.spring(duration: 0.4)) {
+                                withAnimation(navigationAnimation) {
                                     showAdvancedOptions.toggle()
                                     authMode = showAdvancedOptions ? .advanced : .signup
                                     if showAdvancedOptions {
@@ -235,10 +232,13 @@ struct LoginView: View {
                                     }
                                 }
                             } label: {
-                                Text(showAdvancedOptions ? "Basic Options" : "Advanced Options")
+                                Text(showAdvancedOptions ? "Use Bluesky Instead" : "Use Another Provider")
                                     .appFont(AppTextRole.footnote)
                                     .foregroundStyle(.secondary)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
                             }
+                            .disabled(isLoggingIn)
                             .padding(.top, 8)
                         }
                     }
@@ -250,8 +250,8 @@ struct LoginView: View {
                             HStack {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
-                                    .symbolEffect(.pulse)
-                                Text(appStateManager.authentication.expiredAccountInfo != nil ? "Session Expired" : "Login Error")
+                                    .symbolEffect(.pulse, isActive: !reduceMotion)
+                                Text(appStateManager.authentication.expiredAccountInfo != nil ? "Session Expired" : "Couldn’t Sign In")
                                     .appFont(AppTextRole.headline)
                                 Spacer()
                                 Button(action: {
@@ -264,6 +264,7 @@ struct LoginView: View {
                                         .imageScale(.large)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Dismiss Error")
                             }
 
                             Text(appStateManager.authentication.expiredAccountInfo != nil ?
@@ -303,20 +304,17 @@ struct LoginView: View {
                             HStack {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.secondary)
-                                Text("Authentication cancelled")
+                                Text("Sign-in canceled")
                                     .appFont(AppTextRole.subheadline)
                                     .foregroundColor(.secondary)
                             }
                             
-                            Button("Return to sign in options") {
-                                withAnimation {
-                                    authenticationCancelled = false
-                                    authMode = .selection
-                                    showAdvancedOptions = false
-                                }
+                            Button(action: returnToSignInOptions) {
+                                Text("Back to Sign-In Options")
+                                    .frame(minHeight: 44)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .modifier(SecondaryAuthButtonModifier())
+                            .disabled(isLoggingIn)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
@@ -328,7 +326,7 @@ struct LoginView: View {
                         .onAppear {
                             // Reset the cancelled state after 6 seconds
                             DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-                                withAnimation {
+                                withAnimation(reduceMotion ? nil : .default) {
                                     self.authenticationCancelled = false
                                 }
                             }
@@ -336,25 +334,20 @@ struct LoginView: View {
                     }
                     
                     Spacer(minLength: adaptiveSize(geometry, base: 40, min: 20))
+                    legalFooter
                     
-                    // Subtle credit for shader artist
-                    HStack {
-                        Spacer()
-                        Text("Sky by drift")
-                            .appFont(AppTextRole.caption2)
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .padding(.trailing, 8)
-                            .padding(.bottom, 4)
-                    }
                 }
                 .frame(minHeight: geometry.size.height)
                 .padding(.horizontal)
             }
                 .scrollBounceBehavior(.basedOnSize)
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
             }
+        }
+        .toolbar { loginToolbar }
+        .modifier(LoginNavigationContainer())
+        .sheet(isPresented: $showSavedAccounts) {
+            AccountSwitcherView()
+                .environment(appStateManager)
         }
         .onChange(of: appStateManager.authentication.state) { _, newValue in
             // Update local error state based on auth manager errors
@@ -362,15 +355,16 @@ struct LoginView: View {
                 error = message
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
                 // Cancel authentication task on error
                 authenticationTask?.cancel()
                 authenticationTask = nil
             } else if case .authenticated = newValue {
+                guard LoginAuthenticationCompletionPolicy.accepts(
+                    newValue, reauthenticationDID: reauthenticationTargetDID
+                ) else { return }
                 // Centralized auth state observation in AppStateManager handles transitionToAuthenticated and error recovery.
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
                 // Clear any cancelled state from previous attempts - we succeeded
                 authenticationCancelled = false
                 error = nil
@@ -380,7 +374,6 @@ struct LoginView: View {
             } else if case .authenticating(let progress) = newValue {
                 // Update local progress based on detailed auth progress
                 isLoggingIn = true
-                showTimeoutCountdown = true
 
                 // Map detailed progress to our local progress enum if needed
                 switch progress {
@@ -407,18 +400,18 @@ struct LoginView: View {
                 authenticationTask?.cancel()
                 authenticationTask = nil
             }
-            showTimeoutCountdown = false
             // Reset the re-authentication flag so it can trigger again if the user returns to this view
             hasStartedReAuthentication = false
         }
-        .onTapGesture(count: 5) {
-            // Hidden gesture: tap 5 times to enable debug mode
-            showDebugInfo.toggle()
-            PlatformHaptics.success()
-        }
+        .modifier(DebugInfoTapGesture(showDebugInfo: $showDebugInfo))
         .task {
             // Check biometric authentication availability
             biometricAuthAvailable = (appStateManager.authentication.biometricType != .none)
+
+            // Load saved accounts so the Saved Accounts button reflects what the switcher can show.
+            if !isAddingNewAccount {
+                await appStateManager.authentication.refreshAvailableAccounts()
+            }
 
             // If there's an expired account, automatically start re-authentication
             // BUT: Skip this if we're explicitly adding a new account (not re-authenticating)
@@ -468,6 +461,57 @@ struct LoginView: View {
         }
     }
     
+    // MARK: - Navigation
+
+    private var navigationAnimation: Animation? {
+        reduceMotion ? nil : .spring(duration: 0.4)
+    }
+
+    @ToolbarContentBuilder
+    private var loginToolbar: some ToolbarContent {
+        if authMode != .selection {
+            ToolbarItem(placement: .navigation) {
+                Button(action: returnToSignInOptions) {
+                    Label("Back", systemImage: "chevron.backward")
+                        .labelStyle(.iconOnly)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .disabled(isLoggingIn)
+                .accessibilityIdentifier("login.back")
+            }
+        }
+        if isPresentedModally {
+            ToolbarItem(placement: modalCancelPlacement) {
+                Button(action: cancelAndDismiss) {
+                    Text("Cancel")
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("login.cancel")
+            }
+        }
+    }
+
+    private var modalCancelPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+        .topBarTrailing
+        #else
+        .cancellationAction
+        #endif
+    }
+
+    private func returnToSignInOptions() {
+        guard !isLoggingIn else { return }
+        focusedField = nil
+        withAnimation(navigationAnimation) {
+            authMode = .selection
+            showAdvancedOptions = false
+            showAppViewAdvancedOptions = false
+            error = nil
+            validationError = nil
+            authenticationCancelled = false
+        }
+    }
+
     // MARK: - Computed Properties
     
     private func validatingTextFieldWithBackground(geometry: GeometryProxy) -> some View {
@@ -477,9 +521,11 @@ struct LoginView: View {
                 text: $handle,
                 prompt: "username.bsky.social",
                 icon: "at",
+                label: "Handle",
                 validationError: validationError,
                 isDisabled: isLoggingIn,
                 keyboardType: .emailAddress,
+                textContentType: .username,
                 submitLabel: .go,
                 onSubmit: {
                     handleLogin()
@@ -500,62 +546,31 @@ struct LoginView: View {
 #endif
         }
         .focused($focusedField, equals: Field.username)
-        .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? AppSettings())
+        .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? LoginView.signedOutFallback)
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-        .background(textFieldBackgroundView)
-        .modifier(TextFieldShadowModifier(colorScheme: colorScheme))
-        .overlay(textFieldOverlayView)
         .transition(AnyTransition.asymmetric(
             insertion: AnyTransition.scale(scale: 0.95).combined(with: AnyTransition.opacity),
             removal: AnyTransition.scale(scale: 1.05).combined(with: AnyTransition.opacity)
         ))
     }
     
-    private var textFieldBackgroundView: some View {
-        ZStack {
-            // Glass morphism background
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-            
-            // Inner shadow for depth
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(textFieldStrokeGradient, lineWidth: 1)
-                .blur(radius: 1)
+    @ViewBuilder
+    private var authSelectionButtons: some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            GlassEffectContainer(spacing: 16) {
+                authSelectionButtonContent
+            }
+        } else {
+            authSelectionButtonContent
         }
     }
-    
-    private var textFieldStrokeGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.black.opacity(0.2),
-                Color.clear
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-    
-    private var textFieldOverlayView: some View {
-        RoundedRectangle(cornerRadius: 16)
-            .stroke(textFieldOverlayGradient, lineWidth: 0.5)
-    }
-    
-    private var textFieldOverlayGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(0.4),
-                Color.white.opacity(0.1)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-    
-    private var authSelectionButtons: some View {
+
+    private var authSelectionButtonContent: some View {
         VStack(spacing: 16) {
             // Login Button
             Button {
-                withAnimation(.spring(duration: 0.4)) {
+                guard authMode == .selection, !isLoggingIn else { return }
+                withAnimation(navigationAnimation) {
                     authMode = .login
                     focusedField = .username
                 }
@@ -564,12 +579,15 @@ struct LoginView: View {
                     .appFont(AppTextRole.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
+                    .frame(minHeight: 44)
             }
-            .modifier(PrimaryButtonModifier(authMode: authMode))
+            .modifier(PrimaryButtonModifier())
+            .accessibilityIdentifier("login.signIn")
             
             // Sign Up Button
             Button {
-                withAnimation(.spring(duration: 0.4)) {
+                guard authMode == .selection, !isLoggingIn else { return }
+                withAnimation(navigationAnimation) {
                     authMode = .signup
                 }
             } label: {
@@ -577,9 +595,72 @@ struct LoginView: View {
                     .appFont(AppTextRole.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
+                    .frame(minHeight: 44)
             }
-            .modifier(PrimaryButtonModifier(authMode: authMode))
+            .modifier(PrimaryButtonModifier())
+            .accessibilityIdentifier("login.createAccount")
+            
+            // Only offer Saved Accounts when the switcher has accounts to show.
+            if !isAddingNewAccount && !appStateManager.authentication.availableAccounts.isEmpty {
+                Button { showSavedAccounts = true } label: {
+                    Text("Saved Accounts")
+                        .appFont(AppTextRole.subheadline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .modifier(SecondaryAuthButtonModifier())
+                .disabled(isLoggingIn || appStateManager.authentication.state.isAuthenticating)
+                .accessibilityIdentifier("login.savedAccounts")
+            }
         }
+        .disabled(isLoggingIn)
+    }
+
+    private var legalFooter: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) { legalLinks }
+            VStack(spacing: 0) { legalLinks }
+        }
+        .appFont(AppTextRole.footnote)
+        .multilineTextAlignment(.center)
+        // The links sit on the animated sky, which can drift a white cloud behind
+        // them; white text over `legalFooterScrim` reads on clouds and deep blue.
+        .tint(.white)
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+        .padding(.bottom, 8)
+    }
+
+    /// Darkens the bottom of the sky, behind the legal links.
+    private var legalFooterScrim: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black.opacity(0), location: 0),
+                .init(color: .black.opacity(0.16), location: 0.45),
+                .init(color: .black.opacity(0.42), location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: 200)
+        .frame(maxHeight: .infinity, alignment: .bottom)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var legalLinks: some View {
+        Link("Terms of Service", destination: CommunityStandards.termsOfServiceURL)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("login.terms")
+        if let privacyURL = LegalConfig.privacyPolicyURL {
+            Link("Privacy Policy", destination: privacyURL)
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("login.privacy")
+        }
+        Link("Community Guidelines", destination: CommunityStandards.communityGuidelinesURL)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("login.communityGuidelines")
     }
     
     private var deepBlueSkyBackground: some View {
@@ -652,7 +733,7 @@ struct LoginView: View {
     
     private func advancedPDSField(geometry: GeometryProxy) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Create account on custom PDS")
+            Text("Create an account with another provider")
                 .appFont(AppTextRole.headline)
                 .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
             
@@ -660,11 +741,13 @@ struct LoginView: View {
 #if os(iOS)
                 ValidatingTextField(
                     text: $pdsURL,
-                    prompt: "PDS URL (e.g., https://bsky.social)",
+                    prompt: "Provider address, like https://bsky.social",
                     icon: "link",
+                    label: "Server Address",
                     validationError: validationError,
                     isDisabled: isLoggingIn,
                     keyboardType: .URL,
+                    textContentType: .URL,
                     submitLabel: .go,
                     onSubmit: {
                         handleAdvancedSignup()
@@ -673,7 +756,7 @@ struct LoginView: View {
 #elseif os(macOS)
                 ValidatingTextField(
                     text: $pdsURL,
-                    prompt: "PDS URL (e.g., https://bsky.social)",
+                    prompt: "Provider address, like https://bsky.social",
                     icon: "link",
                     validationError: validationError,
                     isDisabled: isLoggingIn,
@@ -685,7 +768,7 @@ struct LoginView: View {
 #endif
             }
             .focused($focusedField, equals: Field.pdsurl)
-            .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? AppSettings())
+            .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? LoginView.signedOutFallback)
             .frame(maxWidth: min(geometry.size.width * 0.9, 400))
             .transition(AnyTransition.opacity.combined(with: AnyTransition.move(edge: .top)))
         }
@@ -776,7 +859,7 @@ struct LoginView: View {
             
             // Reset to defaults button
             Button {
-                withAnimation {
+                withAnimation(reduceMotion ? nil : .default) {
                     customAppViewDID = "did:web:api.bsky.app#bsky_appview"
                     customChatDID = "did:web:api.bsky.chat#bsky_chat"
                 }
@@ -836,28 +919,11 @@ struct LoginView: View {
                 } label: {
                     Text("Cancel")
                         .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.regularMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .frame(minWidth: 44, minHeight: 44)
                 }
-                .buttonStyle(.plain)
-            }
-            
-            // Timeout countdown
-            if showTimeoutCountdown {
-                HStack {
-                    Image(systemName: "clock")
-                        .foregroundStyle(.orange)
-                        .imageScale(.small)
-                    
-                    Text("Timeout in \(timeoutCountdown)s")
-                        .appFont(AppTextRole.caption2)
-                        .foregroundStyle(.secondary)
-                    
-                    Spacer()
-                }
+                .modifier(SecondaryAuthButtonModifier())
+                .accessibilityIdentifier("login.cancelAuthentication")
             }
         }
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
@@ -876,11 +942,14 @@ struct LoginView: View {
             } icon: {
                 Image(systemName: authModeActionIcon())
             }
-            .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+            .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
+            .frame(minHeight: 44)
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(isButtonDisabled())
+        .modifier(PrimaryButtonModifier())
+        .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+        .disabled(isButtonDisabled() || isLoggingIn)
+        .accessibilityIdentifier("login.continue")
     }
     
     private func handleActionButtonTap() {
@@ -932,8 +1001,6 @@ struct LoginView: View {
         // Reset state
         isLoggingIn = false
         loginProgress = .idle
-        showTimeoutCountdown = false
-        
         // Only show authenticationCancelled if user explicitly cancelled, not on errors
         // This prevents "Authentication cancelled" from appearing on auth failures
         authenticationCancelled = true
@@ -942,33 +1009,25 @@ struct LoginView: View {
         appStateManager.authentication.resetError()
     }
     
-    /// Starts the timeout countdown
-    private func startTimeoutCountdown() {
-        showTimeoutCountdown = true
-        timeoutCountdown = 60
-
-        // Create a countdown timer
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [self] timer in
-
-            DispatchQueue.main.async {
-                if self.timeoutCountdown > 0 && self.isLoggingIn {
-                    self.timeoutCountdown -= 1
-                } else {
-                    timer.invalidate()
-                    self.showTimeoutCountdown = false
-                }
-            }
+    /// Stops any sign-in in progress and closes the sheet.
+    private func cancelAndDismiss() {
+        if isLoggingIn {
+            cancelAuthenticationTaskAndPendingAttempt()
+            isLoggingIn = false
+            loginProgress = .idle
+            appStateManager.authentication.resetError()
         }
+        dismiss()
     }
     
     private func authModeActionText() -> String {
         switch authMode {
         case .login:
-            return "Signing In..."
+            return "Signing in…"
         case .signup:
-            return "Creating Account..."
+            return "Creating account…"
         case .advanced:
-            return "Connecting to PDS..."
+            return "Connecting to your provider…"
         case .selection:
             return "" // Should never be used
         }
@@ -985,13 +1044,13 @@ struct LoginView: View {
         case .idle:
             return ""
         case .startingAuth:
-            return "Starting authentication flow"
+            return "Starting sign-in"
         case .authenticating:
-            return "Opening browser for secure login"
+            return "Opening a secure sign-in page"
         case .processingCallback:
-            return "Processing authentication"
+            return "Finishing sign-in"
         case .completing:
-            return "Finalizing login"
+            return "Almost done"
         }
     }
 
@@ -1007,7 +1066,7 @@ struct LoginView: View {
         case .signup:
             return "Create Account on Bluesky"
         case .advanced:
-            return "Create Account on Custom PDS" // Fixed typo in "Create"
+            return "Create Account"
         case .selection:
             return "" // Should never be used
         }
@@ -1045,28 +1104,27 @@ struct LoginView: View {
     }
     
     private func handleLogin() {
+        guard !isLoggingIn else { return }
         // Validate handle format
         guard validateHandle(handle) else {
             return
         }
         
-        // Start login process
-        Task {
-            await startLogin()
-        }
+        // Reserve the UI and store the cancellable task before accepting another tap.
+        startLogin()
     }
     
     private func handleSignup() {
+        guard !isLoggingIn else { return }
         // Start signup process with default PDS URL (bsky.social)
-        Task {
-            await startSignup(pdsURL: URL(string: "https://bsky.social")!)
-        }
+        startSignup(pdsURL: URL(string: "https://bsky.social")!)
     }
     
     private func handleAdvancedSignup() {
+        guard !isLoggingIn else { return }
         // Validate PDS URL
         guard let url = URL(string: pdsURL), isValidURL(pdsURL) else {
-            validationError = "Please enter a valid URL"
+            validationError = "Enter a full web address, like https://example.com."
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -1076,9 +1134,7 @@ struct LoginView: View {
         }
         
         // Start signup process with custom PDS URL
-        Task {
-            await startSignup(pdsURL: url)
-        }
+        startSignup(pdsURL: url)
     }
     
     private func validateHandle(_ handle: String) -> Bool {
@@ -1087,7 +1143,7 @@ struct LoginView: View {
         // Simple validation - must contain a dot or @ symbol
         guard trimmedHandle.contains(".") || trimmedHandle.contains("@") else {
             logger.warning("Invalid handle format: \(trimmedHandle)")
-            validationError = "Please include a domain (example.bsky.social)"
+            validationError = "Enter your full handle, like name.bsky.social."
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -1101,8 +1157,9 @@ struct LoginView: View {
         return true
     }
     
-    private func startLogin() async {
+    private func startLogin() {
         logger.info("Starting login for handle: \(handle)")
+        reauthenticationTargetDID = nil
         
         // Cancel any existing authentication task
         authenticationTask?.cancel()
@@ -1120,8 +1177,6 @@ struct LoginView: View {
             logger.info("Using custom Chat DID: \(customChatDID)")
         }
 
-        // Start timeout countdown
-        startTimeoutCountdown()
 
         // Clean up handle - remove @ prefix and whitespace
         let cleanHandle = handle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1182,7 +1237,6 @@ struct LoginView: View {
                     authenticationCancelled = true
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
                 } catch is CancellationError {
@@ -1191,16 +1245,14 @@ struct LoginView: View {
                     logger.notice("Authentication task cancelled (auth may have already succeeded)")
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                 } catch {
                     // Other authentication errors (including timeout)
                     logger.error("Authentication error: \(error.localizedDescription)")
                     // Don't show authenticationCancelled for errors, use error state instead
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                     authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                 }
                 
             } catch {
@@ -1215,12 +1267,11 @@ struct LoginView: View {
                 
                 // Don't show cancellation errors as user-facing errors
                 if !isCancellationError {
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                 }
                 
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
             }
             
             // Clean up the task reference
@@ -1229,13 +1280,13 @@ struct LoginView: View {
     }
     
     private func startReAuthenticationForExpiredAccount(_ expiredAccount: AuthenticationManager.AccountInfo) async {
+        reauthenticationTargetDID = expiredAccount.did
         guard expiredAccount.loginHandle != nil else {
             logger.warning("Cannot automatically re-authenticate expired account without a saved handle")
             focusedField = .username
             hasStartedReAuthentication = false
             isLoggingIn = false
             loginProgress = .idle
-            showTimeoutCountdown = false
             return
         }
 
@@ -1249,8 +1300,6 @@ struct LoginView: View {
         loginProgress = .startingAuth
         error = nil
 
-        // Start timeout countdown
-        startTimeoutCountdown()
 
         // Create and store the authentication task
         authenticationTask = Task { @MainActor in
@@ -1260,9 +1309,8 @@ struct LoginView: View {
 
                 guard let authURL else {
                     logger.error("Failed to get auth URL for expired account re-authentication")
-                    error = "Failed to get authentication URL for expired account"
+                    error = "Couldn’t start signing in. Try again."
                     isLoggingIn = false
-                    showTimeoutCountdown = false
                     hasStartedReAuthentication = false
                     return
                 }
@@ -1316,7 +1364,6 @@ struct LoginView: View {
                     authenticationCancelled = true
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                     hasStartedReAuthentication = false
 
                     // Clear expired account info to prevent automatic retry loop
@@ -1328,11 +1375,10 @@ struct LoginView: View {
                     // Other authentication errors (including timeout)
                     logger.error("Re-authentication error: \(error.localizedDescription)")
                     // Don't show authenticationCancelled for errors, use error state instead
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                     authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
-                    showTimeoutCountdown = false
                     hasStartedReAuthentication = false
                 }
 
@@ -1348,12 +1394,11 @@ struct LoginView: View {
 
                 // Don't show cancellation errors as user-facing errors
                 if !isCancellationError {
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                 }
 
                 isLoggingIn = false
                 loginProgress = .idle
-                showTimeoutCountdown = false
                 hasStartedReAuthentication = false
             }
 
@@ -1362,8 +1407,11 @@ struct LoginView: View {
         }
     }
 
-    private func startSignup(pdsURL: URL) async {
+    private func startSignup(pdsURL: URL) {
         logger.info("Starting signup with PDS URL: \(pdsURL.absoluteString)")
+        reauthenticationTargetDID = nil
+        // New accounts get the welcome flow once they're signed in; existing accounts don't.
+        NewAccountOnboardingMarker.markSignupStarted()
         
         // Cancel any existing authentication task
         authenticationTask?.cancel()
@@ -1372,8 +1420,6 @@ struct LoginView: View {
         isLoggingIn = true
         error = nil
         
-        // Start timeout countdown
-        startTimeoutCountdown()
         
         // Create and store the authentication task
         authenticationTask = Task { @MainActor in
@@ -1412,7 +1458,6 @@ struct LoginView: View {
                     // Only set authenticationCancelled for explicit user cancellation
                     authenticationCancelled = true
                     isLoggingIn = false
-                    showTimeoutCountdown = false
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
                 } catch {
@@ -1420,10 +1465,9 @@ struct LoginView: View {
                     logger.error("Signup authentication error: \(error.localizedDescription)")
                     
                     // Don't show authenticationCancelled for errors, use error state instead
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                     authenticationCancelled = false
                     isLoggingIn = false
-                    showTimeoutCountdown = false
                 }
                 
             } catch {
@@ -1438,11 +1482,10 @@ struct LoginView: View {
                 
                 // Don't show cancellation errors as user-facing errors
                 if !isCancellationError {
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                 }
                 
                 isLoggingIn = false
-                showTimeoutCountdown = false
             }
             
             // Clean up the task reference
@@ -1513,13 +1556,32 @@ struct LoginView: View {
 
 // MARK: - View Modifiers
 
-struct TextFieldShadowModifier: ViewModifier {
-    let colorScheme: ColorScheme
+/// Developer builds only: tapping the sign-in background five times shows technical sign-in progress.
+private struct DebugInfoTapGesture: ViewModifier {
+    @Binding var showDebugInfo: Bool
     
     func body(content: Content) -> some View {
+        #if DEBUG
+        content.onTapGesture(count: 5) {
+            showDebugInfo.toggle()
+            PlatformHaptics.success()
+        }
+        #else
         content
-            .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
-            .shadow(color: .white.opacity(colorScheme == .dark ? 0.1 : 0.5), radius: 10, x: 0, y: -5)
+        #endif
+    }
+}
+
+/// Login is presented directly at the signed-out root and in account/starter-pack sheets.
+private struct LoginNavigationContainer: ViewModifier {
+    func body(content: Content) -> some View {
+        NavigationStack {
+            #if os(iOS)
+            content.navigationBarTitleDisplayMode(.inline)
+            #else
+            content
+            #endif
+        }
     }
 }
 
@@ -1533,17 +1595,45 @@ struct IconShadowModifier: ViewModifier {
     }
 }
 
-struct PrimaryButtonModifier: ViewModifier {
-    let authMode: LoginView.AuthMode
-    
+/// Secondary action on the sign-in screen. Glass keeps the label legible over
+/// both the sky's clouds and its deep blue, where a tinted bordered style
+/// renders blue-on-blue and reads as disabled.
+struct SecondaryAuthButtonModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     func body(content: Content) -> some View {
-        content
-            .buttonStyle(.borderedProminent)
-            .tint(.accentColor)
-            .buttonBorderShape(.roundedRectangle(radius: 16))
-            .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-            .scaleEffect(authMode == .selection ? 1.0 : 0.95)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: authMode)
+        if reduceTransparency {
+            content
+                .buttonStyle(.borderedProminent)
+                .tint(Color.systemBackground)
+                .foregroundStyle(.primary)
+                .buttonBorderShape(.roundedRectangle(radius: 16))
+        } else if #available(iOS 26.0, macOS 26.0, *) {
+            content
+                .buttonStyle(.glass)
+                .buttonBorderShape(.roundedRectangle(radius: 16))
+        } else {
+            content
+                .buttonStyle(.bordered)
+                .tint(.white)
+                .buttonBorderShape(.roundedRectangle(radius: 16))
+        }
+    }
+}
+
+/// The native glass button style supplies pressed, focused and disabled feedback.
+struct PrimaryButtonModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        Group {
+            if #available(iOS 26.0, macOS 26.0, *), !reduceTransparency {
+                content.buttonStyle(.glassProminent)
+            } else {
+                content.buttonStyle(.borderedProminent)
+            }
+        }
+        .tint(.accentColor)
+        .buttonBorderShape(.roundedRectangle(radius: 16))
     }
 }

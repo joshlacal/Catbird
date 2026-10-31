@@ -23,6 +23,7 @@ private final class DerivedMP4ValidationCache: @unchecked Sendable {
 }
 
 struct ExternalEmbedView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     let external: AppBskyEmbedExternal.ViewExternal
     let shouldBlur: Bool
     let postID: String
@@ -30,9 +31,13 @@ struct ExternalEmbedView: View {
     @State private var userTappedToShowEmbed = false
     @State private var showingConsentDialog = false
     @State private var pendingConsentProvider: ExternalMediaProvider?
+    @State private var consentSaveFailed = false
     @Environment(\.appSettings) private var appSettings
     @ObservationIgnored @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
+    @Environment(\.containerViewportSize) private var containerViewportSize
+    @Environment(\.displayScale) private var displayScale
+    @State private var hostingWindowSize = CGSize.zero
     @State private var videoModel: VideoModel?
     @State private var gifError: String?
     @State private var isLoadingGif: Bool = false
@@ -46,23 +51,24 @@ struct ExternalEmbedView: View {
     private struct ValidationIdentity: Hashable {
         let url: URL?
         let isAllowed: Bool
+        let isStandardSite: Bool
         let attempt: Int
     }
+
+    private struct ExternalModerationIdentity: Hashable {
+        let uri: URI
+        let labels: [ComAtprotoLabelDefs.Label]
+        let account: String?
+    }
     
-    private let logger = Logger(subsystem: "blue.catbird", category: "ExternalEmbedView")
+    private static let logger = Logger(subsystem: "blue.catbird", category: "ExternalEmbedView")
 
     /// Whether external media consent is explicitly allowed for this GIF provider
     private var isGifProviderAllowed: Bool {
-        guard let url = destinationURL, isGifURL else { return false }
-        guard let provider = provider(for: url) else { return false }
+        guard isGifURL, let provider = detectedProvider else { return false }
         return appSettings.externalMediaConsent(for: provider) == .allow
     }
 
-    /// Whether this external embed URL is a known GIF host (Tenor/Giphy/Klipy)
-    private var isGifURL: Bool {
-        guard let url = destinationURL else { return false }
-        return Self.isGifHost(url)
-    }
 
     private static func isGifHost(_ url: URL) -> Bool {
         let host = url.host?.lowercased() ?? ""
@@ -75,6 +81,11 @@ struct ExternalEmbedView: View {
     }
 
     private func provider(for url: URL) -> ExternalMediaProvider? {
+        if let detectedProvider { return detectedProvider }
+        return Self.detectProvider(for: url)
+    }
+
+    private static func detectProvider(for url: URL) -> ExternalMediaProvider? {
         if let embedType = ExternalMediaType.detect(from: url) {
             return embedType.provider
         }
@@ -114,47 +125,69 @@ struct ExternalEmbedView: View {
         }
         return nil
     }
+    private let destinationURL: URL?
+    private let detectedProvider: ExternalMediaProvider?
+    private let isGifURL: Bool
+    private let standardSiteCard: StandardSiteCard?
+
     init(external: AppBskyEmbedExternal.ViewExternal, shouldBlur: Bool, postID: String) {
         self.external = external
         self.shouldBlur = shouldBlur
         self.postID = postID
         self._isBlurred = State(initialValue: shouldBlur)
 
-        // Compute the GIF aspect-ratio hint synchronously (from the record's own
-        // hh=/ww= query params, where present) so the very first render already
-        // reserves the correct height. Deriving this reactively in onAppear (the old
-        // behavior) meant the first layout pass always showed the small link-card,
-        // then snapped to a much taller placeholder one frame later once onAppear
-        // fired — the reported overlap-then-jump. Giphy URLs carry no such params,
-        // so they still start at the 1.0 default and refine once the video loads —
-        // a much smaller residual than the old card-to-placeholder swap.
         let url = external.uri.url ?? URL(string: external.uri.uriString())
-        if let url, Self.isGifHost(url) {
-            self._gifAspectRatio = State(initialValue: Self.tenorAspectRatioHint(from: url) ?? 1.0)
+        self.destinationURL = url
+        if let url {
+            let isGif = Self.isGifHost(url)
+            self.isGifURL = isGif
+            self.detectedProvider = Self.detectProvider(for: url)
+            if isGif {
+                self._gifAspectRatio = State(initialValue: Self.tenorAspectRatioHint(from: url) ?? 1.0)
+            } else {
+                self._gifAspectRatio = State(initialValue: 1.0)
+            }
         } else {
+            self.isGifURL = false
+            self.detectedProvider = nil
             self._gifAspectRatio = State(initialValue: 1.0)
         }
+        self.standardSiteCard = StandardSiteCard(external)
+    }
+    private var mediaMaximumHeight: CGFloat {
+        #if os(iOS)
+        let viewportHeight = containerViewportSize?.height
+            ?? (hostingWindowSize.height > 0 ? hostingWindowSize.height : UIScreen.main.bounds.height)
+        return ContainerLayoutMetrics.externalMediaHeight(viewportHeight: viewportHeight)
+        #else
+        return min(PlatformScreenInfo.height * 0.6, 500)
+        #endif
     }
 
-    private var destinationURL: URL? {
-        external.uri.url ?? URL(string: external.uri.uriString())
+    @ViewBuilder
+    private var viewportReader: some View {
+        #if os(iOS)
+        if containerViewportSize == nil {
+            WindowViewportReader { hostingWindowSize = $0 }
+        }
+        #endif
     }
-    
+
     var body: some View {
-        Group {
+        ExternalEmbedLabelGate(labels: external.labels) {
             if shouldShowExternalEmbed(for: external.uri) {
                 VStack(alignment: .leading, spacing: 0) {
-                    content
-                        .frame(maxWidth: .infinity)
+                    content.frame(maxWidth: .infinity)
                 }
                 .environment(
                     \.openURL,
                      OpenURLAction { url in
-                         let result = appState.urlHandler.handle(url)
+                         let result = sceneContext.urlHandler.handle(url)
                          return result
                      })
-                .task(id: ValidationIdentity(url: destinationURL, isAllowed: isGifProviderAllowed, attempt: retryAttempt)) {
-                    await setupVideo()
+                .task(id: ValidationIdentity(url: destinationURL, isAllowed: isGifProviderAllowed,
+                                            isStandardSite: standardSiteCard != nil, attempt: retryAttempt)) {
+                    if standardSiteCard == nil { await setupVideo() }
                 }
                 // Fixed sizing to prevent layout jumps
                 .fixedSize(horizontal: false, vertical: true)
@@ -162,37 +195,59 @@ struct ExternalEmbedView: View {
                 blockedExternalMediaView
             }
         }
-        .confirmationDialog(
-            "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
-            isPresented: $showingConsentDialog,
-            titleVisibility: .visible,
-            presenting: pendingConsentProvider
-        ) { provider in
-            Button("Enable external media") {
-                appState.appSettings.setExternalMediaConsentForAllProviders(.allow)
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    userTappedToShowEmbed = true
+        .onChange(of: ExternalModerationIdentity(uri: external.uri, labels: external.labels ?? [], account: appState.userDID)) { _, _ in
+            isBlurred = shouldBlur
+            userTappedToShowEmbed = false
+            showingConsentDialog = false
+            pendingConsentProvider = nil
+            consentSaveFailed = false
+            videoModel = nil
+            gifError = nil
+            isLoadingGif = false
+            inlineImageURL = nil
+            retryAttempt = 0
+            if isGifURL, let url = destinationURL {
+                gifAspectRatio = Self.tenorAspectRatioHint(from: url) ?? 1.0
+            } else {
+                gifAspectRatio = 1.0
+            }
+        }
+        .background(viewportReader)
+        .deferredPresentations(when: showingConsentDialog || consentSaveFailed) { anchor in
+            anchor
+                .confirmationDialog(
+                    "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
+                    isPresented: $showingConsentDialog,
+                    titleVisibility: .visible,
+                    presenting: pendingConsentProvider
+                ) { provider in
+                    Button("Allow \(provider.displayName)") {
+                        guard appState.appSettings.applyExternalMediaConsent(.allow, providers: [provider]) else {
+                            consentSaveFailed = true
+                            return
+                        }
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            userTappedToShowEmbed = true
+                        }
+                        retryAttempt += 1
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { provider in
+                    Text("Playing embeds connects directly to third-party servers and may share your IP address or tracking data with \(provider.displayName).")
                 }
-                retryAttempt += 1
-            }
-            Button("Enable \(provider.displayName) only") {
-                appState.appSettings.setExternalMediaConsent(.allow, for: provider)
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    userTappedToShowEmbed = true
+                .alert("Permission Wasn’t Saved", isPresented: $consentSaveFailed) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text("The player remains blocked. Open External Media Permissions in Settings to retry saving this choice.")
                 }
-                retryAttempt += 1
-            }
-            Button("No thanks", role: .cancel) {
-                appState.appSettings.setExternalMediaConsent(.hide, for: provider)
-            }
-        } message: { provider in
-            Text("Playing embeds connects directly to third-party servers and may share your IP address or tracking data with \(provider.displayName).")
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        if let videoModel = videoModel {
+        if let card = standardSiteCard {
+            StandardSiteEmbedView(card: card)
+        } else if let videoModel = videoModel {
             videoPlayerContent(videoModel: videoModel)
         } else if let gifError = gifError {
             gifErrorContent(error: gifError)
@@ -230,8 +285,8 @@ struct ExternalEmbedView: View {
         }
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .frame(maxHeight: mediaMaximumHeight)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Placeholder shown while a GIF is being validated, using the thumbnail to prevent a flash to the link card
@@ -258,30 +313,28 @@ struct ExternalEmbedView: View {
         }
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .frame(maxHeight: mediaMaximumHeight)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
     @ViewBuilder
     private func videoPlayerContent(videoModel: VideoModel) -> some View {
-        // ContentLabelManager handles all blur logic now
+        // The enclosing media gate conceals this player; nothing blurs here.
         ModernVideoPlayerView(
             model: videoModel,
             postID: postID
         )
         .aspectRatio(videoModel.aspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
-        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .frame(maxHeight: mediaMaximumHeight)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
     
     @ViewBuilder
     private func webViewEmbedContent(url: URL, embedType: ExternalMediaType) -> some View {
         VStack(spacing: 6) {
             EmbeddedMediaWebView(url: url, embedType: embedType, shouldBlur: shouldBlur)
-                .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
             // Hide embed button
             HStack {
                 Spacer()
@@ -313,18 +366,13 @@ struct ExternalEmbedView: View {
             return nil
         }()
 
-        // ContentLabelManager handles all blur logic now - no need for shouldBlur checks
+        // The enclosing media gate conceals this card; no shouldBlur checks here.
         VStack(alignment: .leading, spacing: 3) {
             thumbnailImageContent
             linkDetails
         }
         .padding(6)
-        .background(Color.gray.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-        )
+        .feedEmbedCardStyle()
         .contentShape(Rectangle())
         .onTapGesture {
             handleCardTap(embedType: detectedEmbedType)
@@ -341,7 +389,7 @@ struct ExternalEmbedView: View {
                     .fill(Color.clear)
                     .aspectRatio(1.91 / 1, contentMode: .fit)
                     .overlay(
-                        LazyImage(url: thumbURL) { state in
+                        LazyImage(request: ImageRequestFactory.image(thumbURL, pointSize: CGSize(width: 400, height: 210), scale: displayScale)) { state in
                             if let image = state.image {
                                 image
                                     .resizable()
@@ -378,8 +426,8 @@ struct ExternalEmbedView: View {
                     .foregroundColor(.gray)
                     .frame(width: 20, height: 20)
                 Text(external.uri.authority)
-                    .appFont(AppTextRole.headline)
-                    .textScale(.secondary)
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(6)
@@ -429,7 +477,7 @@ struct ExternalEmbedView: View {
         guard !Task.isCancelled else { return }
 
         guard let url = destinationURL else {
-            logger.debug("❌ Failed to create URL from external URI: \(external.uri.uriString())")
+            Self.logger.debug("❌ Failed to create URL from external URI: \(external.uri.uriString())")
             return
         }
         
@@ -437,7 +485,7 @@ struct ExternalEmbedView: View {
         if let provider = provider(for: url) {
             let consent = appSettings.externalMediaConsent(for: provider)
             guard consent == .allow else {
-                logger.debug("⏸️ Skipping video setup for \(provider.displayName) - consent is \(consent.rawValue)")
+                Self.logger.debug("⏸️ Skipping video setup for \(provider.displayName) - consent is \(consent.rawValue)")
                 return
             }
         }
@@ -450,10 +498,10 @@ struct ExternalEmbedView: View {
             let hintedAspectRatio = Self.tenorAspectRatioHint(from: url)
             if let hintedAspectRatio {
                 gifAspectRatio = hintedAspectRatio
-                logger.debug("🎬 Extracted aspect ratio from URL params = \(gifAspectRatio)")
+                Self.logger.debug("🎬 Extracted aspect ratio from URL params = \(gifAspectRatio)")
             } else {
                 gifAspectRatio = 1.0
-                logger.debug("🎬 Using default aspect ratio 1.0 (no valid dimensions in URL)")
+                Self.logger.debug("🎬 Using default aspect ratio 1.0 (no valid dimensions in URL)")
             }
             
             isLoadingGif = true
@@ -461,7 +509,7 @@ struct ExternalEmbedView: View {
         }
         // Handle Giphy GIFs
         else if url.host?.contains("giphy.com") == true {
-            logger.debug("🎬 Detected Giphy GIF, attempting conversion...")
+            Self.logger.debug("🎬 Detected Giphy GIF, attempting conversion...")
 
             // Set default aspect ratio for Giphy BEFORE loading state
             gifAspectRatio = 1.0
@@ -473,10 +521,10 @@ struct ExternalEmbedView: View {
         else if url.host == "static.klipy.com" || url.host?.contains("klipy.com") == true {
             let hintedAspectRatio = Self.tenorAspectRatioHint(from: url)
             gifAspectRatio = hintedAspectRatio ?? 1.0
-            logger.debug("🎬 Detected Klipy media, aspect ratio = \(gifAspectRatio)")
+            Self.logger.debug("🎬 Detected Klipy media, aspect ratio = \(gifAspectRatio)")
             setupKlipyMedia(from: url, aspectRatio: gifAspectRatio)
         } else {
-            logger.debug("ℹ️ URL is not a recognized GIF host, treating as regular external link")
+            Self.logger.debug("ℹ️ URL is not a recognized GIF host, treating as regular external link")
         }
     }
 
@@ -496,31 +544,31 @@ struct ExternalEmbedView: View {
     
     private func setupTenorVideo(from url: URL, aspectRatio: CGFloat) async {
         guard !Task.isCancelled else { return }
-        logger.debug("🎬 Setting up Tenor video from URL: \(url.absoluteString)")
+        Self.logger.debug("🎬 Setting up Tenor video from URL: \(url.absoluteString)")
 
         // Transform Tenor URL to direct MP4 URL
         let pathComponents = url.path.split(separator: "/")
-        logger.debug("🎬 Tenor URL path components: \(pathComponents)")
+        Self.logger.debug("🎬 Tenor URL path components: \(pathComponents)")
 
         if let idComponent = pathComponents.first {
             let videoId = String(idComponent).replacingOccurrences(of: "AAAAC", with: "AAAPo")
-            logger.debug("🎬 Transformed Tenor ID: '\(idComponent)' -> '\(videoId)'")
+            Self.logger.debug("🎬 Transformed Tenor ID: '\(idComponent)' -> '\(videoId)'")
 
             if let mp4URL = URL(string: "https://media.tenor.com/\(videoId)/video.mp4") {
-                logger.debug("✅ Created Tenor MP4 URL: \(mp4URL.absoluteString)")
+                Self.logger.debug("✅ Created Tenor MP4 URL: \(mp4URL.absoluteString)")
                 await validateAndCreateTenorModel(
                     mp4URL: mp4URL,
                     aspectRatio: aspectRatio,
                     originalURL: url
                 )
             } else {
-                logger.debug("❌ Failed to create MP4 URL for Tenor video ID: \(videoId)")
+                Self.logger.debug("❌ Failed to create MP4 URL for Tenor video ID: \(videoId)")
                 guard !Task.isCancelled else { return }
                 isLoadingGif = false
                 gifError = "Failed to create MP4 URL"
             }
         } else {
-            logger.debug("❌ No path components found in Tenor URL: \(url.path)")
+            Self.logger.debug("❌ No path components found in Tenor URL: \(url.path)")
             guard !Task.isCancelled else { return }
             isLoadingGif = false
             gifError = "Failed to parse Tenor GIF URL"
@@ -547,7 +595,7 @@ struct ExternalEmbedView: View {
             videoModel = model
             isLoadingGif = false
             gifError = nil
-            logger.debug("✅ Used cached validation for Tenor GIF: \(model.id)")
+            Self.logger.debug("✅ Used cached validation for Tenor GIF: \(model.id)")
             return
         }
 
@@ -573,9 +621,9 @@ struct ExternalEmbedView: View {
                     videoModel = model
                     isLoadingGif = false
                     gifError = nil
-                    logger.debug("✅ Created VideoModel for Tenor GIF: \(model.id)")
+                    Self.logger.debug("✅ Created VideoModel for Tenor GIF: \(model.id)")
                 } else {
-                    logger.debug("❌ Tenor MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
+                    Self.logger.debug("❌ Tenor MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
                     guard !Task.isCancelled else { return }
                     isLoadingGif = false
                     gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
@@ -586,7 +634,7 @@ struct ExternalEmbedView: View {
                   !(error is CancellationError),
                   (error as? URLError)?.code != .cancelled
             else { return }
-            logger.debug("❌ Failed to validate Tenor MP4 URL: \(error)")
+            Self.logger.debug("❌ Failed to validate Tenor MP4 URL: \(error)")
             isLoadingGif = false
             gifError = "Unable to load MP4 version"
         }
@@ -611,7 +659,7 @@ struct ExternalEmbedView: View {
                 thumbnailURL: external.thumb?.url
             )
             videoModel = model
-            logger.debug("✅ Created VideoModel for Klipy MP4 (from mp4= slug): \(model.id)")
+            Self.logger.debug("✅ Created VideoModel for Klipy MP4 (from mp4= slug): \(model.id)")
             return
         }
 
@@ -627,12 +675,12 @@ struct ExternalEmbedView: View {
                 thumbnailURL: external.thumb?.url
             )
             videoModel = model
-            logger.debug("✅ Created VideoModel for Klipy MP4 (legacy direct-mp4 URI): \(model.id)")
+            Self.logger.debug("✅ Created VideoModel for Klipy MP4 (legacy direct-mp4 URI): \(model.id)")
             return
         }
 
         inlineImageURL = url
-        logger.debug("🖼️ Klipy URI has no mp4= slug and is not itself an MP4; falling back to inline static image")
+        Self.logger.debug("🖼️ Klipy URI has no mp4= slug and is not itself an MP4; falling back to inline static image")
     }
 
     /// Rebuilds a same-directory Klipy asset URL by swapping in a different filename
@@ -643,52 +691,52 @@ struct ExternalEmbedView: View {
 
     private func setupGiphyVideo(from url: URL) async {
         guard !Task.isCancelled else { return }
-        logger.debug("🎬 Setting up Giphy video from URL: \(url.absoluteString)")
+        Self.logger.debug("🎬 Setting up Giphy video from URL: \(url.absoluteString)")
         
         // Extract GIF ID from various Giphy URL formats
         let giphyId: String? = {
             let urlString = url.absoluteString
-            logger.debug("🎬 Giphy URL string: \(urlString)")
+            Self.logger.debug("🎬 Giphy URL string: \(urlString)")
             
             // Handle media.giphy.com/media/{id}/giphy.gif format
             if url.host?.contains("media.giphy.com") == true {
                 let pathComponents = url.path.split(separator: "/")
-                logger.debug("🎬 Giphy path components (media.giphy.com): \(pathComponents)")
+                Self.logger.debug("🎬 Giphy path components (media.giphy.com): \(pathComponents)")
                 if let mediaIndex = pathComponents.firstIndex(of: "media"),
                    mediaIndex + 1 < pathComponents.count {
                     let id = String(pathComponents[mediaIndex + 1])
-                    logger.debug("🎬 Extracted Giphy ID from media.giphy.com: \(id)")
+                    Self.logger.debug("🎬 Extracted Giphy ID from media.giphy.com: \(id)")
                     return id
                 }
             }
             // Handle giphy.com/gifs/{name}-{id} format
             else if url.path.contains("/gifs/") {
                 let pathComponents = url.path.split(separator: "/")
-                logger.debug("🎬 Giphy path components (giphy.com/gifs): \(pathComponents)")
+                Self.logger.debug("🎬 Giphy path components (giphy.com/gifs): \(pathComponents)")
                 if let gifsIndex = pathComponents.firstIndex(of: "gifs"),
                    gifsIndex + 1 < pathComponents.count {
                     let gifPath = String(pathComponents[gifsIndex + 1])
                     // Extract ID from the end after the last dash
                     let id = gifPath.split(separator: "-").last.map(String.init)
-                    logger.debug("🎬 Extracted Giphy ID from gifs path: \(id ?? "nil")")
+                    Self.logger.debug("🎬 Extracted Giphy ID from gifs path: \(id ?? "nil")")
                     return id
                 }
             }
             // Handle giphy.com/embed/{id} format
             else if url.path.contains("/embed/") {
                 let pathComponents = url.path.split(separator: "/")
-                logger.debug("🎬 Giphy path components (embed): \(pathComponents)")
+                Self.logger.debug("🎬 Giphy path components (embed): \(pathComponents)")
                 let id = pathComponents.last.map(String.init)
-                logger.debug("🎬 Extracted Giphy ID from embed: \(id ?? "nil")")
+                Self.logger.debug("🎬 Extracted Giphy ID from embed: \(id ?? "nil")")
                 return id
             }
             
-            logger.debug("❌ Could not extract Giphy ID from URL format")
+            Self.logger.debug("❌ Could not extract Giphy ID from URL format")
             return nil
         }()
         
         guard let gifId = giphyId else {
-            logger.debug("❌ No Giphy ID found, cannot convert to MP4")
+            Self.logger.debug("❌ No Giphy ID found, cannot convert to MP4")
             guard !Task.isCancelled else { return }
             isLoadingGif = false
             gifError = "Failed to parse Giphy GIF URL"
@@ -697,10 +745,10 @@ struct ExternalEmbedView: View {
         
         // Create MP4 URL for Giphy
         if let mp4URL = URL(string: "https://media.giphy.com/media/\(gifId)/giphy.mp4") {
-            logger.debug("✅ Created Giphy MP4 URL: \(mp4URL.absoluteString)")
+            Self.logger.debug("✅ Created Giphy MP4 URL: \(mp4URL.absoluteString)")
             await validateAndCreateGiphyModel(mp4URL: mp4URL, gifId: gifId)
         } else {
-            logger.debug("❌ Failed to create MP4 URL for Giphy ID: \(gifId)")
+            Self.logger.debug("❌ Failed to create MP4 URL for Giphy ID: \(gifId)")
             guard !Task.isCancelled else { return }
             isLoadingGif = false
             gifError = "Failed to create MP4 URL"
@@ -723,7 +771,7 @@ struct ExternalEmbedView: View {
             videoModel = model
             isLoadingGif = false
             gifError = nil
-            logger.debug("✅ Used cached validation for Giphy GIF: \(model.id)")
+            Self.logger.debug("✅ Used cached validation for Giphy GIF: \(model.id)")
             return
         }
 
@@ -749,9 +797,9 @@ struct ExternalEmbedView: View {
                     videoModel = model
                     isLoadingGif = false
                     gifError = nil
-                    logger.debug("✅ Created VideoModel for Giphy GIF: \(model.id)")
+                    Self.logger.debug("✅ Created VideoModel for Giphy GIF: \(model.id)")
                 } else {
-                    logger.debug("❌ Giphy MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
+                    Self.logger.debug("❌ Giphy MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
                     guard !Task.isCancelled else { return }
                     isLoadingGif = false
                     gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
@@ -762,7 +810,7 @@ struct ExternalEmbedView: View {
                   !(error is CancellationError),
                   (error as? URLError)?.code != .cancelled
             else { return }
-            logger.debug("❌ Failed to validate Giphy MP4 URL: \(error)")
+            Self.logger.debug("❌ Failed to validate Giphy MP4 URL: \(error)")
             isLoadingGif = false
             gifError = "Unable to load MP4 version"
         }
@@ -856,7 +904,8 @@ struct ExternalEmbedView: View {
             if !external.description.isEmpty {
                 Text(external.description)
                     .appFont(AppTextRole.subheadline)
-                    .lineLimit(3)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
                     .truncationMode(.tail)
             }
 
@@ -912,13 +961,13 @@ struct ExternalEmbedView: View {
             }
         } else if let url = destinationURL {
             // Handle URL tap when content is visible
-            _ = appState.urlHandler.handle(url)
+            _ = sceneContext.urlHandler.handle(url)
         }
     }
 
     private func handleCardTap(embedType: ExternalMediaType?) {
         guard let url = destinationURL else {
-            logger.error("❌ External embed missing valid URL for card tap")
+            Self.logger.error("❌ External embed missing valid URL for card tap")
             return
         }
         
@@ -936,16 +985,16 @@ struct ExternalEmbedView: View {
                         userTappedToShowEmbed = true
                     }
                 } else {
-                    _ = appState.urlHandler.handle(url)
+                    _ = sceneContext.urlHandler.handle(url)
                 }
             case .undecided:
                 pendingConsentProvider = provider
                 showingConsentDialog = true
             case .hide:
-                _ = appState.urlHandler.handle(url)
+                _ = sceneContext.urlHandler.handle(url)
             }
         } else {
-            _ = appState.urlHandler.handle(url)
+            _ = sceneContext.urlHandler.handle(url)
         }
     }
     
@@ -1000,7 +1049,7 @@ struct ExternalEmbedView: View {
                 
                 Button("Open Link") {
                     if let url = destinationURL {
-                        _ = appState.urlHandler.handle(url)
+                        _ = sceneContext.urlHandler.handle(url)
                     }
                 }
                 .appFont(AppTextRole.caption)
@@ -1069,7 +1118,12 @@ struct ExternalEmbedView: View {
     private var blockedMediaButtons: some View {
         HStack(spacing: 12) {
             Button("Settings") {
-                appState.navigationManager.navigate(to: .settings(.contentAndMedia))
+                let mediaProvider = (destinationURL ?? external.uri.url).flatMap { provider(for: $0) }
+                let control = mediaProvider.map {
+                    SettingsControlID(rawValue: "media.provider.\($0.rawValue)")
+                } ?? SettingsControlID(rawValue: "media.providerPermissions")
+                sceneContext.navigationManager.navigate(to: .settings(
+                    SettingsRoute(target: .init(screen: .externalMedia, control: control))))
             }
             .appFont(AppTextRole.caption)
             .foregroundStyle(.blue)
@@ -1078,7 +1132,7 @@ struct ExternalEmbedView: View {
             
             Button("Open Link") {
                 if let url = destinationURL {
-                    _ = appState.urlHandler.handle(url)
+                    _ = sceneContext.urlHandler.handle(url)
                 }
             }
             .appFont(AppTextRole.caption)
@@ -1118,7 +1172,7 @@ private struct ExternalEmbedPreviewLoader: View {
         )
         .padding()
       } else {
-        ProgressView("Loading embed...")
+        ProgressView("Loading embed…")
       }
     }
     .task {

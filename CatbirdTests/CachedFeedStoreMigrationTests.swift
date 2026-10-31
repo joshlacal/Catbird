@@ -63,7 +63,7 @@ struct CachedFeedStoreMigrationTests {
     let appSource = try sourceFile("Catbird/App/CatbirdApp.swift")
     let cacheSource = try sourceFile("Catbird/Features/Feed/Models/CachedFeedViewPost.swift")
 
-    #expect(appSource.contains("private static let currentSchemaVersion = 4"))
+    #expect(CatbirdSwiftDataStore.currentSchemaVersion == 4)
     #expect(!appSource.contains("v5: CachedFeedViewPost uniqueness changed"))
     #expect(cacheSource.contains("@Attribute(.unique) var id: String"))
     #expect(!cacheSource.contains("#Unique<CachedFeedViewPost>"))

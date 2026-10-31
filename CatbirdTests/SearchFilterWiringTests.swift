@@ -31,6 +31,7 @@ struct SearchFilterWiringTests {
     #expect(old.filters.sort == .top)
     #expect(!generation.accepts(old))
     #expect(generation.accepts(current))
+    #expect(current.filters.toSearchPostsV2Parameters(query: current.query).sort == "recent")
   }
 
   @Test("all post search paths use searchPostsV2 parameters")

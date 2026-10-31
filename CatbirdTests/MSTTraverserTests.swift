@@ -139,12 +139,13 @@ struct MSTTraverserTests {
     let record2CBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.feed.post", "text": "second"] as [String: Any])
     let record2CID = CID.fromDAGCBOR(record2CBOR)
 
-    let record3CBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.graph.follow", "subject": "did:plc:test"] as [String: Any])
+    let record3CBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.feed.like", "subject": "at://did:plc:test/app.bsky.feed.post/aaa"] as [String: Any])
     let record3CID = CID.fromDAGCBOR(record3CBOR)
 
-    // Left subtree with record3
+    // Left subtree with record3. MST keys are strictly ordered: everything in a node's left
+    // subtree sorts before the node's first entry, so "app.bsky.feed.like/…" < "app.bsky.feed.post/aaa".
     let leftNodeCBOR = buildMSTNodeCBOR(leftSubtree: nil, entries: [
-      (prefixLen: 0, keySuffix: Data("app.bsky.graph.follow/xyz".utf8), valueCID: record3CID, rightSubtree: nil),
+      (prefixLen: 0, keySuffix: Data("app.bsky.feed.like/xyz".utf8), valueCID: record3CID, rightSubtree: nil),
     ])
     let leftNodeCID = CID.fromDAGCBOR(leftNodeCBOR)
 
@@ -179,11 +180,31 @@ struct MSTTraverserTests {
 
     // Should find 3 records: left subtree record first, then root entries
     #expect(results.count == 3)
+    #expect(results.map(\.0) == ["app.bsky.feed.like/xyz", "app.bsky.feed.post/aaa", "app.bsky.feed.post/bbb"])
+    #expect(results.map(\.1) == [record3CID, record1CID, record2CID])
+  }
 
-    let paths = results.map(\.0)
-    #expect(paths.contains("app.bsky.graph.follow/xyz"))
-    #expect(paths.contains("app.bsky.feed.post/aaa"))
-    #expect(paths.contains("app.bsky.feed.post/bbb"))
+  @Test("walkRepository rejects a left subtree key that sorts after its node's first entry")
+  func testWalkRejectsMisorderedSubtree() throws {
+    let recordCBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.feed.post", "text": "first"] as [String: Any])
+    let recordCID = CID.fromDAGCBOR(recordCBOR)
+    let leftNodeCBOR = buildMSTNodeCBOR(leftSubtree: nil, entries: [
+      (prefixLen: 0, keySuffix: Data("app.bsky.graph.follow/xyz".utf8), valueCID: recordCID, rightSubtree: nil),
+    ])
+    let leftNodeCID = CID.fromDAGCBOR(leftNodeCBOR)
+    let rootNodeCBOR = buildMSTNodeCBOR(leftSubtree: leftNodeCID, entries: [
+      (prefixLen: 0, keySuffix: Data("app.bsky.feed.post/aaa".utf8), valueCID: recordCID, rightSubtree: nil),
+    ])
+    let rootNodeCID = CID.fromDAGCBOR(rootNodeCBOR)
+    let commitCBOR = buildCommitCBOR(dataCID: rootNodeCID)
+    let commitCID = CID.fromDAGCBOR(commitCBOR)
+    let carData = try buildCAR(root: commitCID, blocks: [
+      (commitCID, commitCBOR), (rootNodeCID, rootNodeCBOR), (leftNodeCID, leftNodeCBOR), (recordCID, recordCBOR),
+    ])
+    let traverser = MSTTraverser(reader: try CARReader(fileURL: writeTempFile(carData)))
+    #expect(throws: CARReaderError.self) {
+      try traverser.walkRepository(commitCID: commitCID) { _, _ in }
+    }
   }
 
   // MARK: - Helpers

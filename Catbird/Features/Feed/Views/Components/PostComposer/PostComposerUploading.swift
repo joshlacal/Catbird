@@ -16,8 +16,11 @@ extension PostComposerViewModel {
     
     // MARK: - Image Processing and Uploading
     
-    func createImagesEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        guard !mediaItems.isEmpty, let client = appState.atProtoClient else { 
+    /// Uploads `items`, or the active post's photos when nil. Thread entries pass their own
+    /// items so the visible attachments are never swapped out during submit.
+    func createImagesEmbed(items: [MediaItem]? = nil) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        let items = items ?? mediaItems
+        guard !items.isEmpty, let client = appState.atProtoClient else { 
             logger.trace("PostComposerUploading: createImagesEmbed - no media items or client")
             return nil 
         }
@@ -26,53 +29,66 @@ extension PostComposerViewModel {
             try await appState.circleService.requireImages()
         }
 
-        logger.info("PostComposerUploading: Creating images embed with \(self.mediaItems.count) items")
-        var imageEmbeds: [AppBskyEmbedImages.Image] = []
-
-        for (index, item) in mediaItems.enumerated() {
-            guard let rawData = item.rawData else { 
-                logger.warning("PostComposerUploading: Skipping image at index \(index) - no raw data")
-                continue 
+        logger.info("PostComposerUploading: Creating images embed with \(items.count) items")
+        var sources: [Data] = []
+        for item in items {
+            guard let rawData = item.rawData, item.image != nil, !item.isGifConversion else {
+                throw NSError(domain: "ComposerMedia", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "An attachment couldn’t be loaded. Retry it or remove it before posting."
+                ]) 
             }
+            sources.append(rawData)
+        }
 
-            logger.debug("PostComposerUploading: Processing image \(index + 1)/\(self.mediaItems.count) - size: \(rawData.count) bytes")
-            let imageData = try await processImageForUpload(rawData)
-            logger.debug("PostComposerUploading: Image processed - final size: \(imageData.count) bytes")
+        // Decode and encode off the main actor, preparing the next photo while this one uploads.
+        var imageEmbeds: [AppBskyEmbedImages.Image] = []
+        var nextPreparation: Task<ComposerImagePreparation.PreparedUpload, Error>? = Self.startImagePreparation(sources[0])
+        defer { nextPreparation?.cancel() }
+        for (index, item) in items.enumerated() {
+            guard let preparation = nextPreparation else { break }
+            let prepared = try await preparation.value
+            nextPreparation = index + 1 < sources.count ? Self.startImagePreparation(sources[index + 1]) : nil
+            logger.debug("PostComposerUploading: Image \(index + 1)/\(items.count) prepared - \(sources[index].count) -> \(prepared.data.count) bytes")
 
             let blob: Blob
             #if DEBUG
             if let transport = appState.e2eCircleTransport {
-                blob = try await transport.uploadImage(imageData)
+                blob = try await transport.uploadImage(prepared.data)
             } else {
                 let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
-                    data: imageData,
+                    data: prepared.data,
                     mimeType: "image/jpeg",
                     stripMetadata: true
                 )
                 guard responseCode == 200, let uploadedBlob = blobOutput?.blob else {
                     logger.error("PostComposerUploading: Blob upload failed - response code: \(responseCode)")
-                    throw NSError(domain: "BlobUploadError", code: responseCode, userInfo: nil)
+                    throw PostComposerUploadError.badResponse(responseCode)
                 }
                 blob = uploadedBlob
             }
             #else
             let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
-                data: imageData,
+                data: prepared.data,
                 mimeType: "image/jpeg",
                 stripMetadata: true
             )
             guard responseCode == 200, let uploadedBlob = blobOutput?.blob else {
                 logger.error("PostComposerUploading: Blob upload failed - response code: \(responseCode)")
-                throw NSError(domain: "BlobUploadError", code: responseCode, userInfo: nil)
+                throw PostComposerUploadError.badResponse(responseCode)
             }
             blob = uploadedBlob
             #endif
             
             logger.info("PostComposerUploading: Image \(index + 1) uploaded successfully")
 
-            // Only include aspect ratio if we have valid dimensions (non-zero)
+            // The uploaded pixel size is exact; the attachment's size is a fallback.
             let aspectRatio: AppBskyEmbedDefs.AspectRatio?
-            if let ratio = item.aspectRatio, ratio.width > 0, ratio.height > 0 {
+            if prepared.pixelSize.width > 0, prepared.pixelSize.height > 0 {
+                aspectRatio = AppBskyEmbedDefs.AspectRatio(
+                    width: Int(prepared.pixelSize.width),
+                    height: Int(prepared.pixelSize.height)
+                )
+            } else if let ratio = item.aspectRatio, ratio.width > 0, ratio.height > 0 {
                 aspectRatio = AppBskyEmbedDefs.AspectRatio(
                     width: Int(ratio.width),
                     height: Int(ratio.height)
@@ -114,16 +130,47 @@ extension PostComposerViewModel {
         return .appBskyEmbedImages(AppBskyEmbedImages(images: imageEmbeds))
     }
 
-    func createVideoEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+    func createVideoEmbed(
+        for suppliedItem: MediaItem? = nil, entryID: UUID? = nil
+    ) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
         guard destination == .public else {
             throw CircleError.invalidParameter("Video and audio are unavailable in Circles.")
         }
-        guard let videoItem = videoItem, let mediaUploadManager = mediaUploadManager else {
-            logger.debug("DEBUG: Missing videoItem or mediaUploadManager")
-            return nil
+        guard let videoItem = suppliedItem ?? videoItem else { return nil }
+        guard let mediaUploadManager = mediaUploadManager, let client = appState.atProtoClient else {
+            throw VideoUploadError.noClientAvailable
         }
 
+        let context = mediaLoadContext()
+        guard let accountDID = context.accountDID else { throw VideoUploadError.noClientAvailable }
+        let videoID = videoItem.id
+        let originalURL = videoItem.rawVideoURL
+        let originalData = videoItem.videoData
+        guard let owner = videoUploadOwner(for: videoID, entryID: entryID) else {
+            throw VideoUploadError.noClientAvailable
+        }
+        let initiatingAppState = appState
+        let isAccountCurrent: @MainActor @Sendable () -> Bool = { [weak initiatingAppState] in
+            guard let initiatingAppState else { return false }
+            return initiatingAppState.userDID == accountDID && initiatingAppState.atProtoClient === client
+        }
+        let isCurrent: @MainActor @Sendable () -> Bool = { [weak self, weak mediaUploadManager] in
+            guard let self, let mediaUploadManager,
+                  self.ownsMediaLoad(context), self.appState.atProtoClient === client,
+                  self.mediaUploadManager === mediaUploadManager else { return false }
+            let currentItem: MediaItem?
+            if let entryID {
+                currentItem = self.threadEntries.first(where: { $0.id == entryID })?.videoItem
+            } else {
+                currentItem = self.videoItem
+            }
+            return currentItem?.id == videoID && currentItem?.rawVideoURL == originalURL
+                && currentItem?.videoData == originalData
+        }
+        guard isCurrent() else { throw CancellationError() }
+
         isVideoUploading = true
+        defer { if isCurrent() { isVideoUploading = false } }
         logger.debug("DEBUG: Creating video embed, starting upload process")
 
         do {
@@ -131,6 +178,7 @@ extension PostComposerViewModel {
             if let caption = videoItem.caption {
                 logger.info("PostComposerUploading: Uploading video caption (.vtt) for language \(caption.lang.lang.minimalIdentifier)")
                 let uploadedCaption = try await mediaUploadManager.uploadCaptionBlob(caption)
+                guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
                 uploadedCaptions = [uploadedCaption]
                 logger.info("PostComposerUploading: Video caption uploaded successfully")
             }
@@ -139,7 +187,10 @@ extension PostComposerViewModel {
 
             if let videoURL = videoItem.rawVideoURL {
                 logger.debug("DEBUG: Using URL for video upload: \(videoURL)")
-                blob = try await mediaUploadManager.uploadVideo(url: videoURL, alt: videoItem.altText)
+                blob = try await mediaUploadManager.uploadVideo(
+                    url: videoURL, alt: videoItem.altText, owner: owner,
+                    isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
+                )
             } else if let videoAsset = videoItem.rawVideoAsset {
                 logger.debug("DEBUG: Using AVAsset for video upload")
 
@@ -149,9 +200,13 @@ extension PostComposerViewModel {
 
                 logger.debug("DEBUG: Exporting asset to temporary file: \(tempFileURL.path)")
                 let _ = try await exportAsset(videoAsset, to: tempFileURL)
+                guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
 
                 logger.debug("DEBUG: Asset export successful, uploading from: \(tempFileURL.path)")
-                blob = try await mediaUploadManager.uploadVideo(url: tempFileURL, alt: videoItem.altText)
+                blob = try await mediaUploadManager.uploadVideo(
+                    url: tempFileURL, alt: videoItem.altText, owner: owner,
+                    isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
+                )
             } else if let videoData = videoItem.videoData {
                 logger.debug("DEBUG: Using Data for video upload, size: \(videoData.count) bytes")
 
@@ -163,17 +218,16 @@ extension PostComposerViewModel {
                 try videoData.write(to: tempFileURL)
 
                 logger.debug("DEBUG: Uploading from temporary file: \(tempFileURL.path)")
-                blob = try await mediaUploadManager.uploadVideo(url: tempFileURL, alt: videoItem.altText)
+                blob = try await mediaUploadManager.uploadVideo(
+                    url: tempFileURL, alt: videoItem.altText, owner: owner,
+                    isOwnerCurrent: isCurrent, isAccountCurrent: isAccountCurrent
+                )
             } else {
                 logger.error("ERROR: No video source available for upload")
-                isVideoUploading = false
-                throw NSError(
-                    domain: "VideoUploadError",
-                    code: 8,
-                    userInfo: [NSLocalizedDescriptionKey: "No video data available for upload. Please try again."]
-                )
+                throw VideoUploadError.uploadFailed
             }
 
+            guard isCurrent(), !Task.isCancelled else { throw CancellationError() }
             logger.debug("DEBUG: Video upload successful, creating embed")
             let embed = mediaUploadManager.createVideoEmbed(
                 aspectRatio: videoItem.aspectRatio,
@@ -182,32 +236,26 @@ extension PostComposerViewModel {
                 captions: uploadedCaptions
             )
 
-            isVideoUploading = false
             return embed
         } catch {
-            isVideoUploading = false
             logger.error("ERROR: Video upload failed: \(error)")
-
-            let errorMessage: String
-            switch error {
-            case VideoUploadError.processingFailed(let reason):
-                errorMessage = reason
-            case VideoUploadError.uploadFailed:
-                errorMessage = "Video upload failed"
-            case VideoUploadError.processingTimeout:
-                errorMessage = "Video processing timed out"
-            case VideoUploadError.authenticationFailed:
-                errorMessage = "Authentication error during upload"
-            default:
-                errorMessage = error.localizedDescription
-            }
-
-            throw NSError(
-                domain: "VideoUploadError",
-                code: 0,
-                userInfo: [NSLocalizedDescriptionKey: errorMessage]
-            )
+            // Rethrow unchanged so the composer can explain the failure to the user.
+            throw error
         }
+    }
+
+    func videoUploadOwner(for videoID: UUID, entryID: UUID? = nil) -> VideoUploadOwner? {
+        let context = mediaLoadContext()
+        guard let accountDID = context.accountDID else { return nil }
+        // The containing entry survives saving, reordering and account restoration. A saved-row
+        // identifier or the first thread entry would change the key for the same attachment.
+        let entryNamespace = (entryID ?? context.entryID)?.uuidString ?? videoID.uuidString
+        return VideoUploadOwner(
+            accountDID: accountDID,
+            draftID: entryNamespace,
+            entryID: entryNamespace,
+            mediaID: videoID.uuidString
+        )
     }
 
     private func exportAsset(_ asset: AVAsset, to outputURL: URL) async throws -> AVAssetExportSession {
@@ -225,8 +273,12 @@ extension PostComposerViewModel {
         }
 
         logger.debug("DEBUG: Starting export operation")
+        let preparation = MediaPreviewLoadAttempt(timeout: .seconds(120))
+        defer { preparation.cancel() }
         do {
-            try await exportSession.export(to: outputURL, as: .mp4)
+            try await preparation.value {
+                try await exportSession.export(to: outputURL, as: .mp4)
+            }
             logger.debug("DEBUG: Export completed successfully")
         } catch {
             logger.debug("DEBUG: Export failed with error: \(error)")
@@ -236,64 +288,11 @@ extension PostComposerViewModel {
         return exportSession
     }
     
-    private func processImageForUpload(_ data: Data) async throws -> Data {
-        var processedData = data
-
-        if checkImageFormat(data) == "HEIC" {
-            if let converted = convertHEICToJPEG(data) {
-                processedData = converted
-            }
+    private static func startImagePreparation(
+        _ data: Data
+    ) -> Task<ComposerImagePreparation.PreparedUpload, Error> {
+        Task.detached(priority: .userInitiated) {
+            try ComposerImagePreparation.prepareForUploadSynchronously(data)
         }
-
-        if let image = PlatformImage(data: processedData),
-           let compressed = compressImage(image, maxSizeInBytes: 900_000) {
-            processedData = compressed
-        }
-
-        return processedData
-    }
-    
-    // MARK: - Image Format Utilities
-    
-    private func checkImageFormat(_ data: Data) -> String {
-        guard data.count >= 4 else { return "Unknown" }
-        
-        let bytes = data.prefix(4)
-        
-        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
-            return "JPEG"
-        } else if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-            return "PNG"
-        } else if bytes.starts(with: [0x00, 0x00, 0x00]) && data.count > 8 {
-            let ftypBytes = data.subdata(in: 4..<8)
-            if ftypBytes.starts(with: [0x66, 0x74, 0x79, 0x70]) {
-                return "HEIC"
-            }
-        }
-        
-        return "Unknown"
-    }
-    
-    private func convertHEICToJPEG(_ data: Data) -> Data? {
-        guard let image = PlatformImage(data: data) else {
-            return nil
-        }
-        
-        #if os(iOS)
-        guard let jpegData = image.jpegData(compressionQuality: 0.8) else {
-            return nil
-        }
-        #elseif os(macOS)
-        guard let jpegData = image.jpegImageData(compressionQuality: 0.8) else {
-            return nil
-        }
-        #endif
-        
-        return jpegData
-    }
-    
-    private func compressImage(_ image: PlatformImage, maxSizeInBytes: Int) -> Data? {
-        // Use the built-in compression method from CrossPlatformImage
-        return image.compressed(maxSizeInBytes: maxSizeInBytes)
     }
 }

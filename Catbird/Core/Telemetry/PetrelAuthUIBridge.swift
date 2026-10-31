@@ -2,54 +2,43 @@ import Foundation
 import OSLog
 import Petrel
 
-/// Bridges Petrel auth events into Catbird UI state so auto-logout is visible and consistent.
+/// Bridges scoped Petrel failures into Catbird after the emitting SDK storage locks release.
 enum PetrelAuthUIBridge {
     private static let logger = Logger(subsystem: "blue.catbird", category: "AuthUIBridge")
 
     static func enable() {
-        // Use new typed auth event system - no string parsing needed
         PetrelAuthEvents.addObserver { event in
             switch event {
-            case let .gatewaySessionRejected(context, _):
-                Task { @MainActor in
-                    await AppStateManager.shared.authentication.handleGatewaySessionRejection(context)
+            case let .gatewaySessionRejected(context, reason):
+                await AppStateManager.shared.authentication.handleGatewaySessionFailure(
+                    did: context.did, reason: reason
+                ) { client in
+                    await client.isCurrentGatewaySessionFailure(context)
                 }
-
+            // Legacy emitters have not been audited for lock-free delivery. Their
+            // fallback validator may refresh; preserve their existing queued delivery.
+            // Gateway clients ignore these unproven events, even when delivered late.
             case let .autoLogoutTriggered(did, reason):
                 Task { @MainActor in
-                    logger.error("UI handling auto logout did=\(did) reason=\(reason)")
                     await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: reason)
                 }
-
             case let .logoutStarted(did, reason):
                 Task { @MainActor in
-                    logger.info("Logout started did=\(did) reason=\(reason ?? "nil")")
                     await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: reason)
                 }
-
             case let .logoutNoAutoSwitch(did):
                 Task { @MainActor in
-                    logger.warning("No account to switch to after logout did=\(did)")
-                    // User needs to log in - UI should show login screen
-                    await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: "no_accounts_available")
+                    await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(
+                        did: did, reason: "no_accounts_available"
+                    )
                 }
-
-            case let .refreshTokenInvalid(did, statusCode, error):
-                Task { @MainActor in
-                    logger.error("Refresh token invalid did=\(did) status=\(statusCode) error=\(error)")
-                    // Token is invalid, session will be terminated
-                }
-
-            case let .sessionMissing(did, context):
-                Task { @MainActor in
-                    logger.warning("Session missing did=\(did) context=\(context)")
-                }
-
+            case .refreshTokenInvalid:
+                logger.error("Refresh token rejected")
+            case .sessionMissing:
+                logger.warning("Session missing")
             default:
-                // Other auth events are informational, no UI action needed
                 break
             }
         }
     }
 }
-

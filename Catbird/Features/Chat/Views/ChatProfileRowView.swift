@@ -22,12 +22,13 @@ struct ChatProfileRowView: View {
                 AsyncProfileImage(
                     url: profile.finalAvatarURL(),
                     size: 44,
+                    did: profile.did.didString(),
                     labels: extractLabels(from: profile)
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text(profile.displayName ?? "")
+                        Text(profile.displayName?.isEmpty == false ? profile.displayName ?? "" : profile.handle.description)
                             .appFont(AppTextRole.headline)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -48,9 +49,9 @@ struct ChatProfileRowView: View {
                             .lineLimit(1)
 
                         if isMessageable == false {
-                            Text("• Chat Restricted")
+                            Text("· Can’t be messaged")
                                 .appFont(AppTextRole.caption)
-                                .foregroundColor(.red)
+                                .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                     }
@@ -86,16 +87,11 @@ struct ChatProfileRowView: View {
 
     /// Checks if the user can be messaged using authoritative server-side check
     private func checkMessageability() async {
-        // First do a quick local check to avoid unnecessary server calls
         let localCheck = await performLocalMessageabilityCheck()
-        
-        // If local check says definitely not messageable, don't bother with server check
-        if localCheck == false {
-            isMessageable = false
+        if let localCheck {
+            isMessageable = localCheck
             return
         }
-        
-        // For potential messageability, verify with server
         await performServerMessageabilityCheck()
     }
     
@@ -106,15 +102,21 @@ struct ChatProfileRowView: View {
         let profileFollowsMe: Bool
 
         if let profileView = profile as? AppBskyActorDefs.ProfileView {
+            if profileView.viewer?.blocking != nil || profileView.viewer?.blockedBy == true {
+                return false
+            }
             chatSetting = profileView.associated?.chat?.allowIncoming ?? "all"
             viewerStatePresent = profileView.viewer != nil
             profileFollowsMe = profileView.viewer?.followedBy != nil
         } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
+            if profileViewBasic.viewer?.blocking != nil || profileViewBasic.viewer?.blockedBy == true {
+                return false
+            }
             chatSetting = profileViewBasic.associated?.chat?.allowIncoming ?? "all"
             viewerStatePresent = profileViewBasic.viewer != nil
             profileFollowsMe = profileViewBasic.viewer?.followedBy != nil
         } else if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
-            if chatProfile.chatDisabled == true {
+            if chatProfile.chatDisabled == true || chatProfile.viewer?.blocking != nil || chatProfile.viewer?.blockedBy == true {
                 return false
             }
             chatSetting = chatProfile.associated?.chat?.allowIncoming ?? "all"
@@ -148,10 +150,8 @@ struct ChatProfileRowView: View {
     
     /// Performs authoritative server-side messageability check
     private func performServerMessageabilityCheck() async {
-        guard let chatManager = appState.chatManager as ChatManager?,
-              let currentUserDID = try? await chatManager.client?.getDid() else {
-            // If no chat manager or client, assume not messageable
-            isMessageable = false
+        let currentUserDID = appState.userDID
+        guard !currentUserDID.isEmpty else {
             return
         }
         
@@ -176,23 +176,18 @@ struct ChatProfileRowView: View {
         
         isCheckingAvailability = true
         
-        // Use the authoritative server check
-        let (canChat, _) = await chatManager.checkConversationAvailability(members: [currentUserDID, profileDID])
+        // Use the authoritative server check (cached per person)
+        let canChat = await appState.chatManager.canMessage(members: [currentUserDID, profileDID])
         
         isCheckingAvailability = false
+        // A cancelled or failed check is "unknown", not "restricted"
+        guard !Task.isCancelled, let canChat else { return }
         isMessageable = canChat
     }
 
     
-    private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
-        if let profileView = profile as? AppBskyActorDefs.ProfileView {
-            return profileView.labels
-        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
-            return profileViewBasic.labels
-        } else if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
-            return chatProfile.labels
-        }
-        return nil
+    private func extractLabels(from profile: any ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
+        (profile as? any ModerationAccountSubject)?.moderationLabels
     }
 }
 

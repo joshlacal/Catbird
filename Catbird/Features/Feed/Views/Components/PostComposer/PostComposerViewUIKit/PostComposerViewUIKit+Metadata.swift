@@ -5,6 +5,7 @@
 
 import SwiftUI
 import Petrel
+import NukeUI
 import os
 
 private let pcMetadataLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerMetadata")
@@ -14,10 +15,6 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func metadataSection(vm: PostComposerViewModel) -> some View {
     VStack(spacing: 12) {
-      if let parent = vm.parentPost {
-        replyContextView(parent: parent)
-      }
-      
       if let quoted = vm.quotedPost {
         quotedPostView(quoted: quoted, vm: vm)
       }
@@ -73,31 +70,6 @@ extension PostComposerViewUIKit {
     }
   }
 
-  @ViewBuilder
-  private func replyContextView(parent: AppBskyFeedDefs.PostView) -> some View {
-    HStack(spacing: 8) {
-      Image(systemName: "arrowshape.turn.up.left")
-        .foregroundColor(.secondary)
-        .appFont(AppTextRole.subheadline)
-
-      Text("Replying to")
-        .appFont(AppTextRole.caption)
-        .foregroundColor(.secondary)
-
-      Text("@\(parent.author.handle.description)")
-        .appFont(AppTextRole.caption)
-        .fontWeight(.semibold)
-        .foregroundColor(.accentColor)
-        .lineLimit(1)
-
-      Spacer(minLength: 0)
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(Color.secondary.opacity(0.08))
-    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-  }
-  
   // MARK: - Compact Outline Tags View
   
   @ViewBuilder
@@ -225,50 +197,77 @@ extension PostComposerViewUIKit {
   }
   
   @ViewBuilder
-  private func quotedPostView(quoted: AppBskyFeedDefs.PostView, vm: PostComposerViewModel) -> some View {
+  func quotedPostView(quoted: AppBskyFeedDefs.PostView, vm: PostComposerViewModel) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
-        Image(systemName: "quote.bubble")
-          .foregroundColor(.secondary)
-          .appFont(AppTextRole.subheadline)
-        Text("Quoting post")
-          .appFont(AppTextRole.caption)
-          .foregroundColor(.secondary)
-        Spacer(minLength: 0)
-        Button(action: {
-          pcMetadataLogger.info("PostComposerMetadata: Removing quoted post")
-          vm.quotedPost = nil
-          if vm.isThreadMode && vm.threadEntries.indices.contains(vm.currentThreadIndex) {
-            vm.threadEntries[vm.currentThreadIndex].quotedPost = nil
+        if let avatarURL = quoted.author.finalAvatarURL() {
+          LazyImage(request: ImageLoadingManager.imageRequest(
+            for: avatarURL,
+            targetSize: CGSize(width: 20, height: 20)
+          )) { state in
+            if let image = state.image {
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+            } else {
+              Image(systemName: "person.circle.fill")
+                .foregroundStyle(.secondary)
+            }
           }
-        }) {
-          Image(systemName: "xmark.circle.fill")
-            .foregroundColor(.secondary)
-            .appFont(AppTextRole.body)
-            .padding(4)
-            .contentShape(Rectangle())
+          .pipeline(ImageLoadingManager.shared.pipeline)
+          .frame(width: 20, height: 20)
+          .clipShape(Circle())
         }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Remove quoted post")
-      }
 
-      VStack(alignment: .leading, spacing: 4) {
+        EmbeddedAuthorNameView(
+          name: quoted.author.displayName ?? quoted.author.handle.description,
+          verification: quoted.author.verification
+        )
+        .appFont(AppTextRole.subheadline.weight(.semibold))
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+        .layoutPriority(1)
+
         Text("@\(quoted.author.handle.description)")
           .appFont(AppTextRole.caption)
-          .fontWeight(.semibold)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+      .padding(.trailing, 36)
 
-        if case .knownType(let record) = quoted.record,
-           let post = record as? AppBskyFeedPost {
-          Text(post.text)
-            .appFont(AppTextRole.body)
-            .lineLimit(3)
-            .foregroundColor(.primary)
-        }
+      if case .knownType(let record) = quoted.record,
+         let post = record as? AppBskyFeedPost {
+        Text(post.text)
+          .appFont(AppTextRole.body)
+          .lineLimit(3)
+          .foregroundColor(.primary)
       }
     }
     .padding(12)
-    .background(Color.secondary.opacity(0.08))
-    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color(platformColor: .platformSecondarySystemBackground))
+    .clipShape(RoundedRectangle(cornerRadius: 18))
+    .overlay(
+      RoundedRectangle(cornerRadius: 18)
+        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+    )
+    .overlay(alignment: .topTrailing) {
+      Button(action: {
+        pcMetadataLogger.info("PostComposerMetadata: Removing quoted post")
+        vm.quotedPost = nil
+        if vm.isThreadMode && vm.threadEntries.indices.contains(vm.currentThreadIndex) {
+          vm.threadEntries[vm.currentThreadIndex].quotedPost = nil
+        }
+      }) {
+        Image(systemName: "xmark.circle.fill")
+          .foregroundColor(.secondary)
+          .appFont(AppTextRole.body)
+          .frame(width: 44, height: 44)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(PlainButtonStyle())
+      .accessibilityLabel("Remove Quoted Post")
+    }
   }
   // Note: legacy inline link card view replaced by ComposeURLCardView.
 }

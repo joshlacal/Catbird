@@ -113,9 +113,9 @@ struct OnboardingGrowthTests {
     @Test("Signup queue estimate calculation and string formatting")
     func signupQueueTransitionsAndFormatsEstimate() async {
         // 1. Verify estimate formatting
-        #expect(SignupQueuedView.formatEstimate(ms: nil) == "Estimating wait time...")
-        #expect(SignupQueuedView.formatEstimate(ms: 0) == "Estimating wait time...")
-        #expect(SignupQueuedView.formatEstimate(ms: 30_000) == "Estimated wait: Less than a minute")
+        #expect(SignupQueuedView.formatEstimate(ms: nil) == "Estimating wait time…")
+        #expect(SignupQueuedView.formatEstimate(ms: 0) == "Estimating wait time…")
+        #expect(SignupQueuedView.formatEstimate(ms: 30_000) == "Estimated wait: less than a minute")
         #expect(SignupQueuedView.formatEstimate(ms: 60_000) == "Estimated wait: ~1 minute")
         #expect(SignupQueuedView.formatEstimate(ms: 180_000) == "Estimated wait: ~3 minutes")
         #expect(SignupQueuedView.formatEstimate(ms: 3_600_000) == "Estimated wait: ~1 hour")

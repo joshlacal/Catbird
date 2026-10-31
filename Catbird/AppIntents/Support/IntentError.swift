@@ -7,10 +7,15 @@
 //  so it can be used from any intent that talks to a standalone ATProtoClient.
 //
 
+import AppIntents
 import Foundation
 
 /// Errors surfaced by App Intents while resolving accounts or talking to the network.
-enum IntentError: LocalizedError {
+///
+/// Siri and Shortcuts only present a thrown error's own message when the error is
+/// `CustomLocalizedStringResourceConvertible`; any other error (including a plain
+/// `LocalizedError`) reaches the person as a generic failure.
+enum IntentError: Error, CustomLocalizedStringResourceConvertible, LocalizedError {
   /// No signed-in account could be resolved (no active account in the app group).
   case notSignedIn
   /// The requested account DID isn't known to the app (e.g. removed since last sync).
@@ -24,21 +29,23 @@ enum IntentError: LocalizedError {
   /// A required app or system service is temporarily unavailable.
   case serviceUnavailable(String)
 
-  var errorDescription: String? {
+  var localizedStringResource: LocalizedStringResource {
     switch self {
     case .notSignedIn:
       return "You need to sign in to Catbird before using this shortcut."
-    case .accountUnavailable(let did):
-      return "The account \(did) is no longer available. Try signing in again."
-    case .httpError(let code):
-      return "The server returned an error (\(code)). Please try again."
+    case .accountUnavailable:
+      return "That account is no longer signed in to Catbird. Open Catbird to sign in again."
+    case .httpError:
+      return "Bluesky couldn’t complete the request. Please try again."
     case .emptyResponse:
-      return "The server didn't return the expected data. Please try again."
-    case .invalidParameter(let detail):
-      return detail
-    case .serviceUnavailable(let detail):
-      return detail
+      return "Bluesky didn’t return the expected information. Please try again."
+    case .invalidParameter(let detail), .serviceUnavailable(let detail):
+      return "\(detail)"
     }
+  }
+
+  var errorDescription: String? {
+    String(localized: localizedStringResource)
   }
 }
 

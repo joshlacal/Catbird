@@ -114,18 +114,19 @@ struct MacOSMainView: View {
 // MARK: - Deep Link Handlers Modifier
 
 private struct MacOSDeepLinkHandlers: ViewModifier {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Binding var selectedItem: SidebarItem?
   let appState: AppState
 
   func body(content: Content) -> some View {
     content
-      .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
+      .onChange(of: sceneContext.navigationManager.targetConversationId) { _, newValue in
         if newValue != nil {
           selectedItem = .chat
-          appState.navigationManager.targetConversationId = nil
+          sceneContext.navigationManager.targetConversationId = nil
         }
       }
-      .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
+      .onChange(of: sceneContext.navigationManager.targetMLSConversationId) { _, newValue in
         if newValue != nil {
           selectedItem = .chat
         }

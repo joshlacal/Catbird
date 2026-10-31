@@ -40,10 +40,17 @@ extension EnvironmentValues {
 /// - toastManager, themeManager, fontManager
 struct AuthenticatedPreviewModifier: ViewModifier {
   let appState: AppState
+  @State private var sceneContext: SceneNavigationContext
+
+  init(appState: AppState) {
+    self.appState = appState
+    _sceneContext = State(initialValue: SceneNavigationContext(appState: appState, sceneID: UUID()))
+  }
 
   func body(content: Content) -> some View {
     content
       .environment(appState)
+      .environment(sceneContext)
       .environment(AppStateManager.shared)
       .applyAppStateEnvironment(appState)
       .applyTheme(appState.themeManager)

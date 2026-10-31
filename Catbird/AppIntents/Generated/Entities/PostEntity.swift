@@ -17,6 +17,9 @@ struct PostEntity: AppEntity {
     @Property(title: "Author Handle")
     var authorHandle: String
 
+    @Property(title: "Author Avatar")
+    var authorAvatar: URL?
+
     @Property(title: "Like Count")
     var likeCount: Int?
 
@@ -32,15 +35,16 @@ struct PostEntity: AppEntity {
     @Property(title: "Text")
     var text: String?
 
-    @Property(title: "Record Key")
-    var rkey: String
+    // Plain stored property (not @Property) so the record key isn't shown in Shortcuts.
+    // Defaulted so the wrapped properties above can be set before it in initializers.
+    var rkey: String = ""
 
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
-            title: "\(text ?? authorHandle)",
-            subtitle: "\(authorHandle)",
-            image: nil
+            title: "\(authorDisplayName ?? authorHandle)",
+            subtitle: text.map { "\($0)" },
+            image: authorAvatar.map { DisplayRepresentation.Image(url: $0) }
         )
     }
 
@@ -50,6 +54,8 @@ struct PostEntity: AppEntity {
         authorDisplayName = view.author.displayName
 
         authorHandle = view.author.handle.value
+
+        authorAvatar = view.author.avatar?.url
 
         likeCount = view.likeCount
 
@@ -69,29 +75,58 @@ struct PostEntity: AppEntity {
 
 @available(iOS 18.0, *)
 struct PostEntityQuery: EntityQuery, EntityStringQuery {
+    @IntentParameterDependency<UnlikePostIntent>(\.$account)
+    private var unlikeIntent
+
+    @IntentParameterDependency<UnrepostPostIntent>(\.$account)
+    private var unrepostIntent
+
     init() {}
 
+    /// Resolving a target for removal cannot enable an ordinary post query.
+    private var clientContext: (did: String?, purpose: IntentClientProvider.Purpose) {
+        if let unlikeIntent {
+            return (unlikeIntent.account.id, .removal)
+        }
+        if let unrepostIntent {
+            return (unrepostIntent.account.id, .removal)
+        }
+        return (IntentAccountResolver.activeDID(), .coveredUse)
+    }
+
     func entities(for identifiers: [String]) async throws -> [PostEntity] {
+        let context = clientContext
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         let cached = await PostEntityStore.shared.entities(for: identifiers)
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         if cached.count == identifiers.count { return cached }
         let cachedIDs = Set(cached.map(\.id))
         let missing = identifiers.filter { !cachedIDs.contains($0) }
-        let did = IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let client = try await IntentClientProvider.shared.client(for: context.did, purpose: context.purpose)
         var results: [PostEntity] = cached
         for start in stride(from: 0, to: missing.count, by: 25) {
             let chunk = Array(missing[start..<min(start + 25, missing.count)])
             let output = try unwrapIntentResponse(await client.app.bsky.feed.getPosts(input: AppBskyFeedGetPosts.Parameters(uris: try chunk.map { try ATProtocolURI(uriString: $0) })))
             results.append(contentsOf: output.posts.map { PostEntity(from: $0) })
         }
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         return results
     }
 
 
     func entities(matching string: String) async throws -> [PostEntity] {
-        let did = IntentAccountResolver.activeDID()
-        let client = try await IntentClientProvider.shared.client(for: did)
+        let context = clientContext
+        let client = try await IntentClientProvider.shared.client(for: context.did, purpose: context.purpose)
         let output = try unwrapIntentResponse(await client.app.bsky.feed.searchPosts(input: AppBskyFeedSearchPosts.Parameters(q: string)))
+        if context.purpose == .coveredUse {
+            try await IntentClientProvider.shared.requireCoveredUse(for: context.did)
+        }
         return output.posts.map { PostEntity(from: $0) }
     }
 

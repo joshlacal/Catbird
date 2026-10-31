@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SwiftData
 import Testing
 import Petrel
 @testable import Catbird
@@ -89,6 +90,17 @@ struct DraftSyncTranslationTests {
   }
 
   // MARK: - Push (local -> remote)
+
+  @Test("Pending audio stays local until it is converted to an attachment")
+  func pendingAudioStaysLocal() throws {
+    var draft = makeDraft(postText: "Recorded reply")
+    draft.pendingAudioURLString = "file:///Documents/recording.m4a"
+    #expect(!DraftSyncTranslator.isSyncable(draft))
+    let decoded = try JSONDecoder().decode(PostComposerDraft.self, from: JSONEncoder().encode(draft))
+    #expect(decoded.pendingAudioURLString == draft.pendingAudioURLString)
+    draft.pendingAudioURLString = nil
+    #expect(DraftSyncTranslator.isSyncable(draft))
+  }
 
   @Test("Single post push carries text, device identity and langs")
   func singlePostPush() {
@@ -458,20 +470,43 @@ struct DraftSyncTranslationTests {
       threadEntries: [entry],
       isThreadMode: true
     )
-    let owned = DraftPostViewModel(
-      draftPost: try DraftPost.create(from: draft, accountDID: accountDID)
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+    let container = try ModelContainer(for: DraftPost.self, configurations: configuration)
+    let ownedModel = try DraftPost.create(from: draft, accountDID: accountDID)
+    let foreignModel = try DraftPost.create(from: draft, accountDID: "did:plc:other")
+    container.mainContext.insert(ownedModel)
+    container.mainContext.insert(foreignModel)
+    try container.mainContext.save()
+    let owned = DraftPostViewModel(draftPost: ownedModel)
+    let foreign = DraftPostViewModel(draftPost: foreignModel)
+    let suiteName = "blue.catbird.tests.saved-draft-selection.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    let manager = ComposerDraftManager(
+      accountDID: accountDID,
+      modelContext: container.mainContext,
+      defaults: defaults
     )
-    let foreign = DraftPostViewModel(
-      draftPost: try DraftPost.create(from: draft, accountDID: "did:plc:other")
+    let session = SceneComposerEditingSession(
+      manager: manager,
+      accountDID: accountDID,
+      sceneID: UUID(),
+      defaults: defaults
     )
-    let manager = ComposerDraftManager()
+    defer {
+      session.invalidate()
+      defaults.removePersistentDomain(forName: suiteName)
+    }
 
-    #expect(manager.loadSavedDraft(foreign, accountDID: accountDID) == nil)
-    let selected = try #require(manager.loadSavedDraft(owned, accountDID: accountDID))
+    let existingClaim = try session.beginNew(draft: makeDraft(postText: "Existing editor"))
+    #expect(throws: (any Error).self) { try session.restoreSaved(foreign) }
+    #expect(session.activeClaim == existingClaim)
+    #expect(session.currentDraft?.postText == "Existing editor")
+    _ = try session.restoreSaved(owned)
+    let selected = try #require(session.currentDraft)
     #expect(selected.postText == "Selected thread")
     #expect(selected.threadEntries.map(\.text) == ["Selected thread"])
-    #expect(manager.currentDraft?.postText == "Selected thread")
-    #expect(manager.restoredSavedDraftId == owned.id)
+    #expect(session.currentDraft?.postText == "Selected thread")
+    #expect(session.savedDraftID == owned.id)
   }
 
   @Test("Draft media metadata includes thread entry attachments")

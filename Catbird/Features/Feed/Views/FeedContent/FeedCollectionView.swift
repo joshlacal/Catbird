@@ -57,15 +57,18 @@ struct FeedCollectionView: View {
             onScrollOffsetChanged: onScrollOffsetChanged,
             headerView: headerView ?? injectedHeaderView
         )
-        // Recreate controller on theme or font change to ensure UIKit reflects updates
+        // Recreate the controller on font changes so cells re-measure. Theme changes are applied in
+        // place by the controller's ThemeManager observer; rebuilding for them reloaded every module.
         .id(
             "\(ObjectIdentifier(stateManager))-" +
-            "\(stateManager.appState.themeDidChange)-" +
             "\(stateManager.appState.fontDidChange)-" +
             "\(stateManager.appState.userDID ?? "unknown-account-")" +
             "\(stateManager.currentFeedType.identifier)"
         )
         .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
+        .task(id: stateManager.reconnectRetryKey) {
+            await stateManager.retryAfterConnectionRestored()
+        }
     }
 }
 
@@ -133,37 +136,51 @@ struct SimpleFeedCollectionWrapper: View {
     
     @State private var stateManager: FeedStateManager?
     @State private var isInitialized = false
+    /// Keeps the shown manager retained for as long as this view is in the
+    /// hierarchy, including while a pushed screen covers it.
+    @State private var lease = FeedStateLease()
     
     var body: some View {
-        if var stateManager = stateManager {
-            FeedCollectionView(
-                stateManager: stateManager,
-                navigationPath: $navigationPath
-            )
-            .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
-            .task {
-                if !isInitialized {
-                    isInitialized = true
-                    await stateManager.loadInitialData()
+        Group {
+            if let stateManager = stateManager, !stateManager.isCleanedUp {
+                FeedCollectionView(
+                    stateManager: stateManager,
+                    navigationPath: $navigationPath
+                )
+                .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
+                .task {
+                    if !isInitialized {
+                        isInitialized = true
+                        await stateManager.loadInitialData()
+                    }
                 }
+                .onChange(of: feedType) { oldFeedType, newFeedType in
+                    // Send the old feed's pending feedback before switching
+                    Task { await appState.feedFeedbackManager.flushInteractions() }
+                    // Switch to a dedicated manager per feed to keep per-feed scroll state
+                    let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
+                    lease.hold(newManager)
+                    self.stateManager = newManager
+                    Task { @MainActor in
+                        if newManager.posts.isEmpty { await newManager.loadInitialData() }
+                    }
+                }
+            } else {
+                Color.clear
+                    .onAppear {
+                        // Resolve a per-feed state manager from the shared store
+                        let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                        lease.hold(manager)
+                        self.stateManager = manager
+                    }
             }
-            .onChange(of: feedType) { oldFeedType, newFeedType in
-                // Disable feedback for the old feed before switching
-                appState.feedFeedbackManager.disable()
-                
-                // Switch to a dedicated manager per feed to keep per-feed scroll state
-                let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
-                stateManager = newManager
-                Task { @MainActor in
-                    if newManager.posts.isEmpty { await newManager.loadInitialData() }
-                }
+        }
+        .onAppear {
+            if stateManager == nil || stateManager?.isCleanedUp == true {
+                let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                lease.hold(manager)
+                self.stateManager = manager
             }
-        } else {
-            Color.clear
-                .onAppear {
-                    // Resolve a per-feed state manager from the shared store
-                    self.stateManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
-                }
         }
     }
 }
@@ -177,37 +194,51 @@ struct FeedCollectionWrapper: View {
     
     @State private var stateManager: FeedStateManager?
     @State private var isInitialized = false
+    /// Keeps the shown manager retained for as long as this view is in the
+    /// hierarchy, including while a pushed screen covers it.
+    @State private var lease = FeedStateLease()
     
     var body: some View {
-        if var stateManager = stateManager {
-            FeedCollectionView(
-                stateManager: stateManager,
-                navigationPath: $navigationPath
-            )
-            .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
-            .task {
-                if !isInitialized {
-                    isInitialized = true
-                    await stateManager.loadInitialData()
+        Group {
+            if let stateManager = stateManager, !stateManager.isCleanedUp {
+                FeedCollectionView(
+                    stateManager: stateManager,
+                    navigationPath: $navigationPath
+                )
+                .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
+                .task {
+                    if !isInitialized {
+                        isInitialized = true
+                        await stateManager.loadInitialData()
+                    }
                 }
+                .onChange(of: feedType) { oldFeedType, newFeedType in
+                    // Send the old feed's pending feedback before switching
+                    Task { await appState.feedFeedbackManager.flushInteractions() }
+                    // Switch to the store-managed manager for the new feed
+                    let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
+                    lease.hold(newManager)
+                    self.stateManager = newManager
+                    Task { @MainActor in
+                        if newManager.posts.isEmpty { await newManager.loadInitialData() }
+                    }
+                }
+            } else {
+                Color.clear
+                    .onAppear {
+                        // Resolve a per-feed state manager from the shared store
+                        let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                        lease.hold(manager)
+                        self.stateManager = manager
+                    }
             }
-            .onChange(of: feedType) { oldFeedType, newFeedType in
-                // Disable feedback for the old feed before switching
-                appState.feedFeedbackManager.disable()
-                
-                // Switch to the store-managed manager for the new feed
-                let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
-                stateManager = newManager
-                Task { @MainActor in
-                    if newManager.posts.isEmpty { await newManager.loadInitialData() }
-                }
+        }
+        .onAppear {
+            if stateManager == nil || stateManager?.isCleanedUp == true {
+                let manager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                lease.hold(manager)
+                self.stateManager = manager
             }
-        } else {
-            Color.clear
-                .onAppear {
-                    // Resolve a per-feed state manager from the shared store
-                    self.stateManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
-                }
         }
     }
 }

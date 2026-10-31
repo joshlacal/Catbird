@@ -18,8 +18,9 @@ import OSLog
 /// }
 /// ```
 @available(iOS 26, macOS 26, *)
-@MainActor
 enum MetricKitSignposts {
+
+  private static let lock = NSLock()
 
   // MARK: - Feed Loading
 
@@ -27,17 +28,19 @@ enum MetricKitSignposts {
 
   /// Begins a feed loading signpost interval
   static func beginFeedLoad(feedName: String) {
-    guard let log = MetricKitManager.shared.feedLoadingLog else { return }
+    let log = MetricKitManager.feedLoadingLog
     let signpostID = OSSignpostID(log: log)
-    feedSignpostIDs[feedName] = signpostID
+    lock.withLock {
+      feedSignpostIDs[feedName] = signpostID
+    }
 
     os_signpost(.begin, log: log, name: "FeedLoad", signpostID: signpostID)
   }
 
   /// Ends a feed loading signpost interval
   static func endFeedLoad(feedName: String, postCount: Int = 0, success: Bool = true) {
-    guard let log = MetricKitManager.shared.feedLoadingLog,
-          let signpostID = feedSignpostIDs.removeValue(forKey: feedName) else { return }
+    let log = MetricKitManager.feedLoadingLog
+    guard let signpostID = lock.withLock({ feedSignpostIDs.removeValue(forKey: feedName) }) else { return }
 
     os_signpost(.end, log: log, name: "FeedLoad", signpostID: signpostID)
   }
@@ -61,17 +64,19 @@ enum MetricKitSignposts {
 
   /// Begins an image loading signpost interval
   static func beginImageLoad(url: String) {
-    guard let log = MetricKitManager.shared.imageLoadingLog else { return }
+    let log = MetricKitManager.imageLoadingLog
     let signpostID = OSSignpostID(log: log)
-    imageSignpostIDs[url] = signpostID
+    lock.withLock {
+      imageSignpostIDs[url] = signpostID
+    }
 
     os_signpost(.begin, log: log, name: "ImageLoad", signpostID: signpostID)
   }
 
   /// Ends an image loading signpost interval
   static func endImageLoad(url: String, bytesLoaded: Int = 0, fromCache: Bool = false, success: Bool = true) {
-    guard let log = MetricKitManager.shared.imageLoadingLog,
-          let signpostID = imageSignpostIDs.removeValue(forKey: url) else { return }
+    let log = MetricKitManager.imageLoadingLog
+    guard let signpostID = lock.withLock({ imageSignpostIDs.removeValue(forKey: url) }) else { return }
 
     os_signpost(.end, log: log, name: "ImageLoad", signpostID: signpostID)
   }
@@ -82,19 +87,21 @@ enum MetricKitSignposts {
 
   /// Begins a network request signpost interval
   static func beginNetworkRequest(endpoint: String, method: String = "GET") {
-    guard let log = MetricKitManager.shared.networkRequestLog else { return }
+    let log = MetricKitManager.networkRequestLog
     let signpostID = OSSignpostID(log: log)
     let key = "\(method):\(endpoint)"
-    networkSignpostIDs[key] = signpostID
+    lock.withLock {
+      networkSignpostIDs[key] = signpostID
+    }
 
     os_signpost(.begin, log: log, name: "NetworkRequest", signpostID: signpostID)
   }
 
   /// Ends a network request signpost interval
   static func endNetworkRequest(endpoint: String, method: String = "GET", statusCode: Int = 200, bytesTransferred: Int = 0) {
-    guard let log = MetricKitManager.shared.networkRequestLog else { return }
+    let log = MetricKitManager.networkRequestLog
     let key = "\(method):\(endpoint)"
-    guard let signpostID = networkSignpostIDs.removeValue(forKey: key) else { return }
+    guard let signpostID = lock.withLock({ networkSignpostIDs.removeValue(forKey: key) }) else { return }
 
     os_signpost(.end, log: log, name: "NetworkRequest", signpostID: signpostID)
   }
@@ -105,18 +112,23 @@ enum MetricKitSignposts {
 
   /// Begins an authentication signpost interval
   static func beginAuthentication(type: String) {
-    guard let log = MetricKitManager.shared.authenticationLog else { return }
+    let log = MetricKitManager.authenticationLog
     let signpostID = OSSignpostID(log: log)
-    authSignpostID = signpostID
+    lock.withLock {
+      authSignpostID = signpostID
+    }
 
     os_signpost(.begin, log: log, name: "Authentication", signpostID: signpostID)
   }
 
   /// Ends an authentication signpost interval
   static func endAuthentication(success: Bool) {
-    guard let log = MetricKitManager.shared.authenticationLog,
-          let signpostID = authSignpostID else { return }
-    authSignpostID = nil
+    let log = MetricKitManager.authenticationLog
+    guard let signpostID = lock.withLock({ () -> OSSignpostID? in
+      let id = authSignpostID
+      authSignpostID = nil
+      return id
+    }) else { return }
 
     os_signpost(.end, log: log, name: "Authentication", signpostID: signpostID)
   }
@@ -127,18 +139,23 @@ enum MetricKitSignposts {
 
   /// Begins a post composition signpost interval
   static func beginPostComposition() {
-    guard let log = MetricKitManager.shared.composerLog else { return }
+    let log = MetricKitManager.composerLog
     let signpostID = OSSignpostID(log: log)
-    composerSignpostID = signpostID
+    lock.withLock {
+      composerSignpostID = signpostID
+    }
 
     os_signpost(.begin, log: log, name: "PostComposition", signpostID: signpostID)
   }
 
   /// Ends a post composition signpost interval
   static func endPostComposition(posted: Bool, mediaCount: Int = 0, characterCount: Int = 0) {
-    guard let log = MetricKitManager.shared.composerLog,
-          let signpostID = composerSignpostID else { return }
-    composerSignpostID = nil
+    let log = MetricKitManager.composerLog
+    guard let signpostID = lock.withLock({ () -> OSSignpostID? in
+      let id = composerSignpostID
+      composerSignpostID = nil
+      return id
+    }) else { return }
 
     os_signpost(.end, log: log, name: "PostComposition", signpostID: signpostID)
   }
@@ -149,17 +166,21 @@ enum MetricKitSignposts {
 
   /// Begins an MLS operation signpost interval
   static func beginMLSOperation(operation: String) {
-    guard let log = MetricKitManager.shared.mlsOperationLog else { return }
+    let log = MetricKitManager.mlsOperationLog
     let signpostID = OSSignpostID(log: log)
-    mlsSignpostIDs[operation] = signpostID
+    lock.withLock {
+      mlsSignpostIDs[operation] = signpostID
+    }
 
     os_signpost(.begin, log: log, name: "MLSOperation", signpostID: signpostID)
   }
 
   /// Ends an MLS operation signpost interval
   static func endMLSOperation(operation: String, success: Bool = true) {
-    guard let log = MetricKitManager.shared.mlsOperationLog,
-          let signpostID = mlsSignpostIDs.removeValue(forKey: operation) else { return }
+    let log = MetricKitManager.mlsOperationLog
+    guard let signpostID = lock.withLock({
+      mlsSignpostIDs.removeValue(forKey: operation)
+    }) else { return }
 
     os_signpost(.end, log: log, name: "MLSOperation", signpostID: signpostID)
   }
@@ -170,17 +191,19 @@ enum MetricKitSignposts {
 
   /// Begins an animation interval for hitch tracking
   static func beginAnimation(name: String) {
-    guard let log = MetricKitManager.shared.feedLoadingLog else { return }
+    let log = MetricKitManager.feedLoadingLog
     let signpostID = OSSignpostID(log: log)
-    animationSignpostIDs[name] = signpostID
+    lock.withLock {
+      animationSignpostIDs[name] = signpostID
+    }
 
     os_signpost(.begin, log: log, name: "Animation", signpostID: signpostID)
   }
 
   /// Ends an animation interval
   static func endAnimation(name: String) {
-    guard let log = MetricKitManager.shared.feedLoadingLog,
-          let signpostID = animationSignpostIDs.removeValue(forKey: name) else { return }
+    let log = MetricKitManager.feedLoadingLog
+    guard let signpostID = lock.withLock({ animationSignpostIDs.removeValue(forKey: name) }) else { return }
 
     os_signpost(.end, log: log, name: "Animation", signpostID: signpostID)
   }
@@ -189,8 +212,7 @@ enum MetricKitSignposts {
 
   /// Logs a single signpost event (not an interval)
   static func event(category: String, name: StaticString, message: String = "") {
-    guard let log = MetricKitManager.shared.feedLoadingLog else { return }
-
+    let log = MetricKitManager.feedLoadingLog
     os_signpost(.event, log: log, name: name)
   }
 }
@@ -203,19 +225,15 @@ enum MetricKitSignpostsSync {
   
   /// Logs a network request event synchronously
   static func networkEvent(endpoint: String, statusCode: Int, duration: TimeInterval) {
-    Task { @MainActor in
-      MetricKitSignposts.event(
-        category: "Network",
-        name: "RequestComplete",
-        message: "\(endpoint) - \(statusCode) in \(String(format: "%.2f", duration * 1000))ms"
-      )
-    }
+    MetricKitSignposts.event(
+      category: "Network",
+      name: "RequestComplete",
+      message: "\(endpoint) - \(statusCode) in \(String(format: "%.2f", duration * 1000))ms"
+    )
   }
-  
+
   /// Logs an error event synchronously
   static func errorEvent(category: String, message: String) {
-    Task { @MainActor in
-      MetricKitSignposts.event(category: category, name: "Error", message: message)
-    }
+    MetricKitSignposts.event(category: category, name: "Error", message: message)
   }
 }

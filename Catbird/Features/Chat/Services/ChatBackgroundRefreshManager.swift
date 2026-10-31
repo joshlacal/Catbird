@@ -11,6 +11,7 @@ enum ChatBackgroundRefreshManager {
   private static var didRegister = false
   private static var lastScheduleTime: Date?
 
+  @MainActor
   static func registerIfNeeded() {
     guard !didRegister else {
       logger.debug("Chat BGTask already registered")
@@ -35,7 +36,12 @@ enum ChatBackgroundRefreshManager {
     didRegister = true
     logger.info("Registered chat background refresh task")
   }
+  @MainActor
+  static func cancel() {
+    BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+  }
 
+  @MainActor
   static func schedule() {
       if !didRegister {
         logger.info("Lazily registering chat BGTask before scheduling")
@@ -71,7 +77,9 @@ enum ChatBackgroundRefreshManager {
     // RAII background task assertion — auto-released on scope exit
     let bgTask = CatbirdBackgroundTask(name: "BGTask-\(taskIdentifier)")
 
-    schedule()
+    Task { @MainActor in
+      schedule()
+    }
 
     let refreshWork = Task<Bool, Never> {
       guard let activeState = await AppStateManager.shared.lifecycle.appState,
@@ -82,9 +90,8 @@ enum ChatBackgroundRefreshManager {
 
       let appState = activeState
 
-      if Task.isCancelled { return false }
-      await appState.chatManager.loadConversations(refresh: true)
-
+      // P186: In-memory chat conversations are discarded on background task completion;
+      // only persistable state (notifications/badges) is updated in background.
       if Task.isCancelled { return false }
       if appState.notificationManager.notificationsEnabled,
          appState.notificationManager.status == .registered {

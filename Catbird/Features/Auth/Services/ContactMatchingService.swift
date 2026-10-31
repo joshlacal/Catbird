@@ -79,7 +79,7 @@ public enum ContactMatchingError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            return "Contacts access was denied. Please grant access in iOS Settings to find your friends."
+            return "Contacts access was denied. Turn on Contacts access for Catbird in Settings to find your friends."
         case .permissionRestricted:
             return "Contacts access is restricted on this device."
         case .noValidPhoneNumbers:
@@ -89,11 +89,11 @@ public enum ContactMatchingError: LocalizedError, Sendable {
         case .invalidToken:
             return "Your phone verification session expired. Please verify your number again."
         case .verificationFailed(let message):
-            return "Phone verification failed: \(message)"
+            return message
         case .importFailed(let message):
-            return "Contact import failed: \(message)"
+            return message
         case .serviceUnavailable:
-            return "The contact discovery service is temporarily unavailable."
+            return "Finding contacts isn’t available right now. Try again later."
         }
     }
 }
@@ -295,7 +295,8 @@ public final class ContactMatchingService: @unchecked Sendable {
         let (code, _) = try await client.app.bsky.contact.startPhoneVerification(input: input)
         
         guard code == 200 else {
-            throw ContactMatchingError.verificationFailed("Server returned HTTP \(code)")
+            logger.error("startPhoneVerification returned HTTP \(code)")
+            throw ContactMatchingError.verificationFailed("We couldn’t send a verification code. Try again.")
         }
         
         self.verifiedPhoneNumber = normalized
@@ -305,14 +306,14 @@ public final class ContactMatchingService: @unchecked Sendable {
     /// Verify phone with SMS code and obtain short-lived verification token
     public func verifyPhone(phone: String, code: String, client: ATProtoClient) async throws -> String {
         guard let normalized = Self.normalizePhoneNumber(phone, defaultCountryCallingCode: Self.defaultCallingCode()) else {
-            throw ContactMatchingError.verificationFailed("Invalid phone number format.")
+            throw ContactMatchingError.verificationFailed("Please enter a valid phone number.")
         }
         
         let input = AppBskyContactVerifyPhone.Input(phone: normalized, code: code.trimmingCharacters(in: .whitespacesAndNewlines))
         let (responseCode, output) = try await client.app.bsky.contact.verifyPhone(input: input)
         
         guard responseCode == 200, let token = output?.token else {
-            throw ContactMatchingError.verificationFailed("Verification code is incorrect or expired.")
+            throw ContactMatchingError.verificationFailed("That code is incorrect or has expired. Check it or request a new one.")
         }
         
         self.verificationToken = token
@@ -345,7 +346,8 @@ public final class ContactMatchingService: @unchecked Sendable {
             if code == 400 {
                 throw ContactMatchingError.invalidToken
             }
-            throw ContactMatchingError.importFailed("Server returned HTTP \(code)")
+            logger.error("importContacts returned HTTP \(code)")
+            throw ContactMatchingError.importFailed("We couldn’t check your contacts. Try again.")
         }
         
         var matches: [ContactMatch] = []

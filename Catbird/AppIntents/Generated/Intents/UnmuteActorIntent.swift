@@ -29,6 +29,6 @@ struct UnmuteActorIntent: AppIntent {
         guard (200..<300).contains(responseCode) else {
             throw IntentError.httpError(responseCode)
         }
-        return .result(dialog: IntentDialog(stringLiteral: "Unmuted."))
+        return .result(dialog: IntentDialog("Unmuted."))
     }
 }

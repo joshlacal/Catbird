@@ -439,6 +439,7 @@ struct SolariumShimmerModifier: ViewModifier {
     let intensity: Double
     let angle: Double
     @State private var shimmerOffset: CGFloat = -1
+    @State private var contentWidth: CGFloat = 0
 
     init(intensity: Double = 0.3, angle: Double = 45) {
         self.intensity = intensity
@@ -461,7 +462,7 @@ struct SolariumShimmerModifier: ViewModifier {
                         )
                     )
                     .rotationEffect(.degrees(angle))
-                    .offset(x: shimmerOffset * PlatformScreenInfo.width)
+                    .offset(x: shimmerOffset * contentWidth)
                     .animation(
                         .easeInOut(duration: 2)
                         .repeatForever(autoreverses: false),
@@ -472,6 +473,11 @@ struct SolariumShimmerModifier: ViewModifier {
                     }
                     .allowsHitTesting(false)
             )
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { width in
+                contentWidth = width
+            }
             .clipped()
     }
 }

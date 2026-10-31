@@ -19,12 +19,13 @@ struct DiscoveryView: View {
     let onQueryLoaded: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppState.self) private var appState
+    @Environment(\.displayScale) private var displayScale
     @State private var showInterestPicker = false
     @State private var showInviteFriends = false
     @State private var showInviteScanner = false
     var body: some View {
         ScrollView {
-            VStack(spacing: DesignTokens.Spacing.section) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sectionLarge) {
                 // SRCH-015: Saved Searches Section
                 if !viewModel.savedSearches.isEmpty {
                     SavedSearchesSection(
@@ -66,11 +67,11 @@ struct DiscoveryView: View {
                     )
                 }
                 // Trending topics (G06)
-                if !viewModel.trendingTopics.isEmpty, 
-                   let client = appState.atProtoClient,
+                if let client = appState.atProtoClient,
                    appState.appSettings.showTrendingTopics {
                     TrendingTopicsSection(
                         topics: viewModel.trendingTopics,
+                        isLoading: viewModel.isTrendingTopicsLoading || !viewModel.hasLoadedTrendingTopics,
                         onSelect: { term in
                             viewModel.searchQuery = term
                             viewModel.commitSearch(client: client)
@@ -83,16 +84,19 @@ struct DiscoveryView: View {
                 }
                 
                 // Trending videos (G03)
-                if !viewModel.trendingVideos.isEmpty,
-                   appState.atProtoClient != nil,
+                if appState.atProtoClient != nil,
                    appState.appSettings.showTrendingVideos {
                     TrendingVideosSection(
                         videos: viewModel.trendingVideos,
+                        isLoading: viewModel.isTrendingVideosLoading,
                         onSelectPost: { post in
-                            path.append(NavigationDestination.post(post.uri))
+                            path.append(NavigationDestination.videoFeedStartingAt(post))
                         },
                         onSeeAll: {
                             path.append(NavigationDestination.videoFeed)
+                        },
+                        onNavigateVideo: { destination in
+                            path.append(destination)
                         }
                     )
                 }
@@ -127,11 +131,11 @@ struct DiscoveryView: View {
             .padding(.top, DesignTokens.Spacing.lg)
             .padding(.bottom, DesignTokens.Spacing.section)
         }
-        .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
+        .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .scrollDismissesKeyboard(.immediately)
         .refreshable {
             guard let client = appState.atProtoClient else { return }
-            await viewModel.refreshDiscoveryContent(client: client)
+            await viewModel.refreshDiscoveryContent(client: client, displayScale: displayScale)
             await appState.liveEventService.fetchLiveEvents(force: true)
         }
         .sheet(isPresented: $showInterestPicker) {
@@ -152,111 +156,77 @@ struct DiscoveryView: View {
         }
     }
     
-    // SRCH-007: Quick Actions for common searches
-    @ViewBuilder
     private var quickActionsSection: some View {
+        DiscoveryToolsSection(
+            onFindFriends: { showSuggestedProfiles = true },
+            onInviteFriends: { showInviteFriends = true },
+            onScanQR: { showInviteScanner = true },
+            onExploreFeeds: { showAddFeedSheet = true },
+            onOpenTopics: { showAllTrendingTopics = true },
+            showsTopics: appState.appSettings.showTrendingTopics
+        )
+    }
+}
+
+/// The tools are navigation shortcuts rather than search queries.
+struct DiscoveryToolsSection: View {
+    let onFindFriends: () -> Void
+    let onInviteFriends: () -> Void
+    let onScanQR: () -> Void
+    let onExploreFeeds: () -> Void
+    let onOpenTopics: () -> Void
+    var showsTopics: Bool = true
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.accentColor)
-                
-                Text("Quick Searches")
-                    .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
-            }
-            .padding(.horizontal)
-            
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ], spacing: 12) {
-                quickActionButton(
-                    icon: "person.2.fill",
-                    title: "Find Friends",
-                    description: "Discover people to follow",
-                    color: .blue
-                ) {
-                    showSuggestedProfiles = true
-                }
-                
-                quickActionButton(
-                    icon: "person.badge.plus",
-                    title: "Invite Friends",
-                    description: "Share your invite card",
-                    color: .green
-                ) {
-                    showInviteFriends = true
-                }
-                
-                quickActionButton(
-                    icon: "qrcode.viewfinder",
-                    title: "Scan QR",
-                    description: "Scan profile QR codes",
-                    color: .teal
-                ) {
-                    showInviteScanner = true
-                }
-                
-                quickActionButton(
-                    icon: "rectangle.on.rectangle.angled",
-                    title: "Custom Feeds",
-                    description: "Explore curated feeds",
-                    color: .purple
-                ) {
-                    showAddFeedSheet = true
-                }
-                
-                quickActionButton(
-                    icon: "chart.line.uptrend.xyaxis",
-                    title: "What's Trending",
-                    description: "See popular topics",
-                    color: .orange
-                ) {
-                    showAllTrendingTopics = true
+            DiscoverySectionHeader("Explore More", subtitle: "People, feeds, and ways to connect.") {}
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 250), spacing: DesignTokens.Spacing.base)],
+                alignment: .leading,
+                spacing: 0
+            ) {
+                tool("Find Friends", detail: "Discover people to follow", icon: "person.2", action: onFindFriends)
+                tool("Invite Friends", detail: "Share your invite card", icon: "person.badge.plus", action: onInviteFriends)
+                tool("Scan QR", detail: "Open a profile from its code", icon: "qrcode.viewfinder", action: onScanQR)
+                tool("Custom Feeds", detail: "Explore curated feeds", icon: "rectangle.on.rectangle.angled", action: onExploreFeeds)
+                if showsTopics {
+                    tool("All Trending Topics", detail: "Browse the latest conversations", icon: "chart.line.uptrend.xyaxis", action: onOpenTopics)
                 }
             }
-            .padding(.horizontal)
         }
     }
-    
-    @ViewBuilder
-    private func quickActionButton(
-        icon: String,
-        title: String,
-        description: String,
-        color: Color,
-        action: @escaping () -> Void
-    ) -> some View {
+
+    private func tool(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: icon)
-                        .appFont(AppTextRole.title3)
-                        .foregroundColor(color)
-                        .frame(width: 40, height: 40)
-                        .background(
-                            Circle()
-                                .fill(color.opacity(0.15))
-                        )
-                    
-                    Spacer()
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
+                Image(systemName: icon)
+                    .appFont(AppTextRole.title3)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    Text(title)
+                        .appFont(size: Typography.Size.body, weight: .medium, relativeTo: .body)
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                
-                Text(title)
-                    .appFont(AppTextRole.subheadline.weight(.semibold))
-                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                    .lineLimit(1)
-                
-                Text(description)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
                     .appFont(AppTextRole.caption)
-                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                    .lineLimit(2)
+                    .foregroundStyle(.tertiary)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
-            .cornerRadius(12)
-            .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 4, y: 2)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, DesignTokens.Spacing.base)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                VStack(spacing: 0) { Divider() }
+            }
         }
         .buttonStyle(.plain)
     }
@@ -264,12 +234,16 @@ struct DiscoveryView: View {
 
 /// Full screen trending topics view
 struct AllTrendingTopicsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.displayScale) private var displayScale
     @State private var selectedCategory: String?
     @State private var showContributors: Bool = false
     @State private var viewMode: ViewMode = .list
+    @ScaledMetric(relativeTo: .footnote) private var topicSummaryMinimumWidth: CGFloat = 140
     
     enum ViewMode {
         case list, grid
@@ -323,7 +297,6 @@ private struct InlineTopicSummaryLine: View {
                 VStack(spacing: 20) {
                     // Categories filter
                     categoriesFilterView
-                        .padding(.horizontal, 16)
                     
                     if filteredTopics.isEmpty {
                         emptyStateView
@@ -359,8 +332,9 @@ private struct InlineTopicSummaryLine: View {
                                   systemImage: showContributors ? "eye.slash" : "eye")
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "ellipsis")
                     }
+                    .accessibilityLabel("View options")
                 }
                 
                 ToolbarItem(placement: .cancellationAction) {
@@ -370,6 +344,10 @@ private struct InlineTopicSummaryLine: View {
                 }
             }
         }
+        .task(id: appState.topicPreviewPrefetchIdentity(links: filteredTopics.map(\.link))) {
+            appState.prefetchTopicPreviews(trends: filteredTopics, displayScale: displayScale, owner: .search)
+        }
+        .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
     }
     
     private var emptyStateView: some View {
@@ -405,24 +383,29 @@ private struct InlineTopicSummaryLine: View {
         }
     }
     
+    /// Yellow, mint and cyan fills are too light for white text.
+    private static func usesDarkChipText(_ category: String?) -> Bool {
+        ["business", "economy", "finance", "science", "tech", "technology", "weather"].contains(category?.lowercased() ?? "")
+    }
+    
     private func categoryFilterButton(_ category: String?) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 selectedCategory = category
             }
         } label: {
-            Text(category?.capitalized ?? "All")
+            Text(category.map { TrendingTopicCategoryStyle.name(for: $0) } ?? "All")
                 .appFont(AppTextRole.subheadline.weight(selectedCategory == category ? .semibold : .medium))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .background(
                     Capsule()
                         .fill(selectedCategory == category ?
-                              categoryColor(for: category) :
+                              (category == nil ? Color.accentColor : TrendingTopicCategoryStyle.color(for: category)) :
                               Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
                 )
                 .foregroundColor(selectedCategory == category ?
-                                .white :
+                                (Self.usesDarkChipText(category) ? .black : .white) :
                                 Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                 .overlay(
                     Capsule()
@@ -445,8 +428,7 @@ private struct InlineTopicSummaryLine: View {
     
     private var topicsGridView: some View {
         LazyVGrid(columns: [
-            GridItem(.flexible(), spacing: 12),
-            GridItem(.flexible(), spacing: 12)
+            GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 180), spacing: 12)
         ], spacing: 16) {
             ForEach(filteredTopics, id: \.link) { topic in
                 compactTopicCard(topic: topic)
@@ -457,93 +439,28 @@ private struct InlineTopicSummaryLine: View {
     
     private func topicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            // Create a full URL from the relative path to properly route to the feed
-            if let url = URL(string: "https://bsky.app\(topic.link)") {
+            if let url = URL(string: topic.link, relativeTo: URL(string: "https://bsky.app"))?.absoluteURL {
                 onSelect(url.absoluteString)
             }
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 16) {
-                // Main topic info
-                HStack(alignment: .top, spacing: 24) {
-                    // Category icon
-                    categoryIcon(for: topic.category)
-                        .appFont(AppTextRole.title2)
-                        .foregroundColor(categoryColor(for: topic.category))
-                        .frame(width: 48, height: 48)
-                        .background(
-                            Circle()
-                                .fill(categoryColor(for: topic.category).opacity(0.15))
-                        )
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Category and badges
-                        HStack {
-                            if let category = topic.category {
-                                Text(formatCategory(category))
-                                    .appFont(AppTextRole.caption.weight(.medium))
-                                    .foregroundColor(categoryColor(for: topic.category))
-                                    .textCase(.uppercase)
-                            }
-                            
-                            Spacer()
-                            
-                            HStack(spacing: 6) {
-                                if let status = topic.status, status == "hot" {
-                                    trendingBadge(status: status)
-                                }
-                                
-                                if isWithinLastThirtyMinutes(date: topic.startedAt.date) {
-                                    newBadge()
-                                }
-                            }
-                        }
-                        
-                        // Topic name
-                        Text(topic.displayName)
-                            .appFont(AppTextRole.title2.weight(.semibold))
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-                        // Topic summary
-                        InlineTopicSummaryLine(topic: topic)
-                        
-                        // Stats row
-                        HStack(spacing: 20) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(formatPostCount(topic.postCount))
-                                    .appFont(AppTextRole.subheadline.weight(.semibold))
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                                Text("Posts")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(formatTimeSince(topic.startedAt.date))
-                                    .appFont(AppTextRole.subheadline.weight(.semibold))
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                                Text("Trending")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            }
-                            
-                            Spacer()
-                            
-                            Image(systemName: "arrow.up.right")
-                                .appFont(AppTextRole.subheadline)
-                                .foregroundColor(.accentColor)
-                        }
+                VStack(alignment: .leading, spacing: 8) {
+                    TrendingTopicHeading(title: topic.displayName, category: topic.category)
+                    if topic.status == "hot" {
+                        trendingLabel
                     }
                 }
+                largeTopicPreview(topic)
+                largeTopicMetadata(topic)
                 
                 // Contributors section (conditionally shown)
-                if showContributors && !topic.actors.isEmpty {
+                if showContributors && !appState.topicPreview(for: topic.link).contributorProfiles.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Color.dynamicSeparator(appState.themeManager, currentScheme: colorScheme)
                             .frame(height: 1)
                         
-                        Text("Top Contributors")
+                        Text("Topic Participants")
                             .appFont(AppTextRole.subheadline.weight(.medium))
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                         
@@ -558,38 +475,20 @@ private struct InlineTopicSummaryLine: View {
         }
         .buttonStyle(.plain)
     }
-    
+
     private func compactTopicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            // Create a full URL from the relative path to properly route to the feed
-            if let url = URL(string: "https://bsky.app\(topic.link)") {
+            if let url = URL(string: topic.link, relativeTo: URL(string: "https://bsky.app"))?.absoluteURL {
                 onSelect(url.absoluteString)
             }
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    categoryIcon(for: topic.category)
-                        .appFont(AppTextRole.headline)
-                        .foregroundColor(categoryColor(for: topic.category))
-                        .frame(width: 32, height: 32)
-                        .background(
-                            Circle()
-                                .fill(categoryColor(for: topic.category).opacity(0.15))
-                        )
-                    
-                    Spacer()
-                    
-                    if let status = topic.status, status == "hot" {
-                        trendingBadge(status: status)
-                    }
+                TrendingTopicHeading(title: topic.displayName, category: topic.category, size: 20)
+                if topic.status == "hot" {
+                    trendingLabel
                 }
-                
-                Text(topic.displayName)
-                    .appFont(AppTextRole.headline.weight(.semibold))
-                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
+                TrendingTopicArtwork(link: topic.link, actors: topic.actors)
                 InlineTopicSummaryLine(topic: topic)
                 
                 VStack(alignment: .leading, spacing: 4) {
@@ -606,7 +505,7 @@ private struct InlineTopicSummaryLine: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 120)
+            .frame(minHeight: 120)
             .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
             .cornerRadius(12)
             .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 4, y: 2)
@@ -617,7 +516,7 @@ private struct InlineTopicSummaryLine: View {
     private func topicContributors(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
-                ForEach(topic.actors.prefix(4), id: \.did) { actor in
+                ForEach(appState.topicPreview(for: topic.link).contributorProfiles, id: \.did) { actor in
                     contributorView(actor: actor)
                 }
             }
@@ -628,10 +527,10 @@ private struct InlineTopicSummaryLine: View {
     private func contributorView(actor: AppBskyActorDefs.ProfileViewBasic) -> some View {
         Button {
             dismiss()
-            appState.navigationManager.navigate(to: .profile(actor.did.didString()))
+            sceneContext.navigationManager.navigate(to: .profile(actor.did.didString()))
         } label: {
             HStack(spacing: 8) {
-                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32)
+                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32, did: actor.did.didString(), labels: actor.labels)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(actor.displayName ?? "@\(actor.handle)")
@@ -655,76 +554,10 @@ private struct InlineTopicSummaryLine: View {
     }
     
     // Helper functions
-    private func categoryIcon(for category: String?) -> some View {
-        switch category {
-        case "pop-culture":
-            return Image(systemName: "music.note.tv")
-        case "politics":
-            return Image(systemName: "building.columns")
-        case "sports":
-            return Image(systemName: "figure.basketball")
-        case "video-games":
-            return Image(systemName: "gamecontroller")
-        case "tech":
-            return Image(systemName: "laptopcomputer")
-        case "business":
-            return Image(systemName: "chart.bar")
-        case "science":
-            return Image(systemName: "atom")
-        default:
-            return Image(systemName: "number")
-        }
-    }
-    
-    private func categoryColor(for category: String?) -> Color {
-        switch category {
-        case "pop-culture":
-            return .purple
-        case "politics":
-            return .blue
-        case "sports":
-            return .orange
-        case "video-games":
-            return .green
-        case "tech":
-            return .cyan
-        case "business":
-            return .yellow
-        case "science":
-            return .mint
-        default:
-            return .gray
-        }
-    }
-    
-    private func trendingBadge(status: String) -> some View {
-        Text(status.uppercased())
-            .appFont(size: 10)
-            .foregroundColor(.white)
-            .padding(.vertical, 2)
-            .padding(.horizontal, 6)
-            .background(
-                Capsule()
-                    .fill(Color.red)
-            )
-    }
-    
-    private func newBadge() -> some View {
-        Text("NEW")
-            .appFont(size: 10)
-            .foregroundColor(.white)
-            .padding(.vertical, 2)
-            .padding(.horizontal, 6)
-            .background(
-                Capsule()
-                    .fill(Color.green)
-            )
-    }
-    
-    private func isWithinLastThirtyMinutes(date: Date) -> Bool {
-        let now = Date()
-        let thirtyMinutesAgo = now.addingTimeInterval(-30 * 60)
-        return date >= thirtyMinutesAgo
+    private var trendingLabel: some View {
+        Label("Trending", systemImage: "flame.fill")
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.orange)
     }
     
     private func formatPostCount(_ count: Int) -> String {
@@ -739,35 +572,81 @@ private struct InlineTopicSummaryLine: View {
         }
     }
     
-    private func formatCategory(_ category: String) -> String {
-        let specialCases: [String: String] = [
-            "pop-culture": "Entertainment",
-            "video-games": "Video Games"
-        ]
-        
-        if let specialCase = specialCases[category.lowercased()] {
-            return specialCase
-        }
-        
-        let words = category.components(separatedBy: "-")
-        let capitalizedWords = words.map { $0.capitalized }
-        return capitalizedWords.joined(separator: " ")
-    }
-    
     private func formatTimeSince(_ date: Date) -> String {
-        let now = Date()
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date, to: now)
-        
-        if let hours = components.hour, hours > 0 {
-            return hours == 1 ? "1 hour ago" : "\(hours) hours ago"
-        } else if let minutes = components.minute, minutes > 0 {
-            return minutes == 1 ? "1 min ago" : "\(minutes) mins ago"
-        } else {
-            return "just now"
-        }
+        TrendStartedLabel.text(since: date)
     }
 }
 
+private extension AllTrendingTopicsView {
+  @ViewBuilder
+  func largeTopicPreview(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+    if dynamicTypeSize.isAccessibilitySize {
+      VStack(alignment: .leading, spacing: 12) {
+        TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false)
+        InlineTopicSummaryLine(topic: topic)
+      }
+    } else {
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .top, spacing: 16) {
+          TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false)
+          InlineTopicSummaryLine(topic: topic)
+            .frame(minWidth: topicSummaryMinimumWidth, idealWidth: topicSummaryMinimumWidth,
+                   maxWidth: .infinity, alignment: .leading)
+        }
+        VStack(alignment: .leading, spacing: 12) {
+          TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false)
+          InlineTopicSummaryLine(topic: topic)
+        }
+      }
+    }
+  }
+
+  func largeTopicMetadata(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+    HStack(alignment: .center, spacing: 12) {
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 16) {
+          TrendingTopicParticipants(link: topic.link, actors: topic.actors)
+          largeTopicStatistics(topic)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+
+        VStack(alignment: .leading, spacing: 12) {
+          TrendingTopicParticipants(link: topic.link, actors: topic.actors)
+          ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) { largeTopicStatistics(topic) }
+              .fixedSize(horizontal: true, vertical: false)
+            VStack(alignment: .leading, spacing: 12) { largeTopicStatistics(topic) }
+          }
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      Image(systemName: "arrow.up.right")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.accentColor)
+        .accessibilityHidden(true)
+    }
+  }
+
+  @ViewBuilder
+  func largeTopicStatistics(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+    largeTopicStatistic(value: formatPostCount(topic.postCount), title: "Posts")
+    largeTopicStatistic(value: formatTimeSince(topic.startedAt.date), title: "Trending")
+  }
+
+  func largeTopicStatistic(value: String, title: LocalizedStringKey) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(value)
+        .appFont(AppTextRole.subheadline.weight(.semibold))
+        .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+      Text(title)
+        .appFont(AppTextRole.caption)
+        .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+    }
+    .fixedSize(horizontal: false, vertical: true)
+    .accessibilityElement(children: .combine)
+  }
+}
 
 #Preview("DiscoveryView") {
   AsyncPreviewContent { appState in

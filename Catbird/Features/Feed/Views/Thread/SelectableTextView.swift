@@ -16,8 +16,44 @@ import AppKit
 #if os(iOS)
 // Custom UITextView that properly sizes itself and allows text selection
 class SelectableSelfSizingTextView: UITextView {
+  private var cachedMeasurementWidth: CGFloat = -1
+  private var cachedMeasurementHeight: CGFloat = -1
+  private var cachedMeasurementLength: Int = -1
+
+  func invalidateMeasurement() {
+    cachedMeasurementWidth = -1
+    cachedMeasurementHeight = -1
+    cachedMeasurementLength = -1
+    invalidateIntrinsicContentSize()
+  }
+
+  override var attributedText: NSAttributedString! {
+    didSet {
+      invalidateMeasurement()
+    }
+  }
+
+  override var text: String! {
+    didSet {
+      invalidateMeasurement()
+    }
+  }
+
+  override var font: UIFont? {
+    didSet {
+      invalidateMeasurement()
+    }
+  }
+
   private func measuredHeight(for width: CGFloat) -> CGFloat? {
     guard width.isFinite, width > 0 else { return nil }
+
+    let currentLength = attributedText?.length ?? 0
+    if abs(width - cachedMeasurementWidth) < 0.5,
+       currentLength == cachedMeasurementLength,
+       cachedMeasurementHeight > 0 {
+      return cachedMeasurementHeight
+    }
 
     // Measure via TextKit 2 only. Touching `layoutManager` (even once) drops
     // the view into TextKit 1 compatibility mode, which cannot render
@@ -51,7 +87,11 @@ class SelectableSelfSizingTextView: UITextView {
     }
 
     // Add generous bottom padding to prevent clipping (8pt safety margin)
-    return ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
+    let height = ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
+    cachedMeasurementWidth = width
+    cachedMeasurementHeight = height
+    cachedMeasurementLength = currentLength
+    return height
   }
 
   override var intrinsicContentSize: CGSize {
@@ -80,30 +120,31 @@ class SelectableSelfSizingTextView: UITextView {
     super.layoutSubviews()
 
     // Invalidate synchronously when width changes to prevent truncation on first render.
-    // The previous async dispatch caused the initial frame to render with stale height.
     let currentWidth = bounds.width
     if abs(currentWidth - lastKnownWidth) > 1 {
       lastKnownWidth = currentWidth
-      invalidateIntrinsicContentSize()
+      invalidateMeasurement()
     }
   }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
     // When the view is added to a window (e.g. during navigation push),
-    // bounds.width is now correct. Force a fresh size calculation to fix
-    // truncation that occurs when intrinsicContentSize was first queried
-    // with a zero or transitional width.
+    // bounds.width is now correct. Invalidate only if width has actually changed.
     if window != nil {
-      lastKnownWidth = bounds.width
-      invalidateIntrinsicContentSize()
-      setNeedsLayout()
+      let currentWidth = bounds.width
+      if abs(currentWidth - lastKnownWidth) > 1 {
+        lastKnownWidth = currentWidth
+        invalidateMeasurement()
+        setNeedsLayout()
+      }
     }
   }
 }
 
 struct SelectableTextView: UIViewRepresentable {
   let attributedString: AttributedString
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -217,30 +258,33 @@ struct SelectableTextView: UIViewRepresentable {
 
       if uiView.attributedText != nsAttributedString {
         uiView.attributedText = nsAttributedString
-        // Trigger immediate layout update after content changes without animation
-        uiView.invalidateIntrinsicContentSize()
+        uiView.invalidateMeasurement()
         uiView.setNeedsLayout()
-        uiView.layoutIfNeeded()
-
-        // Force immediate superview layout to prevent cascading animations
-        uiView.superview?.layoutIfNeeded()
       }
     }
     
-    // Apply theme colors
+    // Apply theme colors only when changed
     let effectiveColorScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
-    uiView.textColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
-    uiView.tintColor = UIColor(.accentColor)
-    // UITextView paints `.link` runs using linkTextAttributes, ignoring the
-    // foregroundColor on the attributed string. Pin it to the text-safe accent.
-    uiView.linkTextAttributes = [.foregroundColor: UIColor(Color("AccentTextColor"))]
-    
+    let newTextColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
+    if uiView.textColor != newTextColor {
+      uiView.textColor = newTextColor
+    }
+    let newTintColor = UIColor(.accentColor)
+    if uiView.tintColor != newTintColor {
+      uiView.tintColor = newTintColor
+    }
+    let newLinkColor = UIColor(Color("AccentTextColor"))
+    if (uiView.linkTextAttributes[.foregroundColor] as? UIColor) != newLinkColor {
+      uiView.linkTextAttributes = [.foregroundColor: newLinkColor]
+    }
     // Update coordinator with current environment values
-    context.coordinator.appState = appState
+    context.coordinator.sceneContext = sceneContext
   }
   
   func makeCoordinator() -> Coordinator {
-    Coordinator()
+    let coordinator = Coordinator()
+    coordinator.sceneContext = sceneContext
+    return coordinator
   }
 
   func sizeThatFits(
@@ -256,14 +300,15 @@ struct SelectableTextView: UIViewRepresentable {
   }
   
   class Coordinator: NSObject, UITextViewDelegate {
-    var appState: AppState?
+    weak var sceneContext: SceneNavigationContext?
     
     func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange) -> Bool {
-      guard let appState = appState else { return true }
+      guard let sceneContext, !sceneContext.isInvalidated else { return false }
       
       // Handle URL through the app's URL handler on the main thread
       DispatchQueue.main.async {
-        _ = appState.urlHandler.handle(URL)
+        guard !sceneContext.isInvalidated else { return }
+        _ = sceneContext.urlHandler.handle(URL)
       }
       
       // Return false to prevent default system handling since we're handling it ourselves
@@ -285,7 +330,7 @@ struct SelectableTextView: UIViewRepresentable {
     // Calculate effective font size
     let baseSize = textSize ?? Typography.Size.body
     let effectiveSize = isEmojiOnly ? baseSize * 3 : baseSize
-    let scaledSize = fontManager.scaledSize(effectiveSize)
+    let scaledSize = dynamicTypeScaledSize(fontManager.scaledSize(effectiveSize))
     
     // Create default font with FontManager integration
     let defaultFont = createUIFont(size: scaledSize, weight: textWeight, design: textDesign)
@@ -321,6 +366,34 @@ struct SelectableTextView: UIViewRepresentable {
     return nsAttributedString
   }
   
+  /// Applies the system text size on top of the in-app size setting, so this
+  /// text scales with Dynamic Type like the rest of the thread.
+  private func dynamicTypeScaledSize(_ size: CGFloat) -> CGFloat {
+    guard fontManager.dynamicTypeEnabled else { return size }
+    var category = UIContentSizeCategory(dynamicTypeSize)
+    if let limit = fontManager.dynamicTypeLimit?.uiContentSizeCategory, category > limit {
+      category = limit
+    }
+    let traits = UITraitCollection(preferredContentSizeCategory: category)
+    return UIFontMetrics(forTextStyle: uiTextStyle).scaledValue(for: size, compatibleWith: traits)
+  }
+
+  private var uiTextStyle: UIFont.TextStyle {
+    switch textStyle {
+    case .largeTitle: return .largeTitle
+    case .title: return .title1
+    case .title2: return .title2
+    case .title3: return .title3
+    case .headline: return .headline
+    case .subheadline: return .subheadline
+    case .callout: return .callout
+    case .footnote: return .footnote
+    case .caption: return .caption1
+    case .caption2: return .caption2
+    default: return .body
+    }
+  }
+
   private func createUIFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> UIFont {
     let fontWeight: UIFont.Weight
     switch weight {

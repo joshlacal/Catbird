@@ -135,7 +135,7 @@ struct DrawerPanGesture: UIGestureRecognizerRepresentable {
 struct SideDrawer<Content: View, DrawerContent: View>: View {
   let content: Content
   let drawer: DrawerContent
-  let drawerWidth: CGFloat
+  let drawerWidth: CGFloat?
   @Binding private var selectedTab: Int
   @Binding private var isDrawerOpen: Bool
   @Binding private var isRootView: Bool
@@ -144,11 +144,12 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   // drawer toward open from whatever its current resting state is.
   @State private var dragOffset: CGFloat = 0
   @State private var isDragging: Bool = false
+  @State private var hasEverOpened: Bool = false
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-  private let isIPad = PlatformDeviceInfo.isIPad
-
-  private var dragThreshold: CGFloat { isIPad ? 0.2 : 0.3 }
-  private var velocityThreshold: CGFloat { isIPad ? 150 : 100 }
+  // A wide drawer travels farther, so it commits at a smaller fraction of its width.
+  private var dragThreshold: CGFloat { horizontalSizeClass == .regular ? 0.2 : 0.3 }
+  private var velocityThreshold: CGFloat { horizontalSizeClass == .regular ? 150 : 100 }
 
   init(
     selectedTab: Binding<Int>,
@@ -161,10 +162,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     self._selectedTab = selectedTab
     self._isRootView = isRootView
     self._isDrawerOpen = isDrawerOpen
-
-    // Single source of truth for drawer width — full-bleed on phones, a fixed
-    // panel on wider displays (see PlatformScreenInfo.responsiveDrawerWidth).
-    self.drawerWidth = drawerWidth ?? PlatformScreenInfo.responsiveDrawerWidth
+    self._hasEverOpened = State(initialValue: isDrawerOpen.wrappedValue)
+    // Resolve the default width from the receiving container during layout.
+    self.drawerWidth = drawerWidth
 
     self.content = content()
     self.drawer = drawer()
@@ -181,14 +181,20 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   /// Progress of the drawer from closed (0) to fully open (1), accounting for
   /// the live drag translation.
   private func drawerProgress(width: CGFloat) -> CGFloat {
+    guard width > 0 else { return 0 }
     let base: CGFloat = isOpen ? width : 0
     let raw = base + dragOffset
     return min(max(raw / width, 0), 1)
   }
+  private func shouldMountDrawer(progress: CGFloat) -> Bool {
+    hasEverOpened || isOpen || isDragging || progress > 0
+  }
+
 
   var body: some View {
     GeometryReader { geometry in
-      let adaptiveDrawerWidth = min(self.drawerWidth, geometry.size.width)
+      let preferredWidth = drawerWidth ?? ContainerLayoutMetrics.drawerWidth(availableWidth: geometry.size.width)
+      let adaptiveDrawerWidth = max(0, min(preferredWidth, geometry.size.width))
       let progress = drawerProgress(width: adaptiveDrawerWidth)
       let drawerOffset = -adaptiveDrawerWidth * (1 - progress)
 
@@ -197,6 +203,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         // the backdrop below applies a real UIKit backdrop blur over it instead
         // of a SwiftUI .blur, which re-rasterizes the whole feed every frame.
         content
+          .environment(\.containerViewportSize, geometry.size)
 
         DrawerDismissBackdrop(
           progress: progress,
@@ -206,27 +213,34 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             isDrawerOpen = false
           }
         }
+        .accessibilityHidden(progress == 0)
 
         // The drawer frame owns the slide gesture and bounds. FeedsStartPage
         // owns the separate concentric glass panels inside that frame.
-        ConcentricLiquidGlassDrawer(surfaceStyle: .clear) {
-          drawer
-            .environment(\.inSideDrawer, true)
-            .background(Color.clear)
-        }
-          .frame(width: adaptiveDrawerWidth)
-          .frame(maxHeight: .infinity, alignment: .top)
-          .hoverEffect(.lift)
-          .offset(x: drawerOffset)
-          .accessibilityAction(named: "Close Feeds Menu") {
-            withAnimation {
-              isDrawerOpen = false
-            }
+        if shouldMountDrawer(progress: progress) {
+          ConcentricLiquidGlassDrawer(surfaceStyle: .clear) {
+            drawer
+              .environment(\.containerViewportSize, CGSize(width: adaptiveDrawerWidth, height: geometry.size.height))
+              .environment(\.inSideDrawer, true)
+              .background(Color.clear)
           }
-          .accessibilityAddTraits(isOpen ? .isModal : [])
+            .frame(width: adaptiveDrawerWidth)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .hoverEffect(.lift)
+            .offset(x: drawerOffset)
+            // Off-screen while closed; keep VoiceOver from reaching the hidden menu.
+            .accessibilityHidden(progress == 0)
+            .accessibilityAction(named: "Close Feeds Menu") {
+              withAnimation {
+                isDrawerOpen = false
+              }
+            }
+            .accessibilityAddTraits(isOpen ? .isModal : [])
+        }
       }
       .accessibilityAction(named: "Open Feeds Menu") {
         guard !isOpen, canOpen else { return }
+        hasEverOpened = true
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
           isDrawerOpen = true
         }
@@ -238,7 +252,13 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             if !isDrawerOpen && !canOpen {
               return
             }
-
+            if !hasEverOpened {
+              var transaction = Transaction()
+              transaction.disablesAnimations = true
+              withTransaction(transaction) {
+                hasEverOpened = true
+              }
+            }
             isDragging = true
             if isDrawerOpen {
               dragOffset = min(0, translation)
@@ -273,6 +293,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         if !newValue {
           dragOffset = 0
         } else {
+          if !hasEverOpened { hasEverOpened = true }
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             UIAccessibility.post(notification: .screenChanged, argument: nil)
           }
@@ -290,6 +311,15 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     // edge. Children that already manage their own safe area (NavigationStack,
     // TabView, etc.) are unaffected.
     .ignoresSafeArea()
+    .task {
+      // Lazily pre-mount FeedsStartPage after launch and the initial feed frames settle,
+      // preventing a frame drop on the first pan gesture while keeping cold launch lean.
+      try? await Task.sleep(for: .milliseconds(600))
+      guard !Task.isCancelled else { return }
+      if !hasEverOpened {
+        hasEverOpened = true
+      }
+    }
   }
 }
 

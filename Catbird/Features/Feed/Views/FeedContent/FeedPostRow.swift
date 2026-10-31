@@ -11,6 +11,17 @@ import SwiftUI
 import Petrel
 import os
 
+private struct InvalidateFeedRowHeightKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var invalidateFeedRowHeight: (() -> Void)? {
+        get { self[InvalidateFeedRowHeightKey.self] }
+        set { self[InvalidateFeedRowHeightKey.self] = newValue }
+    }
+}
+
 /// A feed post row that works with FeedPostViewModel for persistent state management
 struct FeedPostRow: View, Identifiable {
     var id: String {
@@ -24,7 +35,9 @@ struct FeedPostRow: View, Identifiable {
     var feedTypeIdentifier: String
     var tracksVisibilityForFeedback: Bool = true
     var visibilityContext: PostVisibilityContext = .public
+    var onHeightInvalidated: (() -> Void)? = nil
     @Environment(AppState.self) private var appState
+    @Environment(\.feedInteractionTarget) private var feedInteractionTarget
     @State private var isSmartFilterRevealed = false
     @State private var isIntentRevealed = false
     @State private var isPendingIndicatorVisible = true
@@ -34,13 +47,15 @@ struct FeedPostRow: View, Identifiable {
         navigationPath: Binding<NavigationPath>,
         feedTypeIdentifier: String,
         tracksVisibilityForFeedback: Bool = true,
-        visibilityContext: PostVisibilityContext = .public
+        visibilityContext: PostVisibilityContext = .public,
+        onHeightInvalidated: (() -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self._navigationPath = navigationPath
         self.feedTypeIdentifier = feedTypeIdentifier
         self.tracksVisibilityForFeedback = tracksVisibilityForFeedback
         self.visibilityContext = visibilityContext
+        self.onHeightInvalidated = onHeightInvalidated
     }
     // MARK: - Body
     
@@ -58,7 +73,10 @@ struct FeedPostRow: View, Identifiable {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Show") { isIntentRevealed = true }
+                    Button("Show") {
+                        isIntentRevealed = true
+                        onHeightInvalidated?()
+                    }
                         .buttonStyle(.bordered)
                 }
                 .padding()
@@ -75,7 +93,10 @@ struct FeedPostRow: View, Identifiable {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Show") { isSmartFilterRevealed = true }
+                    Button("Show") {
+                        isSmartFilterRevealed = true
+                        onHeightInvalidated?()
+                    }
                         .buttonStyle(.bordered)
                 }
                 .padding()
@@ -85,8 +106,12 @@ struct FeedPostRow: View, Identifiable {
                     cachedPost: viewModel.post,
                     path: $navigationPath
                 )
+                .environment(\.invalidateFeedRowHeight, onHeightInvalidated)
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    if let fvp = try? viewModel.post.feedViewPost {
+                        ThreadManager.storePrefillPost(fvp.post, userDID: appState.userDID)
+                    }
                     viewModel.navigateToPost(navigationPath: $navigationPath)
                 }
                 .overlay(alignment: .topTrailing) {
@@ -98,7 +123,7 @@ struct FeedPostRow: View, Identifiable {
                             .accessibilityLabel("Smart Filter classification pending")
                     }
                 }
-                .task(id: viewModel.post.isSmartFilterPending) {
+                .task(id: "\(viewModel.post.id)|\(viewModel.post.isSmartFilterPending)") {
                     guard viewModel.post.isSmartFilterPending else { return }
                     try? await Task.sleep(for: .seconds(3))
                     isPendingIndicatorVisible = false
@@ -113,11 +138,13 @@ struct FeedPostRow: View, Identifiable {
         #if os(macOS)
         // macOS uses SwiftUI List - add swipe actions here
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if appState.feedFeedbackManager.isEnabled {
+            if let feedInteractionTarget {
                 VStack {
                         Button {
-                            guard let postURI = try? viewModel.post.feedViewPost.post.uri, appState.feedFeedbackManager.isEnabled else { return }
-                            appState.feedFeedbackManager.sendShowMore(postURI: postURI)
+                            guard let item = try? viewModel.post.feedViewPost else { return }
+                            let postURI = item.post.uri
+                            appState.feedFeedbackManager.sendShowMore(postURI: postURI, target: feedInteractionTarget,
+                                feedContext: item.feedContext, reqId: item.reqId)
                             logger.debug("Sent 'show more' feedback for post: \(postURI)")
                             
                             // Show confirmation toast
@@ -137,8 +164,10 @@ struct FeedPostRow: View, Identifiable {
                     
                     
                     Button {
-                        guard let postURI = try? viewModel.post.feedViewPost.post.uri, appState.feedFeedbackManager.isEnabled else { return }
-                        appState.feedFeedbackManager.sendShowLess(postURI: postURI)
+                        guard let item = try? viewModel.post.feedViewPost else { return }
+                        let postURI = item.post.uri
+                        appState.feedFeedbackManager.sendShowLess(postURI: postURI, target: feedInteractionTarget,
+                            feedContext: item.feedContext, reqId: item.reqId)
                         logger.debug("Sent 'show less' feedback for post: \(postURI)")
                         
                         // Show confirmation toast
@@ -162,15 +191,37 @@ struct FeedPostRow: View, Identifiable {
         .platformIgnoresSafeArea(.container, edges: .horizontal)
         .fixedSize(horizontal: false, vertical: true)
         .transition(.identity)
-        // Track post visibility for feed feedback (iOS 18.0+/macOS 15.0+)
-        .onScrollVisibilityChange(threshold: 0.5) { isVisible in
-            if tracksVisibilityForFeedback, isVisible {
-                if let postURI = try? ATProtocolURI(uriString: viewModel.post.feedViewPost.post.uri.uriString()) {
-                    appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
+        .modifier(FeedRowVisibilityModifier(tracks: tracksVisibilityForFeedback) { isVisible in
+            if isVisible {
+                if let item = try? viewModel.post.feedViewPost {
+                    appState.feedFeedbackManager.trackPostSeen(
+                        postURI: item.post.uri,
+                        target: feedInteractionTarget,
+                        feedContext: item.feedContext,
+                        reqId: item.reqId
+                    )
                 }
             }
+        })
+        .id("\(feedTypeIdentifier)-\(viewModel.post.id)-feedback:\(feedInteractionTarget != nil)")
+        .onChange(of: viewModel.post.id) { _, _ in
+            isSmartFilterRevealed = false
+            isIntentRevealed = false
+            isPendingIndicatorVisible = true
         }
-        .id("\(feedTypeIdentifier)-\(viewModel.post.id)-feedback:\(appState.feedFeedbackManager.isEnabled)")
+    }
+}
+
+private struct FeedRowVisibilityModifier: ViewModifier {
+    let tracks: Bool
+    let action: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if tracks {
+            content.onScrollVisibilityChange(threshold: 0.5, action)
+        } else {
+            content
+        }
     }
     
 }

@@ -10,6 +10,8 @@ import Petrel
 import SwiftUI
 #if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
 #endif
 
 /// Observable class to hold interaction state for a post
@@ -49,23 +51,32 @@ import UIKit
 struct ActionButtonsView: View {
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.feedInteractionTarget) private var feedInteractionTarget
+  @Environment(\.fontManager) private var fontManager
+  @Environment(\.legibilityWeight) private var legibilityWeight
 
-  // Post to display actions for
-  let post: AppBskyFeedDefs.PostView
+  // Post to display actions for. Boxed because an inline `PostView` is about
+  // 3 KB, and `.task(id:)`, `.onChange(of:)` and `PostShareMenu` would each
+  // store another copy in this view's body type.
+  private let postBox: EquatableBox<AppBskyFeedDefs.PostView>
   let postViewModel: PostViewModel
   @State private var isFirstAppear = true
 
   // View model for handling actions
   @State private var viewModel: ActionButtonViewModel
-  @State private var showingPostComposer: Bool = false
-  // Per-post matched transition namespace for reply → composer zoom
-  @Namespace private var replyTransition
 
   // Consolidated interaction state
   @State private var interactionState: PostInteractionState
 
   // State for managing animations and loading
   @State private var initialLoadComplete: Bool = false
+
+  /// Share sheet chosen from the UIKit row's share menu.
+  @State private var shareDestination: PostShareDestination?
+
+  /// Reply composer for a Circle post, which must post back into the same Circle.
+  @State private var showingCircleReplyComposer = false
 
   // Customization option
   let isBig: Bool
@@ -75,28 +86,34 @@ struct ActionButtonsView: View {
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
-  // Unique zoom source id per post to ensure correct return target
-  private var replySourceID: String { "reply-\(post.uri.uriString())" }
 
   // MARK: - Initialization
   init(
     post: AppBskyFeedDefs.PostView, postViewModel: PostViewModel, path: Binding<NavigationPath>,
     isBig: Bool = false
   ) {
-    self.post = post
+    self.init(post: EquatableBox(post), postViewModel: postViewModel, path: path, isBig: isBig)
+  }
+
+  /// Takes a post the caller has already boxed, skipping the copy into a new box.
+  init(
+    post: EquatableBox<AppBskyFeedDefs.PostView>, postViewModel: PostViewModel,
+    path: Binding<NavigationPath>, isBig: Bool = false
+  ) {
+    self.postBox = post
     self.postViewModel = postViewModel
     self._path = path
     self.isBig = isBig
     self._viewModel = State(
       wrappedValue: ActionButtonViewModel(
-        postId: post.uri.uriString(),
+        postId: post.value.uri.uriString(),
         postViewModel: postViewModel,
         appState: postViewModel.appState
       ))
 
     // Initialize consolidated state
-    self._interactionState = State(initialValue: PostInteractionState(post: post))
-      
+    self._interactionState = State(initialValue: PostInteractionState(post: post.value))
+
 //      if case let .knownType(threadgate) = post.threadgate?.record,
 //         let threadgate = threadgate as? AppBskyFeedThreadgate {
 //          if threadgate.allow
@@ -106,6 +123,168 @@ struct ActionButtonsView: View {
 
   // MARK: - Body
   var body: some View {
+    actionRow
+    .onAppear {
+      // Only the SwiftUI row uses `isFirstAppear` (to skip the first symbol transition).
+      guard !usesUIKitRow else { return }
+      // Set isFirstAppear to false after a tiny delay
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        isFirstAppear = false
+      }
+    }
+    .task(id: postBox) {
+      if viewModel.postId != postBox.value.uri.uriString() {
+        viewModel = ActionButtonViewModel(
+          postId: postBox.value.uri.uriString(),
+          postViewModel: postViewModel,
+          appState: postViewModel.appState
+        )
+      }
+
+      // Initial state setup
+      await refreshState()
+      guard !Task.isCancelled else { return }
+
+      // Mark initial load complete after brief delay. Only the SwiftUI row reads it, so the
+      // UIKit feed row skips the write and the second render it would cause.
+      let readsInitialLoad = !usesUIKitRow
+      async let markInitialLoad: Void = {
+        guard readsInitialLoad else { return }
+        try? await Task.sleep(for: .milliseconds(500))
+        guard !Task.isCancelled else { return }
+        initialLoadComplete = true
+      }()
+
+      // Structured task loop for continuous updates with debouncing
+      var lastUpdate = Date.distantPast
+      let debounceInterval: TimeInterval = 0.1  // 100ms debounce to prevent excessive re-renders
+
+      for await _ in await appState.postShadowManager.shadowUpdates(forUri: postBox.value.uri.uriString()) {
+        guard !Task.isCancelled else { break }
+        let now = Date()
+        if now.timeIntervalSince(lastUpdate) >= debounceInterval {
+          lastUpdate = now
+          await refreshState()
+        }
+      }
+      _ = await markInitialLoad
+    }
+    .onChange(of: postBox) { _, newPost in
+      if viewModel.postId != newPost.value.uri.uriString() {
+        viewModel = ActionButtonViewModel(
+          postId: newPost.value.uri.uriString(),
+          postViewModel: postViewModel,
+          appState: postViewModel.appState
+        )
+      }
+      Task { await refreshState() }
+    }
+    .deferredPresentations(when: showingCircleReplyComposer) { anchor in
+      anchor.sheet(isPresented: $showingCircleReplyComposer) {
+        circleReplyComposer
+      }
+    }
+    .id(appState.userDID)
+  }
+
+  @ViewBuilder
+  private var circleReplyComposer: some View {
+    if case .circle(let summary) = postViewModel.visibilityContext {
+      PlatformAgeProtectedContent(operation: .generalContent) {
+        PostComposerViewUIKit(
+          parentPost: postBox.value,
+          destination: .circle(summary),
+          appState: appState,
+          editingSession: sceneContext.composerEditingSession
+        )
+      }
+      .applyAppStateEnvironment(appState)
+      .environment(sceneContext)
+      .toastContainer(using: appState.toastManager)
+      .presentationDetents([.medium, .large])
+      .presentationDragIndicator(.visible)
+    }
+  }
+
+  /// Feed rows on iOS draw the row in UIKit (see `FeedActionBar`); the large
+  /// thread-detail row and macOS keep the SwiftUI row.
+  private var usesUIKitRow: Bool {
+    #if os(iOS)
+    !isBig
+    #else
+    false
+    #endif
+  }
+
+  @ViewBuilder
+  private var actionRow: some View {
+    #if os(iOS)
+    if usesUIKitRow {
+      uikitRow
+    } else {
+      swiftUIRow
+    }
+    #else
+    swiftUIRow
+    #endif
+  }
+
+  #if os(iOS)
+  private var uikitRow: some View {
+    FeedActionBar(state: actionBarState, actions: actionBarActions)
+      .frame(height: FeedActionBar.height)
+      .postShareSheet(destination: $shareDestination, post: postBox, appState: appState)
+  }
+
+  private var actionBarState: FeedActionBarState {
+    let post = postBox.value
+    return FeedActionBarState(
+      postURI: post.uri.uriString(),
+      replyCount: interactionState.replyCount,
+      isReplyDisabled: (post.viewer?.replyDisabled ?? false) || !viewModel.capabilities.canReply,
+      repostCount: interactionState.repostCount,
+      isReposted: interactionState.isReposted,
+      isQuoteDisabled: (post.viewer?.embeddingDisabled ?? false) || !viewModel.capabilities.canQuote,
+      likeCount: interactionState.likeCount,
+      isLiked: interactionState.isLiked,
+      isShareEnabled: isValidShareOrigin && viewModel.capabilities.canPublicShare,
+      canSendViaChat: appState.isAuthenticated && viewModel.capabilities.canPublicShare,
+      canCopyLink: viewModel.capabilities.canPublicShare && ActionButtonViewModel.shareURL(for: post) != nil,
+      reduceMotion: appState.appSettings.effectiveReduceMotion,
+      fonts: .resolved(
+        fontManager: fontManager,
+        boldText: legibilityWeight == .bold || appState.appSettings.effectiveBoldText)
+    )
+  }
+
+  private var actionBarActions: FeedActionBarActions {
+    FeedActionBarActions(
+      reply: { handleReplyTap() },
+      toggleRepost: { handleRepostToggle() },
+      quote: { handleQuotePost() },
+      toggleLike: { handleLikeTap() },
+      sendViaChat: {
+        guard isValidShareOrigin, viewModel.capabilities.canPublicShare else { return }
+        shareDestination = PostShareDestination(kind: .chat, sceneContext: sceneContext)
+      },
+      copyLink: {
+        guard isValidShareOrigin, viewModel.capabilities.canPublicShare,
+              let url = ActionButtonViewModel.shareURL(for: postBox.value) else { return }
+        PostShareDestination.copyLink(url, appState: appState)
+      },
+      moreSharing: {
+        guard isValidShareOrigin, viewModel.capabilities.canPublicShare else { return }
+        shareDestination = PostShareDestination(kind: .native, sceneContext: sceneContext)
+      }
+    )
+  }
+
+  private var isValidShareOrigin: Bool {
+    !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
+  }
+  #endif
+
+  private var swiftUIRow: some View {
     HStack {
       // Reply Button
       InteractionButton(
@@ -119,23 +298,17 @@ struct ActionButtonsView: View {
         handleReplyTap()
       }
       .accessibilityIdentifier("replyButton")
-        .accessibilityLabel("Reply. Replies count: \(interactionState.replyCount)")
-      .disabled((post.viewer?.replyDisabled ?? false) || !viewModel.capabilities.canReply)
+        .accessibilityLabel(countedLabel("Reply", count: interactionState.replyCount, singular: "reply", plural: "replies"))
+      .disabled((postBox.value.viewer?.replyDisabled ?? false) || !viewModel.capabilities.canReply)
       // Subtle glass and mark as the matched transition source for this post
       .padding(.vertical, isBig ? 3 : 2)
-      .padding(.horizontal, isBig ? 6 : 5)
-      #if os(iOS)
-      .modifier(ReplyZoomSource(id: replySourceID, namespace: replyTransition))
-      #endif
+      .frame(maxWidth: .infinity, alignment: .leading)
+
       if viewModel.capabilities.canRepost || viewModel.capabilities.canQuote {
-        Spacer()
-
         repostMenu
-          .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
           .accessibilityIdentifier("repostButton")
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
-
-      Spacer()
 
       // Like Button
       InteractionButton(
@@ -148,128 +321,24 @@ struct ActionButtonsView: View {
         color: interactionState.isLiked ? .red : .secondary,
         isBig: isBig
       ) {
-        // Haptic feedback using shared generator
-        PlatformHaptics.medium()
-
-        // Set animation flag to true
-        interactionState.animateLike = true
-
-        Task {
-          try? await viewModel.toggleLike()
-          // UI state will be updated via the shadow manager and refreshState
-          // Reset animation flag after a short delay if needed
-          try? await Task.sleep(for: .milliseconds(500))  // Adjust delay as needed
-          await MainActor.run { interactionState.animateLike = false }
-        }
+        handleLikeTap()
       }
       .disabled(!viewModel.capabilities.canLike)
       .accessibilityIdentifier("likeButton")
-      .accessibilityLabel(interactionState.isLiked ? "Unlike. Like count: \(interactionState.likeCount)" : "Like. Like count: \(interactionState.likeCount)")
+      .accessibilityLabel(countedLabel(
+        interactionState.isLiked ? "Unlike" : "Like",
+        count: interactionState.likeCount, singular: "like", plural: "likes"))
+      .frame(maxWidth: .infinity, alignment: .leading)
 
       if viewModel.capabilities.canPublicShare {
-        Spacer()
-
-        // Share Button (system share sheet only)
-        InteractionButton(
-          iconName: "square.and.arrow.up",
-          count: nil,  // Share doesn't have a count
-          isActive: false,
-          isFirstAppear: isFirstAppear,
-          color: .secondary,
-          isBig: isBig
-        ) {
-          Task {
-            await viewModel.share(post: post)
-          }
-        }
-        .disabled(!viewModel.capabilities.canPublicShare)
-        .accessibilityIdentifier("shareButton")
-        .accessibilityLabel("Share")
+        PostShareMenu(post: postBox, appState: appState, isBig: isBig)
       }
+
     }
     .font(isBig ? .title3 : .callout)
     .frame(height: isBig ? 54 : 45)
+    .padding(.leading, ActionButtonsView.baseUnit)
     .padding(.trailing, ActionButtonsView.baseUnit * 4)
-    .onAppear {
-      // Set isFirstAppear to false after a tiny delay
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-        isFirstAppear = false
-      }
-    }
-    .task(id: post) {
-      if viewModel.postId != post.uri.uriString() {
-        viewModel = ActionButtonViewModel(
-          postId: post.uri.uriString(),
-          postViewModel: postViewModel,
-          appState: postViewModel.appState
-        )
-      }
-
-      // Initial state setup
-      await refreshState()
-      guard !Task.isCancelled else { return }
-
-      // Mark initial load complete after brief delay
-      async let markInitialLoad: Void = {
-        try? await Task.sleep(for: .milliseconds(500))
-        guard !Task.isCancelled else { return }
-        initialLoadComplete = true
-      }()
-
-      // Structured task loop for continuous updates with debouncing
-      var lastUpdate = Date.distantPast
-      let debounceInterval: TimeInterval = 0.1  // 100ms debounce to prevent excessive re-renders
-
-      for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
-        guard !Task.isCancelled else { break }
-        let now = Date()
-        if now.timeIntervalSince(lastUpdate) >= debounceInterval {
-          lastUpdate = now
-          await refreshState()
-        }
-      }
-      _ = await markInitialLoad
-    }
-    .sheet(isPresented: $showingPostComposer) {
-      Group {
-        PostComposerViewUIKit(
-          parentPost: post,
-          destination: {
-            if case .circle(let summary) = postViewModel.visibilityContext {
-              return .circle(summary)
-            }
-            return .public
-          }(),
-          appState: appState
-        )
-        .applyAppStateEnvironment(appState)
-        #if os(iOS)
-        .presentationDetents({
-          if #available(iOS 26.0, *) { return [.large] } else { return [PresentationDetent.large] }
-        }())
-        .presentationDragIndicator({
-          if #available(iOS 26.0, *) { return .visible } else { return .hidden }
-        }())
-        #endif
-      }
-    .onChange(of: post) { _, newPost in
-      if viewModel.postId != newPost.uri.uriString() {
-        viewModel = ActionButtonViewModel(
-          postId: newPost.uri.uriString(),
-          postViewModel: postViewModel,
-          appState: postViewModel.appState
-        )
-      }
-      // Re-seed through the shadow so a stale payload cannot overwrite an
-      // optimistic decision; the shadow is the single source of truth.
-      Task { await refreshState() }
-    }
-      #if os(iOS)
-      // Link the composer sheet to this reply button's transition namespace
-      .modifier(ReplyZoomDestination(id: replySourceID, namespace: replyTransition))
-      #endif
-    }
-    .id(appState.userDID)
   }
 
   private var repostMenu: some View {
@@ -288,13 +357,13 @@ struct ActionButtonsView: View {
         } label: {
           Label("Quote Post", systemImage: "quote.bubble")
         }
-        .disabled(post.viewer?.embeddingDisabled ?? false)
+        .disabled(postBox.value.viewer?.embeddingDisabled ?? false)
       }
     } label: {
       repostLabel
     }
     .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
-    .id("repost-\(post.uri.uriString())")
+    .id("repost-\(postBox.value.uri.uriString())")
   }
 
   private var repostLabel: some View {
@@ -327,9 +396,20 @@ struct ActionButtonsView: View {
   }
 
   private var repostAccessibilityLabel: String {
-    interactionState.isReposted
-      ? "Remove Repost. Repost count: \(interactionState.repostCount)"
-      : "Repost or Quote Post. Repost count: \(interactionState.repostCount)"
+    countedLabel(
+      interactionState.isReposted ? "Remove Repost" : "Repost or Quote Post",
+      count: interactionState.repostCount, singular: "repost", plural: "reposts")
+  }
+
+  /// VoiceOver label such as "Like, 3 likes".
+  private func countedLabel(_ action: String, count: Int, singular: String, plural: String) -> String {
+    "\(action), \(count) \(count == 1 ? singular : plural)"
+  }
+
+  private func showFailureToast(for error: Error, action: String) {
+    guard let message = UserFacingError.message(for: error, action: action) else { return }
+    appState.toastManager.show(
+      ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
   }
 
   private var repostMenuMinWidth: CGFloat {
@@ -342,40 +422,65 @@ struct ActionButtonsView: View {
   // MARK: - Reply Handling
   
   private func handleReplyTap() {
-    let parentPostURI = post.uri.uriString()
-    
-    // Check for conflicting draft
-    if appState.composerDraftManager.hasConflictingDraft(parentPostURI: parentPostURI, quotedPostURI: nil) {
-      // Show alert asking user what to do with existing draft
-      // For now, just clear the existing draft and proceed
-      appState.composerDraftManager.clearDraft()
+    guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID,
+          viewModel.capabilities.canReply else { return }
+    if case .circle = postViewModel.visibilityContext {
+      showingCircleReplyComposer = true
+      return
     }
-    
-    // Track reply interaction for feed feedback
-    appState.feedFeedbackManager.trackReply(postURI: post.uri)
-    
-    showingPostComposer = true
+    appState.feedFeedbackManager.trackReply(postURI: postBox.value.uri, target: feedInteractionTarget)
+    sceneContext.presentPostComposer(initialText: nil, parentPost: postBox.value, quotedPost: nil)
+  }
+
+  private func handleLikeTap() {
+    // Haptic feedback using shared generator
+    PlatformHaptics.medium()
+
+    // Set animation flag to true
+    interactionState.animateLike = true
+
+    let wasLiked = interactionState.isLiked
+    Task {
+      do {
+        try await viewModel.toggleLike(feedInteractionTarget: feedInteractionTarget)
+      } catch {
+        logger.error("Error toggling like: \(error)")
+        showFailureToast(
+          for: error, action: wasLiked ? "remove your like" : "like this post")
+      }
+      // UI state will be updated via the shadow manager and refreshState
+      // Reset animation flag after a short delay if needed
+      try? await Task.sleep(for: .milliseconds(500))  // Adjust delay as needed
+      await MainActor.run { interactionState.animateLike = false }
+    }
   }
 
   private func handleRepostToggle() {
+    guard viewModel.capabilities.canRepost else { return }
     PlatformHaptics.medium()
 
+    let wasReposted = interactionState.isReposted
     Task {
       do {
-        try await viewModel.toggleRepost()
+        try await viewModel.toggleRepost(feedInteractionTarget: feedInteractionTarget)
       } catch {
-        logger.debug("Error toggling repost: \(error)")
+        logger.error("Error toggling repost: \(error)")
+        showFailureToast(
+          for: error, action: wasReposted ? "remove your repost" : "repost this post")
       }
     }
   }
 
   private func handleQuotePost() {
-    appState.presentPostComposer(quotedPost: post)
+    guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID,
+          viewModel.capabilities.canQuote else { return }
+    appState.feedFeedbackManager.trackQuote(postURI: postBox.value.uri, target: feedInteractionTarget)
+    sceneContext.presentPostComposer(initialText: nil, parentPost: nil, quotedPost: postBox.value)
   }
   
   // MARK: - State Management
   private func refreshState() async {
-    let mergedPost = await appState.postShadowManager.mergeShadow(post: post)
+    let mergedPost = await appState.postShadowManager.mergeShadow(post: postBox.value)
     interactionState.update(from: mergedPost)
   }
 }
@@ -456,37 +561,6 @@ struct InteractionButton: View {
   }
 }
 
-#if os(iOS)
-// MARK: - Matched transition helpers (iOS 26+ safe wrappers)
-private struct ReplyZoomSource: ViewModifier {
-  let id: String
-  let namespace: Namespace.ID
-  @ViewBuilder
-  func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) {
-      content.matchedTransitionSource(id: id, in: namespace) { source in
-        source
-      }
-    } else {
-      content
-    }
-  }
-}
-
-private struct ReplyZoomDestination: ViewModifier {
-  let id: String
-  let namespace: Namespace.ID
-  @ViewBuilder
-  func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) {
-      content.navigationTransition(.zoom(sourceID: id, in: namespace))
-    } else {
-      content
-    }
-  }
-}
-#endif
-
 #Preview("ActionButtonsView") {
   AsyncPreviewDataContent { appState in
     await PreviewData.firstPostView(from: appState)
@@ -496,5 +570,208 @@ private struct ReplyZoomDestination: ViewModifier {
       postViewModel: PostViewModel(post: postView, appState: appState),
       path: .constant(NavigationPath())
     )
+  }
+}
+
+/// Shared feed, thread and video entry point. Sheets belong to the originating
+/// view rather than whichever application window happens to be first.
+struct PostShareMenu: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
+
+  // Boxed: this menu sits in every post's action row, where an inline
+  // `PostView` would add about 3 KB to each enclosing body type.
+  private let postBox: EquatableBox<AppBskyFeedDefs.PostView>
+  let appState: AppState
+  var isBig = false
+  var onChooseChat: (() -> Void)?
+  var onCopyLink: ((URL) -> Void)?
+  var onChooseMore: (() -> Void)?
+
+  @State private var destination: PostShareDestination?
+
+  init(
+    post: AppBskyFeedDefs.PostView,
+    appState: AppState,
+    isBig: Bool = false,
+    onChooseChat: (() -> Void)? = nil,
+    onCopyLink: ((URL) -> Void)? = nil,
+    onChooseMore: (() -> Void)? = nil
+  ) {
+    self.init(
+      post: EquatableBox(post),
+      appState: appState,
+      isBig: isBig,
+      onChooseChat: onChooseChat,
+      onCopyLink: onCopyLink,
+      onChooseMore: onChooseMore
+    )
+  }
+
+  /// Takes a post the caller has already boxed, skipping the copy into a new box.
+  init(
+    post: EquatableBox<AppBskyFeedDefs.PostView>,
+    appState: AppState,
+    isBig: Bool = false,
+    onChooseChat: (() -> Void)? = nil,
+    onCopyLink: ((URL) -> Void)? = nil,
+    onChooseMore: (() -> Void)? = nil
+  ) {
+    self.postBox = post
+    self.appState = appState
+    self.isBig = isBig
+    self.onChooseChat = onChooseChat
+    self.onCopyLink = onCopyLink
+    self.onChooseMore = onChooseMore
+  }
+
+  private var isValidOrigin: Bool {
+    !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
+  }
+
+  var body: some View {
+    Menu {
+      #if os(iOS)
+      Button {
+        guard isValidOrigin else { return }
+        if let onChooseChat { onChooseChat() } else {
+          destination = PostShareDestination(kind: .chat, sceneContext: sceneContext)
+        }
+      } label: {
+        Label("Send via Chat", systemImage: "bubble.left.and.bubble.right")
+      }
+      .disabled(!appState.isAuthenticated && onChooseChat == nil)
+      .accessibilityIdentifier("shareToBlueskyChat")
+
+      #endif
+
+      Button {
+        guard isValidOrigin, let url = ActionButtonViewModel.shareURL(for: postBox.value) else { return }
+        if let onCopyLink {
+          onCopyLink(url)
+        } else {
+          PostShareDestination.copyLink(url, appState: appState)
+        }
+      } label: {
+        Label("Copy Link", systemImage: "link")
+      }
+      .accessibilityIdentifier("copyPostLink")
+      .disabled(ActionButtonViewModel.shareURL(for: postBox.value) == nil)
+
+      #if os(iOS)
+      Button {
+        guard isValidOrigin else { return }
+        if let onChooseMore { onChooseMore() } else {
+          destination = PostShareDestination(kind: .native, sceneContext: sceneContext)
+        }
+      } label: {
+        Label("More…", systemImage: "square.and.arrow.up")
+      }
+      .accessibilityIdentifier("morePostSharing")
+      #else
+      if let url = ActionButtonViewModel.shareURL(for: postBox.value) {
+        ShareLink(item: url) {
+          Label("More…", systemImage: "square.and.arrow.up")
+        }
+        .accessibilityIdentifier("morePostSharing")
+      }
+      #endif
+    } label: {
+      Image(systemName: "square.and.arrow.up")
+        .appFont(Font.TextStyle.callout)
+        .fontWeight(isBig ? .medium : .semibold)
+        .imageScale(isBig ? .large : .medium)
+        // Concrete `Color.secondary`, not the hierarchical `.secondary` style:
+        // inside a Menu label the hierarchical style resolves against the
+        // menu's accent tint and renders blue. Matches reply/repost/like.
+        .foregroundStyle(Color.secondary)
+        .frame(minWidth: isBig ? 48 : 36, minHeight: isBig ? 40 : 32, alignment: .trailing)
+        .contentShape(Rectangle())
+    }
+    .tint(Color.secondary)
+    .disabled(!isValidOrigin)
+    .accessibilityIdentifier("shareButton")
+    .accessibilityLabel("Share post")
+    .postShareSheet(destination: $destination, post: postBox, appState: appState)
+  }
+}
+
+/// A share target chosen from a post's share menu, presented as a sheet from the
+/// scene that chose it.
+struct PostShareDestination: Identifiable {
+  enum Kind { case chat, native }
+  let id = UUID()
+  let kind: Kind
+  let sceneContext: SceneNavigationContext
+
+  @MainActor static func copyLink(_ url: URL, appState: AppState) {
+    #if os(iOS)
+    UIPasteboard.general.url = url
+    #elseif os(macOS)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.writeObjects([url as NSURL])
+    #endif
+    PlatformHaptics.light()
+    appState.toastManager.show(ToastItem(message: "Link copied", icon: "link"))
+  }
+}
+
+extension View {
+  /// Presents the chat or system share sheet for `destination`, and drops it when
+  /// its scene goes away or switches account.
+  func postShareSheet(
+    destination: Binding<PostShareDestination?>,
+    post: EquatableBox<AppBskyFeedDefs.PostView>,
+    appState: AppState
+  ) -> some View {
+    modifier(PostShareSheetModifier(destination: destination, postBox: post, appState: appState))
+  }
+}
+
+private struct PostShareSheetModifier: ViewModifier {
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Binding var destination: PostShareDestination?
+  let postBox: EquatableBox<AppBskyFeedDefs.PostView>
+  let appState: AppState
+
+  func body(content: Content) -> some View {
+    // The sheet and its invalidation observers only matter while a destination is set.
+    content.deferredPresentations(when: destination != nil) { anchor in
+      anchor
+        .sheet(item: $destination) { destination in
+          shareDestination(destination)
+        }
+        .onChange(of: destination?.sceneContext.isInvalidated) { _, isInvalidated in
+          if isInvalidated == true { destination = nil }
+        }
+        .onChange(of: sceneContext.accountDID) { _, _ in
+          destination = nil
+        }
+        .onChange(of: sceneContext.sceneID) { _, _ in
+          destination = nil
+        }
+    }
+  }
+
+  @ViewBuilder
+  private func shareDestination(_ destination: PostShareDestination) -> some View {
+    #if os(iOS)
+    if !destination.sceneContext.isInvalidated,
+       destination.sceneContext.accountDID == appState.userDID {
+      switch destination.kind {
+      case .chat:
+        ModernChatSelectionView(post: postBox.value, appState: appState, sceneContext: destination.sceneContext) {
+          self.destination = nil
+        }
+        .applyAppStateEnvironment(appState)
+        .environment(destination.sceneContext)
+      case .native:
+        NativePostShareSheet(post: postBox.value, appState: appState, sceneContext: destination.sceneContext)
+      }
+    }
+    #else
+    if let url = ActionButtonViewModel.shareURL(for: postBox.value) {
+      ShareLink(item: url)
+    }
+    #endif
   }
 }

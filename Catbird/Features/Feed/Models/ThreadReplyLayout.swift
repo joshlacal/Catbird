@@ -158,6 +158,32 @@ struct ThreadRow: Hashable, Sendable, Identifiable {
     case .readMoreUp, .ancestor, .anchor, .showOtherReplies: return false
     }
   }
+
+  static func == (lhs: ThreadRow, rhs: ThreadRow) -> Bool {
+    lhs.id == rhs.id &&
+    lhs.kind == rhs.kind &&
+    lhs.depth == rhs.depth &&
+    lhs.parentID == rhs.parentID &&
+    lhs.indentLevel == rhs.indentLevel &&
+    lhs.continuingRails == rhs.continuingRails &&
+    lhs.lineIn == rhs.lineIn &&
+    lhs.lineOut == rhs.lineOut &&
+    lhs.startsBranch == rhs.startsBranch &&
+    lhs.mode == rhs.mode
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine(id)
+    hasher.combine(kind)
+    hasher.combine(depth)
+    hasher.combine(parentID)
+    hasher.combine(indentLevel)
+    hasher.combine(continuingRails)
+    hasher.combine(lineIn)
+    hasher.combine(lineOut)
+    hasher.combine(startsBranch)
+    hasher.combine(mode)
+  }
 }
 
 /// Frames and connector endpoints for one row, derived from its `ThreadRow`.

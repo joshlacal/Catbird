@@ -5,6 +5,7 @@
 //  Created by Josh LaCalamito on 2/26/25.
 //
 
+import OSLog
 import Petrel
 import SwiftUI
 
@@ -19,28 +20,48 @@ struct QuotesView: View {
         hSizeClass == .compact ? .infinity : 600
     }
     @State private var loading: Bool = true
-    @State private var error: Error?
+    @State private var isLoadingPage: Bool = false
+    @State private var initialError: Error?
+    @State private var pageError: Error?
     @State private var cursor: String?
+    /// Set once a load succeeds, so returning to the screen doesn't refetch page 1.
+    @State private var hasLoaded = false
     @Binding var path: NavigationPath
+
+    private let logger = Logger(subsystem: "blue.catbird", category: "QuotesView")
     
     var body: some View {
         VStack {
             if loading && quotes.isEmpty {
                 ProgressView()
                     .padding()
-            } else if let error = error {
-                Text("Error loading quotes: \(error.localizedDescription)")
-                    .padding()
-            } else if quotes.isEmpty {
+            } else if let initialError, quotes.isEmpty {
+                ListLoadFailureView(title: "Couldn’t Load Quotes", error: initialError) {
+                    Task { await loadQuotes() }
+                }
+            } else if quotes.isEmpty, hasLoaded {
                 Text("No quotes yet")
                     .padding()
                     .foregroundColor(.secondary)
+            } else if quotes.isEmpty {
+                // A cancelled load leaves nothing loaded yet; `.task` reruns it.
+                ProgressView()
+                    .padding()
             } else {
-                List {
-                    ForEach(quotes, id: \.uri) { post in
-                        Button {
-                            path.append(NavigationDestination.post(post.uri))
-                        } label: {
+                PostListCollectionView(
+                    posts: quotes,
+                    hasMore: cursor != nil,
+                    isLoadingMore: isLoadingPage,
+                    footerState: pageError != nil ? .failed : (cursor != nil ? .loading : .hidden),
+                    onLoadMore: { await loadMoreQuotes() },
+                    onRefresh: { await loadQuotes() },
+                    appState: appState,
+                    accessibilityIdentifier: "quotes.posts"
+                ) { post in
+                    Button {
+                        path.append(NavigationDestination.post(post.uri))
+                    } label: {
+                        VStack(spacing: 0) {
                             PostView(
                                 post: post,
                                 grandparentAuthor: nil,
@@ -51,74 +72,67 @@ struct QuotesView: View {
                             )
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .contentShape(Rectangle())
-                        .listRowSeparator(.visible)
-                        .listRowSeparatorTint(Color.separator)
-                        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-                        .alignmentGuide(.listRowSeparatorTrailing) { d in d.width }
-                        .listRowBackground(
-                            Color.primaryBackground(
-                                themeManager: appState.themeManager,
-                                currentScheme: colorScheme
-                            )
-                        )
-                        .listRowInsets(EdgeInsets())
-                    }
 
-                    if let cursor = cursor {
-                        ProgressView()
-                            .onAppear {
-                                Task { await loadMoreQuotes() }
-                            }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(
-                                Color.primaryBackground(
-                                    themeManager: appState.themeManager,
-                                    currentScheme: colorScheme
-                                )
-                            )
+                            Rectangle()
+                                .fill(Color.separator)
+                                .frame(height: 0.5)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .frame(maxWidth: contentMaxWidth)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-                .listStyle(.plain)
                 .background(
                     Color.primaryBackground(
                         themeManager: appState.themeManager,
                         currentScheme: colorScheme
                     )
                 )
-                .frame(maxWidth: contentMaxWidth)
-                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationTitle("Quotes")
         .task {
+            // `.task` restarts each time the screen reappears, such as on the way
+            // back from a quoting post; keep the loaded pages and scroll position.
+            // Pull to refresh reloads.
+            guard !hasLoaded else { return }
             await loadQuotes()
         }
     }
     
     private func loadQuotes() async {
         loading = true
+        initialError = nil
+        pageError = nil
         
         do {
             guard let client = appState.atProtoClient else {
-                error = NSError(domain: "AppError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])
-                loading = false
-                return
+                throw NSError(domain: "QuotesView", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not signed in"])
             }
             
             let uri = try ATProtocolURI(uriString: postUri)
             let input = AppBskyFeedGetQuotes.Parameters(uri: uri, limit: 25)
             
-            let (_, result) = try await client.app.bsky.feed.getQuotes(input: input)
-            
-            if let result = result {
-                quotes = result.posts
-                cursor = result.cursor
+            let (responseCode, result) = try await client.app.bsky.feed.getQuotes(input: input)
+            guard (200 ... 299).contains(responseCode), let result else {
+                throw NSError(domain: "QuotesView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Unexpected response \(responseCode)"])
             }
+            
+            var seen = Set<String>()
+            quotes = result.posts.filter { seen.insert($0.uri.uriString()).inserted }
+            cursor = result.cursor
+            hasLoaded = true
         } catch {
-            self.error = error
+            logger.error("Failed to load quotes: \(error.localizedDescription)")
+            // A load cancelled by leaving the screen isn't an error; it reruns on return.
+            if !Task.isCancelled {
+                if quotes.isEmpty {
+                    initialError = error
+                } else {
+                    pageError = error
+                }
+            }
         }
         
         loading = false
@@ -127,9 +141,10 @@ struct QuotesView: View {
     private func loadMoreQuotes() async {
         guard let client = appState.atProtoClient,
               let currentCursor = cursor,
-              !loading else { return }
+              !loading, !isLoadingPage else { return }
         
-        loading = true
+        isLoadingPage = true
+        pageError = nil
         
         do {
             let uri = try ATProtocolURI(uriString: postUri)
@@ -139,17 +154,28 @@ struct QuotesView: View {
                 cursor: currentCursor
             )
             
-            let (_, result) = try await client.app.bsky.feed.getQuotes(input: input)
+            let (responseCode, result) = try await client.app.bsky.feed.getQuotes(input: input)
+            guard (200 ... 299).contains(responseCode), let result else {
+                throw NSError(domain: "QuotesView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Unexpected response \(responseCode)"])
+            }
             
-            if let result = result {
-                quotes.append(contentsOf: result.posts)
+            var seen = Set(quotes.map { $0.uri.uriString() })
+            quotes.append(contentsOf: result.posts.filter { seen.insert($0.uri.uriString()).inserted })
+            if result.cursor == currentCursor || result.posts.isEmpty {
+                cursor = nil
+            } else {
                 cursor = result.cursor
             }
         } catch {
-            self.error = error
+            logger.error("Failed to load more quotes: \(error.localizedDescription)")
+            // Pull to refresh cancels a page load still in flight; the refresh
+            // replaces the pages, so that isn't a failed page.
+            if !Task.isCancelled {
+                pageError = error
+            }
         }
         
-        loading = false
+        isLoadingPage = false
     }
 }
 

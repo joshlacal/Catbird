@@ -8,16 +8,15 @@
 import SwiftUI
 
 struct FollowsBadgeView: View {
-    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         Text("Follows you")
             .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(colorScheme == .dark ? Color.accentColor.opacity(0.9) : Color.accentColor.opacity(0.1))
+                    .fill(Color.secondary.opacity(0.15))
             )
     }
 }

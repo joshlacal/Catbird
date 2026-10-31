@@ -9,6 +9,9 @@ import Foundation
 import OSLog
 import Petrel
 import WidgetKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 final class FeedWidgetDataProvider {
@@ -20,13 +23,52 @@ final class FeedWidgetDataProvider {
   /// The DID of the currently active account, used to scope widget data keys
   private var accountDID: String = ""
 
-  private init() {}
+  /// The posts each widget feed was last built from, for the active account, keyed by
+  /// configuration key. A moderation policy change rebuilds the stored widget posts from these
+  /// without a network load.
+  private var widgetSources: [String: WidgetFeedSource] = [:]
+  /// In-memory uri+cid post IDs from the last write, keyed by configKey.
+  private var lastSignatures: [String: [String]] = [:]
+  private var hasConfiguredFeedWidgets: Bool? = nil
+  private var configuredFeedKeys: Set<String>? = nil
+  private var isQueryingConfigurations = false
+  private var moderationPolicyObserver: NSObjectProtocol?
+  private var ageAccessObserver: NSObjectProtocol?
+  private var activeObserver: NSObjectProtocol?
+  private init() {
+    moderationPolicyObserver = NotificationCenter.default.addObserver(
+      forName: .moderationPolicyDidChange, object: nil, queue: .main
+    ) { [weak self] notification in
+      let originDID = notification.userInfo?["accountDID"] as? String
+      MainActor.assumeIsolated { self?.rebuildAfterModerationPolicyChange(originDID: originDID) }
+    }
+    ageAccessObserver = NotificationCenter.default.addObserver(
+      forName: .platformAgeAccessDidChange, object: nil, queue: .main
+    ) { [weak self] notification in
+      let originDID = notification.userInfo?["accountDID"] as? String
+      MainActor.assumeIsolated { self?.handleAgeAccessChange(originDID: originDID) }
+    }
+    refreshWidgetConfigurations()
+    #if canImport(UIKit)
+    activeObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.refreshWidgetConfigurations() }
+    }
+    #endif
+  }
 
   /// Configure the provider with the active account DID for key scoping
   func configure(accountDID: String) {
+    if accountDID != self.accountDID {
+      widgetSources.removeAll()
+      lastSignatures.removeAll()
+      refreshWidgetConfigurations()
+    }
     self.accountDID = accountDID
     // Write active DID so widget knows which account is current
     sharedDefaults?.set(accountDID, forKey: "activeAccountDID")
+    clearExportedPostsIfRequired()
   }
 
   /// Updates widget data from a feed's posts
@@ -35,124 +77,14 @@ final class FeedWidgetDataProvider {
     updateWidgetDataEnhanced(from: posts, feedType: feedType)
   }
 
-  /// Helper method to convert a cached post to widget format
-  private func convertToWidgetPost(_ cachedPost: CachedFeedViewPost) -> WidgetPost? {
-    guard let post = try? cachedPost.feedViewPost else {
-      return nil
-    }
-
-    guard case .knownType(let record) = post.post.record,
-      let feedPost = record as? AppBskyFeedPost
-    else {
-      return nil
-    }
-
-    // Extract text content
-    let text = feedPost.text
-
-    // Extract image URLs from embed
-    let imageURLs = extractImageURLs(from: post.post.embed)
-
-    // Check if it's a repost
-    let isRepost = post.reason != nil
-    let repostAuthorName = extractRepostAuthorName(from: post.reason)
-
-    return WidgetPost(
-      id: post.post.cid.string,
-      authorName: post.post.author.displayName ?? post.post.author.handle.description,
-      authorHandle: "@\(post.post.author.handle)",
-      authorAvatarURL: post.post.author.avatar?.uriString(),
-      text: text,
-      timestamp: post.post.indexedAt.date,
-      likeCount: post.post.likeCount ?? 0,
-      repostCount: post.post.repostCount ?? 0,
-      replyCount: post.post.replyCount ?? 0,
-      imageURLs: imageURLs,
-      isRepost: isRepost,
-      repostAuthorName: repostAuthorName
-    )
-  }
-
-  /// Helper method to extract image URLs from embed
-  private func extractImageURLs(from embed: AppBskyFeedDefs.PostViewEmbedUnion?) -> [String] {
-    guard let embed = embed else { return [] }
-
-    switch embed {
-    case .appBskyEmbedImagesView(let imagesView):
-      return imagesView.images.map { $0.thumb.uriString() }
-    case .appBskyEmbedGalleryView(let galleryView):
-      return galleryView.items.compactMap { item in
-        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-        return image.thumbnail.uriString()
-      }
-    case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
-      if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
-        return imagesView.images.map { $0.thumb.uriString() }
-      }
-      if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
-        return galleryView.items.compactMap { item in
-          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-          return image.thumbnail.uriString()
-        }
-      }
-      return []
-    default:
-      return []
-    }
-  }
-
-  /// Helper method to extract repost author name
-  private func extractRepostAuthorName(from reason: AppBskyFeedDefs.FeedViewPostReasonUnion?)
-    -> String?
-  {
-    guard let reason = reason,
-      case .appBskyFeedDefsReasonRepost(let repostReason) = reason
-    else {
-      return nil
-    }
-    return repostReason.by.displayName ?? repostReason.by.handle.description
-  }
-
-  /// Maps internal FetchType to widget's FeedTypeOption
+  /// Maps internal FetchType to the feed type label stored with widget data
   private func mapFeedType(_ fetchType: FetchType) -> String {
     switch fetchType {
-    case .timeline:
-      return "timeline"
-    case .feed(let uri):
-      // Check for known feed types
-      let uriString = uri.uriString()
-      if uriString.contains("discover") {
-        return "discover"
-      } else if uriString.contains("popular") || uriString.contains("hot") {
-        return "popular"
-      } else {
-        return "custom"
-      }
+    case .feed:
+      return "feed"
     default:
       return "timeline"
     }
-  }
-
-  /// Updates widget data for a specific profile
-  func updateWidgetDataForProfile(handle: String, posts: [CachedFeedViewPost]) {
-    // Use the enhanced version with profile handle
-    updateWidgetDataEnhanced(from: posts, feedType: .timeline, profileHandle: handle)
-  }
-
-  /// Updates shared preferences for widget theme and font settings
-  private func updateSharedPreferences() {
-    guard let sharedDefaults = sharedDefaults else { return }
-
-    // Theme settings (these should be read from actual app state)
-    sharedDefaults.set("system", forKey: "selectedTheme")
-    sharedDefaults.set("dim", forKey: "darkThemeMode")
-
-    // Font settings (these should be read from actual app state)
-    sharedDefaults.set(1.0, forKey: "fontSizeScale")
-    sharedDefaults.set("system", forKey: "fontFamily")
-    sharedDefaults.set("normal", forKey: "lineSpacing")
-
-    logger.debug("Updated shared preferences for widget access")
   }
 
   /// Updates user's pinned and saved feeds for widget access
@@ -219,176 +151,332 @@ final class FeedWidgetDataProvider {
     return (pinnedFeeds, savedFeeds, feedGenerators)
   }
 
-  /// Updates widget data with enhanced metadata and configuration support
-  func updateWidgetDataEnhanced(
-    from posts: [CachedFeedViewPost], feedType: FetchType, profileHandle: String? = nil
-  ) {
-    guard let sharedDefaults = sharedDefaults else {
-      logger.error("Failed to access shared defaults")
+  /// Updates widget data with enhanced metadata and configuration support.
+  /// Only the Following timeline and feed generators have widget configurations;
+  /// lists, profiles and likes are ignored so they never overwrite a widget's posts.
+  func updateWidgetDataEnhanced(from posts: [CachedFeedViewPost], feedType: FetchType) {
+    guard let configKey = createConfigurationKey(feedType: feedType) else { return }
+    guard !accountDID.isEmpty else { return }
+    guard allowsContentExport() else {
+      clearExportedPostsIfRequired()
       return
     }
 
-    // Convert posts to widget format with enhanced data
-    let limitedPosts = Array(posts.prefix(15))  // Increase limit for better variety
-    let widgetPosts = limitedPosts.compactMap { cachedPost in
-      convertToWidgetPostEnhanced(cachedPost)
+    // Skip export entirely when no widget is configured on this device or for this feed (P233)
+    if hasConfiguredFeedWidgets == false { return }
+    if let configured = configuredFeedKeys, !configured.contains(configKey) { return }
+
+    // Skip moderation, write, and reload when the uri+cid signature of the top posts is unchanged
+    let prefixPosts = Array(posts.prefix(FeedWidgetPosts.sourceLimit))
+    let currentSignature = prefixPosts.map(\.id)
+    if let last = lastSignatures[configKey], last == currentSignature {
+      return
     }
 
-    // Create enhanced feed widget data
+    let source = WidgetFeedSource(
+      posts: prefixPosts.compactMap { try? $0.feedViewPostBox },
+      feedType: mapFeedType(feedType),
+      totalPostCount: posts.count,
+      loadedAt: Date())
+    widgetSources[configKey] = source
+    if writeWidgetData(source, configKey: configKey) {
+      lastSignatures[configKey] = currentSignature
+      reloadFeedTimelines(for: configKey)
+    }
+  }
+  /// Rewrites every widget feed built this session when the active account's moderation policy
+  /// changes, then requests that WidgetKit refresh the displayed entries.
+  private func rebuildAfterModerationPolicyChange(originDID: String?) {
+    guard !accountDID.isEmpty, originDID == accountDID else { return }
+    guard allowsContentExport() else {
+      clearExportedPostsIfRequired()
+      return
+    }
+    guard !widgetSources.isEmpty else { return }
+    lastSignatures.removeAll()
+    for (configKey, source) in widgetSources where writeWidgetData(source, configKey: configKey) {
+      reloadFeedTimelines(for: configKey)
+    }
+  }
+
+  private func handleAgeAccessChange(originDID: String?) {
+    guard originDID == accountDID, !accountDID.isEmpty else { return }
+    guard allowsContentExport() else {
+      clearExportedPostsIfRequired()
+      return
+    }
+    rebuildAfterModerationPolicyChange(originDID: originDID)
+  }
+
+  private func allowsContentExport() -> Bool {
+    guard let appState = AppStateManager.shared.lifecycle.appState,
+          appState.userDID == accountDID else { return false }
+    return appState.ageAccess.allows(.generalContent)
+  }
+
+  private func clearExportedPostsIfRequired() {
+    guard let appState = AppStateManager.shared.lifecycle.appState,
+          appState.userDID == accountDID,
+          appState.ageAccess.signal.requirement == .ageCheckRequired,
+          !appState.ageAccess.allows(.generalContent) else { return }
+    clearExportedPosts()
+  }
+
+  /// An OS restriction also covers widgets explicitly configured for another signed-in account.
+  /// Remove only regenerable post payloads, including feeds not loaded in this process. Keep
+  /// account and feed preferences; no age response or verification state enters the App Group.
+  private func clearExportedPosts() {
+    widgetSources.removeAll()
+    lastSignatures.removeAll()
+    if let sharedDefaults {
+      for key in sharedDefaults.dictionaryRepresentation().keys
+      where key.hasPrefix("widgetData_") || key.hasPrefix(FeedWidgetConstants.feedDataKey) {
+        sharedDefaults.removeObject(forKey: key)
+      }
+    }
+    reloadFeedTimelines()
+  }
+
+  private func reloadFeedTimelines(for configKey: String? = nil) {
+    WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+    // CatbirdFeedRectangular only ever displays the Following timeline (P233)
+    if configKey == nil || configKey == FeedWidgetConstants.timelineConfigKey {
+      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedRectangular")
+    }
+  }
+
+  /// Writes the moderated widget posts for one configuration and reports whether it did.
+  /// Nothing is written until the widget's account has a server-confirmed moderation policy.
+  private func writeWidgetData(_ source: WidgetFeedSource, configKey: String) -> Bool {
+    guard let policy = activeModerationPolicy() else {
+      logger.info("Skipped widget update until the account's moderation policy is confirmed")
+      return false
+    }
+    guard let sharedDefaults = sharedDefaults else {
+      logger.error("Failed to access shared defaults")
+      return false
+    }
+
+    let signpostState = PerformanceSignposts.beginInterval("WidgetExport")
+    defer { PerformanceSignposts.endInterval("WidgetExport", signpostState) }
+
+    let widgetPosts = FeedWidgetPosts.make(from: source.posts.map(\.value), policy: policy)
     let feedWidgetData = FeedWidgetDataEnhanced(
       posts: widgetPosts,
-      feedType: mapFeedType(feedType),
-      lastUpdated: Date(),
-      profileHandle: profileHandle,
-      totalPostCount: posts.count
+      feedType: source.feedType,
+      lastUpdated: source.loadedAt,
+      totalPostCount: source.totalPostCount
     )
 
-    // Save to shared defaults with both general and configuration-specific keys
     do {
       let encoder = JSONEncoder()
       encoder.dateEncodingStrategy = .iso8601
       let data = try encoder.encode(feedWidgetData)
 
-      // Save to general key for fallback (DID-scoped)
-      let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
-      sharedDefaults.set(data, forKey: "\(FeedWidgetConstants.feedDataKey)\(didSuffix)")
-
-      // Save to configuration-specific key for targeted widgets (DID-scoped)
-      let configKey = createConfigurationKey(feedType: feedType, profileHandle: profileHandle)
-      sharedDefaults.set(data, forKey: "\(configKey)\(didSuffix)")
+      // Save to the configuration-specific key the widget reads (DID-scoped)
+      sharedDefaults.set(data, forKey: "\(configKey).\(accountDID)")
 
       logger.info(
-        "Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName) (keys: general + \(configKey))"
+        "Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(source.feedType) (key: \(configKey))"
       )
-
-      // Update shared preferences
-      updateSharedPreferences()
-
-      // Reload widget timelines
-      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+      return true
     } catch {
       logger.error("Failed to encode enhanced widget data: \(error.localizedDescription)")
+      return false
     }
   }
 
-  /// Enhanced post conversion with better metadata
-  private func convertToWidgetPostEnhanced(_ cachedPost: CachedFeedViewPost) -> WidgetPost? {
-    guard let post = try? cachedPost.feedViewPost else {
+  /// The active account's moderation policy, when that account is the widget's account and its
+  /// preferences have been confirmed with the server.
+  private func activeModerationPolicy() -> ModerationPolicy? {
+    guard let appState = AppStateManager.shared.lifecycle.appState,
+      appState.userDID == accountDID,
+      appState.ageAccess.allows(.generalContent)
+    else { return nil }
+    let policy = appState.moderationPolicy
+    guard policy.isConfirmed, policy.accountDID == accountDID else { return nil }
+    return policy
+  }
+
+  /// The storage key the widget reads for this feed (same rule as the widget's
+  /// FeedWidgetProvider). Nil for feed types no widget configuration can show.
+  private func createConfigurationKey(feedType: FetchType) -> String? {
+    switch feedType {
+    case .timeline:
+      return FeedWidgetConstants.timelineConfigKey
+    case .feed(let uri):
+      return FeedWidgetConstants.configKey(forFeedURI: uri.uriString())
+    default:
+      return nil
+    }
+  }
+
+  /// Removes everything the widgets know about `did` (saved posts and feed
+  /// preferences) and reloads every widget, so a signed-out or removed account's
+  /// posts stop appearing on the Home Screen.
+  func clearWidgetData(for did: String) {
+    guard !did.isEmpty else { return }
+    guard let sharedDefaults = sharedDefaults else {
+      logger.error("Failed to access shared defaults")
+      return
+    }
+
+    let accountPrefixes = [
+      "widgetData_", FeedWidgetConstants.feedDataKey, "pinnedFeeds", "savedFeeds", "feedGenerators",
+    ]
+    let suffix = ".\(did)"
+    for key in sharedDefaults.dictionaryRepresentation().keys
+    where key.hasSuffix(suffix) && accountPrefixes.contains(where: { key.hasPrefix($0) }) {
+      sharedDefaults.removeObject(forKey: key)
+    }
+
+    if accountDID == did {
+      accountDID = ""
+      widgetSources.removeAll()
+      lastSignatures.removeAll()
+    }
+    WidgetCenter.shared.reloadAllTimelines()
+
+    logger.info("Cleared widget data for a signed-out account")
+  }
+
+  /// Queries WidgetCenter for currently configured widgets once per session and on foreground.
+  private func refreshWidgetConfigurations() {
+    guard !isQueryingConfigurations else { return }
+    isQueryingConfigurations = true
+    #if os(iOS)
+    Task { @MainActor [weak self] in
+      defer { self?.isQueryingConfigurations = false }
+      do {
+        let widgets: [WidgetInfo]
+        if #available(iOS 18.0, macOS 15.0, *) {
+          widgets = try await WidgetCenter.shared.currentConfigurations()
+        } else {
+          widgets = try await withCheckedThrowingContinuation { continuation in
+            WidgetCenter.shared.getCurrentConfigurations { result in
+              continuation.resume(with: result)
+            }
+          }
+        }
+        let feedWidgets = widgets.filter {
+          $0.kind == "CatbirdFeedWidget" || $0.kind == "CatbirdFeedRectangular"
+        }
+        guard let self else { return }
+        if feedWidgets.isEmpty {
+          self.hasConfiguredFeedWidgets = false
+          self.configuredFeedKeys = []
+        } else {
+          self.hasConfiguredFeedWidgets = true
+          self.configuredFeedKeys = feedWidgets.allSatisfy { $0.kind == "CatbirdFeedRectangular" }
+            ? [FeedWidgetConstants.timelineConfigKey] : nil
+        }
+      } catch {
+        self?.hasConfiguredFeedWidgets = true
+        self?.configuredFeedKeys = nil
+      }
+    }
+    #else
+    hasConfiguredFeedWidgets = true
+    configuredFeedKeys = nil
+    isQueryingConfigurations = false
+    #endif
+  }
+}
+
+// MARK: - Widget moderation
+
+/// The posts one widget feed was built from.
+private struct WidgetFeedSource {
+  let posts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]
+  let feedType: String
+  let totalPostCount: Int
+  /// When the feed delivered these posts; a rebuild keeps it, since the posts are no newer.
+  let loadedAt: Date
+}
+
+/// Builds the posts the feed widget stores in the shared App Group under the account's moderation
+/// policy. The widget is a list surface with no warnings or reveal controls, so a post a list would
+/// filter or put behind a warning is left out, and blurred media and avatars are omitted.
+enum FeedWidgetPosts {
+  /// How many of a feed's newest posts are kept to build widget posts from.
+  static let sourceLimit = 30
+  /// How many posts the widget data holds.
+  static let postLimit = 15
+
+  /// The widget posts for `posts`, in order, at most `postLimit`.
+  static func make(from posts: [AppBskyFeedDefs.FeedViewPost], policy: ModerationPolicy) -> [WidgetPost] {
+    var result: [WidgetPost] = []
+    for post in posts {
+      guard let widgetPost = widgetPost(from: post, policy: policy) else { continue }
+      result.append(widgetPost)
+      if result.count == postLimit { break }
+    }
+    return result
+  }
+
+  /// The widget post for `feedPost`, or `nil` when the widget must not show it: the list context
+  /// filters or blurs it. Image and video thumbnails are omitted when the media is blurred, and
+  /// the author avatar when the avatar is blurred.
+  static func widgetPost(from feedPost: AppBskyFeedDefs.FeedViewPost, policy: ModerationPolicy) -> WidgetPost? {
+    let post = feedPost.post
+    guard case .knownType(let record) = post.record, let postRecord = record as? AppBskyFeedPost else {
       return nil
     }
 
-    guard case .knownType(let record) = post.post.record,
-      let feedPost = record as? AppBskyFeedPost
-    else {
-      return nil
-    }
-
-    // Extract text content with better handling
-    let text = feedPost.text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // Extract image URLs from embed with better handling
-    let imageURLs = extractImageURLsEnhanced(from: post.post.embed)
-
-    // Check if it's a repost with better detection
-    let isRepost = post.reason != nil
-    let repostAuthorName = extractRepostAuthorName(from: post.reason)
+    let decision = policy.decide(post: post)
+    let list = decision.ui(.contentList)
+    guard !list.filter, !list.blur else { return nil }
+    let showsMedia = !decision.ui(.contentMedia).blur
+    let showsAvatar = !decision.ui(.avatar).blur
 
     return WidgetPost(
-      id: post.post.cid.string,
-      authorName: post.post.author.displayName ?? post.post.author.handle.description,
-      authorHandle: "@\(post.post.author.handle)",
-      authorAvatarURL: post.post.author.avatar?.uriString(),
-      text: text,
-      timestamp: post.post.indexedAt.date,
-      likeCount: post.post.likeCount ?? 0,
-      repostCount: post.post.repostCount ?? 0,
-      replyCount: post.post.replyCount ?? 0,
-      imageURLs: imageURLs,
-      isRepost: isRepost,
-      repostAuthorName: repostAuthorName
+      id: post.cid.string,
+      authorName: post.author.displayName ?? post.author.handle.description,
+      authorHandle: "@\(post.author.handle)",
+      authorAvatarURL: showsAvatar ? post.author.avatar?.uriString() : nil,
+      text: postRecord.text.trimmingCharacters(in: .whitespacesAndNewlines),
+      timestamp: post.indexedAt.date,
+      likeCount: post.likeCount ?? 0,
+      repostCount: post.repostCount ?? 0,
+      replyCount: post.replyCount ?? 0,
+      imageURLs: showsMedia ? mediaURLs(in: post.embed) : [],
+      isRepost: feedPost.reason != nil,
+      repostAuthorName: repostAuthorName(from: feedPost.reason)
     )
   }
 
-  /// Enhanced image URL extraction
-  private func extractImageURLsEnhanced(from embed: AppBskyFeedDefs.PostViewEmbedUnion?) -> [String]
-  {
-    guard let embed = embed else { return [] }
-
+  /// Full-size image URLs, or the video thumbnail, of the post's own media.
+  private static func mediaURLs(in embed: AppBskyFeedDefs.PostViewEmbedUnion?) -> [String] {
     switch embed {
     case .appBskyEmbedImagesView(let imagesView):
-      // Prefer full size for better quality in widgets
-      return imagesView.images.compactMap { image in
-        // Use fullsize if available, fallback to thumb
-        return image.fullsize.uriString()
-      }
+      return imagesView.images.map { $0.fullsize.uriString() }
     case .appBskyEmbedGalleryView(let galleryView):
-      return galleryView.items.compactMap { item in
-        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-        return image.fullsize.uriString()
-      }
+      return galleryImageURLs(galleryView)
     case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
       if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
-        return imagesView.images.compactMap { image in
-          return image.fullsize.uriString()
-        }
+        return imagesView.images.map { $0.fullsize.uriString() }
       }
       if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
-        return galleryView.items.compactMap { item in
-          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
-          return image.fullsize.uriString()
-        }
+        return galleryImageURLs(galleryView)
       }
       return []
     case .appBskyEmbedVideoView(let videoView):
-      // Handle video thumbnails
       return [videoView.thumbnail?.uriString()].compactMap { $0 }
     default:
       return []
     }
   }
 
-  /// Creates a configuration key that matches the widget's key generation logic
-  private func createConfigurationKey(feedType: FetchType, profileHandle: String? = nil) -> String {
-    var keyComponents = ["widgetData"]
-
-    switch feedType {
-    case .timeline:
-      keyComponents.append("timeline")
-    case .feed(let uri):
-      let uriString = uri.uriString()
-      if uriString.contains("discover") {
-        keyComponents.append("discover")
-      } else if uriString.contains("popular") || uriString.contains("hot") {
-        keyComponents.append("popular")
-      } else {
-        keyComponents.append("custom")
-        keyComponents.append(
-          uriString.replacingOccurrences(of: "at://", with: "").replacingOccurrences(
-            of: "/", with: "_"))
-      }
-    default:
-      keyComponents.append("timeline")
+  private static func galleryImageURLs(_ galleryView: AppBskyEmbedGallery.View) -> [String] {
+    galleryView.items.compactMap { item in
+      guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+      return image.fullsize.uriString()
     }
-
-    if let handle = profileHandle {
-      keyComponents.append(handle.replacingOccurrences(of: "@", with: ""))
-    }
-
-    return keyComponents.joined(separator: "_")
   }
 
-  /// Clears widget data
-  func clearWidgetData() {
-    guard let sharedDefaults = sharedDefaults else {
-      logger.error("Failed to access shared defaults")
-      return
-    }
-
-    let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
-    sharedDefaults.removeObject(forKey: "\(FeedWidgetConstants.feedDataKey)\(didSuffix)")
-    WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
-
-    logger.info("Cleared widget data")
+  private static func repostAuthorName(from reason: AppBskyFeedDefs.FeedViewPostReasonUnion?) -> String? {
+    guard case .appBskyFeedDefsReasonRepost(let repostReason) = reason else { return nil }
+    return repostReason.by.displayName ?? repostReason.by.handle.description
   }
 }
 
@@ -439,4 +527,17 @@ struct FeedWidgetConstants {
   static let sharedSuiteName = "group.blue.catbird.shared"
   static let feedDataKey = "feedWidgetData"
   static let updateInterval: TimeInterval = 15 * 60  // 15 minutes
+
+  /// Storage key for the Following timeline's posts. Must match the widget's
+  /// FeedWidgetConstants in CatbirdFeedWidget/FeedWidgetModels.swift.
+  static let timelineConfigKey = "widgetData_timeline"
+
+  /// Storage key for one feed generator's posts. Must match the widget's
+  /// FeedWidgetConstants.configKey(forFeedURI:) in CatbirdFeedWidget/FeedWidgetModels.swift.
+  static func configKey(forFeedURI uri: String) -> String {
+    let sanitized = uri
+      .replacingOccurrences(of: "at://", with: "")
+      .replacingOccurrences(of: "/", with: "_")
+    return "widgetData_feed_\(sanitized)"
+  }
 }

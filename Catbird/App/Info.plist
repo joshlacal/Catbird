@@ -2,6 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CatbirdFeatures</key>
+	<dict>
+		<key>CirclesSpaces</key>
+		<string>$(CATBIRD_FEATURE_CIRCLES_SPACES)</string>
+		<key>Live</key>
+		<string>$(CATBIRD_FEATURE_LIVE)</string>
+		<key>MLSChat</key>
+		<string>$(CATBIRD_FEATURE_MLS_CHAT)</string>
+		<key>RepositoryTools</key>
+		<string>$(CATBIRD_FEATURE_REPOSITORY_TOOLS)</string>
+	</dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>blue.catbird.posting.retry</string>
@@ -20,7 +33,6 @@
 			<array>
 				<string>blue.catbird</string>
 				<string>catbird</string>
-				<string>bluesky</string>
 			</array>
 		</dict>
 	</array>
@@ -28,25 +40,6 @@
 	<string>https://catbird.blue/privacy</string>
 	<key>LegalTermsOfServiceURL</key>
 	<string>https://catbird.blue/terms</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>localhost</key>
-			<dict>
-				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-		</dict>
-	</dict>
-	<key>NSUserActivityTypes</key>
-	<array>
-		<string>FeedIntentIntent</string>
-	</array>
-	<key>NSUserNotificationUsageDescription</key>
-	<string>Catbird needs permission to send you notifications about mentions, replies, and interactions with your posts.</string>
 	<key>SentryLaunchProfilingEnabled</key>
 	<false/>
 	<key>SupportURL</key>
@@ -58,11 +51,18 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIImageName</key>
+		<string>LaunchIcon</string>
+	</dict>
 	<key>UIObservationTrackingEnabled</key>
 	<true/>
-	<key>com.apple.developer.associated-domains</key>
-	<array>
-		<string>applinks:catbird.blue</string>
-	</array>
+	<key>CATBIRD_TELEMETRY_BACKEND</key>
+	<string>$(CATBIRD_TELEMETRY_BACKEND)</string>
+	<key>CATBIRD_GLITCHTIP_ALLOWED_HOST</key>
+	<string>$(CATBIRD_GLITCHTIP_ALLOWED_HOST)</string>
+	<key>GLITCHTIP_DSN</key>
+	<string>$(CATBIRD_GLITCHTIP_DSN)</string>
 </dict>
 </plist>

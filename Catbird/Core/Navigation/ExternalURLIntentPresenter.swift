@@ -12,16 +12,24 @@ final class ExternalURLIntentPresenter {
     var activeIntent: ExternalURLIntent?
     var pendingIntent: ExternalURLIntent?
     var lastDeliveredURL: String?
+    /// The same URL can arrive twice in quick succession (scene `onOpenURL` plus `URLHandler`).
+    /// Only that burst is ignored; tapping the same link again later opens it again.
+    private var lastDeliveredAt: Date?
+    private let duplicateDeliveryWindow: TimeInterval = 1
 
     init() {}
 
     func handleIntent(_ intent: ExternalURLIntent, from url: URL, appState: AppState?) {
         let urlString = url.absoluteString
-        if lastDeliveredURL == urlString {
+        let now = Date()
+        if lastDeliveredURL == urlString,
+           let lastDeliveredAt,
+           now.timeIntervalSince(lastDeliveredAt) < duplicateDeliveryWindow {
             logger.info("Ignoring duplicate intent delivery for URL: \(urlString, privacy: .private)")
             return
         }
         lastDeliveredURL = urlString
+        lastDeliveredAt = now
 
         guard let appState = appState, appState.isAuthenticated else {
             logger.info("User not authenticated; retaining pending intent: \(String(describing: intent))")
@@ -42,8 +50,12 @@ final class ExternalURLIntentPresenter {
 
     func clearActiveIntent() {
         activeIntent = nil
+        lastDeliveredURL = nil
+        lastDeliveredAt = nil
     }
 }
+
+private let intentViewLogger = Logger(subsystem: "blue.catbird", category: "ExternalURLIntentViews")
 
 // MARK: - Intent Dialog Views
 
@@ -68,9 +80,9 @@ struct VerifyEmailIntentView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 60))
                         .foregroundColor(.green)
-                    Text("Email Confirmed!")
+                    Text("Email Confirmed")
                         .font(.title2.bold())
-                    Text("Your email address \(email) has been verified successfully.")
+                    Text("\(email) is now confirmed.")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -87,7 +99,7 @@ struct VerifyEmailIntentView: View {
                     Text("Confirm Email Address")
                         .font(.title2.bold())
 
-                    Text(email.isEmpty ? "Confirm email verification for your account?" : "Confirm email verification for **\(email)**?")
+                    Text(email.isEmpty ? "Confirm the email address for your account?" : "Confirm **\(email)** as your email address?")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -137,32 +149,34 @@ struct VerifyEmailIntentView: View {
 
     private func loadCurrentEmail() async {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not authenticated"
+            errorMessage = "Sign in to confirm your email."
             return
         }
         do {
             let (statusCode, session) = try await client.com.atproto.server.getSession()
             guard (200 ... 299).contains(statusCode) else {
-                errorMessage = "Failed to load account details (HTTP \(statusCode))."
+                intentViewLogger.error("getSession failed with HTTP \(statusCode, privacy: .public)")
+                errorMessage = "Couldn’t load your account details. Try again."
                 return
             }
             guard let sessionEmail = session?.email, !sessionEmail.isEmpty else {
-                errorMessage = "No email address found for this account."
+                errorMessage = "This account doesn’t have an email address yet. Add one in Settings."
                 return
             }
             self.email = sessionEmail
         } catch {
-            errorMessage = "Failed to load account details: \(error.localizedDescription)"
+            intentViewLogger.error("getSession failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = UserFacingError.message(for: error, action: "load your account details")
         }
     }
 
     private func confirm() async {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not authenticated"
+            errorMessage = "Sign in to confirm your email."
             return
         }
         guard !email.isEmpty else {
-            errorMessage = "Email address is required to confirm."
+            errorMessage = "Catbird couldn’t find the email address to confirm. Try again."
             return
         }
 
@@ -174,24 +188,27 @@ struct VerifyEmailIntentView: View {
             let input = ComAtprotoServerConfirmEmail.Input(email: email, token: code)
             let statusCode = try await client.com.atproto.server.confirmEmail(input: input)
             guard (200 ... 299).contains(statusCode) else {
-                errorMessage = "Failed to confirm email (HTTP \(statusCode))."
+                intentViewLogger.error("confirmEmail failed with HTTP \(statusCode, privacy: .public)")
+                errorMessage = "We couldn’t confirm your email. The link may have expired. Request a new one from Settings."
                 return
             }
 
             // Refresh session info to update and verify emailConfirmed
             let (sessionStatus, session) = try await client.com.atproto.server.getSession()
             guard (200 ... 299).contains(sessionStatus), let session = session else {
-                errorMessage = "Email confirmed, but failed to verify updated session status."
+                intentViewLogger.error("getSession after confirmEmail failed with HTTP \(sessionStatus, privacy: .public)")
+                errorMessage = "Your email may be confirmed, but Catbird couldn’t check. Look in Settings to make sure."
                 return
             }
 
             if session.emailConfirmed == true {
                 isSuccess = true
             } else {
-                errorMessage = "Email confirmation could not be verified on your account."
+                errorMessage = "We couldn’t confirm your email. The link may have expired. Request a new one from Settings."
             }
         } catch {
-            errorMessage = "Failed to confirm email: \(error.localizedDescription)"
+            intentViewLogger.error("confirmEmail failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = UserFacingError.message(for: error, action: "confirm your email")
         }
     }
 }
@@ -199,6 +216,7 @@ struct VerifyEmailIntentView: View {
 struct GroupChatJoinIntentView: View {
     let code: String
     @Environment(AppState.self) private var appState
+    @Environment(SceneNavigationContext.self) private var sceneNavigation
     @Environment(\.dismiss) private var dismiss
 
     @State private var preview: ChatBskyGroupDefs.JoinLinkPreviewView?
@@ -218,30 +236,31 @@ struct GroupChatJoinIntentView: View {
         NavigationStack {
             VStack(spacing: 20) {
                 if isLoading {
-                    ProgressView("Loading Group Preview...")
+                    ProgressView("Loading invite…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if isInvalid {
                     ContentUnavailableView {
                         Label("Invalid Invite Link", systemImage: "link.badge.plus")
                     } description: {
-                        Text("This group invite link is invalid or malformed.")
+                        Text("This invite link isn’t valid. Ask for a new one.")
                     }
                 } else if isDisabled {
                     ContentUnavailableView {
                         Label("Invite Link Disabled", systemImage: "slash.circle")
                     } description: {
-                        Text("This group invite link has been disabled by the group administrator.")
+                        Text("The group’s admin turned off this invite link.")
                     }
                 } else if let joinedConvoId {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 60))
                         .foregroundColor(.green)
-                    Text("Joined Group!")
+                    Text("You’re in the Group")
                         .font(.title2.bold())
                     Button("Open Chat") {
+                        guard isCurrentScene(sceneNavigation) else { return }
                         dismiss()
                         #if os(iOS)
-                        appState.navigationManager.navigate(to: .conversation(joinedConvoId))
+                        sceneNavigation.navigationManager.navigate(to: .conversation(joinedConvoId))
                         #endif
                     }
                     .buttonStyle(.borderedProminent)
@@ -251,7 +270,7 @@ struct GroupChatJoinIntentView: View {
                         .foregroundColor(.orange)
                     Text("Join Request Sent")
                         .font(.title2.bold())
-                    Text("Your request to join has been sent to the group admins for approval.")
+                    Text("The group’s admins will review your request.")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -263,11 +282,11 @@ struct GroupChatJoinIntentView: View {
                     groupPreviewContent(preview)
                 } else if let errorMessage {
                     ContentUnavailableView {
-                        Label("Failed to Load Preview", systemImage: "exclamationmark.triangle")
+                        Label("Couldn’t Load Invite", systemImage: "exclamationmark.triangle")
                     } description: {
                         Text(errorMessage)
                     } actions: {
-                        Button("Retry") {
+                        Button("Try Again") {
                             Task { await loadPreview() }
                         }
                         .buttonStyle(.borderedProminent)
@@ -340,6 +359,8 @@ struct GroupChatJoinIntentView: View {
     }
 
     private func loadPreview() async {
+        weak var operationScene = sceneNavigation
+        guard isCurrentScene(operationScene) else { return }
         isLoading = true
         errorMessage = nil
         isInvalid = false
@@ -347,15 +368,17 @@ struct GroupChatJoinIntentView: View {
         preview = nil
 
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not authenticated"
+            errorMessage = "Sign in to open this invite."
             isLoading = false
             return
         }
 
         do {
             let (statusCode, output) = try await client.chat.bsky.group.getJoinLinkPreviews(input: .init(codes: [code]))
+            guard isCurrentScene(operationScene) else { return }
             guard (200 ... 299).contains(statusCode) else {
-                errorMessage = "Failed to load group preview (HTTP \(statusCode))."
+                intentViewLogger.error("getJoinLinkPreviews failed with HTTP \(statusCode, privacy: .public)")
+                errorMessage = "This invite couldn’t be loaded. It may have expired."
                 isLoading = false
                 return
             }
@@ -369,35 +392,47 @@ struct GroupChatJoinIntentView: View {
                 case .chatBskyGroupDefsInvalidJoinLinkPreviewView:
                     self.isInvalid = true
                 case .unexpected:
-                    errorMessage = "Received an unrecognized preview response."
+                    intentViewLogger.error("getJoinLinkPreviews returned an unrecognized preview type")
+                    errorMessage = "This invite couldn’t be loaded. It may have expired."
                 }
             } else {
                 self.isInvalid = true
             }
         } catch {
-            errorMessage = "Failed to load group preview: \(error.localizedDescription)"
+            guard isCurrentScene(operationScene) else { return }
+            intentViewLogger.error("getJoinLinkPreviews failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = UserFacingError.message(for: error, action: "load this invite")
         }
         isLoading = false
     }
 
     private func joinGroup() async {
+        weak var operationScene = sceneNavigation
+        guard isCurrentScene(operationScene) else { return }
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not authenticated"
+            errorMessage = "Sign in to join this group."
             return
         }
         isJoining = true
         errorMessage = nil
-        defer { isJoining = false }
+        defer {
+            if isCurrentScene(operationScene) {
+                isJoining = false
+            }
+        }
 
         do {
             let (statusCode, output) = try await client.chat.bsky.group.requestJoin(input: .init(code: code))
+            guard isCurrentScene(operationScene) else { return }
             guard (200 ... 299).contains(statusCode) else {
-                errorMessage = "Failed to join group (HTTP \(statusCode))."
+                intentViewLogger.error("requestJoin failed with HTTP \(statusCode, privacy: .public)")
+                errorMessage = "Couldn’t join this group. Try again."
                 return
             }
 
             guard let output = output else {
-                errorMessage = "Failed to receive valid response from server."
+                intentViewLogger.error("requestJoin returned no body")
+                errorMessage = "Couldn’t join this group. Try again."
                 return
             }
 
@@ -406,15 +441,27 @@ struct GroupChatJoinIntentView: View {
                 if let convoId = output.convo?.id {
                     self.joinedConvoId = convoId
                 } else {
-                    errorMessage = "Joined group, but failed to load conversation details."
+                    errorMessage = "You joined the group. Open Messages to find the conversation."
                 }
             case "requested":
                 self.isPendingRequest = true
             default:
-                errorMessage = "Unexpected join response status: \(output.status)"
+                intentViewLogger.error("requestJoin returned unexpected status \(output.status, privacy: .public)")
+                errorMessage = "Couldn’t join this group. Try again."
             }
         } catch {
-            errorMessage = "Error joining group: \(error.localizedDescription)"
+            guard isCurrentScene(operationScene) else { return }
+            intentViewLogger.error("requestJoin failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = UserFacingError.message(for: error, action: "join this group")
         }
+    }
+
+    private func isCurrentScene(_ context: SceneNavigationContext?) -> Bool {
+        guard let context else { return false }
+        return context === sceneNavigation
+            && !context.isInvalidated
+            && context.accountDID == appState.userDID
+            && appState.isAuthenticated
+            && !Task.isCancelled
     }
 }

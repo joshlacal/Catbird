@@ -3,7 +3,7 @@ import Petrel
 
 public struct ThreadgateSettings: Equatable, Sendable {
   public enum ReplyOption: String, CaseIterable, Identifiable, Sendable {
-    case everybody = "Everybody"
+    case everybody = "Anyone"
     case nobody = "Nobody"
     case mentioned = "Mentioned users"
     case following = "Users you follow"

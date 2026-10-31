@@ -34,28 +34,25 @@ struct LikesView: View {
     @State private var initialError: Error?
     @State private var pageError: Error?
     @State private var cursor: String?
+    /// Set once a load succeeds, so returning to the screen doesn't refetch page 1.
+    @State private var hasLoaded = false
     var body: some View {
         VStack {
             if loading && likes.isEmpty {
                 ProgressView()
                     .padding()
             } else if let initialError = initialError, likes.isEmpty {
-                VStack(spacing: 12) {
-                    Text("Error loading likes: \(initialError.localizedDescription)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                    
-                    Button("Retry") {
-                        Task { await loadLikes() }
-                    }
-                    .buttonStyle(.borderedProminent)
+                ListLoadFailureView(title: "Couldn’t Load Likes", error: initialError) {
+                    Task { await loadLikes() }
                 }
-                .padding()
-            } else if likes.isEmpty {
+            } else if likes.isEmpty, hasLoaded {
                 Text("No likes yet")
                     .padding()
                     .foregroundColor(.secondary)
+            } else if likes.isEmpty {
+                // A cancelled load leaves nothing loaded yet; `.task` reruns it.
+                ProgressView()
+                    .padding()
             } else {
                 List {
                     ForEach(likes, id: \.actor.did) { like in
@@ -67,20 +64,10 @@ struct LikesView: View {
                             .listRowInsets(EdgeInsets())
                     }
 
-                    if let pageError = pageError {
-                        VStack(spacing: 8) {
-                            Text("Failed to load more: \(pageError.localizedDescription)")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                            Button("Retry") {
-                                Task { await loadMoreLikes() }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                    if pageError != nil {
+                        ListPageFailureRow {
+                            Task { await loadMoreLikes() }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
                         .listRowSeparator(.hidden)
                     } else if cursor != nil {
                         ProgressView()
@@ -102,6 +89,10 @@ struct LikesView: View {
         }
         .navigationTitle(resolvedTitle)
         .task {
+            // `.task` restarts each time the screen reappears, such as on the way
+            // back from a liker's profile; keep the loaded pages and scroll position.
+            // Pull to refresh reloads.
+            guard !hasLoaded else { return }
             await loadLikes()
         }
     }
@@ -144,8 +135,12 @@ struct LikesView: View {
             }
             likes = uniqueLikes
             cursor = result.cursor
+            hasLoaded = true
         } catch {
-            self.initialError = error
+            // A load cancelled by leaving the screen isn't an error; it reruns on return.
+            if !Task.isCancelled {
+                self.initialError = error
+            }
         }
         
         loading = false
