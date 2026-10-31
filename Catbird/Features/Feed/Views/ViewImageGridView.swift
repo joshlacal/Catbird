@@ -231,6 +231,15 @@ struct ViewImageGridView: View {
     }
   }
 
+  /// Opens the fullscreen viewer on `viewImage`, as a tap does.
+  private func openViewer(for viewImage: AppBskyEmbedImages.ViewImage) {
+    let index = viewImages.firstIndex(where: { $0.id == viewImage.id }) ?? 0
+    currentIndex = index
+    lastViewedIndex = index
+    selectedImage = viewImage
+    activeTransitionID = viewImage.id
+  }
+
   @ViewBuilder
   private func imageView(
     for viewImage: AppBskyEmbedImages.ViewImage, width: CGFloat, height: CGFloat
@@ -290,6 +299,9 @@ struct ViewImageGridView: View {
         altBadge(for: viewImage)
           .padding(6)
       }
+    }
+    .imagePreviewContextMenu(viewImage, isEnabled: !isBlurred) {
+      openViewer(for: viewImage)
     }
     .onTapGesture {
       if shouldBlur {
@@ -389,6 +401,9 @@ struct ViewImageGridView: View {
           altBadge(for: viewImage)
             .padding(10)
         }
+      }
+      .imagePreviewContextMenu(viewImage, isEnabled: !isBlurred) {
+        openViewer(for: viewImage)
       }
       .onTapGesture {
         if shouldBlur {
