@@ -43,10 +43,7 @@ struct FeedLibrarySettingsView: View {
       orderFeedback
     }
     .navigationTitle("Feed Library")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-    .toolbar { ToolbarItem(placement: .primaryAction) { EditButton().disabled(isLoading || isOrdering) } }
+    .modifier(FeedLibraryEditChrome(isDisabled: isLoading || isOrdering))
     .task(id: appState.userDID) { await load() }
   }
 
@@ -153,5 +150,20 @@ struct FeedLibrarySettingsView: View {
       } catch is CancellationError { return }
       catch { continue }
     }
+  }
+}
+
+/// iOS reorders pinned feeds through an Edit button; macOS lists reorder by dragging.
+private struct FeedLibraryEditChrome: ViewModifier {
+  let isDisabled: Bool
+
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content
+      .toolbarTitleDisplayMode(.inline)
+      .toolbar { ToolbarItem(placement: .primaryAction) { EditButton().disabled(isDisabled) } }
+    #else
+    content
+    #endif
   }
 }

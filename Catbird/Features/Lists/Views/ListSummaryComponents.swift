@@ -257,6 +257,7 @@ private func previewList(
   )
 }
 
+#if os(iOS)
 #Preview("List rows") {
   let lists = [
     previewList(name: "Science Writers", purpose: .appbskygraphdefscuratelist, description: "Journalists and researchers who write about space, climate, and biology.", count: 42),
@@ -285,3 +286,4 @@ private func previewList(
   .listStyle(.insetGrouped)
   .previewWithMockEnvironment()
 }
+#endif

@@ -433,6 +433,11 @@ public struct OnboardingAvatarStep: View {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions as CFDictionary) else {
             return UIImage(data: data)
         }
+        #if os(iOS)
         return UIImage(cgImage: cgImage)
+        #else
+        // A zero size makes NSImage use the thumbnail's pixel dimensions.
+        return UIImage(cgImage: cgImage, size: .zero)
+        #endif
     }
 }

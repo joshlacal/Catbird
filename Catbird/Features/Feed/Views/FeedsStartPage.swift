@@ -1106,11 +1106,20 @@ struct FeedsStartPage: View {
     }
   }
 
+  /// The feed search toggle lives in the bottom toolbar on iOS; macOS has no bottom bar.
+  private var searchTogglePlacement: ToolbarItemPlacement {
+    #if os(iOS)
+    .bottomBar
+    #else
+    .automatic
+    #endif
+  }
+
   // MARK: - Body
   var body: some View {
     mainContent
     .toolbar {
-      ToolbarItem(placement: .bottomBar) {
+      ToolbarItem(placement: searchTogglePlacement) {
         Button {
           if isSearchBarVisible {
             searchText = ""

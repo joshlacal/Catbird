@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG && os(iOS)
 import Petrel
 import SwiftData
 import SwiftUI

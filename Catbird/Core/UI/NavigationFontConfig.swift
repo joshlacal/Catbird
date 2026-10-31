@@ -428,15 +428,11 @@ enum NavigationFontConfig {
     }
 
     static func createLargeTitleFont() -> NSFont {
-        return createLargeTitleFont(fontManager: resolveActiveFontManager())
+        return createLargeTitleFont(fontManager: FontManager())
     }
 
     static func createTitleFont() -> NSFont {
-        return createTitleFont(fontManager: resolveActiveFontManager())
-    }
-
-    static func forceApplyToAllNavigationBars() {
-        // No-op on macOS
+        return createTitleFont(fontManager: FontManager())
     }
 
     /// No-op on macOS (no font caching needed for navigation bars)

@@ -53,7 +53,7 @@ private var isVideoFeedUIFixture: Bool {
 }
 
 private var isSocialActionsUIFixture: Bool {
-  #if DEBUG
+  #if DEBUG && os(iOS)
   ProcessInfo.processInfo.arguments.contains("--social-actions-ui-fixture")
   #else
   false
@@ -1357,7 +1357,11 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           } else if isVideoFeedUIFixture {
             VideoFeedUIFixture()
           } else if isSocialActionsUIFixture {
+            #if os(iOS)
             SocialActionsUIFixture()
+            #else
+            EmptyView()
+            #endif
           } else if isInlineReplyUIFixture {
             #if os(iOS)
             InlineReplyValidationFixture()
