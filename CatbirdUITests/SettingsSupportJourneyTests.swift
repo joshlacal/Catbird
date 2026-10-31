@@ -155,7 +155,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
       let endMarker = [
         "accessibility": app.switches["accessibility.haptics"],
         "textReadability": app.staticTexts[
-          "Reading time estimates appear on posts with at least 100 words. Link appearance follows this account's accent color."
+          "Reading time estimates appear on posts with at least 100 words. Link appearance follows this account’s accent color."
         ],
         "content": row(beginningWith: "Languages", in: app),
         // LabeledContent combines the title and the version into one element.
