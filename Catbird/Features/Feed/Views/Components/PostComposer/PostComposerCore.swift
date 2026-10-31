@@ -800,7 +800,7 @@ extension PostComposerViewModel {
         case let .circle(circle):
             logger.info("Calling CircleService.publishPost to space: '\(circle.uri.uriString())'")
             let service = circleService ?? appState.circleService
-            let replyRef = parentPost.map { PostManager.createReplyRef(for: $0) }
+            let replyRef = circleReplyRef()
             let circleDraft = CirclePostDraft(
                 text: postText,
                 facets: facets.isEmpty ? nil : facets,

@@ -425,12 +425,13 @@ struct PostComposerViewUIKit: View {
 
               VStack(spacing: 16) {
                 if !vm.isThreadMode {
-                  if appState.circlesEnabled || vm.destination != .public {
+                  if appState.circlesEnabled || vm.destination != .public || vm.unresolvedCircleAudience != nil {
                     CircleAudiencePicker(
                       selectedDestination: Binding(
                         get: { vm.destination },
                         set: { vm.selectDestination($0) }
                       ),
+                      needsChoice: vm.unresolvedCircleAudience != nil,
                       isReplyLocked: vm.isReplyLockedToCircle,
                       isSubmitting: isSubmitting || vm.activeSubmission != nil || vm.mediaItems.contains { $0.isLoading }
                     )
@@ -804,7 +805,7 @@ private struct ComposerPostToolbarButton: View {
   let action: () -> Void
 
   private var canSubmitPost: Bool {
-    guard vm.destination == .public || vm.appState.circlesEnabled else { return false }
+    guard vm.canPostToDestination else { return false }
     return vm.submitValidationState.canSubmit && !isSubmitting && !hasPendingMediaIntent
   }
 
