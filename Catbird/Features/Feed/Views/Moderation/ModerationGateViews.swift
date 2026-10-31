@@ -5,8 +5,8 @@ import SwiftUI
 // a media gate. A reveal is keyed by the causes it was given
 // (`ModerationRevealState`), so a different set of causes is concealed again
 // even when the hosting view is reused for another post. The body and media
-// gates also record it for their post in `ModerationRevealStore`, so it
-// survives cell reuse and re-appearance.
+// gates also record it for their post (`\.moderationRevealSubject`) in
+// `ModerationRevealStore`, so it survives cell reuse and re-appearance.
 
 // MARK: - Hidden row
 
@@ -92,11 +92,16 @@ struct ModerationContentGate<Content: View>: View {
   @State private var localReveal: ModerationRevealState?
   @Environment(AppState.self) private var appState
   @Environment(\.postID) private var postID
+  @Environment(\.moderationRevealSubject) private var revealSubject
   @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
+
+  /// The post `ModerationRevealStore` records this gate's reveal under.
+  private var storeSubject: String { revealSubject.isEmpty ? postID : revealSubject }
 
   private var revealed: Bool {
     if let localReveal { return localReveal.isRevealed(ui) }
-    return ModerationRevealStore.shared.isRevealed(ui, gate: .body, postID: postID, accountDID: appState.userDID)
+    return ModerationRevealStore.shared.isRevealed(
+      ui, gate: .body, subject: storeSubject, accountDID: appState.userDID)
   }
 
   var body: some View {
@@ -113,7 +118,7 @@ struct ModerationContentGate<Content: View>: View {
         content()
       }
     }
-    .onChange(of: postID) { _, _ in
+    .onChange(of: storeSubject) { _, _ in
       localReveal = nil
     }
   }
@@ -158,7 +163,7 @@ struct ModerationContentGate<Content: View>: View {
       localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
     }
     ModerationRevealStore.shared.setRevealed(
-      isRevealed, ui: ui, gate: .body, postID: postID, accountDID: appState.userDID)
+      isRevealed, ui: ui, gate: .body, subject: storeSubject, accountDID: appState.userDID)
   }
 }
 
@@ -185,11 +190,16 @@ struct ModerationMediaGate<Content: View>: View {
   @State private var localReveal: ModerationRevealState?
   @Environment(AppState.self) private var appState
   @Environment(\.postID) private var postID
+  @Environment(\.moderationRevealSubject) private var revealSubject
   @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
+
+  /// The post `ModerationRevealStore` records this gate's reveal under.
+  private var storeSubject: String { revealSubject.isEmpty ? postID : revealSubject }
 
   private var revealed: Bool {
     if let localReveal { return localReveal.isRevealed(ui) }
-    return ModerationRevealStore.shared.isRevealed(ui, gate: .media, postID: postID, accountDID: appState.userDID)
+    return ModerationRevealStore.shared.isRevealed(
+      ui, gate: .media, subject: storeSubject, accountDID: appState.userDID)
   }
 
   var body: some View {
@@ -215,7 +225,7 @@ struct ModerationMediaGate<Content: View>: View {
         gatedContent
       }
     }
-    .onChange(of: postID) { _, _ in
+    .onChange(of: storeSubject) { _, _ in
       localReveal = nil
     }
   }
@@ -327,7 +337,26 @@ struct ModerationMediaGate<Content: View>: View {
       localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
     }
     ModerationRevealStore.shared.setRevealed(
-      isRevealed, ui: ui, gate: .media, postID: postID, accountDID: appState.userDID)
+      isRevealed, ui: ui, gate: .media, subject: storeSubject, accountDID: appState.userDID)
+  }
+}
+
+// MARK: - Reveal subject
+
+private struct ModerationRevealSubjectKey: EnvironmentKey {
+  static let defaultValue = ""
+}
+
+extension EnvironmentValues {
+  /// The AT URI of the post whose moderation a gate shows, set where a post is
+  /// rendered: `PostView`, the thread anchor and a quote card. Body and media
+  /// gates record Show and Hide for it in `ModerationRevealStore`, so a reveal
+  /// survives cell reuse and applies wherever the same post appears again.
+  /// When it is empty a gate uses `\.postID`, and keeps its reveal in view
+  /// state only when that is empty too.
+  var moderationRevealSubject: String {
+    get { self[ModerationRevealSubjectKey.self] }
+    set { self[ModerationRevealSubjectKey.self] = newValue }
   }
 }
 

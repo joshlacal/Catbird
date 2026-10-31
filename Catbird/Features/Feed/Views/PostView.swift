@@ -777,8 +777,9 @@ private struct PostContentLayout: View {
           path: $path
         )
       }
-      // The gate remembers a reveal for this post, so it survives cell reuse.
-      .environment(\.postID, postID)
+      // Reveals are remembered for the post, not the row, so they survive cell
+      // reuse and carry to other rows and screens that show it.
+      .environment(\.moderationRevealSubject, displayed.value.uri.uriString())
     }
 
     if !isReadOnlyPreview {

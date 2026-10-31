@@ -251,11 +251,14 @@ struct ModerationRevealState: Equatable, Sendable {
 ///
 /// Feed and thread rows are SwiftUI views hosted in reused collection view
 /// cells, so a gate's view state is thrown away whenever its cell is reused,
-/// and a revealed post scrolled away and back came back concealed. A gate under
-/// a post (`\.postID` set) records Show and Hide here and starts from the
-/// recorded choice, so the row lays out revealed on its first pass. An entry is
-/// for one account, one post, one kind of gate and one set of causes, so a new
-/// cause or a cause the viewer may no longer override conceals again, as
+/// and a revealed post scrolled away and back came back concealed. A gate with
+/// a subject (`\.moderationRevealSubject`, the post's AT URI) records Show and
+/// Hide here and starts from the recorded choice, so the row lays out revealed
+/// on its first pass, and the same post in another row or on another screen
+/// starts revealed too. A quote card's subject is the quoted post, so showing
+/// a post never opens a post it quotes. An entry is for one account, one
+/// subject, one kind of gate and one set of causes, so a new cause or a cause
+/// the viewer may no longer override conceals again, as
 /// `ModerationRevealState` does.
 @MainActor
 final class ModerationRevealStore {
@@ -266,7 +269,7 @@ final class ModerationRevealStore {
 
   private struct Key: Hashable {
     let accountDID: String
-    let postID: String
+    let subject: String
     let gate: Gate
     let causes: [ModerationCauseKey]
   }
@@ -277,15 +280,15 @@ final class ModerationRevealStore {
 
   private var revealedKeys: Set<Key> = []
 
-  func isRevealed(_ ui: ModerationUI, gate: Gate, postID: String, accountDID: String) -> Bool {
-    guard !ui.noOverride, let key = Self.key(ui, gate: gate, postID: postID, accountDID: accountDID) else {
+  func isRevealed(_ ui: ModerationUI, gate: Gate, subject: String, accountDID: String) -> Bool {
+    guard !ui.noOverride, let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else {
       return false
     }
     return revealedKeys.contains(key)
   }
 
-  func setRevealed(_ revealed: Bool, ui: ModerationUI, gate: Gate, postID: String, accountDID: String) {
-    guard let key = Self.key(ui, gate: gate, postID: postID, accountDID: accountDID) else { return }
+  func setRevealed(_ revealed: Bool, ui: ModerationUI, gate: Gate, subject: String, accountDID: String) {
+    guard let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else { return }
     if revealed {
       if revealedKeys.count >= Self.maxEntries { revealedKeys.removeAll() }
       revealedKeys.insert(key)
@@ -294,10 +297,10 @@ final class ModerationRevealStore {
     }
   }
 
-  /// No key without a post: a gate outside one keeps its reveal in view state only.
-  private static func key(_ ui: ModerationUI, gate: Gate, postID: String, accountDID: String) -> Key? {
-    guard !postID.isEmpty else { return nil }
-    return Key(accountDID: accountDID, postID: postID, gate: gate, causes: ui.blurs.map(\.key))
+  /// No key without a subject: such a gate keeps its reveal in view state only.
+  private static func key(_ ui: ModerationUI, gate: Gate, subject: String, accountDID: String) -> Key? {
+    guard !subject.isEmpty else { return nil }
+    return Key(accountDID: accountDID, subject: subject, gate: gate, causes: ui.blurs.map(\.key))
   }
 }
 

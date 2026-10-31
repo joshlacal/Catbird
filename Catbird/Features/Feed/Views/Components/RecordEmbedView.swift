@@ -94,6 +94,9 @@ struct RecordEmbedView: View {
                     quotedPostView(post, moderation: moderation)
                         .postRevealFade(isEnabled: showsMutedQuote(post))
                 }
+                // The quote's body and media gates remember reveals for the quoted
+                // post, so showing the parent never opens the quote's own warning.
+                .environment(\.moderationRevealSubject, post.uri.uriString())
                 // A nested label warning can be shorter than the wrapping mute notice.
                 // Keep that reveal from shrinking the row and clamping a feed at its end.
                 .frame(minHeight: mutedQuoteMinimumHeight(post), alignment: .top)

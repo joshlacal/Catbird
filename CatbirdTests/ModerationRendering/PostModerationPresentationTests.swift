@@ -396,6 +396,70 @@ struct ModerationRevealStateTests {
   }
 }
 
+// MARK: - Reveal store
+
+/// What a gate remembers across cell reuse: a reveal belongs to one post (its
+/// subject), one kind of gate and one set of causes.
+@MainActor
+@Suite("Moderation rendering: reveal store")
+struct ModerationRevealStoreTests {
+  private typealias F = RenderingFixtures
+
+  private func warnBody(uri: String = F.postURI) throws -> ModerationUI {
+    try PostModerationPresentation.make(
+      post: F.post(uri: uri, labels: [try F.label("!warn", uri: uri)]), policy: F.policy()).body
+  }
+
+  @Test("A reveal is remembered for its post, gate kind and account, and ends on Hide")
+  func revealIsRememberedForItsPost() throws {
+    let warn = try warnBody()
+    let store = ModerationRevealStore()
+    store.setRevealed(true, ui: warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID)
+    #expect(store.isRevealed(warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID))
+    #expect(!store.isRevealed(warn, gate: .media, subject: F.postURI, accountDID: F.viewerDID))
+    #expect(!store.isRevealed(warn, gate: .body, subject: F.postURI, accountDID: "did:web:other.test"))
+    store.setRevealed(false, ui: warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID)
+    #expect(!store.isRevealed(warn, gate: .body, subject: F.postURI, accountDID: F.viewerDID))
+  }
+
+  @Test("Another post by an account-labelled author keeps its own warning")
+  func accountCauseIsPerPost() throws {
+    let author = try F.profile(labels: [try F.accountLabel("!warn")])
+    let otherURI = "at://\(F.authorDID)/app.bsky.feed.post/two"
+    let first = try PostModerationPresentation.make(post: F.post(author: author), policy: F.policy()).body
+    let second = try PostModerationPresentation.make(
+      post: F.post(uri: otherURI, author: author), policy: F.policy()).body
+    #expect(first.blurs.map(\.key) == second.blurs.map(\.key), "an account cause is the same on every post")
+    let store = ModerationRevealStore()
+    store.setRevealed(true, ui: first, gate: .body, subject: F.postURI, accountDID: F.viewerDID)
+    #expect(!store.isRevealed(second, gate: .body, subject: otherURI, accountDID: F.viewerDID))
+  }
+
+  @Test("Showing a self-quote by an account-labelled author never opens the quote")
+  func selfQuoteKeepsItsOwnWarning() throws {
+    let accountWarn = try F.accountLabel("!warn", did: F.quotedAuthorDID)
+    let quoted = try F.quoted(authorLabels: [accountWarn])
+    let parentURI = "at://\(F.quotedAuthorDID)/app.bsky.feed.post/parent"
+    let parent = try F.post(
+      uri: parentURI, author: F.profile(did: F.quotedAuthorDID, labels: [accountWarn]), quote: quoted)
+    let parentBody = PostModerationPresentation.make(post: parent, policy: F.policy()).body
+    let quoteBody = PostModerationPresentation.make(quoted: quoted, policy: F.policy()).body
+    #expect(parentBody.blur && quoteBody.blur)
+    #expect(parentBody.blurs.map(\.key) == quoteBody.blurs.map(\.key), "both gates show the same cause")
+    let store = ModerationRevealStore()
+    store.setRevealed(true, ui: parentBody, gate: .body, subject: parentURI, accountDID: F.viewerDID)
+    #expect(!store.isRevealed(quoteBody, gate: .body, subject: F.quotedURI, accountDID: F.viewerDID))
+  }
+
+  @Test("A gate with no subject records nothing")
+  func noSubjectRecordsNothing() throws {
+    let warn = try warnBody()
+    let store = ModerationRevealStore()
+    store.setRevealed(true, ui: warn, gate: .body, subject: "", accountDID: F.viewerDID)
+    #expect(!store.isRevealed(warn, gate: .body, subject: "", accountDID: F.viewerDID))
+  }
+}
+
 @Suite("Moderation reveal motion")
 struct ModerationRevealMotionTests {
   @Test("Layout reveal motion is available when accessibility settings allow it")
