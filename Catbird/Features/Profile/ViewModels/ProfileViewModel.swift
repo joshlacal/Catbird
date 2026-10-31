@@ -458,6 +458,7 @@ import AppKit
       )
 
       let (responseCode, output) = try await client.app.bsky.feed.getActorLikes(input: params)
+      try Task.checkCancellation()
 
       guard responseCode == 200, let feed = output?.feed else {
         logger.warning("getActorLikes returned HTTP \(responseCode)")
@@ -479,6 +480,7 @@ import AppKit
         cursor: cursor,
         limit: 25
       )
+      try Task.checkCancellation()
 
       await MainActor.run {
         if reset {
@@ -554,6 +556,7 @@ import AppKit
 
     let (responseCode, output) = try await client.app.bsky.graph.getActorStarterPacks(
       input: params)
+    try Task.checkCancellation()
 
     guard responseCode == 200, let packs = output?.starterPacks else {
       logger.warning("Failed to load starter packs: HTTP \(responseCode)")
@@ -595,6 +598,7 @@ import AppKit
     )
 
     let (responseCode, output) = try await client.app.bsky.graph.getLists(input: params)
+    try Task.checkCancellation()
 
     guard responseCode == 200, let lists = output?.lists else {
       logger.warning("Failed to load lists: HTTP \(responseCode)")
@@ -842,6 +846,7 @@ import AppKit
     )
 
     let (responseCode, output) = try await client.app.bsky.feed.getActorFeeds(input: params)
+    try Task.checkCancellation()
 
     guard responseCode == 200, let fetchedFeeds = output?.feeds else {
       logger.warning("Failed to load feeds: HTTP \(responseCode)")
@@ -888,6 +893,11 @@ import AppKit
   /// Cancelling a caller cancels the load it started (the request of a section the reader
   /// left), not one it waits for. A caller cancelled while it waits does not load, and throws
   /// `CancellationError` once that load ends, whether it succeeded or failed.
+  ///
+  /// A request can still finish after its load was cancelled, so each fetch checks for
+  /// cancellation once its request returns and before it changes any state. A cancelled load
+  /// therefore ends in `CancellationError`, never in a page written after an account switch or
+  /// taken by a waiting first load as its own.
   private func loadSection(_ section: MoreSection, reset: Bool) async throws {
     guard client != nil, profile != nil else { return }
     while let inFlight = sectionLoads[section] {
