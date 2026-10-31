@@ -323,9 +323,15 @@ var id: String {
     // 1. There's no embed (post handles its own labels), OR
     // 2. There are text-specific labels that don't apply to the embed
     if !hasEmbed && (labels?.isEmpty == false || !selfLabelValues.isEmpty) {
+      // Warn over the text only. The action buttons stay outside so revealing
+      // swaps just the text, not the whole post body.
       ContentLabelManager(labels: labels, selfLabelValues: selfLabelValues, contentType: "post") {
-        normalPostContent
+        postContentView
+          .padding(.bottom, PostView.baseUnit)
       }
+      .environment(\.postID, id)
+
+      actionButtons
     } else {
       // Embeds handle their own labels exclusively
       normalPostContent
@@ -345,7 +351,10 @@ var id: String {
         .padding(.bottom, PostView.baseUnit)
     }
 
-    // Action buttons
+    actionButtons
+  }
+
+  private var actionButtons: some View {
     ActionButtonsView(
       post: postState.currentPost,
       postViewModel: viewModel,
