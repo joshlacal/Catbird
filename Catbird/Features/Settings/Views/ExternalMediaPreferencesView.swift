@@ -13,13 +13,13 @@ struct ExternalMediaPreferencesView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        SettingsCategoryIcon(systemImage: "hand.raised.shield.fill", family: .media)
+                        SettingsCategoryIcon(systemImage: "hand.raised.shield", family: .media)
                         Text("Privacy Notice")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                     }
                     
                     Text("Playing external media connects directly to third-party servers. These providers may collect your IP address, device information, and browsing activity in accordance with their privacy policies.")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
@@ -29,17 +29,14 @@ struct ExternalMediaPreferencesView: View {
                 Button("Allow All Providers") {
                     bulkConsent = .allow
                 }
-                .foregroundStyle(.blue)
-                
-                Button("Ask Before Playing (Reset All)") {
+
+                Button("Ask Before Playing for All") {
                     bulkConsent = .undecided
                 }
-                .foregroundStyle(.primary)
-                
-                Button("Block All Providers") {
+
+                Button("Block All Providers", role: .destructive) {
                     bulkConsent = .hide
                 }
-                .foregroundStyle(.red)
             }
             .disabled(!appState.appSettings.canEditPersistedSettings)
             
@@ -58,7 +55,7 @@ struct ExternalMediaPreferencesView: View {
             set: { if !$0 { bulkConsent = nil } }
         ), titleVisibility: .visible) {
             if let bulkConsent {
-                Button(bulkConsent.title) {
+                Button(bulkConsent.title, role: bulkConsent == .hide ? .destructive : nil) {
                     _ = appState.appSettings.applyExternalMediaConsent(
                         bulkConsent, providers: ExternalMediaProvider.allCases
                     )
@@ -79,15 +76,15 @@ struct ExternalMediaPreferencesView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.displayName)
-                    .font(.body)
+                    .appFont(AppTextRole.body)
                 Text(provider.hostDescription)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
             
             Spacer()
             
-            Picker("\(provider.displayName) playback", selection: Binding(
+            Picker("\(provider.displayName) Playback Permission", selection: Binding(
                 get: { appState.appSettings.externalMediaConsent(for: provider) },
                 set: { _ = appState.appSettings.applyExternalMediaConsent($0, providers: [provider]) }
             )) {

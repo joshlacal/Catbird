@@ -7,10 +7,10 @@ struct AdvancedSettingsHubView: View {
     init(initialFocus: SettingsControlID? = nil) { self.initialFocus = initialFocus }
     var body: some View {
         SettingsFocusedForm(initialFocus: initialFocus) {
-            Section("Current account") {
+            Section("Current Account") {
                 SettingsLink(screen: .providers, summary: "Content and chat servers; changes apply when saved", systemImage: "server.rack", family: .advanced)
             }
-            Section("This device") {
+            Section("This Device") {
                 #if DEBUG
                 SettingsLink(screen: .systemLogs, summary: "View and export diagnostic logs", systemImage: "doc.text.magnifyingglass", family: .advanced)
                 #endif
@@ -50,6 +50,8 @@ struct SettingsCacheView: View {
         .confirmationDialog("Clear Image & Web Cache?", isPresented: $confirmingClear, titleVisibility: .visible) {
             Button("Clear Cache", role: .destructive) { clearCache() }
             Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Images and web media will download again as needed.")
         }
     }
     private func clearCache() {

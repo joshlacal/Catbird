@@ -29,9 +29,9 @@ struct InterestPickerSheet: View {
     NavigationStack {
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 16) {
-          Text("Select topics you're interested in to get better feed recommendations")
+          Text("Choose topics you’re interested in to get better feed recommendations.")
             .appFont(AppTextRole.body)
-            .foregroundColor(.secondary)
+            .foregroundStyle(.secondary)
 
           FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
             ForEach(availableInterests) { interest in
@@ -89,8 +89,9 @@ struct InterestTag: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(isSelected ? Color.accentColor : Color(platformColor: .platformSecondarySystemBackground))
-        .foregroundColor(isSelected ? .white : .primary)
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
         .clipShape(Capsule())
     }
+    .accessibilityAddTraits(isSelected ? .isSelected : [])
   }
 }
