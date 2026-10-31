@@ -286,7 +286,9 @@ private struct BlockedContentFullCard: View {
           .foregroundStyle(.secondary)
       }
       if variant == .anchor {
-        Text("The original post is unavailable, but replies are shown to preserve the conversation.")
+        // The AppView returns only the blocked item for a blocked anchor
+        // (getPostThreadV2 drops parents and replies), so don't promise them.
+        Text("Replies to blocked posts aren't shown.")
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
