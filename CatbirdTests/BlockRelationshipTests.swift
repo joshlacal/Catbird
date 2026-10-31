@@ -35,6 +35,7 @@ struct BlockRelationshipTests {
   @Test func mutual() {
     let r = BlockRelationship(blocking: blockUri, blockedBy: true, blockingByList: nil)
     #expect(r.direction == .mutual)
+    #expect(!r.canReveal)
     #expect(r.statusText == "You and this account have blocked each other")
   }
 
