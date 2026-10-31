@@ -366,11 +366,13 @@ struct ModernVideoPlayerView: View {
     return kind
   }
 
+  /// Visual only: the player element's label (`videoAccessibilityLabel`)
+  /// already tells VoiceOver this is a GIF.
   private var gifBadge: some View {
     MediaBadgeLabel(text: "GIF", isLarge: appState.appSettings.largerAltTextBadges)
       .padding(10)
       .allowsHitTesting(false)
-      .accessibilityLabel("Animated GIF")
+      .accessibilityHidden(true)
   }
 
   @ViewBuilder
