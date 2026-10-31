@@ -216,14 +216,7 @@ struct ViewImageGridView: View {
       Button {
         altTextPreviewImage = image
       } label: {
-        Text("ALT")
-          .appFont(isLarge ? AppTextRole.subheadline : AppTextRole.caption2)
-          .fontWeight(.semibold)
-          .foregroundStyle(.white)
-          .frame(minWidth: AltTextBadgeMetrics.side(isLarge: isLarge))
-          .padding(.horizontal, isLarge ? 5 : 3)
-          .padding(.vertical, isLarge ? 4 : 2)
-          .background(.black.opacity(0.65), in: Capsule())
+        MediaBadgeLabel(text: "ALT", isLarge: isLarge)
       }
       .buttonStyle(.plain)
       .accessibilityLabel("Alt text available")
@@ -428,10 +421,6 @@ struct ViewImageGridView: View {
     }
     .layoutPriority(1)
   }
-}
-
-enum AltTextBadgeMetrics {
-  static func side(isLarge: Bool) -> CGFloat { isLarge ? 32 : 24 }
 }
 
 struct AltTextPreviewView: View {

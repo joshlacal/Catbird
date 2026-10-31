@@ -172,6 +172,10 @@ struct ModernVideoPlayerView: View {
       if let player = player, case .hlsStream = model.type {
         videoControls(player: player)
       }
+
+      if model.type.isGif {
+        gifBadge
+      }
     }
 
     let finalView = playerContainer
@@ -265,6 +269,13 @@ struct ModernVideoPlayerView: View {
       ProgressView()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+  }
+
+  private var gifBadge: some View {
+    MediaBadgeLabel(text: "GIF", isLarge: appState.appSettings.largerAltTextBadges)
+      .padding(10)
+      .allowsHitTesting(false)
+      .accessibilityLabel("Animated GIF")
   }
 
   @ViewBuilder
