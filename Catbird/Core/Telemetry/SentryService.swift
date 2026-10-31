@@ -5,61 +5,98 @@ import Sentry
 #endif
 
 enum SentryService {
+    /// SentrySDK.start must run on the main thread (it reads UIApplication state).
+    @MainActor
     static func start() {
         #if canImport(Sentry)
-        guard let dsn = resolveDSN() else { return }
-
+        let configuration = telemetryConfiguration()
+        guard configuration.backend == .glitchTip, let dsn = configuration.dsn else { return }
+        let bundle = Bundle.main
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         SentrySDK.start { options in
-            options.dsn = dsn
-
-            #if DEBUG
-            options.debug = false  // Even in debug, disable Sentry debug to reduce noise
-            options.environment = "debug"
-            options.tracesSampleRate = 0.1  // Reduced for debug builds
-            options.profilesSampleRate = 0.05
-            #elseif BETA
-            options.debug = false
-            options.environment = "beta"
-            options.tracesSampleRate = 0.15
-            options.profilesSampleRate = 0.1
-            #else
-            options.debug = false
-            options.environment = "production"
-            options.tracesSampleRate = 0.05  // Much lower for production
-            options.profilesSampleRate = 0.02
-            #endif
-
-            options.enableAppHangTracking = true
-
-            // Disable launch profiling - it initializes too early during +load
-            // and can cause crashes in SentryFileManager during dyld initialization
-            options.enableAppLaunchProfiling = false
-
-            let bundle = Bundle.main
-            let version = (bundle.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
-            let build = (bundle.infoDictionary?["CFBundleVersion"] as? String) ?? ""
-            options.releaseName = "Catbird@\(version)+\(build)"
-
-            // Filter out noisy/benign errors
-            options.beforeSend = { event in
-                return filterEvent(event)
-            }
+            configureOptions(options, dsn: dsn, version: version, build: build)
         }
         #endif
     }
 
+    #if canImport(Sentry)
+    /// Configure locally so privacy behavior can be verified without starting SDK transport.
+    static func configureOptions(_ options: Options, dsn: String, version: String, build: String) {
+        options.dsn = dsn
+        options.debug = false
+        #if DEBUG
+        options.environment = "debug"
+        #elseif BETA
+        options.environment = "beta"
+        #else
+        options.environment = "production"
+        #endif
+        options.releaseName = "Catbird@\(version)+\(build)"
+        options.dist = build
+        options.sendDefaultPii = false
+        options.enableCrashHandler = true
+        options.enableAppHangTracking = true
+
+        // GlitchTip receives minimized failure reports, without session/performance envelopes.
+        options.tracesSampleRate = 0
+        options.profilesSampleRate = 0
+        options.enableAutoPerformanceTracing = false
+        options.enablePerformanceV2 = false
+        options.enablePersistingTracesWhenCrashing = false
+        options.enableAppLaunchProfiling = false
+        options.enableAutoSessionTracking = false
+        options.enableWatchdogTerminationTracking = false
+        options.enableAutoBreadcrumbTracking = false
+        options.enableNetworkBreadcrumbs = false
+        options.enableNetworkTracking = false
+        options.enableGraphQLOperationTracking = false
+        options.enableCaptureFailedRequests = false
+        options.enableFileIOTracing = false
+        options.enableCoreDataTracing = false
+        options.enableSwizzling = false
+        options.tracePropagationTargets = []
+        options.maxBreadcrumbs = 0
+        options.beforeBreadcrumb = { _ in nil }
+        options.beforeSendSpan = { _ in nil }
+        options.sendClientReports = false
+        options.enableMetricKit = false
+        options.enableMetricKitRawPayload = false
+        options.enableSpotlight = false
+        #if os(iOS) || os(tvOS)
+        options.enableUIViewControllerTracing = false
+        options.enableUserInteractionTracing = false
+        options.enablePreWarmedAppStartTracing = false
+        options.attachScreenshot = false
+        options.attachViewHierarchy = false
+        options.reportAccessibilityIdentifier = false
+        options.sessionReplay.sessionSampleRate = 0
+        options.sessionReplay.onErrorSampleRate = 0
+        #endif
+
+        options.beforeSend = { event in
+            guard event.type != "transaction", let filtered = filterEvent(event) else { return nil }
+            return GlitchTipEventSanitizer.sanitize(redactEvent(filtered))
+        }
+    }
+    #endif
+
     static func addBreadcrumb(level: String, category: String, message: String) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let crumb = Breadcrumb(level: mapLevel(level), category: category)
-        crumb.message = message
+        crumb.message = redactingAccountIdentifiers(message)
         SentrySDK.addBreadcrumb(crumb)
         #endif
     }
 
     static func captureMessage(_ message: String, level: String, category: String) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let event = Event(level: mapLevel(level))
-        event.message = SentryMessage(formatted: message)
+        event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         event.tags = ["category": category]
         SentrySDK.capture(event: event)
         #endif
@@ -67,13 +104,15 @@ enum SentryService {
 
     static func captureMessage(_ message: String, level: String, category: String, extras: [String: Any]?) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let event = Event(level: mapLevel(level))
-        event.message = SentryMessage(formatted: message)
+        event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         event.tags = ["category": category]
         if let extras {
             // Filter extras to JSON-serializable values
             var filtered: [String: Any] = [:]
-            for (k, v) in extras { filtered[k] = v }
+            for (k, v) in extras { filtered[k] = redactingAccountIdentifiers(in: v) }
             event.extra = filtered
         }
         SentrySDK.capture(event: event)
@@ -89,14 +128,16 @@ enum SentryService {
         fingerprint: [String]? = nil
     ) {
         #if canImport(Sentry)
+        // No SDK access unless start() ran on the main thread; avoids off-main SDK initialization.
+        guard SentrySDK.isEnabled else { return }
         let event = Event(level: mapLevel(level))
-        event.message = SentryMessage(formatted: message)
+        event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         var combinedTags = tags ?? [:]
         combinedTags["category"] = category
         event.tags = combinedTags
         if let extras {
             var filtered: [String: Any] = [:]
-            for (k, v) in extras { filtered[k] = v }
+            for (k, v) in extras { filtered[k] = redactingAccountIdentifiers(in: v) }
             event.extra = filtered
         }
         if let fingerprint {
@@ -106,13 +147,79 @@ enum SentryService {
         #endif
     }
 
+    // MARK: - Account Identifier Redaction
+
+    /// Matches AT Protocol DIDs, including percent-encoded ones inside URLs.
+    private static let accountIdentifierPattern = try? NSRegularExpression(
+        pattern: "did(?::|%3A)(?:plc|web|key)(?::|%3A)[A-Za-z0-9._:%-]+",
+        options: [.caseInsensitive]
+    )
+
+    /// Replaces every DID in `text` so diagnostics can't be tied back to an account.
+    static func redactingAccountIdentifiers(_ text: String) -> String {
+        guard let pattern = accountIdentifierPattern, text.range(of: "did", options: .caseInsensitive) != nil else {
+            return text
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        return pattern.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "did:redacted")
+    }
+
+    private static func redactingAccountIdentifiers(in value: Any) -> Any {
+        if let text = value as? String {
+            return redactingAccountIdentifiers(text)
+        }
+        return value
+    }
+
+    private static func redactingAccountIdentifiers(in dictionary: [String: Any]?) -> [String: Any]? {
+        guard let dictionary else { return nil }
+        return dictionary.mapValues { redactingAccountIdentifiers(in: $0) }
+    }
+
+    #if canImport(Sentry)
+    private static func redactBreadcrumb(_ crumb: Breadcrumb) -> Breadcrumb {
+        // The SDK shares breadcrumb objects between the scope and captured events.
+        // Sanitize a new object so concurrent captures never mutate those shared objects.
+        let redacted = Breadcrumb(level: crumb.level, category: crumb.category)
+        redacted.timestamp = crumb.timestamp
+        redacted.type = crumb.type
+        redacted.origin = crumb.origin
+        if let message = crumb.message {
+            redacted.message = redactingAccountIdentifiers(message)
+        }
+        redacted.data = redactingAccountIdentifiers(in: crumb.data)
+        return redacted
+    }
+
+    private static func redactEvent(_ event: Event) -> Event {
+        if let message = event.message?.formatted {
+            event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
+        }
+        event.extra = redactingAccountIdentifiers(in: event.extra)
+        event.user = nil
+        event.breadcrumbs = event.breadcrumbs?.map { redactBreadcrumb($0) }
+        event.exceptions?.forEach { exception in
+            exception.value = redactingAccountIdentifiers(exception.value)
+        }
+        if let request = event.request {
+            if let url = request.url {
+                request.url = redactingAccountIdentifiers(url)
+            }
+            if let query = request.queryString {
+                request.queryString = redactingAccountIdentifiers(query)
+            }
+        }
+        return event
+    }
+    #endif
+
     // MARK: - Helpers
 
-    private static func resolveDSN() -> String? {
-        if let env = ProcessInfo.processInfo.environment["SENTRY_DSN"], !env.isEmpty { return env }
-        if let dsn = Bundle.main.object(forInfoDictionaryKey: "SENTRY_DSN") as? String, !dsn.isEmpty { return dsn }
-        // Fallback to hardcoded DSN
-        return "https://8c18bec496916e4617cdfbe0eb76bc6d@o4505190177701888.ingest.us.sentry.io/4510009092341760"
+    private static func telemetryConfiguration() -> TelemetryConfiguration {
+        TelemetryConfiguration.resolve(
+            environment: ProcessInfo.processInfo.environment,
+            info: Bundle.main.infoDictionary ?? [:]
+        )
     }
 
     #if canImport(Sentry)

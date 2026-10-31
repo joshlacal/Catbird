@@ -38,7 +38,7 @@ struct GroupConfigView: View {
 
   private var participantsFooter: String {
     switch kind {
-    case .bluesky: return "Everyone listed will be invited when this group chat is created."
+    case .bluesky: return "Everyone listed will be added when this group chat is created. Group chats on Bluesky aren’t end-to-end encrypted."
     case .mls: return "Everyone listed receives a separate group invitation when the group is created."
     }
   }
@@ -85,7 +85,9 @@ struct GroupConfigView: View {
 
       if let introduction { MLSOptionalGroupIntroductionSection(text: introduction) }
 
-      securitySection
+      if kind == .mls {
+        securitySection
+      }
     }
     #if os(iOS)
     .listStyle(.insetGrouped)
@@ -140,36 +142,14 @@ struct GroupConfigView: View {
     }
   }
 
-  @ViewBuilder
   private var securitySection: some View {
-    switch kind {
-    case .bluesky:
-      Section {
-        detailRow(
-          icon: "bubble.left.and.bubble.right.fill",
-          title: "Bluesky Chat",
-          detail: "Native chat.bsky group",
-          iconColor: .accentColor
-        )
-        detailRow(
-          icon: "lock.slash.fill",
-          title: "Encryption",
-          detail: "Not end-to-end encrypted",
-          iconColor: .secondary
-        )
-      } header: {
-        Label("Delivery", systemImage: "person.3")
-          .designCaption()
-      }
-    case .mls:
-      Section {
-        detailRow(icon: "lock.shield.fill", title: "MLS Protocol", detail: "RFC 9420 standard", iconColor: .green)
-        detailRow(icon: "key.fill", title: "Forward Secrecy", detail: "Unique keys per message", iconColor: .green)
-        detailRow(icon: "checkmark.seal.fill", title: "Verified Identity", detail: "AT Protocol DIDs", iconColor: .green)
-      } header: {
-        Label("Security", systemImage: "checkmark.shield")
-          .designCaption()
-      }
+    Section {
+      detailRow(icon: "lock.shield.fill", title: "MLS Protocol", detail: "RFC 9420 standard", iconColor: .green)
+      detailRow(icon: "key.fill", title: "Forward Secrecy", detail: "Unique keys per message", iconColor: .green)
+      detailRow(icon: "checkmark.seal.fill", title: "Verified Identity", detail: "AT Protocol DIDs", iconColor: .green)
+    } header: {
+      Label("Security", systemImage: "checkmark.shield")
+        .designCaption()
     }
   }
 

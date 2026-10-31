@@ -28,9 +28,7 @@ actor PostEntityStore {
   private let capacity = 500
   private let defaults: UserDefaults?
 
-  init(
-    defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
-  ) {
+  init(defaults: UserDefaults? = PostEntityCache.appGroupDefaults) {
     self.defaults = defaults
   }
 
@@ -53,9 +51,21 @@ actor PostEntityStore {
     for view in newViews {
       storeInMemory(view)
     }
-    // Write through to the shared app group so App Intents extension processes
+    // Mirror into the shared app group so App Intents extension processes
     // (Siri, Shortcuts) can resolve entities without a network round trip.
     PostEntityCache.upsert(newViews, defaults: defaults)
+  }
+
+  /// Writes buffered App Group entries now instead of after the coalescing delay.
+  func flushPendingWrites() {
+    PostEntityCache.flushPendingWrites(defaults: defaults)
+  }
+
+  /// Forgets every post, in memory and in the App Group (sign-out, account removal).
+  func removeAll() {
+    views.removeAll()
+    order.removeAll()
+    PostEntityCache.removeAll(defaults: defaults)
   }
 
   /// Contract consumed by the generated PostEntityQuery (manifest

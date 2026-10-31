@@ -189,18 +189,12 @@ struct LogEntry: Identifiable, Hashable {
   
   /// Formatted timestamp for display
   var formattedTimestamp: String {
-    let formatter = DateFormatter()
-    formatter.timeStyle = .medium
-    formatter.dateStyle = .none
-    return formatter.string(from: timestamp)
+    timestamp.formatted(date: .omitted, time: .standard)
   }
   
   /// Formatted full timestamp for details
   var fullTimestamp: String {
-    let formatter = DateFormatter()
-    formatter.timeStyle = .medium
-    formatter.dateStyle = .short
-    return formatter.string(from: timestamp)
+    timestamp.formatted(date: .numeric, time: .standard)
   }
 }
 

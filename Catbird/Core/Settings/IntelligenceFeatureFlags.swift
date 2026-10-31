@@ -6,11 +6,12 @@ enum IntelligenceFeatureFlags {
     private static let defaults = UserDefaults.standard
 
     static var copilotEnabled: Bool { value("copilot", default: true) }
-    static var smartFilterStructuralRulesEnabled: Bool { value("smartFilters.structural", default: true) }
-    static var smartFilterSemanticRulesEnabled: Bool { value("smartFilters.semantic", default: true) }
+    // Lite defers these features without overwriting saved opt-ins or account rules.
+    static var smartFilterStructuralRulesEnabled: Bool { false }
+    static var smartFilterSemanticRulesEnabled: Bool { false }
     static var privateCloudComputeEnabled: Bool { value("copilot.pcc", default: true) }
     static var intentControlsEnabled: Bool {
-        get { value("intentControls", default: true) }
+        get { false }
         set {
             defaults.set(newValue, forKey: "feature.intelligence.intentControls")
             NotificationCenter.default.post(name: .intentControlsFeatureFlagDidChange, object: nil)

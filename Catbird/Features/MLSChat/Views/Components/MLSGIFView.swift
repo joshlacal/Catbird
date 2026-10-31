@@ -11,6 +11,7 @@ struct MLSGIFView: View {
   @State private var videoModel: VideoModel?
   @State private var isLoading = true
   @State private var loadError: String?
+  @State private var containerWidth: CGFloat = 0
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSGIFView")
 
@@ -27,6 +28,11 @@ struct MLSGIFView: View {
       }
     }
     .frame(maxWidth: .infinity)
+    .onGeometryChange(for: CGFloat.self) { proxy in
+      proxy.size.width
+    } action: { width in
+      containerWidth = width
+    }
     .onAppear {
       setupVideo()
     }
@@ -170,9 +176,12 @@ struct MLSGIFView: View {
       return 300 // Default height
     }
 
+    guard containerWidth > 0 else {
+      return 300 // Default height until the bubble has been laid out
+    }
+
     let aspectRatio = CGFloat(width) / CGFloat(height)
-    let screenWidth = PlatformScreenInfo.width - 80 // Account for message padding
-    return screenWidth / aspectRatio
+    return containerWidth / aspectRatio
   }
 }
 

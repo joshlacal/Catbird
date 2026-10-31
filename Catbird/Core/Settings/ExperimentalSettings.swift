@@ -49,6 +49,7 @@ final class ExperimentalSettings {
     /// - Parameter accountDID: The DID of the account to check
     /// - Returns: True if MLS chat is enabled for this account
     func isMLSChatEnabled(for accountDID: String) -> Bool {
+        guard CatbirdFeatures.mlsChat else { return false }
         let key = Self.mlsOptInKeyPrefix + accountDID
         return UserDefaults.standard.bool(forKey: key)
     }
@@ -97,6 +98,7 @@ final class ExperimentalSettings {
     /// Get all account DIDs that have MLS enabled
     /// - Returns: Array of DIDs with MLS enabled
     func accountsWithMLSEnabled() -> [String] {
+        guard CatbirdFeatures.mlsChat else { return [] }
         let allKeys = UserDefaults.standard.dictionaryRepresentation().keys
         let prefix = Self.mlsOptInKeyPrefix
         

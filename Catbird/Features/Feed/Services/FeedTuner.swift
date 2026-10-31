@@ -6,6 +6,13 @@ import OrderedCollections
 /// Feed filtering preferences for FeedTuner
 /// Matches Bluesky's app.bsky.actor.defs#feedViewPref specification
 struct FeedTunerSettings {
+    var mutedWords: [MutedWord] = [] {
+      didSet {
+        compiledMutedWords = MutedWordMatcher.Compiled(words: mutedWords)
+      }
+    }
+    private(set) var compiledMutedWords: MutedWordMatcher.Compiled
+
     // Server-synced FeedViewPref settings
     let hideReplies: Bool
     let hideRepliesByUnfollowed: Bool 
@@ -15,7 +22,12 @@ struct FeedTunerSettings {
     
     // App-level settings
     let hideNonPreferredLanguages: Bool
-    let preferredLanguages: [String]
+    var preferredLanguages: [String] {
+      didSet {
+        preferredBaseCodes = Set(preferredLanguages.compactMap(ReadingLanguagePolicy.supportedBaseCode))
+      }
+    }
+    private(set) var preferredBaseCodes: Set<String>
     let mutedUsers: Set<String>
     let blockedUsers: Set<String>
     
@@ -24,15 +36,53 @@ struct FeedTunerSettings {
     let onlyTextPosts: Bool
     let onlyMediaPosts: Bool
     
-    // Content label filtering
-    let contentLabelPreferences: [ContentLabelPreference]
-    let hideAdultContent: Bool
-    
     // Post hiding
     let hiddenPosts: Set<String>
-    
+
     // Current user DID for self-reply detection
     let currentUserDid: String?
+
+    /// The account's label moderation policy, as built by `AppState.refreshModerationPolicy()`.
+    /// Label filtering (adult content, hide settings, `!hide`) reads only this.
+    var moderationPolicy: ModerationPolicy = .failClosed
+
+    init(
+        mutedWords: [MutedWord] = [],
+        hideReplies: Bool,
+        hideRepliesByUnfollowed: Bool,
+        hideRepliesByLikeCount: Int?,
+        hideReposts: Bool,
+        hideQuotePosts: Bool,
+        hideNonPreferredLanguages: Bool,
+        preferredLanguages: [String],
+        mutedUsers: Set<String>,
+        blockedUsers: Set<String>,
+        hideLinks: Bool,
+        onlyTextPosts: Bool,
+        onlyMediaPosts: Bool,
+        hiddenPosts: Set<String>,
+        currentUserDid: String?,
+        moderationPolicy: ModerationPolicy = .failClosed
+    ) {
+        self.mutedWords = mutedWords
+        self.compiledMutedWords = MutedWordMatcher.Compiled(words: mutedWords)
+        self.hideReplies = hideReplies
+        self.hideRepliesByUnfollowed = hideRepliesByUnfollowed
+        self.hideRepliesByLikeCount = hideRepliesByLikeCount
+        self.hideReposts = hideReposts
+        self.hideQuotePosts = hideQuotePosts
+        self.hideNonPreferredLanguages = hideNonPreferredLanguages
+        self.preferredLanguages = preferredLanguages
+        self.preferredBaseCodes = Set(preferredLanguages.compactMap(ReadingLanguagePolicy.supportedBaseCode))
+        self.mutedUsers = mutedUsers
+        self.blockedUsers = blockedUsers
+        self.hideLinks = hideLinks
+        self.onlyTextPosts = onlyTextPosts
+        self.onlyMediaPosts = onlyMediaPosts
+        self.hiddenPosts = hiddenPosts
+        self.currentUserDid = currentUserDid
+        self.moderationPolicy = moderationPolicy
+    }
     
     static let `default` = FeedTunerSettings(
         hideReplies: false,
@@ -47,8 +97,6 @@ struct FeedTunerSettings {
         hideLinks: false,
         onlyTextPosts: false,
         onlyMediaPosts: false,
-        contentLabelPreferences: [],
-        hideAdultContent: false,
         hiddenPosts: [],
         currentUserDid: nil
     )
@@ -67,6 +115,7 @@ struct FeedSlice: Identifiable, Sendable {
   let feedPostUri: String
   let reason: AppBskyFeedDefs.FeedViewPostReasonUnion?
   let feedContext: String?
+  let reqId: String?
   let originalReply: AppBskyFeedDefs.ReplyRef?  // Preserve original reply context for reposts
   
   init(
@@ -78,6 +127,7 @@ struct FeedSlice: Identifiable, Sendable {
     feedPostUri: String,
     reason: AppBskyFeedDefs.FeedViewPostReasonUnion? = nil,
     feedContext: String? = nil,
+    reqId: String? = nil,
     originalReply: AppBskyFeedDefs.ReplyRef? = nil
   ) {
     self.id = feedPostUri
@@ -89,6 +139,7 @@ struct FeedSlice: Identifiable, Sendable {
     self.feedPostUri = feedPostUri
     self.reason = reason
     self.feedContext = feedContext
+    self.reqId = reqId
     self.originalReply = originalReply
   }
   
@@ -152,7 +203,9 @@ actor FeedTuner {
     logger.debug("🧵 FeedTuner.tune() called with \(rawPosts.count) raw posts")
     
     // Apply content filtering first using centralized service
+    let filterSignpost = PerformanceSignposts.beginInterval("FilterPage")
     let filteredPosts = await contentFilterService.filterFeedViewPosts(rawPosts, settings: filterSettings)
+    PerformanceSignposts.endInterval("FilterPage", filterSignpost)
     logger.debug("🧵 Filtered \(rawPosts.count) posts to \(filteredPosts.count) posts")
     
     // Reset seen tracking for new batch
@@ -250,13 +303,14 @@ actor FeedTuner {
     }
     
     // If no quick filters are active, return original slice
-    if !settings.hideLinks && !settings.onlyTextPosts && !settings.onlyMediaPosts {
+    if !settings.hideLinks && !settings.onlyTextPosts && !settings.onlyMediaPosts && settings.mutedWords.isEmpty {
       return slice
     }
     
     var filteredItems: [FeedSliceItem] = []
     
     for item in slice.items {
+      if settings.compiledMutedWords.matches(post: item.post) { continue }
       var shouldInclude = true
       
       // Check for links
@@ -350,6 +404,7 @@ actor FeedTuner {
         feedPostUri: slice.feedPostUri,
         reason: slice.reason,
         feedContext: slice.feedContext,
+        reqId: slice.reqId,
         originalReply: slice.originalReply
       )
     }
@@ -424,7 +479,8 @@ actor FeedTuner {
         rootUri: rootUri,
         feedPostUri: feedPostUri,
         reason: feedPost.reason,
-        feedContext: feedPost.feedContext
+        feedContext: feedPost.feedContext,
+        reqId: feedPost.reqId
       )
     }
     
@@ -436,6 +492,7 @@ actor FeedTuner {
         feedPostUri: feedPostUri,
         reason: feedPost.reason,
         feedContext: feedPost.feedContext,
+        reqId: feedPost.reqId,
         originalReply: feedPost.reply  // Preserve reply context for reposts
       )
     }
@@ -490,7 +547,8 @@ actor FeedTuner {
       rootUri: rootUri,
       feedPostUri: feedPostUri,
       reason: feedPost.reason,
-      feedContext: feedPost.feedContext
+      feedContext: feedPost.feedContext,
+      reqId: feedPost.reqId
     )
     
     // Debug logging

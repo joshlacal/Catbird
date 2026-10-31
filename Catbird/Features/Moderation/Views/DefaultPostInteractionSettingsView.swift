@@ -1,347 +1,344 @@
 import SwiftUI
 import Petrel
 
-/// View for configuring account-wide default threadgate and postgate settings (Post Interaction Settings)
+/// Confirmed account defaults for new posts; per-post overrides remain in the composer.
 struct DefaultPostInteractionSettingsView: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
-    
-    enum ReplyMode: String, CaseIterable, Identifiable {
-        case everybody = "everybody"
-        case nobody = "nobody"
-        case custom = "custom"
-        
-        var id: String { rawValue }
-        
-        var title: String {
-            switch self {
-            case .everybody: return "Everybody"
-            case .nobody: return "Nobody"
-            case .custom: return "Specific Users"
-            }
-        }
-        
-        var subtitle: String {
-            switch self {
-            case .everybody: return "Anyone can reply to your posts"
-            case .nobody: return "No one can reply to your posts"
-            case .custom: return "Only selected groups or lists can reply"
-            }
-        }
+  @Environment(AppState.self) private var appState
+  let initialFocus: SettingsControlID?
+  @State private var editor: AccountSettingsEditSession<AppBskyActorDefs.PostInteractionSettingsPref>?
+  @State private var userLists: [AppBskyGraphDefs.ListView] = []
+  @State private var isLoadingLists = false
+  @State private var listError: String?
+  @State private var listLoadRevision: UInt64 = 0
+
+  enum ReplyMode: String, CaseIterable, Identifiable {
+    case everybody, nobody, custom
+    var id: String { rawValue }
+    var title: String {
+      switch self {
+      case .everybody: "Everyone"
+      case .nobody: "No One"
+      case .custom: "Selected Groups and Lists"
+      }
     }
-    
-    @State private var replyMode: ReplyMode = .everybody
-    @State private var allowMentioned: Bool = true
-    @State private var allowFollowing: Bool = true
-    @State private var allowFollowers: Bool = false
-    @State private var allowLists: Bool = false
-    @State private var selectedListURIs: [String] = []
-    @State private var userLists: [AppBskyGraphDefs.ListView] = []
-    @State private var isLoadingLists: Bool = false
-    @State private var allowQuotes: Bool = true
-    
-    @State private var isLoading: Bool = true
-    @State private var isSaving: Bool = false
-    @State private var errorMessage: String? = nil
-    @State private var showingErrorAlert: Bool = false
-    
-    private var preferencesManager: PreferencesManager {
-        appState.preferencesManager
+    var explanation: String {
+      switch self {
+      case .everybody: "Anyone can reply to new posts."
+      case .nobody: "New posts don’t allow replies."
+      case .custom: "People in any selected group or list can reply."
+      }
     }
-    
-    var body: some View {
-        Form {
-            if isLoading {
-                Section {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, alignment: .center)
-                }
-            } else {
-                replySettingsSection
-                
-                if replyMode == .custom {
-                    customRulesSection
-                }
-                
-                quoteSettingsSection
-                
-                if isSaving {
-                    Section {
-                        HStack {
-                            ProgressView()
-                                .padding(.trailing, 8)
-                            Text("Saving settings...")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle("Post Interaction Settings")
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
-        .alert("Error Saving Settings", isPresented: $showingErrorAlert) {
-            Button("OK") { showingErrorAlert = false }
-        } message: {
-            if let error = errorMessage {
-                Text(error)
-            }
-        }
-        .task {
-            await loadSettings()
-        }
+  }
+
+  init(initialFocus: SettingsControlID? = nil) {
+    self.initialFocus = initialFocus
+  }
+
+  private var replyMode: ReplyMode {
+    guard let rules = editor?.displayedValue?.threadgateAllowRules else { return .everybody }
+    return rules.isEmpty ? .nobody : .custom
+  }
+
+  private var requestedFocus: SettingsControlID? {
+    guard let initialFocus else { return nil }
+    switch editor?.state {
+    case .loadFailed: return .init(rawValue: "privacy.defaultRulesRetryLoad")
+    case .saveFailed: return .init(rawValue: "privacy.defaultRulesRetrySave")
+    default: return initialFocus
     }
-    
-    // MARK: - Sections
-    
-    private var replySettingsSection: some View {
-        Section("Default Who Can Reply") {
+  }
+
+  private var isFocusReady: Bool {
+    switch editor?.state {
+    case .ready, .loadFailed, .saveFailed: true
+    default: false
+    }
+  }
+
+  var body: some View {
+    SettingsFocusedForm(initialFocus: requestedFocus, isReady: isFocusReady) {
+      SettingsScopeSection(scope: "New posts for this account")
+      Section {
+        Text("These defaults apply when you create a post. You can still choose different replies and quotes for an individual post.")
+          .font(.footnote).foregroundStyle(.secondary)
+      }
+      if let editor {
+        if editor.state == .unavailable {
+          Section { Text("This account is no longer active. Open Settings for the current account.") }
+        } else if editor.state == .loading {
+          Section { ProgressView("Loading default replies and quotes…") }
+        } else if editor.state == .loadFailed {
+          Section {
+            Text("Default replies and quotes couldn’t be loaded.")
+            Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
+            Button("Try Again") { Task { await editor.load() } }
+              .settingsControl(.init(rawValue: "privacy.defaultRulesRetryLoad"))
+          }
+          .settingsControl(.init(rawValue: "privacy.defaultPostInteractions"))
+        } else {
+          Section("Who Can Reply") {
             ForEach(ReplyMode.allCases) { mode in
-                Button {
-                    replyMode = mode
-                    Task { await saveSettings() }
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(mode.title)
-                                .font(.body)
-                                .foregroundStyle(.primary)
-                            Text(mode.subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if replyMode == mode {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.blue)
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    .padding(.vertical, 4)
+              Button { select(mode, in: editor) } label: {
+                HStack(alignment: .top) {
+                  VStack(alignment: .leading, spacing: 4) {
+                    Text(mode.title).foregroundStyle(.primary)
+                    Text(mode.explanation).font(.footnote).foregroundStyle(.secondary)
+                  }
+                  Spacer()
+                  if replyMode == mode {
+                    Image(systemName: "checkmark").foregroundStyle(Color.accentColor).accessibilityHidden(true)
+                  }
                 }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .disabled(!editor.canEdit)
+              .accessibilityAddTraits(replyMode == mode ? .isSelected : [])
             }
-        }
-    }
-    
-    private var customRulesSection: some View {
-        Group {
+          }
+          .settingsControl(.init(rawValue: "privacy.defaultPostInteractions"))
+
+          if replyMode == .custom {
             Section("Allow Replies From") {
-                Toggle("Users you follow", isOn: $allowFollowing)
-                    .onChange(of: allowFollowing) { _, _ in Task { await saveSettings() } }
-                
-                Toggle("Your followers", isOn: $allowFollowers)
-                    .onChange(of: allowFollowers) { _, _ in Task { await saveSettings() } }
-                
-                Toggle("Mentioned users", isOn: $allowMentioned)
-                    .onChange(of: allowMentioned) { _, _ in Task { await saveSettings() } }
+              replyToggle("People I Follow", kind: .following, editor: editor)
+              replyToggle("My Followers", kind: .followers, editor: editor)
+              replyToggle("People Mentioned in the Post", kind: .mentioned, editor: editor)
+              if editor.displayedValue?.threadgateAllowRules?.contains(where: {
+                if case .unexpected = $0 { return true }; return false
+              }) == true {
+                Text("Other saved reply rules are kept when you change a group or list. Choosing Everyone or No One replaces all reply rules.")
+                  .font(.footnote).foregroundStyle(.secondary)
+              }
+              Text("The selected groups, lists and any other saved rules are combined.")
+                .font(.footnote).foregroundStyle(.secondary)
             }
-            
-            Section("User Lists") {
-                if isLoadingLists {
+            Section("Lists") {
+              if isLoadingLists {
+                ProgressView("Loading my lists…")
+              } else if let listError {
+                Text(listError).font(.footnote).foregroundStyle(.secondary)
+                Button("Try Again") { Task { await loadUserLists() } }
+              } else if userLists.isEmpty {
+                Text("You have no lists.").foregroundStyle(.secondary)
+              } else {
+                ForEach(userLists, id: \.uri) { list in
+                  let selected = hasList(list.uri.uriString(), in: editor.displayedValue)
+                  Button { toggleList(list.uri, in: editor) } label: {
                     HStack {
-                        Spacer()
-                        ProgressView()
-                        Spacer()
+                      Text(list.name).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+                      Spacer()
+                      if selected { Image(systemName: "checkmark").foregroundStyle(Color.accentColor).accessibilityHidden(true) }
                     }
-                } else if userLists.isEmpty {
-                    Text("No lists found")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(userLists, id: \.uri) { list in
-                        let uriString = list.uri.uriString()
-                        let isSelected = selectedListURIs.contains(uriString)
-                        Button {
-                            if isSelected {
-                                selectedListURIs.removeAll { $0 == uriString }
-                                allowLists = !selectedListURIs.isEmpty
-                            } else {
-                                selectedListURIs.append(uriString)
-                                allowLists = true
-                            }
-                            Task { await saveSettings() }
-                        } label: {
-                            HStack {
-                                Image(systemName: "list.bullet")
-                                    .frame(width: 24)
-                                    .foregroundStyle(.primary)
-                                
-                                Text(list.name)
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                
-                                Spacer()
-                                
-                                if isSelected {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(Color.accentColor)
-                                        .fontWeight(.semibold)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    .frame(minHeight: 44).contentShape(Rectangle())
+                  }
+                  .buttonStyle(.plain)
+                  .disabled(!editor.canEdit)
+                  .accessibilityAddTraits(selected ? .isSelected : [])
                 }
+              }
             }
+          }
+          Section {
+            Toggle("Allow Quote Posts", isOn: Binding(
+              get: { editor.displayedValue?.postgateEmbeddingRules?.contains(where: {
+                if case .appBskyFeedPostgateDisableRule = $0 { return true }
+                return false
+              }) != true },
+              set: { allowed in setQuotes(allowed, in: editor) }
+            ))
+            .disabled(!editor.canEdit)
+            .settingsControl(.init(rawValue: "privacy.defaultQuotes"))
+            if editor.displayedValue?.postgateEmbeddingRules?.contains(where: {
+              if case .unexpected = $0 { return true }; return false
+            }) == true {
+              Text("Other saved quote rules are kept.").font(.footnote).foregroundStyle(.secondary)
+            }
+          } header: {
+            Text("Quote Posts")
+          } footer: {
+            Text("Turning this off prevents other people from quoting new posts by default.")
+          }
+          if editor.state == .saving {
+            Section { ProgressView("Saving defaults…") }
+          } else if editor.state == .saveFailed {
+            Section {
+              Text("This change couldn’t be confirmed.")
+              Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
+              Button("Try This Change Again") { editor.retrySave() }
+                .settingsControl(.init(rawValue: "privacy.defaultRulesRetrySave"))
+              Button("Reload Saved Defaults") { Task { await editor.load() } }
+            }
+          }
         }
+      } else {
+        Section { ProgressView("Loading default replies and quotes…") }
+      }
     }
-    
-    private var quoteSettingsSection: some View {
-        Section(header: Text("Quote Posts"), footer: Text("When disabled, other users cannot quote-post your posts by default. You can still override this per post.")) {
-            Toggle("Allow quote posts", isOn: $allowQuotes)
-                .tint(.blue)
-                .onChange(of: allowQuotes) { _, _ in Task { await saveSettings() } }
+    .navigationTitle("Default Replies & Quotes")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
+    .task(id: appState.userDID) { await loadEditor() }
+    .onDisappear { editor?.invalidate(); listLoadRevision &+= 1; isLoadingLists = false }
+  }
+
+  private enum GroupKind { case following, followers, mentioned }
+
+  private func replyToggle(
+    _ title: String, kind: GroupKind,
+    editor: AccountSettingsEditSession<AppBskyActorDefs.PostInteractionSettingsPref>
+  ) -> some View {
+    Toggle(title, isOn: Binding(
+      get: { editor.displayedValue?.threadgateAllowRules?.contains(where: { matches($0, kind: kind) }) == true },
+      set: { selected in
+        guard editor.canEdit, let value = editor.confirmedValue else { return }
+        var rules = value.threadgateAllowRules ?? []
+        rules.removeAll { matches($0, kind: kind) }
+        if selected {
+          switch kind {
+          case .following: rules.append(.appBskyFeedThreadgateFollowingRule(.init()))
+          case .followers: rules.append(.appBskyFeedThreadgateFollowerRule(.init()))
+          case .mentioned: rules.append(.appBskyFeedThreadgateMentionRule(.init()))
+          }
         }
+        editor.submit(.init(threadgateAllowRules: rules, postgateEmbeddingRules: value.postgateEmbeddingRules))
+      }
+    ))
+    .disabled(!editor.canEdit)
+  }
+
+  private func matches(_ rule: AppBskyActorDefs.PostInteractionSettingsPrefThreadgateAllowRulesUnion, kind: GroupKind) -> Bool {
+    switch (rule, kind) {
+    case (.appBskyFeedThreadgateFollowingRule, .following),
+         (.appBskyFeedThreadgateFollowerRule, .followers),
+         (.appBskyFeedThreadgateMentionRule, .mentioned): true
+    default: false
     }
-    
-    // MARK: - Conversions & Actions
-    
-    private func loadSettings() async {
-        isLoading = true
-        do {
-            let pref = try await preferencesManager.getPostInteractionSettingsPref()
-            decodePref(pref)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
-        await loadUserLists()
+  }
+
+  private func hasList(_ uri: String, in value: AppBskyActorDefs.PostInteractionSettingsPref?) -> Bool {
+    value?.threadgateAllowRules?.contains(where: {
+      if case .appBskyFeedThreadgateListRule(let rule) = $0 { return rule.list.uriString() == uri }
+      return false
+    }) == true
+  }
+
+  @MainActor
+  private func select(_ mode: ReplyMode, in session: AccountSettingsEditSession<AppBskyActorDefs.PostInteractionSettingsPref>) {
+    guard session.canEdit, let value = session.confirmedValue, mode != replyMode else { return }
+    let rules: [AppBskyActorDefs.PostInteractionSettingsPrefThreadgateAllowRulesUnion]?
+    switch mode {
+    case .everybody: rules = nil
+    case .nobody: rules = []
+    case .custom:
+      rules = [.appBskyFeedThreadgateFollowingRule(.init()), .appBskyFeedThreadgateMentionRule(.init())]
     }
-    
-    private func loadUserLists() async {
-        guard let client = appState.atProtoClient else { return }
-        isLoadingLists = true
-        defer { isLoadingLists = false }
-        
-        do {
-            var did = appState.userDID
-            if did.isEmpty {
-                did = (try? await client.getDid()) ?? ""
-            }
-            guard !did.isEmpty else { return }
-            let params = AppBskyGraphGetLists.Parameters(
-                actor: try ATIdentifier(string: did),
-                limit: 50,
-                cursor: nil
-            )
-            let (code, output) = try await client.app.bsky.graph.getLists(input: params)
-            if code == 200, let output = output {
-                userLists = output.lists
-            }
-        } catch {
-            // Degrade gracefully
-        }
+    session.submit(.init(threadgateAllowRules: rules, postgateEmbeddingRules: value.postgateEmbeddingRules))
+  }
+
+  @MainActor
+  private func setQuotes(_ allowed: Bool, in session: AccountSettingsEditSession<AppBskyActorDefs.PostInteractionSettingsPref>) {
+    guard session.canEdit, let value = session.confirmedValue else { return }
+    var rules = value.postgateEmbeddingRules ?? []
+    rules.removeAll { if case .appBskyFeedPostgateDisableRule = $0 { return true }; return false }
+    if !allowed { rules.append(.appBskyFeedPostgateDisableRule(.init())) }
+    session.submit(.init(threadgateAllowRules: value.threadgateAllowRules, postgateEmbeddingRules: rules.isEmpty ? nil : rules))
+  }
+
+  @MainActor
+  private func toggleList(_ uri: ATProtocolURI, in session: AccountSettingsEditSession<AppBskyActorDefs.PostInteractionSettingsPref>) {
+    guard session.canEdit, let value = session.confirmedValue else { return }
+    var rules = value.threadgateAllowRules ?? []
+    if hasList(uri.uriString(), in: value) {
+      rules.removeAll {
+        if case .appBskyFeedThreadgateListRule(let rule) = $0 { return rule.list == uri }
+        return false
+      }
+    } else {
+      rules.append(.appBskyFeedThreadgateListRule(.init(list: uri)))
     }
-    
-    private func decodePref(_ pref: AppBskyActorDefs.PostInteractionSettingsPref?) {
-        guard let pref = pref else {
-            // Default: everybody, allow quotes
-            replyMode = .everybody
-            allowQuotes = true
-            return
-        }
-        
-        // 1. Threadgate rules
-        if let rules = pref.threadgateAllowRules {
-            if rules.isEmpty {
-                replyMode = .nobody
-            } else {
-                replyMode = .custom
-                allowMentioned = false
-                allowFollowing = false
-                allowFollowers = false
-                allowLists = false
-                selectedListURIs = []
-                
-                for rule in rules {
-                    switch rule {
-                    case .appBskyFeedThreadgateMentionRule:
-                        allowMentioned = true
-                    case .appBskyFeedThreadgateFollowingRule:
-                        allowFollowing = true
-                    case .appBskyFeedThreadgateFollowerRule:
-                        allowFollowers = true
-                    case .appBskyFeedThreadgateListRule(let listRule):
-                        allowLists = true
-                        selectedListURIs.append(listRule.list.uriString())
-                    case .unexpected:
-                        break
-                    }
-                }
-            }
-        } else {
-            replyMode = .everybody
-        }
-        
-        // 2. Postgate rules
-        if let postgateRules = pref.postgateEmbeddingRules,
-           postgateRules.contains(where: {
-               if case .appBskyFeedPostgateDisableRule = $0 { return true }
-               return false
-           }) {
-            allowQuotes = false
-        } else {
-            allowQuotes = true
-        }
+    session.submit(.init(threadgateAllowRules: rules, postgateEmbeddingRules: value.postgateEmbeddingRules))
+  }
+
+  @MainActor
+  private func loadEditor() async {
+    editor?.invalidate()
+    let state = appState
+    let account = state.userDID
+    let contextRevision = AppStateManager.shared.settingsAccountContextRevision
+    let manager = state.preferencesManager
+    let session = AccountSettingsEditSession<AppBskyActorDefs.PostInteractionSettingsPref>(
+      accountDID: account,
+      allowEditingAfterSaveFailure: false,
+      isCurrentAccount: {
+        manager.accountDID == account && AppStateManager.shared.lifecycle.userDID == account
+          && AppStateManager.shared.settingsAccountContextRevision == contextRevision
+          && !state.isTransitioningAccounts
+      },
+      load: {
+        try await manager.getConfirmedPostInteractionSettingsPref(expectedAccountDID: account)
+          ?? .init(threadgateAllowRules: nil, postgateEmbeddingRules: nil)
+      },
+      save: { value in
+        try await manager.setPostInteractionSettingsPref(value, expectedAccountDID: account)
+        return value
+      }
+    )
+    editor = session
+    await session.load()
+    guard session.canEdit else { return }
+    await loadUserLists()
+  }
+
+  @MainActor
+  private func loadUserLists() async {
+    guard AppStateManager.shared.lifecycle.userDID == appState.userDID, let client = appState.atProtoClient else {
+      listError = "Sign in to load your lists."
+      return
     }
-    
-    private func encodePref() -> AppBskyActorDefs.PostInteractionSettingsPref {
-        var allowRules: [AppBskyActorDefs.PostInteractionSettingsPrefThreadgateAllowRulesUnion]? = nil
-        
-        switch replyMode {
-        case .everybody:
-            allowRules = nil
-        case .nobody:
-            allowRules = []
-        case .custom:
-            var rules: [AppBskyActorDefs.PostInteractionSettingsPrefThreadgateAllowRulesUnion] = []
-            if allowMentioned {
-                rules.append(.appBskyFeedThreadgateMentionRule(AppBskyFeedThreadgate.MentionRule()))
-            }
-            if allowFollowing {
-                rules.append(.appBskyFeedThreadgateFollowingRule(AppBskyFeedThreadgate.FollowingRule()))
-            }
-            if allowFollowers {
-                rules.append(.appBskyFeedThreadgateFollowerRule(AppBskyFeedThreadgate.FollowerRule()))
-            }
-            for listURI in selectedListURIs {
-                if let uri = try? ATProtocolURI(uriString: listURI) {
-                    rules.append(.appBskyFeedThreadgateListRule(AppBskyFeedThreadgate.ListRule(list: uri)))
-                }
-            }
-            allowRules = rules
+    let state = appState
+    let account = state.userDID
+    let contextRevision = AppStateManager.shared.settingsAccountContextRevision
+    listLoadRevision &+= 1
+    let loadRevision = listLoadRevision
+    isLoadingLists = true
+    listError = nil
+    defer { if listLoadRevision == loadRevision { isLoadingLists = false } }
+    do {
+      var loaded: [AppBskyGraphDefs.ListView] = []
+      var seen: Set<String> = []
+      var cursor: String?
+      repeat {
+        let (code, output) = try await state.performSettingsAccountOperation {
+          try await client.app.bsky.graph.getLists(input: .init(
+            actor: try ATIdentifier(string: account), limit: 50, cursor: cursor
+          ))
         }
-        
-        var embeddingRules: [AppBskyActorDefs.PostInteractionSettingsPrefPostgateEmbeddingRulesUnion]? = nil
-        if !allowQuotes {
-            embeddingRules = [.appBskyFeedPostgateDisableRule(AppBskyFeedPostgate.DisableRule())]
+        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == account,
+              AppStateManager.shared.settingsAccountContextRevision == contextRevision,
+              listLoadRevision == loadRevision, !state.isTransitioningAccounts,
+              state.atProtoClient === client else { return }
+        guard code == 200, let output else {
+          throw NSError(domain: "DefaultRepliesLists", code: code,
+            userInfo: [NSLocalizedDescriptionKey: "Your lists couldn’t be loaded. Try again."])
         }
-        
-        return AppBskyActorDefs.PostInteractionSettingsPref(
-            threadgateAllowRules: allowRules,
-            postgateEmbeddingRules: embeddingRules
-        )
+        loaded.append(contentsOf: output.lists)
+        cursor = output.cursor
+        if let cursor, !seen.insert(cursor).inserted {
+          throw NSError(domain: "DefaultRepliesLists", code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Your lists couldn’t be loaded completely. Try again."])
+        }
+      } while cursor != nil
+      var unique: Set<String> = []
+      userLists = loaded.filter { unique.insert($0.uri.uriString()).inserted }
+    } catch {
+      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == account,
+            AppStateManager.shared.settingsAccountContextRevision == contextRevision,
+            listLoadRevision == loadRevision, !state.isTransitioningAccounts else { return }
+      listError = (error as NSError).domain == "DefaultRepliesLists"
+        ? error.localizedDescription
+        : (UserFacingError.message(for: error, action: "load your lists") ?? "Your lists couldn’t be loaded. Try again.")
     }
-    
-    private func saveSettings() async {
-        isSaving = true
-        errorMessage = nil
-        
-        let pref = encodePref()
-        
-        do {
-            try await preferencesManager.setPostInteractionSettingsPref(pref)
-        } catch {
-            errorMessage = error.localizedDescription
-            showingErrorAlert = true
-            // Reload previous saved state
-            await loadSettings()
-        }
-        
-        isSaving = false
-    }
+  }
 }

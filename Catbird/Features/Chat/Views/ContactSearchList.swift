@@ -24,8 +24,9 @@ struct ContactSearchList: View {
   @Binding var selectionOrder: [String]
   /// Multi-select: bound profile details for selected contacts
   @Binding var selectedProfiles: [String: MLSParticipantViewModel]
-  /// Single-select: called when a contact is tapped
-  var onSingleSelect: ((any ProfileDisplayable) -> Void)?
+  /// Single-select: called when a contact is tapped; the row shows progress
+  /// until it returns
+  var onSingleSelect: (@MainActor (any ProfileDisplayable) async -> Void)?
 
   @Environment(AppState.self) private var appState
   @State private var searchText = ""
@@ -37,7 +38,8 @@ struct ContactSearchList: View {
   @State private var searchError: String?
   @State private var searchTask: Task<Void, Never>?
   @State private var searchGeneration = UUID()
-  @State private var isStartingConversation = false
+  /// DID of the contact whose conversation is being started, if any
+  @State private var startingDID: String?
   @State private var participantAvailability: [String: MLSAPIClient.MLSChatAvailability] = [:]
   @State private var checkingAvailability: Set<String> = []
   @State private var availabilityRequests: [String: UUID] = [:]
@@ -153,7 +155,7 @@ struct ContactSearchList: View {
   private var searchingRow: some View {
     HStack {
       Spacer()
-      ProgressView("Searching...")
+      ProgressView("Searching…")
       Spacer()
     }
     .listRowSeparator(.hidden)
@@ -161,15 +163,16 @@ struct ContactSearchList: View {
 
   @ViewBuilder
   private func errorRow(_ error: String) -> some View {
-    Text("Error: \(error)")
-      .foregroundColor(.red)
+    Text(error)
+      .foregroundStyle(.secondary)
+      .multilineTextAlignment(.center)
       .frame(maxWidth: .infinity, alignment: .center)
       .listRowSeparator(.hidden)
   }
 
   @ViewBuilder
   private var noResultsRow: some View {
-    EmptyStateRow(icon: "magnifyingglass", message: "No results found")
+    EmptyStateRow(icon: "magnifyingglass", message: "No results")
       .listRowSeparator(.hidden)
   }
 
@@ -181,13 +184,10 @@ struct ContactSearchList: View {
         ForEach(searchResults, id: \.did) { profile in
           ChatProfileRowView(
             profile: profile,
-            isStartingConversation: isStartingConversation
-              && profile.did.didString() == searchResults.first?.did.didString(),
-            onSelect: {
-              isStartingConversation = true
-              onSingleSelect?(profile)
-            }
+            isStartingConversation: startingDID == profile.did.didString(),
+            onSelect: { startConversation(with: profile) }
           )
+          .disabled(startingDID != nil)
         }
       case .multi:
         ForEach(mlsSearchResults, id: \.id) { participant in
@@ -205,7 +205,7 @@ struct ContactSearchList: View {
     if isLoadingFollows {
       HStack {
         Spacer()
-        ProgressView("Loading follows...")
+        ProgressView("Loading…")
         Spacer()
       }
       .listRowSeparator(.hidden)
@@ -213,7 +213,7 @@ struct ContactSearchList: View {
       ContentUnavailableView {
         Label("No Follows", systemImage: "person.2.slash")
       } description: {
-        Text("You aren't following anyone yet.")
+        Text("You aren’t following anyone yet. Search for someone by name or handle.")
       }
       .listRowSeparator(.hidden)
     } else {
@@ -223,12 +223,10 @@ struct ContactSearchList: View {
           ForEach(followingProfiles, id: \.did) { profile in
             ChatProfileRowView(
               profile: profile,
-              isStartingConversation: false,
-              onSelect: {
-                isStartingConversation = true
-                onSingleSelect?(profile)
-              }
+              isStartingConversation: startingDID == profile.did.didString(),
+              onSelect: { startConversation(with: profile) }
             )
+            .disabled(startingDID != nil)
           }
         case .multi:
           ForEach(followingProfiles, id: \.did) { profile in
@@ -300,12 +298,26 @@ struct ContactSearchList: View {
         isSelected: selectedDIDs.contains(participant.id),
         isMLSAvailable: isAvailable,
         showsEncryptionBadge: showMLSStatus,
-        unavailableLabel: showMLSStatus ? "Not registered" : "Chat restricted"
+        unavailableLabel: showMLSStatus ? "Not registered" : "Can’t be added"
       ) {
         if isAvailable { toggleParticipant(participant) }
       }
       .disabled(!isAvailable)
       .opacity(isAvailable ? 1.0 : 0.6)
+    }
+  }
+
+  // MARK: - Single-Select Helpers
+
+  /// Starts one conversation at a time; the tapped row shows progress and the
+  /// list unlocks again if starting fails.
+  private func startConversation(with profile: any ProfileDisplayable) {
+    guard startingDID == nil, let onSingleSelect else { return }
+    let did = profile.did.didString()
+    startingDID = did
+    Task { @MainActor in
+      await onSingleSelect(profile)
+      if startingDID == did { startingDID = nil }
     }
   }
 
@@ -373,7 +385,7 @@ struct ContactSearchList: View {
     let accountDID = appState.userDID
     guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
     guard let client = appState.atProtoClient else {
-      searchError = "Not connected"
+      searchError = "Sign in to search for people."
       return
     }
 
@@ -443,11 +455,13 @@ struct ContactSearchList: View {
 
       if actors.isEmpty {
         if let typeaheadError {
-          searchError = typeaheadError.localizedDescription
+          logger.error("Contact search failed: \(typeaheadError.localizedDescription)")
+          searchError = UserFacingError.message(for: typeaheadError, action: "search right now")
           return
         }
         if let typeaheadCode, !(200..<300).contains(typeaheadCode) {
-          searchError = "Search failed"
+          logger.error("Contact search failed: HTTP \(typeaheadCode)")
+          searchError = "Couldn’t search right now. Try again."
           return
         }
       }
@@ -500,7 +514,8 @@ struct ContactSearchList: View {
     } catch {
       guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
       if searchResults.isEmpty && mlsSearchResults.isEmpty {
-        searchError = error.localizedDescription
+        logger.error("Contact search failed: \(error.localizedDescription)")
+        searchError = UserFacingError.message(for: error, action: "search right now")
       }
     }
   }

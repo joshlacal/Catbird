@@ -48,6 +48,15 @@ public enum ContentType: String, CaseIterable, Codable, Sendable {
     }
   }
 
+  /// Label for the native scope bar. Five scopes share one iPhone-width bar, so
+  /// "Starter Packs" is shortened there; results and filters keep `title`.
+  public var scopeTitle: String {
+    switch self {
+    case .starterPacks: return String(localized: "Packs", comment: "Search scope for starter packs")
+    default: return title
+    }
+  }
+
   public var icon: String {
     switch self {
     case .top: return "sparkles"
@@ -69,10 +78,18 @@ public enum ContentType: String, CaseIterable, Codable, Sendable {
   }
 }
 
-/// Enum for API-supported search result sorting options.
+/// UI sort modes for post search results.
 public enum SearchSort: String, CaseIterable, Codable, Sendable {
   case top
   case latest
+
+  /// Sort value accepted by `app.bsky.feed.searchPostsV2`.
+  public var searchPostsV2Value: String {
+    switch self {
+    case .top: return "top"
+    case .latest: return "recent"
+    }
+  }
 
   public var displayName: String {
     switch self {

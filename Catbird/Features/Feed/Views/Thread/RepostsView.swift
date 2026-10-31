@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Petrel
+import OSLog
 
 struct RepostsView: View {
     let postUri: String
@@ -15,8 +16,14 @@ struct RepostsView: View {
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var reposts: [AppBskyActorDefs.ProfileView] = []
     @State private var loading: Bool = true
-    @State private var error: Error?
+    @State private var isLoadingPage: Bool = false
+    @State private var initialError: Error?
+    @State private var pageError: Error?
     @State private var cursor: String?
+    /// Set once a load succeeds, so returning to the screen doesn't refetch page 1.
+    @State private var hasLoaded = false
+
+    private let logger = Logger(subsystem: "blue.catbird", category: "RepostsView")
 
     private var contentMaxWidth: CGFloat {
         hSizeClass == .compact ? .infinity : 600
@@ -27,13 +34,18 @@ struct RepostsView: View {
             if loading && reposts.isEmpty {
                 ProgressView()
                     .padding()
-            } else if let error = error {
-                Text("Error loading reposts: \(error.localizedDescription)")
-                    .padding()
-            } else if reposts.isEmpty {
+            } else if let initialError, reposts.isEmpty {
+                ListLoadFailureView(title: "Couldn’t Load Reposts", error: initialError) {
+                    Task { await loadReposts() }
+                }
+            } else if reposts.isEmpty, hasLoaded {
                 Text("No reposts yet")
                     .padding()
                     .foregroundColor(.secondary)
+            } else if reposts.isEmpty {
+                // A cancelled load leaves nothing loaded yet; `.task` reruns it.
+                ProgressView()
+                    .padding()
             } else {
                 List {
                     ForEach(reposts, id: \.did) { profile in
@@ -45,8 +57,15 @@ struct RepostsView: View {
                             .listRowInsets(EdgeInsets())
                     }
 
-                    if let cursor = cursor {
+                    if pageError != nil {
+                        ListPageFailureRow {
+                            Task { await loadMoreReposts() }
+                        }
+                        .listRowSeparator(.hidden)
+                    } else if cursor != nil {
                         ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                             .onAppear {
                                 Task { await loadMoreReposts() }
                             }
@@ -54,37 +73,55 @@ struct RepostsView: View {
                     }
                 }
                 .listStyle(.plain)
+                .refreshable {
+                    await loadReposts()
+                }
                 .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationTitle("Reposts")
         .task {
+            // `.task` restarts each time the screen reappears, such as on the way
+            // back from a reposter's profile; keep the loaded pages and scroll position.
+            // Pull to refresh reloads.
+            guard !hasLoaded else { return }
             await loadReposts()
         }
     }
     
     private func loadReposts() async {
         loading = true
+        initialError = nil
+        pageError = nil
         
         do {
             guard let client = appState.atProtoClient else {
-                error = NSError(domain: "AppError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])
-                loading = false
-                return
+                throw NSError(domain: "RepostsView", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not signed in"])
             }
             
             let uri = try ATProtocolURI(uriString: postUri)
             let input = AppBskyFeedGetRepostedBy.Parameters(uri: uri, limit: 50)
             
-            let (_, result) = try await client.app.bsky.feed.getRepostedBy(input: input)
-            
-            if let result = result {
-                reposts = result.repostedBy
-                cursor = result.cursor
+            let (responseCode, result) = try await client.app.bsky.feed.getRepostedBy(input: input)
+            guard (200 ... 299).contains(responseCode), let result else {
+                throw NSError(domain: "RepostsView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Unexpected response \(responseCode)"])
             }
+            
+            var seen = Set<String>()
+            reposts = result.repostedBy.filter { seen.insert($0.did.didString()).inserted }
+            cursor = result.cursor
+            hasLoaded = true
         } catch {
-            self.error = error
+            logger.error("Failed to load reposts: \(error.localizedDescription)")
+            // A load cancelled by leaving the screen isn't an error; it reruns on return.
+            if !Task.isCancelled {
+                if reposts.isEmpty {
+                    initialError = error
+                } else {
+                    pageError = error
+                }
+            }
         }
         
         loading = false
@@ -93,9 +130,10 @@ struct RepostsView: View {
     private func loadMoreReposts() async {
         guard let client = appState.atProtoClient,
               let currentCursor = cursor,
-              !loading else { return }
+              !loading, !isLoadingPage else { return }
         
-        loading = true
+        isLoadingPage = true
+        pageError = nil
         
         do {
             let uri = try ATProtocolURI(uriString: postUri)
@@ -105,17 +143,24 @@ struct RepostsView: View {
                 cursor: currentCursor
             )
             
-            let (_, result) = try await client.app.bsky.feed.getRepostedBy(input: input)
+            let (responseCode, result) = try await client.app.bsky.feed.getRepostedBy(input: input)
+            guard (200 ... 299).contains(responseCode), let result else {
+                throw NSError(domain: "RepostsView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Unexpected response \(responseCode)"])
+            }
             
-            if let result = result {
-                reposts.append(contentsOf: result.repostedBy)
+            var seen = Set(reposts.map { $0.did.didString() })
+            reposts.append(contentsOf: result.repostedBy.filter { seen.insert($0.did.didString()).inserted })
+            if result.cursor == currentCursor || result.repostedBy.isEmpty {
+                cursor = nil
+            } else {
                 cursor = result.cursor
             }
         } catch {
-            self.error = error
+            logger.error("Failed to load more reposts: \(error.localizedDescription)")
+            pageError = error
         }
         
-        loading = false
+        isLoadingPage = false
     }
 }
 

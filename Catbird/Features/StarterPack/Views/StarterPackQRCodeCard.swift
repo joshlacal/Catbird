@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Nuke
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import Petrel
@@ -21,8 +22,10 @@ public struct StarterPackQRCodeCard: View {
     let shareURL: URL
     
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.moderationPolicy) private var moderationPolicy
     @State private var qrImage: PlatformImage?
     @State private var renderedCardImage: PlatformImage?
+    @State private var creatorAvatar: PlatformImage?
     
     public init(starterPack: AppBskyGraphDefs.StarterPackView, shareURL: URL) {
         self.starterPack = starterPack
@@ -41,7 +44,7 @@ public struct StarterPackQRCodeCard: View {
         NavigationStack {
             VStack(spacing: 20) {
                 // Renderable Card
-                qrCardContent
+                qrCardContent(avatar: nil)
                     .padding(24)
                     .background(Color.systemBackground)
                     .cornerRadius(20)
@@ -53,7 +56,7 @@ public struct StarterPackQRCodeCard: View {
                     .padding(.horizontal, 20)
                 
                 // Export / Share Button
-                if let cardImage = renderCardToImage() {
+                if let cardImage = renderedCardImage {
                     #if os(iOS)
                     ShareLink(
                         item: Image(uiImage: cardImage),
@@ -87,19 +90,34 @@ public struct StarterPackQRCodeCard: View {
                     }
                 }
             }
-            .onAppear {
+            .task {
                 generateQR()
+                await loadCreatorAvatar()
+                // Render the exported card once, off the body path, with the avatar already loaded
+                // (ImageRenderer can't wait for async image loads).
+                renderedCardImage = renderCardToImage()
             }
         }
     }
     
     // MARK: - Card Content
     
-    private var qrCardContent: some View {
+    /// - Parameter avatar: A preloaded avatar for the exported image; `nil` loads it on screen.
+    private func qrCardContent(avatar: PlatformImage?) -> some View {
         VStack(spacing: 16) {
             // Header
             HStack(spacing: 12) {
-                AsyncProfileImage(url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 48)
+                if let avatar {
+                    platformImageView(avatar)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 48, height: 48)
+                        .clipShape(Circle())
+                } else {
+                    AsyncProfileImage(
+                        url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 48,
+                        did: starterPack.creator.did.didString(), labels: starterPack.creator.labels)
+                }
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(packName)
@@ -180,10 +198,31 @@ public struct StarterPackQRCodeCard: View {
     
     // MARK: - Image Rendering
     
+    private func platformImageView(_ image: PlatformImage) -> Image {
+        #if os(iOS)
+        Image(uiImage: image)
+        #else
+        Image(nsImage: image)
+        #endif
+    }
+    
+    /// Preloads the creator's avatar for the exported card. An avatar the
+    /// moderation policy blurs is not downloaded; the card keeps the placeholder.
+    private func loadCreatorAvatar() async {
+        let creator = starterPack.creator
+        guard !moderationPolicy.concealsAvatar(did: creator.did.didString(), labels: creator.labels) else { return }
+        guard let url = URL(string: creator.avatar?.uriString() ?? ""), url.scheme != nil else { return }
+        creatorAvatar = try? await ImageLoadingManager.shared.pipeline.image(for: url)
+    }
+    
     @MainActor
     private func renderCardToImage() -> PlatformImage? {
         #if os(iOS)
-        let renderer = ImageRenderer(content: qrCardContent.frame(width: 320).padding(20).background(Color.white))
+        // ImageRenderer content does not inherit this view's environment, so the
+        // moderation policy is passed in for the card's avatar placeholder.
+        let renderer = ImageRenderer(
+            content: qrCardContent(avatar: creatorAvatar).frame(width: 320).padding(20).background(Color.white)
+                .environment(\.moderationPolicy, moderationPolicy))
         renderer.scale = 2.0
         return renderer.uiImage
         #else

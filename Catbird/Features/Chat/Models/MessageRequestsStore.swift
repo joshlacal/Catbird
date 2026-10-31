@@ -76,7 +76,8 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
   @ObservationIgnored private var directRequests: [String: DirectRequestView] = [:]
   @ObservationIgnored private var legacyRequests: [String: MLSConversationModel] = [:]
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "MessageRequests")
-
+  @ObservationIgnored private var cachedSource: [ChatBskyConvoDefs.ConvoView] = []
+  @ObservationIgnored private var cachedMappedRequests: [MessageRequestItem] = []
   init(appState: AppState) {
     self.appState = appState
     self.accountDID = appState.userDID
@@ -84,10 +85,17 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
 
   var blueskyRequests: [MessageRequestItem] {
     guard appState.userDID == accountDID else { return [] }
+    let source = appState.chatManager.messageRequests
+    if source == cachedSource {
+      return cachedMappedRequests
+    }
     let now = Date()
-    return appState.chatManager.messageRequests.map {
+    let mapped = source.map {
       MessageRequestItem(bluesky: $0, currentUserDID: accountDID, now: now)
     }
+    cachedSource = source
+    cachedMappedRequests = mapped
+    return mapped
   }
 
   func invalidate() {
@@ -210,7 +218,9 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     switch item.origin {
     case .bluesky(let convoID):
       guard await appState.chatManager.acceptMessageRequest(convoId: convoID) else {
-        errorMessage = "Could not accept this request. It has been kept so you can try again."
+        // Show the failure in the sheet, not as a Messages alert after it closes
+        appState.chatManager.errorState = nil
+        errorMessage = "Couldn’t accept this request. It’s been kept so you can try again."
         return nil
       }
       return appState.userDID == accountDID ? .bluesky(convoID: convoID) : nil
@@ -246,7 +256,13 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     defer { end(item) }
     switch item.origin {
     case .bluesky(let convoID):
-      return await appState.chatManager.declineMessageRequest(convoId: convoID)
+      guard await appState.chatManager.declineMessageRequest(convoId: convoID) else {
+        // Show the failure in the sheet, not as a Messages alert after it closes
+        appState.chatManager.errorState = nil
+        errorMessage = "Couldn’t decline this request. Please try again."
+        return false
+      }
+      return true
     case .encryptedDirect(let conversationID), .encryptedLegacy(let conversationID):
       let generation = self.generation
       do {

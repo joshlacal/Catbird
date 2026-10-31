@@ -13,6 +13,7 @@ struct NotificationsActivityListView: View {
   @State private var posts: [AppBskyFeedDefs.PostView] = []
   @State private var isLoading = true
   @State private var errorMessage: String?
+  @State private var hasLoaded = false
 
   private var contentMaxWidth: CGFloat {
     hSizeClass == .compact ? .infinity : 600
@@ -95,6 +96,7 @@ struct NotificationsActivityListView: View {
     .toolbarTitleDisplayMode(.inline)
     #endif
     .task {
+      guard !hasLoaded else { return }
       await loadPosts()
     }
     .refreshable {
@@ -120,7 +122,7 @@ struct NotificationsActivityListView: View {
       )
 
       guard (200 ... 299).contains(responseCode), let fetchedPosts = output?.posts else {
-        errorMessage = "Failed to load posts (HTTP \(responseCode))"
+        errorMessage = "Couldn’t load these posts. Try again."
         isLoading = false
         return
       }
@@ -133,9 +135,10 @@ struct NotificationsActivityListView: View {
 
       // Restore requested newest-first order and filter out deleted/missing posts
       posts = postURIs.compactMap { postMap[$0] }
+      hasLoaded = true
       isLoading = false
     } catch {
-      errorMessage = "Error loading posts: \(error.localizedDescription)"
+      errorMessage = UserFacingError.message(for: error, action: "load these posts")
       isLoading = false
     }
   }

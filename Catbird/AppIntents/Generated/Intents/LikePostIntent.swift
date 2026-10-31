@@ -28,7 +28,7 @@ struct LikePostIntent: AppIntent {
         }
 
         if view.viewer?.like != nil {
-            return .result(dialog: IntentDialog(stringLiteral: "You already liked that post."))
+            return .result(dialog: IntentDialog("You already liked that post."))
         }
         let record = AppBskyFeedLike(subject: ComAtprotoRepoStrongRef(uri: view.uri, cid: view.cid), createdAt: ATProtocolDate(date: Date()), via: nil)
         let userDID = try await client.getDid()
@@ -37,8 +37,9 @@ struct LikePostIntent: AppIntent {
             collection: try NSID(nsidString: "app.bsky.feed.like"),
             record: .knownType(record)
         )
+        try await IntentClientProvider.shared.requireCoveredUse(for: userDID)
         _ = try unwrapIntentResponse(await client.com.atproto.repo.createRecord(input: input))
-        return .result(dialog: IntentDialog(stringLiteral: "Liked."))
+        return .result(dialog: IntentDialog("Liked."))
 
     }
 }

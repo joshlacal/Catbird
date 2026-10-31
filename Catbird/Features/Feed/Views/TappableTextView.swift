@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 
 struct TappableTextView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let attributedString: AttributedString
     @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
@@ -16,8 +17,8 @@ struct TappableTextView: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.fontManager) private var fontManager
 
-  // State to track if the string contains only emojis
-  @State private var containsOnlyEmojis: Bool = false
+  // Pre-computed flag for emoji-only text scaling
+  private let containsOnlyEmojis: Bool
     
   private var textDesign: Font.Design
   private var textWeight: Font.Weight
@@ -38,8 +39,8 @@ struct TappableTextView: View {
     self.fontWidth = nil
     self.lineSpacing = 1.6
     self.letterSpacing = 0.2
+    self.containsOnlyEmojis = Self.determineIfOnlyEmojis(attributedString)
   }
-    
   public init(
       attributedString: AttributedString,
       textSize: CGFloat? = nil,
@@ -58,8 +59,11 @@ struct TappableTextView: View {
       self.fontWidth = fontWidth
       self.lineSpacing = lineSpacing
       self.letterSpacing = letterSpacing
+      self.containsOnlyEmojis = Self.determineIfOnlyEmojis(attributedString)
   }
-
+    // Unlimited lines at their ideal height never need to shrink, so the text carries no
+    // `minimumScaleFactor`/`allowsTightening`: either one sends every measurement through
+    // SwiftUI's slower scale-to-fit path.
     var body: some View {
         Group {
             if containsOnlyEmojis {
@@ -72,8 +76,6 @@ struct TappableTextView: View {
                         .tracking(fontManager.letterSpacingValue)
                         .lineSpacing(fontManager.getLineSpacing(for: effectiveSize))
                         .lineLimit(nil)
-                        .allowsTightening(true)
-                        .minimumScaleFactor(0.9)
                 } else {
                     Text(attributedString)
                         .appFont(textStyle)
@@ -81,8 +83,6 @@ struct TappableTextView: View {
                         .multilineTextAlignment(.leading)
                         .tracking(fontManager.letterSpacingValue)
                         .lineLimit(nil)
-                        .allowsTightening(true)
-                        .minimumScaleFactor(0.9)
                 }
             } else {
                 // Regular text handling with FontManager integration
@@ -94,16 +94,13 @@ struct TappableTextView: View {
                         .tracking(fontManager.letterSpacingValue)
                         .lineSpacing(fontManager.getLineSpacing(for: effectiveSize))
                         .lineLimit(nil)
-                        .allowsTightening(true)
-                        .minimumScaleFactor(0.9)
-                        .textSelectionAffinity(.automatic)
                         .textSelection(.disabled)
                         // Disable animations to prevent any fly-in or size-change animations
                         .transaction { $0.animation = nil }
                         .environment(
                             \.openURL,
                              OpenURLAction { url in
-                                 return appState.urlHandler.handle(url)
+                                 return sceneContext.urlHandler.handle(url)
                              })
                 } else {
                     Text(attributedString)
@@ -112,25 +109,18 @@ struct TappableTextView: View {
                         .multilineTextAlignment(.leading)
                         .tracking(fontManager.letterSpacingValue)
                         .lineLimit(nil)
-                        .allowsTightening(true)
-                        .minimumScaleFactor(0.9)
-                        .textSelectionAffinity(.automatic)
                         .textSelection(.disabled)
                         // Disable animations to prevent any fly-in or size-change animations
                         .transaction { $0.animation = nil }
                         .environment(
                             \.openURL,
                              OpenURLAction { url in
-                                 return appState.urlHandler.handle(url)
+                                 return sceneContext.urlHandler.handle(url)
                              })
                 }
             }
         }
         .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
-        .onAppear {
-            checkIfOnlyEmojis()
-        }
-
     }
     
     // Helper function to convert Font.TextStyle to AppTextRole
@@ -160,53 +150,28 @@ struct TappableTextView: View {
       return textSize
   }
   
-  // Function to check if the string contains only emojis
-  private func checkIfOnlyEmojis() {
-      // Safely extract a plain string and handle potential crashes
-      let plainString: String
-      do {
-          plainString = String(attributedString.characters.reduce("") { result, char in
-              result + String(char)
-          })
-      } catch {
-          // If any error occurs during processing, assume it's not emoji-only
-          containsOnlyEmojis = false
-          return
+  private static func determineIfOnlyEmojis(_ attributedString: AttributedString) -> Bool {
+      var hasEmoji = false
+      var scalarCount = 0
+      for scalar in attributedString.unicodeScalars {
+          scalarCount += 1
+          if scalarCount > 120 { return false }
+          let v = scalar.value
+          if v == 0x200D || (0xFE00...0xFE0F).contains(v) || (0xE0020...0xE007F).contains(v) {
+              continue
+          }
+          guard scalar.isEmojiScalar else { return false }
+          hasEmoji = true
       }
-      
-      // Skip empty strings
-      guard !plainString.isEmpty else {
-          containsOnlyEmojis = false
-          return
-      }
-      
-      // Check if the string contains only emoji characters
-      containsOnlyEmojis = plainString.containsOnlyEmojis
+      guard hasEmoji else { return false }
+      return attributedString.characters.prefix(16).count <= 15
   }
 }
 
 // Extension to check if a string contains only emoji characters
-extension String {
-    var containsOnlyEmojis: Bool {
-        if isEmpty { return false }
-        
-        // Filter out zero-width joiners and variation selectors which are used in emoji sequences
-        let emojiString = self.unicodeScalars.filter { 
-            !($0.value == 0x200D ||      // Zero-width joiner
-              (0xFE00...0xFE0F).contains($0.value) ||  // Variation selectors
-              (0xE0020...0xE007F).contains($0.value))  // Tags
-        }
-        
-        // If after filtering, we have nothing left, it wasn't an emoji string
-        if emojiString.isEmpty { return false }
-        
-        // Now check if all remaining characters are emoji
-        return emojiString.allSatisfy { isEmoji($0) }
-    }
-    
-    // Improved emoji detection with support for extended emoji and skin tones
-    private func isEmoji(_ scalar: UnicodeScalar) -> Bool {
-        switch scalar.value {
+extension UnicodeScalar {
+    fileprivate var isEmojiScalar: Bool {
+        switch value {
         case 0x1F600...0x1F64F, // Emoticons
              0x1F300...0x1F5FF, // Misc Symbols and Pictographs
              0x1F680...0x1F6FF, // Transport and Map
@@ -222,10 +187,6 @@ extension String {
              0x1F0A0...0x1F0FF, // Playing Cards
              0x1F100...0x1F1FF, // Enclosed Alphanumeric Supplement
              0x1F200...0x1F2FF, // Enclosed Ideographic Supplement
-             0x1F300...0x1F5FF, // Miscellaneous Symbols and Pictographs
-             0x1F600...0x1F64F, // Emoticons
-             0x1F680...0x1F6FF, // Transport and Map Symbols
-             0x1F700...0x1F77F, // Alchemical Symbols
              0x1F3FB...0x1F3FF, // Emoji Modifier Fitzpatrick (skin tones)
              0x261D, 0x26F9,    // Various hand symbols
              0x270A...0x270D,   // Hand symbols
@@ -233,10 +194,26 @@ extension String {
              0x1F926...0x1F9FF: // Additional symbols
             return true
         default:
-            return scalar.properties.isEmoji && 
-                   (scalar.properties.isEmojiPresentation || 
-                    scalar.properties.generalCategory == .otherSymbol)
+            return properties.isEmoji &&
+                   (properties.isEmojiPresentation ||
+                    properties.generalCategory == .otherSymbol)
         }
+    }
+}
+
+extension String {
+    var containsOnlyEmojis: Bool {
+        if isEmpty { return false }
+        var hasEmoji = false
+        for scalar in unicodeScalars {
+            let v = scalar.value
+            if v == 0x200D || (0xFE00...0xFE0F).contains(v) || (0xE0020...0xE007F).contains(v) {
+                continue
+            }
+            guard scalar.isEmojiScalar else { return false }
+            hasEmoji = true
+        }
+        return hasEmoji
     }
 }
 

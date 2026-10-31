@@ -19,10 +19,11 @@ extension AppState {
     
     /// Prefetches a feed for faster initial loading
     /// - Parameter fetchType: The type of feed to prefetch
+    @MainActor
     func prefetchFeed(_ fetchType: FetchType) {
         guard let client = atProtoClient else { return }
         
-        Task {
+        startAccountTask { [self] in
             do {
                 let feedManager = FeedManager(client: client, fetchType: fetchType)
                 let (posts, cursor) = try await feedManager.fetchFeed(fetchType: fetchType, cursor: nil)
@@ -32,11 +33,11 @@ extension AppState {
             }
         }
     }
-    
-    /// Sets the tabTappedAgain property to the specified tab index
-    /// This triggers a scroll to top in the appropriate tab
-    /// - Parameter tabIndex: The index of the tab that was tapped again
-    func triggerScrollToTop(for tabIndex: Int) {
-        tabTappedAgain = tabIndex
-    }
+}
+
+extension SceneNavigationContext {
+  /// Scroll-to-top requests belong to the tab in this window.
+  func triggerScrollToTop(for tabIndex: Int) {
+    tabTappedAgain = tabIndex
+  }
 }

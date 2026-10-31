@@ -16,52 +16,378 @@ import Petrel
 
 @available(iOS 18.0, *)
 actor SpotlightEntityDonator {
-  static let shared = SpotlightEntityDonator()
+  static let shared: SpotlightEntityDonator = {
+    let donator = SpotlightEntityDonator()
+    // Process-lifetime observer. AppState initializes this singleton before its first preflight.
+    // Capture an affirmative restriction before hopping to this actor, so a later clear cannot
+    // lose its revocation. A neutral initial/foreground lookup does not purge existing content.
+    _ = NotificationCenter.default.addObserver(
+      forName: .platformAgeAccessDidChange, object: nil, queue: .main
+    ) { notification in
+      let originDID = notification.userInfo?["accountDID"] as? String
+      MainActor.assumeIsolated {
+        guard let appState = AppStateManager.shared.lifecycle.appState,
+              appState.userDID == originDID,
+              appState.ageAccess.signal.requirement == .ageCheckRequired,
+              !appState.ageAccess.allows(.generalContent) else { return }
+        Task { await donator.removeAll() }
+      }
+    }
+    return donator
+  }()
 
   private let logger = Logger(subsystem: "blue.catbird", category: "SpotlightDonation")
 
   /// Insertion-ordered dedup memory so repeated feed refreshes don't re-index
   /// the same entities; evicts oldest once `capacity` is reached.
   private var donatedIDs = Set<String>()
+  private var donatedSignatures = Set<String>()
   private var donationOrder: [String] = []
+  private var signatureOrder: [String] = []
   private let capacity = 2000
 
+  /// Batching buffer within a ~1 s window
+  private var pendingPostEntities: [PostEntity] = []
+  private var pendingPostSignatures: [String: String] = [:]
+  private var pendingProfileEntities: [ProfileEntity] = []
+  private var batchTask: Task<Void, Never>? = nil
+  private let batchWindowNanoseconds: UInt64 = 1_000_000_000
   /// Per-call cap: feeds can hand over hundreds of posts on a fast scroll.
   private let batchLimit = 50
 
+  /// Whether each post seen in a feed or thread may be indexed, keyed by URI and valid only
+  /// under `verdictPolicy`. Engagement donations receive a URI, not the labeled post, so they
+  /// rely on this record; a post without a current verdict is not indexed.
+  private var postVerdicts: [String: Bool] = [:]
+  private var verdictOrder: [String] = []
+  private var verdictPolicy: ModerationPolicy?
+
+  /// Bumped when the set of posts eligible for Spotlight changes. Installs that
+  /// indexed under an older scope have their stale post entries purged once.
+  private static let postIndexScopeVersion = 2
+  private static let postIndexScopeKey = "spotlightPostIndexScopeVersion"
+  private var postIndexScopeChecked = false
+
+  /// Serialize OS index mutations. A late index completion must be removed before a queued
+  /// revocation finishes; an untracked indexing task could otherwise republish revoked content.
+  private var indexMutationTail: Task<Void, Never>?
+  private var exportGeneration: UInt64 = 0
+
+  private struct ExportContext: Equatable, Sendable {
+    let owner: ObjectIdentifier
+    let ageRevision: UInt64
+    let generation: UInt64
+    let policy: ModerationPolicy
+  }
+
   private init() {}
 
-  func donate(posts: [AppBskyFeedDefs.PostView]) {
-    // Also seed the deadline-safe resolution store — Siri's onscreen-context
-    // requests must resolve these without a network fetch.
-    Task {
-      await PostEntityStore.shared.store(views: posts)
+  // MARK: - Posts
+
+  /// Feed pipeline entry point. Posts are seeded into the deadline-safe
+  /// resolution store so Siri's onscreen-context requests ("like this post")
+  /// resolve without a network fetch, but only posts the account has engaged
+  /// with — authored, liked, reposted, or bookmarked — reach Spotlight. Indexing
+  /// every scrolled-past post floods search with strangers' content. Moderation
+  /// applies to both: posts feeds drop are not seeded, and moderated posts are
+  /// not indexed. Before the account's policy is confirmed nothing is seeded or
+  /// indexed here; rendered posts still seed the store from `PostView`.
+  func donateFeed(posts: [AppBskyFeedDefs.PostView], viewerDID: String?) async {
+    guard let context = await activeExportContext(), context.policy.accountDID == viewerDID else { return }
+    let policy = context.policy
+    let listed: [AppBskyFeedDefs.PostView] = posts.filter { post in
+      SpotlightDonationModeration.isListed(post, policy: policy)
     }
-    index(posts.map { PostEntity(from: $0) })
+    await PostEntityStore.shared.store(views: listed)
+    guard await isCurrent(context) else { return }
+    await purgeLegacyPostIndexIfNeeded()
+    guard await isCurrent(context) else { return }
+    recordVerdicts(for: posts, policy: policy)
+    let indexable: [AppBskyFeedDefs.PostView] = SpotlightDonationModeration.indexableFeedPosts(
+      posts, viewerDID: viewerDID, policy: policy)
+    // Skip posts whose uri+cid signature is already indexed
+    let freshPosts = indexable.filter {
+      !donatedSignatures.contains("\($0.uri.uriString()):\($0.cid.string)")
+    }
+    guard !freshPosts.isEmpty else { return }
+    for post in freshPosts {
+      let entity = PostEntity(from: post)
+      pendingPostEntities.append(entity)
+      pendingPostSignatures[entity.id] = "\(post.uri.uriString()):\(post.cid.string)"
+    }
+    scheduleBatchFlush(context: context)
   }
 
-  func donate(profiles: [AppBskyActorDefs.ProfileViewDetailed]) {
-    let entities = profiles.map { ProfileEntity(from: $0) }
+  /// Indexes posts the account deliberately engaged with, such as the anchor
+  /// of a thread it opened, unless moderation keeps them out of Spotlight. The
+  /// resolution store, persisted to the App Group with the text and the author
+  /// avatar URL, is seeded under the same policy, and only once the account's
+  /// policy is confirmed.
+  func donate(posts: [AppBskyFeedDefs.PostView]) async {
+    guard let context = await activeExportContext() else { return }
+    let policy = context.policy
+    let indexable = SpotlightDonationModeration.storablePosts(posts, policy: policy)
+    await PostEntityStore.shared.store(views: indexable)
+    guard await isCurrent(context) else { return }
+    await purgeLegacyPostIndexIfNeeded()
+    guard await isCurrent(context) else { return }
+    recordVerdicts(for: posts, policy: policy)
+    // Skip posts whose uri+cid signature is already indexed
+    let freshPosts = indexable.filter {
+      !donatedSignatures.contains("\($0.uri.uriString()):\($0.cid.string)")
+    }
+    guard !freshPosts.isEmpty else { return }
+    for post in freshPosts {
+      let entity = PostEntity(from: post)
+      pendingPostEntities.append(entity)
+      pendingPostSignatures[entity.id] = "\(post.uri.uriString()):\(post.cid.string)"
+    }
+    scheduleBatchFlush(context: context)
+  }
+
+  /// Indexes a post the account just liked, reposted, or bookmarked. The post
+  /// was rendered before the interaction, so its view is already in the store.
+  /// It is indexed only when this donator saw the post under the current
+  /// moderation policy and that policy allows it.
+  func donateEngagement(postURI: String) async {
+    guard let context = await activeExportContext(), context.policy == verdictPolicy,
+      postVerdicts[postURI] == true
+    else { return }
+    let entities = await PostEntityStore.shared.entities(for: [postURI])
+    for entity in entities {
+      pendingPostEntities.append(entity)
+    }
+    scheduleBatchFlush(context: context)
+  }
+
+  /// Records whether each post may be indexed under `policy`, replacing every
+  /// verdict made under an earlier policy.
+  private func recordVerdicts(for posts: [AppBskyFeedDefs.PostView], policy: ModerationPolicy) {
+    if verdictPolicy != policy {
+      postVerdicts.removeAll()
+      verdictOrder.removeAll()
+      verdictPolicy = policy
+    }
+    for post in posts {
+      let id = post.uri.uriString()
+      if postVerdicts.updateValue(SpotlightDonationModeration.allowsPost(post, policy: policy), forKey: id) == nil {
+        verdictOrder.append(id)
+        if verdictOrder.count > capacity {
+          postVerdicts.removeValue(forKey: verdictOrder.removeFirst())
+        }
+      }
+    }
+  }
+
+  /// A transient lease on the current account, platform decision, and confirmed label policy.
+  /// No age band or cross-process verification state is stored or exported.
+  private func activeExportContext() async -> ExportContext? {
+    let generation = exportGeneration
+    let context: ExportContext? = await MainActor.run {
+      guard let appState = AppStateManager.shared.lifecycle.appState,
+            appState.ageAccess.allows(.generalContent) else { return nil }
+      let policy = appState.moderationPolicy
+      guard policy.isConfirmed, policy.accountDID != nil,
+            policy.accountDID == appState.userDID else { return nil }
+      return ExportContext(owner: ObjectIdentifier(appState), ageRevision: appState.ageAccess.revision,
+                           generation: generation, policy: policy)
+    }
+    guard generation == exportGeneration else { return nil }
+    return context
+  }
+
+  private func isCurrent(_ context: ExportContext) async -> Bool {
+    guard !Task.isCancelled else { return false }
+    return await activeExportContext() == context
+  }
+
+  /// Earlier builds indexed every feed post. Removes those entries once so only
+  /// engaged posts remain searchable.
+  private func purgeLegacyPostIndexIfNeeded() async {
+    let mutation = enqueueIndexMutation { [weak self] in
+      await self?.performLegacyPostIndexPurge()
+    }
+    await mutation.value
+  }
+
+  private func performLegacyPostIndexPurge() async {
+    guard !postIndexScopeChecked else { return }
+    postIndexScopeChecked = true
+    let defaults = UserDefaults.standard
+    guard defaults.integer(forKey: Self.postIndexScopeKey) < Self.postIndexScopeVersion else {
+      return
+    }
+    do {
+      try await CSSearchableIndex.default().deleteAppEntities(ofType: PostEntity.self)
+      defaults.set(Self.postIndexScopeVersion, forKey: Self.postIndexScopeKey)
+      // Index mutations are serialized; forget old dedup entries so a later donation
+      // can repopulate the index under its current access and moderation policy.
+      donatedIDs.removeAll()
+      donationOrder.removeAll()
+      logger.info("Purged Spotlight posts indexed under the previous scope")
+    } catch {
+      postIndexScopeChecked = false
+      logger.warning("Spotlight legacy post purge failed: \(error.localizedDescription)")
+    }
+  }
+
+  // MARK: - Profiles
+
+  /// Seeds the resolution store with profiles the account opened and indexes
+  /// them in Spotlight, both only for profiles moderation allows (no list
+  /// filter, no profile or avatar blur) under the account's confirmed policy.
+  func donate(profiles: [AppBskyActorDefs.ProfileViewDetailed]) async {
+    guard let context = await activeExportContext() else { return }
+    let policy = context.policy
+    let indexable = SpotlightDonationModeration.storableProfiles(profiles, policy: policy)
     // Also seed the deadline-safe resolution store (see donate(posts:)).
-    Task {
-      await ProfileEntityStore.shared.store(entities: entities)
+    await ProfileEntityStore.shared.store(entities: indexable.map { ProfileEntity(from: $0) })
+    guard await isCurrent(context) else { return }
+    for profile in indexable {
+      pendingProfileEntities.append(ProfileEntity(from: profile))
     }
-    index(entities)
+    scheduleBatchFlush(context: context)
   }
 
-  private func index<Entity: IndexedEntity>(_ entities: [Entity]) where Entity.ID == String {
-    let fresh = Array(entities.filter { !donatedIDs.contains($0.id) }.prefix(batchLimit))
-    guard !fresh.isEmpty else { return }
-    for entity in fresh {
-      remember(entity.id)
+  /// Removes every indexed post and profile so a signed-out or removed account's
+  /// content stops appearing in Spotlight. Content is indexed again as it's viewed.
+  /// The on-screen resolution stores go too: they persist recent posts and profiles
+  /// to the App Group with no account on them, so the next account to sign in
+  /// would otherwise resolve the previous one's.
+  func removeAll() async {
+    exportGeneration &+= 1
+    resetDonationMemory()
+    await PostEntityStore.shared.removeAll()
+    await ProfileEntityStore.shared.removeAll()
+    let mutation = enqueueIndexMutation { [weak self] in
+      await self?.removeIndexedEntities()
+    }
+    await mutation.value
+  }
+
+  private func resetDonationMemory() {
+    batchTask?.cancel()
+    batchTask = nil
+    pendingPostEntities.removeAll()
+    pendingPostSignatures.removeAll()
+    pendingProfileEntities.removeAll()
+    donatedSignatures.removeAll()
+    signatureOrder.removeAll()
+    donatedIDs.removeAll()
+    donationOrder.removeAll()
+    postVerdicts.removeAll()
+    verdictOrder.removeAll()
+    verdictPolicy = nil
+  }
+
+  private func scheduleBatchFlush(context: ExportContext) {
+    guard batchTask == nil else { return }
+    batchTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: batchWindowNanoseconds)
+      guard !Task.isCancelled else { return }
+      await self?.flushPendingBatch(context: context)
+    }
+  }
+
+  private func flushPendingBatch(context: ExportContext) async {
+    batchTask = nil
+    guard await isCurrent(context) else {
+      pendingPostEntities.removeAll()
+      pendingPostSignatures.removeAll()
+      pendingProfileEntities.removeAll()
+      return
     }
 
-    Task {
+    let posts = pendingPostEntities
+    let postSigs = pendingPostSignatures
+    let profiles = pendingProfileEntities
+    pendingPostEntities.removeAll()
+    pendingPostSignatures.removeAll()
+    pendingProfileEntities.removeAll()
+
+    if !posts.isEmpty {
+      await index(posts, signatures: postSigs, context: context)
+    }
+    if !profiles.isEmpty {
+      await index(profiles, signatures: nil, context: context)
+    }
+  }
+
+  private func rememberSignature(_ signature: String) {
+    guard donatedSignatures.insert(signature).inserted else { return }
+    signatureOrder.append(signature)
+    if signatureOrder.count > capacity {
+      let evicted = signatureOrder.removeFirst()
+      donatedSignatures.remove(evicted)
+    }
+  }
+
+  private func removeIndexedEntities() async {
+    do {
+      try await CSSearchableIndex.default().deleteAppEntities(ofType: PostEntity.self)
+    } catch {
+      logger.warning("Spotlight post removal failed: \(error.localizedDescription)")
+    }
+    do {
+      try await CSSearchableIndex.default().deleteAppEntities(ofType: ProfileEntity.self)
+    } catch {
+      logger.warning("Spotlight profile removal failed: \(error.localizedDescription)")
+    }
+    resetDonationMemory()
+  }
+
+  private func enqueueIndexMutation(
+    _ operation: @escaping @Sendable () async -> Void
+  ) -> Task<Void, Never> {
+    let previous = indexMutationTail
+    let mutation = Task {
+      await previous?.value
+      await operation()
+    }
+    indexMutationTail = mutation
+    return mutation
+  }
+
+  private func index<Entity: IndexedEntity>(
+    _ entities: [Entity], signatures: [String: String]? = nil, context: ExportContext
+  ) async where Entity.ID == String {
+    let mutation = enqueueIndexMutation { [weak self] in
+      await self?.performIndex(entities, signatures: signatures, context: context)
+    }
+    await mutation.value
+  }
+
+  private func performIndex<Entity: IndexedEntity>(
+    _ entities: [Entity], signatures: [String: String]? = nil, context: ExportContext
+  ) async where Entity.ID == String {
+    guard await isCurrent(context) else { return }
+    let fresh = entities.filter { !donatedIDs.contains($0.id) }
+    guard !fresh.isEmpty else { return }
+
+    for i in stride(from: 0, to: fresh.count, by: batchLimit) {
+      guard await isCurrent(context) else {
+        await removeIndexedEntities()
+        return
+      }
+      let chunk = Array(fresh[i..<min(i + batchLimit, fresh.count)])
+      var indexed = false
       do {
-        try await CSSearchableIndex.default().indexAppEntities(fresh)
+        try await CSSearchableIndex.default().indexAppEntities(chunk)
+        indexed = true
       } catch {
-        self.logger.warning(
-          "Spotlight donation failed for \(fresh.count) entities: \(error.localizedDescription)")
+        logger.warning("Spotlight donation failed for \(chunk.count) entities: \(error.localizedDescription)")
+      }
+      guard await isCurrent(context) else {
+        // Still inside the same mutation queue: no later index operation can race this cleanup.
+        await removeIndexedEntities()
+        return
+      }
+      guard indexed else { continue }
+      for entity in chunk {
+        remember(entity.id)
+        if let sig = signatures?[entity.id] {
+          rememberSignature(sig)
+        }
       }
     }
   }
@@ -76,3 +402,88 @@ actor SpotlightEntityDonator {
   }
 }
 
+
+// MARK: - Moderation
+
+/// Which posts and profiles may enter the Spotlight index under the account's
+/// moderation policy. An index entry shows the text and the avatar with no
+/// warning or reveal control, so anything moderation filters or blurs in a
+/// list, its media, or the avatar it carries stays out.
+enum SpotlightDonationModeration {
+  /// Whether a feed post may seed the on-screen resolution store: feeds drop
+  /// posts whose list context filters them, so those are never on screen.
+  static func isListed(_ post: AppBskyFeedDefs.PostView, policy: ModerationPolicy) -> Bool {
+    !policy.decide(post: post).ui(.contentList).filter
+  }
+
+  /// What a rendered post row may seed into the on-screen resolution stores.
+  struct RowSeed: Equatable, Sendable {
+    /// Store the post in `PostEntityStore`.
+    let storesPost: Bool
+    /// Store the author in `ProfileEntityStore`.
+    let storesAuthor: Bool
+  }
+
+  /// What a rendered post row (`PostView`) may seed into the on-screen
+  /// resolution stores, which are persisted to the App Group. The post's entry
+  /// carries its text and the author avatar URL, so a post is stored only when
+  /// lists show it, its body and media are not gated, and its author's avatar
+  /// is not a placeholder. The author's profile is stored unless its avatar is
+  /// a placeholder, as `ProfileRowView` does.
+  ///
+  /// This is the row path's rule, not a rule of the store: the thread screen's
+  /// `seedThreadEntityCache` stores every row it shows, and `donateFeed` stores
+  /// every post lists show (`isListed`), so the persisted store can still hold
+  /// a post with a blurred body, media or avatar that a row would not seed.
+  static func rowSeed(_ post: AppBskyFeedDefs.PostView, policy: ModerationPolicy) -> RowSeed {
+    let moderation = PostModerationPresentation.make(post: post, policy: policy)
+    let storesAuthor = !moderation.concealsAvatar
+    let storesPost = storesAuthor && !moderation.isFilteredFromList
+      && !moderation.concealsBody && !moderation.concealsMedia
+    return RowSeed(storesPost: storesPost, storesAuthor: storesAuthor)
+  }
+
+  /// Whether a post may be indexed: no list filter or blur, no media blur, and
+  /// no blur on the author avatar the entry shows.
+  static func allowsPost(_ post: AppBskyFeedDefs.PostView, policy: ModerationPolicy) -> Bool {
+    let decision = policy.decide(post: post)
+    let list = decision.ui(.contentList)
+    return !list.filter && !list.blur && !decision.ui(.contentMedia).blur && !decision.ui(.avatar).blur
+  }
+
+  /// Whether a profile may be indexed: no profile-list filter and no blur on
+  /// the profile view or the avatar.
+  static func allowsProfile(_ profile: some ModerationAccountSubject, policy: ModerationPolicy) -> Bool {
+    let decision = policy.decide(profile: profile)
+    return !decision.ui(.profileList).filter && !decision.ui(.profileView).blur && !decision.ui(.avatar).blur
+  }
+
+  /// The posts a deliberate engagement (opening a thread) may seed into the
+  /// persisted resolution store and index: the `allowsPost` rule, applied
+  /// before anything is written.
+  static func storablePosts(_ posts: [AppBskyFeedDefs.PostView], policy: ModerationPolicy) -> [AppBskyFeedDefs.PostView] {
+    posts.filter { allowsPost($0, policy: policy) }
+  }
+
+  /// The profiles an opened profile may seed into the persisted resolution
+  /// store and index: the `allowsProfile` rule, applied before anything is written.
+  static func storableProfiles<Profile: ModerationAccountSubject>(
+    _ profiles: [Profile], policy: ModerationPolicy
+  ) -> [Profile] {
+    profiles.filter { allowsProfile($0, policy: policy) }
+  }
+
+  /// The feed posts to index: those the viewer authored, liked, reposted or
+  /// bookmarked, and that moderation allows.
+  static func indexableFeedPosts(
+    _ posts: [AppBskyFeedDefs.PostView], viewerDID: String?, policy: ModerationPolicy
+  ) -> [AppBskyFeedDefs.PostView] {
+    posts.filter { post in
+      let engaged = post.author.did.didString() == viewerDID
+        || post.viewer?.like != nil
+        || post.viewer?.repost != nil
+        || post.viewer?.bookmarked == true
+      return engaged && allowsPost(post, policy: policy)
+    }
+  }
+}

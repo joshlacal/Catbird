@@ -16,6 +16,8 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
   let title: String
   let description: String
   let image: String
+  let associatedRefs: [ComAtprotoRepoStrongRef]?
+  let externalView: AppBskyEmbedExternal.View?
   
   /// Original URL detected in the composer text. Card service may canonicalize `url`,
   /// so keep the full user-provided link for embeds and local caching.
@@ -24,6 +26,51 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
   /// Cached thumbnail blob after upload (not persisted)
   var thumbnailBlob: Blob? = nil
 
+  init(
+    error: String, likelyType: String, url: String, title: String,
+    description: String, image: String, sourceURL: String? = nil,
+    thumbnailBlob: Blob? = nil, associatedRefs: [ComAtprotoRepoStrongRef]? = nil,
+    externalView: AppBskyEmbedExternal.View? = nil
+  ) {
+    self.error = error
+    self.likelyType = likelyType
+    self.url = url
+    self.title = title
+    self.description = description
+    self.image = image
+    self.sourceURL = sourceURL
+    self.thumbnailBlob = thumbnailBlob
+    self.associatedRefs = associatedRefs
+    self.externalView = externalView
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    error = try container.decode(String.self, forKey: .error)
+    likelyType = try container.decode(String.self, forKey: .likelyType)
+    url = try container.decode(String.self, forKey: .url)
+    title = try container.decode(String.self, forKey: .title)
+    description = try container.decode(String.self, forKey: .description)
+    image = try container.decode(String.self, forKey: .image)
+
+    // Enhanced metadata is optional; a malformed extension must not discard the card.
+    associatedRefs = try? container.decodeIfPresent([ComAtprotoRepoStrongRef].self, forKey: .associatedRefs)
+    externalView = (try? container.decodeIfPresent(AppBskyEmbedExternal.View.self, forKey: .externalView))
+      ?? (try? container.decodeIfPresent(AppBskyEmbedExternal.View.self, forKey: .legacyExternalView))
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(error, forKey: .error)
+    try container.encode(likelyType, forKey: .likelyType)
+    try container.encode(url, forKey: .url)
+    try container.encode(title, forKey: .title)
+    try container.encode(description, forKey: .description)
+    try container.encode(image, forKey: .image)
+    try container.encodeIfPresent(associatedRefs, forKey: .associatedRefs)
+    try container.encodeIfPresent(externalView, forKey: .externalView)
+  }
+
   enum CodingKeys: String, CodingKey {
     case error
     case likelyType = "likely_type"
@@ -31,6 +78,9 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
     case title
     case description
     case image
+    case associatedRefs = "associated_refs"
+    case externalView = "view"
+    case legacyExternalView = "external_view"
     // thumbnailBlob is excluded from coding
   }
 
@@ -39,8 +89,16 @@ struct URLCardResponse: Codable, Identifiable, Hashable {
 }
 
 struct PostParser {
+  /// Building a data detector is expensive; matching on a shared one is thread-safe.
+  private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+  /// Pass `detectLanguage: false` when the caller doesn't read `detectedLanguage`; the
+  /// composer detects the language itself, once per text pass. Other callers, such as
+  /// CreatePostIntent, rely on the default.
   static func parsePostContent(
-    _ content: String, resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic]
+    _ content: String,
+    resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:],
+    detectLanguage shouldDetectLanguage: Bool = true
   ) -> (text: String, hashtags: [String], facets: [AppBskyRichtextFacet], urls: [String], detectedLanguage: String?) {
     var hashtags: [String] = []
     var facets: [AppBskyRichtextFacet] = []
@@ -49,31 +107,46 @@ struct PostParser {
     let utf8View = content.utf8
     var currentIndex = content.startIndex
 
-    while currentIndex < content.endIndex {
-      if content[currentIndex] == "#" {
-        let hashtagStart = currentIndex
-        currentIndex = content.index(after: currentIndex)
+    // Tags and mentions only start at the beginning of a word, so URL fragments
+    // ("…/wiki/Swift#History") and email-like text don't become facets.
+    func startsWord(_ index: String.Index, allowing openers: Set<Character> = []) -> Bool {
+      guard index > content.startIndex else { return true }
+      let previous = content[content.index(before: index)]
+      return previous.isWhitespace || openers.contains(previous)
+    }
 
-        while currentIndex < content.endIndex
-          && (content[currentIndex].isLetter || content[currentIndex].isNumber) {
-          currentIndex = content.index(after: currentIndex)
+    while currentIndex < content.endIndex {
+      if content[currentIndex] == "#" && startsWord(currentIndex) {
+        let hashtagStart = currentIndex
+        let tagStart = content.index(after: currentIndex)
+        var tagEnd = tagStart
+
+        // A tag runs to the next whitespace, then drops trailing punctuation ("#swift," → "swift").
+        while tagEnd < content.endIndex && !content[tagEnd].isWhitespace {
+          tagEnd = content.index(after: tagEnd)
+        }
+        currentIndex = tagEnd
+        while tagEnd > tagStart && content[content.index(before: tagEnd)].isPunctuation {
+          tagEnd = content.index(before: tagEnd)
         }
 
-        let hashtag = String(content[hashtagStart..<currentIndex])
-        if hashtag.count > 1 {  // Ensure it's not just a lone "#"
-          hashtags.append(String(hashtag.dropFirst()))
+        let tag = String(content[tagStart..<tagEnd])
+        // Skip empty, number-only ("#1") and over-long tags, matching the official app.
+        let hasWordCharacter = tag.contains { !$0.isNumber && !$0.isPunctuation }
+        if !tag.isEmpty && tag.count <= 64 && hasWordCharacter {
+          hashtags.append(tag)
 
           let utf8Start = content[..<hashtagStart].utf8.count
-          let utf8End = utf8Start + content[hashtagStart..<currentIndex].utf8.count
+          let utf8End = utf8Start + content[hashtagStart..<tagEnd].utf8.count
 
           let byteSlice = AppBskyRichtextFacet.ByteSlice(byteStart: utf8Start, byteEnd: utf8End)
-          let tagFeature = AppBskyRichtextFacet.Tag(tag: String(hashtag.dropFirst()))
+          let tagFeature = AppBskyRichtextFacet.Tag(tag: tag)
           let facet = AppBskyRichtextFacet(
             index: byteSlice, features: [.appBskyRichtextFacetTag(tagFeature)])
 
           facets.append(facet)
         }
-      } else if content[currentIndex] == "@" {
+      } else if content[currentIndex] == "@" && startsWord(currentIndex, allowing: ["(", "\"", "'", "“", "‘"]) {
         let mentionStart = currentIndex
         currentIndex = content.index(after: currentIndex)
 
@@ -93,6 +166,14 @@ struct PostParser {
           }
           
           currentIndex = content.index(after: currentIndex)
+        }
+
+        // A handle never ends in "." or "-": those end the sentence ("Thanks @bob.bsky.social.").
+        let firstHandleIndex = content.index(after: mentionStart)
+        while currentIndex > firstHandleIndex {
+          let last = content[content.index(before: currentIndex)]
+          guard last == "." || last == "-" else { break }
+          currentIndex = content.index(before: currentIndex)
         }
 
         let mention = String(content[mentionStart..<currentIndex])
@@ -116,8 +197,7 @@ struct PostParser {
     }
 
     // Add URL detection
-    let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-    if let detector = detector {
+    if let detector = Self.linkDetector {
       let matches = detector.matches(
         in: content, options: [], range: NSRange(location: 0, length: content.utf16.count))
 
@@ -153,9 +233,25 @@ struct PostParser {
       }
     }
 
-    // Detect language
-    let detectedLanguage = LanguageDetector.shared.detectLanguage(for: content)
+    // A tag inside a link would produce overlapping facets; the link wins.
+    let linkSlices: [AppBskyRichtextFacet.ByteSlice] = facets.compactMap { facet in
+      guard case .appBskyRichtextFacetLink = facet.features.first else { return nil }
+      return facet.index
+    }
+    if !linkSlices.isEmpty {
+      facets.removeAll { facet in
+        guard case .appBskyRichtextFacetTag = facet.features.first else { return false }
+        return linkSlices.contains { $0.byteStart < facet.index.byteEnd && facet.index.byteStart < $0.byteEnd }
+      }
+    }
 
+    // Detect language
+    let detectedLanguage: String?
+    if shouldDetectLanguage {
+      detectedLanguage = LanguageDetector.shared.detectLanguage(for: content)
+    } else {
+      detectedLanguage = nil
+    }
     return (content, hashtags, facets, urls, detectedLanguage)
   }
 }

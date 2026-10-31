@@ -148,7 +148,7 @@ actor BookmarksManager {
 
 // MARK: - BookmarkError
 
-enum BookmarkError: Swift.Error, CustomStringConvertible {
+enum BookmarkError: LocalizedError, CustomStringConvertible, HTTPStatusCarrying {
     case creationFailed(Int)
     case deletionFailed(Int)
     case fetchFailed(Int)
@@ -167,6 +167,31 @@ enum BookmarkError: Swift.Error, CustomStringConvertible {
             return "AT Protocol client is not available"
         case .invalidUri:
             return "Invalid URI provided for bookmark operation"
+        }
+    }
+
+    /// User-facing text; `description` keeps the technical detail for logs.
+    var errorDescription: String? {
+        switch self {
+        case .creationFailed:
+            return "Couldn’t save this post. Please try again."
+        case .deletionFailed:
+            return "Couldn’t remove this saved post. Please try again."
+        case .fetchFailed:
+            return "Couldn’t load your saved posts. Pull to refresh to try again."
+        case .missingClient:
+            return "You’re signed out. Sign in to see saved posts."
+        case .invalidUri:
+            return "This post can’t be saved."
+        }
+    }
+
+    var httpStatusCode: Int {
+        switch self {
+        case .creationFailed(let code), .deletionFailed(let code), .fetchFailed(let code):
+            return code
+        case .missingClient, .invalidUri:
+            return 0
         }
     }
 }

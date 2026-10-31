@@ -13,12 +13,13 @@ import Foundation
 import GeoToolbox
 import Petrel
 import LinkPresentation
+import UniformTypeIdentifiers
 
 @available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.draftMessage)
 struct CatbirdDraftMessageSchemaIntent {
   static var title: LocalizedStringResource = "Draft Catbird Message"
-  static var openAppWhenRun = true
+  static var supportedModes: IntentModes { .foreground }
 
   @Parameter(title: "Destination")
   var destination: CatbirdMessagesDestination?
@@ -29,10 +30,10 @@ struct CatbirdDraftMessageSchemaIntent {
   @Parameter(title: "Content")
   var content: AttributedString?
 
-  @Parameter(title: "Attachments", default: [], supportedTypeIdentifiers: ["public.item"])
+  @Parameter(title: "Attachments", default: [], supportedContentTypes: [.item])
   var attachments: [IntentFile]
 
-  @Parameter(title: "Audio Message", supportedTypeIdentifiers: ["public.audio"])
+  @Parameter(title: "Audio Message", supportedContentTypes: [.audio])
   var audioMessage: IntentFile?
 
   @Parameter(title: "Locations", default: [])
@@ -52,49 +53,106 @@ struct CatbirdDraftMessageSchemaIntent {
       draftText = draftText.isEmpty ? linkText : draftText + "\n" + linkText
     }
 
-    let unsupportedNote =
-      (!attachments.isEmpty || audioMessage != nil || !locations.isEmpty || scheduledDate != nil)
-      ? " Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over."
-      : ""
+    let droppedUnsupportedContent =
+      !attachments.isEmpty || audioMessage != nil || !locations.isEmpty || scheduledDate != nil
 
-    guard let destination else {
-      let manager = try await MessagesSchemaRuntime.conversationManager()
-      guard let account = manager.userDid else { throw IntentError.notSignedIn }
-      try await ChatDraftHandoff.shared.storeDurably(
-        PendingChatDraft(conversationID: nil, text: draftText), accountDID: account, database: manager.database)
-      await MainActor.run {
-        AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .chatTab, in: 4)
+    // Capture identity and the target window before the secure chat service
+    // can suspend. A known scene can never be replaced by a later focused window.
+    let textToStore = draftText
+    let draft = try await MainActor.run {
+      let sceneID = SceneRouteCoordinator.shared.preferredSceneIDForExternalEvent()
+      guard let accountDID = IntentAccountResolver.activeDID() else {
+        throw IntentError.notSignedIn
       }
-      return .result(
-        dialog: IntentDialog(
-          stringLiteral:
-            "Pick a conversation in Catbird to start your draft.\(unsupportedNote)"))
+      return PendingChatDraft(
+        accountDID: accountDID, sceneID: sceneID, conversationID: nil, text: textToStore)
     }
+
+    let accountIsCurrent: @MainActor @Sendable () -> Bool = {
+      let manager = AppStateManager.shared
+      return !manager.isTransitioning
+        && IntentAccountResolver.activeDID() == draft.accountDID
+        && (manager.lifecycle.userDID == nil || manager.lifecycle.userDID == draft.accountDID)
+    }
+    let accountChanged = IntentError.serviceUnavailable(
+      "Your account changed while preparing the draft. Please try again.")
+    try Task.checkCancellation()
+    guard await accountIsCurrent() else { throw accountChanged }
 
     let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
-    let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
-    let target = try await MessagesSchemaRuntime.resolveDestination(
-      recipients: recipients, manager: manager, directory: directory)
-    switch target {
-    case .existing(let convoId):
-      try await ChatDraftHandoff.shared.storeDurably(
-        PendingChatDraft(conversationID: convoId, text: draftText),
-        accountDID: directory.currentUserDID, database: manager.database)
-      await MainActor.run {
-        AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .mlsConversation(convoId), in: 4)
+    try Task.checkCancellation()
+    guard manager.userDid == draft.accountDID, await accountIsCurrent() else { throw accountChanged }
+
+    let conversationID: String?
+    if let destination {
+      try await IntentClientProvider.shared.requireCoveredUse(for: draft.accountDID)
+      let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+      let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
+      let target = try await MessagesSchemaRuntime.resolveDestination(
+        recipients: recipients, manager: manager, directory: directory)
+      try Task.checkCancellation()
+      guard await accountIsCurrent() else { throw accountChanged }
+      switch target {
+      case .existing(let convoId):
+        conversationID = convoId
+      case .recipientDraft(var request):
+        guard !request.submitted else {
+          throw IntentError.invalidParameter("A saved request is still resolving. Open Catbird to retry or cancel it.")
+        }
+        request.text = draftText
+        try await MLSDirectComposeDraftStore.requestPresentation(request, database: manager.database)
+        return .result(dialog: Self.dialog(
+          "Draft started in Catbird.", droppedUnsupportedContent: droppedUnsupportedContent))
       }
-    case .recipientDraft(var draft):
-      guard !draft.submitted else {
-        throw IntentError.invalidParameter("A saved request is still resolving. Open Catbird to retry or cancel it.")
-      }
-      draft.text = draftText
-      try await MLSDirectComposeDraftStore.requestPresentation(draft, database: manager.database)
+    } else {
+      conversationID = nil
     }
 
-    return .result(
-      dialog: IntentDialog(
-        stringLiteral: "Draft started in Catbird.\(unsupportedNote)"))
+    try await ChatDraftHandoff.shared.storeDurably(
+      PendingChatDraft(
+        id: draft.id, accountDID: draft.accountDID, sceneID: draft.sceneID,
+        conversationID: conversationID, text: draft.text),
+      accountDID: draft.accountDID, database: manager.database)
+
+    let accountChangedAfterRetaining = IntentError.serviceUnavailable(
+      "Your account changed while preparing the draft. Its text has been retained in Catbird.")
+    let result = try await MainActor.run {
+      try Task.checkCancellation()
+      guard accountIsCurrent() else { throw accountChangedAfterRetaining }
+      let command: SceneRouteCommand = conversationID.map {
+        .navigate(.mlsConversation($0), tabIndex: 4)
+      } ?? .showTab(4, resetPath: false)
+      return SceneRouteCoordinator.shared.submit(
+        SceneRouteRequest(
+          id: draft.id, accountDID: draft.accountDID, command: command,
+          preferredSceneID: draft.sceneID),
+        beforeDelivery: { context in
+          accountIsCurrent() && !context.isInvalidated
+            && context.accountDID == draft.accountDID
+            && (draft.sceneID == nil || draft.sceneID == context.sceneID)
+        })
+    }
+
+    let status: LocalizedStringResource
+    switch result {
+    case .delivered:
+      status = conversationID == nil
+        ? "Pick a conversation in Catbird to start your draft."
+        : "Draft started in Catbird."
+    case .queued, .duplicate:
+      status = "Your draft is waiting for its Catbird window to become available."
+    case .dropped:
+      status = "Catbird couldn't open the intended window. Your draft text has been retained."
+    }
+    return .result(dialog: Self.dialog(status, droppedUnsupportedContent: droppedUnsupportedContent))
+  }
+
+  private static func dialog(
+    _ status: LocalizedStringResource, droppedUnsupportedContent: Bool
+  ) -> IntentDialog {
+    guard droppedUnsupportedContent else { return IntentDialog(status) }
+    return IntentDialog(
+      "\(status) Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over.")
   }
 }
 
@@ -112,10 +170,10 @@ struct CatbirdSendMessageSchemaIntent {
   @Parameter(title: "Content")
   var content: AttributedString?
 
-  @Parameter(title: "Attachments", default: [], supportedTypeIdentifiers: ["public.item"])
+  @Parameter(title: "Attachments", default: [], supportedContentTypes: [.item])
   var attachments: [IntentFile]
 
-  @Parameter(title: "Audio Message", supportedTypeIdentifiers: ["public.audio"])
+  @Parameter(title: "Audio Message", supportedContentTypes: [.audio])
   var audioMessage: IntentFile?
 
   @Parameter(title: "Locations", default: [])
@@ -139,6 +197,7 @@ struct CatbirdSendMessageSchemaIntent {
     let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
     let target = try await MessagesSchemaRuntime.resolveDestination(
       recipients: recipients, manager: manager, directory: directory)
+    try await IntentClientProvider.shared.requireCoveredUse(for: directory.currentUserDID)
     let finalConvoId: String
     let sentMessageID: String
     let sentAt: Date

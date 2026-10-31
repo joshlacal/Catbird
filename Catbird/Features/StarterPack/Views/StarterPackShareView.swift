@@ -127,7 +127,9 @@ public struct StarterPackShareView: View {
     private var packPreviewCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                AsyncProfileImage(url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 48)
+                AsyncProfileImage(
+                    url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 48,
+                    did: starterPack.creator.did.didString(), labels: starterPack.creator.labels)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(packName)
@@ -153,12 +155,12 @@ public struct StarterPackShareView: View {
             
             HStack(spacing: 16) {
                 let profileCount = starterPack.list?.listItemCount ?? 0
-                Label("\(profileCount) people", systemImage: "person.2")
+                Label("^[\(profileCount) person](inflect: true)", systemImage: "person.2")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 
                 if let feedsCount = starterPack.feeds?.count, feedsCount > 0 {
-                    Label("\(feedsCount) feeds", systemImage: "rectangle.grid.1x2")
+                    Label("^[\(feedsCount) feed](inflect: true)", systemImage: "rectangle.grid.1x2")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }

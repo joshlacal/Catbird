@@ -3,6 +3,7 @@ import Petrel
 import OSLog
 import NukeUI
 
+@MainActor
 @Observable
 final class ListFeedViewModel {
   // MARK: - Properties
@@ -17,10 +18,13 @@ final class ListFeedViewModel {
   
   // State
   var isLoading = false
+  var isLoadingMembers = false
+  var isLoadingMoreMembers = false
+  var hasMoreMembers = true
+  private var membersCursor: String?
   var errorMessage: String?
   var showingError = false
   var showingMembersList = false
-  
   // MARK: - Computed Properties
   
   var isOwnList: Bool {
@@ -48,15 +52,8 @@ final class ListFeedViewModel {
     errorMessage = nil
     
     do {
-      // Load list details and members concurrently
-      async let listDetailsTask = appState.listManager.getListDetails(listURI.description)
-      async let membersTask = appState.listManager.getListMembers(listURI.description)
-      
-      listDetails = try await listDetailsTask
-      members = try await membersTask
-      
-      logger.info("Loaded list metadata: \(self.members.count) members")
-      
+      listDetails = try await appState.listManager.getListDetails(listURI.description)
+      logger.info("Loaded list metadata: \(self.listDetails?.name ?? "unknown")")
     } catch {
       logger.error("Failed to load list metadata: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
@@ -67,17 +64,60 @@ final class ListFeedViewModel {
   }
   
   @MainActor
+  func loadMembersIfNeeded() async {
+    guard members.isEmpty, !isLoadingMembers else { return }
+    isLoadingMembers = true
+    errorMessage = nil
+    defer { isLoadingMembers = false }
+    membersCursor = nil
+    hasMoreMembers = true
+    do {
+      let page = try await appState.listManager.getListMembersPage(listURI.description, cursor: nil, limit: 50)
+      members = page.members
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.members.isEmpty
+    } catch {
+      logger.error("Failed to load list members: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingError = true
+    }
+  }
+  
+  @MainActor
+  func loadMoreMembersIfNeeded() async {
+    guard !isLoadingMoreMembers, hasMoreMembers, !isLoadingMembers else { return }
+    isLoadingMoreMembers = true
+    defer { isLoadingMoreMembers = false }
+    
+    do {
+      let page = try await appState.listManager.getListMembersPage(
+        listURI.description,
+        cursor: membersCursor,
+        limit: 50
+      )
+      let existingDIDs = Set(members.map(\.did))
+      let newMembers = page.members.filter { !existingDIDs.contains($0.did) }
+      members.append(contentsOf: newMembers)
+      membersCursor = page.cursor
+      hasMoreMembers = page.cursor != nil && !page.members.isEmpty
+    } catch {
+      logger.error("Failed to load more members: \(error.localizedDescription)")
+    }
+  }
+  
+  @MainActor
   func refreshData() async {
     do {
-      // Refresh list details and members
-      async let listDetailsTask = appState.listManager.getListDetails(listURI.description, forceRefresh: true)
-      async let membersTask = appState.listManager.getListMembers(listURI.description, forceRefresh: true)
-      
-      listDetails = try await listDetailsTask
-      members = try await membersTask
-      
+      listDetails = try await appState.listManager.getListDetails(listURI.description, forceRefresh: true)
+      if !members.isEmpty {
+        membersCursor = nil
+        hasMoreMembers = true
+        let page = try await appState.listManager.getListMembersPage(listURI.description, cursor: nil, limit: 50)
+        members = page.members
+        membersCursor = page.cursor
+        hasMoreMembers = page.cursor != nil && !page.members.isEmpty
+      }
       logger.info("Refreshed list metadata")
-      
     } catch {
       logger.error("Failed to refresh list metadata: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
@@ -162,7 +202,7 @@ struct ListFeedView: View {
           Button {
             viewModel.showingMembersList = true
           } label: {
-            Label("View Members (\(viewModel.members.count))", systemImage: "person.2")
+            Label("View Members (\(viewModel.listDetails?.listItemCount ?? viewModel.members.count))", systemImage: "person.2")
           }
         } label: {
           Image(systemName: "ellipsis.circle")
@@ -174,7 +214,7 @@ struct ListFeedView: View {
         membersList(viewModel: viewModel)
       }
     }
-    .alert("Error", isPresented: $viewModel.showingError) {
+    .alert("Something Went Wrong", isPresented: $viewModel.showingError) {
       Button("OK") {
         viewModel.showingError = false
       }
@@ -228,7 +268,7 @@ struct ListFeedView: View {
           }
           
           HStack(spacing: 16) {
-            Text("\(viewModel.members.count) members")
+            Text(MemberCountFormatter.format(count: listDetails.listItemCount ?? viewModel.members.count))
               .font(.caption)
               .foregroundStyle(.tertiary)
             
@@ -250,40 +290,75 @@ struct ListFeedView: View {
   
   private func membersList(viewModel: ListFeedViewModel) -> some View {
     List {
-      ForEach(viewModel.members, id: \.did) { member in
-        Button {
-          path.append(NavigationDestination.profile(member.did.didString()))
-          viewModel.showingMembersList = false
-        } label: {
-          HStack(spacing: 12) {
-            LazyImage(url: member.finalAvatarURL()) { state in
-              if let image = state.image {
-                image
-                  .resizable()
-                  .scaledToFill()
-              } else {
-                Circle()
-                  .fill(.secondary.opacity(0.3))
+      if viewModel.isLoadingMembers && viewModel.members.isEmpty {
+        ProgressView()
+          .frame(maxWidth: .infinity)
+          .listRowBackground(Color.clear)
+          .listRowSeparator(.hidden)
+      } else if let error = viewModel.errorMessage, viewModel.members.isEmpty {
+        ContentUnavailableView(
+          "Could Not Load Members",
+          systemImage: "exclamationmark.triangle",
+          description: Text(error)
+        )
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+      } else if viewModel.members.isEmpty {
+        ContentUnavailableView(
+          "No Members",
+          systemImage: "person.2.slash",
+          description: Text("This list doesn’t have anyone on it yet.")
+        )
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+      } else {
+        ForEach(viewModel.members, id: \.did) { member in
+          Button {
+            path.append(NavigationDestination.profile(member.did.didString()))
+            viewModel.showingMembersList = false
+          } label: {
+            HStack(spacing: 12) {
+              LazyImage(url: member.finalAvatarURL()) { state in
+                if let image = state.image {
+                  image
+                    .resizable()
+                    .scaledToFill()
+                } else {
+                  Circle()
+                    .fill(.secondary.opacity(0.3))
+                }
               }
-            }
-            .frame(width: 40, height: 40)
-            .clipShape(Circle())
-            
-            VStack(alignment: .leading, spacing: 2) {
-              Text(member.displayName ?? member.handle.description)
-                .font(.subheadline)
-                .fontWeight(.medium)
+              .frame(width: 40, height: 40)
+              .clipShape(Circle())
               
-              Text("@\(member.handle)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(member.displayName ?? member.handle.description)
+                  .font(.subheadline)
+                  .fontWeight(.medium)
+                
+                Text("@\(member.handle)")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              
+              Spacer()
             }
-            
-            Spacer()
           }
+          .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        if viewModel.hasMoreMembers {
+          ProgressView()
+            .frame(maxWidth: .infinity)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .task {
+              await viewModel.loadMoreMembersIfNeeded()
+            }
+        }
       }
+    }
+    .task {
+      await viewModel.loadMembersIfNeeded()
     }
     .navigationTitle("List Members")
     #if os(iOS)

@@ -1,6 +1,7 @@
 import Contacts
 import OSLog
 import Petrel
+import NukeUI
 import SwiftUI
 
 /// Find Contacts / Address Book matching flow view (G64)
@@ -8,6 +9,7 @@ public struct FindContactsFlowView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.displayScale) private var displayScale
     
     public var isOnboarding: Bool = false
     public var onFinish: (() -> Void)?
@@ -174,7 +176,7 @@ public struct FindContactsFlowView: View {
                     )
                     privacyBullet(
                         icon: "hand.raised",
-                        title: "You're in Control",
+                        title: "You’re in Control",
                         detail: "You can remove synced contact data at any time from your settings."
                     )
                 }
@@ -250,7 +252,7 @@ public struct FindContactsFlowView: View {
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("We'll send a one-time SMS verification code to verify your phone number before matching contacts.")
+                Text("We’ll send a one-time SMS verification code to verify your phone number before matching contacts.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -292,7 +294,7 @@ public struct FindContactsFlowView: View {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text(isSendingCode ? "Sending Code..." : "Send Verification Code")
+                    Text(isSendingCode ? "Sending code…" : "Send Verification Code")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
@@ -372,7 +374,7 @@ public struct FindContactsFlowView: View {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text(isVerifyingCode ? "Verifying..." : "Verify & Continue")
+                    Text(isVerifyingCode ? "Verifying…" : "Verify & Continue")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
@@ -397,7 +399,7 @@ public struct FindContactsFlowView: View {
                 .scaleEffect(1.5)
                 .tint(Color.accentColor)
             
-            Text("Finding Contacts on Bluesky...")
+            Text("Finding contacts on Bluesky…")
                 .font(.headline)
                 .foregroundStyle(.secondary)
             
@@ -534,11 +536,10 @@ public struct FindContactsFlowView: View {
         HStack(spacing: 12) {
             // Avatar
             if let avatar = match.profile.avatar, let url = URL(string: avatar.uriString()) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
+                LazyImage(request: ImageRequestFactory.avatar(url, pointSize: 44, scale: displayScale)) { state in
+                    if let image = state.image {
                         image.resizable().scaledToFill()
-                    default:
+                    } else {
                         Circle().fill(Color.secondary.opacity(0.2))
                     }
                 }
@@ -665,7 +666,7 @@ public struct FindContactsFlowView: View {
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("To find your friends, please enable Contacts access for Catbird in your device's Settings.")
+                Text("To find your friends, turn on Contacts access for Catbird in Settings.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -718,7 +719,7 @@ public struct FindContactsFlowView: View {
                 .foregroundStyle(.red)
             
             VStack(spacing: 8) {
-                Text("Couldn't Find Contacts")
+                Text("Couldn’t Find Contacts")
                     .font(.title2)
                     .fontWeight(.bold)
                 
@@ -777,14 +778,15 @@ public struct FindContactsFlowView: View {
             } catch ContactMatchingError.permissionDenied, ContactMatchingError.permissionRestricted {
                 step = .permissionDenied
             } catch {
-                step = .error(error.localizedDescription)
+                logger.error("Contacts access failed: \(error.localizedDescription)")
+                step = .error(Self.message(for: error, action: "read your contacts"))
             }
         }
     }
     
     private func handleSendVerificationCode() {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not connected to Bluesky."
+            errorMessage = "Sign in to Bluesky to find your contacts."
             return
         }
         
@@ -799,7 +801,7 @@ public struct FindContactsFlowView: View {
                 startResendTimer()
             } catch {
                 isSendingCode = false
-                errorMessage = error.localizedDescription
+                errorMessage = Self.message(for: error, action: "send a verification code")
             }
         }
     }
@@ -818,7 +820,7 @@ public struct FindContactsFlowView: View {
     
     private func handleVerifyCodeAndImport() {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not connected to Bluesky."
+            errorMessage = "Sign in to Bluesky to find your contacts."
             return
         }
         
@@ -832,7 +834,7 @@ public struct FindContactsFlowView: View {
                 await performImport()
             } catch {
                 isVerifyingCode = false
-                errorMessage = error.localizedDescription
+                errorMessage = Self.message(for: error, action: "verify your phone number")
             }
         }
     }
@@ -846,7 +848,11 @@ public struct FindContactsFlowView: View {
         step = .importing
         
         do {
-            let prepared = try service.fetchAndPrepareContacts(excludingSelfPhone: service.verifiedPhoneNumber)
+            let service = self.service
+            let selfPhone = service.verifiedPhoneNumber
+            let prepared = try await Task.detached(priority: .userInitiated) {
+                try service.fetchAndPrepareContacts(excludingSelfPhone: selfPhone)
+            }.value
             self.unmatchedContacts = prepared.unmatchedContacts
             
             if prepared.normalizedPhoneNumbers.isEmpty {
@@ -859,7 +865,8 @@ public struct FindContactsFlowView: View {
             self.matches = fetchedMatches
             step = .results
         } catch {
-            step = .error(error.localizedDescription)
+            logger.error("Contact import failed: \(error.localizedDescription)")
+            step = .error(Self.message(for: error, action: "check your contacts"))
         }
     }
     
@@ -881,12 +888,12 @@ public struct FindContactsFlowView: View {
                 if !success {
                     logger.warning("Follow/unfollow returned false for \(match.profile.did.didString())")
                     matches[index].isFollowing = !newStatus
-                    errorMessage = "Could not update follow status for \(match.profile.displayName ?? match.profile.handle.description)"
+                    errorMessage = "Couldn’t update your follow for \(match.profile.displayName ?? match.profile.handle.description). Try again."
                 }
             } catch {
                 logger.error("Failed to update follow status: \(error.localizedDescription)")
                 matches[index].isFollowing = !newStatus
-                errorMessage = "Failed to update follow status: \(error.localizedDescription)"
+                errorMessage = UserFacingError.message(for: error, action: "update this follow")
             }
         }
     }
@@ -903,30 +910,64 @@ public struct FindContactsFlowView: View {
     }
     
     private func handleFollowAll() {
+        let indicesToFollow = matches.indices.filter { !matches[$0].isFollowing && !matches[$0].isDismissed }
+        guard !indicesToFollow.isEmpty else { return }
+        
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Couldn’t follow contacts. Please try again."
+            return
+        }
+        
         isFollowingAll = true
         errorMessage = nil
         
+        for idx in indicesToFollow {
+            matches[idx].isFollowing = true
+        }
+        
         Task { @MainActor in
+            let chunkSize = 50
+            let chunks = stride(from: 0, to: indicesToFollow.count, by: chunkSize).map {
+                Array(indicesToFollow[$0..<min($0 + chunkSize, indicesToFollow.count)])
+            }
+            
             var failureCount = 0
-            for i in matches.indices {
-                if !matches[i].isFollowing && !matches[i].isDismissed {
-                    do {
-                        let success = try await appState.follow(did: matches[i].profile.did.didString())
-                        if success {
-                            matches[i].isFollowing = true
-                        } else {
-                            failureCount += 1
-                        }
-                    } catch {
-                        logger.error("Follow failed for match: \(error.localizedDescription)")
-                        failureCount += 1
+            
+            for chunk in chunks {
+                do {
+                    let subjectDIDs = chunk.compactMap { try? DID(didString: matches[$0].profile.did.didString()) }
+                    let creates = try StarterPackService.shared.buildFollowWrites(subjectDIDs: subjectDIDs, via: nil)
+                    let writes = creates.map { ComAtprotoRepoApplyWrites.InputWritesUnion($0) }
+                    
+                    let input = try ComAtprotoRepoApplyWrites.Input(
+                        repo: ATIdentifier(string: appState.userDID),
+                        validate: true,
+                        writes: writes
+                    )
+                    
+                    let (responseCode, _) = try await client.com.atproto.repo.applyWrites(input: input)
+                    guard responseCode == 200 else {
+                        throw NSError(
+                            domain: "FindContactsFlow",
+                            code: responseCode,
+                            userInfo: [NSLocalizedDescriptionKey: "applyWrites returned \(responseCode)"]
+                        )
+                    }
+                } catch {
+                    logger.error("Failed batch follow for contacts chunk: \(error.localizedDescription)")
+                    failureCount += chunk.count
+                    for idx in chunk {
+                        matches[idx].isFollowing = false
                     }
                 }
             }
+            
             isFollowingAll = false
             if failureCount > 0 {
-                errorMessage = "Could not follow \(failureCount) contact\(failureCount == 1 ? "" : "s"). Please try again."
+                errorMessage = "Couldn’t follow \(failureCount) contact\(failureCount == 1 ? "" : "s"). Try again."
             }
+            
+            appState.graphManager.invalidateCache(for: .relationshipChanged, cacheTypes: .following)
         }
     }
     
@@ -944,5 +985,13 @@ public struct FindContactsFlowView: View {
         } else {
             dismiss()
         }
+    }
+    
+    /// Contact-matching errors already carry friendly copy; anything else gets the shared wording.
+    private static func message(for error: Error, action: String) -> String {
+        if let contactError = error as? ContactMatchingError, let description = contactError.errorDescription {
+            return description
+        }
+        return UserFacingError.message(for: error, action: action) ?? "Couldn’t \(action). Try again."
     }
 }

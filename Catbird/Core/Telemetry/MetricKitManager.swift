@@ -9,7 +9,7 @@ import OSLog
 /// - Subscribes to daily metric and diagnostic payloads
 /// - Tracks extended launch measurements
 /// - Provides custom signpost logging for key operations
-/// - Persists metrics for analysis
+/// - Logs payload summaries (payloads are not stored on disk)
 @available(iOS 26, macOS 26, *)
 @MainActor
 final class MetricKitManager: NSObject, @unchecked Sendable {
@@ -24,13 +24,19 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   private var isSubscribed = false
   
   /// Custom metric log handles for various app operations
-  private(set) var feedLoadingLog: OSLog?
-  private(set) var imageLoadingLog: OSLog?
-  private(set) var networkRequestLog: OSLog?
-  private(set) var authenticationLog: OSLog?
-  private(set) var composerLog: OSLog?
-  private(set) var mlsOperationLog: OSLog?
-  
+  nonisolated static let feedLoadingLog: OSLog = MXMetricManager.makeLogHandle(category: "FeedLoading")
+  nonisolated static let imageLoadingLog: OSLog = MXMetricManager.makeLogHandle(category: "ImageLoading")
+  nonisolated static let networkRequestLog: OSLog = MXMetricManager.makeLogHandle(category: "NetworkRequest")
+  nonisolated static let authenticationLog: OSLog = MXMetricManager.makeLogHandle(category: "Authentication")
+  nonisolated static let composerLog: OSLog = MXMetricManager.makeLogHandle(category: "Composer")
+  nonisolated static let mlsOperationLog: OSLog = MXMetricManager.makeLogHandle(category: "MLSOperation")
+
+  nonisolated var feedLoadingLog: OSLog { Self.feedLoadingLog }
+  nonisolated var imageLoadingLog: OSLog { Self.imageLoadingLog }
+  nonisolated var networkRequestLog: OSLog { Self.networkRequestLog }
+  nonisolated var authenticationLog: OSLog { Self.authenticationLog }
+  nonisolated var composerLog: OSLog { Self.composerLog }
+  nonisolated var mlsOperationLog: OSLog { Self.mlsOperationLog }
   // MARK: - Launch Task IDs
   
   /// Task ID for extended launch measurement tracking
@@ -47,13 +53,6 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   
   /// Sets up custom metric log handles for signpost-based metrics
   private func setupLogHandles() {
-    feedLoadingLog = MXMetricManager.makeLogHandle(category: "FeedLoading")
-    imageLoadingLog = MXMetricManager.makeLogHandle(category: "ImageLoading")
-    networkRequestLog = MXMetricManager.makeLogHandle(category: "NetworkRequest")
-    authenticationLog = MXMetricManager.makeLogHandle(category: "Authentication")
-    composerLog = MXMetricManager.makeLogHandle(category: "Composer")
-    mlsOperationLog = MXMetricManager.makeLogHandle(category: "MLSOperation")
-    
     metricLogger.info("✅ MetricKit log handles created")
   }
   
@@ -70,6 +69,7 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
     
     // Process any pending payloads from previous sessions
     processPastPayloads()
+    removeStoredPayloads()
   }
   
   /// Stops the MetricKit manager
@@ -116,39 +116,39 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   
   // MARK: - Past Payloads
   
-  /// Processes any payloads received while the app wasn't running
+  /// Processes any payloads received while the app wasn't running off the main thread
   private func processPastPayloads() {
-    let metricPayloads = MXMetricManager.shared.pastPayloads
-    let diagnosticPayloads = MXMetricManager.shared.pastDiagnosticPayloads
-    
-    if !metricPayloads.isEmpty {
-      metricLogger.info("📊 Processing \(metricPayloads.count) past metric payloads")
-      processMetricPayloads(metricPayloads)
-    }
-    
-    if !diagnosticPayloads.isEmpty {
-      metricLogger.info("🔍 Processing \(diagnosticPayloads.count) past diagnostic payloads")
-      processDiagnosticPayloads(diagnosticPayloads)
+    Task.detached(priority: .utility) { [weak self] in
+      let metricPayloads = MXMetricManager.shared.pastPayloads
+      let diagnosticPayloads = MXMetricManager.shared.pastDiagnosticPayloads
+      
+      if !metricPayloads.isEmpty {
+        self?.metricLogger.info("📊 Processing \(metricPayloads.count) past metric payloads")
+        self?.processMetricPayloads(metricPayloads)
+      }
+      
+      if !diagnosticPayloads.isEmpty {
+        self?.metricLogger.info("🔍 Processing \(diagnosticPayloads.count) past diagnostic payloads")
+        self?.processDiagnosticPayloads(diagnosticPayloads)
+      }
     }
   }
   
   // MARK: - Payload Processing
   
-  private func processMetricPayloads(_ payloads: [MXMetricPayload]) {
+  nonisolated private func processMetricPayloads(_ payloads: [MXMetricPayload]) {
     for payload in payloads {
       logMetricSummary(payload)
-      persistMetricPayload(payload)
     }
   }
   
-  private func processDiagnosticPayloads(_ payloads: [MXDiagnosticPayload]) {
+  nonisolated private func processDiagnosticPayloads(_ payloads: [MXDiagnosticPayload]) {
     for payload in payloads {
       logDiagnosticSummary(payload)
-      persistDiagnosticPayload(payload)
     }
   }
   
-  private func logMetricSummary(_ payload: MXMetricPayload) {
+  nonisolated private func logMetricSummary(_ payload: MXMetricPayload) {
     let begin = payload.timeStampBegin
     let end = payload.timeStampEnd
     let version = payload.latestApplicationVersion
@@ -192,7 +192,7 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
     }
   }
   
-  private func logDiagnosticSummary(_ payload: MXDiagnosticPayload) {
+  nonisolated private func logDiagnosticSummary(_ payload: MXDiagnosticPayload) {
     let begin = payload.timeStampBegin
     let end = payload.timeStampEnd
     
@@ -237,48 +237,18 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
     #endif
   }
   
-  // MARK: - Persistence
-  
-  private func persistMetricPayload(_ payload: MXMetricPayload) {
-    Task {
-      do {
-        let data = payload.jsonRepresentation()
-        let directory = try metricsDirectory()
-        let filename = "metric_\(ISO8601DateFormatter().string(from: payload.timeStampEnd)).json"
-        let url = directory.appendingPathComponent(filename)
-        try data.write(to: url)
-        metricLogger.debug("Persisted metric payload to \(url.lastPathComponent)")
-      } catch {
-        metricLogger.error("Failed to persist metric payload: \(error.localizedDescription)")
-      }
+  // MARK: - Storage Cleanup
+
+  /// Earlier builds wrote every payload to Application Support/MetricKit and never read
+  /// or pruned it. Nothing uses those files, so reclaim the space.
+  private func removeStoredPayloads() {
+    Task.detached(priority: .utility) {
+      guard let base = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+      let directory = base.appendingPathComponent("MetricKit", isDirectory: true)
+      guard FileManager.default.fileExists(atPath: directory.path) else { return }
+      try? FileManager.default.removeItem(at: directory)
     }
-  }
-  
-  private func persistDiagnosticPayload(_ payload: MXDiagnosticPayload) {
-    Task {
-      do {
-        let data = payload.jsonRepresentation()
-        let directory = try metricsDirectory()
-        let filename = "diagnostic_\(ISO8601DateFormatter().string(from: payload.timeStampEnd)).json"
-        let url = directory.appendingPathComponent(filename)
-        try data.write(to: url)
-        metricLogger.debug("Persisted diagnostic payload to \(url.lastPathComponent)")
-      } catch {
-        metricLogger.error("Failed to persist diagnostic payload: \(error.localizedDescription)")
-      }
-    }
-  }
-  
-  private func metricsDirectory() throws -> URL {
-    let directory = FileManager.default
-      .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("MetricKit", isDirectory: true)
-    
-    if !FileManager.default.fileExists(atPath: directory.path) {
-      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-    
-    return directory
   }
 }
 
@@ -288,16 +258,12 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
 extension MetricKitManager: MXMetricManagerSubscriber {
   
   nonisolated func didReceive(_ payloads: [MXMetricPayload]) {
-    Task { @MainActor in
-      metricLogger.info("📊 Received \(payloads.count) metric payload(s)")
-      processMetricPayloads(payloads)
-    }
+    metricLogger.info("📊 Received \(payloads.count) metric payload(s)")
+    processMetricPayloads(payloads)
   }
   
   nonisolated func didReceive(_ payloads: [MXDiagnosticPayload]) {
-    Task { @MainActor in
-      metricLogger.info("🔍 Received \(payloads.count) diagnostic payload(s)")
-      processDiagnosticPayloads(payloads)
-    }
+    metricLogger.info("🔍 Received \(payloads.count) diagnostic payload(s)")
+    processDiagnosticPayloads(payloads)
   }
 }

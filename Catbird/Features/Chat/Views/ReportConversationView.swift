@@ -140,12 +140,12 @@ struct ReportConversationView: View {
 
   private func submitReport(reason: ComAtprotoModerationDefs.ReasonType, details: String) {
     guard let reportingService else {
-      errorMessage = "Not authenticated"
+      errorMessage = "Sign in to report this conversation."
       return
     }
 
     guard let member = primaryMember else {
-      errorMessage = "Could not identify conversation member to report"
+      errorMessage = "Couldn’t find who to report in this conversation."
       return
     }
 
@@ -168,13 +168,13 @@ struct ReportConversationView: View {
           if success {
             self.reportSubmitted = true
           } else {
-            self.errorMessage = "Failed to submit report. Please try again."
+            self.errorMessage = "Couldn’t send the report. Please try again."
           }
         }
       } catch {
         await MainActor.run {
           self.isSubmitting = false
-          self.errorMessage = "Error submitting report: \(error.localizedDescription)"
+          self.errorMessage = UserFacingError.message(for: error, action: "send the report")
         }
       }
     }
@@ -192,7 +192,9 @@ struct ReportConversationView: View {
           self.onConversationLeft?()
           self.dismiss()
         } else {
-          self.errorMessage = "Failed to leave conversation."
+          self.errorMessage = appState.chatManager.errorState?.localizedDescription
+            ?? "Couldn’t leave this conversation. Please try again."
+          appState.chatManager.errorState = nil
         }
       }
     }
@@ -215,13 +217,14 @@ struct ReportConversationView: View {
             self.onConversationLeft?()
             self.dismiss()
           } else {
-            self.errorMessage = "Account blocked, but failed to leave conversation."
+            self.errorMessage = "Account blocked, but couldn’t leave the conversation. Please try again."
+            appState.chatManager.errorState = nil
           }
         }
       } catch {
         await MainActor.run {
           self.isPerformingSafetyAction = false
-          self.errorMessage = "Failed to block account: \(error.localizedDescription)"
+          self.errorMessage = UserFacingError.message(for: error, action: "block this account")
         }
       }
     }

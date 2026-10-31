@@ -2,12 +2,14 @@ import Foundation
 import Petrel
 import OSLog
 
-/// Manages hiding and unhiding posts with server sync via PreferencesManager
+/// Manages hiding and unhiding posts, persisted to the account's Bluesky preferences
+/// (the same hidden-posts list the official app uses).
 @Observable
 @MainActor
 class PostHidingManager {
     private let logger = Logger(subsystem: "blue.catbird.app", category: "PostHidingManager")
     private var preferencesManager: PreferencesManager?
+    private var accountDID: String?
     
     // MARK: - State
     
@@ -17,10 +19,7 @@ class PostHidingManager {
     
     // MARK: - Initialization
     
-    nonisolated init(preferencesManager: PreferencesManager? = nil) {
-        // Simple initialization - no async work
-        // Property will be set via updatePreferencesManager after init
-    }
+    nonisolated init() {}
     
     // MARK: - Public API
     
@@ -29,35 +28,66 @@ class PostHidingManager {
         hiddenPosts.contains(postURI)
     }
     
-    /// Hide a post and sync to server via PreferencesManager
-    func hidePost(_ postURI: String) async {
-        guard !hiddenPosts.contains(postURI) else { return }
+    /// Hide a post and save it to the account's preferences.
+    /// Returns false (and restores the previous state) when the change couldn't be saved.
+    @discardableResult
+    func hidePost(_ postURI: String) async -> Bool {
+        guard !hiddenPosts.contains(postURI) else { return true }
+        guard let preferencesManager else {
+            logger.error("Cannot hide post: preferences are not available")
+            return false
+        }
         
         hiddenPosts.insert(postURI)
-        logger.info("Hidden post: \(postURI)")
+        isSyncing = true
+        defer { isSyncing = false }
         
-        await syncToPreferences()
+        do {
+            try await preferencesManager.hidePost(postURI, expectedAccountDID: accountDID)
+            lastSyncError = nil
+            logger.info("Hidden post: \(postURI)")
+            return true
+        } catch {
+            hiddenPosts.remove(postURI)
+            lastSyncError = error
+            logger.error("Failed to hide post: \(error.localizedDescription)")
+            return false
+        }
     }
     
-    /// Unhide a post and sync to server via PreferencesManager
-    func unhidePost(_ postURI: String) async {
-        guard hiddenPosts.contains(postURI) else { return }
+    /// Unhide a post and save the change to the account's preferences.
+    /// Returns false (and restores the previous state) when the change couldn't be saved.
+    @discardableResult
+    func unhidePost(_ postURI: String) async -> Bool {
+        guard hiddenPosts.contains(postURI) else { return true }
+        guard let preferencesManager else {
+            logger.error("Cannot unhide post: preferences are not available")
+            return false
+        }
         
         hiddenPosts.remove(postURI)
-        logger.info("Unhidden post: \(postURI)")
+        isSyncing = true
+        defer { isSyncing = false }
         
-        await syncToPreferences()
+        do {
+            try await preferencesManager.unhidePost(postURI, expectedAccountDID: accountDID)
+            lastSyncError = nil
+            logger.info("Unhidden post: \(postURI)")
+            return true
+        } catch {
+            hiddenPosts.insert(postURI)
+            lastSyncError = error
+            logger.error("Failed to unhide post: \(error.localizedDescription)")
+            return false
+        }
     }
     
-    /// Load hidden posts from PreferencesManager
+    /// Load hidden posts from the account's preferences
     func loadFromPreferences() async {
         guard let preferencesManager = preferencesManager else {
             logger.warning("PreferencesManager not available")
             return
         }
-        
-        isSyncing = true
-        defer { isSyncing = false }
         
         do {
             let preferences = try await preferencesManager.getPreferences()
@@ -69,48 +99,15 @@ class PostHidingManager {
         }
     }
     
-    /// Sync hidden posts to server via PreferencesManager
-    private func syncToPreferences() async {
-        guard let preferencesManager = preferencesManager else {
-            logger.warning("PreferencesManager not available for sync")
-            return
-        }
-        
-        isSyncing = true
-        defer { isSyncing = false }
-        
-        do {
-            let preferences = try await preferencesManager.getPreferences()
-            preferences.hiddenPosts = Array(hiddenPosts)
-            try await preferencesManager.saveAndSyncPreferences(preferences)
-            logger.info("Synced \(self.hiddenPosts.count) hidden posts to server via PreferencesManager")
-        } catch {
-            lastSyncError = error
-            logger.error("Failed to sync hidden posts via PreferencesManager: \(error.localizedDescription)")
-        }
-    }
-    
-    // MARK: - Bulk Operations
-    
-    /// Clear all hidden posts
-    func clearAll() async {
-        hiddenPosts.removeAll()
-        await syncToPreferences()
-        logger.info("Cleared all hidden posts")
-    }
-    
     /// Get count of hidden posts
     var count: Int {
         hiddenPosts.count
     }
     
-    /// Update the preferences manager reference
-    func updatePreferencesManager(_ manager: PreferencesManager?) {
+    /// Connect the preferences manager for the account this manager belongs to.
+    /// Hidden posts are loaded with `loadFromPreferences()` once preferences have been fetched.
+    func updatePreferencesManager(_ manager: PreferencesManager?, accountDID: String?) {
         self.preferencesManager = manager
-        if manager != nil {
-            Task {
-                await loadFromPreferences()
-            }
-        }
+        self.accountDID = accountDID
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import os
+import OSLog
 import Petrel
 import SwiftUI
 #if os(iOS)
@@ -7,6 +8,20 @@ import UIKit
 #elseif os(macOS)
 import AppKit
 #endif
+
+// MARK: - Self-labels
+
+extension PostComposerViewModel {
+    /// The self-labels record published with a post: every label the author chose, in a stable
+    /// order. Self-labels tell other people's apps to warn about this post's media, so the
+    /// author's own adult-content setting never removes one.
+    nonisolated static func selfLabels(
+        from selected: Set<ComAtprotoLabelDefs.LabelValue>
+    ) -> ComAtprotoLabelDefs.SelfLabels {
+        ComAtprotoLabelDefs.SelfLabels(
+            values: selected.map(\.rawValue).sorted().map { ComAtprotoLabelDefs.SelfLabel(val: $0) })
+    }
+}
 
 // MARK: - Core Functionality Extension
 
@@ -108,7 +123,8 @@ extension PostComposerViewModel {
         return !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                !mediaItems.isEmpty ||
                videoItem != nil ||
-               selectedGif != nil
+               selectedGif != nil ||
+               postingQuoteReference() != nil
     }
 
     var submitValidationState: PostComposerSubmitValidationState {
@@ -116,11 +132,15 @@ extension PostComposerViewModel {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .posting)
         }
 
-        if case .circle = destination, selectedGif != nil || videoItem != nil {
+        if case .circle = destination, selectedGif != nil || videoItem != nil || pendingAudioURL != nil {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .circleUnsupportedMedia)
         }
         if case .circle = destination, !mediaItems.isEmpty, !appState.circleSupportsImages {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .circleImagesUnavailable)
+        }
+
+        if let reason = draftReferenceLoadingReason {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: reason)
         }
 
         if let videoUploadBlockedReason {
@@ -131,15 +151,47 @@ extension PostComposerViewModel {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .videoPreparing)
         }
 
-        if !hasContent {
+        // In thread mode the entries that aren't being edited keep their content in threadEntries.
+        let otherEntries: [(number: Int, entry: ThreadEntry)] = isThreadMode
+            ? threadEntries.enumerated()
+                .filter { $0.offset != currentThreadIndex }
+                .map { (number: $0.offset + 1, entry: $0.element) }
+            : []
+
+        let allImages = mediaItems + otherEntries.flatMap { $0.entry.mediaItems }
+        let allVideos = [videoItem].compactMap { $0 } + otherEntries.compactMap { $0.entry.videoItem }
+        if allImages.contains(where: { $0.isLoading }) || allVideos.contains(where: { $0.isLoading }) {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: .mediaPreparing)
+        }
+        if allImages.contains(where: { $0.rawData == nil || $0.image == nil || $0.isGifConversion }) || allVideos.contains(where: {
+            $0.rawVideoURL == nil && $0.rawVideoAsset == nil && $0.videoData == nil
+        }) {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: .mediaUnavailable)
+        }
+
+        let otherEntriesHaveContent = otherEntries.contains { item in
+            !item.entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !item.entry.mediaItems.isEmpty ||
+            item.entry.videoItem != nil ||
+            item.entry.selectedGif != nil ||
+            postingQuoteReference(for: item.entry) != nil
+        }
+        if !hasContent && !otherEntriesHaveContent {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .emptyContent)
         }
 
         if appState.appSettings.requireAltText {
-            if PostComposerAltTextRequirement.hasMissingAltText(
+            let currentMissing = PostComposerAltTextRequirement.hasMissingAltText(
                 imageAltTexts: mediaItems.map(\.altText),
                 videoAltText: videoItem?.altText
-            ) {
+            )
+            let otherMissing = otherEntries.contains { item in
+                PostComposerAltTextRequirement.hasMissingAltText(
+                    imageAltTexts: item.entry.mediaItems.map(\.altText),
+                    videoAltText: item.entry.videoItem?.altText
+                )
+            }
+            if currentMissing || otherMissing {
                 return PostComposerSubmitValidationState(canSubmit: false, reason: .missingAltText)
             }
         }
@@ -148,6 +200,16 @@ extension PostComposerViewModel {
             return PostComposerSubmitValidationState(
                 canSubmit: false,
                 reason: .overCharacterLimit(current: postText.count, max: maxCharacterCount)
+            )
+        }
+
+        if let overLimit = otherEntries.first(where: { $0.entry.text.count > maxCharacterCount }) {
+            return PostComposerSubmitValidationState(
+                canSubmit: false,
+                reason: .threadPostOverCharacterLimit(
+                    postNumber: overLimit.number,
+                    over: overLimit.entry.text.count - maxCharacterCount
+                )
             )
         }
 
@@ -186,7 +248,8 @@ extension PostComposerViewModel {
     }
 
     func willBeUsedAsEmbed(for url: String) -> Bool {
-        // Return true if this URL is the selected embed URL
+        // A link card is only published when the post has no media attached.
+        guard mediaItems.isEmpty, videoItem == nil, selectedGif == nil else { return false }
         return selectedEmbedURL == url && urlCards[url] != nil
     }
 
@@ -317,7 +380,8 @@ extension PostComposerViewModel {
         }
 
         // Reset to single post mode
-        threadEntries = [ThreadEntry()]
+        // Keep the retained entry's identity so saving/collapsing a thread can resume its upload.
+        threadEntries = [threadEntries.first ?? ThreadEntry()]
         isThreadMode = false
         isThread = false
         currentThreadIndex = 0
@@ -330,32 +394,58 @@ extension PostComposerViewModel {
 
     @MainActor
     func handleMediaPaste(_ items: [NSItemProvider]) async {
+        guard videoItem == nil, selectedGif == nil else {
+            alertItem = AlertItem(title: "Can’t Add Image", message: "Remove the video or GIF to add images.")
+            return
+        }
         for item in items {
+            guard mediaItems.count < maxImagesAllowed else {
+                alertItem = AlertItem(
+                    title: "Image Limit Reached",
+                    message: "A post can have up to \(maxImagesAllowed) images."
+                )
+                return
+            }
             if item.hasItemConformingToTypeIdentifier("public.image") {
                 do {
                     if let data = try await item.loadItem(forTypeIdentifier: "public.image", options: nil) as? Data {
-                        var mediaItem = MediaItem()
-                        mediaItem.rawData = data
-
-                        #if os(iOS)
-                        let platformImage = UIImage(data: data)
-                        if let platformImage = platformImage {
-                            mediaItem.image = Image(uiImage: platformImage)
-                            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
-                        }
-                        #elseif os(macOS)
-                        let platformImage = NSImage(data: data)
-                        if let platformImage = platformImage {
-                            mediaItem.image = Image(nsImage: platformImage)
-                            mediaItem.aspectRatio = platformImage.size
-                        }
-                        #endif
-                        mediaItem.isLoading = false
-
+                        // An animated GIF becomes a video; never decode or save it as a still.
                         if isDataAnimatedGIF(data) {
                             await processGIFAsVideoFromData(data)
-                        } else {
-                            mediaItems.append(mediaItem)
+                            continue
+                        }
+
+                        var mediaItem = MediaItem()
+                        mediaItem.rawData = data
+                        // One background task decodes the thumbnail and writes the draft file.
+                        let (preview, draftFile) = await Self.prepareImageAttachment(
+                            data, writesDraftFile: ownsEditingDraft
+                        )
+                        if let preview {
+                            mediaItem.applyPreview(preview)
+                        }
+                        mediaItem.isLoading = false
+
+                        // The checks above ran before these awaits. A GIF from earlier in this
+                        // paste, a video or GIF picked meanwhile, or another paste or drop may
+                        // have changed what the post can hold.
+                        guard mediaItems.count < maxImagesAllowed else {
+                            releaseUnusedDraftImageFile(draftFile)
+                            alertItem = AlertItem(
+                                title: "Image Limit Reached",
+                                message: "A post can have up to \(maxImagesAllowed) images."
+                            )
+                            return
+                        }
+                        guard videoItem == nil, selectedGif == nil,
+                              !mediaItems.contains(where: { $0.isGifConversion }) else {
+                            releaseUnusedDraftImageFile(draftFile)
+                            alertItem = AlertItem(title: "Can’t Add Image", message: "Remove the video or GIF to add images.")
+                            return
+                        }
+                        mediaItems.append(mediaItem)
+                        if let draftFile {
+                            rememberDraftImageFile(draftFile, for: mediaItem.id, data: data, claim: editingClaim)
                         }
                     }
                 } catch {
@@ -369,29 +459,27 @@ extension PostComposerViewModel {
     func processDetectedGenmoji(_ genmojiData: Data) async {
         var mediaItem = MediaItem()
         mediaItem.rawData = genmojiData
-
-        #if os(iOS)
-        let platformImage = UIImage(data: genmojiData)
-        if let platformImage = platformImage {
-            mediaItem.image = Image(uiImage: platformImage)
-            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+        let (preview, draftFile) = await Self.prepareImageAttachment(
+            genmojiData, writesDraftFile: ownsEditingDraft
+        )
+        if let preview {
+            mediaItem.applyPreview(preview)
         }
-        #elseif os(macOS)
-        let platformImage = NSImage(data: genmojiData)
-        if let platformImage = platformImage {
-            mediaItem.image = Image(nsImage: platformImage)
-            mediaItem.aspectRatio = platformImage.size
-        }
-        #endif
         mediaItem.isLoading = false
 
         let source = MediaSource.genmojiConversion(genmojiData)
-        if !isMediaSourceAlreadyAdded(source) {
-            trackMediaSource(source)
-
-            if mediaItems.count < maxImagesAllowed {
-                mediaItems.append(mediaItem)
-            }
+        guard !isMediaSourceAlreadyAdded(source) else {
+            releaseUnusedDraftImageFile(draftFile)
+            return
+        }
+        trackMediaSource(source)
+        guard mediaItems.count < maxImagesAllowed else {
+            releaseUnusedDraftImageFile(draftFile)
+            return
+        }
+        mediaItems.append(mediaItem)
+        if let draftFile {
+            rememberDraftImageFile(draftFile, for: mediaItem.id, data: genmojiData, claim: editingClaim)
         }
     }
 
@@ -414,22 +502,13 @@ extension PostComposerViewModel {
     // MARK: - Language Management
 
     func toggleLanguage(_ language: LanguageCodeContainer) {
+        // A per-post choice; the default only changes from the language sheet's explicit action.
         if selectedLanguages.contains(language) {
             // Allow removing all languages - it's optional
             selectedLanguages.removeAll { $0 == language }
-            // Update saved preference
-            if selectedLanguages.isEmpty {
-                // Clear the saved default if user removed all languages
-                UserDefaults.standard.removeObject(forKey: "defaultComposerLanguage")
-                logger.info("PostComposerCore: Cleared default language preference")
-            } else {
-                // Save the first remaining language as the new default
-                saveDefaultLanguagePreference()
-            }
         } else {
+            guard selectedLanguages.count < LanguagePickerSheet.maxLanguages else { return }
             selectedLanguages.append(language)
-            // Save this language as the default preference
-            saveDefaultLanguagePreference()
         }
         saveDraftIfNeeded()
     }
@@ -439,19 +518,31 @@ extension PostComposerViewModel {
         guard let suggested = suggestedLanguage else { return }
         logger.info("PostComposerCore: Applying suggested language: \(suggested.lang.minimalIdentifier)")
         selectedLanguages = [suggested]
-        saveDefaultLanguagePreference()
+        saveDraftIfNeeded()
     }
 
     // MARK: - Thread Creation
 
-    func createThread() async throws {
+    @discardableResult
+    func createThread() async throws -> Bool {
+        let submitSignpost = PerformanceSignposts.beginInterval("ComposerSubmit")
+        defer { PerformanceSignposts.endInterval("ComposerSubmit", submitSignpost) }
+
         // ponytail: block thread mode for circles, add circle threading when needed
         guard destination == .public else {
             throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Thread mode is only supported for public posts"])
         }
 
-        // Update current thread entry before posting
+        try appState.ageAccess.require(.generalContent)
+        guard !isSubmissionActive else { throw editingOwnershipError() }
+        try ensureDraftReferencesReadyForPosting()
+        // Update current thread entry before capturing submission ownership.
         updateCurrentThreadEntry()
+        let submissionSnapshot = captureEditingSnapshot()
+        let submittedContent = editingContent()
+        if editingSession != nil && submissionSnapshot == nil { throw editingOwnershipError() }
+        beginSubmission()
+        defer { endSubmission() }
 
         isPosting = true
         defer { isPosting = false }
@@ -463,7 +554,8 @@ extension PostComposerViewModel {
             !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !entry.mediaItems.isEmpty ||
             entry.videoItem != nil ||
-            entry.selectedGif != nil
+            entry.selectedGif != nil ||
+            postingQuoteReference(for: entry) != nil
         }
 
         guard !validEntries.isEmpty else {
@@ -473,24 +565,26 @@ extension PostComposerViewModel {
         // Extract just the text from each entry for the batch thread creation
         let postTexts = validEntries.map { $0.text }
 
-        // Process facets for each post
+        // Process facets for each post. Manual inline links belong to the entry being edited.
+        let currentEntryID = threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex].id : nil
         var allFacets: [[AppBskyRichtextFacet]] = []
         for entry in validEntries {
-            let facets = await processFacetsForText(entry.text)
+            try appState.ageAccess.require(.generalContent)
+            let facets = await processFacets(
+                for: entry.text,
+                manualLinkFacets: entry.id == currentEntryID ? manualLinkFacets : []
+            )
             allFacets.append(facets)
         }
 
         // Process embeds for each post
         var allEmbeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?] = []
         for (idx, entry) in validEntries.enumerated() {
+            try appState.ageAccess.require(.generalContent)
             var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
 
             // Each entry can have its own quote post
-            if let entryQuote = entry.quotedPost {
-                let strongRef = ComAtprotoRepoStrongRef(
-                    uri: entryQuote.uri,
-                    cid: entryQuote.cid
-                )
+            if let strongRef = postingQuoteReference(for: entry) {
                 let record = AppBskyEmbedRecord(record: strongRef)
 
                 // Quote + media → recordWithMedia
@@ -505,14 +599,12 @@ extension PostComposerViewModel {
                        let media = Self.recordWithMediaUnion(from: imagesEmbed) {
                         embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
                     }
-                } else if let videoItem = entry.videoItem {
-                    self.videoItem = videoItem
-                    if let videoEmbed = try await createVideoEmbed(),
+                } else if entry.videoItem != nil {
+                    if let videoEmbed = try await createVideoEmbedForEntry(entry),
                        case .appBskyEmbedVideo(let video) = videoEmbed {
                         let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedVideo(video)
                         embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
                     }
-                    self.videoItem = nil
                 } else {
                     // Quote-only embed
                     embed = .appBskyEmbedRecord(record)
@@ -522,83 +614,46 @@ extension PostComposerViewModel {
             } else if !entry.mediaItems.isEmpty {
                 // Create images embed from the entry's media items
                 embed = try await createImagesEmbedForEntry(entry)
-            } else if let videoItem = entry.videoItem {
-                // Use the entry's video item
-                self.videoItem = videoItem // Temporarily set for createVideoEmbed
-                embed = try await createVideoEmbed()
-                self.videoItem = nil // Clear it
-            } else if !entry.urlCards.isEmpty {
-                // Use the first URL card from the entry for the embed
-                // In thread mode, each entry tracks its own URL cards
-                if let urlCard = entry.urlCards.values.first {
-                    embed = await createExternalEmbedWithThumbnail(urlCard)
-                }
+            } else if entry.videoItem != nil {
+                embed = try await createVideoEmbedForEntry(entry)
+            } else if let embedURL = entry.selectedEmbedURL, let urlCard = entry.urlCards[embedURL] {
+                // Each entry tracks its own link card; use the one shown as the embed.
+                embed = await createExternalEmbedWithThumbnail(urlCard)
             }
             allEmbeds.append(embed)
         }
 
-        // Create self labels
-        // If adult content is disabled, do not allow adult self-labels on posts
-        let adultOnly: Set<String> = ["porn", "sexual", "nudity"]
-        let filteredLabels: Set<ComAtprotoLabelDefs.LabelValue>
-        if !appState.isAdultContentEnabled {
-            filteredLabels = selectedLabels.filter { !adultOnly.contains($0.rawValue) }
-        } else {
-            filteredLabels = selectedLabels
-        }
-        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
+        let selfLabels = Self.selfLabels(from: selectedLabels)
 
         // Set up threadgate and postgate for the first post
-        let threadgateRules = interactionSettings.toThreadgateAllowRules()
-        let postgateRules = interactionSettings.toPostgateEmbeddingRules()
+        let threadgateRules = postingThreadgateRules()
+        let postgateRules = postingPostgateRules()
 
-        // Create the entire thread in one batch operation
-        do {
-            try await postManager.createThread(
-                posts: postTexts,
-                languages: selectedLanguages,
-                selfLabels: selfLabels,
-                hashtags: outlineTags,
-                facets: allFacets,
-                embeds: allEmbeds,
-                parentPost: parentPost,
-                threadgateAllowRules: threadgateRules,
-                postgateEmbeddingRules: postgateRules
-            )
-        } catch {
-            let nsErr = error as NSError
-            if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
-                ComposerOutbox.shared.enqueueThread(texts: postTexts, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
-                appState.composerDraftManager.clearDraft()
-                logger.info("Thread queued offline")
-                return
-            }
-            throw error
-        }
+        // Create the entire thread in one batch operation. Failures propagate so the
+        // composer stays open with the draft intact and the user is told what happened.
+        try appState.ageAccess.require(.generalContent)
+        try await postManager.createThread(
+            posts: postTexts,
+            languages: selectedLanguages,
+            selfLabels: selfLabels,
+            hashtags: outlineTags,
+            facets: allFacets,
+            embeds: allEmbeds,
+            parentPost: parentPost,
+            threadgateAllowRules: threadgateRules,
+            postgateEmbeddingRules: postgateRules
+        )
 
-        // Clear draft on successful post creation
-        appState.composerDraftManager.clearDraft()
-    }
-
-    private func processFacetsForText(_ text: String) async -> [AppBskyRichtextFacet] {
-        // Temporarily set postText for facet processing
-        let originalText = postText
-        postText = text
-        var facets = await processFacets()
-        // Merge in manual inline link facets (legacy path support)
-        if !manualLinkFacets.isEmpty {
-            facets.append(contentsOf: manualLinkFacets)
-        }
-        postText = originalText
-        return facets
+        return completeEditingSubmission(submissionSnapshot, content: submittedContent)
     }
 
     private func createImagesEmbedForEntry(_ entry: ThreadEntry) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        // Temporarily set mediaItems for image upload
-        let originalItems = mediaItems
-        mediaItems = entry.mediaItems
-        defer { mediaItems = originalItems }
-        return try await createImagesEmbed()
+        return try await createImagesEmbed(items: entry.mediaItems)
+    }
+
+    func createVideoEmbedForEntry(_ entry: ThreadEntry) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        guard let item = entry.videoItem else { return nil }
+        return try await createVideoEmbed(for: item, entryID: entry.id)
     }
 
     /// Maps the embed produced by createImagesEmbed (images for <=4 photos,
@@ -618,7 +673,14 @@ extension PostComposerViewModel {
 
     // MARK: - Post Creation
 
-    func createPost() async throws {
+    @discardableResult
+    func createPost() async throws -> Bool {
+        try appState.ageAccess.require(.generalContent)
+        guard !isSubmissionActive else { throw editingOwnershipError() }
+        let submissionSnapshot = captureEditingSnapshot()
+        let submittedContent = editingContent()
+        if editingSession != nil && submissionSnapshot == nil { throw editingOwnershipError() }
+        try ensureDraftReferencesReadyForPosting()
         // Create single post
         isPosting = true
         defer {
@@ -626,7 +688,10 @@ extension PostComposerViewModel {
             endSubmission()
         }
 
-        let submission = try beginSubmission()
+        let submitSignpost = PerformanceSignposts.beginInterval("ComposerSubmit")
+        defer { PerformanceSignposts.endInterval("ComposerSubmit", submitSignpost) }
+
+        let submission = beginSubmission()
         if case .circle = submission.destination {
             guard selectedGif == nil, videoItem == nil else {
                 throw CircleError.invalidParameter("GIFs, video, and audio are unavailable in Circles.")
@@ -642,20 +707,15 @@ extension PostComposerViewModel {
         }
 
         logger.info("Creating post with the selected destination")
-        // Process facets (mentions, links, etc.)
+        // Process facets and embeds concurrently
         logger.debug("Processing facets...")
-        let facets = await processFacets()
-        logger.debug("Processed \(facets.count) facets")
+        async let facetsTask = processFacets()
 
         // Create embed if needed
         var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
 
         // Check if we have both a quoted post AND media - this requires recordWithMedia
-        if let quotedPost = quotedPost {
-            let strongRef = ComAtprotoRepoStrongRef(
-                uri: quotedPost.uri,
-                cid: quotedPost.cid
-            )
+        if let strongRef = postingQuoteReference() {
             let record = AppBskyEmbedRecord(record: strongRef)
 
             if let gif = selectedGif {
@@ -697,20 +757,13 @@ extension PostComposerViewModel {
         } else {
             logger.debug("No embed needed")
         }
+        let facets = await facetsTask
+        try appState.ageAccess.require(.generalContent)
+        logger.debug("Processed \(facets.count) facets")
+        let selfLabels = Self.selfLabels(from: selectedLabels)
 
-        // Create self labels
-        // If adult content is disabled, do not allow adult self-labels on posts
-        let adultOnly: Set<String> = ["porn", "sexual", "nudity"]
-        let filteredLabels: Set<ComAtprotoLabelDefs.LabelValue>
-        if !appState.isAdultContentEnabled {
-            filteredLabels = selectedLabels.filter { !adultOnly.contains($0.rawValue) }
-        } else {
-            filteredLabels = selectedLabels
-        }
-        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
-
-        let threadgateRules = interactionSettings.toThreadgateAllowRules()
-        let postgateRules = interactionSettings.toPostgateEmbeddingRules()
+        let threadgateRules = postingThreadgateRules()
+        let postgateRules = postingPostgateRules()
 
         switch submission.destination {
         case .public:
@@ -719,6 +772,7 @@ extension PostComposerViewModel {
             logger.info("Calling postManager.createPost with text: '\(self.postText)', languages: \(self.selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(self.parentPost != nil)")
 
             do {
+                try appState.ageAccess.require(.generalContent)
                 try await postManager.createPost(
                     postText,
                     languages: selectedLanguages,
@@ -732,28 +786,7 @@ extension PostComposerViewModel {
                     postgateEmbeddingRules: postgateRules
                 )
             } catch {
-                let nsErr = error as NSError
-                if nsErr.domain == NSURLErrorDomain
-                    && (nsErr.code == NSURLErrorNotConnectedToInternet
-                        || nsErr.code == NSURLErrorTimedOut)
-                {
-                    ComposerOutbox.shared.enqueuePost(
-                        text: postText,
-                        languages: selectedLanguages,
-                        labels: selectedLabels,
-                        hashtags: outlineTags
-                    )
-                    appState.composerDraftManager.clearDraft()
-                    logger.info("Post queued offline")
-                    if #available(iOS 26, macOS 26, *) {
-                        await MetricKitSignposts.endPostComposition(
-                            posted: false,
-                            mediaCount: mediaItems.count,
-                            characterCount: postText.count
-                        )
-                    }
-                    return
-                }
+                // Failures propagate so the composer stays open with the draft intact.
                 if #available(iOS 26, macOS 26, *) {
                     await MetricKitSignposts.endPostComposition(
                         posted: false,
@@ -781,6 +814,7 @@ extension PostComposerViewModel {
                 createdAt: ATProtocolDate(date: submission.createdAt)
             )
             do {
+                try appState.ageAccess.require(.generalContent)
                 _ = try await service.publishPost(destination: circle, draft: circleDraft)
                 NotificationCenter.default.post(
                     name: .circlePostPublished,
@@ -803,43 +837,48 @@ extension PostComposerViewModel {
             }
         }
 
-        // Clear draft on successful post creation
-        appState.composerDraftManager.clearDraft()
-
         // End MetricKit tracking for successful post
         if #available(iOS 26, macOS 26, *) {
           await MetricKitSignposts.endPostComposition(posted: true, mediaCount: mediaItems.count, characterCount: postText.count)
         }
 
         logger.info("Post created successfully")
+        return completeEditingSubmission(submissionSnapshot, content: submittedContent)
     }
 
     // MARK: - Thumbnail Management
 
-    /// Pre-upload thumbnails for all URL cards that don't have them yet
+    /// Starts uploading the selected link card's thumbnail as soon as the card and the
+    /// selection both exist, so submit only waits for an upload already in flight. Cards that
+    /// are not the embed are never uploaded.
     @MainActor
-    func preUploadThumbnails() async {
-        let urlCardsToProcess = urlCards.values.filter {
-            !$0.image.isEmpty && thumbnailCache[$0.resolvedURL] == nil && $0.thumbnailBlob == nil
-        }
+    func preUploadThumbnails() {
+        guard let embedURL = selectedEmbedURL, let urlCard = urlCards[embedURL] else { return }
+        _ = thumbnailUploadTask(for: urlCard)
+    }
 
-        // Process thumbnails in background to avoid blocking UI
-        if #available(iOS 16.0, macOS 13.0, *), let optimizer = performanceOptimizer {
-            for urlCard in urlCardsToProcess {
-                do {
-                    try await optimizer.executeThumbnailUpload {
-                        await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-                    }
-                } catch {
-                    logger.error("Failed to upload thumbnail for \(urlCard.resolvedURL): \(error)")
-                }
-            }
-        } else {
-            // Fallback for older OS versions
-            for urlCard in urlCardsToProcess {
-                await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-            }
+    /// Returns the in-flight upload for a card's thumbnail, starting one if the card has an
+    /// image that isn't uploaded yet.
+    @MainActor
+    private func thumbnailUploadTask(for urlCard: URLCardResponse) -> Task<Blob?, Never>? {
+        let cacheKey = urlCard.resolvedURL
+        guard destination == .public, !urlCard.image.isEmpty, urlCard.thumbnailBlob == nil,
+              thumbnailCache[cacheKey] == nil else {
+            return nil
         }
+        if let inFlight = thumbnailUploadTasks[cacheKey] { return inFlight }
+        let task = Task { [weak self] () -> Blob? in
+            guard let self else { return nil }
+            let blob = await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+            // A failed upload is retried by the next request for this card. A cancelled task
+            // was already removed, and a newer one may hold its key.
+            if !Task.isCancelled {
+                self.thumbnailUploadTasks[cacheKey] = nil
+            }
+            return blob
+        }
+        thumbnailUploadTasks[cacheKey] = task
+        return task
     }
 
     /// Check if thumbnail is available for a URL
@@ -863,19 +902,7 @@ extension PostComposerViewModel {
         }
 
         logger.info("Retrying thumbnail upload for: \(url)")
-
-        // Use performance optimizer for retry if available
-        if #available(iOS 16.0, macOS 13.0, *), let optimizer = performanceOptimizer {
-            do {
-                try await optimizer.executeThumbnailUpload {
-                    await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-                }
-            } catch {
-                logger.error("Failed to retry thumbnail upload for \(url): \(error)")
-            }
-        } else {
-            await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-        }
+        _ = await thumbnailUploadTask(for: urlCard)?.value
     }
 
     // MARK: - Additional Helper Methods
@@ -950,20 +977,7 @@ extension PostComposerViewModel {
 
         // Then load the entry state
         postText = entry.text
-        mediaItems = entry.mediaItems.map { item in
-            // Create new instances to avoid reference issues
-            var newItem = MediaItem()
-            newItem.image = item.image
-            newItem.rawData = item.rawData
-            newItem.altText = item.altText
-            newItem.isLoading = item.isLoading
-            newItem.pickerItem = item.pickerItem
-            newItem.aspectRatio = item.aspectRatio
-            newItem.videoData = item.videoData
-            newItem.rawVideoURL = item.rawVideoURL
-            newItem.rawVideoAsset = item.rawVideoAsset
-            return newItem
-        }
+        mediaItems = entry.mediaItems
         videoItem = entry.videoItem
         selectedGif = entry.selectedGif
         detectedURLs = entry.detectedURLs
@@ -984,17 +998,37 @@ extension PostComposerViewModel {
         richAttributedText = NSAttributedString(string: postText)
         #endif
 
+        // Restoring a value does not resume its former task.
+        for index in mediaItems.indices where mediaItems[index].image == nil {
+            mediaItems[index].isLoading = false
+        }
+        if videoItem?.image == nil {
+            videoItem?.isLoading = false
+        }
+
         // Update content after loading
         updatePostContent()
     }
 
     func removeThreadEntry(at index: Int) {
-        removeThreadPost(at: index)
-        // If only one entry remains, automatically revert to single-post mode
+        guard threadEntries.count > 1, threadEntries.indices.contains(index) else { return }
+        // The live editor holds the active entry's text; save it before indices shift.
+        updateCurrentThreadEntry()
+        threadEntries.remove(at: index)
+        if index < currentThreadIndex {
+            currentThreadIndex -= 1
+        }
+        currentThreadIndex = min(currentThreadIndex, threadEntries.count - 1)
+        isThread = threadEntries.count > 1
+
         if isThreadMode && threadEntries.count <= 1 {
+            // Only one entry remains, so revert to single-post mode.
             currentThreadIndex = 0
             exitThreadMode()
+        } else {
+            loadEntryState()
         }
+        saveDraftIfNeeded()
     }
 
     func moveThreadEntry(from index: Int, direction: Int) {
@@ -1021,6 +1055,7 @@ extension PostComposerViewModel {
         guard destination == .public else {
             throw CircleError.invalidParameter("GIFs are unavailable in Circles.")
         }
+        try appState.ageAccess.require(.generalContent)
         guard let client = appState.atProtoClient else { return nil }
 
         // Get the proper GIF media URL (not the Tenor page URL)
@@ -1081,6 +1116,9 @@ extension PostComposerViewModel {
             do {
                 let (data, _) = try await URLSession.shared.data(from: URL(string: previewURL)!)
                 let thumbMimeType = ImageMetadataStripper.detectMIMEType(from: data)
+                try appState.ageAccess.require(.generalContent)
+                guard !Task.isCancelled, appState.atProtoClient === client,
+                      !appState.isAccountSwitchSuspended else { throw CancellationError() }
                 let (_, uploadResult) = try await client.com.atproto.repo.uploadBlob(data: data, mimeType: thumbMimeType)
                 thumbBlob = uploadResult?.blob
             } catch {
@@ -1090,7 +1128,7 @@ extension PostComposerViewModel {
 
         // Use proper title and description
         let title = gif.content_description.isEmpty ? gif.title : gif.content_description
-        let description = gif.content_description.isEmpty ? "via Tenor" : "ALT: \(gif.content_description)"
+        let description = gif.content_description.isEmpty ? "via KLIPY" : "ALT: \(gif.content_description)"
 
         let external = AppBskyEmbedExternal.External(
             uri: URI(uriString: gifURL),
@@ -1136,14 +1174,12 @@ extension PostComposerViewModel {
             title: urlCard.title,
             description: urlCard.description,
             thumb: thumbBlob,
-            associatedRefs: nil
+            associatedRefs: urlCard.associatedRefs
         )
 
         // Start async thumbnail upload if image is available and not cached
-        if destination == .public && !urlCard.image.isEmpty && thumbBlob == nil {
-            Task {
-                await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-            }
+        if destination == .public && thumbBlob == nil {
+            _ = thumbnailUploadTask(for: urlCard)
         }
 
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
@@ -1156,10 +1192,11 @@ extension PostComposerViewModel {
         let cacheKey = urlCard.resolvedURL
         var thumbBlob = destination == .public ? (urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]) : nil
 
-        // If no thumbnail exists but image URL is available, try to upload synchronously
-        if destination == .public && thumbBlob == nil && !urlCard.image.isEmpty {
-            await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-            thumbBlob = destination == .public ? thumbnailCache[cacheKey] : nil
+        // Wait for the upload started when the card was selected, or start it now. A failed
+        // earlier attempt is not cached, so this tries again.
+        if destination == .public, thumbBlob == nil, let upload = thumbnailUploadTask(for: urlCard) {
+            let uploaded = await upload.value
+            thumbBlob = destination == .public ? uploaded : nil
         }
 
         let external = AppBskyEmbedExternal.External(
@@ -1167,22 +1204,24 @@ extension PostComposerViewModel {
             title: urlCard.title,
             description: urlCard.description,
             thumb: thumbBlob,
-            associatedRefs: nil
+            associatedRefs: urlCard.associatedRefs
         )
 
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
     }
 
     /// Uploads thumbnail for external embed and caches the blob reference
-    private func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async {
-        guard destination == .public else { return }
+    @MainActor
+    private func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async -> Blob? {
+        guard destination == .public else { return nil }
         guard let client = appState.atProtoClient,
               let url = URL(string: imageURL) else {
             logger.warning("Cannot upload thumbnail: invalid URL or missing client")
-            return
+            return nil
         }
 
         do {
+            try appState.ageAccess.require(.generalContent)
             logger.debug("Downloading thumbnail from: \(imageURL)")
 
             // Download the image data
@@ -1201,30 +1240,30 @@ extension PostComposerViewModel {
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
                 logger.warning("Failed to download thumbnail: invalid HTTP response")
-                return
+                return nil
             }
 
             // Validate it's an image
             guard data.count > 0 else {
                 logger.warning("Downloaded thumbnail is empty")
-                return
+                return nil
             }
 
-            // Determine MIME type from response or data
-            let mimeType = httpResponse.mimeType ?? "image/jpeg"
-
-            // Resize image if too large (max 1MB for thumbnails)
-            let processedData: Data
-            if data.count > 1_000_000 {
-                processedData = try await resizeImageData(data, maxSizeBytes: 1_000_000)
-            } else {
-                processedData = data
-            }
+            // Re-encode only images over the blob limit, off the main actor. The result is a
+            // JPEG, so its Content-Type must say so.
+            let reencoded = data.count > 1_000_000
+            let processedData = reencoded ? try await ComposerImagePreparation.prepareForUpload(data).data : data
+            let mimeType = Self.thumbnailUploadMIMEType(
+                declared: httpResponse.mimeType, data: processedData, reencoded: reencoded
+            )
 
             logger.debug("Uploading thumbnail (\(processedData.count) bytes) with MIME type: \(mimeType)")
 
             // The audience can change while the thumbnail downloads.
-            guard destination == .public else { return }
+            guard destination == .public else { return nil }
+            try appState.ageAccess.require(.generalContent)
+            guard !Task.isCancelled, appState.atProtoClient === client,
+                  !appState.isAccountSwitchSuspended else { throw CancellationError() }
             let (uploadCode, uploadResult) = try await client.com.atproto.repo.uploadBlob(
                 data: processedData,
                 mimeType: mimeType
@@ -1233,119 +1272,71 @@ extension PostComposerViewModel {
             guard uploadCode >= 200 && uploadCode < 300,
                   let blob = uploadResult?.blob else {
                 logger.error("Failed to upload thumbnail: HTTP \(uploadCode)")
-                return
+                return nil
             }
 
             logger.info("Successfully uploaded thumbnail for external embed: \(String(describing:blob.ref?.cid.string))")
 
             // Cache the blob reference for future use
-            await MainActor.run {
-                let cacheKey = urlCard.resolvedURL
-                self.thumbnailCache[cacheKey] = blob
+            let cacheKey = urlCard.resolvedURL
+            thumbnailCache[cacheKey] = blob
 
-                // Update the URL card if it still exists in current cards
-                if var existingCard = self.urlCards[cacheKey] {
-                    existingCard.thumbnailBlob = blob
-                    if existingCard.sourceURL == nil {
-                        existingCard.sourceURL = cacheKey
-                    }
-                    self.urlCards[cacheKey] = existingCard
+            // Update the URL card if it still exists in current cards
+            if var existingCard = urlCards[cacheKey] {
+                existingCard.thumbnailBlob = blob
+                if existingCard.sourceURL == nil {
+                    existingCard.sourceURL = cacheKey
                 }
+                urlCards[cacheKey] = existingCard
             }
-
+            return blob
         } catch {
             logger.error("Failed to upload thumbnail: \(error.localizedDescription)")
+            return nil
         }
     }
 
-    /// Resizes image data to fit within specified byte limit
-    private func resizeImageData(_ data: Data, maxSizeBytes: Int) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                guard let image = PlatformImage(data: data) else {
-                    continuation.resume(throwing: ThumbnailUploadError.invalidImageData)
-                    return
-                }
-
-                var compressionQuality: CGFloat = 1.0
-                var resizedData = data
-
-                // Try different compression qualities
-                while resizedData.count > maxSizeBytes && compressionQuality > 0.1 {
-                    compressionQuality -= 0.1
-
-                    #if os(iOS)
-                    if let compressed = image.jpegData(compressionQuality: compressionQuality) {
-                        resizedData = compressed
-                    }
-                    #elseif os(macOS)
-                    if let tiffData = image.tiffRepresentation,
-                       let bitmapRep = NSBitmapImageRep(data: tiffData),
-                       let compressed = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: compressionQuality]) {
-                        resizedData = compressed
-                    }
-                    #endif
-                }
-
-                // If still too large, resize the image dimensions
-                if resizedData.count > maxSizeBytes {
-                    let scale = sqrt(Double(maxSizeBytes) / Double(resizedData.count))
-                    let newSize = CGSize(
-                        width: image.size.width * scale,
-                        height: image.size.height * scale
-                    )
-
-                    #if os(iOS)
-                    UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
-                    image.draw(in: CGRect(origin: .zero, size: newSize))
-                    let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
-                    UIGraphicsEndImageContext()
-
-                    if let resizedImage = resizedImage,
-                       let finalData = resizedImage.jpegData(compressionQuality: 0.8) {
-                        resizedData = finalData
-                    }
-                    #elseif os(macOS)
-                    let resizedImage = NSImage(size: newSize, flipped: false) { rect in
-                        image.draw(in: rect)
-                        return true
-                    }
-
-                    if let tiffData = resizedImage.tiffRepresentation,
-                       let bitmapRep = NSBitmapImageRep(data: tiffData),
-                       let finalData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
-                        resizedData = finalData
-                    }
-                    #endif
-                }
-
-                continuation.resume(returning: resizedData)
-            }
-        }
+    /// The Content-Type for a link-card thumbnail upload. Re-encoded bytes are JPEG. Otherwise
+    /// the server's type is used when it names an image; when it doesn't (for example a WebP
+    /// served as application/octet-stream), the type comes from the bytes. Petrel converts and
+    /// strips only `image/` uploads, so a mislabelled WebP would otherwise fail its metadata
+    /// strip and the card would lose its thumbnail.
+    nonisolated static func thumbnailUploadMIMEType(declared: String?, data: Data, reencoded: Bool) -> String {
+        if reencoded { return "image/jpeg" }
+        if let declared = declared?.lowercased(), declared.hasPrefix("image/") { return declared }
+        return ImageMetadataStripper.detectMIMEType(from: data)
     }
 
     // MARK: - Facet Processing
 
     private func processFacets() async -> [AppBskyRichtextFacet] {
+        await processFacets(for: postText, manualLinkFacets: manualLinkFacets)
+    }
+
+    /// Builds the facets for `text` without touching the live editor state.
+    private func processFacets(
+        for text: String,
+        manualLinkFacets linkFacets: [AppBskyRichtextFacet]
+    ) async -> [AppBskyRichtextFacet] {
         // Use the same PostParser logic that's used for real-time parsing to ensure consistency
-        logger.debug("PostComposer: processFacets called with postText='\(self.postText)' (length=\(self.postText.count))")
-        let (_, _, facets, _, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+        logger.debug("PostComposer: processFacets called with text length=\(text.count)")
+        let (_, _, facets, _, _) = PostParser.parsePostContent(text, resolvedProfiles: resolvedProfiles, detectLanguage: false)
 
         // Try to resolve any unresolved mentions for posting
         var enhancedFacets = facets
-        let unresolvedMentions = extractUnresolvedMentions(from: postText)
+        let unresolvedMentions = extractUnresolvedMentions(from: text)
 
         if !unresolvedMentions.isEmpty {
             logger.debug("PostComposer: Found \(unresolvedMentions.count) unresolved mentions, attempting to resolve")
-            let resolvedMentionFacets = await resolveAndCreateMentionFacets(for: unresolvedMentions)
+            let resolvedMentionFacets = await resolveAndCreateMentionFacets(for: unresolvedMentions, in: text)
             enhancedFacets.append(contentsOf: resolvedMentionFacets)
         }
 
         // Merge in manual inline link facets (from UIKit editor)
-        logger.debug("PostComposer: Checking manualLinkFacets: count=\(self.manualLinkFacets.count), isEmpty=\(self.manualLinkFacets.isEmpty)")
-        if !manualLinkFacets.isEmpty {
-            logger.debug("PostComposer: Adding \(self.manualLinkFacets.count) manual link facets: \(self.manualLinkFacets)")
-            enhancedFacets.append(contentsOf: manualLinkFacets)
+        logger.debug("PostComposer: Checking manualLinkFacets: count=\(linkFacets.count)")
+        if !linkFacets.isEmpty {
+            logger.debug("PostComposer: Adding \(linkFacets.count) manual link facets")
+            enhancedFacets.append(contentsOf: linkFacets)
         } else {
             logger.debug("PostComposer: No manual link facets to add")
         }
@@ -1371,9 +1362,10 @@ extension PostComposerViewModel {
     private func extractUnresolvedMentions(from text: String) -> [(handle: String, range: NSRange)] {
         var unresolved: [(String, NSRange)] = []
 
-        let mentionPattern = #"@([a-zA-Z0-9.-]+)"#
+        // Handles need at least one dot; a trailing "." or "-" ends the sentence, not the handle.
+        let mentionPattern = #"(?<![\w.])@([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)"#
         if let regex = try? NSRegularExpression(pattern: mentionPattern, options: []) {
-            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.count))
+            let matches = regex.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
 
             for match in matches {
                 if let range = Range(match.range, in: text) {
@@ -1391,66 +1383,71 @@ extension PostComposerViewModel {
     }
 
     /// Attempt to resolve mentions and create facets for them
-    private func resolveAndCreateMentionFacets(for mentions: [(handle: String, range: NSRange)]) async -> [AppBskyRichtextFacet] {
-        guard let client = appState.atProtoClient else { return [] }
+    private func resolveAndCreateMentionFacets(
+        for mentions: [(handle: String, range: NSRange)],
+        in text: String
+    ) async -> [AppBskyRichtextFacet] {
+        guard let client = appState.atProtoClient, !mentions.isEmpty else { return [] }
 
-        var newFacets: [AppBskyRichtextFacet] = []
+        return await withTaskGroup(of: (AppBskyRichtextFacet?, String, AppBskyActorDefs.ProfileViewBasic?).self) { group in
+            for (handle, range) in mentions {
+                group.addTask { [client] in
+                    do {
+                        let params = AppBskyActorSearchActorsTypeahead.Parameters(q: handle, limit: 1)
+                        let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
 
-        for (handle, range) in mentions {
-            do {
-                // Try to resolve the profile
-                let params = AppBskyActorSearchActorsTypeahead.Parameters(q: handle, limit: 1)
-                let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
+                        if responseCode >= 200 && responseCode < 300,
+                           let response = searchResponse,
+                           let profile = response.actors.first,
+                           profile.handle.description.lowercased() == handle.lowercased() {
 
-                if responseCode >= 200 && responseCode < 300,
-                   let response = searchResponse,
-                   let profile = response.actors.first,
-                   profile.handle.description.lowercased() == handle.lowercased() {
+                            let profileBasic = AppBskyActorDefs.ProfileViewBasic(
+                                did: profile.did,
+                                handle: profile.handle,
+                                displayName: profile.displayName,
+                                pronouns: profile.pronouns, avatar: profile.avatar,
+                                associated: profile.associated,
+                                viewer: profile.viewer,
+                                labels: profile.labels,
+                                createdAt: profile.createdAt,
+                                verification: profile.verification,
+                                status: profile.status,
+                                debug: nil
+                            )
 
-                    // Store resolved profile for future use
-                    let profileBasic = AppBskyActorDefs.ProfileViewBasic(
-                        did: profile.did,
-                        handle: profile.handle,
-                        displayName: profile.displayName,
-                        pronouns: profile.pronouns, avatar: profile.avatar,
-                        associated: profile.associated,
-                        viewer: profile.viewer,
-                        labels: profile.labels,
-                        createdAt: profile.createdAt,
-                        verification: profile.verification,
-                        status: profile.status,
-                        debug: nil
+                            let byteRange = await MainActor.run {
+                                self.calculateByteRange(for: range, in: text)
+                            }
+                            let mention = AppBskyRichtextFacet.Mention(did: profile.did)
+                            let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
 
-                    )
-
-                    await MainActor.run {
-                        resolvedProfiles[handle] = profileBasic
+                            let facet = AppBskyRichtextFacet(
+                                index: AppBskyRichtextFacet.ByteSlice(
+                                    byteStart: byteRange.location,
+                                    byteEnd: byteRange.location + byteRange.length
+                                ),
+                                features: [feature]
+                            )
+                            return (facet, handle, profileBasic)
+                        }
+                    } catch {
+                        // ignore resolution failure
                     }
-
-                    // Create mention facet
-                    let byteRange = calculateByteRange(for: range, in: postText)
-                    let mention = AppBskyRichtextFacet.Mention(did: profile.did)
-                    let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
-
-                    let facet = AppBskyRichtextFacet(
-                        index: AppBskyRichtextFacet.ByteSlice(
-                            byteStart: byteRange.location,
-                            byteEnd: byteRange.location + byteRange.length
-                        ),
-                        features: [feature]
-                    )
-                    newFacets.append(facet)
-
-                    logger.debug("PostComposer: Successfully resolved mention @\(handle) -> \(profile.did.didString())")
-                } else {
-                    logger.debug("PostComposer: Could not resolve mention @\(handle)")
+                    return (nil, handle, nil)
                 }
-            } catch {
-                logger.error("PostComposer: Failed to resolve mention @\(handle): \(error)")
             }
-        }
 
-        return newFacets
+            var newFacets: [AppBskyRichtextFacet] = []
+            for await (facet, handle, profileBasic) in group {
+                if let profileBasic {
+                    self.resolvedProfiles[handle] = profileBasic
+                }
+                if let facet {
+                    newFacets.append(facet)
+                }
+            }
+            return newFacets
+        }
     }
 
     private func calculateByteRange(for range: NSRange, in text: String) -> NSRange {
@@ -1460,24 +1457,5 @@ extension PostComposerViewModel {
         let bytesBefore = nsString.substring(to: range.location).data(using: .utf8)?.count ?? 0
         let bytesInRange = substring.data(using: .utf8)?.count ?? 0
         return NSRange(location: bytesBefore, length: bytesInRange)
-    }
-}
-
-// MARK: - Thumbnail Upload Error
-
-enum ThumbnailUploadError: LocalizedError {
-    case invalidImageData
-    case resizeFailed
-    case uploadFailed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidImageData:
-            return "Invalid image data provided"
-        case .resizeFailed:
-            return "Failed to resize image"
-        case .uploadFailed(let message):
-            return "Upload failed: \(message)"
-        }
     }
 }

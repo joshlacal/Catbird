@@ -28,7 +28,7 @@ struct FollowProfileIntent: AppIntent {
         }
 
         if view.viewer?.following != nil {
-            return .result(dialog: IntentDialog(stringLiteral: "You already follow them."))
+            return .result(dialog: IntentDialog("You already follow them."))
         }
         let record = AppBskyGraphFollow(subject: view.did, createdAt: ATProtocolDate(date: Date()), via: nil)
         let userDID = try await client.getDid()
@@ -37,8 +37,9 @@ struct FollowProfileIntent: AppIntent {
             collection: try NSID(nsidString: "app.bsky.graph.follow"),
             record: .knownType(record)
         )
+        try await IntentClientProvider.shared.requireCoveredUse(for: userDID)
         _ = try unwrapIntentResponse(await client.com.atproto.repo.createRecord(input: input))
-        return .result(dialog: IntentDialog(stringLiteral: "Followed."))
+        return .result(dialog: IntentDialog("Followed."))
 
     }
 }

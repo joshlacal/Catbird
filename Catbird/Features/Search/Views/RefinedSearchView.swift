@@ -13,10 +13,12 @@ import Observation
 
 /// A modernized search view that leverages iOS 18 features for a better search experience
 struct RefinedSearchView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     // MARK: - Properties
     
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
     @State private var viewModel: RefinedSearchViewModel
     @Binding var selectedTab: Int
     @Binding var lastTappedTab: Int?
@@ -64,7 +66,7 @@ struct RefinedSearchView: View {
         .onChange(of: searchText) { _, newText in
             updateSearchWithText(newText)
         }
-        .onChange(of: appState.pendingSearchRequest?.id) { _, _ in
+        .onChange(of: sceneContext.pendingSearchRequest?.id) { _, _ in
             applyPendingSearchRequestIfNeeded()
         }
         // selectedContentType handler moved next to the scope binding
@@ -127,6 +129,7 @@ struct RefinedSearchView: View {
         .sheet(isPresented: $isShowingSuggestedProfiles) {
             SuggestedProfilesSheet(
                 profiles: viewModel.suggestedProfiles,
+                isLoading: viewModel.isSuggestedProfilesLoading,
                 onSelect: { profile in
                     isShowingSuggestedProfiles = false
                     navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
@@ -150,7 +153,7 @@ struct RefinedSearchView: View {
     // MARK: - Computed Properties
     
     private var navigationPath: Binding<NavigationPath> {
-        appState.navigationManager.pathBinding(for: 1)
+        sceneContext.navigationManager.pathBinding(for: 1)
     }
 
     /// The sort/filter bar only applies to post results (Top + Latest scopes).
@@ -189,16 +192,16 @@ struct RefinedSearchView: View {
         .navigationTitle("Search")
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
-        .searchFocused($isSearchFieldFocused)
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "Profiles, posts, or feeds"
         )
+        .searchFocused($isSearchFieldFocused)
         .searchPresentationToolbarBehavior(.avoidHidingContent)
         .searchScopes($bindableViewModel.selectedContentType) {
             ForEach(availableScopes, id: \.self) { scope in
-                Text(scope.title).tag(scope)
+                Text(scope.scopeTitle).tag(scope)
             }
         }
         .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
@@ -229,7 +232,7 @@ struct RefinedSearchView: View {
                 }
             } else if viewModel.isCommittedSearch {
                 logger.debug("Refreshing existing committed search for new scope: \(newValue.title)")
-                Task { await viewModel.refreshSearch(client: client) }
+                Task { await viewModel.refreshSearch(client: client, displayScale: displayScale) }
             } else {
                 logger.debug("No action taken - empty search text and no committed search")
             }
@@ -242,7 +245,7 @@ struct RefinedSearchView: View {
         .searchFocused($isSearchFieldFocused)
         .searchScopes($bindableViewModel.selectedContentType) {
             ForEach(availableScopes, id: \.self) { scope in
-                Text(scope.title).tag(scope)
+                Text(scope.scopeTitle).tag(scope)
             }
         }
         .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
@@ -273,7 +276,7 @@ struct RefinedSearchView: View {
                 }
             } else if viewModel.isCommittedSearch {
                 logger.debug("Refreshing existing committed search for new scope: \(newValue.title)")
-                Task { await viewModel.refreshSearch(client: client) }
+                Task { await viewModel.refreshSearch(client: client, displayScale: displayScale) }
             } else {
                 logger.debug("No action taken - empty search text and no committed search")
             }
@@ -282,6 +285,10 @@ struct RefinedSearchView: View {
         .searchSuggestions {
             searchSuggestionsContent
         }
+        // Configure the native suggestions list, not just the discovery scroll view.
+        // Short history must still accept a vertical pan to dismiss the keyboard.
+        .scrollDismissesKeyboard(.interactively)
+        .scrollBounceBehavior(.always, axes: .vertical)
         .onSubmit(of: .search) {
             commitSearch()
         }
@@ -315,7 +322,7 @@ struct RefinedSearchView: View {
             if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
                 pendingDedicatedProposal = nil
                 if case .preparePostDraft(let text) = proposal {
-                    appState.presentPostComposer(initialText: text)
+                    sceneContext.presentPostComposer(initialText: text)
                 }
             }
         }
@@ -381,7 +388,8 @@ struct RefinedSearchView: View {
         return ResultsView(
             viewModel: viewModel,
             path: navigationPath,
-            selectedContentType: $bindableViewModel.selectedContentType
+            selectedContentType: $bindableViewModel.selectedContentType,
+            onReset: { reset() }
         )
     }
     
@@ -399,7 +407,7 @@ struct RefinedSearchView: View {
 
     private var searchMenuButton: some View {
         Menu {
-            if !activeSearchQuery.isEmpty {
+            if !activeSearchQuery.isEmpty && CopilotAvailability.isAvailable {
                 Button {
                     isShowingCopilot = true
                 } label: {
@@ -426,141 +434,164 @@ struct RefinedSearchView: View {
                 Label("Reset Search", systemImage: "arrow.counterclockwise")
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "ellipsis")
         }
+        .accessibilityLabel("Search options")
     }
     
     // MARK: - Search Suggestions
     
+    /// Native search suggestions replace the page while the field is focused. Three
+    /// distinct states: typing (query + typeahead), history, and no history yet.
     @ViewBuilder
     private var searchSuggestionsContent: some View {
-        if !searchText.isEmpty {
-            VStack(spacing: 0) {
-                // Profile suggestions
-                if !viewModel.typeaheadProfiles.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Profiles")
-                            .appHeadline()
-                            .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .padding(.horizontal, 16)
-                            .padding(.top, 12)
-                        
-                        ForEach(viewModel.typeaheadProfiles, id: \.did) { profile in
-                            Button {
-                                handleProfileSelection(profile)
-                            } label: {
-                                profileSuggestionRow(profile)
-                                    .mainContentFrame()
-                                    .padding(.vertical, 8)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                    .padding(.bottom, 12)
-                }
-                
-                // Feeds typeahead removed (profiles only)
-                
-                // Term suggestions
-//                if !viewModel.typeaheadSuggestions.isEmpty {
-//                    VStack(alignment: .leading, spacing: 10) {
-//                        Text("Suggestions")
-//                            .appHeadline()
-//                            .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-//                            .padding(.horizontal)
-//                            .padding(.top, 8)
-//
-//                        ForEach(viewModel.typeaheadSuggestions, id: \.self) { suggestion in
-//                            Button {
-//                                handleSuggestionSelection(suggestion)
-//                            } label: {
-//                                Label(suggestion, systemImage: "magnifyingglass")
-//                                    .padding(.horizontal)
-//                                    .padding(.vertical, 6)
-//                                    .contentShape(Rectangle())
-//                            }
-//                            .buttonStyle(PlainButtonStyle())
-//                        }
-//                    }
-//                    .padding(.bottom, 12)
-//                }
-                
-                // Direct search button
-                Button {
-                    commitSearch()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 44, height: 44)
-                        Text(verbatim: "Search for \"\(searchText)\"")
-                            .foregroundColor(.accentColor)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .mainContentFrame()
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
+        if !trimmedSearchText.isEmpty {
+            typeaheadSuggestions
+        } else if hasSearchHistory {
+            searchHistorySuggestions
         } else {
-            // Recent profiles
-            if !viewModel.recentProfileSearches.isEmpty {
-                RecentProfilesSection(
-                    profiles: viewModel.recentProfileSearches,
-                    onSelect: { profile in
-                        navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
-                    },
-                    onClear: {
-                        viewModel.clearRecentProfileSearches()
-                    }
-                )
-                .padding(.bottom, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-            }
-            
-            // Recent searches (G05)
-            if !viewModel.recentSearchEntries.isEmpty, let client = appState.atProtoClient {
-                RecentSearchesSection(
-                    entries: viewModel.recentSearchEntries,
-                    onSelect: { entry in
-                        viewModel.applyRecentSearchEntry(
-                            entry,
-                            client: client,
-                            onQueryLoaded: { searchText = $0 }
-                        )
-                    },
-                    onDelete: { entry in
-                        viewModel.deleteRecentSearch(entry)
-                    },
-                    onClear: {
-                        viewModel.clearRecentSearches()
-                    }
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-            }
+            SearchHistoryEmptyHint()
+                .modifier(SearchSuggestionRowModifier())
         }
     }
-    
+
+    private var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasSearchHistory: Bool {
+        !viewModel.recentProfileSearches.isEmpty
+            || (!viewModel.recentSearchEntries.isEmpty && appState.atProtoClient != nil)
+    }
+
+    /// Recent searches that contain the typed text, excluding an exact repeat of it.
+    private var matchingRecentSearches: [RecentSearchEntry] {
+        guard appState.atProtoClient != nil else { return [] }
+        let query = trimmedSearchText
+        return Array(viewModel.recentSearchEntries.filter {
+            $0.query.localizedCaseInsensitiveContains(query)
+                && $0.query.compare(query, options: .caseInsensitive) != .orderedSame
+        }.prefix(3))
+    }
+
+    @ViewBuilder
+    private var typeaheadSuggestions: some View {
+        Button {
+            commitSearch()
+        } label: {
+            SearchSuggestionRow(systemImage: "magnifyingglass", tint: .accentColor) {
+                Text("Search for “\(trimmedSearchText)”")
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("search.suggestion.submit")
+        .modifier(SearchSuggestionRowModifier())
+
+        ForEach(matchingRecentSearches) { entry in
+            Button {
+                applyRecentSearch(entry)
+            } label: {
+                SearchSuggestionRow(systemImage: "clock.arrow.circlepath", tint: .secondary) {
+                    Text(entry.query)
+                        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Recent search")
+            .modifier(SearchSuggestionRowModifier())
+        }
+
+        if !viewModel.typeaheadProfiles.isEmpty {
+            // One block, so the header doesn't take a full-height list row.
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Profiles")
+                    .appFont(AppTextRole.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 2)
+
+                ForEach(viewModel.typeaheadProfiles, id: \.did) { profile in
+                    Button {
+                        handleProfileSelection(profile)
+                    } label: {
+                        profileSuggestionRow(profile)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .modifier(SearchSuggestionRowModifier())
+        }
+    }
+
+    @ViewBuilder
+    private var searchHistorySuggestions: some View {
+        if !viewModel.recentProfileSearches.isEmpty {
+            RecentProfilesSection(
+                profiles: viewModel.recentProfileSearches,
+                onSelect: { profile in
+                    isSearchFieldFocused = false
+                    navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
+                },
+                onClear: {
+                    viewModel.clearRecentProfileSearches()
+                }
+            )
+            .modifier(SearchSuggestionRowModifier())
+        }
+
+        // Recent searches (G05)
+        if !viewModel.recentSearchEntries.isEmpty, appState.atProtoClient != nil {
+            RecentSearchesSection(
+                entries: viewModel.recentSearchEntries,
+                onSelect: { entry in
+                    applyRecentSearch(entry)
+                },
+                onFill: { entry in
+                    searchText = entry.query
+                },
+                onDelete: { entry in
+                    viewModel.deleteRecentSearch(entry)
+                },
+                onClear: {
+                    viewModel.clearRecentSearches()
+                }
+            )
+        }
+    }
+
+    private func applyRecentSearch(_ entry: RecentSearchEntry) {
+        guard let client = appState.atProtoClient else { return }
+        isSearchFieldFocused = false
+        viewModel.applyRecentSearchEntry(
+            entry,
+            client: client,
+            onQueryLoaded: { searchText = $0 }
+        )
+    }
+
     private func profileSuggestionRow(_ profile: AppBskyActorDefs.ProfileViewBasic) -> some View {
         HStack(spacing: 12) {
-            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(profile.displayName ?? "@\(profile.handle)")
-                    .appHeadline()
+            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36,
+                              did: profile.did.didString(), labels: profile.labels)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profile.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(profile.handle)")
+                    .appFont(AppTextRole.body)
+                    .lineLimit(1)
                 Text(verbatim: "@\(profile.handle)")
-                    .appSubheadline()
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
     }
     
     // Feeds typeahead row removed
@@ -580,16 +611,23 @@ struct RefinedSearchView: View {
     // MARK: - Helper Methods
     
     private func handleTabTap(_ newValue: Int?) {
-        if newValue == 1, selectedTab == 1 {
-            // Reset search on double-tap
-            reset()
-            lastTappedTab = nil
+        guard newValue == 1, selectedTab == 1 else { return }
+        lastTappedTab = nil
+
+        if !navigationPath.wrappedValue.isEmpty {
+            // Reselecting a deeper destination returns to Search first.
+            // Keep the query and results available when the root reappears.
+            isSearchFieldFocused = false
+            navigationPath.wrappedValue = NavigationPath()
+        } else {
+            // Ordinary tab reselection focuses search; no timed double tap is needed.
+            isSearchFieldFocused = true
         }
     }
 
     private func applyPendingSearchRequestIfNeeded() {
         guard selectedTab == 1 else { return }
-        guard let request = appState.pendingSearchRequest else { return }
+        guard let request = sceneContext.pendingSearchRequest else { return }
         guard request.id != lastHandledSearchRequestID else { return }
 
         lastHandledSearchRequestID = request.id
@@ -612,7 +650,7 @@ struct RefinedSearchView: View {
             isApplyingPendingSearchRequest = false
         }
 
-        appState.pendingSearchRequest = nil
+        sceneContext.pendingSearchRequest = nil
     }
 
     @MainActor
@@ -643,13 +681,14 @@ struct RefinedSearchView: View {
     }
     
     private func initializeOnAppear() {
+        viewModel.ensureLocalPreferencesAndStoredSearchesLoaded()
         // Subscribe to events only if this is the active search tab
         if selectedTab == 1 {
-            viewModel.subscribeToEvents()
+            viewModel.subscribeToEvents(displayScale: displayScale)
         }
         
         if let client = appState.atProtoClient {
-            viewModel.initialize(client: client)
+            viewModel.initialize(client: client, displayScale: displayScale)
         }
     }
     
@@ -661,7 +700,7 @@ struct RefinedSearchView: View {
     private func handleTabChange(_ newTab: Int) {
         if newTab == 1 {
             // Search tab became active - subscribe to events
-            viewModel.subscribeToEvents()
+            viewModel.subscribeToEvents(displayScale: displayScale)
         } else {
             // Search tab became inactive - unsubscribe from events
             viewModel.unsubscribeFromEvents()
@@ -671,12 +710,20 @@ struct RefinedSearchView: View {
     private func commitSearch() {
         logger.debug("commitSearch() called")
 
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isSearchFieldFocused = false
+        // The field can hold text the view model no longer has (for example after
+        // "Explore Trending Content"), so always commit what the user sees.
+        viewModel.searchQuery = trimmed
+
         if let client = appState.atProtoClient {
             viewModel.commitSearch(client: client)
         }
     }
     
     private func handleProfileSelection(_ profile: AppBskyActorDefs.ProfileViewBasic) {
+        isSearchFieldFocused = false
         viewModel.addRecentProfileSearchBasic(profile: profile)
         navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
     }
@@ -702,7 +749,7 @@ struct RefinedSearchView: View {
         // If term looks like a trending topic link, route directly to the feed via URLHandler
         if term.hasPrefix("http://") || term.hasPrefix("https://") {
             if let url = URL(string: term) {
-                _ = appState.urlHandler.handle(url)
+                _ = sceneContext.urlHandler.handle(url)
                 return
             }
         }

@@ -36,7 +36,7 @@ struct OCRTextSelectionView: View {
           VStack(spacing: 16) {
             ProgressView()
               .controlSize(.large)
-            Text("Detecting text...")
+            Text("Detecting text…")
               .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
           }
@@ -229,7 +229,7 @@ struct OCRTextSelectionViewLegacy: View {
           VStack(spacing: 16) {
             ProgressView()
               .controlSize(.large)
-            Text("Detecting text...")
+            Text("Detecting text…")
               .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
           }

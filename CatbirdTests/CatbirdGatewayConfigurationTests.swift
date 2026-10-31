@@ -11,7 +11,6 @@ struct CatbirdGatewayConfigurationTests {
 
     #expect(configuration.origin == URL(string: "https://api.catbird.blue")!)
     #expect(configuration.serviceDID == "did:web:api.catbird.blue")
-    #expect(configuration.mlsServiceDID == nil)
 
     let e2eWithoutOverride = try CatbirdGatewayConfiguration.resolve(arguments: [
       "Catbird", "--e2e-mode",
@@ -29,9 +28,6 @@ struct CatbirdGatewayConfigurationTests {
 
     #expect(configuration.origin == URL(string: "https://dev-api.catbird.blue")!)
     #expect(configuration.serviceDID == "did:web:dev-api.catbird.blue")
-    #expect(
-      configuration.mlsServiceDID == "did:web:dev-api.catbird.blue:mls#atproto_mls"
-    )
   }
 
   @Test("a staging override without E2E mode fails closed")
@@ -98,7 +94,7 @@ struct CatbirdGatewayConfigurationTests {
     }
   }
 
-  @Test("foreground gateway and MLS call sites use the centralized decision")
+  @Test("foreground gateway call sites use the centralized decision")
   func foregroundWiring() throws {
     let repositoryURL = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
@@ -111,11 +107,9 @@ struct CatbirdGatewayConfigurationTests {
       "Catbird/Features/Chat/Services/ChatHeartbeatManager.swift":
         "CatbirdGatewayConfiguration.current.serviceDID",
       "Catbird/Features/Notifications/Services/NotificationManager.swift":
-        "gatewayURL: CatbirdGatewayConfiguration.current.origin",
+        "notificationServiceDIDString: String = CatbirdGatewayConfiguration.current.serviceDID",
       "Catbird/AppIntents/Support/IntentClientProvider.swift":
         "gatewayURL: CatbirdGatewayConfiguration.current.origin",
-      "Catbird/Core/State/AppState.swift":
-        "CatbirdGatewayConfiguration.current.mlsServiceDID",
     ]
 
     for (path, fragment) in expectedFragments {
@@ -126,34 +120,5 @@ struct CatbirdGatewayConfigurationTests {
       #expect(source.contains(fragment), "Missing centralized routing in \(path)")
     }
 
-    let appState = try String(
-      contentsOf: repositoryURL.appendingPathComponent("Catbird/Core/State/AppState.swift"),
-      encoding: .utf8
-    )
-    #expect(appState.contains(".custom(serviceDID: mlsServiceDID)"))
-    #expect(appState.contains("environment: environment"))
-    #expect(appState.contains("return await MLSAPIClient("))
-
-    let notificationManager = try String(
-      contentsOf: repositoryURL.appendingPathComponent(
-        "Catbird/Features/Notifications/Services/NotificationManager.swift"
-      ),
-      encoding: .utf8
-    )
-    let inactiveAccountStart = try #require(
-      notificationManager.range(of: "private func getOrCreateAPIClient(for userDid: String)")
-    )
-    let inactiveAccountEnd = try #require(
-      notificationManager.range(
-        of: "private func checkGroupExists",
-        range: inactiveAccountStart.upperBound..<notificationManager.endIndex
-      )
-    )
-    let inactiveAccountSource = notificationManager[
-      inactiveAccountStart.lowerBound..<inactiveAccountEnd.lowerBound
-    ]
-    #expect(inactiveAccountSource.contains("CatbirdGatewayConfiguration.current.mlsServiceDID"))
-    #expect(inactiveAccountSource.contains(".custom(serviceDID: mlsServiceDID)"))
-    #expect(!inactiveAccountSource.contains("environment: .production"))
   }
 }

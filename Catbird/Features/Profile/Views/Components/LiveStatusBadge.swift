@@ -23,9 +23,11 @@ extension AppBskyActorDefs.StatusView {
 /// active live status. Tapping opens the status embed's external URL via the
 /// app's URL handling; without an embed the badge is non-interactive.
 struct LiveStatusBadge: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let embedURL: URL?
 
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
 
   init(embedURL: URL? = nil) {
     self.embedURL = embedURL
@@ -34,7 +36,7 @@ struct LiveStatusBadge: View {
   var body: some View {
     if let embedURL {
       Button {
-        _ = appState.urlHandler.handle(embedURL)
+        _ = sceneContext.urlHandler.handle(embedURL)
       } label: {
         badgeLabel
       }
@@ -59,7 +61,7 @@ struct LiveStatusBadge: View {
       .padding(.vertical, 2)
       .background(Capsule().fill(Color.red))
       .padding(DesignTokens.Size.borderBold)
-      .background(Capsule().fill(Color.systemBackground))
+      .background(Capsule().fill(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)))
       .contentShape(Capsule())
   }
 }
@@ -70,5 +72,5 @@ struct LiveStatusBadge: View {
     LiveStatusBadge(embedURL: URL(string: "https://example.com/live"))
   }
   .padding()
-  .previewWithMockEnvironment()
+  .previewWithAuthenticatedState()
 }

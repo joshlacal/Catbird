@@ -62,7 +62,7 @@ struct CreatePostIntent: AppIntent {
   @Parameter(title: "Account")
   var account: AccountEntity?
 
-  @Parameter(title: "Text")
+  @Parameter(title: "Text", requestValueDialog: IntentDialog("What do you want to post?"))
   var text: String
 
   @Parameter(title: "Reply To")
@@ -90,6 +90,7 @@ struct CreatePostIntent: AppIntent {
 
     let did = account?.id ?? IntentAccountResolver.activeDID()
     let client = try await IntentClientProvider.shared.client(for: did)
+    let postingDID = try await client.getDid()
 
     // Hydrate reply/quote targets: the reply path needs the full parent view
     // (PostManager derives the thread root from it) and the quote path needs
@@ -133,7 +134,7 @@ struct CreatePostIntent: AppIntent {
     // Media: upload each image as a blob.
     var imageEmbeds: [AppBskyEmbedImages.Image] = []
     if !images.isEmpty {
-      let uploader = MediaUploadManager(client: client)
+      let uploader = await MediaUploadManager(client: client)
       for (index, file) in images.enumerated() {
         let blob = try await uploader.uploadImageBlob(file.data)
         let alt = index == 0 ? (altText ?? "") : ""
@@ -147,7 +148,10 @@ struct CreatePostIntent: AppIntent {
     try await requestConfirmation()
 
     let languages = parsed.detectedLanguage.map { [LanguageCodeContainer(languageCode: $0)] } ?? []
-    let postManager = PostManager(client: client)
+    let postManager = PostManager(client: client, standalonePostingAuthorization: {
+      try await IntentClientProvider.shared.requireCoveredUse(for: postingDID)
+      return postingDID
+    })
     let postURI = try await postManager.createPost(
       parsed.text,
       languages: languages,
@@ -176,10 +180,13 @@ struct CreatePostIntent: AppIntent {
       }
     }
 
-    return .result(
-      value: createdEntity,
-      dialog: IntentDialog(
-        stringLiteral: parentView == nil ? "Posted." : "Reply posted."))
+    let dialog: IntentDialog
+    if parentView == nil {
+      dialog = IntentDialog("Posted.")
+    } else {
+      dialog = IntentDialog("Reply posted.")
+    }
+    return .result(value: createdEntity, dialog: dialog)
   }
 
   /// Resolves mention handles to profiles for PostParser, keyed by lowercased

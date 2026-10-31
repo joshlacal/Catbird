@@ -94,7 +94,7 @@ struct RichTextFacetUtils {
     if path.isEmpty || path == "/" { return host }
     let maxPath = 15
     if path.count > maxPath {
-      let truncated = String(path.prefix(maxPath)) + "..."
+      let truncated = String(path.prefix(maxPath)) + "…"
       return host + truncated
     }
     return host + path
@@ -110,17 +110,11 @@ struct RichTextFacetUtils {
     var attributed = AttributedString(text)
     
     for facet in linkFacets {
-      // Validate range before conversion
-      guard facet.range.location >= 0,
-            facet.range.location + facet.range.length <= text.count else {
-        logger.error("Utils.createFacets: Invalid range \(facet.range.debugDescription) for text length \(text.count)")
+      // Link ranges are UTF-16 NSRanges from the text view; convert them, not character offsets.
+      guard let range = Range(facet.range, in: attributed) else {
+        logger.error("Utils.createFacets: Invalid range \(facet.range.debugDescription) for text length \(text.utf16.count)")
         continue
       }
-      
-      // Convert NSRange to AttributedString range
-      let start = attributed.index(attributed.startIndex, offsetByCharacters: facet.range.location)
-      let end = attributed.index(start, offsetByCharacters: facet.range.length)
-      let range = start..<end
       
       attributed[range].link = facet.url
       attributed[range].foregroundColor = .accentColor

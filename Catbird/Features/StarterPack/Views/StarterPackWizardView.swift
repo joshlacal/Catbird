@@ -43,6 +43,7 @@ public struct StarterPackWizardView: View {
     @State private var errorMessage: String?
     @State private var showingErrorAlert: Bool = false
     @State private var isPreloadingEdit: Bool = false
+    @State private var preloadFailed: Bool = false
     
     private let logger = Logger(subsystem: "blue.catbird", category: "StarterPackWizardView")
     
@@ -65,9 +66,21 @@ public struct StarterPackWizardView: View {
                     VStack(spacing: 16) {
                         ProgressView()
                             .controlSize(.large)
-                        Text("Loading starter pack details...")
+                        Text("Loading starter pack details…")
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if preloadFailed {
+                    ContentUnavailableView {
+                        Label("Couldn’t Load Starter Pack", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text("Couldn’t load this starter pack’s people. Check your connection and try again.")
+                    } actions: {
+                        Button("Try Again") {
+                            Task { await preloadEditStateIfNeeded() }
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -100,10 +113,10 @@ public struct StarterPackWizardView: View {
                     .disabled(isSubmitting)
                 }
             }
-            .alert("Error", isPresented: $showingErrorAlert) {
+            .alert("Couldn’t Save Starter Pack", isPresented: $showingErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(errorMessage ?? "An unknown error occurred.")
+                Text(errorMessage ?? "Something went wrong. Try again.")
             }
             .task {
                 await preloadEditStateIfNeeded()
@@ -150,6 +163,8 @@ public struct StarterPackWizardView: View {
             }
         }
         .padding(.horizontal, 24)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(currentStep.rawValue + 1) of \(WizardStep.allCases.count), \(currentStep.title)")
     }
     
     // MARK: - Bottom Action Bar
@@ -172,7 +187,7 @@ public struct StarterPackWizardView: View {
                         .background(Capsule().fill(Color.systemGray5))
                         .foregroundColor(.primary)
                 }
-                .disabled(isSubmitting)
+                .disabled(isSubmitting || isEditStateUnavailable)
             }
             
             Spacer()
@@ -195,11 +210,11 @@ public struct StarterPackWizardView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
                     .background(
-                        Capsule().fill(draft.isValid && !isSubmitting ? Color.accentColor : Color.gray.opacity(0.4))
+                        Capsule().fill(draft.isValid && !isSubmitting && !isEditStateUnavailable ? Color.accentColor : Color.gray.opacity(0.4))
                     )
                     .foregroundColor(.white)
                 }
-                .disabled(!draft.isValid || isSubmitting)
+                .disabled(!draft.isValid || isSubmitting || isEditStateUnavailable)
             } else {
                 Button {
                     withAnimation {
@@ -214,11 +229,11 @@ public struct StarterPackWizardView: View {
                         .padding(.horizontal, 24)
                         .padding(.vertical, 10)
                         .background(
-                            Capsule().fill(isCurrentStepValid ? Color.accentColor : Color.gray.opacity(0.4))
+                            Capsule().fill(isCurrentStepValid && !isEditStateUnavailable ? Color.accentColor : Color.gray.opacity(0.4))
                         )
                         .foregroundColor(.white)
                 }
-                .disabled(!isCurrentStepValid)
+                .disabled(!isCurrentStepValid || isEditStateUnavailable)
             }
         }
         .padding(.horizontal, 20)
@@ -238,6 +253,12 @@ public struct StarterPackWizardView: View {
         }
     }
     
+    /// Editing is blocked until the existing pack's people have loaded, so saving can never
+    /// remove members just because they failed to load.
+    private var isEditStateUnavailable: Bool {
+        isPreloadingEdit || preloadFailed
+    }
+
     private var isCurrentStepValid: Bool {
         switch currentStep {
         case .details:
@@ -256,6 +277,7 @@ public struct StarterPackWizardView: View {
         guard let client = appState.atProtoClient else { return }
         
         isPreloadingEdit = true
+        preloadFailed = false
         defer { isPreloadingEdit = false }
         
         // Extract metadata
@@ -293,6 +315,8 @@ public struct StarterPackWizardView: View {
                 }
             } catch {
                 logger.error("Failed to preload starter pack members: \(error.localizedDescription)")
+                preloadFailed = true
+                return
             }
         }
         
@@ -308,13 +332,13 @@ public struct StarterPackWizardView: View {
     
     private func finishWizard() async {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not logged in."
+            errorMessage = "You’re signed out. Sign in and try again."
             showingErrorAlert = true
             return
         }
         let accountDID = appState.userDID
         guard draft.isValid else {
-            errorMessage = draft.validationError ?? "Invalid draft."
+            errorMessage = draft.validationError ?? "Check the starter pack’s details and try again."
             showingErrorAlert = true
             return
         }
@@ -347,7 +371,8 @@ public struct StarterPackWizardView: View {
             }
         } catch {
             logger.error("Failed to save starter pack: \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingError.message(for: error, action: "save this starter pack")
+                ?? "Something went wrong. Try again."
             showingErrorAlert = true
             isSubmitting = false
         }

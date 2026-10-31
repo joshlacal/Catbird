@@ -10,176 +10,155 @@ import SwiftUI
 import Petrel
 import OSLog
 
-@available(iOS 26.0, macOS 26.0, *)
 struct BookmarksView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.colorScheme) private var colorScheme
   @Environment(\.horizontalSizeClass) private var hSizeClass
   @Binding var path: NavigationPath
 
   private var contentMaxWidth: CGFloat {
-    hSizeClass == .compact ? .infinity : 600
+    #if os(macOS)
+    return 700
+    #else
+    return hSizeClass == .compact ? .infinity : 600
+    #endif
   }
   
   // State
   @State private var bookmarks: [AppBskyBookmarkDefs.BookmarkView] = []
   @State private var isLoading = false
-  @State private var hasError = false
-  @State private var errorMessage = ""
+  @State private var hasLoaded = false
+  @State private var loadError: String?
   @State private var cursor: String?
   @State private var hasMoreContent = true
   
   // Performance
   private let logger = Logger(subsystem: "blue.catbird", category: "BookmarksView")
   
-    private static let baseUnit: CGFloat = 3
+  private static let baseUnit: CGFloat = 3
 
   // MARK: - Body
   var body: some View {
     Group {
-      if bookmarks.isEmpty && !isLoading {
+      if !bookmarks.isEmpty {
+        bookmarksListView
+      } else if let loadError, !isLoading {
+        ContentUnavailableStateView(
+          title: "Couldn’t Load Bookmarks",
+          description: loadError,
+          systemImage: "bookmark.slash",
+          actionTitle: "Try Again"
+        ) {
+          Task { await loadInitialBookmarks() }
+        }
+      } else if hasLoaded && !isLoading {
         emptyStateView
       } else {
-        bookmarksListView
+        ProgressView()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .navigationTitle("Bookmarks")
     #if os(iOS)
     .navigationBarTitleDisplayMode(.large)
     #endif
-    .toolbar {
-      ToolbarItem(placement: .automatic) {
-        if isLoading {
-          ProgressView()
-            .scaleEffect(0.8)
-        }
-      }
-    }
     .task {
+      // `.task` restarts each time the screen reappears, such as on the way back
+      // from a bookmarked post; keep the loaded pages and scroll position.
+      // Pull to refresh reloads.
+      guard !hasLoaded, bookmarks.isEmpty else { return }
       await loadInitialBookmarks()
     }
     .refreshable {
       await refreshBookmarks()
-    }
-    .alert("Error", isPresented: $hasError) {
-      Button("OK") { hasError = false }
-    } message: {
-      Text(errorMessage)
     }
     .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
   
   // MARK: - Empty State
   private var emptyStateView: some View {
-    VStack(spacing: 24) {
-      Image(systemName: "bookmark.fill")
-        .font(.system(size: 64))
-        .foregroundColor(.secondary)
-      
-      VStack(spacing: 8) {
-        Text("No Bookmarks")
-          .font(.title2)
-          .fontWeight(.semibold)
-        
-        Text("Posts you bookmark will appear here")
-          .font(.body)
-          .foregroundColor(.secondary)
-          .multilineTextAlignment(.center)
-      }
+    ContentUnavailableView {
+      Label("No Bookmarks", systemImage: "bookmark")
+    } description: {
+      Text("Tap the bookmark button on any post to save it here for later.")
     }
-    .padding()
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
   // MARK: - Bookmarks List
   private var bookmarksListView: some View {
-    List {
-      ForEach(Array(bookmarks.enumerated()), id: \.element.subject.uri) { _, bookmarkView in
-        bookmarkRowView(bookmarkView)
-              .listRowBackground(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
-
-          // Hide only the very top separator
-      }
-      
-      // Load more content
-      if hasMoreContent && !bookmarks.isEmpty && !isLoading {
-        HStack {
-          Spacer()
-          ProgressView()
-            .scaleEffect(0.8)
-          Spacer()
-        }
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
-
-        .task {
-          await loadMoreBookmarks()
-        }
-      }
+    PostListCollectionView(
+      bookmarks: bookmarks,
+      hasMore: hasMoreContent,
+      isLoadingMore: isLoading,
+      footerState: hasMoreContent ? (isLoading ? .loading : .hidden) : .hidden,
+      onLoadMore: { await loadMoreBookmarks() },
+      onRefresh: { await refreshBookmarks() },
+      onRemoveBookmark: removeBookmark,
+      appState: appState,
+      accessibilityIdentifier: "bookmarks.posts"
+    ) { bookmarkView in
+      bookmarkRowView(bookmarkView)
     }
-    .listRowInsets(EdgeInsets()) 
-    .listStyle(.plain)
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
   
   // MARK: - Bookmark Row
+  /// Matches the main feed: the same post component, spacing, and full-width hairline divider.
   @ViewBuilder
   private func bookmarkRowView(_ bookmarkView: AppBskyBookmarkDefs.BookmarkView) -> some View {
-    switch bookmarkView.item {
-    case .appBskyFeedDefsPostView(let postView):
-      PostView(
-        post: postView,
-        grandparentAuthor: nil,
-        isParentPost: false,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .padding(.top, BookmarksView.baseUnit * 3)
-      .padding(.horizontal, BookmarksView.baseUnit * 1.5)
-      .fixedSize(horizontal: false, vertical: true)
-      .contentShape(Rectangle())
-      .allowsHitTesting(true)
-      .frame(maxWidth: contentMaxWidth, alignment: .center)
-      .frame(maxWidth: .infinity, alignment: .center)
-      .onTapGesture { path.append(NavigationDestination.post(postView.uri)) }
-      .alignmentGuide(.listRowSeparatorLeading) { _ in 0}
-      .alignmentGuide(.listRowSeparatorTrailing) { d in d.width}
-      .listRowSeparator(.visible)
-      .listRowInsets(EdgeInsets())
+    VStack(spacing: 0) {
+      switch bookmarkView.item {
+      case .appBskyFeedDefsPostView(let postView):
+        EnhancedFeedPost(
+          feedViewPost: AppBskyFeedDefs.FeedViewPost(post: postView),
+          path: $path
+        )
 
-    case .appBskyFeedDefsBlockedPost(let blocked):
-      BlockedContentCard(
-        relationship: BlockRelationship(blockedPost: blocked),
-        authorDid: blocked.author.did.didString(),
-        postUri: blocked.uri,
-        variant: .feed,
-        path: $path
-      )
-      .padding(.top, BookmarksView.baseUnit * 3)
-      .padding(.horizontal, BookmarksView.baseUnit * 1.5)
-      .listRowSeparator(.hidden)
-      .listRowInsets(EdgeInsets())
+      case .appBskyFeedDefsBlockedPost(let blocked):
+        BlockedContentCard(
+          relationship: BlockRelationship(blockedPost: blocked),
+          authorDid: blocked.author.did.didString(),
+          postUri: blocked.uri,
+          variant: .feed,
+          path: $path
+        )
+        .padding(.vertical, BookmarksView.baseUnit * 3)
+        .padding(.horizontal, BookmarksView.baseUnit * 4)
+        .frame(maxWidth: contentMaxWidth)
+        .frame(maxWidth: .infinity)
 
-    case .appBskyFeedDefsNotFoundPost:
-      VStack {
-        HStack {
-          Image(systemName: "exclamationmark.triangle")
-            .foregroundColor(.orange)
-          Text("Post unavailable")
-            .foregroundColor(.secondary)
-          Spacer()
-        }
-        .padding()
+      case .appBskyFeedDefsNotFoundPost:
+        unavailablePostRow
+
+      case .unexpected:
+        unavailablePostRow
       }
-      .background(Color.secondary.opacity(0.1))
-      .cornerRadius(8)
-      .listRowSeparator(.hidden)
 
-    case .unexpected:
-      EmptyView()
-}
+      Rectangle()
+        .fill(Color.separator)
+        .frame(height: 0.5)
+    }
+  }
+
+  private var unavailablePostRow: some View {
+    HStack(spacing: BookmarksView.baseUnit * 3) {
+      Image(systemName: "exclamationmark.triangle")
+        .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Post unavailable")
+          .appFont(AppTextRole.subheadline.weight(.semibold))
+        Text("It may have been deleted. Swipe to remove this bookmark.")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer(minLength: 0)
+    }
+    .padding(.vertical, BookmarksView.baseUnit * 4)
+    .padding(.horizontal, BookmarksView.baseUnit * 5)
+    .frame(maxWidth: contentMaxWidth)
+    .frame(maxWidth: .infinity)
+    .accessibilityElement(children: .combine)
   }
   
   // MARK: - Data Loading
@@ -187,10 +166,13 @@ struct BookmarksView: View {
   /// Loads initial bookmarks
   private func loadInitialBookmarks() async {
     guard !isLoading else { return }
-    guard let client = appState.atProtoClient else { return }
+    guard let client = appState.atProtoClient else {
+      loadError = "Couldn’t load your bookmarks. Sign in again and try again."
+      return
+    }
     
     isLoading = true
-    hasError = false
+    loadError = nil
     
     do {
       let (fetchedBookmarks, nextCursor) = try await appState.bookmarksManager.fetchBookmarks(
@@ -204,6 +186,7 @@ struct BookmarksView: View {
         self.cursor = nextCursor
         // If we got no bookmarks OR no cursor, there's no more content
         self.hasMoreContent = nextCursor != nil && !fetchedBookmarks.isEmpty
+        self.hasLoaded = true
         self.isLoading = false
       }
       
@@ -211,8 +194,10 @@ struct BookmarksView: View {
       
     } catch {
       await MainActor.run {
-        self.hasError = true
-        self.errorMessage = "Failed to load bookmarks: \(error.localizedDescription)"
+        // A load cancelled by leaving the screen isn't an error; it reruns on return.
+        if !Task.isCancelled {
+          self.loadError = UserFacingError.message(for: error, action: "load your bookmarks")
+        }
         self.isLoading = false
       }
       logger.error("Failed to load initial bookmarks: \(error)")
@@ -235,15 +220,14 @@ struct BookmarksView: View {
         self.cursor = nextCursor
         // If we got no bookmarks OR no cursor, there's no more content
         self.hasMoreContent = nextCursor != nil && !fetchedBookmarks.isEmpty
+        self.hasLoaded = true
+        self.loadError = nil
       }
       
       logger.info("Refreshed bookmarks: \(fetchedBookmarks.count) items")
       
     } catch {
-      await MainActor.run {
-        self.hasError = true
-        self.errorMessage = "Failed to refresh bookmarks: \(error.localizedDescription)"
-      }
+      showFailureToast(for: error, action: "refresh your bookmarks")
       logger.error("Failed to refresh bookmarks: \(error)")
     }
   }
@@ -252,6 +236,8 @@ struct BookmarksView: View {
   private func loadMoreBookmarks() async {
     guard hasMoreContent, !isLoading else { return }
     guard let client = appState.atProtoClient else { return }
+    isLoading = true
+    defer { isLoading = false }
     
     do {
       let (moreBookmarks, nextCursor) = try await appState.bookmarksManager.fetchBookmarks(
@@ -271,15 +257,44 @@ struct BookmarksView: View {
       
     } catch {
       await MainActor.run {
-        self.hasError = true
-        self.errorMessage = "Failed to load more bookmarks: \(error.localizedDescription)"
+        // Stop the footer from retrying in a loop; pull to refresh starts over.
+        self.hasMoreContent = false
       }
+      showFailureToast(for: error, action: "load more bookmarks")
       logger.error("Failed to load more bookmarks: \(error)")
     }
   }
+
+  /// Removes a bookmark optimistically, restoring the row if the request fails.
+  private func removeBookmark(_ bookmarkView: AppBskyBookmarkDefs.BookmarkView) async -> Bool {
+    guard let client = appState.atProtoClient,
+          let index = bookmarks.firstIndex(where: { $0.subject.uri == bookmarkView.subject.uri })
+    else { return false }
+
+    let postUri = bookmarkView.subject.uri
+    let postUriString = postUri.uriString()
+    withAnimation { _ = bookmarks.remove(at: index) }
+    await appState.postShadowManager.setBookmarked(postUri: postUriString, isBookmarked: false)
+
+    do {
+      try await appState.bookmarksManager.deleteBookmark(postUri: postUri, client: client)
+      appState.toastManager.show(ToastItem(message: "Bookmark removed", icon: "bookmark"))
+      return true
+    } catch {
+      withAnimation { bookmarks.insert(bookmarkView, at: min(index, bookmarks.count)) }
+      await appState.postShadowManager.setBookmarked(postUri: postUriString, isBookmarked: true)
+      showFailureToast(for: error, action: "remove this bookmark")
+      logger.error("Failed to remove bookmark: \(error)")
+      return false
+    }
+  }
+
+  private func showFailureToast(for error: Error, action: String) {
+    guard let message = UserFacingError.message(for: error, action: action) else { return }
+    appState.toastManager.show(ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
+  }
 }
 
-@available(iOS 26.0, macOS 26.0, *)
 #Preview("BookmarksView") {
   @Previewable @State var path = NavigationPath()
   NavigationStack(path: $path) {

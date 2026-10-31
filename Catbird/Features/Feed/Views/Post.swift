@@ -19,7 +19,7 @@ struct Post: View, Equatable {
         lhs.post == rhs.post
     }
     
-    private let logger = Logger(subsystem: "blue.catbird", category: "Translation")
+    private static let logger = Logger(subsystem: "blue.catbird", category: "Translation")
 
     let post: AppBskyFeedPost
     let isSelectable: Bool
@@ -32,15 +32,14 @@ struct Post: View, Equatable {
     @State private var isTranslating = false
     @State private var shouldPrepareTranslation = false
     @State private var showTranslationPopover = false
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.legibilityWeight) private var legibilityWeight
     @Environment(AppState.self) private var appState
     @Environment(\.adultContentEnabled) private var adultContentEnabled
+    @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
     @State private var bluemojiEnriched: AttributedString?
-    /// Facet-styled body text, built once per `PostStyledTextKey` and reused by every
-    /// body evaluation and by the bluemoji enrichment task.
-    @State private var baseAttributed: AttributedString?
-    @State private var baseAttributedKey: PostStyledTextKey?
+    // Base styled text is cached in PostStyledTextCache.shared avoiding @State writes and re-renders
     @State private var showLanguageSelection = false
     private let textSize: CGFloat?
     private let textStyle: Font.TextStyle
@@ -85,7 +84,6 @@ struct Post: View, Equatable {
     }
     
     // Typography configuration
-    //    @Environment(\.legibilityWeight) private var legibilityWeight
     private var postTextDesign: Font.Design = .default
     private var postTextWeight: Font.Weight = .regular
     
@@ -122,28 +120,23 @@ struct Post: View, Equatable {
     var body: some View {
         let key = styledTextKey
         let baseForBody: AttributedString = {
-            if let cached = baseAttributed, baseAttributedKey == key {
+            if let cached = PostStyledTextCache.shared.get(for: key) {
                 return cached
             }
-            return Self.buildBaseStyledString(post: post, key: key)
+            let built = Self.buildBaseStyledString(post: post, key: key)
+            PostStyledTextCache.shared.set(built, for: key)
+            return built
         }()
         let displayString = displayAttributedString(base: baseForBody, key: key)
 
         VStack(alignment: .leading, spacing: 6) {
-            // Translation button with enhanced styling
+            // Translation action and language metadata
             if shouldShowTranslationButton || indicatorLanguage != nil {
-                HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     if shouldShowTranslationButton {
                         translationButton
                     }
-                    if let indicatorLanguage {
-                        Text(languageName(for: indicatorLanguage))
-                            .appCaption2()
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(.secondary.opacity(0.12), in: Capsule())
-                    }
+                    languageMetadata
                 }
             }
             
@@ -216,20 +209,24 @@ struct Post: View, Equatable {
                 }
             }
         .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
-        .task(id: BluemojiTaskKey(styledTextKey: key, adultContentEnabled: adultContentEnabled)) {
-            let base: AttributedString
-            if let cached = baseAttributed, baseAttributedKey == key {
-                base = cached
-            } else {
-                base = baseForBody
-                baseAttributed = base
-                baseAttributedKey = key
-            }
+        .onChange(of: post) { _, _ in
+            showTranslation = false
+            translatedText = nil
+            translationConfig = nil
+            translationError = nil
+            isTranslating = false
+            shouldPrepareTranslation = false
+            showTranslationPopover = false
+            showLanguageSelection = false
             bluemojiEnriched = nil
+        }
+        .task(id: BluemojiTaskKey(styledTextKey: key, adultContentEnabled: adultContentEnabled)) {
+            let base = PostStyledTextCache.shared.get(for: key) ?? baseForBody
+            if bluemojiEnriched != nil { bluemojiEnriched = nil }
             guard !post.text.isEmpty, let facets = post.facets, !facets.isEmpty else { return }
             let enriched = await appState.bluemojiRenderer.enrich(
                 base, text: post.text, facets: facets, allowAdult: adultContentEnabled)
-            guard !Task.isCancelled, baseAttributedKey == key else { return }
+            guard !Task.isCancelled else { return }
             if enriched != base { bluemojiEnriched = enriched }
         }
         .modifier(TranslationTaskModifier(config: translationConfig) { session in
@@ -238,18 +235,21 @@ struct Post: View, Equatable {
                 await performTranslation(session: translationSession)
             }
         })
-        .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
-            ForEach(sourceLanguages, id: \.languageCode) { language in
-                Button(languageName(for: language)) {
-                    Task {
-                        await setupTranslation(sourceLanguage: language)
+        .deferredPresentations(when: showLanguageSelection) { anchor in
+            anchor
+                .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
+                    ForEach(sourceLanguages, id: \.languageCode) { language in
+                        Button(languageName(for: language)) {
+                            Task {
+                                await setupTranslation(sourceLanguage: language)
+                            }
+                        }
                     }
+
+                    Button("Cancel", role: .cancel) { }
+                } message: {
+                    Text("Choose the language to translate from")
                 }
-            }
-            
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Choose the language to translate from")
         }
 
             // Translation error with enhanced styling
@@ -269,7 +269,7 @@ struct Post: View, Equatable {
                     HStack(spacing: 8) {
                         ForEach(tags, id: \.self) { tag in
                             Text("#\(tag)")
-                                .customScaledFont(size: 13, weight: .medium, design: .rounded)
+                                .customScaledFont(size: 13, weight: .medium, relativeTo: .footnote, design: .rounded)
                                 .foregroundColor(Color.accentColor)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 4)
@@ -280,6 +280,7 @@ struct Post: View, Equatable {
                                 .onTapGesture {
                                     path.append(NavigationDestination.hashtag(tag))
                                 }
+                                .accessibilityAddTraits(.isButton)
                         }
                     }
                 }
@@ -287,14 +288,10 @@ struct Post: View, Equatable {
             }
         }
     
-    private var sourceLanguageCodes: String {
+    private var sourceLanguageNames: String {
         sourceLanguages
-            .compactMap { $0.baseLanguageCode }
+            .map { languageName(for: $0) }
             .joined(separator: ", ")
-    }
-    
-    private var targetLanguageCode: String {
-        targetLanguage.baseLanguageCode?.lowercased() ?? "en"
     }
 
     private func displayAttributedString(
@@ -304,7 +301,7 @@ struct Post: View, Equatable {
         if showTranslation, let translated = translatedText {
             return AttributedString(translated)
         }
-        if baseAttributedKey == key, let enriched = bluemojiEnriched {
+        if let enriched = bluemojiEnriched {
             return enriched
         }
         return base
@@ -317,7 +314,17 @@ struct Post: View, Equatable {
             text: post.text,
             facets: post.facets,
             highlightLinks: appState.appSettings.highlightLinks,
-            linkStyle: appState.appSettings.linkStyle
+            linkStyle: appState.appSettings.linkStyle,
+            fontGeneration: appState.fontManager.generation,
+            dynamicTypeSize: dynamicTypeSize,
+            colorScheme: colorScheme,
+            darkThemeMode: String(describing: appState.themeManager.darkThemeMode),
+            accentColor: appState.themeManager.currentAccentColor.rawValue,
+            isBoldText: (legibilityWeight == .bold) || appState.fontManager.effectiveBoldText,
+            textSize: textSize,
+            textStyle: textStyle,
+            textDesign: textDesign,
+            textWeight: textWeight
         )
     }
 
@@ -342,38 +349,52 @@ struct Post: View, Equatable {
         return localized ?? (identifier.isEmpty ? "Unknown" : identifier)
     }
 
-    // Enhanced translation button with better styling
+    private var languageMetadata: some View {
+        Group {
+            if shouldShowTranslationButton {
+                Text("From \(sourceLanguageNames) to \(languageName(for: targetLanguage))")
+            } else if let indicatorLanguage {
+                Text(languageName(for: indicatorLanguage))
+            }
+        }
+        .appCaption2()
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var translationButton: some View {
         Button(action: toggleTranslation) {
             HStack(spacing: 6) {
                 if isTranslating {
                     ProgressView()
                         .scaleEffect(0.7)
-                    Text("Translating...")
-                        .customScaledFont(size: 12, weight: .medium)
+                    Text("Translating…")
+                        .customScaledFont(size: 12, weight: .medium, relativeTo: .caption)
                 } else {
                     Image(systemName: showTranslation ? "globe.americas.fill" : "globe.americas")
                         .imageScale(.small)
                     
                     Text(showTranslation ? "Hide Translation" : "Translate")
-                        .customScaledFont(size: 12, weight: .medium)
-                    
-                    Text("(\(sourceLanguageCodes) → \(targetLanguageCode))")
-                        .customScaledFont(size: 11, weight: .regular)
-                        .foregroundColor(.secondary.opacity(0.8))
+                        .customScaledFont(size: 12, weight: .medium, relativeTo: .caption)
                 }
             }
-            .padding(.vertical, 4)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 5)
             .padding(.horizontal, 8)
             .background(
                 Capsule()
-                    .fill(Color.secondary.opacity(0.15))
+                    .fill(Color.accentColor.opacity(0.12))
             )
-            .foregroundColor(colorScheme == .dark ? .white.opacity(0.9) : .primary.opacity(0.8))
-            .contentShape(Capsule())
+            .foregroundColor(.accentColor)
+            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isTranslating)
+        .accessibilityLabel(isTranslating ? Text("Translating…") : Text(showTranslation ? "Hide Translation" : "Translate"))
+        .accessibilityHint(showTranslation ? Text("Show the original post") : Text("Translate into \(languageName(for: targetLanguage))"))
     }
 
     private func toggleTranslation() {
@@ -395,6 +416,7 @@ struct Post: View, Equatable {
         
         if showTranslation {
             // Hide translation and reset state
+            invalidateFeedRowHeight?()
             withAnimation {
                 showTranslation = false
                 translatedText = nil
@@ -455,13 +477,13 @@ struct Post: View, Equatable {
             let availability = LanguageAvailability()
             let status = await availability.status(from: normalizedSourceLanguage, to: normalizedTargetLanguage)
             
-            logger.debug("Translation status: \(String(describing: status)) for \(String(describing: normalizedSourceLanguage)) -> \(String(describing: normalizedTargetLanguage))")
+            Self.logger.debug("Translation status: \(String(describing: status)) for \(String(describing: normalizedSourceLanguage)) -> \(String(describing: normalizedTargetLanguage))")
             
             #if compiler(>=6.2)
             if case .installed = status, #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *) {
                 // Models already downloaded — translate directly without triggering
                 // the .translationTask() modifier (which shows the system download UI).
-                logger.debug("Models installed; translating directly via TranslationSession")
+                Self.logger.debug("Models installed; translating directly via TranslationSession")
                 let session = TranslationSession(installedSource: normalizedSourceLanguage, target: normalizedTargetLanguage)
                 await performTranslation(session: session)
                 return
@@ -476,24 +498,24 @@ struct Post: View, Equatable {
                     translationConfig = config
                     shouldPrepareTranslation = false
                     translationError = nil
-                    logger.debug("Translation configuration set for installed languages (pre-iOS 26 path)")
+                    Self.logger.debug("Translation configuration set for installed languages (pre-iOS 26 path)")
                 case .supported:
                     let config = TranslationSession.Configuration(source: normalizedSourceLanguage, target: normalizedTargetLanguage)
                     translationConfig = config
                     shouldPrepareTranslation = true
                     translationError = nil
-                    logger.debug("Translation configuration set for supported languages requiring preparation")
+                    Self.logger.debug("Translation configuration set for supported languages requiring preparation")
                 case .unsupported:
                     // Handle unsupported language pairing
                     shouldPrepareTranslation = false
                     translationConfig = nil
                     translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
-                    logger.debug("Translation unsupported for language pair")
+                    Self.logger.debug("Translation unsupported for language pair")
                 @unknown default:
                     shouldPrepareTranslation = false
                     translationConfig = nil
                     translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
-                    logger.debug("Translation status unknown")
+                    Self.logger.debug("Translation status unknown")
                 }
             }
         } else {
@@ -501,14 +523,14 @@ struct Post: View, Equatable {
                 translationConfig = nil
                 shouldPrepareTranslation = false
                 translationError = NSLocalizedString("Translation requires iOS 18.0 or later.", comment: "")
-                logger.debug("Translation not available - iOS version too old")
+                Self.logger.debug("Translation not available - iOS version too old")
             }
         }
     }
     
     @MainActor @available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *)
     private func performTranslation(session: TranslationSession) async {
-        logger.debug("Starting translation...")
+        Self.logger.debug("Starting translation...")
         isTranslating = true
         translationError = nil
 
@@ -516,7 +538,7 @@ struct Post: View, Equatable {
             do {
                 try await session.prepareTranslation()
             } catch {
-                logger.debug("prepareTranslation failed: \(error.localizedDescription)")
+                Self.logger.debug("prepareTranslation failed: \(error.localizedDescription)")
                 // Continue — we’ll handle errors from translate and retry if appropriate.
             }
         }
@@ -528,6 +550,7 @@ struct Post: View, Equatable {
 
         do {
             let target = try await attemptTranslate()
+            invalidateFeedRowHeight?()
             withAnimation {
                 translatedText = target
                 showTranslation = true
@@ -538,10 +561,11 @@ struct Post: View, Equatable {
             #if compiler(>=6.2)
             // If models aren’t installed, prompt and retry once.
             if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
-                logger.debug("Translate threw notInstalled; retrying after prepareTranslation prompt…")
+                Self.logger.debug("Translate threw notInstalled; retrying after prepareTranslation prompt…")
                 do {
                     try await session.prepareTranslation()
                     let target = try await attemptTranslate()
+                    invalidateFeedRowHeight?()
                     withAnimation {
                         translatedText = target
                         showTranslation = true
@@ -555,7 +579,7 @@ struct Post: View, Equatable {
             }
             #endif
 
-            logger.debug("Translation error: \(error.localizedDescription)")
+            Self.logger.debug("Translation error: \(error.localizedDescription)")
             withAnimation {
                 #if compiler(>=6.2)
                 if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
@@ -571,7 +595,7 @@ struct Post: View, Equatable {
                     } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
                         translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
                     } else {
-                        translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
+                        translationError = "Translation isn’t available right now. Try again later."
                     }
                 }
                 #else
@@ -585,7 +609,7 @@ struct Post: View, Equatable {
                 } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
                     translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
                 } else {
-                    translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
+                    translationError = "Translation isn’t available right now. Try again later."
                 }
                 #endif
                 isTranslating = false
@@ -607,6 +631,16 @@ private struct PostStyledTextKey: Hashable, Sendable {
     let facets: [AppBskyRichtextFacet]?
     let highlightLinks: Bool
     let linkStyle: String
+    let fontGeneration: Int
+    let dynamicTypeSize: DynamicTypeSize
+    let colorScheme: ColorScheme
+    let darkThemeMode: String
+    let accentColor: String
+    let isBoldText: Bool
+    let textSize: CGFloat?
+    let textStyle: Font.TextStyle
+    let textDesign: Font.Design
+    let textWeight: Font.Weight
 }
 
 /// Task identity for Bluemoji enrichment, combining the facet-styled text key
@@ -614,6 +648,69 @@ private struct PostStyledTextKey: Hashable, Sendable {
 private struct BluemojiTaskKey: Hashable, Sendable {
     let styledTextKey: PostStyledTextKey
     let adultContentEnabled: Bool
+}
+/// Thread-safe in-memory cache for facet-styled post text (P074 / P278).
+private final class PostStyledTextCache: @unchecked Sendable {
+    static let shared = PostStyledTextCache()
+    private var cache: [PostStyledTextKey: AttributedString] = [:]
+    private var keys: [PostStyledTextKey] = []
+    private let lock = NSLock()
+    private let maxEntries = 1000
+    private var memoryWarningObserver: (any NSObjectProtocol)?
+
+    init() {
+        #if canImport(UIKit)
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.removeAll()
+        }
+        #endif
+    }
+
+    deinit {
+        if let memoryWarningObserver {
+            NotificationCenter.default.removeObserver(memoryWarningObserver)
+        }
+    }
+
+    func get(for key: PostStyledTextKey) -> AttributedString? {
+        lock.withLock {
+            guard let value = cache[key] else { return nil }
+            if let idx = keys.firstIndex(of: key) {
+                keys.remove(at: idx)
+                keys.append(key)
+            }
+            return value
+        }
+    }
+
+    func set(_ string: AttributedString, for key: PostStyledTextKey) {
+        lock.withLock {
+            if cache[key] == nil {
+                if keys.count >= maxEntries {
+                    let oldest = keys.removeFirst()
+                    cache.removeValue(forKey: oldest)
+                }
+                keys.append(key)
+            } else {
+                if let idx = keys.firstIndex(of: key) {
+                    keys.remove(at: idx)
+                    keys.append(key)
+                }
+            }
+            cache[key] = string
+        }
+    }
+
+    func removeAll() {
+        lock.withLock {
+            cache.removeAll(keepingCapacity: true)
+            keys.removeAll(keepingCapacity: true)
+        }
+    }
 }
 
 // MARK: - Typography Configuration
@@ -659,7 +756,10 @@ private struct TranslationPresentationIfAvailable: ViewModifier {
         content
         #else
         if #available(iOS 17.4, *) {
-            content.translationPresentation(isPresented: $isPresented, text: text)
+            // Anchored to a background sharing the text's frame, installed only while shown.
+            content.deferredPresentations(when: isPresented) { anchor in
+                anchor.translationPresentation(isPresented: $isPresented, text: text)
+            }
         } else {
             content
         }

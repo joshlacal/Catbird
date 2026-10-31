@@ -2,159 +2,243 @@
 //  TrendingVideosSection.swift
 //  Catbird
 //
-//  Explore Trending Videos carousel (G03).
-//
 
+import Nuke
 import NukeUI
 import Petrel
 import SwiftUI
 
-/// Horizontal carousel displaying trending videos loaded from the fixed `thevids` feed generator.
+/// Horizontal previews of The Vids; cards open the pager at the selected video.
 public struct TrendingVideosSection: View {
+  public enum Presentation {
+    case timeline, discovery
+
+    var width: CGFloat { self == .timeline ? 136 : 156 }
+    var thumbnailHeight: CGFloat { self == .timeline ? 144 : 176 }
+  }
+
   public let videos: [AppBskyFeedDefs.FeedViewPost]
+  public let presentation: Presentation
+  public let isLoading: Bool
   public let onSelectPost: (AppBskyFeedDefs.PostView) -> Void
   public let onSeeAll: () -> Void
+  public let onNavigateVideo: ((NavigationDestination) -> Void)?
 
-  @Environment(AppState.self) private var appState
-  @Environment(\.colorScheme) private var colorScheme
+  @Namespace private var videoTransitionNamespace
+  @State private var videoTransitionSectionID = UUID()
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-  @ScaledMetric(relativeTo: .caption) private var authorRowHeight: CGFloat = 20
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.fontManager) private var fontManager
+  @Environment(\.displayScale) private var displayScale
+  @Environment(\.moderationPolicy) private var moderationPolicy
+  @ScaledMetric(relativeTo: .caption) private var authorLineHeight: CGFloat = 18
 
-  public static let thevidsURI = "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/thevids"
+  public static let thevidsURI = VideoFeedView.thevidsURI
 
   public init(
     videos: [AppBskyFeedDefs.FeedViewPost],
+    presentation: Presentation = .discovery,
+    isLoading: Bool = false,
     onSelectPost: @escaping (AppBskyFeedDefs.PostView) -> Void,
-    onSeeAll: @escaping () -> Void
+    onSeeAll: @escaping () -> Void,
+    onNavigateVideo: ((NavigationDestination) -> Void)? = nil
   ) {
     self.videos = videos
+    self.presentation = presentation
+    self.isLoading = isLoading
     self.onSelectPost = onSelectPost
     self.onSeeAll = onSeeAll
+    self.onNavigateVideo = onNavigateVideo
+  }
+
+  private var cardWidth: CGFloat { dynamicTypeSize.isAccessibilitySize ? 208 : presentation.width }
+  private var authorHeight: CGFloat {
+    let lineHeight = (fontManager.dynamicTypeEnabled ? authorLineHeight : 18) * fontManager.sizeScale
+    let lineSpacing = fontManager.getLineSpacing(for: Typography.Size.caption)
+    return max(36, lineHeight * 2 + max(0, lineSpacing))
+  }
+  /// Small author avatar sized to the first caption line so the caption area keeps its height.
+  private var authorAvatarSize: CGFloat {
+    let lineHeight = (fontManager.dynamicTypeEnabled ? authorLineHeight : 18) * fontManager.sizeScale
+    return min(24, max(16, lineHeight))
+  }
+
+  /// The previews the account's policy lets the carousel list. The policy comes
+  /// from the environment, so a policy change re-filters the loaded set in place.
+  private var visibleVideos: [AppBskyFeedDefs.FeedViewPost] {
+    TrendingVideoModeration.listed(videos, policy: moderationPolicy)
   }
 
   public var body: some View {
-    if !videos.isEmpty {
-      VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
-        headerView
-        carouselView
-      }
-    }
-  }
-
-  private var headerView: some View {
-    HStack {
-      HStack(spacing: 6) {
-        Image(systemName: "play.rectangle.fill")
-          .appFont(AppTextRole.subheadline)
-          .foregroundColor(.accentColor)
-
-        Text("Trending Videos")
-          .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
-      }
-
-      Spacer()
-
-      Button(action: onSeeAll) {
-        HStack(spacing: 2) {
-          Text("See All")
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.medium)
-          Image(systemName: "chevron.right")
-            .appFont(AppTextRole.caption)
+    let videos = visibleVideos
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+      DiscoverySectionHeader(
+        "Trending Videos",
+        subtitle: presentation == .discovery ? "A preview of The Vids, Bluesky’s video feed." : nil
+      ) {
+        Button { openVideoFeed(startingAt: nil) } label: {
+          Label("Open The Vids", systemImage: "chevron.right")
+            .labelStyle(DisclosureLinkLabelStyle())
+            .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(minHeight: 44)
+            .videoFeedZoomSource(postURI: nil, namespace: videoTransitionNamespace, cornerRadius: 12)
         }
-        .foregroundColor(.accentColor)
+        .accessibilityHint("Open the full-screen Bluesky video feed")
+      }
+      if videos.isEmpty {
+        HStack(spacing: DesignTokens.Spacing.md) {
+          if isLoading { ProgressView() }
+          Text(isLoading ? "Loading video previews…" : "No video previews right now. Pull to refresh, or open The Vids.")
+            .appFont(AppTextRole.subheadline)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+        .padding(.horizontal, 16)
+      } else {
+        carouselView(videos)
       }
     }
-    .padding(.horizontal)
   }
 
-  private var carouselView: some View {
+  private func carouselView(_ videos: [AppBskyFeedDefs.FeedViewPost]) -> some View {
     ScrollView(.horizontal, showsIndicators: false) {
-      LazyHStack(alignment: .top, spacing: 12) {
+      LazyHStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
         ForEach(videos, id: \.post.uri) { feedViewPost in
           videoCard(feedViewPost.post)
         }
       }
-      .padding(.horizontal)
+      .padding(.horizontal, 16)
     }
-    // A horizontal lazy stack cannot infer its cross-axis size inside a vertical scroll view.
-    .frame(height: 220 + 8 + max(20, authorRowHeight))
+    // A lazy horizontal stack needs an explicit cross-axis size inside the timeline's self-sizing cell.
+    // Reserve two scaled author lines from first layout; remote images cannot change the cell height.
+    .frame(height: presentation.thumbnailHeight + DesignTokens.Spacing.sm + authorHeight)
   }
 
   private func videoCard(_ post: AppBskyFeedDefs.PostView) -> some View {
-    let thumbnailURL = extractVideoThumbnailURL(from: post)
-    let altText = extractVideoAltText(from: post)
-    let authorName = post.author.displayName ?? "@\(post.author.handle)"
+    // A covered thumbnail is neither requested nor drawn; the card shows the
+    // cause instead and the pager it opens offers Show where allowed.
+    let cover = TrendingVideoModeration.thumbnailUI(for: post, policy: moderationPolicy)
+    let thumbnailURL = cover.blur ? nil : TrendingVideoModeration.videoThumbnailURL(in: post)
+    let altText = cover.blur ? nil : TrendingVideoModeration.videoAltText(in: post)
+    let authorName = post.author.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let author = authorName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(post.author.handle)"
+    let coverTitle = cover.blur ? ModerationPresentation.title(for: cover) : nil
 
-    return Button {
-      onSelectPost(post)
-    } label: {
-      VStack(alignment: .leading, spacing: 8) {
-        // Thumbnail with play icon overlay
-        ZStack(alignment: .bottomTrailing) {
-          if let url = thumbnailURL {
-            LazyImage(url: url) { state in
+    return Button { openVideoFeed(startingAt: post) } label: {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+        ZStack(alignment: .bottomLeading) {
+          if let coverTitle {
+            coveredThumbnail(title: coverTitle)
+          } else if let url = thumbnailURL {
+            LazyImage(request: TrendingTopicImageRequests.request(url,
+              size: CGSize(width: cardWidth, height: presentation.thumbnailHeight), displayScale: displayScale, priority: .normal)) { state in
               if let image = state.image {
-                image
-                  .resizable()
-                  .aspectRatio(contentMode: .fill)
+                image.resizable().scaledToFill()
               } else if state.isLoading {
-                Color.secondary.opacity(0.15)
-                  .overlay(ProgressView())
+                Color.secondary.opacity(0.12)
               } else {
                 fallbackThumbnail
               }
             }
-            .frame(width: 160, height: 220)
-            .clipped()
-            .cornerRadius(12)
+            .pipeline(ImageLoadingManager.shared.pipeline)
           } else {
             fallbackThumbnail
-              .frame(width: 160, height: 220)
-              .cornerRadius(12)
           }
-
-          // Play icon pill
-          HStack(spacing: 4) {
+        }
+        .frame(width: cardWidth, height: presentation.thumbnailHeight)
+        .clipped()
+        .overlay(alignment: .bottomLeading) {
+          if coverTitle == nil {
             Image(systemName: "play.fill")
-              .font(.system(size: 10, weight: .bold))
-            Text("Video")
-              .font(.system(size: 10, weight: .semibold))
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.white)
+              .frame(width: 28, height: 28)
+              .background(.black.opacity(0.65), in: Circle())
+              .padding(8)
+              .accessibilityHidden(true)
           }
-          .padding(.horizontal, 6)
-          .padding(.vertical, 3)
-          .background(.ultraThinMaterial)
-          .cornerRadius(6)
-          .padding(8)
         }
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
+        .videoFeedZoomSource(
+          postURI: post.uri.uriString(),
+          namespace: videoTransitionNamespace,
+          cornerRadius: DesignTokens.Size.radiusMD
+        )
 
-        // Author row
-        HStack(spacing: 6) {
-          if let avatarURL = post.author.avatar?.uriString(), let url = URL(string: avatarURL) {
-            LazyImage(url: url) { state in
-              if let image = state.image {
-                image.resizable().aspectRatio(contentMode: .fill)
-              } else {
-                Circle().fill(Color.secondary.opacity(0.2))
-              }
-            }
-            .frame(width: 20, height: 20)
-            .clipShape(Circle())
-          }
-
-          Text(authorName)
-            .appFont(AppTextRole.caption)
-            .fontWeight(.medium)
-            .lineLimit(1)
-            .foregroundColor(.primary)
-        }
-        .frame(width: 160, height: max(20, authorRowHeight), alignment: .leading)
+        authorRow(post, name: author)
       }
+      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel("Video by \(authorName)\(altText.map { ", \($0)" } ?? "")")
-    .accessibilityHint("Double tap to open post")
+    .accessibilityElement(children: .ignore)
+    // The replacement element drops the Button trait on iOS 27; restore it for VoiceOver.
+    .accessibilityAddTraits(.isButton)
+    .accessibilityLabel("Video by \(author)\((coverTitle ?? altText).map { ", \($0)" } ?? "")")
+    .accessibilityHint("Play this video in The Vids")
+  }
+
+  private func openVideoFeed(startingAt post: AppBskyFeedDefs.PostView?) {
+    #if os(iOS)
+    if #available(iOS 18.0, macOS 15.0, *), !reduceMotion, let onNavigateVideo {
+      let source = VideoFeedZoomSource(
+        sectionID: videoTransitionSectionID,
+        postURI: post?.uri.uriString(),
+        namespace: videoTransitionNamespace
+      )
+      onNavigateVideo(.videoFeedZoom(initialPost: post, source: source))
+      return
+    }
+    #endif
+    if let post {
+      onSelectPost(post)
+    } else {
+      onSeeAll()
+    }
+  }
+
+  /// The thumbnail area of a moderated preview: the cause's name over the
+  /// neutral fill, with no media and no play badge.
+  private func coveredThumbnail(title: String) -> some View {
+    Rectangle()
+      .fill(Color.secondary.opacity(0.12))
+      .overlay {
+        VStack(spacing: DesignTokens.Spacing.xs) {
+          Image(systemName: "eye.slash.fill")
+            .font(.title2)
+            .foregroundStyle(.secondary)
+          Text(title)
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+      }
+      .accessibilityIdentifier("moderation.trendingVideoCover")
+  }
+
+  /// Small avatar beside the creator's name; the row keeps the fixed author height.
+  private func authorRow(_ post: AppBskyFeedDefs.PostView, name: String) -> some View {
+    HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+      AsyncProfileImage(
+        url: post.author.finalAvatarURL(),
+        size: authorAvatarSize,
+        did: post.author.did.didString(),
+        labels: post.author.labels
+      )
+      .accessibilityHidden(true)
+
+      Text(name)
+        .appFont(size: Typography.Size.caption, weight: .medium, relativeTo: .caption)
+        .lineLimit(2)
+        .multilineTextAlignment(.leading)
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+    .frame(width: cardWidth, height: authorHeight, alignment: .topLeading)
   }
 
   private var fallbackThumbnail: some View {
@@ -162,50 +246,8 @@ public struct TrendingVideosSection: View {
       .fill(Color.secondary.opacity(0.12))
       .overlay {
         Image(systemName: "play.rectangle")
-          .font(.system(size: 32))
-          .foregroundColor(.secondary)
+          .font(.title2)
+          .foregroundStyle(.secondary)
       }
-  }
-
-  private func extractVideoThumbnailURL(from post: AppBskyFeedDefs.PostView) -> URL? {
-    if let embed = post.embed {
-      switch embed {
-      case .appBskyEmbedVideoView(let videoView):
-        if let thumb = videoView.thumbnail?.uriString() {
-          return URL(string: thumb)
-        }
-      case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-        switch recordWithMedia.media {
-        case .appBskyEmbedVideoView(let videoView):
-          if let thumb = videoView.thumbnail?.uriString() {
-            return URL(string: thumb)
-          }
-        default:
-          break
-        }
-      default:
-        break
-      }
-    }
-    return nil
-  }
-
-  private func extractVideoAltText(from post: AppBskyFeedDefs.PostView) -> String? {
-    if let embed = post.embed {
-      switch embed {
-      case .appBskyEmbedVideoView(let videoView):
-        return videoView.alt
-      case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-        switch recordWithMedia.media {
-        case .appBskyEmbedVideoView(let videoView):
-          return videoView.alt
-        default:
-          break
-        }
-      default:
-        break
-      }
-    }
-    return nil
   }
 }

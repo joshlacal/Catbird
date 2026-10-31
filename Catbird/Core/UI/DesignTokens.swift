@@ -9,13 +9,13 @@ import SwiftUI
 
 // MARK: - Design Tokens
 
-/// Comprehensive design token system enforcing 3pt grid consistency
-/// Use these tokens for all spacing, sizing, and typography throughout the app
+/// Shared values for custom components. Native Form/List metrics remain system-owned.
+/// Named typography helpers use FontManager so app preferences and Dynamic Type apply.
 struct DesignTokens {
     
     // MARK: - Base Unit
     
-    /// Base 3pt unit - all spacing should be multiples of this
+    /// Base 3pt unit for custom component spacing, not a replacement for native control metrics.
     static let baseUnit: CGFloat = 3
     
     // MARK: - Spacing Scale (3pt Grid)
@@ -74,7 +74,8 @@ struct DesignTokens {
         static let avatarXL: CGFloat = baseUnit * 20  // 60pt
         static let avatarXXL: CGFloat = baseUnit * 32 // 96pt
         
-        // Button heights
+        // Visual button sizes. These are not minimum touch targets; interactive
+        // content must retain the platform's hit area and grow with larger text.
         static let buttonSM: CGFloat = baseUnit * 10  // 30pt
         static let buttonMD: CGFloat = baseUnit * 12  // 36pt
         static let buttonLG: CGFloat = baseUnit * 14  // 42pt
@@ -300,7 +301,8 @@ extension View {
     
     // MARK: - Typography Modifiers
     
-    /// Apply consistent font with proper line height
+    /// Fixed typography for decorative content. Prefer a named design helper or
+    /// appFont for readable text that must follow app preferences and Dynamic Type.
     func designFont(
         size: CGFloat,
         weight: Font.Weight = .regular,
@@ -313,71 +315,69 @@ extension View {
             .tracking(letterSpacing)
     }
     
-    /// Quick typography helpers
+    /// Preserve the established base sizes while sharing the app's font family,
+    /// size, Bold Text, line spacing, tracking, and Dynamic Type preferences.
     func designTitle1() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.title1,
             weight: .bold,
-            lineHeight: DesignTokens.LineHeight.tight,
-            letterSpacing: DesignTokens.LetterSpacing.tight
+            relativeTo: .title
         )
     }
     
     func designTitle2() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.title2,
             weight: .semibold,
-            lineHeight: DesignTokens.LineHeight.snug,
-            letterSpacing: DesignTokens.LetterSpacing.tight
+            relativeTo: .title2
         )
     }
     
     func designHeadline() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.headline,
             weight: .semibold,
-            lineHeight: DesignTokens.LineHeight.snug
+            relativeTo: .headline
         )
     }
     
     func designBody() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.body,
             weight: .regular,
-            lineHeight: DesignTokens.LineHeight.relaxed
+            relativeTo: .body
         )
     }
     
     func designBodyLarge() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.bodyLarge,
             weight: .regular,
-            lineHeight: DesignTokens.LineHeight.relaxed
+            relativeTo: .body
         )
     }
     
     func designCallout() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.callout,
             weight: .medium,
-            lineHeight: DesignTokens.LineHeight.normal
+            relativeTo: .callout
         )
     }
     
     func designCaption() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.caption,
             weight: .medium,
-            lineHeight: DesignTokens.LineHeight.normal,
-            letterSpacing: DesignTokens.LetterSpacing.wide
+            relativeTo: .caption
         )
     }
     
     func designFootnote() -> some View {
-        self.designFont(
+        self.appFont(
             size: DesignTokens.FontSize.footnote,
             weight: .regular,
-            lineHeight: DesignTokens.LineHeight.normal
+            relativeTo: .footnote
         )
     }
     

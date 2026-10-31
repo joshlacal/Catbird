@@ -135,8 +135,32 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
     
     // MARK: - Initialization
     
+    private var fontChangeObserver: (any NSObjectProtocol)?
+
     init(fontManager: FontManager) {
         self.fontManager = fontManager
+        #if os(iOS)
+        fontChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FontChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                NavigationFontConfig.invalidateCache()
+                await self.applyToNavigationBar()
+                NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: self.fontManager)
+                await self.performOptimizedForceUpdate()
+            }
+        }
+        #endif
+    }
+
+    deinit {
+        if let observer = fontChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
     
     // MARK: - Methods
@@ -349,15 +373,16 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         #if os(iOS)
         // Ensure we're on the main thread for UI operations
         await MainActor.run {
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-            
-            for window in windowScene.windows {
-                // Find all navigation controllers efficiently
-                let navControllers = findAllNavigationControllers(in: window.rootViewController)
-                
-                // Update them on main thread
-                for navController in navControllers {
-                    updateSingleNavigationBar(navController.navigationBar)
+            for scene in UIApplication.shared.connectedScenes {
+                guard let windowScene = scene as? UIWindowScene else { continue }
+                for window in windowScene.windows {
+                    // Find all navigation controllers efficiently
+                    let navControllers = findAllNavigationControllers(in: window.rootViewController)
+                    
+                    // Update them on main thread
+                    for navController in navControllers {
+                        updateSingleNavigationBar(navController.navigationBar)
+                    }
                 }
             }
         }
@@ -440,18 +465,19 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
     /// Perform the legacy force update on main thread
     private func performLegacyForceUpdate() {
         #if os(iOS)
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-        
-        for window in windowScene.windows {
-            // Find all navigation controllers and force update their navigation bars
-            updateNavigationBarsRecursively(in: window.rootViewController)
-            
-            // Force update all UINavigationBar instances directly
-            forceUpdateAllNavigationBarInstances(in: window)
-            
-            // Force window to update
-            window.setNeedsDisplay()
-            window.layoutIfNeeded()
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                // Find all navigation controllers and force update their navigation bars
+                updateNavigationBarsRecursively(in: window.rootViewController)
+                
+                // Force update all UINavigationBar instances directly
+                forceUpdateAllNavigationBarInstances(in: window)
+                
+                // Force window to update
+                window.setNeedsDisplay()
+                window.layoutIfNeeded()
+            }
         }
         #endif
     }
@@ -761,25 +787,5 @@ extension EnvironmentValues {
     var themeManager: ThemeManager? {
         get { self[ThemeManagerKey.self] }
         set { self[ThemeManagerKey.self] = newValue }
-    }
-}
-
-// MARK: - Transition Support
-
-struct ThemeTransitionModifier: ViewModifier {
-    let themeManager: ThemeManager
-    let appSettings: AppSettings
-    
-    func body(content: Content) -> some View {
-        content
-            .motionAwareAnimation(.easeInOut(duration: 0.3), value: themeManager.darkThemeMode, appSettings: appSettings)
-            .motionAwareAnimation(.easeInOut(duration: 0.3), value: themeManager.colorSchemeOverride, appSettings: appSettings)
-    }
-}
-
-extension View {
-    /// Add smooth transitions when theme changes
-    func themeTransition(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        self.modifier(ThemeTransitionModifier(themeManager: themeManager, appSettings: appSettings))
     }
 }

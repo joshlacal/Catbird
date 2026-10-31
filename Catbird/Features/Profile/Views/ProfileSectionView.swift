@@ -7,8 +7,8 @@ struct ProfileSectionView: View {
     let tab: ProfileTab
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
-    // Add state tracking to diagnose loading issues
     @State private var isInitialLoading = true
+    @State private var hasLoaded = false
     @State private var loadError: Error?
     @State private var showingCreateStarterPack = false
     
@@ -18,92 +18,100 @@ struct ProfileSectionView: View {
             if tab == .videos {
                 StreamplaceVideoListView(userDID: viewModel.userDID)
             } else if isInitialLoading {
-                ProgressView("Loading \(tab.title.lowercased())...")
+                ProgressView("Loading…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = loadError {
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .appFont(AppTextRole.largeTitle)
-                        .foregroundColor(.orange)
-                    
-                    Text("Could not load content")
-                        .appFont(AppTextRole.headline)
-                    
-                    Text(error.localizedDescription)
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(.secondary)
-                    
+                ContentUnavailableView {
+                    Label("Couldn’t Load \(tab.title)", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(UserFacingError.message(for: error, action: "load \(tab.title.lowercased())") ?? "Check your connection and try again.")
+                } actions: {
                     Button("Try Again") {
                         Task { await loadContent() }
                     }
-                    .padding()
-                    .background(Color.accentColor)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
+                    .buttonStyle(.borderedProminent)
                 }
-                .padding()
             } else {
                 // Main content view once loading is complete
                 contentForTab
             }
         }
         .navigationTitle(tab.title)
+        .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .task {
+            // Load once; returning from a pushed list or post shouldn't reload and flash a spinner.
+            guard !hasLoaded else { return }
             await loadContent()
         }
         .sheet(isPresented: $showingCreateStarterPack) {
-            StarterPackWizardView(mode: .create) { _ in
+            StarterPackWizardView(mode: .create) { uri in
+                path.append(NavigationDestination.starterPack(uri))
                 Task {
-                    await viewModel.loadStarterPacks()
+                    try? await viewModel.refreshStarterPacks()
                 }
             }
         }
     }
     
-    // Centralized content loading function to handle all cases
+    // Loads (or reloads) the first page for this section and records any failure.
     private func loadContent() async {
-        isInitialLoading = true
+        if !hasLoaded {
+            isInitialLoading = true
+        }
         loadError = nil
-        
-            switch tab {
-            case .likes:
-                // Force reload without isEmpty check
-                await viewModel.loadLikes()
-            case .lists:
-                await viewModel.loadLists()
-            case .starterPacks:
-                await viewModel.loadStarterPacks()
-            case .feeds:
-                await viewModel.loadFeeds()
-            case .videos:
-                break // StreamplaceVideoListView handles its own loading
-            default:
-                break
-            }
-            
-            // After successful loading
-            isInitialLoading = false
+
+        do {
+            try await refreshContent()
+        } catch {
+            // A load cancelled because the view went away stays unloaded, so the
+            // next appearance loads again instead of showing an empty section.
+            guard !Task.isCancelled else { return }
+            loadError = error
+        }
+        guard !Task.isCancelled else { return }
+
+        hasLoaded = true
+        isInitialLoading = false
+    }
+
+    private func refreshContent() async throws {
+        switch tab {
+        case .likes:
+            try await viewModel.refreshLikes()
+        case .lists:
+            try await viewModel.refreshLists()
+        case .starterPacks:
+            try await viewModel.refreshStarterPacks()
+        case .feeds:
+            try await viewModel.refreshFeeds()
+        default:
+            break
+        }
     }
     
     // Content views organized for better maintainability
     @ViewBuilder
     private var contentForTab: some View {
         List {
-            switch tab {
-            case .likes:
-                likesList
-            case .lists:
-                listsList
-            case .starterPacks:
-                starterPacksList
-            case .feeds:
-                feedsList
-            default:
-                Text("Content not available")
-                    .padding()
+            Group {
+                switch tab {
+                case .likes:
+                    likesList
+                case .lists:
+                    listsList
+                case .starterPacks:
+                    starterPacksList
+                case .feeds:
+                    feedsList
+                default:
+                    Text("Content not available")
+                        .padding()
+                }
             }
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .navigationTitle(tab.title)
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
@@ -120,39 +128,38 @@ struct ProfileSectionView: View {
       if viewModel.isCurrentUser {
           
           if viewModel.isLoadingLikes && viewModel.likes.isEmpty {
-              ProgressView("Loading liked posts...")
+              ProgressView("Loading…")
                   .frame(maxWidth: .infinity, minHeight: 100)
                   .padding()
           } else if viewModel.likes.isEmpty {
-              emptyContentView("No Likes", "This user hasn't liked any posts yet.")
+              emptyContentView("No Likes", "You haven’t liked any posts yet.")
           } else {
               ForEach(viewModel.likes, id: \.post.uri) { post in
                   FeedPost(post: post, path: $path)
-                  
-                  // Load more when reaching the end
-                  if post == viewModel.likes.last && !viewModel.isLoadingLikes {
-                      Color.clear.frame(height: 20)
-                          .onAppear {
-                              Task { await viewModel.loadLikes() }
-                          }
-                  }
               }
               
-              // Loading indicator for pagination
-              if viewModel.isLoadingLikes {
-                  ProgressView()
-                      .padding()
-                      .frame(maxWidth: .infinity)
+              // Pagination trigger & loading indicator
+              if viewModel.hasMoreLikes {
+                  if viewModel.isLoadingLikes {
+                      ProgressView()
+                          .padding()
+                          .frame(maxWidth: .infinity)
+                  } else {
+                      Color.clear.frame(height: 20)
+                          .onAppear {
+                              Task { await viewModel.loadMoreLikes() }
+                          }
+                  }
               }
           }
       } else {
 
           if viewModel.isLoadingLikes && viewModel.otherUserLikes.isEmpty {
-              ProgressView("Loading liked posts...")
+              ProgressView("Loading…")
                   .frame(maxWidth: .infinity, minHeight: 100)
                   .padding()
           } else if viewModel.otherUserLikes.isEmpty {
-              emptyContentView("No Likes", "This user hasn't liked any posts yet.")
+              emptyContentView("No Likes", "This user hasn’t liked any posts yet.")
           } else {
               ForEach(viewModel.otherUserLikes, id: \.uri) { post in
                   PostView(post: post, grandparentAuthor: nil, isParentPost: false, isSelectable: false, path: $path, appState: appState)
@@ -164,21 +171,20 @@ struct ProfileSectionView: View {
                     .onTapGesture {
                         path.append(NavigationDestination.post(post.uri))
                     }
-
-                  // Load more when reaching the end
-                  if post == viewModel.otherUserLikes.last && !viewModel.isLoadingLikes {
-                      Color.clear.frame(height: 20)
-                          .onAppear {
-                              Task { await viewModel.loadLikes() }
-                          }
-                  }
               }
               
-              // Loading indicator for pagination
-              if viewModel.isLoadingLikes {
-                  ProgressView()
-                      .padding()
-                      .frame(maxWidth: .infinity)
+              // Pagination trigger & loading indicator
+              if viewModel.hasMoreLikes {
+                  if viewModel.isLoadingLikes {
+                      ProgressView()
+                          .padding()
+                          .frame(maxWidth: .infinity)
+                  } else {
+                      Color.clear.frame(height: 20)
+                          .onAppear {
+                              Task { await viewModel.loadMoreLikes() }
+                          }
+                  }
               }
           }
 
@@ -187,31 +193,35 @@ struct ProfileSectionView: View {
 
   @ViewBuilder
   private var listsList: some View {
-    if viewModel.isLoading && viewModel.lists.isEmpty {
-      ProgressView("Loading lists...")
+    if viewModel.isLoadingSection && viewModel.lists.isEmpty {
+      ProgressView("Loading…")
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
     } else if viewModel.lists.isEmpty {
-      emptyContentView("No Lists", "This user hasn't created any lists yet.")
+      emptyContentView("No Lists", viewModel.isCurrentUser ? "You haven’t created any lists yet." : "This user hasn’t created any lists yet.")
     } else {
-      LazyVStack(spacing: 0) {
-        ForEach(viewModel.lists, id: \.uri) { list in
+      ForEach(viewModel.lists, id: \.uri) { list in
+        Button {
+          path.append(NavigationDestination.listFeed(list.uri))
+        } label: {
           ListRow(list: list)
-
-          // Load more when reaching the end
-          if list == viewModel.lists.last && !viewModel.isLoadingMorePosts {
-            Color.clear.frame(height: 20)
-              .onAppear {
-                Task { await viewModel.loadLists() }
-              }
-          }
         }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .listRowSeparator(list.uri == viewModel.lists.first?.uri ? .hidden : .automatic, edges: .top)
+      }
 
-        // Loading indicator for pagination
-        if viewModel.isLoadingMorePosts {
+      // Pagination trigger & loading indicator
+      if viewModel.hasMoreLists {
+        if viewModel.isLoadingSection {
           ProgressView()
             .padding()
             .frame(maxWidth: .infinity)
+        } else {
+          Color.clear.frame(height: 20)
+            .onAppear {
+              Task { await viewModel.loadMoreLists() }
+            }
         }
       }
     }
@@ -219,13 +229,13 @@ struct ProfileSectionView: View {
 
   @ViewBuilder
   private var starterPacksList: some View {
-    if viewModel.isLoading && viewModel.starterPacks.isEmpty {
-      ProgressView("Loading starter packs...")
+    if viewModel.isLoadingSection && viewModel.starterPacks.isEmpty {
+      ProgressView("Loading…")
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
     } else if viewModel.starterPacks.isEmpty {
       VStack(spacing: 16) {
-        emptyContentView("No Starter Packs", viewModel.isCurrentUser ? "You haven't created any starter packs yet." : "This user hasn't created any starter packs yet.")
+        emptyContentView("No Starter Packs", viewModel.isCurrentUser ? "You haven’t created any starter packs yet." : "This user hasn’t created any starter packs yet.")
         
         if viewModel.isCurrentUser {
           Button {
@@ -272,33 +282,31 @@ struct ProfileSectionView: View {
         } label: {
           StarterPackRowView(pack: pack)
         }
+      }
 
-        // Load more when reaching the end
-        if pack == viewModel.starterPacks.last && !viewModel.isLoadingMorePosts
-          && viewModel.hasMoreStarterPacks {
+      // Pagination trigger & loading indicator
+      if viewModel.hasMoreStarterPacks {
+        if viewModel.isLoadingSection {
+          ProgressView()
+            .padding()
+            .frame(maxWidth: .infinity)
+        } else {
           Color.clear.frame(height: 20)
             .onAppear {
               Task { await viewModel.loadStarterPacks() }
             }
         }
       }
-
-      // Loading indicator for pagination
-      if viewModel.isLoadingMorePosts && viewModel.hasMoreStarterPacks {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
-      }
     }
   }
   @ViewBuilder
   private var feedsList: some View {
-    if viewModel.isLoading && viewModel.feeds.isEmpty {
-      ProgressView("Loading feeds...")
+    if viewModel.isLoadingSection && viewModel.feeds.isEmpty {
+      ProgressView("Loading…")
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
     } else if viewModel.feeds.isEmpty {
-      emptyContentView("No Feeds", "This user hasn't created any feeds yet.")
+      emptyContentView("No Feeds", viewModel.isCurrentUser ? "You haven’t created any feeds yet." : "This user hasn’t created any feeds yet.")
     } else {
       ForEach(viewModel.feeds, id: \.uri) { feed in
         Button {
@@ -307,21 +315,20 @@ struct ProfileSectionView: View {
           FeedRowView(feed: feed)
         }
         .buttonStyle(.plain)
-
-        // Load more when reaching the end
-        if feed == viewModel.feeds.last && !viewModel.isLoadingMorePosts {
-          Color.clear.frame(height: 20)
-            .onAppear {
-              Task { await viewModel.loadFeeds() }
-            }
-        }
       }
 
-      // Loading indicator for pagination
-      if viewModel.isLoadingMorePosts {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
+      // Pagination trigger & loading indicator
+      if viewModel.hasMoreFeeds {
+        if viewModel.isLoadingSection {
+          ProgressView()
+            .padding()
+            .frame(maxWidth: .infinity)
+        } else {
+          Color.clear.frame(height: 20)
+            .onAppear {
+              Task { await viewModel.loadMoreFeeds() }
+            }
+        }
       }
     }
   }
@@ -331,7 +338,7 @@ struct ProfileSectionView: View {
     VStack(spacing: 16) {
       Spacer()
 
-      Image(systemName: "square.stack.3d.up.slash")
+      Image(systemName: tab.systemImage)
         .appFont(size: 48)
         .foregroundColor(.secondary)
 
@@ -347,7 +354,62 @@ struct ProfileSectionView: View {
       Spacer()
     }
     .frame(maxWidth: .infinity, minHeight: 300)
+    .listRowSeparator(.hidden)
   }
+}
+
+/// Shows a profile's More section for any account, independent of which profile screen
+/// registered the navigation destination.
+struct ProfileSectionHostView: View {
+    let tab: ProfileTab
+    @Binding var path: NavigationPath
+    @State private var viewModel: ProfileViewModel
+
+    /// - Parameter loadedViewModel: The presenting profile's view model, reused only when
+    ///   its profile has already loaded; otherwise this view loads the profile itself.
+    init(
+        did: String, tab: ProfileTab, appState: AppState, path: Binding<NavigationPath>,
+        loadedViewModel: ProfileViewModel? = nil
+    ) {
+        self.tab = tab
+        self._path = path
+        self._viewModel = State(initialValue: loadedViewModel ?? ProfileViewModel(
+            client: appState.atProtoClient,
+            userDID: did,
+            currentUserDID: appState.userDID
+        ))
+    }
+
+    var body: some View {
+        Group {
+            if viewModel.profile != nil {
+                ProfileSectionView(viewModel: viewModel, tab: tab, path: $path)
+            } else if let error = viewModel.error {
+                ContentUnavailableView {
+                    Label("Couldn’t Load \(tab.title)", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text((error as? ProfileError)?.errorDescription
+                        ?? UserFacingError.message(for: error, action: "load this profile")
+                        ?? "Try again.")
+                } actions: {
+                    Button("Try Again") {
+                        Task { await viewModel.loadProfile() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .navigationTitle(tab.title)
+            } else {
+                ProgressView("Loading…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationTitle(tab.title)
+            }
+        }
+        .task {
+            if viewModel.profile == nil {
+                await viewModel.loadProfile()
+            }
+        }
+    }
 }
 
 #Preview {

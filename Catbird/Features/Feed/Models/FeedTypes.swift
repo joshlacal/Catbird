@@ -68,15 +68,13 @@ enum FetchType: Hashable, Sendable, CustomStringConvertible {
       if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
         return cachedName
       }
-      // Fallback to record key
-      let recordKey = uri.uriString().components(separatedBy: "/").last ?? "Unknown"
-      return "List: \(recordKey)"
+      // Never surface the record key; it's an opaque identifier
+      return "List"
     case .feed(let uri):
       if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
         return cachedName
       }
-      let recordKey = uri.uriString().components(separatedBy: "/").last ?? "Unknown"
-      return "Feed: \(recordKey)"
+      return "Feed"
     case .author(let did):
       // Display handle if available, otherwise DID
       return "Posts by \(did)"

@@ -180,12 +180,22 @@ struct SearchFilterStateTests {
     #expect(decoded.activeFilterCount == s.activeFilterCount)
   }
 
-  @Test("sortValue maps to the API string")
-  func sortValue() {
+  @Test("sortValue preserves the UI sort names")
+  func sortValuePreservesUINames() {
     var s = SearchFilterState()
     #expect(s.sortValue == "top")
     s.sort = .latest
     #expect(s.sortValue == "latest")
+  }
+
+  @Test("SearchPostsV2 maps Latest to the API's recent sort")
+  func searchPostsV2SortParameter() {
+    var state = SearchFilterState()
+    #expect(state.toSearchPostsV2Parameters(query: "No").sort == "top")
+
+    state.sort = .latest
+    #expect(state.sortValue == "latest")
+    #expect(state.toSearchPostsV2Parameters(query: "No").sort == "recent")
   }
 
   @Test("anytime produces no date bounds")

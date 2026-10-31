@@ -28,7 +28,7 @@ struct StarterPackProfilesStep: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                 
-                TextField("Search people to add...", text: $searchQuery)
+                TextField("Search people to add", text: $searchQuery)
                     .autocorrectionDisabled()
         .platformInsetGroupedListStyle()
                     .onChange(of: searchQuery) { _, newValue in
@@ -120,7 +120,9 @@ struct StarterPackProfilesStep: View {
         let canAdd = draft.profiles.count < StarterPackDraft.maxProfilesCount
         
         return HStack(spacing: 12) {
-            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 40)
+            AsyncProfileImage(
+                url: URL(string: profile.avatar?.uriString() ?? ""), size: 40,
+                did: profile.did.didString(), labels: profile.labels)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(profile.displayName ?? "@\(profile.handle)")
@@ -187,7 +189,9 @@ struct StarterPackProfilesStep: View {
                 Section(footer: Text("Swipe or tap the trash icon to remove an account.")) {
                     ForEach(draft.profiles, id: \.did) { profile in
                         HStack(spacing: 12) {
-                            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 40)
+                            AsyncProfileImage(
+                                url: URL(string: profile.avatar?.uriString() ?? ""), size: 40,
+                                did: profile.did.didString(), labels: profile.labels)
                             
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(profile.displayName ?? "@\(profile.handle)")
@@ -213,6 +217,7 @@ struct StarterPackProfilesStep: View {
                                     .background(Circle().fill(Color.systemGray5))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Remove \(profile.displayName ?? profile.handle.description)")
                         }
                         .padding(.vertical, 4)
                     }

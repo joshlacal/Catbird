@@ -1,271 +1,323 @@
 import SwiftUI
 import Petrel
 
-/// View for managing per-labeler content preferences
+/// The canonical list of subscribed moderation services. Loading never changes subscriptions.
 struct LabelerSettingsView: View {
-    @Environment(AppState.self) private var appState
-    @State private var labelers: [AppBskyLabelerDefs.LabelerViewDetailed] = []
-    @State private var isLoading = true
-    @State private var errorMessage: String?
-    
-    // Per-labeler preferences (labelerDID -> label -> visibility)
-    @State private var labelerPreferences: [String: [String: ContentVisibility]] = [:]
-    @State private var isSaving = false
-    
-    var body: some View {
-        Group {
-            if isLoading {
-                ProgressView("Loading labelers...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let errorMessage = errorMessage {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.orange)
-                    Text("Error Loading Labelers")
-                        .font(.headline)
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Button("Retry") {
-                        Task {
-                            await loadLabelers()
-                        }
-                    }
-                }
-                .padding()
-            } else if labelers.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "checklist.unchecked")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.secondary)
-                    Text("No Labelers Subscribed")
-                        .font(.headline)
-                    Text("You're not subscribed to any custom moderation services")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding()
-            } else {
-                labelersList
-            }
-        }
-        .navigationTitle("Labeler Settings")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-        .task {
-            await loadLabelers()
-        }
-    }
-    
-    private var labelersList: some View {
-        Form {
-            ForEach(labelers, id: \.uri) { labeler in
-                Section {
-                    labelerHeader(labeler)
-                    labelerContentControls(labeler)
-                } header: {
-                    Text(labelerDisplayName(labeler))
-                        .textCase(nil)
-                        .font(.headline)
-                }
-            }
-            
-            if isSaving {
-                Section {
-                    HStack {
-                        ProgressView()
-                            .padding(.trailing, 8)
-                        Text("Saving preferences...")
-                    }
-                }
-            }
-        }
-    }
-    
-    @ViewBuilder
-    private func labelerHeader(_ labeler: AppBskyLabelerDefs.LabelerViewDetailed) -> some View {
-        HStack(spacing: 12) {
-            if let avatarURL = labeler.creator.finalAvatarURL() {
-                AsyncImage(url: avatarURL) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Color.gray.opacity(0.3)
-                }
-                .frame(width: 40, height: 40)
-                .clipShape(Circle())
-            } else {
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 40))
-                    .foregroundStyle(.gray)
-            }
-            
+  @Environment(AppState.self) private var appState
+  let initialFocus: SettingsControlID?
+  @State private var labelers: [AppBskyLabelerDefs.LabelerViewDetailed] = []
+  @State private var unavailable: [DID] = []
+  @State private var request = UUID()
+  @State private var isLoading = true
+  @State private var isSaving = false
+  @State private var hasConfirmedPreferences = false
+  @State private var errorMessage: String?
+  init(initialFocus: SettingsControlID? = nil) { self.initialFocus = initialFocus }
+
+  var body: some View {
+    SettingsFocusedForm(initialFocus: initialFocus, isReady: hasConfirmedPreferences) {
+      Section {
+        if isLoading { ProgressView("Loading moderation services…") }
+        ForEach(labelers, id: \.uri) { labeler in
+          NavigationLink {
+            ModerationServiceSettingsView(labeler: labeler)
+          } label: {
             VStack(alignment: .leading, spacing: 4) {
-                Text("@\(labeler.creator.handle.description)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                
-                if let description = labeler.creator.description {
-                    Text(description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+              Text(labeler.creator.displayName ?? labeler.creator.handle.description)
+              Text("@\(labeler.creator.handle.description)").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+              if labeler.creator.did.didString() == Self.defaultDID {
+                Text("Always active").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+              }
             }
+          }
         }
-        .padding(.vertical, 4)
-    }
-    
-    @ViewBuilder
-    private func labelerContentControls(_ labeler: AppBskyLabelerDefs.LabelerViewDetailed) -> some View {
-        let labelerDid = labeler.creator.did.didString()
-        
-        VStack(spacing: 16) {
-            ContentVisibilitySelector(
-                title: "Adult Content",
-                description: "Explicit sexual images, videos, or text",
-                selection: Binding(
-                    get: { getPreference(labelerDid: labelerDid, label: "nsfw") },
-                    set: { setPreference(labelerDid: labelerDid, label: "nsfw", visibility: $0) }
-                )
-            )
-            
-            ContentVisibilitySelector(
-                title: "Sexually Suggestive",
-                description: "Sexualized content without explicit activity",
-                selection: Binding(
-                    get: { getPreference(labelerDid: labelerDid, label: "suggestive") },
-                    set: { setPreference(labelerDid: labelerDid, label: "suggestive", visibility: $0) }
-                )
-            )
-            
-            ContentVisibilitySelector(
-                title: "Graphic Content",
-                description: "Violence, blood, or injury",
-                selection: Binding(
-                    get: { getPreference(labelerDid: labelerDid, label: "graphic") },
-                    set: { setPreference(labelerDid: labelerDid, label: "graphic", visibility: $0) }
-                )
-            )
-            
-            ContentVisibilitySelector(
-                title: "Non-Sexual Nudity",
-                description: "Artistic or educational nudity",
-                selection: Binding(
-                    get: { getPreference(labelerDid: labelerDid, label: "nudity") },
-                    set: { setPreference(labelerDid: labelerDid, label: "nudity", visibility: $0) }
-                )
-            )
-        }
-    }
-    
-    private func labelerDisplayName(_ labeler: AppBskyLabelerDefs.LabelerViewDetailed) -> String {
-        if labeler.creator.handle.description == "moderation.bsky.app" {
-            return "Official Bluesky Moderation"
-        }
-        return labeler.creator.displayName ?? labeler.creator.handle.description
-    }
-    
-    private func getPreference(labelerDid: String, label: String) -> ContentVisibility {
-        labelerPreferences[labelerDid]?[label] ?? .warn
-    }
-    
-    private func setPreference(labelerDid: String, label: String, visibility: ContentVisibility) {
-        if labelerPreferences[labelerDid] == nil {
-            labelerPreferences[labelerDid] = [:]
-        }
-        labelerPreferences[labelerDid]?[label] = visibility
-        
-        // Save to server
-        Task {
-            await savePreferences(labelerDid: labelerDid, label: label, visibility: visibility)
-        }
-    }
-    
-    private func loadLabelers() async {
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            guard let client = appState.atProtoClient else {
-                errorMessage = "Not authenticated"
-                isLoading = false
-                return
+        NavigationLink("Add Moderation Service", destination: AddLabelerView())
+          .disabled(!hasConfirmedPreferences || isSaving)
+      } footer: {
+        Text("Settings for a service’s own labels take precedence over your global settings. Bluesky moderation is always active; up to 19 additional services can be subscribed.")
+      }
+      .settingsControl(.init(rawValue: "moderation.labelers"))
+      if !unavailable.isEmpty {
+        Section("Unavailable Services") {
+          Text("These services couldn’t be reached. They stay in your subscriptions until you remove them.")
+            .appFont(AppTextRole.caption).foregroundStyle(.secondary)
+          ForEach(unavailable, id: \.self) { did in
+            HStack {
+              Text("Unavailable Service")
+              Spacer()
+              Button("Remove", role: .destructive) { removeUnavailable(did) }.disabled(!hasConfirmedPreferences || isSaving)
             }
-            
-            let reportingService = ReportingService(client: client)
-            labelers = try await reportingService.getSubscribedLabelers()
-            
-            // Load existing preferences for all labelers
-            let preferences = try await appState.preferencesManager.getPreferences()
-            
-            for labeler in labelers {
-                let labelerDid = labeler.creator.did.didString()
-                var labelerPrefs: [String: ContentVisibility] = [:]
-                
-                // Check for existing preferences for this labeler
-                for labelKey in ["nsfw", "suggestive", "graphic", "nudity"] {
-                    let visibility = ContentFilterManager.getVisibilityForLabel(
-                        label: labelKey,
-                        labelerDid: labeler.creator.did,
-                        preferences: preferences.contentLabelPrefs
-                    )
-                    labelerPrefs[labelKey] = visibility
-                }
-                
-                labelerPreferences[labelerDid] = labelerPrefs
-            }
-            
-            isLoading = false
-        } catch {
-            errorMessage = error.localizedDescription
-            isLoading = false
+          }
         }
-    }
-    
-    private func savePreferences(labelerDid: String, label: String, visibility: ContentVisibility) async {
-        isSaving = true
-        
-        do {
-            // Create labeler-scoped preference
-            let labelerDID = try DID(didString: labelerDid)
-            let preference = ContentLabelPreference(
-                labelerDid: labelerDID,
-                label: label,
-                visibility: visibility.rawValue
-            )
-            
-            // Get existing preferences
-            let currentPrefs = try await appState.preferencesManager.getPreferences()
-            var updatedPrefs = currentPrefs.contentLabelPrefs
-            
-            // Remove any existing preference for this labeler+label combination
-            updatedPrefs.removeAll { pref in
-                pref.labelerDid?.didString() == labelerDid && pref.label == label
-            }
-            
-            // Add new preference
-            updatedPrefs.append(preference)
-            
-            // Save to server
-            try await appState.preferencesManager.updateContentLabelPreferences(updatedPrefs)
-            
-            isSaving = false
-        } catch {
-            errorMessage = "Failed to save preferences: \(error.localizedDescription)"
-            isSaving = false
+      }
+      if let errorMessage {
+        Section {
+          Text(errorMessage).foregroundStyle(.secondary)
+          Button("Try Again") { Task { await load() } }.disabled(isLoading || isSaving)
+            .accessibilityIdentifier("moderation.labelers.retry")
         }
+      }
     }
+    .navigationTitle("Moderation Services")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
+    .task(id: appState.userDID) { await load() }
+    .refreshable { await load() }
+  }
+
+  static let defaultDID = "did:plc:ar7c4by46qjdydhdevvrndac"
+  private func load() async {
+    let token = UUID(); request = token
+    let account = appState.userDID
+    let manager = appState.preferencesManager
+    let client = appState.atProtoClient
+    isLoading = true; isSaving = false; errorMessage = nil; hasConfirmedPreferences = false
+    defer { if request == token { isLoading = false } }
+    do {
+      guard let client else { throw PreferencesManagerError.clientNotInitialized }
+      let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+      var dids = [try DID(didString: Self.defaultDID)]
+      for item in preferences.labelers where !dids.contains(item.did) { dids.append(item.did) }
+      let bounded = Array(dids.prefix(20))
+      let finishAccountIO = try manager.beginSettingsAccountIO()
+      defer { finishAccountIO?() }
+      let (code, data) = try await client.app.bsky.labeler.getServices(input: .init(dids: bounded, detailed: true))
+      guard request == token, manager.accountDID == account, appState.userDID == account,
+            appState.atProtoClient === client else { return }
+      guard (200..<300).contains(code), let data else { throw PreferencesManagerError.invalidData }
+      let detailed = data.views.compactMap { value -> AppBskyLabelerDefs.LabelerViewDetailed? in
+        if case .appBskyLabelerDefsLabelerViewDetailed(let view) = value { return view }
+        return nil
+      }
+      labelers = bounded.compactMap { did in detailed.first { $0.creator.did == did } }
+      let returned = Set(labelers.map { $0.creator.did })
+      unavailable = preferences.labelers.map(\.did).filter { !returned.contains($0) && $0.didString() != Self.defaultDID }
+      hasConfirmedPreferences = true
+    } catch {
+      guard request == token, manager.accountDID == account else { return }
+      errorMessage = UserFacingError.message(for: error, action: "load moderation services")
+    }
+  }
+
+  private func removeUnavailable(_ did: DID) {
+    guard hasConfirmedPreferences, !isSaving else { return }
+    let account = appState.userDID; let manager = appState.preferencesManager
+    let editRequest = request
+    isSaving = true
+    Task { @MainActor in
+      defer { if request == editRequest, manager.accountDID == account, appState.userDID == account { isSaving = false } }
+      do {
+        try await manager.removeLabelers([did.didString()], expectedAccountDID: account)
+        guard request == editRequest, appState.userDID == account, manager.accountDID == account else { return }
+        unavailable.removeAll { $0 == did }
+      } catch {
+        guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
+        hasConfirmedPreferences = false
+        errorMessage = UserFacingError.message(for: error, action: "remove this service")
+      }
+    }
+  }
 }
 
-#Preview("LabelerSettingsView") {
-  NavigationStack {
-    LabelerSettingsView()
+/// One moderation service's labels, configured with the keys the moderation engine reads.
+struct ModerationServiceSettingsView: View {
+  let labeler: AppBskyLabelerDefs.LabelerViewDetailed
+  @Environment(AppState.self) private var appState
+  /// The account this screen last confirmed its preferences for with the server.
+  @State private var confirmedAccountDID: String?
+  @State private var isLoading = true
+  @State private var isSaving = false
+  @State private var pending: PendingLabelChoice?
+  @State private var errorMessage: String?
+  @State private var request = UUID()
+
+  private var serviceDID: DID { labeler.creator.did }
+  private var isDefaultService: Bool { serviceDID.didString() == LabelerSettingsView.defaultDID }
+
+  /// The moderation engine's preferences for this account, once confirmed by this screen.
+  private var confirmedPrefs: ModerationPrefs? {
+    let policy = appState.moderationPolicy
+    guard confirmedAccountDID == appState.userDID, policy.isConfirmed,
+          policy.accountDID == appState.userDID else { return nil }
+    return policy.prefs
   }
-  .previewWithAuthenticatedState()
+
+  var body: some View {
+    let prefs = confirmedPrefs
+    Form {
+      Section {
+        if let description = labeler.creator.description { Text(description).foregroundStyle(.secondary) }
+        if isDefaultService { Text("Always active").foregroundStyle(.secondary) }
+        else {
+          Toggle("Subscribed", isOn: Binding(
+            get: { prefs.map { LabelerLabelSettings.isSubscribed(serviceDID.didString(), prefs: $0) } ?? false },
+            set: { setSubscribed($0) }))
+            .disabled(prefs == nil || isSaving)
+        }
+      }
+      if isLoading && prefs == nil { Section { ProgressView("Loading content settings…") } }
+      if let prefs {
+        let rows = LabelerLabelSettings.rows(
+          labelValues: labeler.policies.labelValues.map(\.rawValue),
+          definitions: labeler.policies.labelValueDefinitions ?? [],
+          labelerDID: serviceDID.didString(), prefs: prefs)
+        if rows.isEmpty {
+          Section { Text("This service doesn’t publish any labels you can configure.").foregroundStyle(.secondary) }
+        }
+        ForEach(rows) { row in
+          Section {
+            LabelerLabelRowView(
+              row: row, pending: pending?.preference(for: row.identifier), isSaving: isSaving,
+              accessibilityID: "moderation.service.\(row.identifier)",
+              onSelect: { save(identifier: row.identifier, preference: $0) },
+              onReset: { reset(identifier: row.identifier) })
+          }
+        }
+      }
+      if isSaving { Section { ProgressView("Saving…") } }
+      if let errorMessage {
+        Section {
+          Text(errorMessage).foregroundStyle(.secondary)
+          Button("Reload Settings") { Task { await load() } }.disabled(isLoading || isSaving)
+            .accessibilityIdentifier("moderation.service.retry")
+        }
+      }
+    }
+    .navigationTitle(labeler.creator.displayName ?? labeler.creator.handle.description)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
+    .task(id: appState.userDID) { await load() }
+  }
+
+  private func load() async {
+    let token = UUID(); request = token
+    let account = appState.userDID; let manager = appState.preferencesManager
+    if confirmedAccountDID != account { confirmedAccountDID = nil }
+    isLoading = true; isSaving = false; pending = nil; errorMessage = nil
+    defer { if request == token { isLoading = false } }
+    do {
+      // A confirmed fetch rebuilds `appState.moderationPolicy` before it returns.
+      _ = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+      guard request == token, manager.accountDID == account, appState.userDID == account else { return }
+      confirmedAccountDID = account
+    } catch {
+      guard request == token, manager.accountDID == account else { return }
+      confirmedAccountDID = nil
+      errorMessage = UserFacingError.message(for: error, action: "load this service’s settings")
+    }
+  }
+
+  private func save(identifier: String, preference: LabelPreference) {
+    let write = LabelerLabelSettings.serviceWrite(identifier: identifier, preference: preference, labelerDID: serviceDID)
+    edit(pending: PendingLabelChoice(identifier: identifier, preference: preference)) { manager, account in
+      try await manager.updateContentLabelPreferences([write], expectedAccountDID: account)
+    }
+  }
+
+  private func reset(identifier: String) {
+    let did = serviceDID
+    edit { manager, account in
+      try await manager.removeContentLabelOverride(label: identifier, labelerDid: did, expectedAccountDID: account)
+    }
+  }
+
+  private func setSubscribed(_ enabled: Bool) {
+    guard !isDefaultService, let prefs = confirmedPrefs,
+          enabled != LabelerLabelSettings.isSubscribed(serviceDID.didString(), prefs: prefs) else { return }
+    let did = serviceDID
+    edit { manager, account in
+      if enabled { try await manager.addLabeler(did, expectedAccountDID: account) }
+      else { try await manager.removeLabeler(did, expectedAccountDID: account) }
+    }
+  }
+
+  /// Runs one confirmed write. A confirmed write rebuilds `appState.moderationPolicy` before it returns.
+  private func edit(
+    pending choice: PendingLabelChoice? = nil,
+    _ operation: @escaping @MainActor (PreferencesManager, String) async throws -> Void
+  ) {
+    guard confirmedPrefs != nil, !isLoading, !isSaving else { return }
+    let account = appState.userDID; let manager = appState.preferencesManager
+    let editRequest = request
+    isSaving = true; pending = choice; errorMessage = nil
+    Task { @MainActor in
+      defer {
+        if request == editRequest, manager.accountDID == account, appState.userDID == account {
+          isSaving = false; pending = nil
+        }
+      }
+      do {
+        try await operation(manager, account)
+      } catch {
+        guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
+        confirmedAccountDID = nil
+        errorMessage = UserFacingError.message(for: error, action: "save this setting")
+      }
+    }
+  }
+}
+
+/// One label a moderation service publishes: a choice for a label the service defines, or the value in
+/// effect and the reason it can't be changed here.
+struct LabelerLabelRowView: View {
+  let row: LabelerLabelRow
+  /// A choice being saved for this row.
+  let pending: LabelPreference?
+  let isSaving: Bool
+  let accessibilityID: String
+  let onSelect: (LabelPreference) -> Void
+  /// Removes this service's saved choice. `nil` hides the button.
+  var onReset: (() -> Void)?
+
+  var body: some View {
+    switch row.control {
+    case .selectable(let value, let canWarn, let source):
+      VStack(alignment: .leading, spacing: 4) {
+        LabelPreferenceSelector(
+          title: row.name, description: row.description, canWarn: canWarn,
+          selection: Binding(get: { pending ?? value }, set: { onSelect($0) }))
+          .disabled(isSaving)
+          .accessibilityIdentifier(accessibilityID)
+        Text(Self.note(for: source))
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+        if source == .service, let onReset {
+          Button("Use Default Setting") { onReset() }
+            .disabled(isSaving)
+            .accessibilityIdentifier("\(accessibilityID).reset")
+        }
+      }
+    case .configuredGlobally(let value, let hasServiceOverride):
+      VStack(alignment: .leading, spacing: 4) {
+        LabelPreferenceStatusRow(
+          title: row.name, description: row.description, value: value,
+          note: hasServiceOverride ? "This service has its own setting for this label."
+            : "Set in Moderation settings for every service.",
+          systemImage: "slider.horizontal.3")
+        if hasServiceOverride, let onReset {
+          Button("Use Moderation Setting") { onReset() }
+            .disabled(isSaving)
+            .accessibilityIdentifier("\(accessibilityID).reset")
+        }
+      }
+    case .hiddenWhileAdultContentOff:
+      LabelPreferenceStatusRow(
+        title: row.name, description: row.description, value: .hide,
+        note: "Hidden while adult content is off.", systemImage: "lock.fill")
+    case .requiresSubscription:
+      LabelPreferenceStatusRow(
+        title: row.name, description: row.description, value: nil,
+        note: "Subscribe to this service to use its labels.", systemImage: "info.circle")
+    }
+  }
+
+  private static func note(for source: LabelerLabelRow.Source) -> String {
+    switch source {
+    case .service: "Saved for this service."
+    case .global: "Using your global setting for this label."
+    case .serviceDefault: "Using this service’s default."
+    }
+  }
 }

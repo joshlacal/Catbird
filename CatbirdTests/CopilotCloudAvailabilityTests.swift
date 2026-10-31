@@ -18,7 +18,7 @@ struct CopilotCloudAvailabilityTests {
         let agent = BlueskyIntelligenceAgent()
         let stream = await agent.streamTurn(
             conversationID: UUID(), accountDID: "did:plc:test", prompt: "Hello",
-            context: .search(query: "test"), history: [], route: .privateCloudCompute
+            context: .search(query: "test"), history: [], route: .privateCloudCompute, currentClient: nil
         )
         do {
             for try await _ in stream {

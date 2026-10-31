@@ -343,7 +343,6 @@ struct CircleMediaLoaderTests {
 
     let postEmbed = PostEmbed(
       embed: .appBskyEmbedRecordWithMediaView(recordWithMediaView),
-      labels: nil,
       path: .constant(NavigationPath()),
       visibilityContext: .circle(circle),
       authorDID: memberDID

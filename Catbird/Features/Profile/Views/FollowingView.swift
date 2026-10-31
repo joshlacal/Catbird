@@ -22,21 +22,13 @@ struct FollowingView: View {
 
     var body: some View {
         List {
-            if let error = viewModel.error {
-                ErrorStateView(
-                    error: error,
-                    context: "Failed to load following",
-                    retryAction: { Task { await retryLoadFollowing() } }
-                )
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets())
-            } else if !viewModel.follows.isEmpty {
+            if !viewModel.follows.isEmpty {
                 ForEach(viewModel.follows, id: \.did) { follow in
                     ProfileRowView(profile: follow, path: $path)
                         .listRowInsets(EdgeInsets())
                         .onAppear {
                             // Load more when reaching the end
-                            if follow == viewModel.follows.last && viewModel.hasMoreFollows && !viewModel.isLoadingMore {
+                            if follow == viewModel.follows.last && viewModel.hasMoreFollows && !viewModel.isLoadingMore && viewModel.error == nil {
                                 Task { await viewModel.loadFollowing() }
                             }
                         }
@@ -48,9 +40,28 @@ struct FollowingView: View {
                         .padding()
                         .frame(maxWidth: .infinity)
                         .listRowSeparator(.hidden)
+                } else if viewModel.error != nil {
+                    HStack {
+                        Text("Couldn’t load more.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Try Again") {
+                            Task { await retryLoadFollowing() }
+                        }
+                    }
+                    .padding()
+                    .listRowSeparator(.hidden)
                 }
-            } else if viewModel.isLoadingMore {
-                ProgressView("Loading following...")
+            } else if let error = viewModel.error {
+                ErrorStateView(
+                    error: error,
+                    context: "Failed to load following",
+                    retryAction: { Task { await retryLoadFollowing() } }
+                )
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+            } else if !viewModel.hasLoadedFollows || viewModel.isLoadingMore {
+                ProgressView("Loading…")
                     .frame(maxWidth: .infinity, minHeight: 100)
                     .padding()
                     .listRowSeparator(.hidden)
@@ -64,6 +75,9 @@ struct FollowingView: View {
     #if os(iOS)
     .toolbarTitleDisplayMode(.large)
     #endif
+        .refreshable {
+            await viewModel.refreshFollowing()
+        }
         .task {
             if viewModel.follows.isEmpty && !viewModel.isLoadingMore {
                 await viewModel.loadFollowing()

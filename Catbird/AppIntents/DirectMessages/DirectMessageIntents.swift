@@ -22,10 +22,10 @@ struct SendDirectMessageIntent: AppIntent {
   @Parameter(title: "Account")
   var account: AccountEntity?
 
-  @Parameter(title: "Recipient")
+  @Parameter(title: "Recipient", requestValueDialog: IntentDialog("Who do you want to message?"))
   var recipient: ProfileEntity
 
-  @Parameter(title: "Message")
+  @Parameter(title: "Message", requestValueDialog: IntentDialog("What do you want to say?"))
   var message: String
 
   init() {}
@@ -33,11 +33,12 @@ struct SendDirectMessageIntent: AppIntent {
   func perform() async throws -> some IntentResult & ProvidesDialog {
     let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
-      throw IntentError.invalidParameter("Message text cannot be empty.")
+      throw IntentError.invalidParameter("Enter a message to send.")
     }
 
     let did = account?.id ?? IntentAccountResolver.activeDID()
     let client = try await IntentClientProvider.shared.client(for: did)
+    let sendingDID = try await client.getDid()
     let recipientName = recipient.displayName ?? "@\(recipient.handle)"
 
     let (convoCode, convoData) = try await client.chat.bsky.convo.getConvoForMembers(
@@ -45,9 +46,16 @@ struct SendDirectMessageIntent: AppIntent {
         members: [try DID(didString: recipient.id)]))
     guard (200..<300).contains(convoCode), let convo = convoData?.convo else {
       throw IntentError.invalidParameter(
-        "\(recipientName) can't receive direct messages right now.")
+        "\(recipientName) can’t receive direct messages right now.")
     }
 
+    // A message can't be unsent for the recipient, so always confirm the
+    // recipient and text first (Siri may have misheard either).
+    try await requestConfirmation(
+      actionName: .send,
+      dialog: IntentDialog("Send “\(text)” to \(recipientName)?"))
+
+    try await IntentClientProvider.shared.requireCoveredUse(for: sendingDID)
     _ = try unwrapIntentResponse(
       await client.chat.bsky.convo.sendMessage(
         input: ChatBskyConvoSendMessage.Input(
@@ -55,7 +63,7 @@ struct SendDirectMessageIntent: AppIntent {
           message: ChatBskyConvoDefs.MessageInput(
             text: text, facets: nil, embed: nil, replyTo: nil))))
 
-    return .result(dialog: IntentDialog(stringLiteral: "Sent to \(recipientName)."))
+    return .result(dialog: IntentDialog("Sent to \(recipientName)."))
   }
 }
 
@@ -79,12 +87,12 @@ struct GetConversationsIntent: AppIntent {
       limit: limit ?? 25, accountDID: did)
 
     let dialog: IntentDialog
-    if let first = conversations.first {
-      dialog = IntentDialog(
-        stringLiteral:
-          "Found \(conversations.count) conversation\(conversations.count == 1 ? "" : "s"). Latest: \(first.title).")
+    if let first = conversations.first, conversations.count == 1 {
+      dialog = IntentDialog("Found 1 conversation: \(first.title).")
+    } else if let first = conversations.first {
+      dialog = IntentDialog("Found \(conversations.count) conversations. Latest: \(first.title).")
     } else {
-      dialog = IntentDialog(stringLiteral: "No conversations found.")
+      dialog = IntentDialog("No conversations found.")
     }
     return .result(value: conversations, dialog: dialog)
   }
@@ -110,10 +118,13 @@ struct GetUnreadDMCountIntent: AppIntent {
         input: ChatBskyConvoListConvos.Parameters(limit: 100)))
     let unread = output.convos.reduce(0) { $0 + $1.unreadCount }
 
-    return .result(
-      value: unread,
-      dialog: IntentDialog(
-        stringLiteral: "You have \(unread) unread direct message\(unread == 1 ? "" : "s")."))
+    let dialog: IntentDialog
+    if unread == 1 {
+      dialog = IntentDialog("You have 1 unread direct message.")
+    } else {
+      dialog = IntentDialog("You have \(unread) unread direct messages.")
+    }
+    return .result(value: unread, dialog: dialog)
   }
 }
 
@@ -140,6 +151,6 @@ struct MarkConversationReadIntent: AppIntent {
         input: ChatBskyConvoUpdateRead.Input(convoId: conversation.id)))
 
     return .result(
-      dialog: IntentDialog(stringLiteral: "Marked \(conversation.title) as read."))
+      dialog: IntentDialog("Marked \(conversation.title) as read."))
   }
 }

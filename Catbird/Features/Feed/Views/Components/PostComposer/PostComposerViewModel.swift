@@ -45,14 +45,36 @@ final class PostComposerViewModel {
   
   // MARK: - Reply and Quote Properties
   
-  var parentPost: AppBskyFeedDefs.PostView?
-  var quotedPost: AppBskyFeedDefs.PostView?
+  var parentPost: AppBskyFeedDefs.PostView? {
+    didSet {
+      if !isUpdatingText {
+        pendingParentPostURI = parentPost?.uri.uriString()
+        parentRestorationTask?.cancel()
+      }
+    }
+  }
+  var quotedPost: AppBskyFeedDefs.PostView? {
+    didSet {
+      // Entry switching temporarily clears this property while loading a different entry.
+      guard !isUpdatingText, threadEntries.indices.contains(currentThreadIndex) else { return }
+      let entryID = threadEntries[currentThreadIndex].id
+      quoteRestorationTasks[entryID]?.cancel()
+      quoteRestorationTasks[entryID] = nil
+      threadEntries[currentThreadIndex].quotedPost = quotedPost
+      threadEntries[currentThreadIndex].draftQuotedPostURI = quotedPost?.uri.uriString()
+      threadEntries[currentThreadIndex].draftQuotedPostCID = quotedPost?.cid.string
+    }
+  }
   var replyTo: AppBskyFeedDefs.PostView?
   
   // MARK: - Media Properties
   
+  @ObservationIgnored let mediaPreviewLoads = MediaPreviewLoadRegistry()
   var mediaItems: [MediaItem] = []
   var videoItem: MediaItem?
+  private(set) var pendingAudioURL: URL?
+  private(set) var pendingAudioThreadEntryID: UUID?
+  private(set) var isPreparingPendingAudio = false
   var currentEditingMediaId: UUID?
   var isAltTextEditorPresented = false
   var isPhotoEditorPresented = false
@@ -83,7 +105,12 @@ final class PostComposerViewModel {
   // MARK: - URL Embed Selection
   /// The first URL pasted/detected will be used as the embed (if no other embed type is set)
   /// This tracks which URL should be featured as the embed card
-  var selectedEmbedURL: String?
+  var selectedEmbedURL: String? {
+    didSet {
+      // Selecting a card starts its thumbnail upload, so submit only awaits it (P176).
+      if selectedEmbedURL != oldValue { preUploadThumbnails() }
+    }
+  }
   
   /// URLs that should be kept as embeds even when removed from text
   /// This allows users to paste a URL, generate preview, then delete the URL text
@@ -93,6 +120,10 @@ final class PostComposerViewModel {
   
   /// Cache for uploaded thumbnail blobs by URL
   var thumbnailCache: [String: Blob] = [:]
+  /// In-flight link-card thumbnail uploads keyed by resolved URL, so submit awaits an upload
+  /// that started when the card was selected instead of starting a second one. An entry is
+  /// removed when its upload finishes, so a failed upload is tried again.
+  @ObservationIgnored var thumbnailUploadTasks: [String: Task<Blob?, Never>] = [:]
   
   // MARK: - Mention Properties
   
@@ -134,7 +165,9 @@ final class PostComposerViewModel {
   var mediaSourceTracker: Set<String> = []
   var showLabelSelector = false
   var showThreadgateOptions = false
-  var interactionSettings: PostInteractionSettingsState = PostInteractionSettingsState()
+  var interactionSettings: PostInteractionSettingsState = PostInteractionSettingsState() {
+    didSet { interactionSettingsRevision += 1 }
+  }
   var threadgateSettings: ThreadgateSettings {
     get { interactionSettings.threadgate }
     set { interactionSettings.threadgate = newValue }
@@ -142,19 +175,44 @@ final class PostComposerViewModel {
   // MARK: - Private Properties
   
   let appState: AppState
-  
-  // MARK: - Performance Optimization
-  
-  @available(iOS 16.0, macOS 13.0, *)
-  private var _performanceOptimizer: PostComposerPerformanceOptimizer?
-  
-  @available(iOS 16.0, macOS 13.0, *)
-  var performanceOptimizer: PostComposerPerformanceOptimizer? {
-    if _performanceOptimizer == nil {
-      _performanceOptimizer = PostComposerPerformanceOptimizer()
-    }
-    return _performanceOptimizer
+  let editingSession: SceneComposerEditingSession?
+  private(set) var editingClaim: ComposerDraftClaim?
+  private let editingPresentationID = UUID()
+  private var serializedEditingContent: EditingContent?
+  private var serializedEditingDraft: PostComposerDraft?
+  private var submissionRecoveryDraft: PostComposerDraft?
+
+  private var draftRestorationGeneration = UUID()
+  private var pendingParentPostURI: String?
+  /// True when a restored reply's original post couldn't be loaded.
+  private(set) var parentRestoreFailed = false
+  private var parentRestorationTask: Task<Void, Never>?
+  private var quoteRestorationTasks: [UUID: Task<Void, Never>] = [:]
+  private var interactionDefaultsTask: Task<Void, Never>?
+  private var interactionSettingsRevision = 0
+  private struct DraftInteractionSnapshot {
+    let settings: PostInteractionSettingsState
+    let threadgateAllow: [AppBskyDraftDefs.DraftThreadgateAllowUnion]?
+    let postgateEmbeddingRules: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]?
   }
+  private var restoredInteractionSnapshot: DraftInteractionSnapshot?
+  
+  // MARK: - Debounced Work
+
+  // Each task captures the view model weakly, so a pending debounce never keeps a closed
+  // composer, and the photos it holds, alive.
+  @ObservationIgnored var textProcessingDebounceTask: Task<Void, Never>?
+  @ObservationIgnored var urlCardDebounceTask: Task<Void, Never>?
+  @ObservationIgnored var urlCardLoadsInFlight: Set<String> = []
+
+  // MARK: - Draft Image Files
+
+  /// The draft file written for each image attachment's current bytes. Autosaves reuse it
+  /// instead of hashing and writing every image again.
+  @ObservationIgnored private var draftImageFiles: [UUID: DraftImageFile] = [:]
+  /// Draft files this editor created before its composition had a claim (the first save of a
+  /// new editor). They join the composition's files once it is claimed.
+  @ObservationIgnored private var unclaimedDraftImageFiles: Set<String> = []
   
   #if DEBUG
   @ObservationIgnored
@@ -212,13 +270,17 @@ final class PostComposerViewModel {
     return postText.count > maxCharacterCount
   }
   
-  // MARK: - Circle Destination and Submission Properties
-  
+  // MARK: - Circle Destination and Submission State
+
   private(set) var destination: CircleDestination = .public
+  /// The post submission in flight; guards against duplicate submits and freezes the destination.
   private(set) var activeSubmission: PostSubmission?
   var isReplyLockedToCircle: Bool = false
   var circleService: CircleService?
-  
+
+  /// True while a post submission is in flight; guards against duplicate submits.
+  var isSubmissionActive: Bool { activeSubmission != nil }
+
   var canChangeDestination: Bool {
     guard activeSubmission == nil else { return false }
     guard !isReplyLockedToCircle else { return false }
@@ -239,10 +301,11 @@ final class PostComposerViewModel {
   }
   
   @discardableResult
-  func beginSubmission() throws -> PostSubmission {
+  func beginSubmission() -> PostSubmission {
     if let active = activeSubmission {
       return active
     }
+    submissionRecoveryDraft = ownsEditingDraft ? serializedDraftForCurrentContent() : nil
     let submission = PostSubmission(
       id: UUID(),
       destination: self.destination,
@@ -255,6 +318,7 @@ final class PostComposerViewModel {
   
   func endSubmission() {
     self.activeSubmission = nil
+    submissionRecoveryDraft = nil
   }
   
   // MARK: - Initialization
@@ -264,7 +328,8 @@ final class PostComposerViewModel {
     quotedPost: AppBskyFeedDefs.PostView? = nil,
     destination: CircleDestination = .public,
     appState: AppState,
-    circleService: CircleService? = nil
+    circleService: CircleService? = nil,
+    editingSession: SceneComposerEditingSession? = nil
   ) {
     logger.info("PostComposerViewModel: Initializing - parentPost: \(parentPost != nil), quotedPost: \(quotedPost != nil)")
     self.parentPost = parentPost
@@ -275,23 +340,9 @@ final class PostComposerViewModel {
     }
     self.appState = appState
     self.circleService = circleService
+    self.editingSession = editingSession
 
-    // Initialize interaction settings from saved account defaults
-    if let defaultPref = appState.preferencesManager.cachedPostInteractionSettingsPref() {
-      self.interactionSettings = Self.interactionSettings(from: defaultPref)
-    } else {
-      self.interactionSettings = PostInteractionSettingsState()
-      Task { [weak self] in
-        guard let self = self else { return }
-        if let pref = try? await self.appState.preferencesManager.getPostInteractionSettingsPref() {
-          await MainActor.run {
-            if !self.interactionSettings.isCustom {
-              self.interactionSettings = Self.interactionSettings(from: pref)
-            }
-          }
-        }
-      }
-    }
+    loadDefaultInteractionSettings()
     if let client = appState.atProtoClient {
       self.mediaUploadManager = MediaUploadManager(client: client)
       logger.debug("PostComposerViewModel: MediaUploadManager initialized")
@@ -303,60 +354,387 @@ final class PostComposerViewModel {
     
     // Initialize thread mode properly
     setupInitialState()
-    
-    // Initialize performance optimization
-    if #available(iOS 16.0, macOS 13.0, *) {
-      _ = performanceOptimizer // Initialize lazily
-      logger.debug("PostComposerViewModel: Performance optimizer initialized")
-    }
+    LiveDraftMediaReferences.register(self)
     
     logger.info("PostComposerViewModel: Initialization complete")
   }
   
   // MARK: - Auto-save Management
   
-func saveDraftIfNeeded() {
-    // Don't save if there's no content
-    let hasText = !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let hasMedia = !mediaItems.isEmpty
-    let hasVideo = videoItem != nil
-    let hasGif = selectedGif != nil
-    
-    guard hasText || hasMedia || hasVideo || hasGif else {
-      logger.trace("PostComposerViewModel: saveDraftIfNeeded - no content to save")
-      return
+  /// Starts only the request explicitly supplied by the originating scene.
+  /// A missing claim means a new editor, never an implicit resume.
+  func startEditing(restoring draft: PostComposerDraft? = nil, claim: ComposerDraftClaim? = nil) throws {
+    guard !Task.isCancelled, let editingSession, editingSession.accountDID == appState.userDID else {
+      throw editingOwnershipError()
     }
-    
-    logger.info("PostComposerViewModel: Saving draft - text: \(hasText), media: \(hasMedia), video: \(hasVideo), gif: \(hasGif)")
-    
-    // Save draft
-    let draft = saveDraftState()
-    appState.composerDraftManager.storeDraft(draft)
-    // Keep the AppView copy fresh while editing a restored saved draft
-    // (debounced; no-op unless draft sync is enabled)
-    appState.composerDraftManager.scheduleWorkingDraftSync(draft)
+    if let claim {
+      guard claim.sceneID == editingSession.sceneID,
+            claim.accountDID == editingSession.accountDID,
+            editingSession.resume(claim: claim),
+            editingSession.claimEditor(editingPresentationID, claim: claim),
+            let snapshot = editingSession.snapshot(), snapshot.claim == claim else {
+        throw editingOwnershipError()
+      }
+      // Lease takeover flushes the previous live editor before this read.
+      editingClaim = claim
+      restoreDraftState(snapshot.draft)
+      cacheSerializedDraft(snapshot.draft)
+    } else {
+      if let draft { restoreDraftState(draft) }
+      let body = serializedDraftForCurrentContent()
+      let claim = try editingSession.beginNew(draft: body)
+      guard editingSession.claimEditor(editingPresentationID, claim: claim) else { throw editingOwnershipError() }
+      editingClaim = claim
+      for urlString in unclaimedDraftImageFiles {
+        editingSession.recordCreatedDraftImageFile(urlString, claim: claim)
+      }
+      unclaimedDraftImageFiles.removeAll()
+      cacheSerializedDraft(body)
+    }
+    try registerLiveDraftProvider()
+  }
 
-    logger.debug("PostComposerViewModel: Draft saved - text preview: \(self.postText.prefix(50))...")
+  func restoreSavedDraft(_ draft: DraftPostViewModel) throws {
+    guard let editingSession else { throw editingOwnershipError() }
+    let claim = try editingSession.restoreSaved(draft)
+    guard editingSession.claimEditor(editingPresentationID, claim: claim) else { throw editingOwnershipError() }
+    editingClaim = claim
+    guard let snapshot = editingSession.snapshot(), snapshot.claim == editingClaim else {
+      throw editingOwnershipError()
+    }
+    restoreDraftState(snapshot.draft)
+    cacheSerializedDraft(snapshot.draft)
+    try registerLiveDraftProvider()
+  }
+
+  func replacementForSavedDraft(_ draft: DraftPostViewModel) throws -> PostComposerViewModel {
+    guard captureEditingSnapshot() != nil else { throw editingOwnershipError() }
+    let replacement = PostComposerViewModel(appState: appState, editingSession: editingSession)
+    try replacement.restoreSavedDraft(draft)
+    return replacement
+  }
+
+  @discardableResult
+  func detachEditingDraftForTransfer(_ snapshot: ComposerEditingSnapshot) -> Bool {
+    guard ownsEditingDraft, let editingSession, snapshot.claim == editingClaim else { return false }
+    return editingSession.detachForTransfer(snapshot)
+  }
+
+  var ownsEditingDraft: Bool {
+    guard let editingSession, let editingClaim else { return false }
+    return editingSession.ownsEditor(editingPresentationID, claim: editingClaim)
+      && editingClaim.accountDID == appState.userDID
+  }
+
+  /// Flushes the body and captures its ownership before any asynchronous work.
+  func captureEditingSnapshot() -> ComposerEditingSnapshot? {
+    guard !Task.isCancelled, let editingSession, let editingClaim, ownsEditingDraft,
+          editingSession.update(serializedDraftForCurrentContent(), claim: editingClaim) else { return nil }
+    return editingSession.snapshot()
+  }
+
+  private func cacheSerializedDraft(_ draft: PostComposerDraft) {
+    serializedEditingContent = editingContent()
+    serializedEditingDraft = draft
+  }
+
+  /// Keep identical media references when the editor body has not changed.
+  private func serializedDraftForCurrentContent() -> PostComposerDraft {
+    let content = editingContent()
+    if content == serializedEditingContent, let draft = serializedEditingDraft { return draft }
+    let draft = saveDraftState()
+    serializedEditingContent = editingContent()
+    serializedEditingDraft = draft
+    return draft
+  }
+
+  private func registerLiveDraftProvider() throws {
+    guard let editingSession, let claim = editingClaim,
+          editingSession.registerLiveDraftProvider(
+            editorID: editingPresentationID, claim: claim,
+            provider: { [weak self] in
+              // The session validates the exact lease before and after this
+              // callback, including teardown from a cancelled lifecycle task.
+              guard let self, self.editingClaim == claim else { return nil }
+              if self.isSubmissionActive, let frozen = self.submissionRecoveryDraft {
+                return frozen
+              }
+              return self.serializedDraftForCurrentContent()
+            }
+          ) else { throw editingOwnershipError() }
+  }
+
+  @discardableResult
+  func unregisterLiveDraftProvider() -> Bool {
+    guard let editingSession, let editingClaim else { return false }
+    return editingSession.unregisterLiveDraftProvider(editorID: editingPresentationID, claim: editingClaim)
+  }
+
+  func saveDraftIfNeeded(claim expectedClaim: ComposerDraftClaim? = nil) {
+    guard !Task.isCancelled, !isSubmissionActive,
+          expectedClaim == nil || expectedClaim == editingClaim,
+          ownsEditingDraft else { return }
+    _ = captureEditingSnapshot()
+  }
+
+  var hasMeaningfulDraftContent: Bool {
+    // SwiftUI reads this during layout. Inspect live state without serializing
+    // media or writing the active thread entry back into observable state.
+    if !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      || !mediaItems.isEmpty || videoItem != nil || selectedGif != nil
+      || quotedPost != nil || !outlineTags.isEmpty || !selectedLabels.isEmpty
+      || selectedEmbedURL != nil || !urlsKeptForEmbed.isEmpty || pendingAudioURL != nil {
+      return true
+    }
+    return threadEntries.enumerated().contains { index, entry in
+      if entry.draftQuotedPostURI != nil { return true }
+      guard isThreadMode, index != currentThreadIndex else { return false }
+      return !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !entry.mediaItems.isEmpty || entry.videoItem != nil || entry.selectedGif != nil
+        || entry.quotedPost != nil || !entry.hashtags.isEmpty || !entry.outlineTags.isEmpty
+        || entry.selectedEmbedURL != nil || !entry.urlsKeptForEmbed.isEmpty
+    }
+  }
+
+  @discardableResult
+  func minimizeEditingDraft() -> Bool {
+    guard !isSubmissionActive, ownsEditingDraft, let editingSession,
+          let editingClaim, captureEditingSnapshot() != nil,
+          editingSession.minimize(claim: editingClaim) else { return false }
+    if !ownsEditingDraft { clearAll() }
+    return true
+  }
+
+  @discardableResult
+  func discardEditingDraft() -> Bool {
+    guard ownsEditingDraft, let editingSession, let editingClaim,
+          editingSession.discard(claim: editingClaim) else { return false }
+    clearAll()
+    return true
+  }
+
+  @discardableResult
+  func preserveRecordedAudio(at url: URL, claim: ComposerDraftClaim?, threadEntryID: UUID) -> Bool {
+    guard ownsEditingDraft, editingClaim == claim, pendingAudioURL == nil,
+          threadEntries.contains(where: { $0.id == threadEntryID }) else { return false }
+    pendingAudioURL = url
+    pendingAudioThreadEntryID = threadEntryID
+    saveDraftIfNeeded()
+    return true
+  }
+
+  func removePendingAudio() {
+    guard ownsEditingDraft, !isPreparingPendingAudio else { return }
+    // A saved row or another recovery envelope may still reference this file.
+    pendingAudioURL = nil
+    pendingAudioThreadEntryID = nil
+    saveDraftIfNeeded()
+  }
+
+  @discardableResult
+  func finishPendingAudio(
+    withVideoAt videoURL: URL,
+    audioURL: URL,
+    claim: ComposerDraftClaim?,
+    threadEntryID: UUID,
+    prepareVideo: (@MainActor (URL) async throws -> PreparedPendingAudioVideo)? = nil
+  ) async throws -> Bool {
+    guard !Task.isCancelled, !isPreparingPendingAudio, ownsEditingDraft, editingClaim == claim,
+          pendingAudioURL == audioURL, pendingAudioThreadEntryID == threadEntryID,
+          threadEntries.contains(where: { $0.id == threadEntryID }) else { return false }
+    // Includes live media identities and the active entry. No draft writes occur while staging.
+    let originalContent = editingContent()
+    isPreparingPendingAudio = true
+    defer { isPreparingPendingAudio = false }
+
+    let prepared: PreparedPendingAudioVideo
+    if let prepareVideo {
+      prepared = try await prepareVideo(videoURL)
+    } else {
+      prepared = try await preparePendingAudioVideo(videoURL)
+    }
+    var committed = false
+    defer { if !committed { prepared.discard() } }
+    guard !Task.isCancelled, ownsEditingDraft, editingClaim == claim,
+          pendingAudioURL == audioURL, pendingAudioThreadEntryID == threadEntryID,
+          editingContent() == originalContent,
+          let index = threadEntries.firstIndex(where: { $0.id == threadEntryID }) else { return false }
+
+    // One synchronous publication to the recording's original post, even when another is selected.
+    threadEntries[index].mediaItems = []
+    threadEntries[index].selectedGif = nil
+    threadEntries[index].videoItem = prepared.item
+    if index == currentThreadIndex {
+      mediaItems = []
+      selectedGif = nil
+      videoItem = prepared.item
+      videoUploadBlockedReason = prepared.blockedReason
+      videoUploadBlockedCode = prepared.blockedCode
+    }
+    pendingAudioURL = nil
+    pendingAudioThreadEntryID = nil
+    saveDraftIfNeeded()
+    committed = true
+    return true
+  }
+
+  /// This comparison has no file writes, unlike the persisted media wrappers.
+  struct EditingContent: Equatable {
+    struct Media: Equatable {
+      let id: UUID
+      let data: Data?
+      let videoData: Data?
+      let videoURL: URL?
+      let imageURL: URL?
+      let altText: String
+      let aspectRatio: CGSize?
+      let isLoading: Bool
+      let isAudioVisualizerVideo: Bool
+      let isGifConversion: Bool
+      let caption: VideoCaption?
+
+      init(_ item: MediaItem) {
+        id = item.id
+        data = item.rawData
+        videoData = item.videoData
+        videoURL = item.rawVideoURL
+        imageURL = item.rawImageURL
+        altText = item.altText
+        aspectRatio = item.aspectRatio
+        isLoading = item.isLoading
+        isAudioVisualizerVideo = item.isAudioVisualizerVideo
+        isGifConversion = item.isGifConversion
+        caption = item.caption
+      }
+    }
+
+    let text: String
+    let media: [Media]
+    let video: Media?
+    let gif: TenorGif?
+    let languages: [LanguageCodeContainer]
+    let labels: Set<ComAtprotoLabelDefs.LabelValue>
+    let tags: [String]
+    let threadEntries: [ThreadEntry]
+    let threadMedia: [[Media]]
+    let threadVideos: [Media?]
+    let isThreadMode: Bool
+    let currentThreadIndex: Int
+    let parentURI: String?
+    let quotedURI: String?
+    let interactionSettings: PostInteractionSettingsState
+    let pendingAudioURL: URL?
+    let pendingAudioThreadEntryID: UUID?
+    let detectedURLs: [String]
+    let urlCards: [String: URLCardResponse]
+    let selectedEmbedURL: String?
+    let urlsKeptForEmbed: Set<String>
+  }
+
+  func editingContent() -> EditingContent {
+    EditingContent(
+      text: postText, media: mediaItems.map(EditingContent.Media.init),
+      video: videoItem.map(EditingContent.Media.init), gif: selectedGif,
+      languages: selectedLanguages, labels: selectedLabels, tags: outlineTags,
+      threadEntries: threadEntries,
+      threadMedia: threadEntries.map { $0.mediaItems.map(EditingContent.Media.init) },
+      threadVideos: threadEntries.map { $0.videoItem.map(EditingContent.Media.init) },
+      isThreadMode: isThreadMode, currentThreadIndex: currentThreadIndex,
+      parentURI: parentPost?.uri.uriString() ?? pendingParentPostURI,
+      quotedURI: quotedPost?.uri.uriString(), interactionSettings: interactionSettings,
+      pendingAudioURL: pendingAudioURL, pendingAudioThreadEntryID: pendingAudioThreadEntryID,
+      detectedURLs: detectedURLs, urlCards: urlCards,
+      selectedEmbedURL: selectedEmbedURL, urlsKeptForEmbed: urlsKeptForEmbed
+    )
+  }
+
+  @discardableResult
+  func completeEditingSubmission(_ snapshot: ComposerEditingSnapshot?, content: EditingContent) -> Bool {
+    guard let editingSession else { return true }
+    guard ownsEditingDraft, let snapshot, snapshot.claim == editingClaim,
+          content == editingContent() else { return false }
+    return editingSession.completeSubmission(snapshot)
+  }
+
+  func editingOwnershipError() -> NSError {
+    NSError(domain: "ComposerEditingSession", code: 1, userInfo: [
+      NSLocalizedDescriptionKey: "This draft is no longer open in this window."
+    ])
+  }
+
+  struct MediaLoadContext: Sendable {
+    let generation: UUID
+    let claim: ComposerDraftClaim?
+    let accountDID: String?
+    let entryID: UUID?
+  }
+
+  func mediaLoadContext() -> MediaLoadContext {
+    MediaLoadContext(
+      generation: draftRestorationGeneration, claim: editingClaim, accountDID: appState.userDID,
+      entryID: threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex].id : nil
+    )
+  }
+
+  func ownsMediaLoadDraft(_ context: MediaLoadContext) -> Bool {
+    context.generation == draftRestorationGeneration && context.claim == editingClaim
+      && context.accountDID == appState.userDID
+      && (editingSession == nil || ownsEditingDraft)
+  }
+
+  func ownsMediaLoad(_ context: MediaLoadContext) -> Bool {
+    ownsMediaLoadDraft(context)
+      && context.entryID == (threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex].id : nil)
+  }
+
+  /// A task that finishes offscreen must not leave a stored thread attachment spinning.
+  func finishMediaLoad(withId id: UUID, context: MediaLoadContext) {
+    guard ownsMediaLoadDraft(context) else { return }
+    if ownsMediaLoad(context) {
+      if videoItem?.id == id { videoItem?.isLoading = false }
+      if let index = mediaItems.firstIndex(where: { $0.id == id }) {
+        mediaItems[index].isLoading = false
+      }
+      syncMediaStateToCurrentThread()
+    }
+    if let index = threadEntries.firstIndex(where: { $0.id == context.entryID }) {
+      if threadEntries[index].videoItem?.id == id { threadEntries[index].videoItem?.isLoading = false }
+      if let mediaIndex = threadEntries[index].mediaItems.firstIndex(where: { $0.id == id }) {
+        threadEntries[index].mediaItems[mediaIndex].isLoading = false
+      }
+    }
   }
 
   // MARK: - Video Upload Eligibility
   func checkVideoUploadEligibility(force: Bool = false) async {
-    guard videoItem != nil, let manager = mediaUploadManager else { 
+    guard let videoID = videoItem?.id, let manager = mediaUploadManager else { 
       logger.trace("PostComposerViewModel: checkVideoUploadEligibility - no video or manager")
       return 
     }
     logger.info("PostComposerViewModel: Checking video upload eligibility - force: \(force)")
+    let context = mediaLoadContext()
+    if let owner = videoUploadOwner(for: videoID),
+       let store = try? VideoUploadCheckpointStore.shared.get(),
+       let saved = try? await store.load(owner: owner),
+       [.uploading, .finishing, .processing, .complete].contains(saved.phase)
+         || (saved.phase == .abandoned && saved.uploadJobID != nil) {
+      guard !Task.isCancelled, videoItem?.id == videoID, ownsMediaLoad(context) else { return }
+      // An existing reservation/job can be resumed even when no new upload allowance remains.
+      // Submission still verifies the exact owner/file and asks the server for authoritative state.
+      videoUploadBlockedReason = nil
+      videoUploadBlockedCode = nil
+      return
+    }
     let result = await manager.preflightUploadPermission(force: force)
-    await MainActor.run {
-      if result.allowed {
-        logger.info("PostComposerViewModel: Video upload allowed")
-        self.videoUploadBlockedReason = nil
-        self.videoUploadBlockedCode = nil
-      } else {
-        logger.warning("PostComposerViewModel: Video upload blocked - code: \(result.code ?? "none"), message: \(result.message ?? "none")")
-        self.videoUploadBlockedReason = result.message ?? "Video uploads are currently unavailable"
-        self.videoUploadBlockedCode = result.code
-      }
+    guard !Task.isCancelled, videoItem?.id == videoID, ownsMediaLoad(context) else { return }
+    if result.allowed {
+      logger.info("PostComposerViewModel: Video upload allowed")
+      self.videoUploadBlockedReason = nil
+      self.videoUploadBlockedCode = nil
+    } else {
+      logger.warning("PostComposerViewModel: Video upload blocked - code: \(result.code ?? "none"), message: \(result.message ?? "none")")
+      self.videoUploadBlockedReason = result.message ?? "Video uploads are currently unavailable"
+      self.videoUploadBlockedCode = result.code
     }
   }
 
@@ -422,32 +800,142 @@ func saveDraftIfNeeded() {
   }
   
   func saveDraftState() -> PostComposerDraft {
+    updateCurrentThreadEntry()
+    let rootQuote = isThreadMode && currentThreadIndex != 0 ? threadEntries.first?.quotedPost : quotedPost
+    let rootQuoteURI = threadEntries.first?.draftQuotedPostURI ?? rootQuote?.uri.uriString()
+    let rootQuoteCID = threadEntries.first?.draftQuotedPostCID ?? rootQuote?.cid.string
+    let rules = effectiveDraftInteractionRules()
+    let imageFiles = persistDraftImageFiles()
+    let codableMedia: (MediaItem) -> CodableMediaItem = { item in
+      CodableMediaItem(from: item, persistedImageURLString: DraftImageFile.urlString(for: item, in: imageFiles))
+    }
     return PostComposerDraft(
       postText: postText,
-      mediaItems: mediaItems.map(CodableMediaItem.init),
-      videoItem: videoItem.map(CodableMediaItem.init),
+      mediaItems: mediaItems.map(codableMedia),
+      videoItem: videoItem.map(codableMedia),
       selectedGif: selectedGif,
       selectedLanguages: selectedLanguages,
       selectedLabels: selectedLabels,
       outlineTags: outlineTags,
-      threadEntries: threadEntries.map { CodableThreadEntry(from: $0, parentPost: parentPost, quotedPost: quotedPost) },
+      threadEntries: threadEntries.enumerated().map { index, entry in
+        CodableThreadEntry(from: entry, parentPost: index == 0 ? parentPost : nil,
+                           quotedPost: index == 0 ? rootQuote : nil,
+                           parentPostURI: index == 0 ? pendingParentPostURI : nil,
+                           encodeMedia: codableMedia)
+      },
       isThreadMode: isThreadMode,
       currentThreadIndex: currentThreadIndex,
-      parentPostURI: parentPost?.uri.uriString(),
-      quotedPostURI: quotedPost?.uri.uriString()
+      parentPostURI: parentPost?.uri.uriString() ?? pendingParentPostURI,
+      quotedPostURI: rootQuoteURI,
+      quotedPostCID: rootQuoteCID,
+      draftPostgateEmbeddingRules: rules.postgate,
+      draftThreadgateAllow: rules.threadgate,
+      hasDraftInteractionSettings: true,
+      pendingAudioURLString: pendingAudioURL?.absoluteString,
+      pendingAudioThreadEntryID: pendingAudioThreadEntryID
     )
   }
   
+  /// Records a draft file written off the main actor for an attachment's bytes. `claim` is the
+  /// composition the write was started for; a file the write created becomes one of its files.
+  func rememberDraftImageFile(_ file: DraftImageWrite, for id: UUID, data: Data, claim: ComposerDraftClaim?) {
+    draftImageFiles[id] = DraftImageFile(data: data, urlString: file.urlString)
+    noteCreatedDraftImageFile(file, claim: claim)
+  }
+
+  /// A draft file written for bytes that no attachment kept: the attachment was removed, an
+  /// edit was superseded, or the composition ended while the work ran. Nothing will save it, so
+  /// a file the write created is removed now unless something else names it.
+  func releaseUnusedDraftImageFile(_ file: DraftImageWrite?) {
+    Self.releaseUnusedDraftImageFile(file, session: editingSession)
+  }
+
+  /// The same, for work that finished after its editor was released.
+  static func releaseUnusedDraftImageFile(_ file: DraftImageWrite?, session: SceneComposerEditingSession?) {
+    guard let file, file.created, let session else { return }
+    session.removeUnreferencedDraftImageFiles([file.urlString])
+  }
+
+  private func noteCreatedDraftImageFile(_ file: DraftImageWrite, claim: ComposerDraftClaim?) {
+    guard file.created, let editingSession else { return }
+    guard let claim else {
+      unclaimedDraftImageFiles.insert(file.urlString)
+      return
+    }
+    if !editingSession.recordCreatedDraftImageFile(file.urlString, claim: claim) {
+      // The composition ended while the file was written; no one will save or discard it.
+      editingSession.removeUnreferencedDraftImageFiles([file.urlString])
+    }
+  }
+
+  /// Returns the draft file for an image's current bytes, hashing and writing them only when
+  /// this attachment has no file yet or its bytes changed (crop or edit).
+  private func draftImageURLString(for item: MediaItem) -> String? {
+    guard let data = item.rawData else { return nil }
+    if let file = draftImageFiles[item.id], file.data == data, file.exists { return file.urlString }
+    guard let file = CodableMediaItem.writeImageData(data) else { return nil }
+    rememberDraftImageFile(file, for: item.id, data: data, claim: editingClaim)
+    return file.urlString
+  }
+
+  /// Writes a file for each attachment whose current bytes have none, and drops entries for
+  /// removed attachments so their bytes are not kept alive.
+  private func persistDraftImageFiles() -> [UUID: DraftImageFile] {
+    var items = mediaItems + [videoItem].compactMap { $0 }
+    for entry in threadEntries {
+      items += entry.mediaItems + [entry.videoItem].compactMap { $0 }
+    }
+    let liveIDs = Set(items.map(\.id))
+    draftImageFiles = draftImageFiles.filter { liveIDs.contains($0.key) }
+    for item in items {
+      _ = draftImageURLString(for: item)
+    }
+    return draftImageFiles
+  }
+
+  /// A restored image was just read from its content-named draft file, so the first save
+  /// after a restore reuses that file instead of hashing the bytes again.
+  private func rememberRestoredDraftImageFiles() {
+    let restored = mediaItems + threadEntries.flatMap(\.mediaItems)
+    for item in restored {
+      guard let data = item.rawData, let url = item.rawImageURL, url.isFileURL,
+            url.lastPathComponent.hasPrefix("draft_image_") else { continue }
+      draftImageFiles[item.id] = DraftImageFile(data: data, urlString: url.absoluteString)
+    }
+  }
+
+  /// Cancels pending text and link-card passes and in-flight thumbnail uploads.
+  private func cancelDebouncedWork() {
+    textProcessingDebounceTask?.cancel()
+    textProcessingDebounceTask = nil
+    urlCardDebounceTask?.cancel()
+    urlCardDebounceTask = nil
+    thumbnailUploadTasks.values.forEach { $0.cancel() }
+    thumbnailUploadTasks.removeAll()
+  }
+
   func clearAll() {
     logger.info("PostComposerViewModel: Clearing all composer state")
     isUpdatingText = true
     defer { isUpdatingText = false }
+    invalidateDraftRestoration()
+    cancelDebouncedWork()
+    // Posted or discarded photos should not stay in memory until the next save.
+    draftImageFiles.removeAll()
+    unclaimedDraftImageFiles.removeAll()
+    parentPost = nil
+    replyTo = nil
+    quotedPost = nil
+    pendingParentPostURI = nil
+    restoredInteractionSnapshot = nil
     
     postText = ""
     richAttributedText = NSAttributedString()
     attributedPostText = AttributedString()
     mediaItems = []
     videoItem = nil
+    pendingAudioURL = nil
+    pendingAudioThreadEntryID = nil
     selectedGif = nil
     selectedLanguages = []
     selectedLabels = []
@@ -460,21 +948,7 @@ func saveDraftIfNeeded() {
     selectedEmbedURL = nil
     urlsKeptForEmbed = []
     mentionSuggestions = []
-    if let defaultPref = appState.preferencesManager.cachedPostInteractionSettingsPref() {
-      interactionSettings = Self.interactionSettings(from: defaultPref)
-    } else {
-      interactionSettings = PostInteractionSettingsState()
-      Task { [weak self] in
-        guard let self = self else { return }
-        if let pref = try? await self.appState.preferencesManager.getPostInteractionSettingsPref() {
-          await MainActor.run {
-            if !self.interactionSettings.isCustom {
-              self.interactionSettings = Self.interactionSettings(from: pref)
-            }
-          }
-        }
-      }
-    }
+    loadDefaultInteractionSettings()
     
     logger.debug("PostComposerViewModel: All state cleared")
   }
@@ -483,6 +957,7 @@ func saveDraftIfNeeded() {
     logger.info("PostComposerViewModel: Restoring draft state - text length: \(draft.postText.count), media: \(draft.mediaItems.count), video: \(draft.videoItem != nil), gif: \(draft.selectedGif != nil)")
     isUpdatingText = true
     isDraftMode = true
+    invalidateDraftRestoration()
 
     defer {
       isUpdatingText = false
@@ -493,30 +968,54 @@ func saveDraftIfNeeded() {
     postText = draft.postText
     mediaItems = draft.mediaItems.map { $0.toMediaItem() }
     videoItem = draft.videoItem?.toMediaItem()
+    pendingAudioURL = draft.pendingAudioURLString.flatMap(URL.init(string:))
+    pendingAudioThreadEntryID = pendingAudioURL == nil ? nil : draft.pendingAudioThreadEntryID
     selectedGif = draft.selectedGif
     selectedLanguages = draft.selectedLanguages
     selectedLabels = draft.selectedLabels
     outlineTags = draft.outlineTags
     threadEntries = draft.threadEntries.map { $0.toThreadEntry() }
+    if threadEntries.isEmpty { threadEntries = [ThreadEntry()] }
+    rememberRestoredDraftImageFiles()
     isThreadMode = draft.isThreadMode
-    currentThreadIndex = draft.currentThreadIndex
+    currentThreadIndex = min(max(0, draft.currentThreadIndex), threadEntries.count - 1)
+    detectedURLs = threadEntries[currentThreadIndex].detectedURLs
+    urlCards = threadEntries[currentThreadIndex].urlCards
+    selectedEmbedURL = threadEntries[currentThreadIndex].selectedEmbedURL
+    urlsKeptForEmbed = threadEntries[currentThreadIndex].urlsKeptForEmbed
+    parentPost = nil
+    replyTo = nil
+    quotedPost = nil
+    pendingParentPostURI = draft.parentPostURI
+    if threadEntries[0].draftQuotedPostURI == nil {
+      threadEntries[0].draftQuotedPostURI = draft.quotedPostURI
+      threadEntries[0].draftQuotedPostCID = draft.quotedPostCID
+    }
+    restoredInteractionSnapshot = nil
+    if draft.hasDraftInteractionSettings == true || draft.draftThreadgateAllow != nil || draft.draftPostgateEmbeddingRules != nil {
+      interactionSettings = Self.interactionSettings(fromDraft: draft)
+      restoredInteractionSnapshot = DraftInteractionSnapshot(
+        settings: interactionSettings,
+        threadgateAllow: draft.draftThreadgateAllow,
+        postgateEmbeddingRules: draft.draftPostgateEmbeddingRules
+      )
+    } else {
+      loadDefaultInteractionSettings()
+    }
     
       logger.debug("PostComposerViewModel: Draft state restored - isThreadMode: \(self.isThreadMode), threadEntries: \(self.threadEntries.count), currentIndex: \(self.currentThreadIndex)")
 
     richAttributedText = NSAttributedString(string: postText)
     updatePostContent()
 
-    // Restore parent and quoted post references from URIs
+    // Retain strong refs before fetching display metadata, so autosave is lossless.
     if let parentURI = draft.parentPostURI {
-      logger.debug("PostComposerViewModel: Restoring parent post from URI: \(parentURI)")
-      Task {
-        await restorePostFromURI(parentURI, isParent: true)
-      }
+      parentRestorationTask = restorePostFromURI(parentURI, entryID: nil)
+      parentRestoreFailed = parentRestorationTask == nil
     }
-    if let quotedURI = draft.quotedPostURI {
-      logger.debug("PostComposerViewModel: Restoring quoted post from URI: \(quotedURI)")
-      Task {
-        await restorePostFromURI(quotedURI, isParent: false)
+    for entry in threadEntries {
+      if let quotedURI = entry.draftQuotedPostURI {
+        quoteRestorationTasks[entry.id] = restorePostFromURI(quotedURI, entryID: entry.id)
       }
     }
 
@@ -535,32 +1034,244 @@ func saveDraftIfNeeded() {
     }
   }
 
-  /// Fetch and restore a post from its URI
-  private func restorePostFromURI(_ uriString: String, isParent: Bool) async {
-    guard let client = appState.atProtoClient else { return }
+  private func invalidateDraftRestoration() {
+    draftRestorationGeneration = UUID()
+    parentRestoreFailed = false
+    parentRestorationTask?.cancel()
+    parentRestorationTask = nil
+    quoteRestorationTasks.values.forEach { $0.cancel() }
+    quoteRestorationTasks.removeAll()
+    interactionDefaultsTask?.cancel()
+    interactionDefaultsTask = nil
+  }
 
-    do {
-        let uri = try ATProtocolURI(uriString: uriString)
-      let params = AppBskyFeedGetPosts.Parameters(uris: [uri])
-      let (responseCode, response) = try await client.app.bsky.feed.getPosts(input: params)
-
-      if responseCode >= 200 && responseCode < 300,
-         let posts = response?.posts,
-         let post = posts.first {
-        await MainActor.run {
-          if isParent {
-            self.parentPost = post
-          } else {
-            self.quotedPost = post
-          }
-        }
-      }
-    } catch {
-      logger.error("Failed to restore post from URI \(uriString): \(error)")
+  private func loadDefaultInteractionSettings() {
+    interactionDefaultsTask?.cancel()
+    let preferences = appState.preferencesManager
+    if let pref = preferences.cachedPostInteractionSettingsPref() {
+      interactionSettings = Self.interactionSettings(from: pref)
+      return
+    }
+    interactionSettings = PostInteractionSettingsState()
+    let generation = draftRestorationGeneration
+    let revision = interactionSettingsRevision
+    let accountDID = appState.userDID
+    let activeAccountDID = AppStateManager.shared.lifecycle.userDID
+    interactionDefaultsTask = Task { [weak self] in
+      guard let pref = try? await preferences.getPostInteractionSettingsPref(),
+            !Task.isCancelled, let self,
+            self.appState.userDID == accountDID,
+            AppStateManager.shared.lifecycle.userDID == activeAccountDID,
+            self.draftRestorationGeneration == generation,
+            self.interactionSettingsRevision == revision,
+            self.restoredInteractionSnapshot == nil else { return }
+      self.interactionSettings = Self.interactionSettings(from: pref)
     }
   }
 
+  /// Fetch display metadata without replacing a removed or superseded strong reference.
+  private func restorePostFromURI(_ uriString: String, entryID: UUID?) -> Task<Void, Never>? {
+    guard let client = appState.atProtoClient else { return nil }
+    let generation = draftRestorationGeneration
+    let accountDID = appState.userDID
+    let activeAccountDID = AppStateManager.shared.lifecycle.userDID
+    guard activeAccountDID == nil || activeAccountDID == accountDID else { return nil }
+    return Task { [weak self] in
+      do {
+        let uri = try ATProtocolURI(uriString: uriString)
+        let params = AppBskyFeedGetPosts.Parameters(uris: [uri])
+        let (responseCode, response) = try await client.app.bsky.feed.getPosts(input: params)
+        guard !Task.isCancelled, let self,
+              self.draftRestorationGeneration == generation,
+              self.appState.userDID == accountDID,
+              AppStateManager.shared.lifecycle.userDID == activeAccountDID,
+              self.appState.atProtoClient === client else { return }
+        guard (200..<300).contains(responseCode),
+              let post = response?.posts.first(where: { $0.uri.uriString() == uriString }) else {
+          self.logger.error("Draft post unavailable - response code: \(responseCode)")
+          self.markParentRestoreFailed(uriString, entryID: entryID)
+          return
+        }
+        if let entryID {
+          guard let index = self.threadEntries.firstIndex(where: { $0.id == entryID }),
+                self.threadEntries[index].draftQuotedPostURI == uriString else { return }
+          self.threadEntries[index].quotedPost = post
+          // Keep the saved CID stable; hydration is only for display metadata.
+          if self.threadEntries[index].draftQuotedPostCID.flatMap({ try? CID.parse($0) }) == nil {
+            self.threadEntries[index].draftQuotedPostCID = post.cid.string
+          }
+          self.quoteRestorationTasks[entryID] = nil
+          if index == self.currentThreadIndex {
+            let wasUpdatingText = self.isUpdatingText
+            self.isUpdatingText = true
+            self.quotedPost = post
+            self.isUpdatingText = wasUpdatingText
+          }
+        } else {
+          guard self.pendingParentPostURI == uriString else { return }
+          self.parentRestorationTask = nil
+          self.parentPost = post
+          self.replyTo = post
+        }
+      } catch {
+        guard !Task.isCancelled, let self else { return }
+        self.logger.error("Failed to restore draft post: \(error.localizedDescription)")
+        guard self.draftRestorationGeneration == generation else { return }
+        self.markParentRestoreFailed(uriString, entryID: entryID)
+      }
+    }
+  }
+
+  private func markParentRestoreFailed(_ uriString: String, entryID: UUID?) {
+    guard entryID == nil, pendingParentPostURI == uriString, parentPost == nil else { return }
+    parentRestorationTask = nil
+    parentRestoreFailed = true
+  }
+
+  /// Tries again to load the original post of a restored reply draft.
+  func retryParentRestore() {
+    guard let uriString = pendingParentPostURI, parentPost == nil else { return }
+    parentRestorationTask?.cancel()
+    parentRestoreFailed = false
+    parentRestorationTask = restorePostFromURI(uriString, entryID: nil)
+    parentRestoreFailed = parentRestorationTask == nil
+  }
+
+  /// Turns a reply draft whose original post is unavailable into a new top-level post.
+  func detachUnavailableParent() {
+    guard parentPost == nil, pendingParentPostURI != nil else { return }
+    parentRestorationTask?.cancel()
+    parentRestorationTask = nil
+    pendingParentPostURI = nil
+    parentRestoreFailed = false
+    saveDraftIfNeeded()
+  }
+
+  isolated deinit {
+    if let editingClaim {
+      _ = editingSession?.unregisterLiveDraftProvider(editorID: editingPresentationID, claim: editingClaim)
+      _ = editingSession?.releaseEditor(editingPresentationID, claim: editingClaim)
+    }
+    parentRestorationTask?.cancel()
+    quoteRestorationTasks.values.forEach { $0.cancel() }
+    interactionDefaultsTask?.cancel()
+    parentRestorationTask = nil
+    quoteRestorationTasks.removeAll()
+    interactionDefaultsTask = nil
+    cancelDebouncedWork()
+  }
+
   // MARK: - Post Interaction Settings Helper (G40)
+
+  /// A quote can be published from its strong reference even if its preview is unavailable.
+  func postingQuoteReference(for entry: ThreadEntry? = nil) -> ComAtprotoRepoStrongRef? {
+    let source = entry ?? (threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex] : nil)
+    if let uriString = source?.draftQuotedPostURI,
+       let cidString = source?.draftQuotedPostCID,
+       let uri = try? ATProtocolURI(uriString: uriString),
+       let cid = try? CID.parse(cidString) {
+      return .init(uri: uri, cid: cid)
+    }
+    let post = entry == nil ? quotedPost : entry?.quotedPost
+    return post.map { .init(uri: $0.uri, cid: $0.cid) }
+  }
+
+  var draftReferenceLoadingReason: PostComposerSubmitValidationState.Reason? {
+    if pendingAudioURL != nil { return .pendingAudio }
+    if pendingParentPostURI != nil && parentPost == nil { return parentRestoreFailed ? .replyUnavailable : .replyLoading }
+    let entries = isThreadMode ? threadEntries : Array(threadEntries.prefix(1))
+    if entries.contains(where: { $0.draftQuotedPostURI != nil && postingQuoteReference(for: $0) == nil }) {
+      return .quoteLoading
+    }
+    return nil
+  }
+
+  var isReply: Bool {
+    parentPost != nil || pendingParentPostURI != nil
+  }
+
+  func ensureDraftReferencesReadyForPosting() throws {
+    guard let reason = draftReferenceLoadingReason else { return }
+    let validation = PostComposerSubmitValidationState(canSubmit: false, reason: reason)
+    throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: validation.message ?? "The saved post must load before posting."])
+  }
+
+  private func effectiveDraftInteractionRules() -> (
+    threadgate: [AppBskyDraftDefs.DraftThreadgateAllowUnion]?,
+    postgate: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]?
+  ) {
+    let current = Self.draftInteractionRules(from: interactionSettings)
+    guard let restored = restoredInteractionSnapshot else { return current }
+    // Preserve unsupported rules, and nil versus [], until that control is edited.
+    return (
+      restored.settings.threadgate == interactionSettings.threadgate ? restored.threadgateAllow : current.threadgate,
+      restored.settings.allowQuotes == interactionSettings.allowQuotes ? restored.postgateEmbeddingRules : current.postgate
+    )
+  }
+
+  func postingThreadgateRules() -> [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? {
+    // Bluesky only honors reply settings on the thread's root post.
+    guard !isReply else { return nil }
+    return effectiveDraftInteractionRules().threadgate?.map { rule in
+      switch rule {
+      case .appBskyFeedThreadgateMentionRule(let value): return .appBskyFeedThreadgateMentionRule(value)
+      case .appBskyFeedThreadgateFollowerRule(let value): return .appBskyFeedThreadgateFollowerRule(value)
+      case .appBskyFeedThreadgateFollowingRule(let value): return .appBskyFeedThreadgateFollowingRule(value)
+      case .appBskyFeedThreadgateListRule(let value): return .appBskyFeedThreadgateListRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+  }
+
+  func postingPostgateRules() -> [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]? {
+    effectiveDraftInteractionRules().postgate?.map { rule in
+      switch rule {
+      case .appBskyFeedPostgateDisableRule(let value): return .appBskyFeedPostgateDisableRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+  }
+
+  private static func draftInteractionRules(from settings: PostInteractionSettingsState) -> (
+    threadgate: [AppBskyDraftDefs.DraftThreadgateAllowUnion]?,
+    postgate: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]?
+  ) {
+    let threadgate = settings.toThreadgateAllowRules()?.map { rule -> AppBskyDraftDefs.DraftThreadgateAllowUnion in
+      switch rule {
+      case .appBskyFeedThreadgateMentionRule(let value): return .appBskyFeedThreadgateMentionRule(value)
+      case .appBskyFeedThreadgateFollowerRule(let value): return .appBskyFeedThreadgateFollowerRule(value)
+      case .appBskyFeedThreadgateFollowingRule(let value): return .appBskyFeedThreadgateFollowingRule(value)
+      case .appBskyFeedThreadgateListRule(let value): return .appBskyFeedThreadgateListRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    let postgate = settings.toPostgateEmbeddingRules()?.map { rule -> AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion in
+      switch rule {
+      case .appBskyFeedPostgateDisableRule(let value): return .appBskyFeedPostgateDisableRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    return (threadgate, postgate)
+  }
+
+  static func interactionSettings(fromDraft draft: PostComposerDraft) -> PostInteractionSettingsState {
+    let threadgate = draft.draftThreadgateAllow?.map { rule -> AppBskyActorDefs.PostInteractionSettingsPrefThreadgateAllowRulesUnion in
+      switch rule {
+      case .appBskyFeedThreadgateMentionRule(let value): return .appBskyFeedThreadgateMentionRule(value)
+      case .appBskyFeedThreadgateFollowerRule(let value): return .appBskyFeedThreadgateFollowerRule(value)
+      case .appBskyFeedThreadgateFollowingRule(let value): return .appBskyFeedThreadgateFollowingRule(value)
+      case .appBskyFeedThreadgateListRule(let value): return .appBskyFeedThreadgateListRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    let postgate = draft.draftPostgateEmbeddingRules?.map { rule -> AppBskyActorDefs.PostInteractionSettingsPrefPostgateEmbeddingRulesUnion in
+      switch rule {
+      case .appBskyFeedPostgateDisableRule(let value): return .appBskyFeedPostgateDisableRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    return interactionSettings(from: .init(threadgateAllowRules: threadgate, postgateEmbeddingRules: postgate))
+  }
 
   static func interactionSettings(from pref: AppBskyActorDefs.PostInteractionSettingsPref?) -> PostInteractionSettingsState {
     guard let pref = pref else {
@@ -626,29 +1337,43 @@ func saveDraftIfNeeded() {
   // MARK: - Media Item Model
   
   struct MediaItem: Identifiable {
-    let id = UUID()
+    let id: UUID
     var pickerItem: PhotosPickerItem?
-    var image: Image?
+    /// `Image` is not Equatable, so every assignment advances `previewRevision`, which `==`
+    /// compares. SwiftUI and Observation then see a decoded or edited preview as a change.
+    var image: Image? { didSet { previewRevision &+= 1 } }
+    private(set) var previewRevision: UInt64 = 0
     var isLoading: Bool = true
     var altText: String = ""
     var aspectRatio: CGSize?
-    var rawData: Data?
-    var videoData: Data?
+    /// Compared by revision rather than by bytes, so a diff never compares megabytes.
+    var rawData: Data? { didSet { rawDataRevision &+= 1 } }
+    private(set) var rawDataRevision: UInt64 = 0
+    var rawImageURL: URL?
+    var videoData: Data? { didSet { videoDataRevision &+= 1 } }
+    private(set) var videoDataRevision: UInt64 = 0
     var rawVideoURL: URL?
     var rawVideoAsset: AVAsset?
     var isAudioVisualizerVideo: Bool = false
     var isGifConversion: Bool = false
     var caption: VideoCaption? = nil
+
+    var canRetryLoading: Bool {
+      rawData != nil || pickerItem != nil || rawImageURL != nil || rawVideoURL != nil
+    }
     
     init(pickerItem: PhotosPickerItem) {
+      self.id = UUID()
       self.pickerItem = pickerItem
     }
     
-    init() {
+    init(id: UUID = UUID()) {
+      self.id = id
       self.pickerItem = nil
     }
     
     init(url: URL, isAudioVisualizerVideo: Bool = false) {
+      self.id = UUID()
       self.pickerItem = nil
       self.rawVideoURL = url
       self.isAudioVisualizerVideo = isAudioVisualizerVideo
@@ -657,11 +1382,54 @@ func saveDraftIfNeeded() {
   }
 }
 
+// MARK: - Draft Media Held in Memory
+
+extension PostComposerViewModel: DraftMediaReferenceHolder {
+  /// An editor whose composition has ended can no longer save, reopen or hand off what it
+  /// shows, so only an editor of a current composition (or one with no editing session) names
+  /// files. Cancellation is ignored here: a cleanup may run in a cancelled load task.
+  var heldDraftMediaURLStrings: [String] {
+    var isCurrent = true
+    if let editingSession {
+      isCurrent = editingClaim.map { editingSession.isCurrent($0) } ?? false
+    }
+    guard isCurrent || !unclaimedDraftImageFiles.isEmpty else { return [] }
+    var items = mediaItems + [videoItem].compactMap { $0 }
+    for entry in threadEntries {
+      items += entry.mediaItems + [entry.videoItem].compactMap { $0 }
+    }
+    var urls = draftImageFiles.values.map(\.urlString) + Array(unclaimedDraftImageFiles)
+    urls += items.flatMap { [$0.rawImageURL?.absoluteString, $0.rawVideoURL?.absoluteString].compactMap { $0 } }
+    urls += [pendingAudioURL?.absoluteString].compactMap { $0 }
+    for draft in [serializedEditingDraft, submissionRecoveryDraft].compactMap({ $0 }) {
+      urls += draft.referencedFileURLStrings
+    }
+    return urls
+  }
+}
+
 // MARK: - MediaItem Hashable Conformance
 
 extension PostComposerViewModel.MediaItem: Hashable {
+    /// Compares everything an attachment tile, a draft or an upload reads. With an id-only `==`,
+    /// SwiftUI took a decoded photo for the placeholder it had already drawn and kept the
+    /// spinner, and @Observable skipped notifying when such an attachment was assigned.
+    /// `hash(into:)` stays id-only, which `==` still implies.
     static func == (lhs: PostComposerViewModel.MediaItem, rhs: PostComposerViewModel.MediaItem) -> Bool {
         lhs.id == rhs.id
+            && lhs.previewRevision == rhs.previewRevision
+            && lhs.isLoading == rhs.isLoading
+            && lhs.altText == rhs.altText
+            && lhs.aspectRatio == rhs.aspectRatio
+            && lhs.rawDataRevision == rhs.rawDataRevision
+            && lhs.rawImageURL == rhs.rawImageURL
+            && lhs.videoDataRevision == rhs.videoDataRevision
+            && lhs.rawVideoURL == rhs.rawVideoURL
+            && lhs.rawVideoAsset === rhs.rawVideoAsset
+            && lhs.isAudioVisualizerVideo == rhs.isAudioVisualizerVideo
+            && lhs.isGifConversion == rhs.isGifConversion
+            && lhs.caption == rhs.caption
+            && lhs.pickerItem == rhs.pickerItem
     }
     
     func hash(into hasher: inout Hasher) {

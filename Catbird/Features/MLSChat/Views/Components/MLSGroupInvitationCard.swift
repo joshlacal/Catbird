@@ -5,6 +5,7 @@ import SwiftUI
 /// existing group policy UI owns any separate acceptance operation.
 struct MLSGroupInvitationCard: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let reference: MLSGroupInvitationReference
 
   var body: some View {
@@ -14,7 +15,7 @@ struct MLSGroupInvitationCard: View {
         .font(.caption).foregroundStyle(.secondary)
       if appState.userDID == reference.recipientDid || appState.userDID == reference.invitedByDid {
         Button("View group invitation") {
-          appState.navigationManager.targetMLSConversationId = reference.conversationId
+          appState.navigateToMLSConversation(reference.conversationId, preferredSceneID: sceneContext.sceneID)
         }
       }
     }

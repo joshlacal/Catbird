@@ -9,6 +9,7 @@ import SwiftUI
 /// Pushed within MLSGroupDetailView's NavigationStack — does not wrap itself in another one.
 struct MLSAddMemberView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.dismiss) private var dismiss
 
   let conversationId: String
@@ -76,7 +77,7 @@ struct MLSAddMemberView: View {
     }
     .sheet(item: $noteDraft) { draft in
       MLSDirectComposeView(draft: draft) { conversationID in
-        appState.navigationManager.targetMLSConversationId = conversationID
+        appState.navigateToMLSConversation(conversationID, preferredSceneID: sceneContext.sceneID)
         dismiss()
       }
     }

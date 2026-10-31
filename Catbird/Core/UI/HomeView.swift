@@ -6,6 +6,7 @@ import SwiftUI
 #if os(iOS)
 /// The main home view that displays feeds and handles sidebar/drawer functionality
 struct HomeView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
 
   // Navigation and state bindings
@@ -15,6 +16,7 @@ struct HomeView: View {
   @Binding var currentFeedName: String
   @Binding var isDrawerOpen: Bool
   @Binding var isRootView: Bool
+  var composeOverlay: () -> AnyView = { AnyView(EmptyView()) }
 
   // Local state
   @State private var showingSettings = false
@@ -22,13 +24,14 @@ struct HomeView: View {
   @State private var showingQuickFilter = false
 
   // For logging
-  let id = UUID().uuidString.prefix(6)
-  private let logger = Logger(subsystem: "blue.catbird", category: "HomeView")
+  private let id = "home"
+  private static let logger = Logger(subsystem: "blue.catbird", category: "HomeView")
+  private var logger: Logger { Self.logger }
 
   var body: some View {
     // Capture appState early to ensure it's available for sheet presentations
     let capturedAppState = appState
-    let navigationPath = capturedAppState.navigationManager.pathBinding(for: 0)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 0)
 
     ZStack {
       mainNavigationView(navigationPath: navigationPath)
@@ -44,7 +47,7 @@ struct HomeView: View {
         }
     }
       .onAppear {
-        capturedAppState.navigationManager.updateCurrentTab(0)
+        sceneContext.navigationManager.updateCurrentTab(0)
         // Sync isRootView on appear to recover from any stale state
         let currentPathCount = navigationPath.wrappedValue.count
         if currentPathCount == 0 && !isRootView {
@@ -116,13 +119,20 @@ struct HomeView: View {
     #else
     NavigationStack(path: navigationPath) {
       feedContentView(navigationPath: navigationPath)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .platformIgnoresSafeArea()
+        // Let the navigation content own bar clearance from the first layout.
+        .overlay(alignment: .bottomTrailing) {
+          if selectedTab == 0 && isRootView {
+            composeOverlay()
+          }
+        }
         .navigationTitle(currentFeedName)
+        .ensureNavigationFonts()
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
         #endif
-        .ensureNavigationFonts()
         #if !targetEnvironment(macCatalyst)
         .toolbar {
           leadingToolbarContent
@@ -226,7 +236,7 @@ struct HomeView: View {
 
   private func handleLastTappedTabChange(oldValue: Int?, newValue: Int?) {
     if newValue == 0, selectedTab == 0 {
-      appState.tabTappedAgain = 0
+      sceneContext.tabTappedAgain = 0
       Task { @MainActor in
         lastTappedTab = nil
       }

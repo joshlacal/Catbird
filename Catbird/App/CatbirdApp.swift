@@ -44,9 +44,98 @@ private var isMessageRequestsUIFixture: Bool {
   #endif
 }
 
+private var isVideoFeedUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--video-feed-ui-fixture")
+  #else
+  false
+  #endif
+}
+
+private var isSocialActionsUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains("--social-actions-ui-fixture")
+  #else
+  false
+  #endif
+}
+
+private var isSceneRuntimeUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(SceneRuntimeFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
+private var isInlineReplyUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(InlineReplyValidationFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
+private var isMessagesViewportUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(MessagesViewportValidationFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
+private var isSearchTabReselectionUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(SearchTabReselectionFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
+private var isMessagesNavigationUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(MessagesNavigationFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
 private var isPresentationUIFixture: Bool {
-  isEncryptedRequestUIFixture || isMessageRequestsUIFixture
+  isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
+}
+
+private var isFeedPerformanceFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains("--feed-perf-fixture")
+  #else
+  false
+  #endif
+}
+
+private var isModerationUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains("--moderation-ui-fixture")
+  #else
+  false
+  #endif
+}
+
+private var isSettingsUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--settings-ui-fixture")
+  #else
+  false
+  #endif
+}
+
+/// Hosted local StoreKit tests configure their session before opening the app's StoreKit connection.
+private var shouldDeferSupportTipStartupForLocalTesting: Bool {
+  #if DEBUG && os(iOS) && targetEnvironment(simulator)
+  ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test")
+  #else
+  false
+  #endif
 }
 
 // App-wide logger
@@ -239,6 +328,7 @@ final class MLSSceneSuspensionCloseClaim {
   }
 }
 
+
 /// Owns the production SwiftData schema so app startup and migration tests open
 /// exactly the same store shape.
 enum CatbirdSwiftDataStore {
@@ -249,6 +339,28 @@ enum CatbirdSwiftDataStore {
     ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self,
     ParsedMedia.self, ParsedConnection.self, ParsedUnknownRecord.self,
   ]
+
+  static let currentSchemaVersion = 4
+  static let appGroupIdentifier = "group.blue.catbird.shared"
+  static let launchAttemptCountKey = "CatbirdLaunchAttemptCount"
+  static let lastLaunchTimeKey = "CatbirdLastLaunchTime"
+  static let crashLoopThreshold = 3
+  static let crashLoopWindowSeconds: TimeInterval = 60
+  static let safeModeReason = "Catbird had trouble opening its local data, so changes you make now won’t be saved after you close the app."
+
+  static var swiftDataStoreDirectory: URL? {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+      .appendingPathComponent("swiftdata", isDirectory: true)
+  }
+
+  static var swiftDataStoreURL: URL? {
+    swiftDataStoreDirectory?.appendingPathComponent("Catbird.store")
+  }
+
+  static var legacyAppGroupSwiftDataDirectory: URL? {
+    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
+      .appendingPathComponent("swiftdata", isDirectory: true)
+  }
 
   static func makeContainer(at storeURL: URL) throws -> ModelContainer {
     let schema = Schema(modelTypes)
@@ -265,7 +377,333 @@ enum CatbirdSwiftDataStore {
     let schema = Schema(modelTypes)
     return try ModelContainer(for: schema, configurations: [configuration])
   }
+
+  static func makeContainer() throws -> ModelContainer {
+    if let storeDir = swiftDataStoreDirectory {
+      try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+    }
+
+    let config: ModelConfiguration
+    if let storeURL = swiftDataStoreURL {
+      config = ModelConfiguration(
+        "Catbird",
+        url: storeURL,
+        cloudKitDatabase: .none
+      )
+      logger.debug("📍 Using explicit store URL: \(storeURL.path)")
+    } else {
+      config = ModelConfiguration(cloudKitDatabase: .none)
+      logger.warning("⚠️ App group unavailable, using default store location")
+    }
+
+    return try makeContainer(configuration: config)
+  }
+
+  static func makeInMemoryContainer() throws -> ModelContainer {
+    let config = ModelConfiguration("Catbird-InMemory", isStoredInMemoryOnly: true)
+    return try ModelContainer(
+      for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
+      FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+      BackupRecord.self, BackupConfiguration.self, RepositoryRecord.self,
+      ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self,
+      ParsedMedia.self, ParsedConnection.self, ParsedUnknownRecord.self,
+      configurations: config
+    )
+  }
+
+  static func deleteSwiftDataSidecarsOnly() {
+    let fileManager = FileManager.default
+    let sidecars = ["-wal", "-shm"]
+
+    if let storeURL = swiftDataStoreURL {
+      for suffix in sidecars {
+        let sidecarURL = URL(fileURLWithPath: storeURL.path + suffix)
+        if fileManager.fileExists(atPath: sidecarURL.path) {
+          do {
+            try fileManager.removeItem(at: sidecarURL)
+            logger.info("🔄 Removed sidecar: \(sidecarURL.lastPathComponent)")
+          } catch {
+            logger.warning("⚠️ Failed to remove sidecar \(sidecarURL.lastPathComponent): \(error.localizedDescription)")
+          }
+        }
+      }
+    }
+
+    let legacyFiles = [
+      "Catbird.store-wal", "Catbird.store-shm",
+      "Catbird.sqlite-wal", "Catbird.sqlite-shm",
+      "default.store-wal", "default.store-shm"
+    ]
+    for directory in allDatabaseDirectories() {
+      for fileName in legacyFiles {
+        let fileURL = directory.appendingPathComponent(fileName)
+        if fileManager.fileExists(atPath: fileURL.path) {
+          try? fileManager.removeItem(at: fileURL)
+          logger.debug("🔄 Removed legacy sidecar: \(fileName)")
+        }
+      }
+    }
+  }
+
+  static func quarantineSwiftDataStore(reason: String) {
+    let fileManager = FileManager.default
+    let dateFormatter = ISO8601DateFormatter()
+    dateFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+    let timestamp = dateFormatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+
+    guard let storeDir = swiftDataStoreDirectory else {
+      logger.warning("⚠️ Cannot quarantine - store directory unavailable")
+      resetAllDatabaseFiles()
+      return
+    }
+
+    let quarantineDir = storeDir.deletingLastPathComponent()
+      .appendingPathComponent("quarantine/\(timestamp)_\(reason)", isDirectory: true)
+
+    do {
+      try fileManager.createDirectory(at: quarantineDir, withIntermediateDirectories: true)
+
+      let storeFiles = ["Catbird.store", "Catbird.store-wal", "Catbird.store-shm"]
+      for fileName in storeFiles {
+        let sourceURL = storeDir.appendingPathComponent(fileName)
+        if fileManager.fileExists(atPath: sourceURL.path) {
+          let destURL = quarantineDir.appendingPathComponent(fileName)
+          try fileManager.moveItem(at: sourceURL, to: destURL)
+          logger.info("📦 Quarantined: \(fileName) → \(quarantineDir.lastPathComponent)/")
+        }
+      }
+
+      let metadata: [String: Any] = [
+        "quarantine_reason": reason,
+        "timestamp": Date().timeIntervalSince1970,
+        "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+        "schema_version": currentSchemaVersion
+      ]
+      if let metadataData = try? JSONSerialization.data(withJSONObject: metadata, options: .prettyPrinted) {
+        try metadataData.write(to: quarantineDir.appendingPathComponent("metadata.json"))
+      }
+
+      logger.info("✅ Database quarantined to: \(quarantineDir.path)")
+    } catch {
+      logger.error("❌ Quarantine failed: \(error.localizedDescription) - falling back to delete")
+      resetAllDatabaseFiles()
+    }
+  }
+
+  static func resetAllDatabaseFiles() {
+    let resetLogger = Logger(subsystem: "blue.catbird", category: "DatabaseRecovery")
+    resetLogger.warning("🗑️ RESET: Deleting all SwiftData files")
+
+    let fileManager = FileManager.default
+    let allFiles = [
+      "Catbird.store", "Catbird.store-wal", "Catbird.store-shm",
+      "Catbird.sqlite", "Catbird.sqlite-wal", "Catbird.sqlite-shm",
+      "default.store", "default.store-wal", "default.store-shm"
+    ]
+
+    for directory in allDatabaseDirectories() {
+      for fileName in allFiles {
+        let fileURL = directory.appendingPathComponent(fileName)
+        if fileManager.fileExists(atPath: fileURL.path) {
+          do {
+            try fileManager.removeItem(at: fileURL)
+            resetLogger.info("🗑️ Deleted: \(fileURL.path)")
+          } catch {
+            resetLogger.warning("⚠️ Failed to delete \(fileName): \(error.localizedDescription)")
+          }
+        }
+      }
+    }
+
+    if let storeDir = swiftDataStoreDirectory, fileManager.fileExists(atPath: storeDir.path) {
+      try? fileManager.removeItem(at: storeDir)
+      resetLogger.info("🗑️ Deleted swiftdata directory (private container)")
+    }
+
+    if let legacyDir = legacyAppGroupSwiftDataDirectory, fileManager.fileExists(atPath: legacyDir.path) {
+      try? fileManager.removeItem(at: legacyDir)
+      resetLogger.info("🗑️ Deleted legacy swiftdata directory (App Group)")
+    }
+
+    UserDefaults.standard.removeObject(forKey: "CatbirdSchemaVersion")
+    UserDefaults.standard.removeObject(forKey: launchAttemptCountKey)
+    UserDefaults.standard.removeObject(forKey: lastLaunchTimeKey)
+
+    resetLogger.info("✅ Database reset complete")
+  }
+
+  static func allDatabaseDirectories() -> [URL] {
+    var directories: [URL] = []
+    if let storeDir = swiftDataStoreDirectory {
+      directories.append(storeDir)
+    }
+    if let legacyDir = legacyAppGroupSwiftDataDirectory {
+      directories.append(legacyDir)
+    }
+    if let appGroup = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+      directories.append(appGroup)
+      directories.append(appGroup.appendingPathComponent("Library/Application Support"))
+    }
+    if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+      directories.append(docs)
+    }
+    if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+      directories.append(appSupport)
+    }
+    return directories
+  }
+
+  static func migrateSwiftDataFromAppGroup() {
+    let migrationKey = "SwiftDataMigratedFromAppGroup"
+    guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+    let fm = FileManager.default
+    guard let oldDir = legacyAppGroupSwiftDataDirectory,
+          let newDir = swiftDataStoreDirectory else {
+      UserDefaults.standard.set(true, forKey: migrationKey)
+      return
+    }
+
+    guard fm.fileExists(atPath: oldDir.path),
+          let contents = try? fm.contentsOfDirectory(atPath: oldDir.path),
+          !contents.isEmpty else {
+      UserDefaults.standard.set(true, forKey: migrationKey)
+      return
+    }
+
+    try? fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+
+    for fileName in contents {
+      let oldFile = oldDir.appendingPathComponent(fileName)
+      let newFile = newDir.appendingPathComponent(fileName)
+      if fm.fileExists(atPath: newFile.path) { continue }
+      do {
+        try fm.moveItem(at: oldFile, to: newFile)
+        logger.info("📦 Migrated SwiftData file: \(fileName)")
+      } catch {
+        logger.warning("⚠️ Failed to migrate \(fileName): \(error.localizedDescription)")
+      }
+    }
+
+    try? fm.removeItem(at: oldDir)
+    UserDefaults.standard.set(true, forKey: migrationKey)
+    logger.info("✅ SwiftData migrated from App Group to private container")
+  }
+
+  static func detectCrashLoop() -> Bool {
+    let defaults = UserDefaults.standard
+    let now = Date().timeIntervalSince1970
+    let lastLaunch = defaults.double(forKey: lastLaunchTimeKey)
+    let attemptCount = defaults.integer(forKey: launchAttemptCountKey)
+
+    if now - lastLaunch < crashLoopWindowSeconds {
+      let newCount = attemptCount + 1
+      defaults.set(newCount, forKey: launchAttemptCountKey)
+      defaults.set(now, forKey: lastLaunchTimeKey)
+
+      if newCount >= crashLoopThreshold {
+        logger.error("🔄 Crash loop detected: \(newCount) launches in \(Int(now - lastLaunch))s")
+        return true
+      }
+    } else {
+      defaults.set(1, forKey: launchAttemptCountKey)
+      defaults.set(now, forKey: lastLaunchTimeKey)
+    }
+
+    return false
+  }
+
+  static func resetCrashLoopCounter() {
+    UserDefaults.standard.removeObject(forKey: launchAttemptCountKey)
+    UserDefaults.standard.removeObject(forKey: lastLaunchTimeKey)
+  }
+
+  static func shouldResetDatabase() -> Bool {
+    let savedVersion = UserDefaults.standard.integer(forKey: "CatbirdSchemaVersion")
+    return savedVersion != 0 && savedVersion < currentSchemaVersion
+  }
+
+  static func saveSchemaVersion() {
+    UserDefaults.standard.set(currentSchemaVersion, forKey: "CatbirdSchemaVersion")
+  }
+
+  static func formatDatabaseError(_ error: Error) -> String {
+    var details = error.localizedDescription
+    if let nsError = error as NSError? {
+      details += " [domain: \(nsError.domain), code: \(nsError.code)]"
+      if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+        details += " underlying: \(underlying.localizedDescription)"
+      }
+    }
+    return details
+  }
+
+  /// Runs the full recovery ladder off the main thread.
+  static func openWithRecovery() -> ModelContainerState {
+    logger.info("📦 Starting off-main ModelContainer initialization")
+    migrateSwiftDataFromAppGroup()
+
+    if detectCrashLoop() {
+      logger.error("🔄 CRASH LOOP DETECTED - forcing safe mode recovery")
+      if let container = try? makeInMemoryContainer() {
+        resetCrashLoopCounter()
+        return .degraded(container, reason: safeModeReason)
+      }
+    }
+
+    if shouldResetDatabase() {
+      logger.warning("⚠️ Schema version mismatch detected, resetting database for clean migration")
+      quarantineSwiftDataStore(reason: "schema_mismatch")
+    }
+
+    // Attempt A: Normal initialization
+    do {
+      let container = try makeContainer()
+      saveSchemaVersion()
+      logger.info("✅ ModelContainer initialized successfully")
+      return .ready(container)
+    } catch {
+      logger.error("❌ Attempt A (normal init) failed: \(formatDatabaseError(error))")
+    }
+
+    // Attempt B: Delete sidecars only
+    do {
+      logger.warning("🔧 Attempt B: Deleting WAL/SHM sidecars and retrying...")
+      deleteSwiftDataSidecarsOnly()
+      let container = try makeContainer()
+      saveSchemaVersion()
+      logger.warning("✅ Recovered by deleting WAL/SHM sidecars")
+      return .ready(container)
+    } catch {
+      logger.error("❌ Attempt B (sidecar recovery) failed: \(formatDatabaseError(error))")
+    }
+
+    // Attempt C: Quarantine store and retry fresh
+    do {
+      logger.warning("🔧 Attempt C: Quarantining store and creating fresh database...")
+      quarantineSwiftDataStore(reason: "corruption_recovery")
+      let container = try makeContainer()
+      saveSchemaVersion()
+      logger.warning("✅ Recovered by quarantining store and recreating")
+      return .ready(container)
+    } catch {
+      logger.error("❌ Attempt C (quarantine recovery) failed: \(formatDatabaseError(error))")
+    }
+
+    // Attempt D: In-memory fallback
+    do {
+      logger.error("⚠️ Attempt D: Falling back to in-memory storage...")
+      let container = try makeInMemoryContainer()
+      resetCrashLoopCounter()
+      logger.error("⚠️ Running in DEGRADED MODE - data will not persist across restarts")
+      return .degraded(container, reason: safeModeReason)
+    } catch {
+      logger.error("❌ Attempt D (in-memory fallback) failed: \(formatDatabaseError(error))")
+      return .failed(error)
+    }
+  }
 }
+
 #if os(iOS)
 /// Background launches may never create or transition a SwiftUI scene. Establish
 /// MLS admission before authentication's asynchronous startup can open storage.
@@ -374,7 +812,7 @@ struct CatbirdApp: App {
           MetricKitManager.shared.beginExtendedLaunchMeasurement(taskName: "AppInitialization")
         }
 
-        // Set notification center delegate for handling MLS notifications
+        // Set notification center delegate for handling notification taps, presentation, and MLS notifications
         UNUserNotificationCenter.current().delegate = self
 
       // BGTask handlers MUST be registered before didFinishLaunchingWithOptions returns
@@ -389,6 +827,10 @@ struct CatbirdApp: App {
         ) { task in
           guard let processingTask = task as? BGProcessingTask else {
             task.setTaskCompleted(success: false)
+            return
+          }
+          guard CatbirdFeatures.mlsChat else {
+            processingTask.setTaskCompleted(success: true)
             return
           }
           Task {
@@ -411,7 +853,9 @@ struct CatbirdApp: App {
         BGTaskSchedulerManager.schedule()
         ChatBackgroundRefreshManager.schedule()
         BackgroundCacheRefreshManager.schedule()
-        MLSBackgroundRefreshManager.scheduleInitialRefresh()
+        if CatbirdFeatures.mlsChat {
+          MLSBackgroundRefreshManager.scheduleInitialRefresh()
+        }
       }
       
       return true
@@ -465,7 +909,7 @@ struct CatbirdApp: App {
 
 
       // Check if this is an MLS key package inventory notification
-      if let type = userInfo["type"] as? String,
+      if CatbirdFeatures.mlsChat, let type = userInfo["type"] as? String,
          type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
         logger.info("Processing MLS key package notification (\(type))")
 
@@ -651,13 +1095,11 @@ struct CatbirdApp: App {
   @State private var showBiometricPrompt = false
   @State private var hasBiometricCheck = false
   
-  // Pending launch URL received before authentication
-  @State private var pendingLaunchURL: URL?
-  @State private var unauthenticatedStarterPackItem: StarterPackLandingItem?
   // MARK: - State Restoration
   @State private var restorationIdentifier = "CatbirdMainApp"
 
-  @Environment(\.modelContext) private var modelContext
+  // No @Environment(\.modelContext) here: an App struct is outside every
+  // .modelContainer, so it reads SwiftUI's empty placeholder context, not the store.
   @Environment(\.scenePhase) private var scenePhase
 
   #if os(iOS)
@@ -667,16 +1109,24 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
+    if !shouldDeferSupportTipStartupForLocalTesting {
+      SupportTipStore.shared.start()
+    }
     if isPresentationUIFixture { return }
     // Resolve routing first: in DEBUG this installs an explicitly configured runtime fixture
     // transport before any client exists (and refuses to launch on an invalid config).
     _ = CatbirdGatewayConfiguration.current
     #if os(iOS)
+    // MLS admission is established before the authentication restore below can open storage.
     prepareInitialMLSAdmission(
       applicationState: UIApplication.shared.applicationState,
       source: "CatbirdApp.init"
     )
     #endif
+    // Start auth restore concurrently with startup
+    Task { @MainActor in
+      await AppStateManager.shared.initialize()
+    }
     logger.info("🚀 CatbirdApp initializing")
 
     // Register blue.catbird.* / place.stream.* lexicon types with Petrel's decoder registry
@@ -710,491 +1160,43 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         setupDebugTools()
     #endif
 
-    #if canImport(FoundationModels)
-    if #available(iOS 26.0, macOS 26.0, *) {
-      Task(priority: .background) {
-        await TopicSummaryService.shared.prepareModelWarmupIfNeeded()
-      }
-    }
-    #endif
+    // P001: Dead model-warmup calls removed
 
   }
-
-  // MARK: - Schema Version Management
-
-  /// Current schema version - increment this when making breaking schema changes
-  /// This forces a database reset for users with older incompatible schemas
-  private static let currentSchemaVersion = 4  // Increment only for a truly incompatible store schema
-
-  /// Checks if database needs reset due to schema version mismatch
-  private func shouldResetDatabase() -> Bool {
-    let savedVersion = UserDefaults.standard.integer(forKey: "CatbirdSchemaVersion")
-    return savedVersion != 0 && savedVersion < Self.currentSchemaVersion
-  }
-
-  /// Saves current schema version after successful initialization
-  private func saveSchemaVersion() {
-    UserDefaults.standard.set(Self.currentSchemaVersion, forKey: "CatbirdSchemaVersion")
-  }
-
-  // MARK: - SwiftData Store Configuration
-
-  /// App group identifier for shared storage (used by MLS databases and NSE, NOT SwiftData)
-  private static let appGroupIdentifier = "group.blue.catbird.shared"
-
-  /// SwiftData store in the app's PRIVATE Application Support directory.
-  /// NOT in App Group — SwiftData uses NSFileCoordinator internally when in App Group,
-  /// which holds system-level file coordination locks that trigger 0xdead10cc on suspension.
-  /// No extensions (NSE, widgets) need SwiftData access.
-  private static var swiftDataStoreDirectory: URL? {
-    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-      .appendingPathComponent("swiftdata", isDirectory: true)
-  }
-
-  private static var swiftDataStoreURL: URL? {
-    swiftDataStoreDirectory?.appendingPathComponent("Catbird.store")
-  }
-
-  /// Old App Group location — used for one-time migration and cleanup only
-  private static var legacyAppGroupSwiftDataDirectory: URL? {
-    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
-      .appendingPathComponent("swiftdata", isDirectory: true)
-  }
-
-  /// Moves SwiftData files from the old App Group location to private Application Support.
-  /// Runs once — skips if already migrated or if no old files exist.
-  private static func migrateSwiftDataFromAppGroup() {
-    let migrationKey = "SwiftDataMigratedFromAppGroup"
-    guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
-
-    let fm = FileManager.default
-    guard let oldDir = legacyAppGroupSwiftDataDirectory,
-          let newDir = swiftDataStoreDirectory else {
-      UserDefaults.standard.set(true, forKey: migrationKey)
-      return
-    }
-
-    // If old directory doesn't exist or is empty, nothing to migrate
-    guard fm.fileExists(atPath: oldDir.path),
-          let contents = try? fm.contentsOfDirectory(atPath: oldDir.path),
-          !contents.isEmpty else {
-      UserDefaults.standard.set(true, forKey: migrationKey)
-      return
-    }
-
-    // Ensure new directory exists
-    try? fm.createDirectory(at: newDir, withIntermediateDirectories: true)
-
-    // Move all SwiftData files (main db, WAL, SHM)
-    for fileName in contents {
-      let oldFile = oldDir.appendingPathComponent(fileName)
-      let newFile = newDir.appendingPathComponent(fileName)
-
-      // Don't overwrite if new location already has data
-      if fm.fileExists(atPath: newFile.path) { continue }
-
-      do {
-        try fm.moveItem(at: oldFile, to: newFile)
-        logger.info("📦 Migrated SwiftData file: \(fileName)")
-      } catch {
-        logger.warning("⚠️ Failed to migrate \(fileName): \(error.localizedDescription)")
-      }
-    }
-
-    // Clean up old directory
-    try? fm.removeItem(at: oldDir)
-
-    UserDefaults.standard.set(true, forKey: migrationKey)
-    logger.info("✅ SwiftData migrated from App Group to private container")
-  }
-
-  /// Crash loop detection keys
-  private static let launchAttemptCountKey = "CatbirdLaunchAttemptCount"
-  private static let lastLaunchTimeKey = "CatbirdLastLaunchTime"
-  private static let crashLoopThreshold = 3
-  private static let crashLoopWindowSeconds: TimeInterval = 60  // 3 crashes in 60 seconds
 
   // MARK: - ModelContainer Async Initialization
 
+  /// The open in progress. Every window shows LoadingView while the store opens,
+  /// so a multi-window restore would otherwise open the SQLite store twice at once.
+  @MainActor private static var inFlightModelContainerOpen: Task<ModelContainerState, Never>?
+
   @MainActor
   private func initializeModelContainer() async {
-    logger.info("📦 Starting async ModelContainer initialization")
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ONE-TIME MIGRATION: Move SwiftData from App Group to private container
-    // App Group + SwiftData = NSFileCoordinator during autosave = 0xdead10cc
-    // ═══════════════════════════════════════════════════════════════════════════
-    Self.migrateSwiftDataFromAppGroup()
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CRASH LOOP DETECTION
-    // ═══════════════════════════════════════════════════════════════════════════
-    let crashLoopDetected = detectCrashLoop()
-    if crashLoopDetected {
-      logger.error("🔄 CRASH LOOP DETECTED - forcing safe mode recovery")
-      // Jump straight to in-memory fallback
-      if let container = try? makeInMemoryContainer() {
-        appStateManager.modelContainerState = .degraded(container, reason: "Crash loop detected - running in safe mode")
-        // Reset crash counter after successful safe mode entry
-        resetCrashLoopCounter()
-        return
-      }
+    if case .failed = appStateManager.modelContainerState {
+      appStateManager.modelContainerState = .loading
     }
-
-    // Check for schema version mismatch and proactively reset if needed
-    if shouldResetDatabase() {
-      logger.warning("⚠️ Schema version mismatch detected, resetting database for clean migration")
-      quarantineSwiftDataStore(reason: "schema_mismatch")
+    guard case .loading = appStateManager.modelContainerState else { return }
+    if let inFlight = Self.inFlightModelContainerOpen {
+      _ = await inFlight.value
+      return
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // RECOVERY LADDER: Attempt A - Normal initialization
-    // ═══════════════════════════════════════════════════════════════════════════
-    do {
-      let container = try makeContainer()
-      saveSchemaVersion()
-      appStateManager.modelContainerState = .ready(container)
-      // Mark successful launch (resets crash counter after 30s stability)
+    logger.info("📦 Requesting off-main ModelContainer initialization")
+    let open = Task.detached(priority: .userInitiated) {
+      CatbirdSwiftDataStore.openWithRecovery()
+    }
+    Self.inFlightModelContainerOpen = open
+    let result = await open.value
+    Self.inFlightModelContainerOpen = nil
+    appStateManager.modelContainerState = result
+    if case .ready = result {
       scheduleStableLaunchMarker()
-      logger.info("✅ ModelContainer initialized successfully")
-      return
-    } catch {
-      logger.error("❌ Attempt A (normal init) failed: \(Self.formatDatabaseError(error))")
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // RECOVERY LADDER: Attempt B - Delete WAL/SHM sidecars only, retry
-    // A surprising number of "corruption" reports are just poisoned WAL files
-    // ═══════════════════════════════════════════════════════════════════════════
-    do {
-      logger.warning("🔧 Attempt B: Deleting WAL/SHM sidecars and retrying...")
-      deleteSwiftDataSidecarsOnly()
-      let container = try makeContainer()
-      saveSchemaVersion()
-      appStateManager.modelContainerState = .ready(container)
-      scheduleStableLaunchMarker()
-      logger.warning("✅ Recovered by deleting WAL/SHM sidecars")
-      return
-    } catch {
-      logger.error("❌ Attempt B (sidecar recovery) failed: \(Self.formatDatabaseError(error))")
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // RECOVERY LADDER: Attempt C - Quarantine store and create fresh
-    // Move files to timestamped folder for potential diagnostics
-    // ═══════════════════════════════════════════════════════════════════════════
-    do {
-      logger.warning("🔧 Attempt C: Quarantining store and creating fresh database...")
-      quarantineSwiftDataStore(reason: "corruption_recovery")
-      let container = try makeContainer()
-      saveSchemaVersion()
-      appStateManager.modelContainerState = .ready(container)
-      scheduleStableLaunchMarker()
-      logger.warning("✅ Recovered by quarantining store and recreating")
-      return
-    } catch {
-      logger.error("❌ Attempt C (quarantine recovery) failed: \(Self.formatDatabaseError(error))")
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // RECOVERY LADDER: Attempt D - In-memory fallback (LAST RESORT)
-    // ═══════════════════════════════════════════════════════════════════════════
-    do {
-      logger.error("⚠️ Attempt D: Falling back to in-memory storage...")
-      let container = try makeInMemoryContainer()
-      appStateManager.modelContainerState = .degraded(container, reason: "Database recovery failed - running in safe mode. Data will not persist.")
-      resetCrashLoopCounter()  // Prevent crash loop on next launch
-      logger.error("⚠️ Running in DEGRADED MODE - data will not persist across restarts")
-      return
-    } catch {
-      logger.error("❌ Attempt D (in-memory fallback) failed: \(Self.formatDatabaseError(error))")
-      appStateManager.modelContainerState = .failed(error)
-    }
-  }
-
-  /// Deletes all SQLite database files (main, WAL, SHM) to ensure clean recovery
-  private func deleteAllDatabaseFiles(in directory: URL) {
-    let fileManager = FileManager.default
-    let dbFiles = [
-      "Catbird.sqlite",
-      "Catbird.sqlite-wal",
-      "Catbird.sqlite-shm",
-      "default.store",           // SwiftData may use this name
-      "default.store-wal",
-      "default.store-shm"
-    ]
-
-    for fileName in dbFiles {
-      let fileURL = directory.appendingPathComponent(fileName)
-      if fileManager.fileExists(atPath: fileURL.path) {
-        do {
-          try fileManager.removeItem(at: fileURL)
-          logger.info("🔄 Removed database file: \(fileName)")
-        } catch {
-          logger.warning("⚠️ Failed to remove \(fileName): \(error.localizedDescription)")
-        }
-      }
-    }
-
-    // Also check Application Support directory where SwiftData might store files
-    if let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-      for fileName in dbFiles {
-        let fileURL = appSupportURL.appendingPathComponent(fileName)
-        if fileManager.fileExists(atPath: fileURL.path) {
-          do {
-            try fileManager.removeItem(at: fileURL)
-            logger.info("🔄 Removed database file from App Support: \(fileName)")
-          } catch {
-            logger.warning("⚠️ Failed to remove \(fileName) from App Support: \(error.localizedDescription)")
-          }
-        }
-      }
-    }
-  }
-
-  // MARK: - Database Recovery Helpers
-
-  /// Creates a ModelContainer with explicit store URL in private Application Support
-  private func makeContainer() throws -> ModelContainer {
-    // Ensure the swiftdata directory exists
-    if let storeDir = Self.swiftDataStoreDirectory {
-      try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
-    }
-
-    // Use explicit URL if available, otherwise fall back to default
-    let config: ModelConfiguration
-    if let storeURL = Self.swiftDataStoreURL {
-      config = ModelConfiguration(
-        "Catbird",
-        url: storeURL,
-        cloudKitDatabase: .none
-      )
-      logger.debug("📍 Using explicit store URL: \(storeURL.path)")
-    } else {
-      // Fallback to default location if app group is unavailable
-      config = ModelConfiguration(cloudKitDatabase: .none)
-      logger.warning("⚠️ App group unavailable, using default store location")
-    }
-
-    return try CatbirdSwiftDataStore.makeContainer(configuration: config)
-  }
-
-  /// Creates an in-memory ModelContainer for degraded mode
-  private func makeInMemoryContainer() throws -> ModelContainer {
-    let config = ModelConfiguration("Catbird-InMemory", isStoredInMemoryOnly: true)
-    return try ModelContainer(
-      for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
-      FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-      BackupRecord.self, BackupConfiguration.self, RepositoryRecord.self,
-      ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self,
-      ParsedMedia.self, ParsedConnection.self, ParsedUnknownRecord.self,
-      configurations: config
-    )
-  }
-
-  /// Deletes only WAL and SHM sidecar files, preserving the main database
-  /// Often fixes corruption caused by interrupted writes during backgrounding
-  private func deleteSwiftDataSidecarsOnly() {
-    let fileManager = FileManager.default
-    let sidecars = ["-wal", "-shm"]
-
-    // Delete from explicit store location
-    if let storeURL = Self.swiftDataStoreURL {
-      for suffix in sidecars {
-        let sidecarURL = URL(fileURLWithPath: storeURL.path + suffix)
-        if fileManager.fileExists(atPath: sidecarURL.path) {
-          do {
-            try fileManager.removeItem(at: sidecarURL)
-            logger.info("🔄 Removed sidecar: \(sidecarURL.lastPathComponent)")
-          } catch {
-            logger.warning("⚠️ Failed to remove sidecar \(sidecarURL.lastPathComponent): \(error.localizedDescription)")
-          }
-        }
-      }
-    }
-
-    // Also clean up legacy locations
-    let legacyFiles = [
-      "Catbird.store-wal", "Catbird.store-shm",
-      "Catbird.sqlite-wal", "Catbird.sqlite-shm",
-      "default.store-wal", "default.store-shm"
-    ]
-    for directory in Self.allDatabaseDirectories() {
-      for fileName in legacyFiles {
-        let fileURL = directory.appendingPathComponent(fileName)
-        if fileManager.fileExists(atPath: fileURL.path) {
-          try? fileManager.removeItem(at: fileURL)
-          logger.debug("🔄 Removed legacy sidecar: \(fileName)")
-        }
-      }
-    }
-  }
-
-  /// Moves the SwiftData store to a quarantine folder for potential diagnostics
-  /// Creates a timestamped backup that can be used for debugging or data recovery
-  private func quarantineSwiftDataStore(reason: String) {
-    let fileManager = FileManager.default
-    let dateFormatter = ISO8601DateFormatter()
-    dateFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
-    let timestamp = dateFormatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
-
-    guard let storeDir = Self.swiftDataStoreDirectory else {
-      logger.warning("⚠️ Cannot quarantine - store directory unavailable")
-      // Fall back to deleting all database files
-      Self.resetAllDatabaseFiles()
-      return
-    }
-
-    let quarantineDir = storeDir.deletingLastPathComponent()
-      .appendingPathComponent("quarantine/\(timestamp)_\(reason)", isDirectory: true)
-
-    do {
-      try fileManager.createDirectory(at: quarantineDir, withIntermediateDirectories: true)
-
-      // Move all store files to quarantine
-      let storeFiles = ["Catbird.store", "Catbird.store-wal", "Catbird.store-shm"]
-      for fileName in storeFiles {
-        let sourceURL = storeDir.appendingPathComponent(fileName)
-        if fileManager.fileExists(atPath: sourceURL.path) {
-          let destURL = quarantineDir.appendingPathComponent(fileName)
-          try fileManager.moveItem(at: sourceURL, to: destURL)
-          logger.info("📦 Quarantined: \(fileName) → \(quarantineDir.lastPathComponent)/")
-        }
-      }
-
-      // Write metadata file for debugging
-      let metadata: [String: Any] = [
-        "quarantine_reason": reason,
-        "timestamp": Date().timeIntervalSince1970,
-        "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
-        "schema_version": Self.currentSchemaVersion
-      ]
-      if let metadataData = try? JSONSerialization.data(withJSONObject: metadata, options: .prettyPrinted) {
-        try metadataData.write(to: quarantineDir.appendingPathComponent("metadata.json"))
-      }
-
-      logger.info("✅ Database quarantined to: \(quarantineDir.path)")
-    } catch {
-      logger.error("❌ Quarantine failed: \(error.localizedDescription) - falling back to delete")
-      Self.resetAllDatabaseFiles()
     }
   }
 
   /// Deletes all SwiftData database files from all possible locations
   /// Called by ErrorRecoveryView's Reset button - works WITHOUT ModelContainer
   static func resetAllDatabaseFiles() {
-    let resetLogger = Logger(subsystem: "blue.catbird", category: "DatabaseRecovery")
-    resetLogger.warning("🗑️ RESET: Deleting all SwiftData files")
-
-    let fileManager = FileManager.default
-    let allFiles = [
-      "Catbird.store", "Catbird.store-wal", "Catbird.store-shm",
-      "Catbird.sqlite", "Catbird.sqlite-wal", "Catbird.sqlite-shm",
-      "default.store", "default.store-wal", "default.store-shm"
-    ]
-
-    // Delete from all possible locations
-    for directory in allDatabaseDirectories() {
-      for fileName in allFiles {
-        let fileURL = directory.appendingPathComponent(fileName)
-        if fileManager.fileExists(atPath: fileURL.path) {
-          do {
-            try fileManager.removeItem(at: fileURL)
-            resetLogger.info("🗑️ Deleted: \(fileURL.path)")
-          } catch {
-            resetLogger.warning("⚠️ Failed to delete \(fileName): \(error.localizedDescription)")
-          }
-        }
-      }
-    }
-
-    // Delete the current swiftdata directory
-    if let storeDir = swiftDataStoreDirectory, fileManager.fileExists(atPath: storeDir.path) {
-      try? fileManager.removeItem(at: storeDir)
-      resetLogger.info("🗑️ Deleted swiftdata directory (private container)")
-    }
-
-    // Delete legacy App Group swiftdata directory if it still exists
-    if let legacyDir = legacyAppGroupSwiftDataDirectory, fileManager.fileExists(atPath: legacyDir.path) {
-      try? fileManager.removeItem(at: legacyDir)
-      resetLogger.info("🗑️ Deleted legacy swiftdata directory (App Group)")
-    }
-
-    // Reset schema version to force fresh init
-    UserDefaults.standard.removeObject(forKey: "CatbirdSchemaVersion")
-
-    // Reset crash loop counter
-    UserDefaults.standard.removeObject(forKey: launchAttemptCountKey)
-    UserDefaults.standard.removeObject(forKey: lastLaunchTimeKey)
-
-    resetLogger.info("✅ Database reset complete")
-  }
-
-  /// Returns all directories where database files might exist
-  private static func allDatabaseDirectories() -> [URL] {
-    var directories: [URL] = []
-
-    // Current private container swiftdata directory
-    if let storeDir = swiftDataStoreDirectory {
-      directories.append(storeDir)
-    }
-
-    // Legacy App Group swiftdata directory (pre-migration)
-    if let legacyDir = legacyAppGroupSwiftDataDirectory {
-      directories.append(legacyDir)
-    }
-
-    // App group root (for any stray files)
-    if let appGroup = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
-      directories.append(appGroup)
-      directories.append(appGroup.appendingPathComponent("Library/Application Support"))
-    }
-
-    // Documents directory
-    if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-      directories.append(docs)
-    }
-
-    // Application Support
-    if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-      directories.append(appSupport)
-    }
-
-    return directories
-  }
-
-  // MARK: - Crash Loop Detection
-
-  /// Detects if the app is in a crash loop (multiple launches in quick succession)
-  private func detectCrashLoop() -> Bool {
-    let defaults = UserDefaults.standard
-    let now = Date().timeIntervalSince1970
-    let lastLaunch = defaults.double(forKey: Self.lastLaunchTimeKey)
-    let attemptCount = defaults.integer(forKey: Self.launchAttemptCountKey)
-
-    // Check if we're within the crash window
-    if now - lastLaunch < Self.crashLoopWindowSeconds {
-      let newCount = attemptCount + 1
-      defaults.set(newCount, forKey: Self.launchAttemptCountKey)
-      defaults.set(now, forKey: Self.lastLaunchTimeKey)
-
-      if newCount >= Self.crashLoopThreshold {
-        logger.error("🔄 Crash loop detected: \(newCount) launches in \(Int(now - lastLaunch))s")
-        return true
-      }
-    } else {
-      // Reset counter - we're outside the crash window
-      defaults.set(1, forKey: Self.launchAttemptCountKey)
-      defaults.set(now, forKey: Self.lastLaunchTimeKey)
-    }
-
-    return false
-  }
-
-  /// Resets the crash loop counter (called after successful recovery)
-  private func resetCrashLoopCounter() {
-    UserDefaults.standard.removeObject(forKey: Self.launchAttemptCountKey)
-    UserDefaults.standard.removeObject(forKey: Self.lastLaunchTimeKey)
+    CatbirdSwiftDataStore.resetAllDatabaseFiles()
   }
 
   /// Schedules a task to mark the launch as stable after 30 seconds
@@ -1202,24 +1204,10 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     Task {
       try? await Task.sleep(nanoseconds: 30_000_000_000)  // 30 seconds
       await MainActor.run {
-        resetCrashLoopCounter()
+        CatbirdSwiftDataStore.resetCrashLoopCounter()
         logger.debug("✅ Launch marked as stable (30s elapsed)")
       }
     }
-  }
-
-  /// Formats database errors for better diagnostics
-  private static func formatDatabaseError(_ error: Error) -> String {
-    var details = error.localizedDescription
-
-    if let nsError = error as NSError? {
-      details += " [domain: \(nsError.domain), code: \(nsError.code)]"
-      if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-        details += " underlying: \(underlying.localizedDescription)"
-      }
-    }
-
-    return details
   }
 
   // MARK: - Background Task Registration
@@ -1262,20 +1250,42 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
   @SceneBuilder
   private var macOSWindowScenes: some Scene {
     WindowGroup(id: "compose") {
-      if case .authenticated(let appState) = appStateManager.lifecycle {
-        PostComposerViewUIKit(appState: appState)
-          .frame(minWidth: 500, minHeight: 400)
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+      CatbirdWindowRoot(
+        appStateManager: appStateManager,
+        onOpenURL: { url, scene in handleSceneURL(url, in: scene) },
+        onAccountReady: { scene in routePendingLaunchURLIfNeeded(in: scene) }
+      ) { scene in
+        if case .authenticated(let appState) = appStateManager.lifecycle,
+           let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            PostComposerViewUIKit(
+              appState: appState,
+              editingSession: context.composerEditingSession
+            )
+              .platformAgeProtected(.generalContent)
+              .frame(minWidth: 500, minHeight: 400)
+          }
+          .id(context.activityRegistrationID)
+        }
       }
     }
     .defaultSize(width: 600, height: 500)
 
     Window("Settings", id: "settings") {
-      if case .authenticated(let appState) = appStateManager.lifecycle {
-        SettingsView()
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+      CatbirdWindowRoot(
+        appStateManager: appStateManager,
+        onOpenURL: { url, scene in handleSceneURL(url, in: scene) },
+        onAccountReady: { scene in routePendingLaunchURLIfNeeded(in: scene) }
+      ) { scene in
+        if case .authenticated(let appState) = appStateManager.lifecycle,
+           let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            SettingsView()
+          }
+          .id(context.activityRegistrationID)
+        }
       }
     }
     .defaultSize(width: 700, height: 500)
@@ -1283,7 +1293,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
   #endif
 
   @ViewBuilder
-  private var applicationContent: some View {
+  private func applicationContent(in scene: SceneWindowState) -> some View {
     switch appStateManager.modelContainerState {
         case .loading:
           LoadingView()
@@ -1292,7 +1302,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             }
 
         case .ready(let container):
-          sceneRoot()
+          sceneRoot(in: scene)
             .onAppear {
               handleSceneAppear(container: container)
             }
@@ -1307,7 +1317,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           // Running in safe mode with in-memory database
           VStack(spacing: 0) {
             DegradedModeBanner(reason: reason)
-            sceneRoot()
+            sceneRoot(in: scene)
               .onAppear {
                 handleSceneAppear(container: container)
               }
@@ -1321,9 +1331,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
         case .failed(let error):
           ErrorRecoveryView(error: error, retry: {
-            Task {
-              await initializeModelContainer()
-            }
+            appStateManager.modelContainerState = .loading
           })
     }
   }
@@ -1335,138 +1343,90 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     // ("(unknown context at $…)"). Saved state then never matches the next launch, AppKit
     // restores nothing, and the relaunched app has no window.
     WindowGroup(id: "main") {
-      Group {
-        #if DEBUG
-        if isEncryptedRequestUIFixture {
-          MLSEncryptedRequestUIFixture()
-        } else if isMessageRequestsUIFixture {
-          MessageRequestsUIFixture()
-        } else {
-          applicationContent
+      CatbirdWindowRoot(
+        appStateManager: appStateManager,
+        onOpenURL: { url, scene in handleSceneURL(url, in: scene) },
+        onAccountReady: { scene in routePendingLaunchURLIfNeeded(in: scene) }
+      ) { scene in
+        Group {
+          #if DEBUG
+          if isEncryptedRequestUIFixture {
+            MLSEncryptedRequestUIFixture()
+          } else if isMessageRequestsUIFixture {
+            MessageRequestsUIFixture()
+          } else if isVideoFeedUIFixture {
+            VideoFeedUIFixture()
+          } else if isSocialActionsUIFixture {
+            #if os(iOS)
+            SocialActionsUIFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isInlineReplyUIFixture {
+            #if os(iOS)
+            InlineReplyValidationFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isMessagesViewportUIFixture {
+            #if os(iOS)
+            MessagesViewportValidationFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isSearchTabReselectionUIFixture {
+            #if os(iOS)
+            SearchTabReselectionFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isMessagesNavigationUIFixture {
+            #if os(iOS)
+            MessagesNavigationFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isSceneRuntimeUIFixture {
+            #if os(iOS)
+            SceneRuntimeFixture(scene: scene)
+            #else
+            EmptyView()
+            #endif
+          } else if isSettingsUIFixture {
+            SettingsUIFixture()
+          } else if isModerationUIFixture {
+            #if os(iOS)
+            ModerationUIFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isFeedPerformanceFixture {
+            #if os(iOS)
+            FeedPerformanceFixture()
+            #else
+            EmptyView()
+            #endif
+          } else {
+            applicationContent(in: scene)
+          }
+          #else
+          applicationContent(in: scene)
+          #endif
         }
-        #else
-        applicationContent
+        .catalystPlainButtons()
+        #if DEBUG && os(iOS)
+        .overlay {
+          if ProcessInfo.processInfo.arguments.contains("--bluemoji-visual-test") {
+            BluemojiVisualTestView()
+          }
+        }
         #endif
       }
-      .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
-        handleScenePhaseChange(from: oldPhase, to: newPhase)
-      }
-      .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
-        handleScenePhaseChange(from: oldPhase, to: newPhase)
-      }
-      .catalystPlainButtons()
-      #if DEBUG && os(iOS)
-      .overlay {
-        if ProcessInfo.processInfo.arguments.contains("--bluemoji-visual-test") {
-          BluemojiVisualTestView()
-        }
-      }
-      #endif
-      .onOpenURL { url in
-          guard !isPresentationUIFixture else { return }
-          logger.info(
-            "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
-          )
-
-          guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
-            return
-          }
-          let scheme = (components.scheme ?? "").lowercased()
-          let host = (components.host ?? "").lowercased()
-          let path = components.path.lowercased()
-
-          // Check for gateway BFF callback (Universal Link from catbird.blue)
-          // Gateway redirects with a one-time exchange code in the query.
-          if scheme == "https" && host == "catbird.blue" && path == "/oauth/callback" {
-            logger.info("Gateway OAuth callback detected")
-            Task {
-              do {
-                try await appStateManager.authentication.handleGatewayCallback(url)
-                logger.info("Gateway OAuth callback handled successfully")
-              } catch {
-                logger.error("Error handling gateway callback: \(error)")
-              }
-            }
-          } else if (scheme == "catbird" || scheme == "blue.catbird") && ((host == "oauth" && path == "/callback") || (host.isEmpty && path == "/oauth/callback") || (host == "oauth/callback" && path.isEmpty)) {
-            // Legacy public OAuth callback (direct ATProto OAuth)
-            Task {
-              do {
-                try await appStateManager.authentication.handleCallback(url)
-                logger.info("OAuth callback handled successfully")
-              } catch {
-                logger.error("Error handling OAuth callback: \(error)")
-              }
-            }
-          } else if url.scheme == "blue.catbird" && url.host == "notifications" {
-            logger.info("Widget notification deep link received")
-
-            // Instead of using the navigation system, directly set the selected tab
-            Task { @MainActor in
-              guard let appState = self.appState else { return }
-              // Access the tab selection mechanism directly
-              if let tabSelection = appState.navigationManager.tabSelection {
-                tabSelection(2)  // Switch to notifications tab (index 2)
-              } else {
-                // Fallback if no tab selection mechanism is available
-                appState.navigationManager.updateCurrentTab(2)
-              }
-            }
-          } else if url.scheme == "blue.catbird" && url.host == "oauth"
-                      && url.lastPathComponent == "circle-appview" {
-            // Circle AppView authorization completed. The AppView owns the
-            // grant server-side; this only records that it succeeded.
-            logger.info("Circle AppView OAuth completion deep link received")
-            Task { @MainActor in
-              CircleAppViewAuthCoordinator.shared.complete(callback: url)
-            }
-          } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
-            // Handle E2E testing commands (only in E2E mode)
-            #if os(iOS) || (DEBUG && os(macOS))
-            logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
-            if appStateManager.isE2EMode {
-              Task { @MainActor in
-                logger.error("[E2E-URL] Calling handleE2ECommand")
-                await self.handleE2ECommand(url: url)
-              }
-            } else {
-              logger.error("[E2E-URL] E2E URL received but not in E2E mode: \(url.absoluteString)")
-            }
-            #endif
-          } else if let intent = ExternalURLIntent.parse(from: url) {
-            // Route bluesky://intent/* (compose prefill, verify-email) and group-chat join links through ExternalURLIntentPresenter
-            logger.info("External URL intent parsed from URL: \(url.absoluteString, privacy: .private)")
-            if let appState = self.appState {
-              appState.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
-            } else {
-              logger.info("AppState unavailable; retaining pending intent launch URL")
-              pendingLaunchURL = url
-            }
-          } else {
-            // Handle all other URLs through the URLHandler
-            if let appState = self.appState {
-              _ = appState.urlHandler.handle(url)
-            } else {
-              logger.info("AppState unavailable; retaining pending launch URL")
-              pendingLaunchURL = url
-            }
-          }
-        }
-        .onChange(of: appStateManager.lifecycle) { _, newLifecycle in
-          if case .authenticated(let appState) = newLifecycle {
-            unauthenticatedStarterPackItem = nil
-            routePendingLaunchURLIfNeeded(with: appState)
-          }
-        }
-        .onChange(of: pendingLaunchURL) { _, newURL in
-          if appState == nil, let url = newURL {
-            Task { @MainActor in
-              let handler = URLHandler()
-              if let uri = await handler.resolveStarterPackURI(from: url) {
-                self.unauthenticatedStarterPackItem = StarterPackLandingItem(flowID: UUID(), uri: uri)
-              }
-            }
-          }
-        }
+    }
+    .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
+      guard !isPresentationUIFixture,
+            SceneApplicationPhaseObservation.shared.accept(newPhase) else { return }
+      handleScenePhaseChange(from: oldPhase, to: newPhase)
     }
     #if os(macOS)
     .windowStyle(.automatic)
@@ -1482,8 +1442,189 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 }
 
 private extension CatbirdApp {
+  func handleSceneURL(_ url: URL, in scene: SceneWindowState) {
+  guard !isPresentationUIFixture else { return }
+  logger.info(
+    "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
+  )
+
+  guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+    return
+  }
+  let scheme = (components.scheme ?? "").lowercased()
+  let host = (components.host ?? "").lowercased()
+  let path = components.path.lowercased()
+
+  // Check for gateway BFF callback (Universal Link from catbird.blue)
+  // Gateway redirects with a one-time exchange code in the query.
+  if scheme == "https" && host == "catbird.blue" && path == "/oauth/callback" {
+    logger.info("Gateway OAuth callback detected")
+    Task {
+      do {
+        try await appStateManager.authentication.handleGatewayCallback(url)
+        logger.info("Gateway OAuth callback handled successfully")
+      } catch {
+        logger.error("Error handling gateway callback: \(error)")
+      }
+    }
+  } else if (scheme == "catbird" || scheme == "blue.catbird") && ((host == "oauth" && path == "/callback") || (host.isEmpty && path == "/oauth/callback") || (host == "oauth/callback" && path.isEmpty)) {
+    // Legacy public OAuth callback (direct ATProto OAuth)
+    Task {
+      do {
+        try await appStateManager.authentication.handleCallback(url)
+        logger.info("OAuth callback handled successfully")
+      } catch {
+        logger.error("Error handling OAuth callback: \(error)")
+      }
+    }
+  } else if url.scheme == "blue.catbird" && url.host == "notifications" {
+    logger.info("Widget notification deep link received")
+
+    guard let context = scene.context, !context.isInvalidated,
+          context.accountDID == self.appState?.userDID else {
+      scene.retainLaunchURL(url)
+      return
+    }
+    context.navigationManager.updateCurrentTab(2)
+    context.navigationManager.tabSelection?(2)
+  } else if url.scheme == "blue.catbird" && url.host == "oauth"
+              && url.lastPathComponent == "circle-appview" {
+    // Circle AppView authorization completed. The AppView owns the
+    // grant server-side; this only records that it succeeded.
+    logger.info("Circle AppView OAuth completion deep link received")
+    Task { @MainActor in
+      CircleAppViewAuthCoordinator.shared.complete(callback: url)
+    }
+  } else if (scheme == "blue.catbird" || scheme == "catbird") && host == "share" {
+    // The share extension saved a draft to the app group and opened Catbird.
+    // The import presents it in the composer once an account is ready, and
+    // keeps any draft that was already open as a recoverable saved draft.
+    IncomingSharedDraftHandler.importIfAvailable()
+  } else if (scheme == "blue.catbird" || scheme == "catbird") && Self.widgetRouteHosts.contains(host) {
+    handleWidgetURL(url, components: components, host: host, in: scene)
+  } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
+    // Handle E2E testing commands (DEBUG builds, E2E mode only)
+    #if DEBUG
+    logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
+    if appStateManager.isE2EMode {
+      let receivingContext = scene.context
+      Task { @MainActor in
+        logger.error("[E2E-URL] Calling handleE2ECommand")
+        await self.handleE2ECommand(url: url, sceneContext: receivingContext)
+      }
+    } else {
+      logger.error("[E2E-URL] E2E URL received but not in E2E mode: \(url.absoluteString)")
+    }
+    #else
+    logger.info("Ignoring test-harness URL in a release build")
+    #endif
+  } else if let intent = ExternalURLIntent.parse(from: url) {
+    // Route bluesky://intent/* (compose prefill, verify-email) and group-chat join links through ExternalURLIntentPresenter
+    logger.info("External URL intent parsed from URL: \(url.absoluteString, privacy: .private)")
+    if let appState = self.appState, let context = scene.context,
+         !context.isInvalidated, context.accountDID == appState.userDID {
+      context.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
+    } else {
+      logger.info("AppState unavailable; retaining pending intent launch URL")
+      scene.retainLaunchURL(url)
+    }
+  } else {
+    // Handle all other URLs through the URLHandler
+    if let appState = self.appState, let context = scene.context,
+         !context.isInvalidated, context.accountDID == appState.userDID {
+      _ = context.urlHandler.handle(url)
+    } else {
+      logger.info("AppState unavailable; retaining pending launch URL")
+      scene.retainLaunchURL(url)
+    }
+  }
+  }
+
+  /// Hosts emitted by the Compose and Feed widgets (and post links from widget timelines).
+  static let widgetRouteHosts: Set<String> = ["compose", "feed", "profile", "post"]
+
+  /// Routes widget taps such as `blue.catbird://compose?account=<did>`, `blue.catbird://feed/timeline`,
+  /// `blue.catbird://feed?url=<feed>`, `blue.catbird://profile/<handle>` and `blue.catbird://post?uri=<at-uri>`.
+  /// Requests go through the scene route coordinator so they wait for an account switch to finish.
+  func handleWidgetURL(_ url: URL, components: URLComponents, host: String, in scene: SceneWindowState) {
+    guard let appState = self.appState else {
+      scene.retainLaunchURL(url)
+      return
+    }
+    let queryItems = components.queryItems ?? []
+    let requestedDID = queryItems.first(where: { $0.name == "account" })?.value
+    let targetDID = (requestedDID?.isEmpty == false ? requestedDID : nil) ?? appState.userDID
+
+    let command: SceneRouteCommand
+    var beforeDelivery: SceneRouteCoordinator.BeforeDelivery?
+    switch host {
+    case "compose":
+      command = .showTab(0, resetPath: false)
+      beforeDelivery = { context in
+        context.presentPostComposer()
+        return true
+      }
+    case "profile":
+      let actor = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      guard !actor.isEmpty else {
+        command = .showTab(0, resetPath: false)
+        break
+      }
+      command = .navigate(.profile(actor), tabIndex: 0)
+    case "post":
+      guard let rawURI = queryItems.first(where: { $0.name == "uri" })?.value,
+            let uri = try? ATProtocolURI(uriString: rawURI) else {
+        command = .showTab(0, resetPath: false)
+        break
+      }
+      command = .navigate(.post(uri), tabIndex: 0)
+    default:
+      // feed: a custom feed or list arrives as `?url=`; anything else opens the Home timeline.
+      if let rawFeed = queryItems.first(where: { $0.name == "url" })?.value, !rawFeed.isEmpty {
+        if let uri = try? ATProtocolURI(uriString: rawFeed) {
+          command = .navigate(uri.collection == "app.bsky.graph.list" ? .listFeed(uri) : .feed(uri), tabIndex: 0)
+        } else if let webURL = URL(string: rawFeed), URLSchemePolicy.isWeb(webURL) {
+          command = .showTab(0, resetPath: false)
+          beforeDelivery = { context in
+            _ = context.urlHandler.handle(webURL, tabIndex: 0)
+            return true
+          }
+        } else {
+          command = .showTab(0, resetPath: true)
+        }
+      } else {
+        command = .showTab(0, resetPath: true)
+      }
+    }
+
+    SceneRouteCoordinator.shared.submit(
+      SceneRouteRequest(accountDID: targetDID, command: command, preferredSceneID: scene.sceneID),
+      beforeDelivery: beforeDelivery
+    )
+
+    // A widget configured for another signed-in account switches to it first; the request
+    // above is delivered once this window shows that account.
+    if targetDID != appState.userDID {
+      Task { @MainActor in
+        let outcome = await appStateManager.switchAccount(to: targetDID)
+        if case .failed = outcome {
+          logger.error("Widget deep link could not switch to the requested account")
+        }
+        appStateManager.presentAccountSwitchOutcome(outcome)
+      }
+    }
+  }
+
+  private var pendingAuthAlertBinding: Binding<AuthenticationManager.AuthAlert?> {
+    Binding(
+      get: { appStateManager.authentication.pendingAuthAlert },
+      set: { _ in Task { await appStateManager.authentication.clearPendingAuthAlert() } }
+    )
+  }
+
   @ViewBuilder
-  func sceneRoot() -> some View {
+  func sceneRoot(in scene: SceneWindowState) -> some View {
+    @Bindable var scene = scene
     Group {
       switch appStateManager.lifecycle {
       case .launching:
@@ -1492,58 +1633,72 @@ private extension CatbirdApp {
       case .unauthenticated:
         LoginView()
           .environment(appStateManager)
-          .sheet(item: $unauthenticatedStarterPackItem, onDismiss: {
+          .sheet(item: $scene.unauthenticatedStarterPackItem, onDismiss: {
             if !appStateManager.lifecycle.isAuthenticated {
-              StarterPackOnboardingManager.shared.clearPendingContext()
-              pendingLaunchURL = nil
+              scene.dismissStarterPackIfOwned()
             }
-            unauthenticatedStarterPackItem = nil
+            scene.unauthenticatedStarterPackItem = nil
           }) { item in
             StarterPackLandingView(flowID: item.flowID, starterPackURI: item.uri) {
               if !appStateManager.lifecycle.isAuthenticated {
-                StarterPackOnboardingManager.shared.clearPendingContext()
-                pendingLaunchURL = nil
+                scene.dismissStarterPackIfOwned()
               }
-              unauthenticatedStarterPackItem = nil
+              scene.unauthenticatedStarterPackItem = nil
             }
             .environment(appStateManager)
           }
       case .authenticated(let appState):
-        if shouldShowContentForAuthenticatedState {
-          ContentView()
-            .modifier(MLSDirectDraftPresentation())
-            .id(appState.userDID)
-            .applyAppStateEnvironment(appState)
+        if shouldShowContentForAuthenticatedState,
+           let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            ContentView()
+              .modifier(MLSDirectDraftPresentation())
+          }
+          .id(context.activityRegistrationID)
         } else {
           LoadingView()  // For biometric check
         }
 
       case .deactivated(let appState):
-        AccountDeactivatedView(appState: appState)
-          .id(appState.userDID)
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+        if let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            AccountDeactivatedView(appState: appState)
+          }
+          .id(context.activityRegistrationID)
+        } else {
+          LoadingView()
+        }
 
       case .takendown(let appState):
-        AccountTakedownView(appState: appState)
-          .id(appState.userDID)
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+        if let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            AccountTakedownView(appState: appState)
+          }
+          .id(context.activityRegistrationID)
+        } else {
+          LoadingView()
+        }
       }
+    }
+    // Sign-out explanations are usually raised while moving to the sign-in screen,
+    // so they're presented here, above every lifecycle state.
+    // Asks to sign in again when a switch reached an account whose session expired.
+    // It waits while the sign-out alert below is up, so the two never stack.
+    .modifier(AccountReauthenticationPromptModifier(appStateManager: appStateManager))
+    .alert(item: pendingAuthAlertBinding) { alert in
+      Alert(
+        title: Text(alert.title),
+        message: Text(alert.message),
+        dismissButton: .default(Text("OK"), action: {
+          Task { await appStateManager.authentication.clearPendingAuthAlert() }
+        })
+      )
     }
     .overlay {
       biometricOverlay()
-    }
-  }
-
-  private struct StarterPackLandingItem: Identifiable {
-    let flowID: UUID
-    let uri: ATProtocolURI
-    var id: String { "\(flowID.uuidString)-\(uri.uriString())" }
-
-    init(flowID: UUID = UUID(), uri: ATProtocolURI) {
-      self.flowID = flowID
-      self.uri = uri
     }
   }
 
@@ -1567,24 +1722,9 @@ private extension CatbirdApp {
     appStateManager.hasHandledSceneAppear = true
     logger.debug("✅ handleSceneAppear called for first time")
 
-#if os(iOS)
-    if let appState,
-       let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-       let window = windowScene.windows.first,
-       let rootVC = window.rootViewController {
-      appState.urlHandler.registerTopViewController(rootVC)
-      window.restorationIdentifier = "MainWindow"
-      window.shouldGroupAccessibilityChildren = true
-
-      Task {
-        await restoreApplicationState()
-      }
-    }
-#elseif os(macOS)
     Task {
       await restoreApplicationState()
     }
-#endif
 
 #if os(iOS)
     setupBackgroundNotification()
@@ -1597,7 +1737,7 @@ private extension CatbirdApp {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
       }
-      FeedStateStore.shared.setModelContext(modelContext)
+      FeedStateStore.shared.setModelContext(container.mainContext)
     }
 
     if #available(iOS 26.0, macOS 26.0, *) {
@@ -1646,6 +1786,7 @@ private extension CatbirdApp {
       isMacOS: isMacOS,
       otherScenesActive: hasOtherScenes
     )
+    CopilotAvailability.setApplicationActive(newPhase == .active || hasOtherScenes)
 
     if otherScenesActive && (newPhase == .inactive || newPhase == .background) {
       logger.info("Scene transitioned to \(String(describing: newPhase)), but other connected scenes remain active in foreground. Preserving process-wide database and MLS connections.")
@@ -1769,13 +1910,11 @@ private extension CatbirdApp {
       }
       #endif
 
-      await FeedStateStore.shared.handleScenePhaseChange(newPhase)
-
       guard MLSForegroundResumeCoordinator.isCurrentTransition(
         sceneTransitionToken,
         expectedPhase: newPhase
       ) else {
-        logger.debug("Skipping stale scene lifecycle task after feed-state update")
+        logger.debug("Skipping stale scene lifecycle task")
         return
       }
 
@@ -1904,6 +2043,8 @@ private extension CatbirdApp {
 #endif
 
       if newPhase == .background {
+        // Reaching the background cleanly means this launch didn't crash.
+        CatbirdSwiftDataStore.resetCrashLoopCounter()
         saveApplicationState()
 #if os(iOS)
         if !otherScenesActive {
@@ -2076,6 +2217,10 @@ private extension CatbirdApp {
 #if DEBUG
       try? Tips.resetDatastore()
 #endif
+      if UserDefaults.standard.bool(forKey: OnboardingManager.resetTipsOnNextLaunchKey) {
+        UserDefaults.standard.removeObject(forKey: OnboardingManager.resetTipsOnNextLaunchKey)
+        try? Tips.resetDatastore()
+      }
       try? Tips.configure([
         .displayFrequency(.immediate),
         .datastoreLocation(.applicationDefault)
@@ -2088,16 +2233,14 @@ private extension CatbirdApp {
 
     // If authenticated, initialize preferences manager and app services
     if let appState = appStateManager.lifecycle.appState {
-      appState.initializePreferencesManager(with: modelContext)
-      appState.configureDataServices(modelContainer: modelContext.container)
-
-      #if canImport(FoundationModels)
-      if #available(iOS 26.0, macOS 26.0, *) {
-        Task(priority: .background) {
-          await TopicSummaryService.shared.prepareLaunchWarmup(appState: appState)
-        }
+      // Bind the real store. AppStateManager has normally done this already, and the
+      // bootstrap key makes a repeat with the same container a no-op.
+      if let container = appStateManager.modelContainerState.container {
+        appState.initializePreferencesManager(with: container.mainContext)
+        appState.configureDataServices(modelContainer: container)
       }
-      #endif
+
+      // P001: Dead model-warmup calls removed
 
       Task {
         do {
@@ -2110,8 +2253,6 @@ private extension CatbirdApp {
         }
       }
 
-      // MLS initialization removed - will be lazily initialized when user opens chat
-      routePendingLaunchURLIfNeeded(with: appState)
     }
 
     await performInitialBiometricCheck()
@@ -2127,23 +2268,19 @@ private extension CatbirdApp {
     logger.info("🎉 initializeApplicationIfNeeded completed - hasBiometricCheck: \(hasBiometricCheck)")
   }
 
-  private func routePendingLaunchURLIfNeeded(with appState: AppState) {
-    guard let url = pendingLaunchURL else {
-      StarterPackOnboardingManager.shared.clearPendingContext()
-      return
-    }
-    logger.info("Routing pending launch URL after authentication: \(url.absoluteString, privacy: .private)")
-    pendingLaunchURL = nil
-    if let intent = ExternalURLIntent.parse(from: url) {
-      appState.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
-    } else {
-      _ = appState.urlHandler.handle(url)
-    }
-    // If welcome onboarding is required for this account (e.g. brand new account signup),
-    // WelcomeOnboardingView owns the starter pack finalization presentation.
-    // Otherwise (e.g. existing account login with starter pack link), finalize here.
+  private func routePendingLaunchURLIfNeeded(in scene: SceneWindowState) {
+    guard case .authenticated(let appState) = appStateManager.lifecycle,
+          let context = scene.context, !context.isInvalidated,
+          context.accountDID == appState.userDID,
+          let url = scene.pendingLaunchURL else { return }
+    logger.info("Routing receiving-window launch URL after authentication: \(url.absoluteString, privacy: .private)")
+    let starterPackFlowID = scene.starterPackFlowID
+    scene.clearPendingLaunchURL()
+    handleSceneURL(url, in: scene)
+    // Only the window that owns this onboarding flow may finalize its pending context.
     if appState.onboardingManager.hasCompletedWelcome(for: appState.userDID),
        let pending = StarterPackOnboardingManager.shared.pendingContext,
+       pending.flowID == starterPackFlowID,
        let client = appState.atProtoClient {
       Task {
         _ = try? await StarterPackOnboardingManager.shared.finalizeStarterPackOnboarding(
@@ -2181,23 +2318,26 @@ private extension CatbirdApp {
     return authenticated  // Show content only if biometric passed
   }
 
+  /// Picks up exactly where the launch screen leaves off: the same 250pt
+  /// `LaunchIcon`, centered on the system background, with progress below it,
+  /// so a cold launch doesn't jump to a smaller icon.
   struct LoadingView: View {
+    private static let launchIconSize: CGFloat = 250
+
     var body: some View {
-      VStack(spacing: 20) {
-        Image("CatbirdIcon")
-          .resizable()
-          .frame(width: 80, height: 80)
-          .cornerRadius(16)
-
-        ProgressView()
-          .scaleEffect(1.5)
-
-        Text("Loading...")
-          .font(.headline)
-          .foregroundColor(.secondary)
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.systemBackground)
+      Image("LaunchIcon")
+        .accessibilityHidden(true)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+          VStack(spacing: 12) {
+            ProgressView()
+            Text("Loading…")
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          }
+          .offset(y: Self.launchIconSize / 2 + 48)
+        }
+        .background(Color.systemBackground)
     }
   }
 
@@ -2216,13 +2356,13 @@ private extension CatbirdApp {
           .foregroundStyle(.red, .red.opacity(0.2))
 
         // Title
-        Text("Database Error")
+        Text("Catbird Couldn’t Open")
           .font(.title)
           .fontWeight(.bold)
 
         // Error details (expandable)
         VStack(alignment: .leading, spacing: 8) {
-          Text("Unable to open app database")
+          Text("Catbird couldn’t open the data it keeps on this device.")
             .font(.body)
             .foregroundColor(.secondary)
 
@@ -2262,7 +2402,7 @@ private extension CatbirdApp {
         } label: {
           HStack {
             Image(systemName: "trash")
-            Text("Reset Local Database")
+            Text("Reset Local Data")
             Text("(Recommended)")
               .font(.caption)
               .foregroundColor(.orange)
@@ -2289,7 +2429,7 @@ private extension CatbirdApp {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.systemBackground)
       .confirmationDialog(
-        "Reset Local Database?",
+        "Reset Local Data?",
         isPresented: $showResetConfirmation,
         titleVisibility: .visible
       ) {
@@ -2307,7 +2447,7 @@ private extension CatbirdApp {
             VStack(spacing: 16) {
               ProgressView()
                 .scaleEffect(1.5)
-              Text("Resetting...")
+              Text("Resetting…")
                 .font(.headline)
                 .foregroundColor(.white)
             }
@@ -2400,7 +2540,7 @@ private extension CatbirdApp {
               // Force app restart by setting state to loading
               AppStateManager.shared.modelContainerState = .loading
             } label: {
-              Text("Reset Database & Restart")
+              Text("Reset Local Data")
                 .font(.caption)
                 .fontWeight(.medium)
             }
@@ -2499,7 +2639,7 @@ private extension CatbirdApp {
   }
 #endif
 
-#if os(iOS) || (DEBUG && os(macOS))
+#if DEBUG
   // MARK: - E2E Testing URL Handlers
 
   /// Handle E2E testing URL commands
@@ -2510,7 +2650,7 @@ private extension CatbirdApp {
   /// - send-message?text=...&conversationId=... - Send a message to a conversation
   /// - dump-state - Write MLS state dump to app container
   /// - block?did=... - Block a DID and leave shared MLS conversations
-  func handleE2ECommand(url: URL) async {
+  func handleE2ECommand(url: URL, sceneContext: SceneNavigationContext?) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Commands")
     
     guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
@@ -4340,7 +4480,7 @@ struct BiometricAuthenticationOverlay: View {
           .fontWeight(.bold)
           .foregroundColor(.white)
         
-        Text("Authenticate to continue")
+        Text("Unlock to continue")
           .font(.subheadline)
           .foregroundColor(.gray)
         
@@ -4717,7 +4857,7 @@ extension CatbirdApp.AppDelegate {
     completionHandler([.banner, .sound, .badge])
   }
 }
-#endif 
+#endif
 
 extension CatbirdApp {
   /// Whether a scene leaving `.active` keeps the process-wide database and MLS connections open.

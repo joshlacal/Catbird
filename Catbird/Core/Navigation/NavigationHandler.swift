@@ -17,6 +17,35 @@ struct NavigationHandler {
     selectedTab: Binding<Int>
   ) -> some View {
     switch destination {
+    case .settings:
+      destinationContent(destination, path: path, appState: appState, selectedTab: selectedTab)
+    #if os(iOS)
+    case .conversation, .chatTab:
+      PlatformAgeProtectedContent(operation: .directMessaging) {
+        destinationContent(destination, path: path, appState: appState, selectedTab: selectedTab)
+      }
+    #endif
+    default:
+      PlatformAgeProtectedContent(operation: .generalContent, safetyTarget: safetyTarget(for: destination)) {
+        destinationContent(destination, path: path, appState: appState, selectedTab: selectedTab)
+      }
+    }
+  }
+
+  private static func safetyTarget(for destination: NavigationDestination) -> String? {
+    switch destination {
+    case .profile(let actor): return actor
+    case .post(let uri): return uri.uriString()
+    default: return nil
+    }
+  }
+
+  @ViewBuilder
+  private static func destinationContent(
+    _ destination: NavigationDestination, path: Binding<NavigationPath>, appState: AppState,
+    selectedTab: Binding<Int>
+  ) -> some View {
+    switch destination {
     case .profile(let did):
       UnifiedProfileView(
         did: did,
@@ -24,7 +53,7 @@ struct NavigationHandler {
         appState: appState,
         path: path
       )
-      .ignoresSafeArea()
+      .ignoresSafeArea(edges: .vertical)
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
       #endif
@@ -44,7 +73,7 @@ struct NavigationHandler {
         .id(tag)
 
     case .topic(let topic):
-      TopicFeedView(topic: topic)
+      TopicFeedView(topic: topic, path: path)
         .navigationTitle(topic)
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
@@ -70,7 +99,8 @@ struct NavigationHandler {
         .id(uri.uriString())
 
     case .list(let uri):
-      ListView(listURI: uri, path: path)
+      // The full list screen, with Report, Block/Unblock and Share, for every list link.
+      ListDetailView(listURIString: uri.uriString(), path: path)
         .id(uri.uriString())
 
     case .starterPack(let uri):
@@ -107,17 +137,12 @@ struct NavigationHandler {
         .id(postUri)
 
     case .bookmarks:
-      if #available(iOS 26.0, macOS 26.0, *) {
-        BookmarksView(path: path)
-          .navigationTitle("Bookmarks")
-          #if os(iOS)
-          .toolbarTitleDisplayMode(.large)
-          #endif
-          .id("bookmarks")
-      } else {
-        Text("Bookmarks require iOS 26.0 or macOS 26.0")
-          .navigationTitle("Bookmarks")
-      }
+      BookmarksView(path: path)
+        .navigationTitle("Bookmarks")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.large)
+        #endif
+        .id("bookmarks")
 
     case .activitySubscriptions:
       ActivitySubscriptionsView()
@@ -160,6 +185,13 @@ struct NavigationHandler {
     case .videoFeed:
       VideoFeedView(path: path)
         .id("videoFeed")
+    case .videoFeedStartingAt(let post):
+      VideoFeedView(initialPost: post, path: path)
+        .id("videoFeed-\(post.uri.uriString())")
+    case .videoFeedZoom(let post, let source):
+      VideoFeedView(initialPost: post, path: path)
+        .id("videoFeed-\(post?.uri.uriString() ?? "thevids")")
+        .videoFeedZoomDestination(source)
 
     case .settings(let route):
       settingsView(for: route)
@@ -232,30 +264,8 @@ struct NavigationHandler {
 
   @ViewBuilder
   private static func settingsView(for route: SettingsRoute) -> some View {
-    switch route {
-    case .language:
-      LanguageSettingsView()
-    case .accessibility:
-      AccessibilitySettingsView()
-    case .appearance, .appIcon:
-      AppearanceSettingsView()
-    case .account, .appPasswords:
-      AccountSettingsView()
-    case .privacyAndSecurity:
-      PrivacySecuritySettingsView()
-    case .contentAndMedia, .followingFeed, .interests:
-      ContentMediaSettingsView()
-    case .about:
-      AboutSettingsView()
-    case .notifications:
-      NotificationSettingsView()
-    case .moderation:
-      ModerationSettingsView()
-    case .savedFeeds:
-      ListsManagerView()
-    case .intentControls:
-      IntentControlsSettingsView()
-    }
+    SettingsDestinationView(target: route.target)
+      .navigationDestination(for: SettingsTarget.self) { target in SettingsDestinationView(target: target) }
   }
 
   /// Returns the title string for a navigation destination
@@ -295,26 +305,10 @@ struct NavigationHandler {
       return circle.name
     case .notificationActivity:
       return "Activity"
-    case .videoFeed:
+    case .videoFeed, .videoFeedStartingAt, .videoFeedZoom:
       return "Videos"
     case .settings(let route):
-      switch route {
-      case .language: return "Language"
-      case .accessibility: return "Accessibility"
-      case .appearance: return "Appearance"
-      case .account: return "Account"
-      case .privacyAndSecurity: return "Privacy & Security"
-      case .contentAndMedia: return "Content & Media"
-      case .about: return "About"
-      case .notifications: return "Notifications"
-      case .moderation: return "Moderation"
-      case .followingFeed: return "Following Feed"
-      case .savedFeeds: return "Saved Feeds"
-      case .appPasswords: return "App Passwords"
-      case .interests: return "Interests"
-      case .appIcon: return "App Icon"
-      case .intentControls: return "Intent Controls"
-      }
+      return route.target.screen.title
     #if os(iOS)
     case .conversation:
       return "Conversation"
@@ -373,7 +367,7 @@ struct NavigationHandler {
       return "person.2.circle"
     case .notificationActivity:
       return "bell"
-    case .videoFeed:
+    case .videoFeed, .videoFeedStartingAt, .videoFeedZoom:
       return "play.rectangle"
     case .settings:
       return "gear"
@@ -419,6 +413,7 @@ public struct StarterPackShortResolverView: View {
   let code: String
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneNavigation
   @State private var resolvedURI: ATProtocolURI?
   @State private var errorMessage: String?
   @State private var isLoading = true
@@ -434,16 +429,16 @@ public struct StarterPackShortResolverView: View {
         StarterPackView(uri: resolvedURI, path: $path)
       } else if let errorMessage {
         ContentUnavailableView {
-          Label("Unable to Open Starter Pack", systemImage: "exclamationmark.triangle")
+          Label("Couldn’t Open Starter Pack", systemImage: "exclamationmark.triangle")
         } description: {
           Text(errorMessage)
         } actions: {
-          Button("Retry") {
+          Button("Try Again") {
             Task { await resolveCode() }
           }
         }
       } else {
-        ProgressView("Resolving Starter Pack...")
+        ProgressView("Opening starter pack…")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
@@ -453,11 +448,13 @@ public struct StarterPackShortResolverView: View {
   }
 
   private func resolveCode() async {
+    weak var operationScene = sceneNavigation
+    guard isCurrentScene(operationScene) else { return }
     isLoading = true
     errorMessage = nil
     
     guard let url = URL(string: "https://go.bsky.app/\(code)") else {
-      errorMessage = "Invalid starter pack code"
+      errorMessage = "This starter pack link isn’t valid."
       isLoading = false
       return
     }
@@ -468,8 +465,9 @@ public struct StarterPackShortResolverView: View {
 
     do {
       let (data, response) = try await URLSession.shared.data(for: request)
+      guard isCurrentScene(operationScene) else { return }
       guard let httpResponse = response as? HTTPURLResponse, (200...399).contains(httpResponse.statusCode) else {
-        errorMessage = "Starter pack not found or link has expired."
+        errorMessage = "This starter pack couldn’t be found. The link may have expired."
         isLoading = false
         return
       }
@@ -479,30 +477,46 @@ public struct StarterPackShortResolverView: View {
         if let candidateString {
           if candidateString.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: candidateString) {
             self.resolvedURI = uri
-          } else if let dest = await appState.urlHandler.parseDestination(from: candidateString),
-                    case .starterPack(let uri) = dest {
-            self.resolvedURI = uri
           } else {
-            errorMessage = "Could not resolve starter pack destination."
+            let destination = await operationScene?.urlHandler.parseDestination(from: candidateString)
+            guard isCurrentScene(operationScene) else { return }
+            if case .starterPack(let uri)? = destination {
+              self.resolvedURI = uri
+            } else {
+              errorMessage = "This starter pack couldn’t be found. The link may have expired."
+            }
           }
         } else {
-          errorMessage = "Starter pack not found or link has expired."
+          errorMessage = "This starter pack couldn’t be found. The link may have expired."
         }
       } else if let location = httpResponse.value(forHTTPHeaderField: "Location") {
         if location.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: location) {
           self.resolvedURI = uri
-        } else if let dest = await appState.urlHandler.parseDestination(from: location),
-                  case .starterPack(let uri) = dest {
-          self.resolvedURI = uri
         } else {
-          errorMessage = "Could not resolve starter pack destination."
+          let destination = await operationScene?.urlHandler.parseDestination(from: location)
+          guard isCurrentScene(operationScene) else { return }
+          if case .starterPack(let uri)? = destination {
+            self.resolvedURI = uri
+          } else {
+            errorMessage = "This starter pack couldn’t be found. The link may have expired."
+          }
         }
       } else {
-        errorMessage = "Starter pack not found or link has expired."
+        errorMessage = "This starter pack couldn’t be found. The link may have expired."
       }
     } catch {
-      errorMessage = "Network error resolving starter pack: \(error.localizedDescription)"
+      guard isCurrentScene(operationScene) else { return }
+      errorMessage = UserFacingError.message(for: error, action: "open this starter pack")
     }
     isLoading = false
+  }
+
+  private func isCurrentScene(_ context: SceneNavigationContext?) -> Bool {
+    guard let context else { return false }
+    return context === sceneNavigation
+      && !context.isInvalidated
+      && context.accountDID == appState.userDID
+      && appState.isAuthenticated
+      && !Task.isCancelled
   }
 }

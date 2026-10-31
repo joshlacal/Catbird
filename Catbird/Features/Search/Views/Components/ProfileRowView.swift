@@ -7,14 +7,23 @@ struct ProfileRowView: View {
     let profile: ProfileDisplayable
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
-    @State private var currentUserDid: String?
-    @State private var viewerStatus: ViewerStatus = .unknown
+    @Environment(\.moderationPolicy) private var moderationPolicy
+    @State private var optimisticStatus: ViewerStatus?
+    @State private var showUnblockConfirmation = false
     
     private enum ViewerStatus {
         case unknown
         case notFollowing
         case following
         case blocking
+    }
+
+    private var isSelf: Bool {
+        profile.did.didString() == appState.userDID
+    }
+
+    private var effectiveStatus: ViewerStatus {
+        optimisticStatus ?? getInitialViewerStatus()
     }
     
     var body: some View {
@@ -26,6 +35,7 @@ struct ProfileRowView: View {
                 AsyncProfileImage(
                     url: profile.finalAvatarURL(),
                     size: DesignTokens.Size.avatarLG,
+                    did: profile.did.didString(),
                     labels: extractLabels(from: profile)
                 )
 
@@ -40,7 +50,7 @@ struct ProfileRowView: View {
                 Spacer(minLength: DesignTokens.Spacing.sm)
 
                 // Follow button if logged in and not self
-                if let did = currentUserDid, did != profile.did.didString() {
+                if appState.isAuthenticated && !isSelf {
                     followButton()
                         .padding(.top, 2)
                 }
@@ -54,18 +64,15 @@ struct ProfileRowView: View {
         .entityContext(
           EntityIdentifier(for: ProfileEntity.self, identifier: profile.did.didString()))
         .task {
-            await ProfileEntityStore.shared.store(ProfileEntity(displayable: profile))
-
-            // Fetch the DID asynchronously
-            currentUserDid = try? await appState.atProtoClient?.getDid()
-            
-            // Initialize viewer status
-            if viewerStatus == .unknown {
-                viewerStatus = getInitialViewerStatus()
+            // The persisted resolution store carries the avatar URL, so an
+            // author whose avatar stays a placeholder is not seeded (as the
+            // feed row does for post authors).
+            if !moderationPolicy.concealsAvatar(did: profile.did.didString(), labels: extractLabels(from: profile)) {
+                await ProfileEntityStore.shared.store(ProfileEntity(displayable: profile))
             }
         }
         .onChange(of: profile.did) { _, _ in
-            viewerStatus = getInitialViewerStatus()
+            optimisticStatus = nil
         }
     }
     
@@ -82,6 +89,10 @@ struct ProfileRowView: View {
             if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
                 VerificationBadgeView(kind: badgeKind)
                     .font(.subheadline)
+            }
+            if AutomationBadge.isSelfDeclared(labels: extractLabels(from: profile), authorDID: profile.did) {
+                AutomationBadgeView()
+                    .layoutPriority(1)
             }
 
             if let pronouns = profile.pronouns, !pronouns.isEmpty {
@@ -152,32 +163,45 @@ struct ProfileRowView: View {
     // Follow button with appropriate state
     @ViewBuilder
     private func followButton() -> some View {
-        switch viewerStatus {
+        switch effectiveStatus {
         case .blocking:
             Button {
-                Task {
-                    let previous = viewerStatus
-                    viewerStatus = .notFollowing
-                    do {
-                        _ = try await appState.unblock(did: profile.did.didString())
-                    } catch {
-                        viewerStatus = previous
-                    }
-                }
+                showUnblockConfirmation = true
             } label: {
-                buttonLabel("Blocked", color: .white, backgroundColor: .red)
+                buttonLabel("Unblock", color: .white, backgroundColor: .red)
             }
             .buttonStyle(.plain)
+            .accessibilityHint("You blocked this account")
+            .confirmationDialog(
+                "Unblock @\(profile.handle)?",
+                isPresented: $showUnblockConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Unblock", role: .destructive) {
+                    Task {
+                        let previous = effectiveStatus
+                        optimisticStatus = .notFollowing
+                        do {
+                            _ = try await appState.unblock(did: profile.did.didString())
+                        } catch {
+                            optimisticStatus = previous
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("They’ll be able to see your posts and interact with you again.")
+            }
             
         case .following:
             Button {
                 Task {
-                    let previous = viewerStatus
-                    viewerStatus = .notFollowing
+                    let previous = effectiveStatus
+                    optimisticStatus = .notFollowing
                     do {
                         _ = try await appState.unfollow(did: profile.did.didString())
                     } catch {
-                        viewerStatus = previous
+                        optimisticStatus = previous
                     }
                 }
             } label: {
@@ -188,12 +212,12 @@ struct ProfileRowView: View {
         case .notFollowing, .unknown:
             Button {
                 Task {
-                    let previous = viewerStatus
-                    viewerStatus = .following
+                    let previous = effectiveStatus
+                    optimisticStatus = .following
                     do {
                         _ = try await appState.follow(did: profile.did.didString())
                     } catch {
-                        viewerStatus = previous
+                        optimisticStatus = previous
                     }
                 }
             } label: {
@@ -242,15 +266,8 @@ struct ProfileRowView: View {
             .contentShape(Capsule())
     }
     
-    private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
-        if let profileView = profile as? AppBskyActorDefs.ProfileView {
-            return profileView.labels
-        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
-            return profileViewBasic.labels
-        } else if let profileViewDetailed = profile as? AppBskyActorDefs.ProfileViewDetailed {
-            return profileViewDetailed.labels
-        }
-        return nil
+    private func extractLabels(from profile: any ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
+        (profile as? any ModerationAccountSubject)?.moderationLabels
     }
 }
 

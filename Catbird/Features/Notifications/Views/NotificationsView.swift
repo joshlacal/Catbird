@@ -5,8 +5,10 @@ import Petrel
 import SwiftUI
 
 struct NotificationsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState: AppState
   @Environment(\.horizontalSizeClass) private var hSizeClass
+  @Environment(\.scenePhase) private var scenePhase
   @State private var viewModel: NotificationsViewModel
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
@@ -17,17 +19,23 @@ struct NotificationsView: View {
   @State private var showingSettings = false
   @State private var circleRefresh = NotificationSupplementRefresh()
   private let loadMoreTriggerDedupInterval: TimeInterval = 0.35
+  @State private var openIntervalState: OSSignpostIntervalState?
+  @State private var wasBackgrounded = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsView")
 
   init(appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>) {
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
-    _viewModel = State(wrappedValue: NotificationsViewModel(client: appState.atProtoClient))
+    _viewModel = State(wrappedValue: NotificationsViewModel(
+      client: appState.atProtoClient,
+      notificationManager: appState.notificationManager,
+      moderationPolicy: appState.moderationPolicy
+    ))
   }
 
   var body: some View {
-    let navigationPathBinding = appState.navigationManager.pathBinding(for: 2)
+    let navigationPathBinding = sceneContext.navigationManager.pathBinding(for: 2)
 
     return navigationStack(using: navigationPathBinding)
     .onChange(of: lastTappedTab) { _, newValue in
@@ -41,29 +49,65 @@ struct NotificationsView: View {
     }
     .onChange(of: selectedTab) { oldValue, newValue in
       if newValue == 2 && oldValue != 2 {
+        if openIntervalState == nil {
+          openIntervalState = PerformanceSignposts.beginInterval("NotificationsOpen")
+        }
         Task {
           startCircleRefresh()
-          await viewModel.refreshNotifications()
+          if !viewModel.hasLoadedOnce {
+            await viewModel.loadNotifications()
+          } else if viewModel.isStale || appState.notificationManager.unreadCount > 0 {
+            await viewModel.refreshNotifications()
+          }
+          if let state = openIntervalState {
+            PerformanceSignposts.endInterval("NotificationsOpen", state)
+            openIntervalState = nil
+          }
           try? await viewModel.markNotificationsAsSeen()
         }
+      }
+    }
+    .onChange(of: appState.notificationManager.preferences) { _, _ in
+      viewModel.preferencesDidChange()
+    }
+    .onChange(of: viewModel.isLoading) { _, isLoading in
+      if !isLoading, let state = openIntervalState {
+        PerformanceSignposts.endInterval("NotificationsOpen", state)
+        openIntervalState = nil
       }
     }
     .onChange(of: selectedFilter) { _, newFilter in
       Task {
         await viewModel.setFilter(newFilter)
       }
-    }.task {
+    }
+    .onChange(of: appState.moderationPolicy) { _, policy in
+      // The list the view model paginates is the policy-filtered one.
+      viewModel.moderationPolicy = policy
+    }
+    .task {
+      if openIntervalState == nil {
+        openIntervalState = PerformanceSignposts.beginInterval("NotificationsOpen")
+      }
+      viewModel.moderationPolicy = appState.moderationPolicy
       #if DEBUG
-      if appState.e2eCircleTransport == nil, viewModel.groupedNotifications.isEmpty {
+      if appState.e2eCircleTransport == nil, !viewModel.hasLoadedOnce {
         await viewModel.loadNotifications()
       }
       #else
-      if viewModel.groupedNotifications.isEmpty {
+      if !viewModel.hasLoadedOnce {
         await viewModel.loadNotifications()
       }
       #endif
-      // Force widget update when notifications view appears
-      appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
+      if let state = openIntervalState {
+        PerformanceSignposts.endInterval("NotificationsOpen", state)
+        openIntervalState = nil
+      }
+      // The first visit creates this view with the tab already selected, so the
+      // selectedTab change above never fires for it.
+      if selectedTab == 2 {
+        try? await viewModel.markNotificationsAsSeen()
+      }
     }
     .task(id: appState.circlesEnabled) {
       if appState.circlesEnabled {
@@ -73,16 +117,30 @@ struct NotificationsView: View {
       }
     }
     .onDisappear { circleRefresh.cancel() }
-    // Check scene phase changes
-    #if os(iOS)
-    .onChange(of: UIApplication.shared.applicationState) { newState in
-      if newState == .active {
-          // App became active, update widget
-        appState.notificationManager.updateWidgetUnreadCount(
-          appState.notificationManager.unreadCount)
+    .onChange(of: scenePhase) { _, newPhase in
+      if newPhase == .background {
+        wasBackgrounded = true
+        return
+      }
+      guard newPhase == .active, wasBackgrounded else { return }
+      wasBackgrounded = false
+      // Returning to the app on this tab: show what's new and clear the badge.
+      if selectedTab == 2 {
+        Task {
+          if viewModel.isStale || appState.notificationManager.unreadCount > 0 {
+            await viewModel.refreshNotifications()
+          }
+          try? await viewModel.markNotificationsAsSeen()
+        }
       }
     }
-    #endif
+    .onChange(of: viewModel.error != nil) { _, hasError in
+      // A failed refresh keeps the loaded list on screen and reports the problem as a toast.
+      guard hasError, !viewModel.groupedNotifications.isEmpty else { return }
+      appState.toastManager.show(ToastItem(
+        message: "Couldn’t refresh notifications", icon: "exclamationmark.triangle.fill"))
+      viewModel.clearError()
+    }
   }
 
   @MainActor
@@ -126,12 +184,18 @@ struct NotificationsView: View {
         #if !targetEnvironment(macCatalyst)
         .toolbar {
           ToolbarItem(placement: notificationsLeadingPlacement) {
-            Button {
-              navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
+            Menu {
+              Button("Notification Settings", systemImage: "gearshape") {
+                navigationPath.wrappedValue.append(NavigationDestination.settings(.notifications))
+              }
+              Button("Activity Alerts", systemImage: "bell.badge") {
+                navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
+              }
             } label: {
-              Image(systemName: "bell.badge")
+              Image(systemName: "gearshape")
                 .imageScale(.medium)
             }
+            .accessibilityLabel("Notification Options")
             .nuxNudge(id: .activitySubscriptions)
           }
 
@@ -189,13 +253,13 @@ struct NotificationsView: View {
   @ViewBuilder
   private var notificationContent: some View {
     if !appState.circlesEnabled {
-      if let error = viewModel.error {
+      if let error = viewModel.error, viewModel.groupedNotifications.isEmpty {
         ErrorStateView(
           error: error,
-          context: "Failed to load notifications",
+          context: "Couldn’t load notifications",
           retryAction: { Task { await retryLoadNotifications() } }
         )
-      } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
+      } else if (viewModel.isLoading || viewModel.isRefreshing) && viewModel.groupedNotifications.isEmpty {
         loadingView
       } else if viewModel.groupedNotifications.isEmpty {
         emptyView
@@ -219,39 +283,59 @@ struct NotificationsView: View {
   }
 
   private var emptyView: some View {
-    VStack(spacing: DesignTokens.Spacing.xl) {
-      Image(systemName: "bell.slash")
+    let isMentions = selectedFilter == .mentions
+    return VStack(spacing: DesignTokens.Spacing.xl) {
+      Image(systemName: isMentions ? "at" : "bell.slash")
         .appFont(size: 48)
         .foregroundColor(.secondary)
 
-      Text("No Notifications")
+      Text(isMentions ? "No Mentions Yet" : "No Notifications")
         .enhancedAppHeadline()
         .fontWeight(.semibold)
 
-      Text("You don't have any notifications yet")
+      Text(isMentions
+        ? "Replies, mentions, and quotes will appear here."
+        : "You don’t have any notifications yet.")
         .enhancedAppSubheadline()
         .foregroundColor(.secondary)
+        .multilineTextAlignment(.center)
 
-      Button(action: {
+      if viewModel.hasMoreNotifications {
+        loadMoreFilteredNotificationsButton
+      }
+
+      Button("Refresh") {
         Task {
           await viewModel.refreshNotifications()
         }
-      }) {
-        Text("Refresh")
-          .padding(.horizontal, 24)
-          .padding(.vertical, 10)
-          .background(Color.accentColor)
-          .foregroundColor(.white)
-          .cornerRadius(8)
       }
+      .buttonStyle(.borderedProminent)
       .padding(.top, 8)
     }
+    .padding(.horizontal)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var loadMoreFilteredNotificationsButton: some View {
+    Button {
+      Task { await viewModel.loadMoreNotifications() }
+    } label: {
+      if viewModel.isLoadingMore {
+        ProgressView()
+      } else {
+        Text("Load More")
+      }
+    }
+    .buttonStyle(.bordered)
+    .disabled(viewModel.isLoadingMore)
+    .accessibilityIdentifier("notifications.loadMoreFiltered")
   }
 
   @ViewBuilder
   private var notificationsList: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
+    // The view model's list already excludes the groups the policy filters
+    // (`NotificationModeration`), so row indexes match its pagination threshold.
     let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
@@ -265,15 +349,16 @@ struct NotificationsView: View {
             .listSectionSeparator(.hidden, edges: .top)
         }
 
-        if let error = viewModel.error, appState.circlesEnabled {
+        if let error = viewModel.error, viewModel.groupedNotifications.isEmpty, appState.circlesEnabled {
           ErrorStateView(
             error: error,
-            context: "Failed to load public notifications",
+            context: "Couldn’t load public notifications",
             retryAction: { Task { await retryLoadNotifications() } }
           )
           .listRowSeparator(.hidden)
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty && appState.circlesEnabled {
+        } else if (viewModel.isLoading || viewModel.isRefreshing)
+          && viewModel.groupedNotifications.isEmpty && appState.circlesEnabled {
           HStack {
             Spacer()
             ProgressView("Loading notifications")
@@ -296,46 +381,73 @@ struct NotificationsView: View {
           .listRowSeparator(.hidden)
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         }
-        ForEach(indexedGroups, id: \.element.id) { item in
-          let index = item.offset
-          let group = item.element
-          NotificationCard(
-            group: group,
-            onTap: { destination in
-              navigationPath.wrappedValue.append(destination)
-            }, path: navigationPath
-          )
-          #if os(macOS)
-          .frame(maxWidth: 700)
-          .frame(maxWidth: .infinity, alignment: .center)
-          #endif
-          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-          .listRowSeparator(.visible)
-          .listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
-          .alignmentGuide(.listRowSeparatorLeading) { _ in
-            0
+        Section {
+          ForEach(indexedGroups, id: \.element.id) { item in
+            let index = item.offset
+            let group = item.element
+            NotificationCard(
+              group: group,
+              onTap: { destination in
+                navigationPath.wrappedValue.append(destination)
+              }, path: navigationPath
+            )
+            .equatable()
+            #if os(macOS)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity, alignment: .center)
+            #endif
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            .listRowSeparator(.visible)
+            .listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
+            .alignmentGuide(.listRowSeparatorLeading) { _ in
+              0
+            }
+            .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+            .onAppear {
+              triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
+            }
           }
-          .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-          .onAppear {
-            triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
-          }
-        }
 
-        if viewModel.hasMoreNotifications {
-          HStack {
-            Spacer()
-            ProgressView()
-              .padding()
-            Spacer()
+          if viewModel.paginationError != nil {
+            VStack(spacing: 8) {
+              Text("Couldn’t load more notifications.")
+                .appSubheadline()
+                .foregroundStyle(.secondary)
+              Button("Retry") {
+                Task { await viewModel.loadMoreNotifications() }
+              }
+              .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+            #if os(macOS)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity, alignment: .center)
+            #endif
+            .listRowSeparator(.hidden)
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+          } else if viewModel.hasMoreNotifications {
+            HStack {
+              Spacer()
+              ProgressView()
+                .padding()
+              Spacer()
+            }
+            #if os(macOS)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity, alignment: .center)
+            #endif
+            .id("loadingIndicator")
+            .listRowSeparator(.hidden)
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+            .onAppear {
+              // The spinner is the last row; reaching it requests the next page too.
+              triggerLoadMoreNotificationsIfNeeded(currentIndex: indexedGroups.count - 1)
+            }
           }
-          #if os(macOS)
-          .frame(maxWidth: 700)
-          .frame(maxWidth: .infinity, alignment: .center)
-          #endif
-          .id("loadingIndicator")
-          .listRowSeparator(.hidden)
         }
+        .listSectionSeparator(.hidden, edges: .top)
       }
 
       .listStyle(.plain)
@@ -356,14 +468,9 @@ struct NotificationsView: View {
     }
   }
 
-  private func shouldLoadMoreNotifications(currentIndex: Int) -> Bool {
-    let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
-    return currentIndex >= thresholdIndex && viewModel.hasMoreNotifications && !viewModel.isLoadingMore
-  }
-  
   @MainActor
   private func triggerLoadMoreNotificationsIfNeeded(currentIndex: Int) {
-    guard shouldLoadMoreNotifications(currentIndex: currentIndex) else { return }
+    guard viewModel.shouldLoadMore(afterShowingIndex: currentIndex) else { return }
     
     let now = Date().timeIntervalSinceReferenceDate
     guard now - lastLoadMoreTriggerTime >= loadMoreTriggerDedupInterval else { return }
@@ -386,10 +493,35 @@ struct NotificationsView: View {
 
 // MARK: - Notification Card
 
-struct NotificationCard: View {
+struct NotificationCard: View, Equatable {
   let group: GroupedNotification
   let onTap: (NavigationDestination) -> Void
   @Binding var path: NavigationPath
+
+  static func == (lhs: NotificationCard, rhs: NotificationCard) -> Bool {
+    guard lhs.group.id == rhs.group.id,
+          lhs.group.type == rhs.group.type,
+          lhs.group.pageNumber == rhs.group.pageNumber,
+          lhs.group.hasUnreadNotifications == rhs.group.hasUnreadNotifications,
+          lhs.group.subjectPost?.cid == rhs.group.subjectPost?.cid,
+          lhs.group.subjectPost?.viewer?.like == rhs.group.subjectPost?.viewer?.like,
+          lhs.group.subjectPost?.viewer?.repost == rhs.group.subjectPost?.viewer?.repost,
+          lhs.group.parentPost?.cid == rhs.group.parentPost?.cid,
+          lhs.group.parentPost?.viewer?.like == rhs.group.parentPost?.viewer?.like,
+          lhs.group.parentPost?.viewer?.repost == rhs.group.parentPost?.viewer?.repost,
+          lhs.group.notifications.count == rhs.group.notifications.count
+    else {
+      return false
+    }
+
+    for (ln, rn) in zip(lhs.group.notifications, rhs.group.notifications) {
+      if ln.cid != rn.cid || ln.isRead != rn.isRead {
+        return false
+      }
+    }
+
+    return true
+  }
   @Environment(AppState.self) private var appState: AppState
   @Environment(\.horizontalSizeClass) private var hSizeClass
 
@@ -398,6 +530,9 @@ struct NotificationCard: View {
   }
 
   @State private var isFollowExpanded = false
+  @Environment(\.moderationPolicy) private var moderationPolicy
+  /// The hidden preview's cause identity the viewer chose to show.
+  @State private var revealedModerationFilter: String?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -427,7 +562,9 @@ struct NotificationCard: View {
         expandedFollowersList
       }
     }
-    .padding(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
+    // Leading 5pt puts icons and reply avatars ~11pt from the edge, the same
+    // column as avatars in the home feed, instead of hugging the screen edge.
+    .padding(EdgeInsets(top: 0, leading: 5, bottom: 0, trailing: 16))
     .animation(.none, value: isFollowExpanded)
     .frame(maxWidth: contentMaxWidth, alignment: .center)
     .frame(maxWidth: .infinity, alignment: .center)
@@ -438,32 +575,20 @@ struct NotificationCard: View {
 
   private var expandedFollowersList: some View {
     VStack(alignment: .leading, spacing: 4) {
-      Rectangle()
-        .frame(height: 1)
-        .foregroundColor(Color.systemGray5)
-        .padding(.horizontal)
-        .padding(.top, 8)
-
       ForEach(group.notifications, id: \.cid) { notification in
         Button {
           onTap(NavigationDestination.profile(notification.author.did.didString()))
         } label: {
           HStack(spacing: DesignTokens.Spacing.base) {
-            LazyImage(url: URL(string: notification.author.avatar?.uriString() ?? "")) { state in
-              if let image = state.image {
-                image
-                  .resizable()
-                  .aspectRatio(contentMode: .fill)
-              } else {
-                Color.gray
-              }
-            }
-            .frame(width: 36, height: 36)
-            .clipShape(Circle())
+            NotificationAuthorAvatar(author: notification.author, size: 36)
 
             VStack(alignment: .leading, spacing: 2) {
               HStack(spacing: 4) {
-                Text(notification.author.displayName ?? notification.author.handle.description)
+                Text(
+                  notification.author.displayName.flatMap {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+                  } ?? notification.author.handle.description
+                )
                   .fontWeight(.semibold)
                   .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                   .lineLimit(1)
@@ -499,10 +624,11 @@ struct NotificationCard: View {
 
         if notification.cid != group.notifications.last?.cid {
           Divider()
-            .padding(.leading, 36 + 12)
+            .padding(.leading, DesignTokens.Spacing.base + 36 + DesignTokens.Spacing.base)
         }
       }
     }
+    .padding(.leading, 50)
     .clipShape(RoundedRectangle(cornerRadius: 8))
     .padding(.bottom, 8)
   }
@@ -626,8 +752,8 @@ struct NotificationCard: View {
     case (.activitySubscription, let n): return " shared \(n) new posts"
     case (.starterpackJoined, 1): return " signed up with your starter pack"
     case (.starterpackJoined, _): return "\(othersSuffix) signed up with your starter pack"
-    case (.verified, _): return " verification was added"
-    case (.unverified, _): return " verification was removed"
+    case (.verified, _): return " verified your account"
+    case (.unverified, _): return " removed their verification from your account"
     case (.contactMatch, _): return " is on Bluesky"
     case (.feedgenLike, 1): return " liked your custom feed"
     case (.feedgenLike, _): return "\(othersSuffix) liked your custom feed"
@@ -637,7 +763,7 @@ struct NotificationCard: View {
   /// First author's display name (falls back to @handle, then "Someone").
   private var notificationAuthorName: String {
     let firstAuthor = group.notifications.first?.author
-    if let displayName = firstAuthor?.displayName, !displayName.isEmpty {
+    if let displayName = firstAuthor?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
       return displayName
     } else if let handle = firstAuthor?.handle {
       return "@" + handle.description
@@ -693,11 +819,38 @@ struct NotificationCard: View {
     }
   }
 
+  /// The subject post, under the feed-row rules: a hidden row when the policy
+  /// filters it, else the body gate over text and media, with the media
+  /// thumbnails behind a compact media gate.
   @ViewBuilder
   private var postPreview: some View {
     if let post = group.subjectPost {
+      let moderation = PostModerationPresentation.make(post: post, policy: moderationPolicy)
+      if moderation.hidesRow && revealedModerationFilter != moderation.filterIdentity {
+        ModerationHiddenPostRow(presentation: moderation) {
+          revealedModerationFilter = moderation.filterIdentity
+        }
+      } else {
+        VStack(alignment: .leading, spacing: 6) {
+          if moderation.hidesRow {
+            // A shown hidden preview keeps its cause in view and can be hidden again.
+            ModerationRevealedPostBar(presentation: moderation) {
+              revealedModerationFilter = nil
+            }
+          }
+          ModerationContentGate(ui: moderation.body) {
+            postPreviewBody(post, moderation: moderation)
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func postPreviewBody(_ post: AppBskyFeedDefs.PostView, moderation: PostModerationPresentation) -> some View {
       VStack(alignment: .leading, spacing: 8) {
-        // Show post text if available
+        ContentLabelView(causes: moderation.chips)
+
         if case .knownType(let postObj) = post.record, let feedPost = postObj as? AppBskyFeedPost,
           !feedPost.text.isEmpty {
           Text(feedPost.text)
@@ -706,48 +859,22 @@ struct NotificationCard: View {
             .lineLimit(3)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        
+
         // Show media thumbnails if available
         let thumbnails = extractMediaThumbnails(from: post)
         if !thumbnails.isEmpty {
-          NotificationMediaThumbnail(thumbnails: thumbnails)
-            .frame(maxWidth: .infinity, alignment: .leading)
+          ModerationMediaGate(ui: moderation.media, style: .compact) {
+            NotificationMediaThumbnail(thumbnails: thumbnails)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
         }
-        
+
         // Show quoted post text for record embeds (without media)
         if thumbnails.isEmpty, let embed = post.embed {
           switch embed {
-          case .appBskyEmbedRecordView(let record):
-            switch record.record {
-            case .appBskyEmbedRecordViewRecord(let viewRecord):
-              if case let .knownType(recordPost) = viewRecord.value,
-                let post = recordPost as? AppBskyFeedPost {
-                Text("Quoted: \(post.text)")
-                  .appBody()
-                  .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
-                  .lineLimit(2)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
+          case .appBskyEmbedRecordView, .appBskyEmbedRecordWithMediaView:
+            quotedPreview(in: post)
 
-            default:
-              EmptyView()
-            }
-
-          case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-            switch recordWithMedia.record.record {
-            case .appBskyEmbedRecordViewRecord(let viewRecord):
-              if case let .knownType(recordPost) = viewRecord.value,
-                let post = recordPost as? AppBskyFeedPost {
-                Text("Quoted: \(post.text)")
-                  .appBody()
-                  .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
-                  .lineLimit(2)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-
-            default: EmptyView()
-            }
-            
           case .appBskyEmbedExternalView(let external):
             // Show external link info if no thumbnail available
             if thumbnails.isEmpty {
@@ -768,6 +895,24 @@ struct NotificationCard: View {
             EmptyView()
           }
         }
+      }
+  }
+
+  /// The quoted post's text under the quote's own decision: a `!hide`, `!warn`
+  /// or labeler `blurs: content` label on the quoted post or its author gates
+  /// it here as `RecordEmbedView` does in feeds. The parent's decision carries
+  /// these causes downgraded, so its body gate never covers them.
+  @ViewBuilder
+  private func quotedPreview(in post: AppBskyFeedDefs.PostView) -> some View {
+    if let quoted = PostModerationPresentation.quotedRecord(in: post),
+      case .knownType(let record) = quoted.value, let quotedPost = record as? AppBskyFeedPost {
+      let quote = PostModerationPresentation.make(quoted: quoted, policy: moderationPolicy)
+      ModerationContentGate(ui: quote.body) {
+        Text("Quoted: \(quotedPost.text)")
+          .appBody()
+          .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
+          .lineLimit(2)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
   }
@@ -805,7 +950,11 @@ struct NotificationCard: View {
           uniqueURIs = [uri]
         }
       }
-      onTap(NavigationDestination.notificationActivity(uniqueURIs))
+      if uniqueURIs.count == 1 {
+        onTap(NavigationDestination.post(uniqueURIs[0]))
+      } else if !uniqueURIs.isEmpty {
+        onTap(NavigationDestination.notificationActivity(uniqueURIs))
+      }
     case .starterpackJoined:
       if let starterPackURI = group.notifications.first?.reasonSubject {
         onTap(NavigationDestination.starterPack(starterPackURI))
@@ -1057,26 +1206,49 @@ struct NotificationMediaThumbnail: View {
   }
 }
 
+/// A notification author's avatar. When the policy blurs it (`ui(.avatar)`:
+/// `!warn`, `!hide` or an adult or graphic account label set to warn or hide)
+/// the neutral placeholder is drawn and no image is requested.
+struct NotificationAuthorAvatar: View {
+  let author: AppBskyActorDefs.ProfileView
+  let size: CGFloat
+  @Environment(\.moderationPolicy) private var moderationPolicy
+  @Environment(\.displayScale) private var displayScale
+
+  var body: some View {
+    if NotificationModeration.concealsAvatar(of: author, policy: moderationPolicy) {
+      ModeratedAvatarPlaceholder(size: size)
+    } else {
+      let request = ImageRequestFactory.avatar(author.finalAvatarURL(), pointSize: size, scale: displayScale)
+      LazyImage(request: request) { state in
+        if let image = state.image {
+          image
+            .resizable()
+            .scaledToFill()
+        } else {
+          Image(systemName: "person.crop.circle")
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(.gray)
+        }
+      }
+      .frame(width: size, height: size)
+      .clipShape(Circle())
+    }
+  }
+}
+
 struct AvatarStack: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let notifications: [AppBskyNotificationListNotifications.Notification]
   @Environment(AppState.self) private var appState: AppState
 
   var body: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
 
     HStack(spacing: 3) {
       ForEach(0..<min(3, notifications.count), id: \.self) { index in
-        LazyImage(url: notifications[index].author.finalAvatarURL()) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-          } else {
-            Image(systemName: "person.crop.circle.fill")
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-          }
-        }
+        NotificationAuthorAvatar(author: notifications[index].author, size: 44)
         .onTapGesture {
           navigationPath.wrappedValue.append(
             NavigationDestination.profile(notifications[index].author.did.didString())
