@@ -7,9 +7,11 @@ struct FeedDiscoveryDetailsView: View {
   let onPreview: () -> Void
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 12) {
+    List {
+      Section {
         FeedDiscoveryIdentity(feed: feed)
+      }
+      Section("About") {
         if let description = feed.description, !description.isEmpty {
           Text(description)
             .appFont(AppTextRole.body)
@@ -18,21 +20,48 @@ struct FeedDiscoveryDetailsView: View {
         } else {
           Text("This feed has no description.").foregroundStyle(.secondary)
         }
-        Button {
-          path.append(NavigationDestination.profile(feed.creator.did.didString()))
-        } label: {
-          Label("View creator", systemImage: "person.crop.circle")
-            .frame(minHeight: 44)
-        }
-        Button("Browse Feed", action: onPreview)
-          .buttonStyle(.borderedProminent)
-          .frame(minHeight: 44)
       }
-      .frame(maxWidth: 700, alignment: .leading)
-      .padding(16)
-      .frame(maxWidth: .infinity)
+      Section {
+        NavigationLink(value: NavigationDestination.profile(feed.creator.did.didString())) {
+          Label("View creator", systemImage: "person.crop.circle")
+        }
+      }
     }
     .navigationTitle("Feed details")
+    .modifier(BrowseFeedToolbar(action: onPreview))
+  }
+}
+
+/// Browse Feed is the screen's one primary action, so it sits in the bottom bar
+/// as a prominent Liquid Glass button on iOS 26 rather than inside the list.
+private struct BrowseFeedToolbar: ViewModifier {
+  let action: () -> Void
+
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbar {
+      ToolbarItem(placement: .bottomBar) { button }
+    }
+    #else
+    content.toolbar {
+      ToolbarItem(placement: .primaryAction) { button }
+    }
+    #endif
+  }
+
+  @ViewBuilder private var button: some View {
+    #if compiler(>=6.2)
+    if #available(iOS 26.0, macOS 26.0, *) {
+      Button("Browse Feed", action: action)
+        .buttonStyle(.glassProminent)
+    } else {
+      Button("Browse Feed", action: action)
+        .buttonStyle(.borderedProminent)
+    }
+    #else
+    Button("Browse Feed", action: action)
+      .buttonStyle(.borderedProminent)
+    #endif
   }
 }
 

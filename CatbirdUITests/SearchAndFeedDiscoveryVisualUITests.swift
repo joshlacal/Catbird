@@ -102,8 +102,9 @@ final class SearchAndFeedDiscoveryVisualUITests: XCTestCase {
     XCTAssertTrue(app.buttons["feed.discovery.open"].firstMatch.exists)
     XCTAssertTrue(app.buttons.containing(NSPredicate(format: "label CONTAINS 'Pinned'")).firstMatch.exists,
                   "Pinned status is a separate control")
-    let selector = app.buttons["feed.discovery.selection"].firstMatch
-    XCTAssertLessThan(firstPost.frame.minY - selector.frame.maxY, 260,
+    // The feed picker is the navigation title's menu, so the summary sits right under the bar.
+    let titleMenu = app.navigationBars["Discover Feeds"].staticTexts["Discover Feeds"].firstMatch
+    XCTAssertLessThan(firstPost.frame.minY - titleMenu.frame.maxY, 260,
                       "The compact summary leaves most of the sheet for posts")
 
     // Scroll to the end: the last post must clear the bottom search field.
@@ -127,7 +128,7 @@ final class SearchAndFeedDiscoveryVisualUITests: XCTestCase {
 
     app.buttons["feed.discovery.previous"].tap()
     XCTAssertTrue(firstPost.waitForExistence(timeout: 5))
-    app.buttons["feed.discovery.selection"].tap()
+    titleMenu.tap()
     let science = app.buttons["Science"].firstMatch
     XCTAssertTrue(science.waitForExistence(timeout: 5))
     capture("feeds-04-selector-menu")
