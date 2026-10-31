@@ -208,6 +208,12 @@ struct GalleryEmbedView: View {
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(image.alt.isEmpty ? "Image \(index + 1) of \(total)" : image.alt)
     .accessibilityAddTraits(.isImage)
+    .imagePreviewContextMenu(image, isEnabled: !isBlurred && visibilityContext == .public) {
+      currentIndex = index
+      lastViewedIndex = index
+      selectedImage = image
+      activeTransitionID = image.id
+    }
     .onTapGesture {
       if shouldBlur {
         isBlurred.toggle()
