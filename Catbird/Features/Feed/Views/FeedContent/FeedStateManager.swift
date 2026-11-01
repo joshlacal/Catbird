@@ -548,7 +548,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
             trendingInvalidated = true
             trendingRefreshTask?.cancel()
             trendingRefreshTask = Task { [weak self] in
-                await self?.loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale)
+                await self?.loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale, force: true)
             }
         }
     }
@@ -856,12 +856,15 @@ final class FeedStateManager: StateInvalidationSubscriber {
         trendingRequestID == requestID ? trendingContent : TrendingFeedContent()
     }
 
-    func loadTrendingIfNeeded(requestID: String, displayScale: CGFloat) async {
-        guard shouldReloadTrending(for: requestID, now: Date()) else {
+    /// `force` (pull to refresh) fetches new lists even when Search or an earlier load fetched some within
+    /// `TrendingTopicListCache.freshAge`. A pull whose load was cancelled still forces the next appear.
+    func loadTrendingIfNeeded(requestID: String, displayScale: CGFloat, force: Bool = false) async {
+        let force = force || trendingInvalidated
+        guard force || shouldReloadTrending(for: requestID, now: Date()) else {
             appState.prefetchTopicPreviews(trends: trendingContent.trends, displayScale: displayScale, owner: .timeline)
             return
         }
-        let content = await TrendingFeedContent.load(appState: appState, displayScale: displayScale)
+        let content = await TrendingFeedContent.load(appState: appState, displayScale: displayScale, force: force)
         guard !Task.isCancelled else { return }
         trendingContent = content
         trendingRequestID = requestID

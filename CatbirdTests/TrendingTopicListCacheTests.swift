@@ -257,6 +257,30 @@ struct TrendingTopicListCacheTests {
     #expect(env.storedData(for: accountA) == nil)
   }
 
+  @Test("A forced load skips a fresh list")
+  func forceSkipsFreshList() async throws {
+    let env = try Environment()
+    defer { env.tearDown() }
+    let store = env.makeStore()
+    _ = try await store.fetchOrCoalesceTrends(for: accountA) { [makeTrend("alpha")] }
+    env.clock.advance(60)
+    #expect(store.cachedTrends(for: accountA)?.isFresh == true)
+
+    var fetches = 0
+    let cached = try await store.fetchOrCoalesceTrends(for: accountA) {
+      fetches += 1
+      return [makeTrend("unused")]
+    }
+    let forced = try await store.fetchOrCoalesceTrends(for: accountA, force: true) {
+      fetches += 1
+      return [makeTrend("refreshed")]
+    }
+    #expect(cached == [makeTrend("alpha")])
+    #expect(forced == [makeTrend("refreshed")])
+    #expect(fetches == 1)
+    #expect(store.cachedTrends(for: accountA)?.trends == [makeTrend("refreshed")])
+  }
+
   // MARK: Helpers
 
   private func makeTrend(

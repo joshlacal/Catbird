@@ -8,21 +8,25 @@ struct TrendingFeedContent: Equatable {
 
     var isEmpty: Bool { trends.isEmpty && videos.isEmpty }
 
+    /// Loads both lists, reusing what Search or an earlier load fetched within
+    /// `TrendingTopicListCache.freshAge` unless `force` (pull to refresh) asks for new ones.
     @MainActor
-    static func load(appState: AppState, displayScale: CGFloat) async -> Self {
-        async let trends = loadTrends(appState: appState, displayScale: displayScale)
-        async let videos = loadVideos(appState: appState)
+    static func load(appState: AppState, displayScale: CGFloat, force: Bool = false) async -> Self {
+        async let trends = loadTrends(appState: appState, displayScale: displayScale, force: force)
+        async let videos = loadVideos(appState: appState, force: force)
         return await Self(trends: trends, videos: videos)
     }
 
     @MainActor
-    private static func loadTrends(appState: AppState, displayScale: CGFloat) async -> [AppBskyUnspeccedDefs.TrendView] {
+    private static func loadTrends(
+        appState: AppState, displayScale: CGFloat, force: Bool
+    ) async -> [AppBskyUnspeccedDefs.TrendView] {
         guard appState.appSettings.showTrendingTopics, let client = appState.atProtoClient else {
             return []
         }
         let viewerDID = appState.userDID
         do {
-            let trends = try await appState.trendingTopicMediaStore.fetchOrCoalesceTrends(for: viewerDID) {
+            let trends = try await appState.trendingTopicMediaStore.fetchOrCoalesceTrends(for: viewerDID, force: force) {
                 let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
                 guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
                 return output?.trends ?? []
@@ -31,18 +35,19 @@ struct TrendingFeedContent: Equatable {
             appState.prefetchTopicPreviews(trends: trends, displayScale: displayScale, owner: .timeline)
             return trends
         } catch {
-            return appState.trendingTopicMediaStore.cachedTrends(for: viewerDID)?.trends ?? []
+            // Never a stored list here: an empty set is what tells FeedStateManager to retry on the next appear.
+            return []
         }
     }
 
     @MainActor
-    private static func loadVideos(appState: AppState) async -> [AppBskyFeedDefs.FeedViewPost] {
+    private static func loadVideos(appState: AppState, force: Bool) async -> [AppBskyFeedDefs.FeedViewPost] {
         guard appState.appSettings.showTrendingVideos, let client = appState.atProtoClient else {
             return []
         }
         let viewerDID = appState.userDID
         do {
-            let posts = try await appState.trendingTopicMediaStore.fetchOrCoalesceVideos(for: viewerDID) {
+            let posts = try await appState.trendingTopicMediaStore.fetchOrCoalesceVideos(for: viewerDID, force: force) {
                 let input = AppBskyFeedGetFeed.Parameters(
                     feed: try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI),
                     limit: 10,
@@ -57,8 +62,7 @@ struct TrendingFeedContent: Equatable {
             // section re-filters with the live policy and covers moderated thumbnails.
             return TrendingVideoModeration.listed(posts, policy: appState.moderationPolicy)
         } catch {
-            let cached = appState.trendingTopicMediaStore.cachedVideos(for: viewerDID)?.videos ?? []
-            return TrendingVideoModeration.listed(cached, policy: appState.moderationPolicy)
+            return []
         }
     }
 }
