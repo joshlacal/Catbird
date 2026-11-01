@@ -38,9 +38,14 @@ struct FeedPostRow: View, Identifiable {
     var onHeightInvalidated: (() -> Void)? = nil
     @Environment(AppState.self) private var appState
     @Environment(\.feedInteractionTarget) private var feedInteractionTarget
+    @Environment(\.invalidateFeedRowHeight) private var inheritedInvalidateFeedRowHeight
     @State private var isSmartFilterRevealed = false
     @State private var isIntentRevealed = false
     @State private var isPendingIndicatorVisible = true
+
+    private var effectiveInvalidateHeight: (() -> Void)? {
+        onHeightInvalidated ?? inheritedInvalidateFeedRowHeight
+    }
 
     init(
         viewModel: FeedPostViewModel,
@@ -74,8 +79,10 @@ struct FeedPostRow: View, Identifiable {
                     }
                     Spacer()
                     Button("Show") {
-                        isIntentRevealed = true
-                        onHeightInvalidated?()
+                        withoutRevealAnimation {
+                            isIntentRevealed = true
+                        }
+                        effectiveInvalidateHeight?()
                     }
                         .buttonStyle(.bordered)
                 }
@@ -94,8 +101,10 @@ struct FeedPostRow: View, Identifiable {
                     }
                     Spacer()
                     Button("Show") {
-                        isSmartFilterRevealed = true
-                        onHeightInvalidated?()
+                        withoutRevealAnimation {
+                            isSmartFilterRevealed = true
+                        }
+                        effectiveInvalidateHeight?()
                     }
                         .buttonStyle(.bordered)
                 }
@@ -106,7 +115,7 @@ struct FeedPostRow: View, Identifiable {
                     cachedPost: viewModel.post,
                     path: $navigationPath
                 )
-                .environment(\.invalidateFeedRowHeight, onHeightInvalidated)
+                .environment(\.invalidateFeedRowHeight, effectiveInvalidateHeight)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     if let fvp = try? viewModel.post.feedViewPost {

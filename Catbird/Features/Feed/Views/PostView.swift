@@ -620,8 +620,10 @@ private struct PostContentLayout: View {
       // A filter inherited from a quote does not hide the row; the quote card
       // gates itself.
       ModerationHiddenPostRow(presentation: moderation) {
+        withoutRevealAnimation {
+          postState.revealedModerationFilter = moderation.filterIdentity
+        }
         invalidateFeedRowHeight?()
-        postState.revealedModerationFilter = moderation.filterIdentity
       }
       .padding(.top, PostView.baseUnit)
     } else {
@@ -629,8 +631,10 @@ private struct PostContentLayout: View {
         if moderation.hidesRow {
           // A shown hidden row keeps its cause in view and can be hidden again.
           ModerationRevealedPostBar(presentation: moderation) {
+            withoutRevealAnimation {
+              postState.revealedModerationFilter = nil
+            }
             invalidateFeedRowHeight?()
-            postState.revealedModerationFilter = nil
           }
           .padding(.horizontal, PostView.baseUnit)
           .padding(.top, PostView.baseUnit)
@@ -666,8 +670,10 @@ private struct PostContentLayout: View {
             .foregroundStyle(.secondary)
           Spacer(minLength: 0)
           Button("Show") {
+            withoutRevealAnimation {
+              postState.revealedMutedPreview = mutedPreviewIdentity
+            }
             invalidateFeedRowHeight?()
-            postState.revealedMutedPreview = mutedPreviewIdentity
           }
             .frame(minWidth: 44, minHeight: 44)
             .buttonStyle(.borderless)

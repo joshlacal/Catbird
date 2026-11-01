@@ -193,18 +193,29 @@ private enum ModerationFixtureScene: String {
   }
 
   var samples: [ModerationFixtureSample] {
+    let args = ProcessInfo.processInfo.arguments
+    let roomBelow = args.contains("--moderation-reveal-room-below")
+    let leadIn = args.contains("--moderation-reveal-lead-in")
     switch self {
-    case .adultOnA, .adultOffA: [.textSexual, .imageGraphic]
-    case .adultOnB: [.imagePorn, .textWarn]
-    case .adultOnC: [.quotedPorn, .accountPorn]
+    case .adultOnA, .adultOffA:
+      return [.textSexual, .imageGraphic]
+    case .adultOnB:
+      return (leadIn ? [.imagePlainLeadInA, .imagePlainLeadInB] : [])
+        + [.imagePorn, .textWarn]
+        + (roomBelow ? [.imagePlainTrailA, .imagePlainTrailB] : [])
+    case .adultOnC:
+      return [.quotedPorn, .accountPorn]
     case .mutedQuote:
-      [.imagePlain, .imagePlainLeadInA, .imagePlainLeadInB, .mutedQuote]
-        + (ProcessInfo.processInfo.arguments.contains("--moderation-reveal-room-below")
-          ? [.imagePlainTrailA, .imagePlainTrailB] : [])
-    case .adultOffB: [.imagePorn, .quotedPorn]
-    case .threadAdultOff: [.imagePorn]
-    case .settingsAdultOn, .settingsAdultOff: []
-    case .imageControl: [.imagePlain]
+      return [.imagePlain, .imagePlainLeadInA, .imagePlainLeadInB, .mutedQuote]
+        + (roomBelow ? [.imagePlainTrailA, .imagePlainTrailB] : [])
+    case .adultOffB:
+      return [.imagePorn, .quotedPorn]
+    case .threadAdultOff:
+      return [.imagePorn]
+    case .settingsAdultOn, .settingsAdultOff:
+      return []
+    case .imageControl:
+      return [.imagePlain]
     }
   }
 }
@@ -316,14 +327,21 @@ private final class ModerationFixtureWorld {
           throw FixtureError.cachedPost
         }
         feedPosts.append(cached)
-        if sample == .mutedQuote { diagnosticPostID = cached.id }
+        if sample == .mutedQuote || (sample == .imagePorn && diagnosticPostID == nil) {
+          diagnosticPostID = cached.id
+        }
         rows.append(ModerationFixtureRow(
           id: sample.rawValue, caption: caption,
           kind: .feed(FeedPostViewModel(post: cached, appState: state))))
       }
     }
+    if diagnosticPostID == nil {
+      diagnosticPostID = feedPosts.first?.id
+    }
+    let usesFeedCollection = scene == .mutedQuote
+      || (ProcessInfo.processInfo.arguments.contains("--moderation-feed-collection") && !feedPosts.isEmpty)
     let feedStateManager: FeedStateManager?
-    if scene == .mutedQuote {
+    if usesFeedCollection {
       let feedModel = FeedModel(
         feedManager: FeedManager(client: nil, fetchType: .timeline), appState: state)
       feedModel.posts = feedPosts

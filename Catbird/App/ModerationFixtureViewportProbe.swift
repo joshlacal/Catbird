@@ -38,6 +38,7 @@ struct ModerationFixtureViewportProbe: UIViewRepresentable {
       displayLink = nil
       guard window != nil else { return }
       let link = CADisplayLink(target: DisplayTarget(self), selector: #selector(DisplayTarget.tick))
+      link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
       link.add(to: .main, forMode: .common)
       displayLink = link
     }
@@ -61,6 +62,26 @@ struct ModerationFixtureViewportProbe: UIViewRepresentable {
       ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
     }
 
+    private func activeGeometryAnimationKeys(in layer: CALayer) -> [String] {
+      if layer is CAReplicatorLayer
+        || layer.delegate is UIActivityIndicatorView
+        || layer.delegate is UIRefreshControl {
+        return []
+      }
+      var found: [String] = []
+      if let keys = layer.animationKeys() {
+        for key in keys
+        where key != "opacity" && key != "contents"
+          && key != "instanceAlphaOffset" && key != "contentsMultiplyColor" {
+          found.append("\(type(of: layer)):\(key)")
+        }
+      }
+      for sublayer in layer.sublayers ?? [] {
+        found.append(contentsOf: activeGeometryAnimationKeys(in: sublayer))
+      }
+      return found
+    }
+
     private func record(_ event: String) {
       guard let window, let collection = collection(in: window) else { return }
       for visible in collection.visibleCells.compactMap({ $0 as? FeedPostCollectionViewCell })
@@ -82,6 +103,7 @@ struct ModerationFixtureViewportProbe: UIViewRepresentable {
         "minimumOffsetY": minimum, "maximumOffsetY": maximum,
         "bottomGap": maximum - collection.contentOffset.y,
         "dragging": collection.isDragging, "decelerating": collection.isDecelerating,
+        "displayMaxFPS": window.windowScene?.screen.maximumFramesPerSecond ?? 60,
       ]
       if let cell {
         let identity = ObjectIdentifier(cell)
@@ -90,6 +112,15 @@ struct ModerationFixtureViewportProbe: UIViewRepresentable {
         geometry["cellContentFrame"] = rectangle(cell.frame)
         geometry["cellWindowFrame"] = rectangle(cell.convert(cell.bounds, to: window))
         geometry["contentViewWindowFrame"] = rectangle(cell.contentView.convert(cell.contentView.bounds, to: window))
+        if let presentation = cell.layer.presentation(), let superlayer = cell.layer.superlayer {
+          let inWindow = superlayer.convert(presentation.frame, to: window.layer)
+          geometry["cellPresentationWindowFrame"] = rectangle(inWindow)
+        }
+        let animKeys = activeGeometryAnimationKeys(in: collection.layer)
+        geometry["geometryAnimationCount"] = animKeys.count
+        if !animKeys.isEmpty {
+          geometry["geometryAnimationKeys"] = animKeys
+        }
         geometry["freshlyConfigured"] = cell.isFreshlyConfigured
         if let indexPath = collection.indexPath(for: cell),
           let attributes = collection.layoutAttributesForItem(at: indexPath) {

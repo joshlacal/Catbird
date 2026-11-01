@@ -182,6 +182,175 @@ final class ModerationMutedQuoteRevealUITests: XCTestCase {
     capture("Quoted label still gates content after viewport reuse", app)
   }
 
+  func testTopLevelFeedMediaGateShowAndHideStepsInOneFrameTopAnchored() throws {
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--moderation-ui-fixture",
+      "--moderation-scene=adult-on-b",
+      "--moderation-feed-collection",
+      "--moderation-layout-diagnostics",
+      "--moderation-reveal-lead-in",
+      "--moderation-reveal-room-below",
+    ]
+    app.launch()
+
+    let feed = app.collectionViews.firstMatch
+    XCTAssertTrue(feed.waitForExistence(timeout: 10))
+    let probe = app.descendants(matching: .any)
+      .matching(identifier: "moderation.fixture.geometry").firstMatch
+    XCTAssertTrue(probe.waitForExistence(timeout: 10))
+
+    let mediaShow = app.buttons.matching(identifier: "moderation.mediaGate.show")
+      .matching(NSPredicate(format: "label == %@", "Show")).firstMatch
+    let mediaHide = app.buttons.matching(identifier: "moderation.mediaGate.hide")
+      .matching(NSPredicate(format: "label == %@", "Hide")).firstMatch
+    scrollToMutedQuote(show: mediaShow, in: feed)
+
+    let cell = app.descendants(matching: .any)
+      .matching(identifier: "moderation.fixture.outerCell").firstMatch
+    XCTAssertTrue(cell.waitForExistence(timeout: 5))
+    waitForDiagnosticLayout(cell)
+
+    // Verify Show expands height in 1 single display step with 0pt top jump and 0 geometry animations.
+    capture("Top-level CW media before Show", app)
+    let beforeShow = try tapVisibleControlPreservingViewport(mediaShow, in: feed, cell: cell, probe: probe)
+    let beforeShowHeight = try number(try XCTUnwrap(beforeShow["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertTrue(mediaHide.waitForExistence(timeout: 5))
+    capture("Top-level CW media after Show", app)
+
+    let afterShow = try lastGeometry(probe)
+    let afterShowHeight = try number(try XCTUnwrap(afterShow["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertGreaterThan(afterShowHeight - beforeShowHeight, 30, "Revealing unreserved media must expand cell height")
+    try assertOneFrameStepAndZeroGeometryAnimations(
+      probe,
+      since: beforeShow,
+      startHeight: beforeShowHeight,
+      endHeight: afterShowHeight
+    )
+
+    // Verify Hide shrinks height in 1 single display step with 0pt top jump and 0 geometry animations.
+    let beforeHide = try tapVisibleControlPreservingViewport(mediaHide, in: feed, cell: cell, probe: probe)
+    let beforeHideHeight = try number(try XCTUnwrap(beforeHide["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertTrue(mediaShow.waitForExistence(timeout: 5))
+    capture("Top-level CW media after Hide", app)
+
+    let afterHide = try lastGeometry(probe)
+    let afterHideHeight = try number(try XCTUnwrap(afterHide["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertEqual(afterHideHeight, beforeShowHeight, accuracy: 2)
+    try assertOneFrameStepAndZeroGeometryAnimations(
+      probe,
+      since: beforeHide,
+      startHeight: beforeHideHeight,
+      endHeight: afterHideHeight
+    )
+
+    // Scroll with zero-momentum hold-drag so the cell's top header/avatar are partially tucked
+    // ~30pt above adjustedTop while both Show and Hide remain comfortably inside viewport —
+    // the exact geometry where UIKit's default self-sizing anchor previously jumped contentOffset.
+    for _ in 0..<8 {
+      let current = try lastGeometry(probe)
+      let cellFrame = try XCTUnwrap(current["cellWindowFrame"] as? [String: Any])
+      let collectionFrame = try XCTUnwrap(current["collectionWindow"] as? [String: Any])
+      let topVisibleBoundary = try number(collectionFrame, "y") + (try number(current, "adjustedTop"))
+      let cellTopY = try number(cellFrame, "y")
+      let targetCellTopY = topVisibleBoundary - 28
+      let delta = cellTopY - targetCellTopY
+      if cellTopY < topVisibleBoundary - 8 && cellTopY > topVisibleBoundary - 56 {
+        break
+      }
+      let dragOffset = delta + (delta > 0 ? 14 : -14)
+      let clampedDelta = min(max(dragOffset, -240), 240)
+      let start = feed.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.6))
+      let end = start.withOffset(CGVector(dx: 0, dy: -clampedDelta))
+      start.press(forDuration: 0.02, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.25)
+      waitForDiagnosticLayout(cell)
+    }
+
+    let tuckedBaseline = try lastGeometry(probe)
+    let tuckedCollectionFrame = try XCTUnwrap(tuckedBaseline["collectionWindow"] as? [String: Any])
+    let topVisibleBoundary = try number(tuckedCollectionFrame, "y") + (try number(tuckedBaseline, "adjustedTop"))
+    let tuckedCellFrame = try XCTUnwrap(tuckedBaseline["cellWindowFrame"] as? [String: Any])
+    XCTAssertLessThan(
+      try number(tuckedCellFrame, "y"),
+      topVisibleBoundary,
+      "Cell top must be partially tucked above top inset before partial-tuck Show/Hide check"
+    )
+    capture("Partially tucked CW media before Show", app)
+
+    let tuckedBeforeShow = try tapVisibleControlPreservingViewport(mediaShow, in: feed, cell: cell, probe: probe)
+    let tuckedBeforeShowCell = try XCTUnwrap(tuckedBeforeShow["cellWindowFrame"] as? [String: Any])
+    XCTAssertLessThan(
+      try number(tuckedBeforeShowCell, "y"),
+      topVisibleBoundary,
+      "Cell top must still be partially tucked above top inset at the moment Show is tapped"
+    )
+    let tuckedBeforeShowH = try number(tuckedBeforeShowCell, "height")
+    XCTAssertTrue(mediaHide.waitForExistence(timeout: 5))
+    capture("Partially tucked CW media after Show", app)
+    let tuckedAfterShow = try lastGeometry(probe)
+    let tuckedAfterShowH = try number(try XCTUnwrap(tuckedAfterShow["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertGreaterThan(tuckedAfterShowH - tuckedBeforeShowH, 30)
+    try assertOneFrameStepAndZeroGeometryAnimations(
+      probe,
+      since: tuckedBeforeShow,
+      startHeight: tuckedBeforeShowH,
+      endHeight: tuckedAfterShowH
+    )
+
+    let tuckedBeforeHide = try tapVisibleControlPreservingViewport(mediaHide, in: feed, cell: cell, probe: probe)
+    let tuckedBeforeHideCell = try XCTUnwrap(tuckedBeforeHide["cellWindowFrame"] as? [String: Any])
+    XCTAssertLessThan(
+      try number(tuckedBeforeHideCell, "y"),
+      topVisibleBoundary,
+      "Cell top must remain partially tucked above top inset at the moment Hide is tapped"
+    )
+    let tuckedBeforeHideH = try number(tuckedBeforeHideCell, "height")
+    XCTAssertTrue(mediaShow.waitForExistence(timeout: 5))
+    capture("Partially tucked CW media after Hide", app)
+    let tuckedAfterHide = try lastGeometry(probe)
+    let tuckedAfterHideH = try number(try XCTUnwrap(tuckedAfterHide["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertEqual(tuckedAfterHideH, tuckedBeforeShowH, accuracy: 2)
+    try assertOneFrameStepAndZeroGeometryAnimations(
+      probe,
+      since: tuckedBeforeHide,
+      startHeight: tuckedBeforeHideH,
+      endHeight: tuckedAfterHideH
+    )
+  }
+
+  private func assertOneFrameStepAndZeroGeometryAnimations(
+    _ probe: XCUIElement,
+    since baseline: [String: Any],
+    startHeight: Double,
+    endHeight: Double
+  ) throws {
+    let value = try XCTUnwrap(probe.value as? String)
+    let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String: Any])
+    let events = try XCTUnwrap(json["events"] as? [[String: Any]])
+    let sequence = try number(baseline, "sequence")
+    let baselineWindowFrame = try XCTUnwrap(baseline["cellWindowFrame"] as? [String: Any])
+    let baselineOriginY = try number(baselineWindowFrame, "y")
+
+    var distinctHeights: [Double] = []
+    for event in events where ((event["sequence"] as? NSNumber)?.doubleValue ?? -1) > sequence {
+      let animCount = (event["geometryAnimationCount"] as? NSNumber)?.intValue ?? 0
+      XCTAssertEqual(animCount, 0, "Zero non-opacity CAAnimations allowed during CW resize")
+      if let presFrame = event["cellPresentationWindowFrame"] as? [String: Any] {
+        XCTAssertEqual(try number(presFrame, "y"), baselineOriginY, accuracy: 1.5,
+          "Presentation layer top Y must remain anchored at 0pt jump")
+      }
+      if let winFrame = event["cellWindowFrame"] as? [String: Any] {
+        let h = try number(winFrame, "height")
+        if distinctHeights.last.map({ abs($0 - h) > 1.5 }) ?? true {
+          distinctHeights.append(h)
+        }
+        let matchesStartOrEnd = abs(h - startHeight) <= 2.0 || abs(h - endHeight) <= 2.0
+        XCTAssertTrue(matchesStartOrEnd,
+          "Cell height must step in 1 single frame without intermediate heights; saw \(h) between \(startHeight) and \(endHeight)")
+      }
+    }
+  }
+
   private func captureMutedQuoteRevealDiagnostics(scenario: String, extra: [String] = []) throws {
     let app = launchFixture(["--moderation-layout-diagnostics"] + extra)
     let feed = app.collectionViews.firstMatch
@@ -230,9 +399,10 @@ final class ModerationMutedQuoteRevealUITests: XCTestCase {
 
   /// Deliberate navigation must settle before the reveal measurement starts.
   /// A normal XCUIElement.tap can silently scroll an off-screen media control.
+  @discardableResult
   private func tapVisibleControlPreservingViewport(
     _ control: XCUIElement, in feed: XCUIElement, cell: XCUIElement, probe: XCUIElement
-  ) throws {
+  ) throws -> [String: Any] {
     let viewport = feed.frame.insetBy(dx: 0, dy: 24)
     for _ in 0..<4 where !viewport.contains(control.frame) {
       let distance = min(max(control.frame.midY - viewport.midY, -viewport.height * 0.4), viewport.height * 0.4)
@@ -253,6 +423,7 @@ final class ModerationMutedQuoteRevealUITests: XCTestCase {
       attachDiagnosticJSON(Data(value.utf8), name: "Media gate after tap geometry.json")
     }
     try assertViewportStable(probe, since: baseline)
+    return baseline
   }
 
   /// Inspect every changed display sample after the tap, including movement

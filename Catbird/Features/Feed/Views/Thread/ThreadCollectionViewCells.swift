@@ -27,6 +27,12 @@ final class ThreadRowCell: UICollectionViewCell {
     fatalError("init(coder:) has not been implemented")
   }
 
+  override func invalidateIntrinsicContentSize() {
+    UIView.performWithoutAnimation {
+      super.invalidateIntrinsicContentSize()
+    }
+  }
+
   func configure(
     row: ThreadRow,
     threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem?,
@@ -36,7 +42,8 @@ final class ThreadRowCell: UICollectionViewCell {
     path: Binding<NavigationPath>,
     visibilityContext: PostVisibilityContext = .public,
     isActionLoading: Bool = false,
-    onAction: (() -> Void)? = nil
+    onAction: (() -> Void)? = nil,
+    onInvalidateHeight: (() -> Void)? = nil
   ) {
     // Responder-level onscreen-context annotation — SwiftUI modifiers inside
     // UIHostingConfiguration content aren't collected by the system.
@@ -78,6 +85,7 @@ final class ThreadRowCell: UICollectionViewCell {
     contentConfiguration = UIHostingConfiguration {
       content
         .id(rowIdentity)
+        .environment(\.invalidateFeedRowHeight, onInvalidateHeight)
         .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
         .environment(sceneContext)
@@ -133,6 +141,12 @@ final class MainPostCell: UICollectionViewCell {
     fatalError("init(coder:) has not been implemented")
   }
 
+  override func invalidateIntrinsicContentSize() {
+    UIView.performWithoutAnimation {
+      super.invalidateIntrinsicContentSize()
+    }
+  }
+
   func configure(
     post: AppBskyFeedDefs.PostView,
     appState: AppState,
@@ -141,7 +155,8 @@ final class MainPostCell: UICollectionViewCell {
     opThreadPostIndex: Int? = nil,
     opThreadPostCount: Int? = nil,
     visibilityContext: PostVisibilityContext = .public,
-    showsLineFromParent: Bool = false
+    showsLineFromParent: Bool = false,
+    onInvalidateHeight: (() -> Void)? = nil
   ) {
     let postIdentity = post.uri.uriString()
     let configurationIdentity = Self.configurationIdentity(
@@ -193,6 +208,7 @@ final class MainPostCell: UICollectionViewCell {
       // the anchor in place.
       contentConfiguration = UIHostingConfiguration {
         content
+          .environment(\.invalidateFeedRowHeight, onInvalidateHeight)
           .trackingModerationPolicy(of: appState)
           .applyAppStateEnvironment(appState)
           .environment(sceneContext)
@@ -265,12 +281,19 @@ final class BlockedAnchorCell: UICollectionViewCell {
     fatalError("init(coder:) has not been implemented")
   }
 
+  override func invalidateIntrinsicContentSize() {
+    UIView.performWithoutAnimation {
+      super.invalidateIntrinsicContentSize()
+    }
+  }
+
   func configure(
     blocked: AppBskyUnspeccedDefs.ThreadItemBlocked,
     anchorURI: ATProtocolURI,
     appState: AppState,
     sceneContext: SceneNavigationContext,
-    path: Binding<NavigationPath>
+    path: Binding<NavigationPath>,
+    onInvalidateHeight: (() -> Void)? = nil
   ) {
     contentView.backgroundColor = UIColor(
       Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
@@ -289,6 +312,7 @@ final class BlockedAnchorCell: UICollectionViewCell {
           variant: .anchor,
           path: path
         )
+        .environment(\.invalidateFeedRowHeight, onInvalidateHeight)
         .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
           .environment(sceneContext)
