@@ -11,6 +11,41 @@ import OSLog
 import TipKit
 import Observation
 
+/// Whether the search page hides its own content behind `.searchSuggestions`.
+///
+/// In an iPhone-style iOS layout the suggestions list replaces the page, and
+/// `.scrollContentBackground(.hidden)` makes its container transparent, so
+/// `DiscoveryView`, `TypeaheadView` or `ResultsView` would show through below the
+/// last suggestion row; the page is hidden while the field is focused or an
+/// uncommitted query is being typed. On macOS the suggestions drop down from the
+/// toolbar field, and in a full-size iPad layout they are not assumed to cover the
+/// page, so the page stays visible behind them.
+enum SearchSuggestionsOverlayGate {
+  static func hidesPageContent(
+    suggestionsFillPage: Bool,
+    isSearchFieldFocused: Bool,
+    searchState: SearchState,
+    isCommittedSearch: Bool
+  ) -> Bool {
+    guard suggestionsFillPage else { return false }
+    return isSearchFieldFocused || (searchState == .searching && !isCommittedSearch)
+  }
+
+  /// Suggestions replace the page in an iOS layout that is compact in either
+  /// direction: an iPhone in any orientation (a large iPhone in landscape is
+  /// regular width but compact height) or an iPad window narrowed to compact width.
+  static func suggestionsFillPage(
+    horizontalSizeClass: UserInterfaceSizeClass?,
+    verticalSizeClass: UserInterfaceSizeClass?
+  ) -> Bool {
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    return horizontalSizeClass == .compact || verticalSizeClass == .compact
+    #else
+    return false
+    #endif
+  }
+}
+
 /// A modernized search view that leverages iOS 18 features for a better search experience
 struct RefinedSearchView: View {
   @Environment(SceneNavigationContext.self) private var sceneContext
@@ -19,6 +54,8 @@ struct RefinedSearchView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var viewModel: RefinedSearchViewModel
     @Binding var selectedTab: Int
     @Binding var lastTappedTab: Int?
@@ -169,12 +206,18 @@ struct RefinedSearchView: View {
         return ContentType.allCases
     }
     
-    /// True while the native `.searchSuggestions` overlay owns the viewport.
-    /// Hiding the underlying content prevents `DiscoveryView`, `TypeaheadView`, or
-    /// `ResultsView` from showing through below the last suggestion row when
-    /// `.scrollContentBackground(.hidden)` makes the suggestions container transparent.
+    /// True while the native `.searchSuggestions` list owns the viewport; see
+    /// `SearchSuggestionsOverlayGate`.
     private var isShowingSearchSuggestionsOverlay: Bool {
-        isSearchFieldFocused || (viewModel.searchState == .searching && !viewModel.isCommittedSearch)
+        SearchSuggestionsOverlayGate.hidesPageContent(
+            suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage(
+                horizontalSizeClass: horizontalSizeClass,
+                verticalSizeClass: verticalSizeClass
+            ),
+            isSearchFieldFocused: isSearchFieldFocused,
+            searchState: viewModel.searchState,
+            isCommittedSearch: viewModel.isCommittedSearch
+        )
     }
 
     @ViewBuilder

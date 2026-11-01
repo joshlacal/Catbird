@@ -1,9 +1,46 @@
 import Foundation
 import Testing
+import SwiftUI
 @testable import Catbird
 
 @Suite("Search filter wiring")
 struct SearchFilterWiringTests {
+  @Test("search content hides behind suggestions only where the suggestions fill the page")
+  func suggestionsOverlayHidesPageOnlyWhereSuggestionsFillIt() {
+    func hides(
+      fill: Bool, focused: Bool = false, state: SearchState = .idle, committed: Bool = false
+    ) -> Bool {
+      SearchSuggestionsOverlayGate.hidesPageContent(
+        suggestionsFillPage: fill, isSearchFieldFocused: focused, searchState: state, isCommittedSearch: committed
+      )
+    }
+
+    // Compact width: the focused field or an uncommitted query owns the screen.
+    #expect(hides(fill: true, focused: true))
+    #expect(hides(fill: true, focused: true, state: .results, committed: true))
+    #expect(hides(fill: true, state: .searching))
+    #expect(!hides(fill: true, state: .searching, committed: true))
+    #expect(!hides(fill: true, state: .results, committed: true))
+    #expect(!hides(fill: true))
+
+    // Suggestions that float over the page never hide it.
+    for state in [SearchState.idle, .searching, .results, .loading] {
+      for focused in [false, true] {
+        #expect(!hides(fill: false, focused: focused, state: state))
+      }
+    }
+
+    // On iOS, suggestions fill the page in a layout compact in either direction.
+    func fills(_ horizontal: UserInterfaceSizeClass?, _ vertical: UserInterfaceSizeClass?) -> Bool {
+      SearchSuggestionsOverlayGate.suggestionsFillPage(horizontalSizeClass: horizontal, verticalSizeClass: vertical)
+    }
+    #expect(fills(.compact, .regular))  // iPhone portrait, narrow iPad window
+    #expect(fills(.regular, .compact))  // large iPhone landscape
+    #expect(fills(.compact, .compact))  // iPhone landscape
+    #expect(!fills(.regular, .regular)) // full-size iPad
+    #expect(!fills(nil, nil))
+  }
+
   @Test("committed saved-query echo is ignored without blocking real edits")
   func savedQueryEchoDisposition() {
     #expect(!SearchQueryUpdateGate.shouldProcess(
