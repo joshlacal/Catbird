@@ -158,11 +158,7 @@ struct TasteCalibrationBeatView: View {
         Text(duel.prompt)
           .font(.headline)
 
-        Text(
-          duel.kind == "trap"
-            ? "Disambiguates lookalike search terms so only the real scene enters your feed."
-            : "Tunes the relative weight between neighboring sub-communities."
-        )
+        Text(Self.duelKindSubtitle(for: duel.kind))
         .font(.caption)
         .foregroundStyle(.secondary)
 
@@ -299,6 +295,15 @@ struct TasteCalibrationBeatView: View {
     for side: BlueCatbirdOnboardingDefs.CalibrationOption
   ) -> [HydratedSamplePost] {
     side.samplePostUris.prefix(2).compactMap { viewModel.duelPostsByURI[$0.uriString()] }
+  }
+
+  static func duelKindSubtitle(for kind: String) -> String {
+    switch kind {
+    case "collision_trap", "ambiguity_split", "trap":
+      "Quick Clarification · Disambiguates lookalike search terms so only the real scene enters your feed."
+    default:
+      "Tunes the relative weight between neighboring sub-communities."
+    }
   }
 }
 

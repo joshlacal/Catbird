@@ -475,5 +475,248 @@ struct OnboardingIntelligenceTests {
     reloaded.setRepostMuted(false, for: "did:plc:synthcurator1")
     #expect(!reloaded.isRepostMuted(for: "did:plc:synthcurator1"))
     #expect(reloaded.isRepostMuted(for: "did:plc:synthcurator2"))
+
+    // Unscoped empty accountDID must never read or write global UserDefaults keys
+    let unscoped = FeedFilterSettings(accountDID: "", defaults: defaults)
+    unscoped.mergeMutedRepostAuthors(["did:plc:synthcurator99"])
+    #expect(unscoped.mutedRepostAuthorDIDs.isEmpty)
+    #expect(defaults.stringArray(forKey: "MutedRepostAuthorDIDs") == nil)
+  }
+
+  @Test("Selection, pin, and exclusion caps match BlueCatbirdOnboarding lexicon array limits")
+  @MainActor
+  func selectionPinAndExclusionCapsMatchLexiconLimits() async throws {
+    let mock = MockIntelligenceService()
+    let vm = SceneOnboardingViewModel(service: mock, mode: .newAccountOnboarding)
+    await vm.loadInitialCatalog()
+
+    for idx in 1...SceneOnboardingViewModel.maxSelectedCommunities {
+      let comm = try Self.makeCommunity(id: 1000 + idx, title: "Scene \(idx)")
+      vm.toggleCommunity(comm)
+    }
+    #expect(vm.selectedCount == 24)
+    #expect(vm.errorBannerMessage == nil)
+
+    // 25th community is rejected cleanly without exceeding lexicon maxLength=24
+    let overflowComm = try Self.makeCommunity(id: 9999, title: "Scene 25 Overflow")
+    vm.toggleCommunity(overflowComm)
+    #expect(vm.selectedCount == 24)
+    #expect(vm.selectionWeight(for: 9999) == 0)
+    #expect(vm.errorBannerMessage != nil)
+
+    // Boosting an already-selected community among the 24 still works
+    let firstPicked = try Self.makeCommunity(id: 1001, title: "Scene 1")
+    vm.toggleHeartBoost(for: firstPicked)
+    #expect(vm.selectionWeight(for: 1001) == 2)
+    #expect(vm.currentSelectionsPayload.count == 24)
+
+    // Unpicking one clears the limit banner and opens room again
+    vm.toggleCommunity(firstPicked)
+    #expect(vm.selectedCount == 23)
+    #expect(vm.errorBannerMessage == nil)
+
+    // Pin cap = 30
+    for idx in 1...SceneOnboardingViewModel.maxPinnedAuthors {
+      vm.togglePinAuthor(did: "did:plc:synthpin\(idx)")
+    }
+    #expect(vm.pinnedDIDs.count == 30)
+    vm.togglePinAuthor(did: "did:plc:synthpin31")
+    #expect(vm.pinnedDIDs.count == 30)
+    #expect(!vm.isAuthorPinned("did:plc:synthpin31"))
+
+    // Exclusion cap = 100 (FIFO eviction preserves bounded payload)
+    for idx in 1...105 {
+      await vm.excludeAndSwapAccount("did:plc:synthexcl\(idx)")
+    }
+    #expect(vm.excludedDIDs.count == 100)
+    #expect(mock.lastSolveInput?.excludedDids?.count == 100)
+    #expect(!vm.excludedDIDs.contains("did:plc:synthexcl1"))
+    #expect(vm.excludedDIDs.contains("did:plc:synthexcl105"))
+  }
+
+  @Test("Out-of-order listCommunities responses cannot overwrite newer search queries or resets")
+  @MainActor
+  func staleOutOfOrderSearchResponsesAreDiscarded() async throws {
+    @MainActor
+    final class ControlledSearchService: @unchecked Sendable, CatbirdIntelligenceServicing {
+      var slowSearchContinuation: CheckedContinuation<Void, Never>?
+
+      func fetchSeedFollowDIDs(limit: Int) async -> [String] { [] }
+
+      func getCatalog(
+        seedFollowDIDs: [String],
+        query: String?,
+        macroCategory: String?,
+        limit: Int
+      ) async throws -> BlueCatbirdOnboardingGetCatalog.Output {
+        let featured = try OnboardingIntelligenceTests.makeCommunity(id: 497, title: "Featured Swift")
+        return .init(
+          catalogVersion: "s17_rev6_synth",
+          totalCommunities: 1,
+          scenes: [],
+          featuredCommunities: [featured],
+          warmStartCommunities: []
+        )
+      }
+
+      func listCommunities(
+        query: String?,
+        macroCategory: String?,
+        sceneSlug: String?,
+        limit: Int,
+        cursor: String?
+      ) async throws -> BlueCatbirdIntelListCommunities.Output {
+        if query == "SlowStale" {
+          await withCheckedContinuation { cont in
+            self.slowSearchContinuation = cont
+          }
+          let stale = try OnboardingIntelligenceTests.makeCommunity(id: 777, title: "Stale Result")
+          return .init(
+            catalogVersion: "s17_rev6_synth",
+            totalCount: 1,
+            cursor: nil,
+            scenes: [],
+            communities: [stale]
+          )
+        }
+        let fresh = try OnboardingIntelligenceTests.makeCommunity(id: 2421, title: "Fresh Indie Result")
+        return .init(
+          catalogVersion: "s17_rev6_synth",
+          totalCount: 1,
+          cursor: nil,
+          scenes: [],
+          communities: [fresh]
+        )
+      }
+
+      func getCommunity(communityId: Int) async throws -> BlueCatbirdIntelGetCommunity.Output {
+        throw CatbirdIntelligenceError.serviceUnavailable
+      }
+      func getCalibrationSwipes(
+        selections: [BlueCatbirdOnboardingDefs.CommunitySelection],
+        seedFollowDIDs: [String],
+        maxSwipes: Int
+      ) async throws -> BlueCatbirdOnboardingGetCalibrationSwipes.Output {
+        throw CatbirdIntelligenceError.serviceUnavailable
+      }
+      func previewTimeline(
+        selections: [BlueCatbirdOnboardingDefs.CommunitySelection],
+        swipes: [BlueCatbirdOnboardingDefs.CalibrationSwipeAnswer],
+        controls: BlueCatbirdOnboardingDefs.BundleControls,
+        limit: Int
+      ) async throws -> BlueCatbirdOnboardingPreviewTimeline.Output {
+        throw CatbirdIntelligenceError.serviceUnavailable
+      }
+      func solveBundle(
+        input: BlueCatbirdOnboardingSolveBundle.Input
+      ) async throws -> BlueCatbirdOnboardingSolveBundle.Output {
+        throw CatbirdIntelligenceError.serviceUnavailable
+      }
+      func hydratePosts(
+        uris: [ATProtocolURI],
+        attributionByURI: [String: PostAttributionMetadata]
+      ) async -> [HydratedSamplePost] { [] }
+      func hydrateProfiles(dids: [DID]) async -> [String: HydratedRecommendedProfile] { [:] }
+      func hydrateFeeds(recommended: [BlueCatbirdOnboardingDefs.RecommendedFeed]) async -> [HydratedFeedOption] { [] }
+      func hydrateStarterPacks(recommended: [BlueCatbirdOnboardingDefs.RecommendedStarterPack]) async -> [HydratedStarterPackOption] { [] }
+      func commitLineup(
+        followDIDs: [String],
+        originalsOnlyDIDs: Set<String>,
+        pinnedFeedURIs: [String]
+      ) async throws -> OnboardingCommitReceipt {
+        .init(followedCount: 0, batchCount: 0, originalsOnlyCount: 0, pinnedFeedsCount: 0)
+      }
+    }
+
+    let svc = ControlledSearchService()
+    let vm = SceneOnboardingViewModel(service: svc, mode: .newAccountOnboarding)
+    await vm.loadInitialCatalog()
+
+    vm.searchQuery = "SlowStale"
+    let staleTask = Task { @MainActor in
+      await vm.performSearchNow()
+    }
+    while svc.slowSearchContinuation == nil {
+      await Task.yield()
+    }
+
+    // Newer search completes while SlowStale is still suspended
+    vm.searchQuery = "FreshIndie"
+    await vm.performSearchNow()
+    #expect(vm.displayedCommunities.map(\.communityId) == [2421])
+    #expect(vm.isSearching == false)
+
+    // Now release the stale response and ensure it is discarded
+    svc.slowSearchContinuation?.resume()
+    await staleTask.value
+    #expect(vm.displayedCommunities.map(\.communityId) == [2421])
+    #expect(vm.isSearching == false)
+  }
+
+  @Test("Account context guard fails closed across account switches and collision_trap duel copy matches backend")
+  func accountContextGuardAndCollisionTrapCopy() {
+    #expect(
+      LiveCatbirdIntelligenceService.isAccountContextActive(
+        expectedDID: "did:plc:synthacct1",
+        activeUserDID: "did:plc:synthacct1",
+        isAccountSwitchSuspended: false,
+        isSameClient: true,
+        clientDID: "did:plc:synthacct1"
+      ) == true
+    )
+    #expect(
+      LiveCatbirdIntelligenceService.isAccountContextActive(
+        expectedDID: "",
+        activeUserDID: "",
+        isAccountSwitchSuspended: false,
+        isSameClient: true,
+        clientDID: ""
+      ) == false
+    )
+    #expect(
+      LiveCatbirdIntelligenceService.isAccountContextActive(
+        expectedDID: "did:plc:synthacct1",
+        activeUserDID: "did:plc:synthacct1",
+        isAccountSwitchSuspended: true,
+        isSameClient: true,
+        clientDID: "did:plc:synthacct1"
+      ) == false
+    )
+    #expect(
+      LiveCatbirdIntelligenceService.isAccountContextActive(
+        expectedDID: "did:plc:synthacct1",
+        activeUserDID: "did:plc:synthacct2",
+        isAccountSwitchSuspended: false,
+        isSameClient: true,
+        clientDID: "did:plc:synthacct1"
+      ) == false
+    )
+    #expect(
+      LiveCatbirdIntelligenceService.isAccountContextActive(
+        expectedDID: "did:plc:synthacct1",
+        activeUserDID: "did:plc:synthacct1",
+        isAccountSwitchSuspended: false,
+        isSameClient: false,
+        clientDID: "did:plc:synthacct1"
+      ) == false
+    )
+    #expect(
+      LiveCatbirdIntelligenceService.isAccountContextActive(
+        expectedDID: "did:plc:synthacct1",
+        activeUserDID: "did:plc:synthacct1",
+        isAccountSwitchSuspended: false,
+        isSameClient: true,
+        clientDID: "did:plc:synthacct2"
+      ) == false
+    )
+
+    #expect(
+      TasteCalibrationBeatView.duelKindSubtitle(for: "collision_trap")
+        .contains("Disambiguates lookalike search terms")
+    )
+    #expect(
+      TasteCalibrationBeatView.duelKindSubtitle(for: "subscene_split")
+        .contains("neighboring sub-communities")
+    )
   }
 }

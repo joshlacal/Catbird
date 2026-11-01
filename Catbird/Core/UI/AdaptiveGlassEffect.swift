@@ -11,13 +11,12 @@ import SwiftUI
 
 // MARK: - Adaptive Glass Effect Style (iOS 26+ / Swift 6.2+)
 
-@available(macOS 26.0, *)
 public enum AdaptiveGlassStyle {
     case regular
     case secondary
     case accentTinted
     
-    @available(iOS 26.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     var nativeGlassStyle: Glass {
         switch self {
         case .regular:
@@ -54,7 +53,6 @@ public enum AdaptiveGlassStyle {
 
 // MARK: - Adaptive Glass Effect Extensions
 
-@available(macOS 26.0, *)
 public extension View {
     
     @ViewBuilder
@@ -62,7 +60,7 @@ public extension View {
         style: AdaptiveGlassStyle = .regular,
         interactive: Bool = false
     ) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             let glassStyle = interactive ? style.nativeGlassStyle.interactive() : style.nativeGlassStyle
             self.glassEffect(glassStyle)
         } else {
@@ -76,7 +74,7 @@ public extension View {
         in shape: S,
         interactive: Bool = false
     ) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             let glassStyle = interactive ? style.nativeGlassStyle.interactive() : style.nativeGlassStyle
             self.glassEffect(glassStyle, in: shape)
         } else {

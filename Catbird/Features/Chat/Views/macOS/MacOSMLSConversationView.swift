@@ -41,13 +41,15 @@ struct MacOSMLSOrdinaryConversationView: View {
 
   var body: some View {
     Group {
-      if let eligibility = appState.spacesEligibility, case .unavailable = eligibility {
+      if let eligibility = appState.spacesEligibility, !eligibility.eligible {
         MLSSpacesRequiredGateView(
-          status: eligibility,
-          onReauthorizeSpaces: {
+          eligibility: eligibility,
+          onReauthorizeScopes: {
             Task { await appState.reauthorizeSpacesForMLS() }
           },
-          onSwitchToBlueskyDMs: {}
+          onRefreshCheck: {
+            try? await appState.initializeMLS()
+          }
         )
       } else if !MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) {
         ContentUnavailableView("Conversation unavailable", systemImage: "lock.slash")
@@ -142,10 +144,11 @@ struct MacOSMLSOrdinaryConversationView: View {
     await source.loadMessages()
     guard let coordinator = appState.mlsCoordinator else { return }
     if let meta = try? await coordinator.getGroupMetadata(conversationId: conversationId),
-       !meta.title.isEmpty
+       let title = meta.title,
+       !title.isEmpty
     {
-      groupTitle = meta.title
-      groupDescription = meta.description
+      groupTitle = title
+      groupDescription = meta.description ?? ""
     } else if let convo = (try? await coordinator.listConversations(limit: 200))?.first(where: { $0.conversationId == conversationId }) {
       groupTitle = convo.title ?? "Encrypted Chat"
       spaceURI = convo.spaceUri
