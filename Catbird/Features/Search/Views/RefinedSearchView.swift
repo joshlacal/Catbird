@@ -11,16 +11,30 @@ import OSLog
 import TipKit
 import Observation
 
-/// Whether the search page hides its own content behind `.searchSuggestions`.
+/// Whether the search page hides its own content behind `.searchSuggestions`, and
+/// whether the native suggestions container is transparent.
 ///
-/// In an iPhone-style iOS layout the suggestions list replaces the page, and
-/// `.scrollContentBackground(.hidden)` makes its container transparent, so
-/// `DiscoveryView`, `TypeaheadView` or `ResultsView` would show through below the
-/// last suggestion row; the page is hidden while the field is focused or an
-/// uncommitted query is being typed. On macOS the suggestions drop down from the
-/// toolbar field, and in a full-size iPad layout they are not assumed to cover the
-/// page, so the page stays visible behind them.
+/// On iOS the search field sits in the navigation bar drawer, and the native
+/// suggestions are a full-page UIKit list on every size class: an iPhone in either
+/// orientation and a full-size iPad alike. Its container is made transparent so the
+/// themed (Dim, Black) background shows below the last suggestion row, which would
+/// also let `DiscoveryView`, `TypeaheadView` or `ResultsView` show through, so the
+/// page is hidden while the field is focused or an uncommitted query is being typed.
+/// On macOS the suggestions drop down from the toolbar field, so the page stays
+/// visible behind them and they keep their default background. The container is
+/// transparent only where the page is hidden behind it.
 enum SearchSuggestionsOverlayGate {
+  /// True on iOS, where the native suggestions cover the whole page on every size
+  /// class. False on macOS, where they drop down from the toolbar field; Mac Catalyst
+  /// is treated the same way, keeping the suggestions' default background.
+  static var suggestionsFillPage: Bool {
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    return true
+    #else
+    return false
+    #endif
+  }
+
   static func hidesPageContent(
     suggestionsFillPage: Bool,
     isSearchFieldFocused: Bool,
@@ -31,18 +45,10 @@ enum SearchSuggestionsOverlayGate {
     return isSearchFieldFocused || (searchState == .searching && !isCommittedSearch)
   }
 
-  /// Suggestions replace the page in an iOS layout that is compact in either
-  /// direction: an iPhone in any orientation (a large iPhone in landscape is
-  /// regular width but compact height) or an iPad window narrowed to compact width.
-  static func suggestionsFillPage(
-    horizontalSizeClass: UserInterfaceSizeClass?,
-    verticalSizeClass: UserInterfaceSizeClass?
-  ) -> Bool {
-    #if os(iOS) && !targetEnvironment(macCatalyst)
-    return horizontalSizeClass == .compact || verticalSizeClass == .compact
-    #else
-    return false
-    #endif
+  /// The native suggestions container's background: hidden (transparent) only where
+  /// the suggestions fill the page and so hide it, never over a visible page.
+  static func suggestionsBackground(suggestionsFillPage: Bool) -> Visibility {
+    suggestionsFillPage ? .hidden : .automatic
   }
 }
 
@@ -54,8 +60,6 @@ struct RefinedSearchView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var displayScale
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var viewModel: RefinedSearchViewModel
     @Binding var selectedTab: Int
     @Binding var lastTappedTab: Int?
@@ -206,14 +210,11 @@ struct RefinedSearchView: View {
         return ContentType.allCases
     }
     
-    /// True while the native `.searchSuggestions` list owns the viewport; see
-    /// `SearchSuggestionsOverlayGate`.
-    private var isShowingSearchSuggestionsOverlay: Bool {
+    /// True while the page is hidden behind the native `.searchSuggestions` list,
+    /// which happens only on iOS; see `SearchSuggestionsOverlayGate`.
+    private var hidesPageBehindSearchSuggestions: Bool {
         SearchSuggestionsOverlayGate.hidesPageContent(
-            suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage(
-                horizontalSizeClass: horizontalSizeClass,
-                verticalSizeClass: verticalSizeClass
-            ),
+            suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage,
             isSearchFieldFocused: isSearchFieldFocused,
             searchState: viewModel.searchState,
             isCommittedSearch: viewModel.isCommittedSearch
@@ -247,9 +248,9 @@ struct RefinedSearchView: View {
                 }
                 mainContentArea
             }
-            .opacity(isShowingSearchSuggestionsOverlay ? 0 : 1)
-            .allowsHitTesting(!isShowingSearchSuggestionsOverlay)
-            .accessibilityHidden(isShowingSearchSuggestionsOverlay)
+            .opacity(hidesPageBehindSearchSuggestions ? 0 : 1)
+            .allowsHitTesting(!hidesPageBehindSearchSuggestions)
+            .accessibilityHidden(hidesPageBehindSearchSuggestions)
         }
         .navigationTitle("Search")
         #if os(iOS)
@@ -347,7 +348,14 @@ struct RefinedSearchView: View {
         .searchSuggestions {
             searchSuggestionsContent
         }
-        .scrollContentBackground(.hidden)
+        // Targets the native suggestions list (the page's own lists set their own
+        // background): on iOS it is transparent so the ZStack's themed background
+        // shows below the last row; see SearchSuggestionsOverlayGate.
+        .scrollContentBackground(
+            SearchSuggestionsOverlayGate.suggestionsBackground(
+                suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage
+            )
+        )
         // Configure the native suggestions list, not just the discovery scroll view.
         // Short history must still accept a vertical pan to dismiss the keyboard.
         .scrollDismissesKeyboard(.interactively)
@@ -540,8 +548,9 @@ struct RefinedSearchView: View {
     
     // MARK: - Search Suggestions
     
-    /// Native search suggestions replace the page while the field is focused. Three
-    /// distinct states: typing (query + typeahead), history, and no history yet.
+    /// Native search suggestions shown while the field is focused: on iOS they replace
+    /// the page, on macOS they drop down from the toolbar field. Three distinct
+    /// states: typing (query + typeahead), history, and no history yet.
     @ViewBuilder
     private var searchSuggestionsContent: some View {
         if !trimmedSearchText.isEmpty {

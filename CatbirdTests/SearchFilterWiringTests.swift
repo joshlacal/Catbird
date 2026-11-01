@@ -23,22 +23,41 @@ struct SearchFilterWiringTests {
     #expect(!hides(fill: true, state: .results, committed: true))
     #expect(!hides(fill: true))
 
-    // Suggestions that float over the page never hide it.
+    // Suggestions that drop down from the toolbar field (macOS) never hide the page.
     for state in [SearchState.idle, .searching, .results, .loading] {
       for focused in [false, true] {
         #expect(!hides(fill: false, focused: focused, state: state))
       }
     }
 
-    // On iOS, suggestions fill the page in a layout compact in either direction.
-    func fills(_ horizontal: UserInterfaceSizeClass?, _ vertical: UserInterfaceSizeClass?) -> Bool {
-      SearchSuggestionsOverlayGate.suggestionsFillPage(horizontalSizeClass: horizontal, verticalSizeClass: vertical)
+    // On iOS the suggestions fill the page on every size class, a full-size iPad included.
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    #expect(SearchSuggestionsOverlayGate.suggestionsFillPage)
+    #else
+    #expect(!SearchSuggestionsOverlayGate.suggestionsFillPage)
+    #endif
+  }
+
+  @Test("the suggestions container is transparent only where the page is hidden behind it")
+  func suggestionsBackgroundIsTransparentOnlyOverAHiddenPage() {
+    #expect(SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: true) == .hidden)
+    #expect(SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: false) == .automatic)
+
+    // Wherever the container is transparent, every state that shows suggestions (a
+    // focused field, or typeahead for an uncommitted query) hides the page.
+    for fill in [false, true]
+    where SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: fill) == .hidden {
+      for state in [SearchState.idle, .searching, .results, .loading] {
+        for committed in [false, true] {
+          #expect(SearchSuggestionsOverlayGate.hidesPageContent(
+            suggestionsFillPage: fill, isSearchFieldFocused: true, searchState: state, isCommittedSearch: committed
+          ))
+        }
+      }
+      #expect(SearchSuggestionsOverlayGate.hidesPageContent(
+        suggestionsFillPage: fill, isSearchFieldFocused: false, searchState: .searching, isCommittedSearch: false
+      ))
     }
-    #expect(fills(.compact, .regular))  // iPhone portrait, narrow iPad window
-    #expect(fills(.regular, .compact))  // large iPhone landscape
-    #expect(fills(.compact, .compact))  // iPhone landscape
-    #expect(!fills(.regular, .regular)) // full-size iPad
-    #expect(!fills(nil, nil))
   }
 
   @Test("committed saved-query echo is ignored without blocking real edits")
