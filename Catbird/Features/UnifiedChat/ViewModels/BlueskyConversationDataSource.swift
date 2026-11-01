@@ -185,12 +185,16 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   /// A send that fails does not hold back the ones queued after it: they still
   /// go out, and the failed row stays in the transcript with Retry, which
   /// queues it again at the back.
+  ///
+  /// Each queued send holds the data source strongly: only the conversation
+  /// view's state owns it, so a send waiting behind another when the user
+  /// leaves the conversation must keep it alive to go out at all. A finished
+  /// task releases its captures, so the source is freed once the queue drains.
   @discardableResult
   private func enqueueSend(id pendingID: String) -> Task<Bool, Never> {
     let previous = sendQueueTail
-    let send = Task { @MainActor [weak self] () -> Bool in
+    let send = Task { @MainActor [self] () -> Bool in
       _ = await previous?.value
-      guard let self else { return false }
       return await self.performPendingSend(id: pendingID)
     }
     sendQueueTail = send

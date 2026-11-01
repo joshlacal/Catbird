@@ -175,6 +175,34 @@ struct ChatTabConversationTests {
     #expect(source.pendingSends.isEmpty)
   }
 
+  @Test("Sends queued behind one in flight still go out when the conversation view lets the source go")
+  func queuedSendsOutliveTheConversationView() async {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    // Only the view's @State owns the source; tapping Back (or picking another
+    // conversation on macOS) drops that reference while sends are queued.
+    var source: BlueskyConversationDataSource? = makeSource(manager, server)
+    weak var releasedSource: BlueskyConversationDataSource?
+    releasedSource = source
+    let mention = "hey @alice.bsky.social look"
+    server.held = [mention]
+
+    source?.draftText = mention
+    source?.submitDraft()
+    await settle { server.isHolding(mention) }
+    source?.draftText = "ok"
+    source?.submitDraft()
+    source = nil
+
+    server.release(mention)
+    await settle { server.sent.count == 2 }
+    #expect(server.sent.map(\.text) == [mention, "ok"])
+    // The queue keeps the source only until its sends finish.
+    await settle { releasedSource == nil }
+    #expect(releasedSource == nil)
+  }
+
   @Test("A failed send does not hold back later sends, and Retry sends it again at the back once")
   func failedSendDoesNotWedgeTheQueue() async throws {
     let manager = await makeManager(MessagePagesStub())
