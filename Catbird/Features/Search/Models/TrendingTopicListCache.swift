@@ -35,6 +35,10 @@ final class TrendingTopicListCache {
   private var videosInFlight: [String: InFlight<Video>] = [:]
   /// Lists fetched before this instant are never fresh.
   private var trustedSince: Date
+  /// False while the account is suspended for a switch, when the shared client may already carry
+  /// another account's credentials: no request starts then, and no answer that arrives then is stored.
+  /// `AppState` points this at its own suspension state.
+  var admitsRequests: @MainActor () -> Bool = { true }
 
   init(disk: TrendingTopicsDiskCache = TrendingTopicsDiskCache(), now: @escaping () -> Date = Date.init) {
     self.disk = disk
@@ -135,6 +139,9 @@ final class TrendingTopicListCache {
     if let existing = self[keyPath: inFlight][accountDID] {
       return try await existing.task.value
     }
+    // Suspension invalidates every request in flight, so none is joined above; a new one would be
+    // sent with whichever account's credentials the client holds mid-switch.
+    guard admitsRequests() else { return [] }
     let id = UUID()
     let task = Task { @MainActor [weak self] () throws -> [Value] in
       defer {
@@ -144,7 +151,7 @@ final class TrendingTopicListCache {
       }
       let values = try await fetch()
       // Invalidation drops the entry: a response to a request sent before it is not cached.
-      if let self, self[keyPath: inFlight][accountDID]?.id == id {
+      if let self, self.admitsRequests(), self[keyPath: inFlight][accountDID]?.id == id {
         store(self, values)
       }
       return values

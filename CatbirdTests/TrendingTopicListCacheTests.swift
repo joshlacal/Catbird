@@ -198,6 +198,65 @@ struct TrendingTopicListCacheTests {
     #expect(store.cachedTrends(for: accountA)?.trends == oversized)
   }
 
+  @Test("While the account is suspended for a switch no request starts and nothing is stored")
+  func suspendedAccountRequestsAndStoresNothing() async throws {
+    let env = try Environment()
+    defer { env.tearDown() }
+    let store = env.makeStore()
+    var admitted = false
+    store.lists.admitsRequests = { admitted }
+    var fetches = 0
+
+    let trends = try await store.fetchOrCoalesceTrends(for: accountA, force: true) {
+      fetches += 1
+      return [makeTrend("other-account")]
+    }
+    let videos = try await store.fetchOrCoalesceVideos(for: accountA, force: true) {
+      fetches += 1
+      return []
+    }
+    #expect(fetches == 0, "Mid-switch the shared client may already carry the next account's credentials")
+    #expect(trends.isEmpty)
+    #expect(videos.isEmpty)
+    #expect(store.cachedTrends(for: accountA) == nil)
+    #expect(env.storedData(for: accountA) == nil)
+
+    // A switch rolled back: the account resumes and its next load is sent and kept.
+    admitted = true
+    let resumed = try await store.fetchOrCoalesceTrends(for: accountA) {
+      fetches += 1
+      return [makeTrend("alpha")]
+    }
+    #expect(fetches == 1)
+    #expect(resumed == [makeTrend("alpha")])
+    #expect(store.cachedTrends(for: accountA)?.isFresh == true)
+    #expect(env.storedData(for: accountA) != nil)
+  }
+
+  @Test("An answer that arrives while the account is suspended reaches its caller but is not stored")
+  func answerDuringSuspensionIsNotStored() async throws {
+    let env = try Environment()
+    defer { env.tearDown() }
+    let store = env.makeStore()
+    var admitted = true
+    store.lists.admitsRequests = { admitted }
+    let gate = FetchGate()
+    let pending = Task { @MainActor in
+      try await store.fetchOrCoalesceTrends(for: accountA) {
+        await gate.wait()
+        return [makeTrend("mid-switch")]
+      }
+    }
+    try await waitUntil { gate.calls == 1 }
+
+    admitted = false
+    gate.open()
+
+    #expect(try await pending.value == [makeTrend("mid-switch")])
+    #expect(store.cachedTrends(for: accountA) == nil)
+    #expect(env.storedData(for: accountA) == nil)
+  }
+
   // MARK: Helpers
 
   private func makeTrend(
