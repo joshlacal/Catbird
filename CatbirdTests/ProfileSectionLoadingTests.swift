@@ -196,9 +196,9 @@ struct ProfileSectionLoadingTests {
     // that page nor takes it as its own content.
     let copy = Self.start { try await Self.refresh(section, on: viewModel) }
     await withKnownIssue(Self.uncancellableRequests) {
-      try await Self.waitUntil("the first load's request while the next page is held") {
-        server.heldRequestCount == 2
-      }
+      try await Self.waitUntil(
+        "the first load's request while the next page is held", timeout: Self.knownIssueTimeout
+      ) { server.heldRequestCount == 2 }
       #expect(server.cancelledHeldRequestCount == 1)
     }
     // Answers the next page if its request still runs. Its load was cancelled, so its page never
@@ -361,12 +361,19 @@ extension ProfileSectionLoadingTests {
   private static let uncancellableRequests: Comment =
     "Petrel's request deduplication lets a cancelled request run until it is answered"
 
+  /// How long a wait inside `withKnownIssue` lasts. With the current Petrel pin it runs out on
+  /// every run, so it stays short, and once Petrel stops a cancelled request it is still far
+  /// longer than the request takes to stop. It goes with the wrappers at the pin bump.
+  private static let knownIssueTimeout: Duration = .seconds(1)
+
   /// Expects the held request of a load that was just cancelled to stop, a known issue with the
   /// current Petrel pin (see `uncancellableRequests`), then answers whatever is still held, so
   /// the cancelled load ends either way.
   private static func expectHeldRequestToStop(_ server: ProfileSectionStubServer) async {
     await withKnownIssue(uncancellableRequests) {
-      try await waitUntil("the cancelled request to stop") { server.cancelledHeldRequestCount == 1 }
+      try await waitUntil("the cancelled request to stop", timeout: knownIssueTimeout) {
+        server.cancelledHeldRequestCount == 1
+      }
     }
     server.releaseHeldPages()
   }
@@ -374,9 +381,10 @@ extension ProfileSectionLoadingTests {
   private struct TimedOut: Error {}
 
   private static func waitUntil(
-    _ what: String = "the next page to reach the stub server", _ condition: () -> Bool
+    _ what: String = "the next page to reach the stub server", timeout: Duration = .seconds(5),
+    _ condition: () -> Bool
   ) async throws {
-    for _ in 0..<500 {
+    for _ in 0..<Int(timeout / .milliseconds(10)) {
       if condition() { return }
       try await Task.sleep(for: .milliseconds(10))
     }
