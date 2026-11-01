@@ -10,6 +10,7 @@ struct InterestsSettingsView: View {
     @State private var hasLoadedSuccessfully = false
     @State private var loadError: String?
     @State private var isShowingPicker = false
+    @State private var isShowingSceneExplorer = false
     @State private var errorMessage: String?
     @State private var showingError = false
     @State private var saveTask: Task<Void, Never>?
@@ -87,6 +88,26 @@ struct InterestsSettingsView: View {
                 }
                 .disabled(isLoading || !hasLoadedSuccessfully)
             }
+
+            Section("Community Intelligence") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Explore Scenes & Tune Your Feed", systemImage: "sparkles")
+                        .fontWeight(.semibold)
+                        .appFont(AppTextRole.headline)
+
+                    Text("Browse 1,000+ live Bluesky communities, preview real posts, and assemble a role-balanced lineup with Originals-Only repost taming.")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+
+                Button {
+                    isShowingSceneExplorer = true
+                } label: {
+                    Label("Open Scene Explorer", systemImage: "safari.fill")
+                }
+                .accessibilityIdentifier("settings.interests.openSceneExplorer")
+            }
         }
         .navigationTitle("Your Interests")
         #if os(iOS)
@@ -102,6 +123,27 @@ struct InterestsSettingsView: View {
                     await saveInterests(updatedInterests)
                 }
             )
+        }
+        .sheet(isPresented: $isShowingSceneExplorer) {
+            NavigationStack {
+                SceneIntelligenceOnboardingView(
+                    mode: .tuneExistingFeed,
+                    selectedInterests: interests,
+                    onComplete: {
+                        isShowingSceneExplorer = false
+                    },
+                    onSkip: {
+                        isShowingSceneExplorer = false
+                    }
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") {
+                            isShowingSceneExplorer = false
+                        }
+                    }
+                }
+            }
         }
         .alert("Couldn’t Save Interests", isPresented: $showingError) {
             Button("OK", role: .cancel) { }

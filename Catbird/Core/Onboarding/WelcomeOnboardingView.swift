@@ -72,9 +72,10 @@ public struct WelcomeOnboardingView: View {
                             interestsStepView
                                 .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
                         case 2:
-                            OnboardingSuggestedAccountsStep(
+                            SceneIntelligenceOnboardingView(
+                                mode: .newAccountOnboarding,
                                 selectedInterests: Array(selectedInterests),
-                                onContinue: { advanceStep() },
+                                onComplete: { advanceStep() },
                                 onSkip: { advanceStep() }
                             )
                             .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
