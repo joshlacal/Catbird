@@ -165,7 +165,9 @@ class NotificationService: UNNotificationServiceExtension {
     content.threadIdentifier = "catbird-suppressed"
     content.categoryIdentifier = ""
     content.targetContentIdentifier = nil
+    #if os(iOS)
     content.launchImageName = ""
+    #endif
 
     var userInfo: [AnyHashable: Any] = [
       "suppressedForSignedOutAccount": true
