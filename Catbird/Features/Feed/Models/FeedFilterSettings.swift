@@ -51,7 +51,7 @@ struct FeedFilter: Identifiable, Hashable {
   private var mutedRepostProcessor: MutedRepostAuthorProcessor?
   private var hasLanguageObserver = false
 
-  private let accountDID: String
+  let accountDID: String
   private let defaults: UserDefaults
   private var isLoadingStoredSettings = true
 
@@ -453,12 +453,19 @@ struct FeedFilter: Identifiable, Hashable {
     activeFilterIds.formUnion(filters.filter(\.isEnabled).map(\.id))
     defaults.set(Array(activeFilterIds), forKey: key("FeedFilterActiveFilters"))
     defaults.set(sortMode.rawValue, forKey: key("FeedSortMode"))
-    defaults.set(Array(mutedRepostAuthorDIDs).sorted(), forKey: key("MutedRepostAuthorDIDs"))
+    if !accountDID.isEmpty {
+      defaults.set(Array(mutedRepostAuthorDIDs).sorted(), forKey: key("MutedRepostAuthorDIDs"))
+    }
     NotificationCenter.default.post(name: NSNotification.Name("FeedFiltersChanged"), object: self,
       userInfo: ["accountDID": accountDID])
   }
 
   private func loadMutedRepostAuthors() {
+    guard !accountDID.isEmpty else {
+      mutedRepostAuthorDIDs = []
+      rebuildMutedRepostProcessor()
+      return
+    }
     let saved = defaults.stringArray(forKey: key("MutedRepostAuthorDIDs")) ?? []
     mutedRepostAuthorDIDs = Set(saved.filter { !$0.isEmpty })
     rebuildMutedRepostProcessor()
@@ -478,7 +485,7 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   func setRepostMuted(_ muted: Bool, for authorDID: String) {
-    guard !authorDID.isEmpty else { return }
+    guard !accountDID.isEmpty, !authorDID.isEmpty else { return }
     if muted {
       mutedRepostAuthorDIDs.insert(authorDID)
     } else {
@@ -489,6 +496,7 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   func mergeMutedRepostAuthors(_ dids: Set<String>) {
+    guard !accountDID.isEmpty else { return }
     let cleaned = Set(dids.filter { !$0.isEmpty })
     guard !cleaned.isEmpty else { return }
     mutedRepostAuthorDIDs.formUnion(cleaned)

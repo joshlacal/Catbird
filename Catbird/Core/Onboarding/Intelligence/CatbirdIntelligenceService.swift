@@ -537,6 +537,67 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     self.currentUserDID = appState.userDID
   }
 
+  static func isAccountContextActive(
+    expectedDID: String,
+    activeUserDID: String,
+    isAccountSwitchSuspended: Bool,
+    isSameClient: Bool,
+    clientDID: String?
+  ) -> Bool {
+    guard !expectedDID.isEmpty,
+          !isAccountSwitchSuspended,
+          activeUserDID == expectedDID,
+          isSameClient,
+          let clientDID,
+          clientDID == expectedDID
+    else {
+      return false
+    }
+    return true
+  }
+
+  @MainActor
+  private func isMainActorAccountContextMatching() -> Bool {
+    guard let appState else { return false }
+    return !currentUserDID.isEmpty
+      && !appState.isAccountSwitchSuspended
+      && appState.userDID == currentUserDID
+      && appState.atProtoClient === client
+  }
+
+  private func isActiveViewerContextValid() async -> Bool {
+    guard await isMainActorAccountContextMatching() else { return false }
+    let clientDID = try? await client.getDid()
+    guard let appState = await MainActor.run(body: { self.appState }) else { return false }
+    return await MainActor.run {
+      Self.isAccountContextActive(
+        expectedDID: currentUserDID,
+        activeUserDID: appState.userDID,
+        isAccountSwitchSuspended: appState.isAccountSwitchSuspended,
+        isSameClient: appState.atProtoClient === client,
+        clientDID: clientDID
+      )
+    }
+  }
+
+  @MainActor
+  private func ensureActiveAccountContext() async throws -> AppState {
+    guard let appState, isMainActorAccountContextMatching() else {
+      throw CatbirdIntelligenceError.clientUnavailable
+    }
+    let clientDID = try? await client.getDid()
+    guard Self.isAccountContextActive(
+      expectedDID: currentUserDID,
+      activeUserDID: appState.userDID,
+      isAccountSwitchSuspended: appState.isAccountSwitchSuspended,
+      isSameClient: appState.atProtoClient === client,
+      clientDID: clientDID
+    ) else {
+      throw CatbirdIntelligenceError.clientUnavailable
+    }
+    return appState
+  }
+
   private func ensureGatewayServiceDIDs() async {
     let alreadyRegistered = await cache.markServiceDIDsRegistered()
     guard !alreadyRegistered else { return }
@@ -567,13 +628,17 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
   }
 
   public func fetchSeedFollowDIDs(limit: Int = 50) async -> [String] {
-    guard !currentUserDID.isEmpty else { return [] }
+    guard await isActiveViewerContextValid() else { return [] }
     do {
       let actor = try ATIdentifier(string: currentUserDID)
       let (code, response) = try await client.app.bsky.graph.getFollows(
         input: .init(actor: actor, limit: min(max(1, limit), 100))
       )
-      guard (200..<300).contains(code), let response else { return [] }
+      guard await isActiveViewerContextValid(),
+            (200..<300).contains(code),
+            let response else {
+        return []
+      }
       return response.follows.map { $0.did.didString() }
     } catch {
       logger.debug("Seed follow lookup skipped: \(error.localizedDescription)")
@@ -587,8 +652,9 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     macroCategory: String?,
     limit: Int = 48
   ) async throws -> BlueCatbirdOnboardingGetCatalog.Output {
+    _ = try await ensureActiveAccountContext()
     await ensureGatewayServiceDIDs()
-    let dids = seedFollowDIDs.compactMap { try? DID(didString: $0) }
+    let dids = seedFollowDIDs.prefix(100).compactMap { try? DID(didString: $0) }
     do {
       let (code, data) = try await client.blue.catbird.onboarding.getCatalog(
         input: .init(
@@ -611,6 +677,7 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     limit: Int = 40,
     cursor: String? = nil
   ) async throws -> BlueCatbirdIntelListCommunities.Output {
+    _ = try await ensureActiveAccountContext()
     await ensureGatewayServiceDIDs()
     do {
       let (code, data) = try await client.blue.catbird.intel.listCommunities(
@@ -629,6 +696,7 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
   }
 
   public func getCommunity(communityId: Int) async throws -> BlueCatbirdIntelGetCommunity.Output {
+    _ = try await ensureActiveAccountContext()
     await ensureGatewayServiceDIDs()
     do {
       let (code, data) = try await client.blue.catbird.intel.getCommunity(
@@ -645,12 +713,13 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     seedFollowDIDs: [String],
     maxSwipes: Int = 4
   ) async throws -> BlueCatbirdOnboardingGetCalibrationSwipes.Output {
+    _ = try await ensureActiveAccountContext()
     await ensureGatewayServiceDIDs()
-    let dids = seedFollowDIDs.compactMap { try? DID(didString: $0) }
+    let dids = seedFollowDIDs.prefix(100).compactMap { try? DID(didString: $0) }
     do {
       let (code, data) = try await client.blue.catbird.onboarding.getCalibrationSwipes(
         input: .init(
-          selections: selections,
+          selections: Array(selections.prefix(24)),
           seedFollowDids: dids.isEmpty ? nil : dids,
           maxSwipes: maxSwipes
         )
@@ -667,12 +736,13 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     controls: BlueCatbirdOnboardingDefs.BundleControls,
     limit: Int = 16
   ) async throws -> BlueCatbirdOnboardingPreviewTimeline.Output {
+    _ = try await ensureActiveAccountContext()
     await ensureGatewayServiceDIDs()
     do {
       let (code, data) = try await client.blue.catbird.onboarding.previewTimeline(
         input: .init(
-          selections: selections,
-          swipes: swipes.isEmpty ? nil : swipes,
+          selections: Array(selections.prefix(24)),
+          swipes: swipes.isEmpty ? nil : Array(swipes.prefix(8)),
           controls: controls,
           limit: limit
         )
@@ -686,6 +756,7 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
   public func solveBundle(
     input: BlueCatbirdOnboardingSolveBundle.Input
   ) async throws -> BlueCatbirdOnboardingSolveBundle.Output {
+    _ = try await ensureActiveAccountContext()
     await ensureGatewayServiceDIDs()
     do {
       let (code, data) = try await client.blue.catbird.onboarding.solveBundle(input: input)
@@ -705,7 +776,11 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
       currentUserDID: currentUserDID,
       uris: uris,
       attributionByURI: attributionByURI,
-      interBatchDelayMs: 0
+      interBatchDelayMs: 0,
+      validateViewerContext: { [weak self] in
+        guard let self else { return false }
+        return await self.isActiveViewerContextValid()
+      }
     )
   }
 
@@ -715,7 +790,11 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
       cache: cache,
       currentUserDID: currentUserDID,
       dids: dids,
-      interBatchDelayMs: 0
+      interBatchDelayMs: 0,
+      validateViewerContext: { [weak self] in
+        guard let self else { return false }
+        return await self.isActiveViewerContextValid()
+      }
     )
   }
 
@@ -747,9 +826,7 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     originalsOnlyDIDs: Set<String>,
     pinnedFeedURIs: [String]
   ) async throws -> OnboardingCommitReceipt {
-    guard let appState else {
-      throw CatbirdIntelligenceError.clientUnavailable
-    }
+    _ = try await ensureActiveAccountContext()
     let parsedDIDs = followDIDs.compactMap { try? DID(didString: $0) }
     var followedCount = 0
     let batchCount = parsedDIDs.isEmpty
@@ -762,7 +839,7 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
           client: client,
           dids: parsedDIDs,
           via: nil,
-          accountDID: appState.userDID,
+          accountDID: currentUserDID,
           batchSize: Self.maxBatchSize
         )
       } catch {
@@ -770,15 +847,23 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
       }
     }
 
+    let postFollowAppState = try await ensureActiveAccountContext()
     let activeOriginalsOnly = originalsOnlyDIDs.intersection(Set(followDIDs))
-    if !activeOriginalsOnly.isEmpty {
-      appState.feedFilterSettings.mergeMutedRepostAuthors(activeOriginalsOnly)
+    if !activeOriginalsOnly.isEmpty,
+       postFollowAppState.feedFilterSettings.accountDID == currentUserDID {
+      postFollowAppState.feedFilterSettings.mergeMutedRepostAuthors(activeOriginalsOnly)
     }
 
     var pinnedCount = 0
     for uriString in pinnedFeedURIs {
-      guard let uri = try? ATProtocolURI(uriString: uriString) else { continue }
-      if (try? await appState.feedLibraryActions.add(uri, to: .pinned)) != nil {
+      guard !postFollowAppState.isAccountSwitchSuspended,
+            postFollowAppState.userDID == currentUserDID,
+            postFollowAppState.atProtoClient === client,
+            let uri = try? ATProtocolURI(uriString: uriString)
+      else {
+        break
+      }
+      if (try? await postFollowAppState.feedLibraryActions.add(uri, to: .pinned)) != nil {
         pinnedCount += 1
       }
     }
@@ -799,8 +884,12 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     currentUserDID: String,
     uris: [ATProtocolURI],
     attributionByURI: [String: PostAttributionMetadata],
-    interBatchDelayMs: UInt64
+    interBatchDelayMs: UInt64,
+    validateViewerContext: (@Sendable () async -> Bool)? = nil
   ) async -> [HydratedSamplePost] {
+    if let validateViewerContext, await !validateViewerContext() {
+      return []
+    }
     var orderedUnique: [ATProtocolURI] = []
     var seen = Set<String>()
     for uri in uris {
@@ -821,11 +910,17 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
       if start > 0 && interBatchDelayMs > 0 {
         try? await Task.sleep(for: .milliseconds(interBatchDelayMs))
       }
+      if let validateViewerContext, await !validateViewerContext() {
+        return []
+      }
       let batch = Array(missing[start..<min(start + maxBatchSize, missing.count)])
       guard let (code, output) = try? await client.app.bsky.feed.getPosts(input: .init(uris: batch)),
             (200..<300).contains(code),
             let posts = output?.posts else {
         continue
+      }
+      if let validateViewerContext, await !validateViewerContext() {
+        return []
       }
       let mapped = posts.compactMap { OnboardingHydrationMapper.mapPostView($0, currentUserDID: currentUserDID) }
       await cache.storePosts(mapped)
@@ -854,8 +949,12 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     cache: OnboardingHydrationCache,
     currentUserDID: String,
     dids: [DID],
-    interBatchDelayMs: UInt64
+    interBatchDelayMs: UInt64,
+    validateViewerContext: (@Sendable () async -> Bool)? = nil
   ) async -> [String: HydratedRecommendedProfile] {
+    if let validateViewerContext, await !validateViewerContext() {
+      return [:]
+    }
     var uniqueDIDs: [DID] = []
     var seen = Set<String>()
     for did in dids {
@@ -876,6 +975,9 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
       if start > 0 && interBatchDelayMs > 0 {
         try? await Task.sleep(for: .milliseconds(interBatchDelayMs))
       }
+      if let validateViewerContext, await !validateViewerContext() {
+        return [:]
+      }
       let batch = Array(missing[start..<min(start + maxBatchSize, missing.count)])
       let actors = batch.compactMap { try? ATIdentifier(string: $0.didString()) }
       guard !actors.isEmpty,
@@ -883,6 +985,9 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
             (200..<300).contains(code),
             let profiles = output?.profiles else {
         continue
+      }
+      if let validateViewerContext, await !validateViewerContext() {
+        return [:]
       }
       let mapped = profiles.compactMap { OnboardingHydrationMapper.mapProfileDetailed($0, currentUserDID: currentUserDID) }
       await cache.storeProfiles(mapped)
@@ -1267,7 +1372,12 @@ public final class LoopbackShowcaseIntelligenceService: CatbirdIntelligenceServi
       ? 0
       : (followDIDs.count + LiveCatbirdIntelligenceService.maxBatchSize - 1) / LiveCatbirdIntelligenceService.maxBatchSize
     let activeOriginalsOnly = originalsOnlyDIDs.intersection(Set(followDIDs))
-    if let appState, !activeOriginalsOnly.isEmpty {
+    if let appState,
+       !currentUserDID.isEmpty,
+       !appState.isAccountSwitchSuspended,
+       appState.userDID == currentUserDID,
+       appState.feedFilterSettings.accountDID == currentUserDID,
+       !activeOriginalsOnly.isEmpty {
       appState.feedFilterSettings.mergeMutedRepostAuthors(activeOriginalsOnly)
     }
     return OnboardingCommitReceipt(

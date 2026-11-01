@@ -14,6 +14,7 @@ public struct SceneIntelligenceOnboardingView: View {
   let onSkip: (() -> Void)?
 
   @State private var viewModel: SceneOnboardingViewModel?
+  @State private var boundUserDID: String?
   @State private var peekDetent: PresentationDetent = .large
 
   public init(
@@ -54,28 +55,34 @@ public struct SceneIntelligenceOnboardingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
-    .task {
-      if viewModel == nil {
-        if let preconfiguredViewModel {
+    .task(id: appState.userDID) {
+      if let preconfiguredViewModel {
+        if viewModel == nil {
           self.viewModel = preconfiguredViewModel
-        } else {
-          let svc: any CatbirdIntelligenceServicing
-          if let injectedService {
-            svc = injectedService
-          } else if let client = appState.atProtoClient {
-            svc = LiveCatbirdIntelligenceService(appState: appState, client: client)
-          } else {
-            svc = UnavailableCatbirdIntelligenceService()
-          }
-          let created = SceneOnboardingViewModel(
-            service: svc,
-            mode: mode,
-            initialInterests: selectedInterests
-          )
-          self.viewModel = created
-          await created.loadInitialCatalog()
         }
+        return
       }
+      if viewModel != nil && boundUserDID == appState.userDID {
+        return
+      }
+      self.boundUserDID = appState.userDID
+      let svc: any CatbirdIntelligenceServicing
+      if let injectedService {
+        svc = injectedService
+      } else if let client = appState.atProtoClient,
+                !appState.userDID.isEmpty,
+                !appState.isAccountSwitchSuspended {
+        svc = LiveCatbirdIntelligenceService(appState: appState, client: client)
+      } else {
+        svc = UnavailableCatbirdIntelligenceService()
+      }
+      let created = SceneOnboardingViewModel(
+        service: svc,
+        mode: mode,
+        initialInterests: selectedInterests
+      )
+      self.viewModel = created
+      await created.loadInitialCatalog()
     }
   }
 

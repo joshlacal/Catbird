@@ -8,6 +8,13 @@ struct StartingLineupBeatView: View {
   let onSkipAll: (() -> Void)?
 
   @Environment(\.displayScale) private var displayScale
+  @State private var inspectedStarterPack: InspectedStarterPackItem?
+  @State private var starterPackNavigationPath = NavigationPath()
+
+  private struct InspectedStarterPackItem: Identifiable {
+    let id: String
+    let uri: ATProtocolURI
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -56,6 +63,19 @@ struct StartingLineupBeatView: View {
       commitBottomDock
     }
     .accessibilityIdentifier("intel.beat.lineup")
+    .sheet(item: $inspectedStarterPack) { item in
+      NavigationStack(path: $starterPackNavigationPath) {
+        StarterPackView(uri: item.uri, path: $starterPackNavigationPath)
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Done") {
+                inspectedStarterPack = nil
+              }
+            }
+          }
+      }
+      .presentationDragIndicator(.visible)
+    }
   }
 
   private var summaryHeroCard: some View {
@@ -267,30 +287,46 @@ struct StartingLineupBeatView: View {
   private var starterPacksReferenceSection: some View {
     if !viewModel.hydratedStarterPacks.isEmpty {
       VStack(alignment: .leading, spacing: 8) {
-        Label("Community Starter Packs (Reference Only)", systemImage: "shippingbox.fill")
+        Label("Inspectable Starter Packs", systemImage: "shippingbox.fill")
           .font(.subheadline.weight(.semibold))
-        Text("Shown for exploration later — never bulk-followed automatically, so your feed stays crisp.")
+        Text("Tap to inspect members — never bulk-followed automatically, so your feed stays crisp.")
           .font(.caption2)
           .foregroundStyle(.secondary)
 
         ForEach(viewModel.hydratedStarterPacks) { pack in
-          HStack(spacing: 10) {
-            Image(systemName: "sparkles.rectangle.stack")
+          Button {
+            guard let parsedURI = try? ATProtocolURI(uriString: pack.uri) else { return }
+            starterPackNavigationPath = NavigationPath()
+            inspectedStarterPack = InspectedStarterPackItem(id: pack.id, uri: parsedURI)
+          } label: {
+            HStack(spacing: 10) {
+              Image(systemName: "sparkles.rectangle.stack")
+                .foregroundStyle(Color.accentColor)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(pack.name)
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.primary)
+                Text("Curated by @\(pack.creatorHandle) · \(pack.joinedAllTimeCount) joined")
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+              }
+              Spacer()
+              HStack(spacing: 4) {
+                Text("Inspect")
+                  .font(.caption2.weight(.semibold))
+                Image(systemName: "chevron.right")
+                  .font(.caption2.weight(.bold))
+              }
               .foregroundStyle(Color.accentColor)
-            VStack(alignment: .leading, spacing: 2) {
-              Text(pack.name)
-                .font(.caption.weight(.semibold))
-              Text("Curated by @\(pack.creatorHandle) · \(pack.joinedAllTimeCount) joined")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
             }
-            Spacer()
+            .padding(10)
+            .background(
+              RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.06))
+            )
           }
-          .padding(10)
-          .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-              .fill(Color.secondary.opacity(0.06))
-          )
+          .buttonStyle(.plain)
+          .accessibilityIdentifier("intel.lineup.starterPack.\(pack.id)")
         }
       }
     }

@@ -54,11 +54,19 @@ public final class SceneOnboardingViewModel {
 
   // MARK: - Dependencies & Mode
 
+  public static let maxSelectedCommunities = 24
+  public static let maxPinnedAuthors = 30
+  public static let maxExcludedAuthors = 100
+  public static let maxSeedFollows = 100
+
   public let mode: ExperienceMode
   public let initialInterests: [String]
   @ObservationIgnored private let service: any CatbirdIntelligenceServicing
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "SceneOnboardingVM")
   @ObservationIgnored private var searchDebounceTask: Task<Void, Never>?
+  @ObservationIgnored private var searchGeneration: UInt64 = 0
+  @ObservationIgnored private var orderedPinnedDIDs: [String] = []
+  @ObservationIgnored private var orderedExcludedDIDs: [String] = []
 
   // MARK: - Navigation & Service Availability
 
@@ -158,10 +166,12 @@ public final class SceneOnboardingViewModel {
   }
 
   public var currentSelectionsPayload: [BlueCatbirdOnboardingDefs.CommunitySelection] {
-    orderedSelectedCommunityIds.compactMap { cid in
-      guard let w = selectionWeights[cid], w > 0 else { return nil }
-      return BlueCatbirdOnboardingDefs.CommunitySelection(communityId: cid, weight: w)
-    }
+    orderedSelectedCommunityIds
+      .prefix(Self.maxSelectedCommunities)
+      .compactMap { cid in
+        guard let w = selectionWeights[cid], w > 0 else { return nil }
+        return BlueCatbirdOnboardingDefs.CommunitySelection(communityId: cid, weight: w)
+      }
   }
 
   public var currentBundleControls: BlueCatbirdOnboardingDefs.BundleControls {
@@ -235,7 +245,7 @@ public final class SceneOnboardingViewModel {
     errorBannerMessage = nil
     defer { isLoadingCatalog = false }
 
-    let seeds = await service.fetchSeedFollowDIDs(limit: 50)
+    let seeds = Array(await service.fetchSeedFollowDIDs(limit: 50).prefix(Self.maxSeedFollows))
     self.seedFollowDIDs = seeds
 
     do {
@@ -250,7 +260,11 @@ public final class SceneOnboardingViewModel {
       self.scenes = output.scenes
       self.featuredCommunities = output.featuredCommunities
       self.warmStartCommunities = output.warmStartCommunities
-      self.displayedCommunities = output.featuredCommunities
+      if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          && selectedMacroCategory == .all
+          && selectedSceneSlug == nil {
+        self.displayedCommunities = output.featuredCommunities
+      }
       indexCommunities(output.featuredCommunities)
       indexCommunities(output.warmStartCommunities)
     } catch CatbirdIntelligenceError.serviceUnavailable {
@@ -287,7 +301,14 @@ public final class SceneOnboardingViewModel {
     if selectionWeights[cid] != nil {
       selectionWeights.removeValue(forKey: cid)
       orderedSelectedCommunityIds.removeAll { $0 == cid }
+      if errorBannerMessage?.contains("up to \(Self.maxSelectedCommunities)") == true {
+        errorBannerMessage = nil
+      }
     } else {
+      guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
+        errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
+        return
+      }
       selectionWeights[cid] = 1
       orderedSelectedCommunityIds.append(cid)
     }
@@ -299,6 +320,10 @@ public final class SceneOnboardingViewModel {
     let cid = community.communityId
     let current = selectionWeights[cid] ?? 0
     if current == 0 {
+      guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
+        errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
+        return
+      }
       selectionWeights[cid] = 2
       orderedSelectedCommunityIds.append(cid)
     } else if current == 1 {
@@ -311,6 +336,9 @@ public final class SceneOnboardingViewModel {
   public func removeSelection(communityId: Int) {
     selectionWeights.removeValue(forKey: communityId)
     orderedSelectedCommunityIds.removeAll { $0 == communityId }
+    if errorBannerMessage?.contains("up to \(Self.maxSelectedCommunities)") == true {
+      errorBannerMessage = nil
+    }
   }
 
   public func selectMacroCategory(_ category: OnboardingMacroCategory) async {
@@ -331,21 +359,25 @@ public final class SceneOnboardingViewModel {
   public func updateSearchQuery(_ query: String) {
     searchQuery = query
     searchDebounceTask?.cancel()
+    searchGeneration &+= 1
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty && selectedMacroCategory == .all && selectedSceneSlug == nil {
       displayedCommunities = featuredCommunities
       isSearching = false
       return
     }
+    let scheduledGeneration = searchGeneration
     searchDebounceTask = Task { @MainActor [weak self] in
       try? await Task.sleep(for: .milliseconds(180))
-      guard !Task.isCancelled, let self else { return }
+      guard !Task.isCancelled, let self, self.searchGeneration == scheduledGeneration else { return }
       await self.performSearchNow()
     }
   }
 
   public func performSearchNow() async {
     searchDebounceTask?.cancel()
+    searchGeneration &+= 1
+    let generation = searchGeneration
     let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty && selectedMacroCategory == .all && selectedSceneSlug == nil {
       displayedCommunities = featuredCommunities
@@ -354,7 +386,11 @@ public final class SceneOnboardingViewModel {
     }
 
     isSearching = true
-    defer { isSearching = false }
+    defer {
+      if self.searchGeneration == generation {
+        isSearching = false
+      }
+    }
 
     do {
       let out = try await service.listCommunities(
@@ -364,9 +400,11 @@ public final class SceneOnboardingViewModel {
         limit: 48,
         cursor: nil
       )
+      guard !Task.isCancelled, self.searchGeneration == generation else { return }
       indexCommunities(out.communities)
       displayedCommunities = out.communities
     } catch {
+      guard !Task.isCancelled, self.searchGeneration == generation else { return }
       logger.error("Community search failed: \(error.localizedDescription)")
     }
   }
@@ -562,9 +600,20 @@ public final class SceneOnboardingViewModel {
     guard !did.isEmpty else { return }
     if pinnedDIDs.contains(did) {
       pinnedDIDs.remove(did)
+      orderedPinnedDIDs.removeAll { $0 == did }
+      if errorBannerMessage?.contains("up to \(Self.maxPinnedAuthors)") == true {
+        errorBannerMessage = nil
+      }
     } else {
+      guard pinnedDIDs.count < Self.maxPinnedAuthors else {
+        errorBannerMessage = "You can pin up to \(Self.maxPinnedAuthors) voices."
+        return
+      }
       pinnedDIDs.insert(did)
+      orderedPinnedDIDs.removeAll { $0 == did }
+      orderedPinnedDIDs.append(did)
       excludedDIDs.remove(did)
+      orderedExcludedDIDs.removeAll { $0 == did }
     }
   }
 
@@ -601,14 +650,16 @@ public final class SceneOnboardingViewModel {
     errorBannerMessage = nil
     defer { isSolvingBundle = false }
 
-    let pinned = pinnedDIDs.sorted().compactMap { try? DID(didString: $0) }
-    let excluded = excludedDIDs.sorted().compactMap { try? DID(didString: $0) }
-    let seeds = seedFollowDIDs.compactMap { try? DID(didString: $0) }
+    let pinnedSource = orderedPinnedDIDs.isEmpty ? pinnedDIDs.sorted() : orderedPinnedDIDs
+    let excludedSource = orderedExcludedDIDs.isEmpty ? excludedDIDs.sorted() : orderedExcludedDIDs
+    let pinned = pinnedSource.prefix(Self.maxPinnedAuthors).compactMap { try? DID(didString: $0) }
+    let excluded = excludedSource.prefix(Self.maxExcludedAuthors).compactMap { try? DID(didString: $0) }
+    let seeds = seedFollowDIDs.prefix(Self.maxSeedFollows).compactMap { try? DID(didString: $0) }
 
     do {
       let input = BlueCatbirdOnboardingSolveBundle.Input(
         selections: selections,
-        swipes: swipeAnswers.isEmpty ? nil : swipeAnswers,
+        swipes: swipeAnswers.isEmpty ? nil : Array(swipeAnswers.prefix(8)),
         controls: currentBundleControls,
         targetSize: targetBundleSize,
         pinnedDids: pinned.isEmpty ? nil : pinned,
@@ -670,8 +721,16 @@ public final class SceneOnboardingViewModel {
   }
 
   public func excludeAndSwapAccount(_ did: String) async {
+    guard !did.isEmpty else { return }
+    orderedExcludedDIDs.removeAll { $0 == did }
+    orderedExcludedDIDs.append(did)
+    if orderedExcludedDIDs.count > Self.maxExcludedAuthors {
+      let evicted = orderedExcludedDIDs.removeFirst()
+      excludedDIDs.remove(evicted)
+    }
     excludedDIDs.insert(did)
     pinnedDIDs.remove(did)
+    orderedPinnedDIDs.removeAll { $0 == did }
     enabledFollowDIDs.remove(did)
     originalsOnlyDIDs.remove(did)
     await solveStartingLineup()
@@ -680,6 +739,10 @@ public final class SceneOnboardingViewModel {
   public func addHarmoniousNeighborAndResolve(_ neighbor: BlueCatbirdIntelDefs.CommunitySummary) async {
     knownCommunitiesById[neighbor.communityId] = neighbor
     if selectionWeights[neighbor.communityId] == nil {
+      guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
+        errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
+        return
+      }
       selectionWeights[neighbor.communityId] = 1
       orderedSelectedCommunityIds.append(neighbor.communityId)
     }
