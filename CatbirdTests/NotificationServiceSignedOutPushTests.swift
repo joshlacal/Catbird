@@ -67,7 +67,8 @@ struct NotificationServiceDeliveryCharacterizationTests {
     let content = UNMutableNotificationContent()
     content.title = "Alice"
     content.body = "private message"
-    content.userInfo = ["type": "chat_message", "convoId": "conversation"]
+    // The extension writes the body from messageText, as Nest sends it.
+    content.userInfo = ["type": "chat_message", "convoId": "conversation", "messageText": "private message"]
     if let recipient { content.userInfo["recipient_account"] = recipient }
     let output = await fixture.deliver(UNNotificationRequest(
       identifier: UUID().uuidString, content: content, trigger: nil))
