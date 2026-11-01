@@ -27,9 +27,25 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     var sendState: MessageSendState
   }
 
+  /// Sends one message and reports the server's MessageView before ChatManager
+  /// updates its maps. The default is `ChatManager.sendMessage`; tests supply
+  /// their own to control when each send finishes.
+  typealias MessageSender = @MainActor (
+    _ convoID: String,
+    _ text: String,
+    _ embed: ChatBskyConvoDefs.MessageInputEmbedUnion?,
+    _ replyTo: ChatBskyConvoDefs.ReplyRef?,
+    _ onConfirmed: @escaping (ChatBskyConvoDefs.MessageView) -> Void
+  ) async -> Bool
+
   private(set) var messages: [BlueskyMessageAdapter] = []
   private(set) var pendingSends: [PendingBlueskySend] = []
   private var confirmedDiffableIDByMessageID: [String: String] = [:]
+  private let messageSender: MessageSender
+  /// The send queued last. Each send waits for the one queued before it, so
+  /// messages reach the server in the order they were sent even when an earlier
+  /// one takes longer before its POST (an @mention's handle lookup, say).
+  @ObservationIgnored private var sendQueueTail: Task<Bool, Never>?
   private(set) var scrollToBottomTrigger: Int = 0
   var messageLoadState: ChatManager.MessageLoadState {
     chatManager.messageLoadStates[convoID] ?? .idle
@@ -52,11 +68,26 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   }
   // MARK: - Init
 
-  init(chatManager: ChatManager, convoID: String, currentUserDID: String, appState: AppState? = nil) {
+  init(
+    chatManager: ChatManager,
+    convoID: String,
+    currentUserDID: String,
+    appState: AppState? = nil,
+    messageSender: MessageSender? = nil
+  ) {
     self.chatManager = chatManager
     self.convoID = convoID
     self.currentUserDID = currentUserDID
     self.appState = appState
+    self.messageSender = messageSender ?? { [chatManager] convoID, text, embed, replyTo, onConfirmed in
+      await chatManager.sendMessage(
+        convoId: convoID,
+        text: text,
+        embed: embed,
+        replyTo: replyTo,
+        onConfirmedMessage: onConfirmed
+      )
+    }
     updateMessagesFromManager()
     hasReceivedInitialMessages = false
     startObservingChatManager()
@@ -118,30 +149,49 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
         }
       }
     )
-    return await performPendingSend(id: pendingID)
+    return await enqueueSend(id: pendingID).value
   }
 
   func submitDraft() {
     guard let submission = draft.beginSend() else { return }
     draft.finishSend(submission, succeeded: true)
     let pendingID = enqueuePendingDraft(submission.value)
-    Task { @MainActor [weak self] in
-      _ = await self?.performPendingSend(id: pendingID)
-    }
+    enqueueSend(id: pendingID)
   }
 
   func sendDraft(_ submission: MessageDraft<BlueskyConversationDraft>.Submission) async {
     draft.finishSend(submission, succeeded: true)
     let pendingID = enqueuePendingDraft(submission.value)
-    _ = await performPendingSend(id: pendingID)
+    _ = await enqueueSend(id: pendingID).value
   }
 
+  /// Sends a failed message again. It goes to the back of the queue, after any
+  /// message sent since it failed, and its row moves to the bottom with it.
   func retryFailedSend(pendingID: String) async {
-    guard let index = pendingSends.firstIndex(where: { $0.id == pendingID }) else { return }
-    pendingSends[index].sendState = .sending
+    guard let index = pendingSends.firstIndex(where: { $0.id == pendingID }),
+          case .failed = pendingSends[index].sendState else { return }
+    var pending = pendingSends.remove(at: index)
+    pending.sendState = .sending
+    pendingSends.append(pending)
     updateMessagesFromManager()
     scrollToBottomTrigger &+= 1
-    _ = await performPendingSend(id: pendingID)
+    _ = await enqueueSend(id: pendingID).value
+  }
+
+  /// Queues `pendingID` behind every send already queued in this conversation.
+  /// A send that fails does not hold back the ones queued after it: they still
+  /// go out, and the failed row stays in the transcript with Retry, which
+  /// queues it again at the back.
+  @discardableResult
+  private func enqueueSend(id pendingID: String) -> Task<Bool, Never> {
+    let previous = sendQueueTail
+    let send = Task { @MainActor [weak self] () -> Bool in
+      _ = await previous?.value
+      guard let self else { return false }
+      return await self.performPendingSend(id: pendingID)
+    }
+    sendQueueTail = send
+    return send
   }
 
   @discardableResult
@@ -225,15 +275,14 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     guard !Task.isCancelled,
           let pending = pendingSends.first(where: { $0.id == pendingID }) else { return false }
     error = nil
-    let success = await chatManager.sendMessage(
-      convoId: convoID,
-      text: pending.text,
-      embed: pending.embedInput,
-      replyTo: pending.replyTo,
-      onConfirmedMessage: { [weak self] messageView in
-        self?.completePendingSend(id: pendingID, realMessageID: messageView.id)
-      }
-    )
+    let success = await messageSender(
+      convoID,
+      pending.text,
+      pending.embedInput,
+      pending.replyTo
+    ) { [weak self] messageView in
+      self?.completePendingSend(id: pendingID, realMessageID: messageView.id)
+    }
     if success {
       // Ensure any pending row is cleaned up if originalMessagesMap was already updated
       pendingSends.removeAll { $0.id == pendingID }
@@ -416,8 +465,13 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       )
     }
 
-    // 3. Combine and sort chronologically by sentAt
-    let combined = (userAdapters + pendingAdapters + systemAdapters).sorted { $0.sentAt < $1.sentAt }
+    // 3. Confirmed, system and failed rows sort chronologically by sentAt. Sends
+    // still queued or in flight stay at the bottom in queue order, which is the
+    // order the server will give them, whatever the device clock says.
+    let inFlightAdapters = pendingAdapters.filter { $0.sendState == .sending }
+    let settledPendingAdapters = pendingAdapters.filter { $0.sendState != .sending }
+    let combined = (userAdapters + settledPendingAdapters + systemAdapters)
+      .sorted { $0.sentAt < $1.sentAt } + inFlightAdapters
 
     // 4. Group consecutive same-day system messages (1-3 separate, 4+ collapsed)
     self.messages = BlueskySystemMessageGrouper.group(
