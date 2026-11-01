@@ -193,6 +193,17 @@ struct VideoUploadCheckpointRetentionTests {
     await upgraded.release(owner: owner, runID: sanitized.runID)
   }
 
+  @Test("The launch open runs the shared store's sweep and excludes its folder from backups")
+  func launchOpensSharedStore() async throws {
+    await VideoUploadCheckpointStore.openSharedInBackground().value
+    _ = try VideoUploadCheckpointStore.shared.get()
+    var root = try VideoUploadCheckpointStore.defaultRootURL()
+    root.removeAllCachedResourceValues()
+    #expect(try root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+    #expect(FileManager.default.fileExists(
+      atPath: root.appendingPathComponent(VideoUploadCheckpointStore.sanitizedSnapshotsMarker).path))
+  }
+
   // MARK: - Through the Engine
 
   @Test("A completed upload keeps no snapshot, and a post retry reuses the finished job without sending bytes")

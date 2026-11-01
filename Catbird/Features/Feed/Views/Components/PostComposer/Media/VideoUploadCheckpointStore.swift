@@ -64,14 +64,28 @@ actor VideoUploadCheckpointStore {
   private var activeLeases: [VideoUploadOwner: UUID] = [:]
   private var cleanupLeases: [VideoUploadOwner: UUID] = [:]
 
-  init(rootURL: URL? = nil) throws {
-    if let rootURL {
-      self.rootURL = rootURL
-    } else {
-      self.rootURL = try FileManager.default.url(
-        for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-      ).appendingPathComponent("Catbird/VideoUploads", isDirectory: true)
+  /// Opens `shared` once, off the main thread. App launch calls this so an older build's raw
+  /// snapshots are purged and the root is excluded from backups even if no composer ever holds a
+  /// video again, and so that sweep never runs on the main thread. No run can hold a lease before
+  /// `shared` exists, so the sweep is safe this early.
+  @discardableResult
+  static func openSharedInBackground() -> Task<Void, Never> {
+    Task.detached(priority: .utility) {
+      if case .failure(let error) = Self.shared {
+        Self.logger.error("Couldn’t open the video upload store: \(error.localizedDescription, privacy: .public)")
+      }
     }
+  }
+
+  /// The root `shared` opens.
+  static func defaultRootURL() throws -> URL {
+    try FileManager.default.url(
+      for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+    ).appendingPathComponent("Catbird/VideoUploads", isDirectory: true)
+  }
+
+  init(rootURL: URL? = nil) throws {
+    self.rootURL = try rootURL ?? Self.defaultRootURL()
     try FileManager.default.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
     var values = URLResourceValues()
     values.isExcludedFromBackup = true
