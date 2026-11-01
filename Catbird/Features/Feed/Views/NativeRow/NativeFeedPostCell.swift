@@ -57,6 +57,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
 
   override init(frame: CGRect) {
     super.init(frame: frame)
+    CollectionViewCellResizeAnchor.disableImplicitLayerAnimations(on: self)
     backgroundConfiguration = .clear()
     for view in [avatarView, headerView, textView, actionBar, optionsGlyph, optionsButton, divider] as [UIView] {
       contentView.addSubview(view)

@@ -39,6 +39,7 @@ enum CollectionViewCellResizeAnchor {
   static func performTopAnchoredResize(
     in collectionView: UICollectionView?,
     for cell: UICollectionViewCell?,
+    additionalCells: [UICollectionViewCell] = [],
     prepare: (() -> Void)? = nil
   ) {
     CATransaction.begin()
@@ -59,39 +60,53 @@ enum CollectionViewCellResizeAnchor {
 
       let oldOffset = collectionView.contentOffset
       let anchorViewportY = cell.frame.minY - oldOffset.y
-
       let wasPerformingResize = isPerformingResize
       isPerformingResize = true
       defer { isPerformingResize = wasPerformingResize }
 
-      invalidateHostedIntrinsicSize(of: cell)
-      let didInvalidateLayout = invalidateCellHeight(in: collectionView, for: cell, at: indexPath)
+      let allCells = [cell] + additionalCells.filter { $0 !== cell && $0.window != nil }
+      let didInvalidateLayout = invalidateCells(allCells, in: collectionView)
       if didInvalidateLayout {
         collectionView.layoutIfNeeded()
         restoreTopAnchor(
-          in: collectionView,
-          for: cell,
-          at: indexPath,
-          oldOffsetX: oldOffset.x,
-          anchorViewportY: anchorViewportY
+          in: collectionView, for: cell, at: indexPath,
+          oldOffset: oldOffset, anchorViewportY: anchorViewportY
         )
       }
 
-      // Settle the cell and hosted view at their final bounds inside the same
-      // non-animated transaction so pre-commit has zero dirty layout left.
-      cell.layoutIfNeeded()
-      cell.contentView.layoutIfNeeded()
+      // Settle every resized cell and hosted view at their final bounds inside the
+      // same non-animated transaction so pre-commit has zero dirty layout left.
+      settleCells(allCells)
 
       if didInvalidateLayout && collectionView.layer.needsLayout() {
         collectionView.layoutIfNeeded()
         restoreTopAnchor(
-          in: collectionView,
-          for: cell,
-          at: indexPath,
-          oldOffsetX: oldOffset.x,
-          anchorViewportY: anchorViewportY
+          in: collectionView, for: cell, at: indexPath,
+          oldOffset: oldOffset, anchorViewportY: anchorViewportY
         )
       }
+    }
+  }
+
+  private static func invalidateCells(
+    _ cells: [UICollectionViewCell],
+    in collectionView: UICollectionView
+  ) -> Bool {
+    var didInvalidate = false
+    for target in cells {
+      invalidateHostedIntrinsicSize(of: target)
+      if let targetPath = collectionView.indexPath(for: target),
+         invalidateCellHeight(in: collectionView, for: target, at: targetPath) {
+        didInvalidate = true
+      }
+    }
+    return didInvalidate
+  }
+
+  private static func settleCells(_ cells: [UICollectionViewCell]) {
+    for target in cells {
+      target.layoutIfNeeded()
+      target.contentView.layoutIfNeeded()
     }
   }
 
@@ -143,19 +158,27 @@ enum CollectionViewCellResizeAnchor {
     in collectionView: UICollectionView,
     for cell: UICollectionViewCell,
     at indexPath: IndexPath,
-    oldOffsetX: CGFloat,
+    oldOffset: CGPoint,
     anchorViewportY: CGFloat
   ) {
     let updatedFrame = collectionView.layoutAttributesForItem(at: indexPath)?.frame ?? cell.frame
     let inset = collectionView.adjustedContentInset
-    let minOffsetY = -inset.top
-    let maxOffsetY = max(
-      minOffsetY,
+    // Preserve rubber-band overscroll above the top inset (e.g. during pull-to-refresh)
+    // instead of snapping downward to -inset.top.
+    let minOffsetY = min(-inset.top, oldOffset.y)
+    let standardMaxOffsetY = max(
+      -inset.top,
       collectionView.contentSize.height - collectionView.bounds.height + inset.bottom
     )
+    let maxOffsetY = max(minOffsetY, standardMaxOffsetY)
     let desiredOffsetY = min(maxOffsetY, max(minOffsetY, updatedFrame.minY - anchorViewportY))
     if abs(collectionView.contentOffset.y - desiredOffsetY) > 0.001 {
-      collectionView.contentOffset = CGPoint(x: oldOffsetX, y: desiredOffsetY)
+      let restoredOffset = CGPoint(x: oldOffset.x, y: desiredOffsetY)
+      if collectionView.isDecelerating && !collectionView.isTracking && !collectionView.isDragging {
+        collectionView.setContentOffset(restoredOffset, animated: false)
+      } else {
+        collectionView.contentOffset = restoredOffset
+      }
       collectionView.layoutIfNeeded()
     }
   }

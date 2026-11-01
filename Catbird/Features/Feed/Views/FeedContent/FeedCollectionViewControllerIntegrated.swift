@@ -966,13 +966,22 @@ import os
             feedTypeIdentifier: self.stateManager.currentFeedType.identifier,
             tracksVisibilityForFeedback: false,
             onHeightInvalidated: { [weak self, weak cell] in
+              let duplicateVisibleCells = (self?.collectionView.visibleCells ?? [])
+                .compactMap { $0 as? FeedPostCollectionViewCell }
+                .filter { $0 !== cell && $0.postID == postId }
               CollectionViewCellResizeAnchor.performTopAnchoredResize(
                 in: self?.collectionView,
-                for: cell
+                for: cell,
+                additionalCells: duplicateVisibleCells
               ) {
+                let currentGeneration = ModerationRevealStore.shared.generation
                 self?.rowHeightCache.invalidate(postID: postId)
-                cell?.revealGeneration = ModerationRevealStore.shared.generation
+                cell?.revealGeneration = currentGeneration
                 cell?.markHeightNeedsRecalculation()
+                for duplicateCell in duplicateVisibleCells {
+                  duplicateCell.revealGeneration = currentGeneration
+                  duplicateCell.markHeightNeedsRecalculation()
+                }
               }
             }
           )
