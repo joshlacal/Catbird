@@ -45,31 +45,18 @@ struct UnifiedEmbedView: View {
 
   var body: some View {
     switch embed {
-    case .blueskyRecord(let record):
-      RecordEmbedContainer(
-        uriString: record.uri,
-        accountDID: appState.userDID,
-        title: "Shared Post",
-        subtitle: nil,
-        navigationPath: $navigationPath
-      )
-      .id("\(ObjectIdentifier(appState)):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(record.uri)")
+    case .blueskyRecord, .post:
+      // Built from the URI alone: an MLS post's sender-supplied handle and text never reach the card.
+      if let card = ChatSharedPostCard(embed: embed) {
+        RecordEmbedContainer(card: card, accountDID: appState.userDID, navigationPath: $navigationPath)
+          .id("\(ObjectIdentifier(appState)):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(card.uri)")
+      }
 
     case .link(let link):
       linkEmbed(link)
 
     case .gif(let gif):
       gifEmbed(gif)
-
-    case .post(let post):
-      RecordEmbedContainer(
-        uriString: post.uri,
-        accountDID: appState.userDID,
-        title: post.authorHandle.map { "@\($0)" } ?? "Shared Post",
-        subtitle: post.text,
-        navigationPath: $navigationPath
-      )
-      .id("\(ObjectIdentifier(appState)):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(post.uri)")
 
     case .tile(let tile):
       TileCardView(tile: tile)
@@ -543,13 +530,13 @@ private struct ChatMediaAspectLayout: Layout {
 
 /// A shared post. It renders only a record the store keeps under the labeler scope now in effect, so the
 /// viewer's labelers have been consulted and the policy can act on every label it carries. Until then
-/// the card shows its placeholder: no author, text or media.
+/// the card shows its placeholder: no author, text or media (`ChatSharedPostCard.placeholder`).
 private struct RecordEmbedContainer: View {
-  let uriString: String
+  let card: ChatSharedPostCard
   let accountDID: String
-  let title: String
-  let subtitle: String?
   @Binding var navigationPath: NavigationPath
+
+  private var uriString: String { card.uri }
 
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
@@ -673,8 +660,10 @@ private struct RecordEmbedContainer: View {
     }
   }
 
+  /// Neutral for every post and every pre-confirmation state, the covered one included.
   @ViewBuilder
   private func placeholderView(showsProgress: Bool, action: (@MainActor () async -> Void)?) -> some View {
+    let placeholder = card.placeholder
     Button {
       guard let action else { return }
       Task { await action() }
@@ -685,24 +674,16 @@ private struct RecordEmbedContainer: View {
             .foregroundStyle(.secondary)
             .opacity(showsProgress ? 0 : 1)
             .overlay { if showsProgress { ProgressView().controlSize(.mini) } }
-          Text(title)
+          Text(placeholder.title)
             .font(.caption)
             .fontWeight(.medium)
             .foregroundStyle(.primary)
         }
 
-        if let subtitle, !subtitle.isEmpty {
-          Text(subtitle)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-            .multilineTextAlignment(.leading)
-        } else {
-          Text("Shared post")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
+        Text(placeholder.detail)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
       }
       .padding(10)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -710,6 +691,9 @@ private struct RecordEmbedContainer: View {
     }
     .buttonStyle(.plain)
     .disabled(action == nil)
+    .accessibilityLabel(placeholder.accessibilityLabel)
+    .accessibilityValue(showsProgress ? Text("Loading") : Text(verbatim: ""))
+    .accessibilityHint(action == nil ? Text(verbatim: "") : Text("Loads the post"))
   }
 
   private var unavailableView: some View {
