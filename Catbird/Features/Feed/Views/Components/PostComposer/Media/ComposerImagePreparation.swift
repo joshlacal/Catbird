@@ -203,8 +203,10 @@ enum ComposerImagePreparation {
       ) else { continue }
       context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
       context.fill(bounds)
+      // `crop` is top-left based like CGImage.cropping(to:); CGContext's origin is bottom-left.
       context.draw(image, in: CGRect(
-        x: -crop.minX, y: -crop.minY, width: CGFloat(image.width), height: CGFloat(image.height)
+        x: -crop.minX, y: crop.maxY - CGFloat(image.height),
+        width: CGFloat(image.width), height: CGFloat(image.height)
       ))
       return context.makeImage()
     }
