@@ -199,6 +199,8 @@ extension PostComposerViewModel {
 
                 logger.debug("DEBUG: Writing video data to temporary file: \(tempFileURL.path)")
                 try videoData.write(to: tempFileURL)
+                // uploadVideo returns only after its upload stopped reading this file.
+                defer { try? FileManager.default.removeItem(at: tempFileURL) }
 
                 logger.debug("DEBUG: Uploading from temporary file: \(tempFileURL.path)")
                 blob = try await mediaUploadManager.uploadVideo(
