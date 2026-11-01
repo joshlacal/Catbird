@@ -3,6 +3,8 @@ import SwiftUI
 /// Structured sheet for the API-supported post search filters (G02).
 public struct SearchFiltersSheet: View {
   @Environment(\.dismiss) private var dismiss
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
 
   public let initialState: SearchFilterState
   public let onApply: (SearchFilterState) -> Void
@@ -86,6 +88,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Domain & Links
         Section("Domain & Links") {
@@ -149,6 +152,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Hashtags
         Section("Hashtags") {
@@ -166,6 +170,7 @@ public struct SearchFiltersSheet: View {
           .autocorrectionDisabled()
           .platformTextInputCapitalization(.never)
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Date Range
         Section("Date Range") {
@@ -189,6 +194,7 @@ public struct SearchFiltersSheet: View {
             ), displayedComponents: .date)
           }
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Language
         Section("Language") {
@@ -199,6 +205,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Replies
         Section("Replies") {
@@ -208,6 +215,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Media & Audience
         Section("Content & Audience") {
@@ -215,6 +223,7 @@ public struct SearchFiltersSheet: View {
           Toggle("Video only", isOn: $draft.hasVideo)
           Toggle("From following only", isOn: $draft.following)
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Reset
         Section {
@@ -224,7 +233,10 @@ public struct SearchFiltersSheet: View {
           .disabled(draft.activeFilterCount == 0)
           .frame(maxWidth: .infinity)
         }
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
       }
+      .scrollContentBackground(.hidden)
+      .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
       .navigationTitle("Filters")
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)

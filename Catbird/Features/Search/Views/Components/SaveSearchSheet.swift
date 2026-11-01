@@ -46,6 +46,7 @@ struct SaveSearchSheet: View {
                 } footer: {
                     Text("Give this search a memorable name for quick access later.")
                 }
+                .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
                 
                 if hasActiveFilters {
                     Section {
@@ -53,8 +54,11 @@ struct SaveSearchSheet: View {
                     } header: {
                         Text("Active Filters")
                     }
+                    .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
             .navigationTitle("Save Search")
             #if os(iOS)
             .toolbarTitleDisplayMode(.inline)

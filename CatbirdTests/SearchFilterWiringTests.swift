@@ -5,40 +5,48 @@ import SwiftUI
 
 @Suite("Search filter wiring")
 struct SearchFilterWiringTests {
-  @Test("search content hides behind suggestions only where the suggestions fill the page")
+  @Test("search content hides behind suggestions exactly while they are up and fill the page")
   func suggestionsOverlayHidesPageOnlyWhereSuggestionsFillIt() {
-    func hides(
-      fill: Bool, focused: Bool = false, state: SearchState = .idle, committed: Bool = false
-    ) -> Bool {
-      SearchSuggestionsOverlayGate.hidesPageContent(
-        suggestionsFillPage: fill, isSearchFieldFocused: focused, searchState: state, isCommittedSearch: committed
-      )
+    func hides(fill: Bool, focused: Bool) -> Bool {
+      SearchSuggestionsOverlayGate.hidesPageContent(suggestionsFillPage: fill, isSearchFieldFocused: focused)
     }
 
-    // Compact width: the focused field or an uncommitted query owns the screen.
+    // iOS shows the suggestions exactly while the field is focused, so the page hides
+    // then (the hide-keyboard key on iPad keeps the field focused)...
     #expect(hides(fill: true, focused: true))
-    #expect(hides(fill: true, focused: true, state: .results, committed: true))
-    #expect(hides(fill: true, state: .searching))
-    #expect(!hides(fill: true, state: .searching, committed: true))
-    #expect(!hides(fill: true, state: .results, committed: true))
-    #expect(!hides(fill: true))
+    // ...and shows once the field loses focus, typed text or not: scrolling the
+    // keyboard away removes the suggestions from a search that stays presented, and a
+    // hidden page there would leave the screen blank.
+    #expect(!hides(fill: true, focused: false))
 
-    // Suggestions that float over the page never hide it.
-    for state in [SearchState.idle, .searching, .results, .loading] {
+    // Suggestions that drop down from the toolbar field (macOS) never hide the page.
+    #expect(!hides(fill: false, focused: true))
+    #expect(!hides(fill: false, focused: false))
+
+    // On iOS the suggestions fill the page on every size class, a full-size iPad included.
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    #expect(SearchSuggestionsOverlayGate.suggestionsFillPage)
+    #else
+    #expect(!SearchSuggestionsOverlayGate.suggestionsFillPage)
+    #endif
+  }
+
+  @Test("the suggestions container is transparent only where the page is hidden behind it")
+  func suggestionsBackgroundIsTransparentOnlyOverAHiddenPage() {
+    #expect(SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: true) == .hidden)
+    #expect(SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: false) == .automatic)
+
+    // Wherever the container is transparent, the page hides whenever the suggestions
+    // are up (a focused field) and shows whenever they are not, so the page never
+    // shows through them and the screen is never left blank.
+    for fill in [false, true]
+    where SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: fill) == .hidden {
       for focused in [false, true] {
-        #expect(!hides(fill: false, focused: focused, state: state))
+        #expect(SearchSuggestionsOverlayGate.hidesPageContent(
+          suggestionsFillPage: fill, isSearchFieldFocused: focused
+        ) == focused)
       }
     }
-
-    // On iOS, suggestions fill the page in a layout compact in either direction.
-    func fills(_ horizontal: UserInterfaceSizeClass?, _ vertical: UserInterfaceSizeClass?) -> Bool {
-      SearchSuggestionsOverlayGate.suggestionsFillPage(horizontalSizeClass: horizontal, verticalSizeClass: vertical)
-    }
-    #expect(fills(.compact, .regular))  // iPhone portrait, narrow iPad window
-    #expect(fills(.regular, .compact))  // large iPhone landscape
-    #expect(fills(.compact, .compact))  // iPhone landscape
-    #expect(!fills(.regular, .regular)) // full-size iPad
-    #expect(!fills(nil, nil))
   }
 
   @Test("committed saved-query echo is ignored without blocking real edits")

@@ -31,12 +31,15 @@ struct SearchSuggestionRow<Title: View>: View {
 
 /// Native search suggestions render in a list; Catbird rows own their own insets and spacing.
 struct SearchSuggestionRowModifier: ViewModifier {
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
+
   func body(content: Content) -> some View {
     content
       .frame(maxWidth: .infinity, alignment: .leading)
       .listRowInsets(EdgeInsets())
       .listRowSeparator(.hidden)
-      .listRowBackground(Color.clear)
+      .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
   }
 }
 

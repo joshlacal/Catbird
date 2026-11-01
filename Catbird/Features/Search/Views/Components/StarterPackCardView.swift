@@ -12,6 +12,8 @@ import Petrel
 struct StarterPackCardView: View {
     let starterPack: AppBskyGraphDefs.StarterPackViewBasic
     @Binding var path: NavigationPath
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         Button {
@@ -23,7 +25,7 @@ struct StarterPackCardView: View {
                     // Pack/Creator icon
                     ZStack {
                         Circle()
-                            .fill(Color.systemGray5)
+                            .fill(Color.elevatedBackground(appState.themeManager, elevation: .medium, currentScheme: colorScheme))
                             .frame(width: 44, height: 44)
                         
                         AsyncProfileImage(
@@ -94,11 +96,11 @@ struct StarterPackCardView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity)
-            .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

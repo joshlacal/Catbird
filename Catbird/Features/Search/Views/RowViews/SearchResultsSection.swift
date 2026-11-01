@@ -12,6 +12,8 @@ import SwiftUI
 struct ResultsSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         Section {
@@ -22,7 +24,7 @@ struct ResultsSection<Content: View>: View {
                 .padding(.vertical, 10)
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.systemBackground)
+                .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         }
     }
 }

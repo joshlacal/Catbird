@@ -757,6 +757,11 @@ final class AppState {
         preferencesManager.endSettingsAccountOperation = { [weak self] token in
             self?.accountServiceWork.endOperation(token)
         }
+        // Trend lists are cached and stored under this account, so none is requested or stored while a
+        // switch has it suspended: the shared client may already hold the next account's credentials.
+        trendingTopicMediaStore.lists.admitsRequests = { [weak self] in
+            self?.isAccountSwitchSuspended == false
+        }
         postHidingManager.updatePreferencesManager(preferencesManager, accountDID: userDID)
         appSettings.persistence.startEffect = { [weak self] action in
             guard let self else { return false }
@@ -820,7 +825,7 @@ final class AppState {
         accountServiceWork.suspend()
         ageAccess.suspend()
         feedFeedbackManager.discardPending()
-        trendingTopicMediaStore.invalidateForGraphChange()
+        trendingTopicMediaStore.invalidateForSuspension()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
         backgroundPollingTask?.cancel()
@@ -993,7 +998,7 @@ final class AppState {
         accountServiceWork.suspend()
         ageAccess.suspend()
         feedFeedbackManager.discardPending()
-        trendingTopicMediaStore.invalidateForGraphChange()
+        trendingTopicMediaStore.invalidateForSuspension()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
 
