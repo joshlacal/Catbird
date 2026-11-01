@@ -286,12 +286,12 @@ final class DeviceManagementViewModel {
             logger.info("Loading devices...")
             let actorDeviceId = currentDeviceId ?? appState.resolvedMLSDeviceID()
             currentDeviceId = actorDeviceId
-            if let mlsClient = await appState.getMLSAPIClient() {
-                await client.setServiceDID(mlsClient.environment.serviceDID, for: "blue.catbird.chat")
+            guard let mlsClient = await appState.getMLSAPIClient() else {
+                devices = []
+                isLoading = false
+                return
             }
-            let (_, output) = try await client.blue.catbird.chat.getOwnDevices(
-                input: .init(actorDeviceId: actorDeviceId)
-            )
+            let output = try await mlsClient.getOwnDevices(actorDeviceId: actorDeviceId)
             devices = output?.items.map(DeviceRowModel.init) ?? []
             logger.info("Loaded \(self.devices.count) devices")
         } catch {

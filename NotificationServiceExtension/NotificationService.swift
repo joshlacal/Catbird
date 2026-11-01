@@ -139,7 +139,7 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    guard let wake = Self.decodePushWakePayload(from: userInfo) else {
+    guard let wake = MLSPushExtensionProcessor.decodePushWakePayload(from: userInfo) else {
       contentHandler(mutable)
       return
     }
@@ -169,12 +169,17 @@ class NotificationService: UNNotificationServiceExtension {
     let homeDsURL = appGroupDefaults?
       .string(forKey: "mlsHomeDsEndpoint_\(wake.recipientAccountHash)")
       .flatMap(URL.init(string:)) ?? URL(string: "https://chat.catbird.blue")
+    let actorDeviceId = appGroupDefaults?
+      .string(forKey: "mlsDeviceId_\(wake.recipientAccountHash)")
 
     let preview = MLSPushExtensionProcessor.process(
       storageRoot: appGroupRoot,
       accountDidHash: wake.recipientAccountHash,
       keystore: KeychainPlatformKeyStore(),
-      transport: PetrelPlatformTransport(homeDsEndpoint: homeDsURL),
+      transport: PetrelPlatformTransport(
+        homeDsEndpoint: homeDsURL,
+        actorDeviceId: actorDeviceId
+      ),
       wake: wake,
       postDarwinNotification: true
     )
@@ -230,6 +235,11 @@ class NotificationService: UNNotificationServiceExtension {
     if let hash = userInfo["recipient_account"] as? String {
       return resolvePublishedAccountDID(fromHash: hash)
     }
+    if let catbird = userInfo["catbird"] as? [String: Any],
+       let hash = catbird["recipientAccountHash"] as? String
+    {
+      return resolvePublishedAccountDID(fromHash: hash)
+    }
     return nil
   }
 
@@ -253,48 +263,6 @@ class NotificationService: UNNotificationServiceExtension {
 
   private static func sha256Hex(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
-  }
-
-  private static func decodePushWakePayload(from userInfo: [AnyHashable: Any]) -> PushWakePayload? {
-    let dict: [String: Any]
-    if let nested = userInfo["payload"] as? [String: Any] {
-      dict = nested
-    } else if let jsonStr = userInfo["payload"] as? String,
-              let data = jsonStr.data(using: .utf8),
-              let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-    {
-      dict = parsed
-    } else {
-      dict = Dictionary(uniqueKeysWithValues: userInfo.compactMap { k, v in
-        (k as? String).map { ($0, v) }
-      })
-    }
-
-    guard let rawConvo = (dict["conversationId"] as? String) ?? (dict["convo_id"] as? String),
-          let rawHash = (dict["recipientAccountHash"] as? String) ?? (dict["recipient_account"] as? String),
-          !rawConvo.isEmpty,
-          !rawHash.isEmpty
-    else { return nil }
-
-    let kind = (dict["kind"] as? String) ?? (dict["type"] as? String) ?? "application"
-    let generation = (dict["generation"] as? Int64) ?? (dict["generation"] as? Int).map(Int64.init) ?? 0
-    let entrySeq = (dict["entrySeq"] as? Int64) ?? (dict["seq"] as? Int64) ?? (dict["seq"] as? String).flatMap(Int64.init) ?? 0
-    let messageId = (dict["messageId"] as? String) ?? (dict["message_id"] as? String) ?? "msg-\(entrySeq)"
-    let senderDid = (dict["senderDid"] as? String) ?? (dict["sender_did"] as? String)
-    let inlineCiphertext = (dict["ciphertext"] as? String).flatMap { Data(base64Encoded: $0) }
-    let fetchRequired = (dict["fetchRequired"] as? Bool) ?? (inlineCiphertext == nil)
-
-    return PushWakePayload(
-      kind: kind,
-      conversationId: rawConvo,
-      generation: generation,
-      entrySeq: entrySeq,
-      messageId: messageId,
-      recipientAccountHash: rawHash.lowercased(),
-      fetchRequired: fetchRequired,
-      senderDid: senderDid,
-      inlineCiphertext: inlineCiphertext
-    )
   }
 
   private static func applyFallback(to content: UNMutableNotificationContent, wake: PushWakePayload) {

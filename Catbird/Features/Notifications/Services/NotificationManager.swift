@@ -2014,7 +2014,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   private func updateSignedRequestPushRegistration(enabled override: Bool? = nil, expectedAccount: String? = nil) async {
     guard CatbirdFeatures.mlsChat else { return }
     #if os(iOS)
-    guard let appState, let client, let token = deviceToken else { return }
+    guard let appState, appState.isMLSRuntimeAllowed, let client, let token = deviceToken else { return }
     let account = appState.userDID
     guard expectedAccount == nil || expectedAccount == account else { return }
     let desired = override ?? (notificationsEnabled && isMasterPushEnabled() && mlsChatNotificationsEnabled)
@@ -2022,7 +2022,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     do {
       guard try await client.getDid() == account else { return }
       let deviceId = appState.resolvedMLSDeviceID()
-      let accountDidHash = try MLSAppGroupStorage.accountDidHash(for: account)
       let tokenHex = hexString(from: token)
 
       #if DEBUG
@@ -2046,42 +2045,18 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
 
       guard let mlsClient = await appState.getMLSAPIClient(),
+            let coordinator = await appState.getOrOpenMLSCoordinator(),
             appState.userDID == account else { return }
 
-      let keyId = "sig-\(deviceId)"
-      let authGeneration = 1
-      let signedAtDate = ATProtocolDate(date: Date())
-      let signedAtString = signedAtDate.iso8601String
-
-      let signingSeed = try Self.loadOrCreatePushGatewaySigningSeed(accountDidHash: accountDidHash)
-      let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: signingSeed)
-
-      var transcriptMap = OrderedCBORMap()
-      transcriptMap = transcriptMap.adding(key: "appId", value: try pushAppID.toCBORValue())
-      transcriptMap = transcriptMap.adding(key: "authGeneration", value: try authGeneration.toCBORValue())
-      transcriptMap = transcriptMap.adding(key: "deviceId", value: try deviceId.toCBORValue())
-      transcriptMap = transcriptMap.adding(key: "enabled", value: try desired.toCBORValue())
-      transcriptMap = transcriptMap.adding(key: "gatewayUrl", value: try regOutput.gatewayUrl.uriString().toCBORValue())
-      transcriptMap = transcriptMap.adding(key: "keyId", value: try keyId.toCBORValue())
-      transcriptMap = transcriptMap.adding(key: "pushKey", value: try regOutput.pushKey.toCBORValue())
-      transcriptMap = transcriptMap.adding(key: "signedAt", value: try signedAtString.toCBORValue())
-
-      var transcriptBytes = Data("CATBIRD-CHAT-PUSH-GATEWAY\0".utf8)
-      transcriptBytes.append(try DAGCBOR.encodeValue(transcriptMap))
-      let signature = try privateKey.signature(for: transcriptBytes)
+      let signed = try await coordinator.buildSignedPushGatewayRegistration(
+        gatewayUrl: regOutput.gatewayUrl.uriString(),
+        appId: regOutput.appId,
+        pushKey: regOutput.pushKey,
+        enabled: desired
+      )
 
       _ = try await mlsClient.registerPushGateway(
-        input: BlueCatbirdChatRegisterPushGateway.Input(
-          deviceId: deviceId,
-          keyId: keyId,
-          authGeneration: authGeneration,
-          gatewayUrl: regOutput.gatewayUrl,
-          appId: regOutput.appId,
-          pushKey: regOutput.pushKey,
-          enabled: desired,
-          signedAt: signedAtDate,
-          signature: Bytes(data: signature)
-        )
+        rawJsonData: Data(signed.requestJson.utf8)
       )
       notificationLogger.info("Push gateway registration updated (enabled=\(desired))")
     } catch {
@@ -2089,25 +2064,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       notificationLogger.warning("Push gateway registration deferred: \(error.localizedDescription)")
     }
     #endif
-  }
-
-  private static func loadOrCreatePushGatewaySigningSeed(accountDidHash: String) throws -> Data {
-    let keystore = KeychainPlatformKeyStore()
-    let signerKeyId = "mls-signer:\(accountDidHash)"
-    if let signerJson = try keystore.loadSignatureKeypair(keyId: signerKeyId),
-       let parsed = try? JSONSerialization.jsonObject(with: signerJson) as? [String: Any],
-       let rawPrivate = parsed["private"] as? [UInt8],
-       rawPrivate.count >= 32
-    {
-      return Data(rawPrivate.prefix(32))
-    }
-    let fallbackKeyId = "mls-push-gw-signer:\(accountDidHash)"
-    if let existing = try keystore.loadSignatureKeypair(keyId: fallbackKeyId), existing.count == 32 {
-      return existing
-    }
-    let generated = Curve25519.Signing.PrivateKey().rawRepresentation
-    try keystore.storeSignatureKeypair(keyId: fallbackKeyId, keypairBytes: generated)
-    return generated
   }
 
   private func createNavigationDestination(from uriString: String, type: String) throws -> NavigationDestination {

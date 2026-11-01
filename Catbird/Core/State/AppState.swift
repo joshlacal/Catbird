@@ -1569,21 +1569,25 @@ final class AppState {
                 } else {
                     .production
                 }
-                let accountInfo = await activeClient.getActiveAccountInfo()
-                let pdsEndpoint = accountInfo.pdsURL?.absoluteString ?? "https://bsky.social"
+                let clientBaseURL = await activeClient.networkService.baseURL
+                let pdsEndpoint = clientBaseURL.absoluteString
+                let bareHomeDsDid = environment.bareServiceDID
+                let homeDsEndpointString = environment.endpointURL.absoluteString
 
                 let config = CatbirdMlsClientConfig(
                     storageRoot: storageRoot.path,
                     accountDid: targetUserDID,
                     deviceId: deviceId,
-                    homeDsDid: environment.serviceDID,
-                    homeDsEndpoint: environment.endpointURL.absoluteString,
+                    homeDsDid: bareHomeDsDid,
+                    homeDsEndpoint: homeDsEndpointString,
                     pdsEndpoint: pdsEndpoint
                 )
                 let keystore = KeychainPlatformKeyStore()
                 let transport = PetrelPlatformTransport(
                     atProtoClient: activeClient,
-                    homeDsEndpoint: environment.endpointURL
+                    homeDsEndpoint: environment.endpointURL,
+                    homeDsDid: bareHomeDsDid,
+                    actorDeviceId: deviceId
                 )
 
                 let coordinator = try MLSClientCoordinator(
@@ -1591,6 +1595,10 @@ final class AppState {
                     keystore: keystore,
                     transport: transport
                 )
+                if let sharedDefaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) {
+                    sharedDefaults.set(deviceId, forKey: "mlsDeviceId_\(coordinator.accountDidHash)")
+                    sharedDefaults.set(homeDsEndpointString, forKey: "mlsHomeDsEndpoint_\(coordinator.accountDidHash)")
+                }
                 coordinator.onChangeCallback = { [weak self] _ in
                     Task { @MainActor [weak self] in
                         guard let self else { return }

@@ -277,4 +277,57 @@ struct MLSCleanSlateDataSourceAndGateTests {
       #expect(!FileManager.default.fileExists(atPath: dbURL.path))
     }
   }
+
+  @Test("Signed push gateway registration uses enrolled 43-char keyId thumbprint and NSE decodes nest APNs catbird wake (D2, I10)")
+  @MainActor
+  func pushGatewaySigningAndApnsWakeDecoding() async throws {
+    let tempRoot = try makeTempStorageRoot()
+    defer { archiveTempStorageRoot(tempRoot) }
+
+    let deviceId = "11111111-2222-4333-8444-555555555555"
+    let coordinator = try MLSClientCoordinator(
+      config: CatbirdMlsClientConfig(
+        storageRoot: tempRoot.path,
+        accountDid: "did:plc:pushgwuser001",
+        deviceId: deviceId,
+        homeDsDid: MLSEnvironment.production.bareServiceDID,
+        homeDsEndpoint: "https://chat.catbird.blue",
+        pdsEndpoint: "https://pds.catbird.blue"
+      ),
+      keystore: InMemoryKeyStore(),
+      transport: InMemoryTransport()
+    )
+    #expect(MLSEnvironment.production.bareServiceDID == "did:web:chat.catbird.blue")
+
+    _ = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
+    let signed = try await coordinator.buildSignedPushGatewayRegistration(
+      gatewayUrl: "https://api.catbird.blue/xrpc/blue.catbird.push.deliver",
+      appId: "blue.catbird",
+      pushKey: "push-key-opaque-123",
+      enabled: true
+    )
+    #expect(signed.deviceId == deviceId)
+    #expect(signed.keyId.count == 43)
+    #expect(!signed.keyId.hasPrefix("sig-"))
+    #expect(signed.signatureBytes.count == 64)
+
+    let apnsUserInfo: [AnyHashable: Any] = [
+      "aps": ["mutable-content": 1],
+      "catbird": [
+        "recipientAccountHash": coordinator.accountDidHash,
+        "wakeKind": "application",
+        "conversationId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "generation": 1,
+        "seq": 9,
+        "epoch": 2,
+        "fetchRequired": true,
+      ] as [String: Any],
+    ]
+    let wake = MLSPushExtensionProcessor.decodePushWakePayload(from: apnsUserInfo)
+    #expect(wake?.kind == "application")
+    #expect(wake?.entrySeq == 9)
+    #expect(wake?.recipientAccountHash == coordinator.accountDidHash)
+
+    await coordinator.close()
+  }
 }
