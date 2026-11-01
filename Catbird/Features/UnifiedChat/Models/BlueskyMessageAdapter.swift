@@ -270,6 +270,21 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     return senderID == currentUserDID
   }
 
+  /// Built from the server's MessageView, so `id` is the server's message ID.
+  /// An optimistic send's `id` stays a local `pending-` placeholder until then.
+  private var isServerConfirmed: Bool { messageView != nil }
+
+  var canReply: Bool { isServerConfirmed }
+
+  var canReact: Bool { isServerConfirmed }
+
+  var canDeleteForMe: Bool {
+    if isServerConfirmed { return true }
+    // A failed send is neither queued nor in flight, so discarding its row is final.
+    if case .failed = sendState { return true }
+    return false
+  }
+
   var reactions: [UnifiedReaction] {
     guard let msg = messageView else { return [] }
     return reactionViews.map { reaction in

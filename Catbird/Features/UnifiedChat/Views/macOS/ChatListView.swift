@@ -212,22 +212,28 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             }
           }
 
-          Menu("React") {
-            ForEach(["👍", "❤️", "😂", "😮", "😢"], id: \.self) { emoji in
-              Button(emoji) {
-                dataSource.addReaction(messageID: id, emoji: emoji)
+          // A send the server has not confirmed has only a local ID to react to,
+          // and one still on its way cannot be recalled by deleting its row.
+          if message.canReact {
+            Menu("React") {
+              ForEach(["👍", "❤️", "😂", "😮", "😢"], id: \.self) { emoji in
+                Button(emoji) {
+                  dataSource.addReaction(messageID: id, emoji: emoji)
+                }
               }
-            }
-            Divider()
-            Button("More...") {
-              onRequestEmojiPicker?(id)
+              Divider()
+              Button("More...") {
+                onRequestEmojiPicker?(id)
+              }
             }
           }
 
-          Divider()
+          if message.canDeleteForMe {
+            Divider()
 
-          Button("Delete", role: .destructive) {
-            Task { await dataSource.deleteMessage(messageID: id) }
+            Button("Delete", role: .destructive) {
+              Task { await dataSource.deleteMessage(messageID: id) }
+            }
           }
         }
         .id(id)

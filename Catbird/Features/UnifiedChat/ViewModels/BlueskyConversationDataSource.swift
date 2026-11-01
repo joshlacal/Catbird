@@ -38,6 +38,9 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     _ onConfirmed: @escaping (ChatBskyConvoDefs.MessageView) -> Void
   ) async -> Bool
 
+  /// Prefix of the local ID an optimistic send carries until the server confirms it.
+  static let pendingIDPrefix = "pending-"
+
   private(set) var messages: [BlueskyMessageAdapter] = []
   private(set) var pendingSends: [PendingBlueskySend] = []
   private var confirmedDiffableIDByMessageID: [String: String] = [:]
@@ -243,7 +246,7 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     replyContext: UnifiedMessageReplyContext? = nil,
     sentAt: Date = Date()
   ) -> String {
-    let pendingID = "pending-\(UUID().uuidString)"
+    let pendingID = "\(Self.pendingIDPrefix)\(UUID().uuidString)"
     let pending = PendingBlueskySend(
       id: pendingID,
       text: text,
@@ -279,7 +282,7 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       convoID,
       pending.text,
       pending.embedInput,
-      pending.replyTo
+      serverReplyRef(for: pending.replyTo)
     ) { [weak self] messageView in
       self?.completePendingSend(id: pendingID, realMessageID: messageView.id)
     }
@@ -287,11 +290,22 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       // Ensure any pending row is cleaned up if originalMessagesMap was already updated
       pendingSends.removeAll { $0.id == pendingID }
       updateMessagesFromManager()
-    } else if !Task.isCancelled {
+    } else if !Task.isCancelled, pendingSends.contains(where: { $0.id == pendingID }) {
       failPendingSend(id: pendingID, reason: "Failed to send")
       self.error = NSError(domain: "ChatError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to send message"])
     }
     return success
+  }
+
+  /// The reply reference to send. A reply naming a local `pending-` ID names the
+  /// server ID that send was confirmed under; one whose target was never
+  /// confirmed has no server ID to name, so the message goes out without the
+  /// reply rather than failing on every Retry.
+  func serverReplyRef(for replyTo: ChatBskyConvoDefs.ReplyRef?) -> ChatBskyConvoDefs.ReplyRef? {
+    guard let replyTo, replyTo.messageId.hasPrefix(Self.pendingIDPrefix) else { return replyTo }
+    guard let serverID = confirmedDiffableIDByMessageID.first(where: { $0.value == replyTo.messageId })?.key
+    else { return nil }
+    return ChatBskyConvoDefs.ReplyRef(messageId: serverID)
   }
 
   private static func optimisticUnifiedEmbed(
@@ -315,7 +329,10 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     updateMessagesFromManager()
   }
   func toggleReaction(messageID: String, emoji: String) {
-    let realID = message(for: messageID)?.id ?? messageID
+    let target = message(for: messageID)
+    // A send the server has not confirmed has no server ID to react to.
+    if let target, !target.canReact { return }
+    let realID = target?.id ?? messageID
     Task {
       do {
         try await chatManager.toggleReaction(convoId: convoID, messageId: realID, emoji: emoji)
@@ -332,7 +349,11 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   }
 
   func deleteMessage(messageID: String) async {
-    if pendingSends.contains(where: { $0.id == messageID }) {
+    if let pending = pendingSends.first(where: { $0.id == messageID }) {
+      // A send still queued or in flight may already have reached the server,
+      // so removing its row would not stop the message; only a failed send,
+      // which is neither, is discarded.
+      guard case .failed = pending.sendState else { return }
       pendingSends.removeAll { $0.id == messageID }
       updateMessagesFromManager()
       return

@@ -73,11 +73,14 @@ enum ChatMessageMenuActions {
     quickReactions: [String]
   ) -> [ChatMessageMenuAction] {
     guard !message.isSystemMessage, !message.isTombstone else { return [] }
-    var actions = quickReactions.map(ChatMessageMenuAction.reaction)
-    actions.append(.moreReactions)
-    if callbacks.canReply { actions.append(.reply) }
+    var actions: [ChatMessageMenuAction] = []
+    if message.canReact {
+      actions += quickReactions.map(ChatMessageMenuAction.reaction)
+      actions.append(.moreReactions)
+    }
+    if callbacks.canReply && message.canReply { actions.append(.reply) }
     if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { actions.append(.copy) }
-    if callbacks.canDelete { actions.append(.deleteForMe) }
+    if callbacks.canDelete && message.canDeleteForMe { actions.append(.deleteForMe) }
     if callbacks.canReport && !message.isFromCurrentUser { actions.append(.report) }
     if message.canEdit { actions.append(.edit) }
     if message.canUnsend { actions.append(.unsend) }

@@ -231,7 +231,19 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   private var accessibleMoreActions: (() -> Void)? {
     guard !message.isTombstone else { return nil }
     if let onMoreActions { return onMoreActions }
-    return onLongPress.map { callback in { callback(bubbleGlobalFrame) } }
+    return reactionLongPress.map { callback in { callback(bubbleGlobalFrame) } }
+  }
+
+  /// Long-pressing opens the quick reaction bar, which a message that cannot take
+  /// reactions (a send the server has not confirmed) does not offer.
+  private var reactionLongPress: ((CGRect) -> Void)? {
+    message.canReact ? onLongPress : nil
+  }
+
+  /// Swipe-to-reply and the VoiceOver Reply action, for messages a reply may name.
+  private var replyAction: (() -> Void)? {
+    guard !message.isTombstone, message.canReply else { return nil }
+    return onReply
   }
 
   @ViewBuilder
@@ -274,8 +286,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       )
       let gesturedSurface = SwipeToReplyContainer(
         isFromCurrentUser: message.isFromCurrentUser,
-        enabled: onReply != nil && !message.isTombstone,
-        onReply: onReply
+        enabled: replyAction != nil,
+        onReply: replyAction
       ) {
         bubbleSurface
       }
@@ -295,7 +307,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
               }
             }
             .onLongPressGesture {
-              onLongPress?(bubbleGlobalFrame)
+              // Gated in the action, not the branch, so the bubble keeps its
+              // view identity when a pending send is confirmed.
+              reactionLongPress?(bubbleGlobalFrame)
             }
         } else {
           gesturedSurface
@@ -306,7 +320,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       .modifier(BubbleAccessibilityModifier(
         label: bubbleAccessibilityLabel,
         combinesChildren: message.embed == nil,
-        onReply: message.isTombstone ? nil : onReply,
+        onReply: replyAction,
         onMoreActions: accessibleMoreActions
       ))
       .accessibilityIdentifier("chat.message.\(message.diffableID)")
@@ -704,40 +718,39 @@ private struct SwipeToReplyContainer<Content: View>: View {
   @State private var hasTriggeredHaptic = false
 
   var body: some View {
-    if enabled, let onReply {
-      content()
-        .offset(x: dragOffset)
-        .gesture(
-          DragGesture(minimumDistance: 15)
-            .onChanged { value in
-              let translation = value.translation.width
-              if abs(value.translation.height) < abs(translation) {
-                let validTranslation = isFromCurrentUser ? min(0, translation) : max(0, translation)
-                let damped = validTranslation * 0.4
-                dragOffset = damped
-                let isArmed = isFromCurrentUser ? damped <= -30 : damped >= 30
-                if isArmed && !hasTriggeredHaptic {
-                  PlatformHaptics.light()
-                  hasTriggeredHaptic = true
-                } else if !isArmed && hasTriggeredHaptic {
-                  hasTriggeredHaptic = false
-                }
-              }
-            }
-            .onEnded { _ in
-              let isArmed = isFromCurrentUser ? dragOffset <= -30 : dragOffset >= 30
-              if isArmed {
-                onReply()
-              }
-              withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                dragOffset = 0
+    // Masking the gesture instead of dropping it keeps the bubble's view identity
+    // when `enabled` changes, such as when a pending send is confirmed.
+    content()
+      .offset(x: dragOffset)
+      .gesture(
+        DragGesture(minimumDistance: 15)
+          .onChanged { value in
+            let translation = value.translation.width
+            if abs(value.translation.height) < abs(translation) {
+              let validTranslation = isFromCurrentUser ? min(0, translation) : max(0, translation)
+              let damped = validTranslation * 0.4
+              dragOffset = damped
+              let isArmed = isFromCurrentUser ? damped <= -30 : damped >= 30
+              if isArmed && !hasTriggeredHaptic {
+                PlatformHaptics.light()
+                hasTriggeredHaptic = true
+              } else if !isArmed && hasTriggeredHaptic {
                 hasTriggeredHaptic = false
               }
             }
-        )
-    } else {
-      content()
-    }
+          }
+          .onEnded { _ in
+            let isArmed = isFromCurrentUser ? dragOffset <= -30 : dragOffset >= 30
+            if isArmed {
+              onReply?()
+            }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+              dragOffset = 0
+              hasTriggeredHaptic = false
+            }
+          },
+        including: enabled && onReply != nil ? .all : .subviews
+      )
   }
 }
 

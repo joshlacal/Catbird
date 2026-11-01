@@ -228,6 +228,111 @@ struct ChatTabConversationTests {
     #expect(source.messages.map(\.id) == [pendingID, "3lpeer"])
   }
 
+  // MARK: - Actions on rows the server has not confirmed
+
+  @Test("A pending or failed row takes no replies or reactions, and only a failed one can be deleted")
+  func unconfirmedRowsOfferNoServerActions() async throws {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let source = BlueskyConversationDataSource(
+      chatManager: manager, convoID: "open", currentUserDID: "did:plc:alice"
+    )
+    let callbacks = ChatMessageMenuCallbacks(canReply: true, canDelete: true, canReport: true)
+
+    let pendingID = source.beginPendingSend(text: "on its way")
+    let sending = try #require(source.message(for: pendingID))
+    #expect(!sending.canReply)
+    #expect(!sending.canReact)
+    #expect(!sending.canDeleteForMe)
+    #expect(ChatMessageMenuActions.available(for: sending, callbacks: callbacks, quickReactions: ["👍"]) == [.copy])
+
+    source.failPendingSend(id: pendingID)
+    let failed = try #require(source.message(for: pendingID))
+    #expect(!failed.canReply)
+    #expect(!failed.canReact)
+    #expect(failed.canDeleteForMe)
+    #expect(ChatMessageMenuActions.available(for: failed, callbacks: callbacks, quickReactions: ["👍"])
+      == [.copy, .deleteForMe])
+
+    // Once confirmed, the row keeps its pending item identity but names the server's message.
+    let confirmed = BlueskyMessageAdapter(
+      messageView: try messageView(id: "3lconfirmed", text: "on its way", senderDID: "did:plc:alice", sentAt: Date()),
+      currentUserDID: "did:plc:alice",
+      diffableID: pendingID
+    )
+    #expect(confirmed.canReply)
+    #expect(confirmed.canReact)
+    #expect(confirmed.canDeleteForMe)
+    #expect(ChatMessageMenuActions.available(for: confirmed, callbacks: callbacks, quickReactions: ["👍"])
+      == [.reaction("👍"), .moreReactions, .reply, .copy, .deleteForMe])
+  }
+
+  @Test("Deleting a row whose send is on its way leaves the send to land; a failed row is discarded for good")
+  func deletingUnconfirmedRows() async throws {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    let source = makeSource(manager, server)
+    server.held = ["in flight"]
+
+    source.draftText = "in flight"
+    source.submitDraft()
+    await settle { server.isHolding("in flight") }
+    let inFlightID = try #require(source.pendingSends.first?.id)
+    await source.deleteMessage(messageID: inFlightID)
+    #expect(source.message(for: inFlightID)?.sendState == .sending)
+    server.release("in flight")
+    await settle { source.pendingSends.isEmpty }
+    #expect(server.sent.map(\.text) == ["in flight"])
+    #expect(source.error == nil)
+
+    server.failing = ["lost"]
+    source.draftText = "lost"
+    source.submitDraft()
+    await settle { source.pendingSends.first?.sendState == .failed("Failed to send") }
+    let failedID = try #require(source.pendingSends.first?.id)
+    await source.deleteMessage(messageID: failedID)
+    #expect(source.pendingSends.isEmpty)
+    #expect(source.message(for: failedID) == nil)
+    await source.retryFailedSend(pendingID: failedID)
+    #expect(server.sent.map(\.text) == ["in flight", "lost"])
+  }
+
+  @Test("A reply to a local send names its server ID, on Retry too, and never a pending ID")
+  func replyToLocalSendNamesTheServerID() async throws {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    let source = makeSource(manager, server)
+
+    source.draftText = "original"
+    source.submitDraft()
+    let originalID = try #require(source.pendingSends.first?.id)
+    await settle { source.pendingSends.isEmpty }
+    let repliedToConfirmed = await source.sendMessage(
+      text: "reply", embed: nil, replyTo: ChatBskyConvoDefs.ReplyRef(messageId: originalID)
+    )
+    #expect(repliedToConfirmed)
+    #expect(server.sent.last == MessageSendStub.Sent(text: "reply", replyTo: "3lserver1"))
+
+    // The target has not been confirmed: the reply goes out without it rather than failing for good.
+    let unconfirmedID = source.beginPendingSend(text: "not sent yet")
+    server.failing = ["reply to unconfirmed"]
+    let repliedToUnconfirmed = await source.sendMessage(
+      text: "reply to unconfirmed", embed: nil, replyTo: ChatBskyConvoDefs.ReplyRef(messageId: unconfirmedID)
+    )
+    #expect(!repliedToUnconfirmed)
+    #expect(server.sent.last == MessageSendStub.Sent(text: "reply to unconfirmed", replyTo: nil))
+
+    // Retry names the target's server ID once it has one.
+    source.completePendingSend(id: unconfirmedID, realMessageID: "3ltarget")
+    server.failing = []
+    let failedReply = try #require(source.pendingSends.first { $0.text == "reply to unconfirmed" })
+    await source.retryFailedSend(pendingID: failedReply.id)
+    #expect(server.sent.last == MessageSendStub.Sent(text: "reply to unconfirmed", replyTo: "3ltarget"))
+    #expect(server.sent.allSatisfy { $0.replyTo?.hasPrefix(BlueskyConversationDataSource.pendingIDPrefix) != true })
+  }
+
   // MARK: - Destinations pushed over the selected conversation
 
   @Test("The tab publishes its selection only while that Bluesky conversation is on screen")

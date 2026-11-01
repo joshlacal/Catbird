@@ -22,6 +22,15 @@ protocol UnifiedChatMessage: Identifiable, Hashable, Sendable {
   var sendState: MessageSendState { get }
   var canEdit: Bool { get }
   var canUnsend: Bool { get }
+  /// Whether a reply may name this message. Bluesky rows the server has not
+  /// confirmed carry a local `pending-` ID the server cannot resolve.
+  var canReply: Bool { get }
+  /// Whether reactions may be added to this message; false for the same rows.
+  var canReact: Bool { get }
+  /// Whether "Delete for Me" is offered. A send that may still reach the server
+  /// cannot be recalled by deleting its row, so it is not offered until the
+  /// send has failed or been confirmed.
+  var canDeleteForMe: Bool { get }
   var isEdited: Bool { get }
   var editedAt: Date? { get }
   var isTombstone: Bool { get }
@@ -133,6 +142,9 @@ extension UnifiedChatMessage {
 
   var canEdit: Bool { false }
   var canUnsend: Bool { false }
+  var canReply: Bool { true }
+  var canReact: Bool { true }
+  var canDeleteForMe: Bool { true }
   var isEdited: Bool { false }
   var editedAt: Date? { nil }
   var isTombstone: Bool { false }

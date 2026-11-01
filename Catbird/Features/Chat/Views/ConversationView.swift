@@ -246,7 +246,7 @@ struct ConversationView: View {
           }
         },
         onReply: { message in
-          guard !message.isSystemMessage else { return }
+          guard !message.isSystemMessage, message.canReply else { return }
           dataSource.draft.value.replyTarget = message
         },
         onDeleteMessage: { message in
