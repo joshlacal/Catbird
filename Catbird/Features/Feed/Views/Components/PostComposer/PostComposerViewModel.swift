@@ -303,6 +303,10 @@ final class PostComposerViewModel {
   /// A restored Circle destination this composer cannot use. Posting stays blocked
   /// until the author picks an audience; the draft never becomes Public on its own.
   private(set) var unresolvedCircleAudience: UnresolvedCircleAudience?
+  /// A restored Circle found gone while a post was in flight. It blocks the draft only if
+  /// that post fails; one that went through shows the Circle still takes posts, and blocking
+  /// then would keep the composer open on the post just published.
+  private(set) var circleGoneDuringSubmission: UnresolvedCircleAudience?
 
   /// True while a post submission is in flight; guards against duplicate submits.
   var isSubmissionActive: Bool { activeSubmission != nil }
@@ -354,9 +358,17 @@ final class PostComposerViewModel {
     return submission
   }
   
-  func endSubmission() {
+  /// Ends the post in flight. `published` is true only once the post was written.
+  func endSubmission(published: Bool = false) {
     self.activeSubmission = nil
     submissionRecoveryDraft = nil
+    guard let gone = circleGoneDuringSubmission else { return }
+    circleGoneDuringSubmission = nil
+    // A failed attempt is not retried against a Circle that is gone.
+    guard !published, unresolvedCircleAudience == nil,
+          case .circle(let circle) = destination,
+          circle.uri.uriString() == gone.saved.spaceURI else { return }
+    unresolvedCircleAudience = gone
   }
   
   // MARK: - Initialization
@@ -1116,6 +1128,7 @@ final class PostComposerViewModel {
     circleConfirmationTask?.cancel()
     circleConfirmationTask = nil
     unconfirmedCircleDestination = nil
+    circleGoneDuringSubmission = nil
     endCircleCapabilityWait()
     // Only this draft's wait ends; the probe it started still answers for the account.
     circleCapabilityRetryTask?.cancel()
@@ -1214,11 +1227,13 @@ final class PostComposerViewModel {
         // A post in flight keeps the destination it started with.
         if self.activeSubmission == nil { self.destination = .circle(listed) }
       } else {
-        // Kept even while a post is in flight, so a failed attempt is not retried
-        // against a Circle that is gone.
-        self.unresolvedCircleAudience = UnresolvedCircleAudience(
-          saved: saved, issue: .circleUnavailable(name: circle.name)
-        )
+        let gone = UnresolvedCircleAudience(saved: saved, issue: .circleUnavailable(name: circle.name))
+        // A post in flight decides whether it applies; see endSubmission(published:).
+        if self.activeSubmission == nil {
+          self.unresolvedCircleAudience = gone
+        } else {
+          self.circleGoneDuringSubmission = gone
+        }
       }
     }
   }

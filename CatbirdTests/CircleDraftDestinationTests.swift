@@ -313,23 +313,44 @@ struct CircleDraftDestinationTests {
     #expect(!model.submitValidationState.canSubmit)
   }
 
-  @Test("A Circle found gone while a post is in flight still blocks the next attempt")
-  func missingCircleFoundDuringSubmission() async throws {
-    let appState = await makeAppState(circlesEnabled: true)
-    // The account's Circles list only Family.
-    let transport = DestinationRecordingCircleTransport()
-    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
-    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: nil)
-    let circle = try #require(saved.circle)
+  @Test("A Circle found gone while a post is in flight blocks the next attempt when that post fails")
+  func missingCircleFoundDuringFailedSubmission() async throws {
+    let harness = try await makeSubmissionHarness(publishError: .upstreamUnavailable)
+    defer { harness.close() }
+    let model = harness.model
 
-    model.restoreDraftState(makeDraft("Only for Work", destination: saved))
-    model.beginSubmission()
-    try await waitUntil { model.unresolvedCircleAudience != nil }
-    #expect(model.destination == .circle(circle))
+    let post = Task { try await model.createPost() }
+    try await landListingWhilePublishing(harness)
+    // Recorded, but the draft being posted is left as it was submitted.
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(model.destination == .circle(try #require(harness.saved.circle)))
 
-    model.endSubmission()
+    await harness.transport.publishing.open()
+    await #expect(throws: CircleError.self) { try await post.value }
+    #expect(model.circleGoneDuringSubmission == nil)
     #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
     #expect(!model.submitValidationState.canSubmit)
+    #expect(harness.scene.currentDraft?.circleDestination == harness.saved)
+    #expect(await harness.transport.publishedCount == 0)
+  }
+
+  @Test("A Circle found gone while a post is in flight is dropped when that post goes through")
+  func missingCircleFoundDuringSuccessfulSubmission() async throws {
+    let harness = try await makeSubmissionHarness(publishError: nil)
+    defer { harness.close() }
+    let model = harness.model
+
+    let post = Task { try await model.createPost() }
+    try await landListingWhilePublishing(harness)
+    #expect(model.unresolvedCircleAudience == nil)
+
+    await harness.transport.publishing.open()
+    // The submission completes, so the composer closes instead of keeping the published draft open.
+    #expect(try await post.value)
+    #expect(model.circleGoneDuringSubmission == nil)
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(harness.scene.currentDraft == nil)
+    #expect(await harness.transport.publishedCount == 1)
   }
 
   @Test("A Circle draft never restores under another account and its reply is never read")
@@ -472,6 +493,52 @@ struct CircleDraftDestinationTests {
 
   // MARK: - Helpers
 
+  @MainActor
+  private struct SubmissionHarness {
+    let model: PostComposerViewModel
+    let scene: SceneComposerEditingSession
+    let transport: GatedCircleTransport
+    let saved: CircleDraftDestination
+    let container: ModelContainer
+    let defaultsSuite: String
+
+    func close() {
+      scene.invalidate()
+      UserDefaults(suiteName: defaultsSuite)?.removePersistentDomain(forName: defaultsSuite)
+    }
+  }
+
+  /// An open Work draft whose Circle listing (only Family) and publish both wait to be released.
+  private func makeSubmissionHarness(publishError: CircleError?) async throws -> SubmissionHarness {
+    let appState = await makeAppState(circlesEnabled: true, allowWrites: true)
+    let defaultsSuite = "CircleDraftDestinationTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: defaultsSuite))
+    let container = try ModelContainer(
+      for: DraftPost.self,
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+    )
+    let manager = ComposerDraftManager(accountDID: account, modelContext: container.mainContext, defaults: defaults)
+    let scene = SceneComposerEditingSession(manager: manager, accountDID: account, sceneID: UUID(), defaults: defaults)
+    let transport = GatedCircleTransport(publishError: publishError)
+    let model = PostComposerViewModel(
+      appState: appState, circleService: CircleService(transport: transport), editingSession: scene
+    )
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: nil)
+    try model.startEditing(restoring: makeDraft("Only for Work", destination: saved))
+    return SubmissionHarness(
+      model: model, scene: scene, transport: transport, saved: saved, container: container,
+      defaultsSuite: defaultsSuite
+    )
+  }
+
+  /// Lets the restored Circle's check finish, finding it gone, while the post waits to publish.
+  private func landListingWhilePublishing(_ harness: SubmissionHarness) async throws {
+    await harness.transport.publishing.waitForArrival()
+    #expect(harness.model.isSubmissionActive)
+    await harness.transport.listing.open()
+    try await waitUntil { harness.model.circleGoneDuringSubmission != nil }
+  }
+
   private func makeAppState(circlesEnabled: Bool = false, allowWrites: Bool = false) async -> AppState {
     let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:1")!)
     let appState = AppState(userDID: account, client: client, regulatoryChecker: NoAgeRequirement())
@@ -522,6 +589,84 @@ private struct NoAgeRequirement: AgeRegulatoryChecking {
   #if canImport(UIKit)
   func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
   #endif
+}
+
+/// Lets a test hold a call until it is released, and know when the call arrived.
+private actor Gate {
+  private var isOpen = false
+  private var arrived = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private var arrivals: [CheckedContinuation<Void, Never>] = []
+
+  func pass() async {
+    arrived = true
+    arrivals.forEach { $0.resume() }
+    arrivals.removeAll()
+    guard !isOpen else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func open() {
+    isOpen = true
+    waiters.forEach { $0.resume() }
+    waiters.removeAll()
+  }
+
+  func waitForArrival() async {
+    guard !arrived else { return }
+    await withCheckedContinuation { arrivals.append($0) }
+  }
+}
+
+/// A Circle transport whose listing (only Family) and publish each wait at a gate.
+private actor GatedCircleTransport: CircleTransport {
+  let listing = Gate()
+  let publishing = Gate()
+  let publicEndpointCallCount = 0
+  private let publishError: CircleError?
+  private(set) var publishedCount = 0
+
+  init(publishError: CircleError?) {
+    self.publishError = publishError
+  }
+
+  func listCircles(cursor: String?) async throws -> CircleListPage {
+    await listing.pass()
+    return CircleListPage(circles: [CircleTestFixtures.family], cursor: nil)
+  }
+
+  func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
+    await publishing.pass()
+    if let publishError { throw publishError }
+    publishedCount += 1
+    return try ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/published")
+  }
+
+  func capabilities() async throws -> CircleCapability {
+    CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
+  }
+
+  func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage { throw CircleError.invalidResponse }
+  func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage { throw CircleError.invalidResponse }
+  func listNotifications(cursor: String?) async throws -> CircleNotificationPage { throw CircleError.invalidResponse }
+  func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data { throw CircleError.invalidResponse }
+  func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool { throw CircleError.invalidResponse }
+  func report(
+    post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?
+  ) async throws -> UUID { throw CircleError.invalidResponse }
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary { throw CircleError.invalidResponse }
+  func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
+    throw CircleError.invalidResponse
+  }
+  func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws { throw CircleError.invalidResponse }
+  func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws { throw CircleError.invalidResponse }
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
+    throw CircleError.invalidResponse
+  }
+  func deleteSpace(space: SpaceRef) async throws { throw CircleError.invalidResponse }
+  func addMember(space: SpaceRef, did: DID) async throws { throw CircleError.invalidResponse }
+  func removeMember(space: SpaceRef, did: DID) async throws { throw CircleError.invalidResponse }
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] { throw CircleError.invalidResponse }
 }
 
 private actor CallCounter {

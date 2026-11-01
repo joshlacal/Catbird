@@ -683,9 +683,10 @@ extension PostComposerViewModel {
         try ensureDraftReferencesReadyForPosting()
         // Create single post
         isPosting = true
+        var published = false
         defer {
             isPosting = false
-            endSubmission()
+            endSubmission(published: published)
         }
 
         let submitSignpost = PerformanceSignposts.beginInterval("ComposerSubmit")
@@ -836,6 +837,7 @@ extension PostComposerViewModel {
                 throw error
             }
         }
+        published = true
 
         // End MetricKit tracking for successful post
         if #available(iOS 26, macOS 26, *) {
