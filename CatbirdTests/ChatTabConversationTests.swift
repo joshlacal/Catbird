@@ -132,7 +132,7 @@ struct ChatTabConversationTests {
 
     source.completePendingSend(id: pendingID, realMessageID: realID)
     pages.messages = [.chatBskyConvoDefsMessageView(confirmedView)]
-    await source.loadMessages(userInitiated: true)
+    await source.loadMessages()
     await settle { source.messages.first?.sendState == .sent }
 
     #expect(source.messages.count == 1)
