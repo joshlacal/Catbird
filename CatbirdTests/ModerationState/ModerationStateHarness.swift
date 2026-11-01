@@ -8,8 +8,9 @@ import UIKit
 
 // Shared fixtures for the moderation-state suites. Preferences and labeler services reach AppState
 // through the production network path: a URLProtocol sits under a real ATProtoClient and serves canned
-// `app.bsky.actor.getPreferences` and `app.bsky.labeler.getServices` responses. Each client talks to its
-// own loopback port, so every test controls its own server and several tests can run side by side.
+// `app.bsky.actor.getPreferences`, `app.bsky.labeler.getServices` and `app.bsky.feed.getPosts` responses.
+// Each client talks to its own loopback port, so every test controls its own server and several tests can
+// run side by side.
 
 // MARK: - Constants
 
@@ -34,6 +35,7 @@ final class ModerationStateServer: @unchecked Sendable {
     let method: String
     let path: String
     let requestedDIDs: [String]
+    let requestedURIs: [String]
     let acceptLabelers: String?
     let status: Int
   }
@@ -45,6 +47,7 @@ final class ModerationStateServer: @unchecked Sendable {
   private var _servicesStatus = 200
   private var _servicesDelay: TimeInterval = 0
   private var _services: [String: [String: Any]] = [:]
+  private var _posts: [String: [String: Any]] = [:]
   private var _requests: [RecordedRequest] = []
 
   let port: Int
@@ -108,6 +111,13 @@ final class ModerationStateServer: @unchecked Sendable {
     lock.withLock { _services[did] = view }
   }
 
+  /// Post views `getPosts` serves, keyed by their `uri`. A requested URI with no view is left out of the
+  /// response, as the AppView leaves out posts it cannot show.
+  func setPosts(_ posts: [[String: Any]]) {
+    let byURI = Dictionary(posts.compactMap { post in (post["uri"] as? String).map { ($0, post) } }) { _, last in last }
+    lock.withLock { _posts = byURI }
+  }
+
   /// Every request this server has seen, in order.
   var requests: [RecordedRequest] { lock.withLock { _requests } }
 
@@ -118,7 +128,8 @@ final class ModerationStateServer: @unchecked Sendable {
   // MARK: Serving
 
   fileprivate func respond(
-    method: String, path: String, requestedDIDs: [String], acceptLabelers: String?, body requestBody: Data?
+    method: String, path: String, requestedDIDs: [String], requestedURIs: [String], acceptLabelers: String?,
+    body requestBody: Data?
   ) -> (Int, Data) {
     lock.withLock {
       let status: Int
@@ -143,12 +154,17 @@ final class ModerationStateServer: @unchecked Sendable {
         body = status == 200
           ? ((try? JSONSerialization.data(withJSONObject: ["views": views])) ?? Self.errorBody)
           : Self.errorBody
+      case ("GET", "/xrpc/app.bsky.feed.getPosts"):
+        status = 200
+        let posts = requestedURIs.compactMap { _posts[$0] }
+        body = (try? JSONSerialization.data(withJSONObject: ["posts": posts])) ?? Self.errorBody
       default:
         status = 404
         body = Self.errorBody
       }
       _requests.append(RecordedRequest(
-        method: method, path: path, requestedDIDs: requestedDIDs, acceptLabelers: acceptLabelers, status: status))
+        method: method, path: path, requestedDIDs: requestedDIDs, requestedURIs: requestedURIs,
+        acceptLabelers: acceptLabelers, status: status))
       return (status, body)
     }
   }
@@ -220,10 +236,12 @@ final class ModerationStateProtocol: URLProtocol, @unchecked Sendable {
       client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
       return
     }
-    let dids = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
-      .filter { $0.name == "dids" }.compactMap(\.value) ?? []
+    // Array parameters repeat their name, one query item per value.
+    let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    let dids = queryItems.filter { $0.name == "dids" }.compactMap(\.value)
+    let uris = queryItems.filter { $0.name == "uris" }.compactMap(\.value)
     let (status, body) = server.respond(
-      method: (request.httpMethod ?? "GET").uppercased(), path: url.path, requestedDIDs: dids,
+      method: (request.httpMethod ?? "GET").uppercased(), path: url.path, requestedDIDs: dids, requestedURIs: uris,
       acceptLabelers: request.value(forHTTPHeaderField: "atproto-accept-labelers"),
       body: Self.body(of: request))
     guard let response = HTTPURLResponse(

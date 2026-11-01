@@ -339,7 +339,15 @@ final class AppState {
     @ObservationIgnored private var moderationLabelerDIDs: [String] = []
     /// The labelers and client the last successful definitions load covered.
     @ObservationIgnored private var loadedModerationDefinitionsKey: ModerationDefinitionsKey?
-    @ObservationIgnored private var moderationDefinitionsLoad: ModerationDefinitionsLoad?
+    @ObservationIgnored private var moderationDefinitionsLoad: ModerationDefinitionsLoad? {
+        didSet {
+            let isLoading = moderationDefinitionsLoad != nil
+            if isLoadingModerationDefinitions != isLoading { isLoadingModerationDefinitions = isLoading }
+        }
+    }
+    /// Whether the subscribed labelers' label definitions are loading. Observed, so a view that must not
+    /// show content under a label the policy cannot resolve yet can wait for the load to finish.
+    private(set) var isLoadingModerationDefinitions = false
     /// The normalized labeler set the on-disk definitions cache was last consulted or written for.
     @ObservationIgnored private var moderationDefinitionsDiskKey: [String]?
 
