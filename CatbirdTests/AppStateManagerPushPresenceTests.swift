@@ -32,16 +32,61 @@ struct AppStateManagerPushPresenceTests {
     #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountA)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
 
-    // Transition to unauthenticated (sign-out)
+    // Transition to unauthenticated: presence changes, but no session end is recorded
     manager.setLifecycleForTesting(.unauthenticated)
     #expect(defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
     #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountA)
-    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [Self.accountA])
+    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
 
     // Authenticate with account B
     manager.setLifecycleForTesting(.authenticated(stateB))
     #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
     #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountB)
-    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [Self.accountA])
+    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
+  }
+
+  @Test("A failed switch that ends at sign-in records neither account as ended")
+  @MainActor
+  func failedSwitchRecordsNoEndedAccount() async {
+    let suiteName = "LifecyclePushPresenceSwitch-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let manager = AppStateManager.shared
+    manager.setPushPresenceDefaultsForTesting(defaults)
+    defer {
+      manager.setPushPresenceDefaultsForTesting(nil)
+      manager.setLifecycleForTesting(.unauthenticated)
+    }
+
+    let client = await ATProtoClient(baseURL: URL(string: "https://fixture.invalid")!)
+    let stateA = AppState(userDID: Self.accountA, client: client)
+
+    // A switch from A starts at .launching and, when retiring A fails after B was verified,
+    // ends at .unauthenticated (markAccountSwitchRestartRequired). Both sessions are intact.
+    manager.setLifecycleForTesting(.authenticated(stateA))
+    manager.setLifecycleForTesting(.launching)
+    manager.setLifecycleForTesting(.unauthenticated)
+    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
+  }
+
+  @Test("A launch without a current account does not record the last active account as ended")
+  @MainActor
+  func launchWithoutCurrentAccountRecordsNoEndedAccount() {
+    let suiteName = "LifecyclePushPresenceLaunch-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    defaults.set(Self.accountA, forKey: "activeAccountDID")
+
+    let manager = AppStateManager.shared
+    manager.setPushPresenceDefaultsForTesting(defaults)
+    defer {
+      manager.setPushPresenceDefaultsForTesting(nil)
+      manager.setLifecycleForTesting(.unauthenticated)
+    }
+
+    manager.setLifecycleForTesting(.launching)
+    manager.setLifecycleForTesting(.unauthenticated)
+    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
   }
 }

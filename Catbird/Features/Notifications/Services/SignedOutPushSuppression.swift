@@ -61,23 +61,15 @@ enum SignedOutPushSuppression {
     defaults?.stringArray(forKey: sessionEndedAccountDIDsKey) ?? []
   }
 
-  static func publish(from old: Presence, to new: Presence, in defaults: UserDefaults?) {
+  /// Publishes presence for the extension. A presence change never records an ended session:
+  /// the lifecycle also reaches sign-in after a failed switch or a launch without a current
+  /// account, when every stored session is intact. Only `recordSessionEndedAccount` records one.
+  static func publish(_ presence: Presence, in defaults: UserDefaults?) {
     guard let defaults else { return }
 
-    switch new {
+    switch presence {
     case .signedOut:
       defaults.set(true, forKey: signedOutKey)
-      var didToRecord: String? = nil
-      if case .signedIn(let oldDID) = old {
-        didToRecord = oldDID
-      } else if let persistedDID = defaults.string(forKey: activeAccountDIDKey),
-        persistedDID.hasPrefix("did:")
-      {
-        didToRecord = persistedDID
-      }
-      if let didToRecord {
-        appendEndedAccount(didToRecord, in: defaults)
-      }
       // Note: activeAccountDID is preserved for widget display continuity.
 
     case .signedIn(let activeDID):
@@ -90,6 +82,8 @@ enum SignedOutPushSuppression {
     }
   }
 
+  /// Records an account whose session really ended (logout, removal, expiry), so its pushes
+  /// stay hidden until it signs in again.
   static func recordSessionEndedAccount(_ accountDID: String, in defaults: UserDefaults?) {
     guard let defaults else { return }
     appendEndedAccount(accountDID, in: defaults)

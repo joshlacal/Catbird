@@ -61,48 +61,35 @@ struct SignedOutPushSuppressionTests {
         sessionEndedAccountDIDs: [Self.accountA]))
   }
 
-  @Test("Publish tracks sign-out, sign-in, bounded history, and deduplication")
+  @Test("Publish tracks sign-out and sign-in without recording an ended session")
   func publishTracksSignOutAndSignIn() {
     let suiteName = "PushSuppressionTest-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suiteName)!
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     // Start with sign-in A
-    SignedOutPushSuppression.publish(
-      from: .unknown,
-      to: .signedIn(accountDID: Self.accountA),
-      in: defaults
-    )
+    SignedOutPushSuppression.publish(.signedIn(accountDID: Self.accountA), in: defaults)
     #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountA)
     #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
 
-    // Sign out from A
-    SignedOutPushSuppression.publish(
-      from: .signedIn(accountDID: Self.accountA),
-      to: .signedOut,
-      in: defaults
-    )
+    // Signed-out presence alone is no session end: a failed switch or a launch without a
+    // current account also reaches it with every stored session intact.
+    SignedOutPushSuppression.publish(.signedOut, in: defaults)
     #expect(defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
-    // activeAccountDID preserved for widgets
-    #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountA)
+    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
+
+    // A real session end is recorded explicitly
+    SignedOutPushSuppression.recordSessionEndedAccount(Self.accountA, in: defaults)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [Self.accountA])
 
     // Sign in to B
-    SignedOutPushSuppression.publish(
-      from: .signedOut,
-      to: .signedIn(accountDID: Self.accountB),
-      in: defaults
-    )
+    SignedOutPushSuppression.publish(.signedIn(accountDID: Self.accountB), in: defaults)
     #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
     #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountB)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [Self.accountA])
 
     // Sign in to A again (clears A from ended list)
-    SignedOutPushSuppression.publish(
-      from: .signedIn(accountDID: Self.accountB),
-      to: .signedIn(accountDID: Self.accountA),
-      in: defaults
-    )
+    SignedOutPushSuppression.publish(.signedIn(accountDID: Self.accountA), in: defaults)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
 
     // Test bounded limit and deduplication

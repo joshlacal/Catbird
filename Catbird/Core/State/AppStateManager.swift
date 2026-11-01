@@ -114,10 +114,9 @@ final class AppStateManager {
       Self.activeUserDIDBox.withLock { $0 = newDID }
       MLSCoordinationStore.shared.setActiveUserDID(newDID)
       MLSNotificationCoordinator.updateActiveUserDID(newDID)
-      let oldPresence = SignedOutPushSuppression.presence(for: oldValue)
       let newPresence = SignedOutPushSuppression.presence(for: lifecycle)
-      if oldPresence != newPresence {
-        SignedOutPushSuppression.publish(from: oldPresence, to: newPresence, in: pushPresenceDefaults)
+      if SignedOutPushSuppression.presence(for: oldValue) != newPresence {
+        SignedOutPushSuppression.publish(newPresence, in: pushPresenceDefaults)
       }
     }
   }
@@ -529,6 +528,7 @@ final class AppStateManager {
           self.logger.info("🔔 Auth became unauthenticated - transitioning")
           if let endedDID = self.lifecycle.userDID {
             self.sessionEndedAccountDID = endedDID
+            SignedOutPushSuppression.recordSessionEndedAccount(endedDID, in: self.pushPresenceDefaults)
           }
           self.composerSwitchQueue.invalidate()
           if #available(iOS 17.0, macOS 14.0, *) {
@@ -876,6 +876,7 @@ final class AppStateManager {
     let loggingOutState = lifecycle.appState ?? interruptedSwitchSource
     let loggingOutDID = loggingOutState?.userDID
     if let loggingOutDID {
+      SignedOutPushSuppression.recordSessionEndedAccount(loggingOutDID, in: pushPresenceDefaults)
       NotificationCenter.default.post(
         name: .circleAccountInvalidated,
         object: nil,
@@ -940,6 +941,7 @@ final class AppStateManager {
   /// delivery when it rejects the session, and SignedOutPushSuppression hides its pushes until then.
   private func retireSessionEndedAccount(_ did: String) async {
     logger.info("Retiring an account whose session ended, before another account signs in")
+    SignedOutPushSuppression.recordSessionEndedAccount(did, in: pushPresenceDefaults)
     if let endedState = authenticatedStates.removeValue(forKey: did) {
       await endedState.prepareMLSStorageReset()
       endedState.cleanup()
