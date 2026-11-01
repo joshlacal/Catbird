@@ -63,7 +63,7 @@ extension PostComposerViewModel {
     // MARK: - Thread Management
 
     func addThreadPost() {
-        guard isThreadMode, destination == .public else { return }
+        guard isThreadMode, allowsThreads else { return }
         threadEntries.append(ThreadEntry())
         currentThreadIndex = threadEntries.count - 1
         isThread = threadEntries.count > 1
@@ -320,7 +320,7 @@ extension PostComposerViewModel {
     // MARK: - Thread Management
 
     func addNewThreadEntry() {
-        guard isThreadMode, destination == .public else { return }
+        guard isThreadMode, allowsThreads else { return }
         // Save current state to current thread entry before switching
         updateCurrentThreadEntry()
         addThreadPost()
@@ -331,7 +331,7 @@ extension PostComposerViewModel {
     func enterThreadMode() {
         guard !isThreadMode else { return }
         // ponytail: block thread mode for circles, add circle threading when needed
-        guard destination == .public else { return }
+        guard allowsThreads else { return }
         // Save current post content to first thread entry
         threadEntries[0].text = postText
         threadEntries[0].mediaItems = mediaItems
@@ -683,9 +683,10 @@ extension PostComposerViewModel {
         try ensureDraftReferencesReadyForPosting()
         // Create single post
         isPosting = true
+        var published = false
         defer {
             isPosting = false
-            endSubmission()
+            endSubmission(published: published)
         }
 
         let submitSignpost = PerformanceSignposts.beginInterval("ComposerSubmit")
@@ -800,7 +801,7 @@ extension PostComposerViewModel {
         case let .circle(circle):
             logger.info("Calling CircleService.publishPost to space: '\(circle.uri.uriString())'")
             let service = circleService ?? appState.circleService
-            let replyRef = parentPost.map { PostManager.createReplyRef(for: $0) }
+            let replyRef = circleReplyRef()
             let circleDraft = CirclePostDraft(
                 text: postText,
                 facets: facets.isEmpty ? nil : facets,
@@ -836,6 +837,7 @@ extension PostComposerViewModel {
                 throw error
             }
         }
+        published = true
 
         // End MetricKit tracking for successful post
         if #available(iOS 26, macOS 26, *) {

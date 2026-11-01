@@ -8,6 +8,8 @@ import PetrelCatbird
 struct CircleAudiencePicker: View {
   @Binding var selectedDestination: CircleDestination
   var circles: [CircleSummary] = []
+  /// A restored draft whose saved audience cannot be used. Its author picks one again.
+  var needsChoice: Bool = false
   var isReplyLocked: Bool = false
   var isSubmitting: Bool = false
 
@@ -43,13 +45,18 @@ struct CircleAudiencePicker: View {
         }
       } label: {
         HStack(spacing: 6) {
-          switch selectedDestination {
-          case .public:
-            Image(systemName: "globe")
-            Text("Public")
-          case .circle(let circle):
-            Image(systemName: "person.2.fill")
-            Text(circle.name)
+          if needsChoice {
+            Image(systemName: "exclamationmark.circle")
+            Text("Choose Audience")
+          } else {
+            switch selectedDestination {
+            case .public:
+              Image(systemName: "globe")
+              Text("Public")
+            case .circle(let circle):
+              Image(systemName: "person.2.fill")
+              Text(circle.name)
+            }
           }
 
           if !isReplyLocked && !isSubmitting {
@@ -58,7 +65,7 @@ struct CircleAudiencePicker: View {
           }
         }
         .font(.subheadline)
-        .foregroundStyle(selectedDestination == .public ? Color.secondary : Color.accentColor)
+        .foregroundStyle(labelColor)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(Color.secondarySystemBackground)
@@ -90,7 +97,13 @@ struct CircleAudiencePicker: View {
     }
   }
 
+  private var labelColor: Color {
+    if needsChoice { return .orange }
+    return selectedDestination == .public ? .secondary : .accentColor
+  }
+
   private var accessibilityLabelText: String {
+    if needsChoice { return "Audience: not chosen" }
     switch selectedDestination {
     case .public:
       return "Audience: Public"

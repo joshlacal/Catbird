@@ -68,7 +68,7 @@ extension PostComposerViewUIKit {
   }
   
   func canSubmit(vm: PostComposerViewModel) -> Bool {
-    guard vm.destination == .public || appState.circlesEnabled else { return false }
+    guard vm.canPostToDestination else { return false }
     return vm.submitValidationState.canSubmit && !isSubmitting && !hasPendingMediaIntent
   }
   

@@ -99,6 +99,7 @@ struct PostComposerSubmitValidationState: Equatable {
         case pendingAudio
         case circleImagesUnavailable
         case circleUnsupportedMedia
+        case circleAudienceUnresolved(CircleDraftAudienceIssue)
     }
 
     let canSubmit: Bool
@@ -127,6 +128,8 @@ struct PostComposerSubmitValidationState: Equatable {
             return "GIFs, video, and audio are unavailable in Circles. Remove the attachment to continue."
         case .circleImagesUnavailable:
             return "Images are unavailable for this Circle. Remove the attachments to post text."
+        case .circleAudienceUnresolved(let issue):
+            return issue.message
         case .missingAltText:
             return "Add alt text to every media attachment before posting."
         case .replyLoading:
@@ -144,7 +147,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio, .circleImagesUnavailable, .circleUnsupportedMedia:
+        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio, .circleImagesUnavailable, .circleUnsupportedMedia, .circleAudienceUnresolved:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -195,6 +198,8 @@ struct PostComposerDraft: Codable, Hashable {
   var hasDraftInteractionSettings: Bool? = nil
   var pendingAudioURLString: String? = nil
   var pendingAudioThreadEntryID: UUID? = nil
+  // Absent for Public drafts, so their stored JSON is unchanged and older drafts decode as Public.
+  var circleDestination: CircleDraftDestination? = nil
 }
 
 // MARK: - Codable Wrappers for Draft State

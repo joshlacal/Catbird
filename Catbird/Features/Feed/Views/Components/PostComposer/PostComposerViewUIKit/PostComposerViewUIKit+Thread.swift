@@ -171,7 +171,7 @@ extension PostComposerViewUIKit {
       onThreadgateAction: { showingThreadgate = true },
       onLanguageAction: { showingLanguagePicker = true },
       onThreadAction: {
-        guard vm.destination == .public, !hasPendingMediaIntent else { return }
+        guard vm.allowsThreads, !hasPendingMediaIntent else { return }
         if vm.isThreadMode {
           pcThreadLogger.info("PostComposerThread: Adding new thread entry to existing thread")
           withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {

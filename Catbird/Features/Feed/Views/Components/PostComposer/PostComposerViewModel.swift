@@ -187,6 +187,29 @@ final class PostComposerViewModel {
   /// True when a restored reply's original post couldn't be loaded.
   private(set) var parentRestoreFailed = false
   private var parentRestorationTask: Task<Void, Never>?
+  /// Where a restored reply's parent is read. A Circle post is read only through the
+  /// Circle the draft was saved for, never a public endpoint.
+  private enum ReplyParentSource {
+    case network
+    case circle(CircleSummary)
+    case unreadable
+  }
+  private var replyParentSource: ReplyParentSource = .network
+  /// The thread a restored Circle reply was saved with.
+  private var restoredCircleReply: CircleDraftDestination.Reply?
+  /// A restored Circle not yet checked against this account's Circles. The check waits
+  /// while Circles are unavailable, as they are for a moment at launch and account switch.
+  private var unconfirmedCircleDestination: CircleDraftDestination?
+  private var circleConfirmationTask: Task<Void, Never>?
+  /// How long a restored Circle reply shows as loading while Circles are unknown and no
+  /// probe has answered. After that it shows as unavailable, with Try Again.
+  @ObservationIgnored var circleCapabilityWaitLimit: Duration = .seconds(10)
+  private var circleCapabilityWaitTask: Task<Void, Never>?
+  /// The probe started by Try Again on a Circle reply that waited for Circles.
+  private var circleCapabilityRetryTask: Task<Void, Never>?
+  /// True when a Circle reply's parent shows as unavailable only because Circles are not
+  /// known. It is read once they are.
+  private var parentRestoreAwaitsCircles = false
   private var quoteRestorationTasks: [UUID: Task<Void, Never>] = [:]
   private var interactionDefaultsTask: Task<Void, Never>?
   private var interactionSettingsRevision = 0
@@ -277,9 +300,23 @@ final class PostComposerViewModel {
   private(set) var activeSubmission: PostSubmission?
   var isReplyLockedToCircle: Bool = false
   var circleService: CircleService?
+  /// A restored Circle destination this composer cannot use. Posting stays blocked
+  /// until the author picks an audience; the draft never becomes Public on its own.
+  private(set) var unresolvedCircleAudience: UnresolvedCircleAudience?
+  /// A restored Circle found gone while a post was in flight. It blocks the draft only if
+  /// that post fails; one that went through shows the Circle still takes posts, and blocking
+  /// then would keep the composer open on the post just published.
+  private(set) var circleGoneDuringSubmission: UnresolvedCircleAudience?
 
   /// True while a post submission is in flight; guards against duplicate submits.
   var isSubmissionActive: Bool { activeSubmission != nil }
+
+  /// A Circle destination waits while Circles are unavailable instead of posting publicly.
+  var canPostToDestination: Bool { destination == .public || appState.circlesEnabled }
+
+  /// Threads post only to a Public audience the author chose. A restored audience still
+  /// waiting for a choice keeps the single-post composer, where its picker is shown.
+  var allowsThreads: Bool { destination == .public && unresolvedCircleAudience == nil }
 
   var canChangeDestination: Bool {
     guard activeSubmission == nil else { return false }
@@ -290,6 +327,11 @@ final class PostComposerViewModel {
   func selectDestination(_ newDestination: CircleDestination) {
     guard canChangeDestination else { return }
     self.destination = newDestination
+    self.unresolvedCircleAudience = nil
+    // The author's choice ends the check of a restored Circle.
+    self.circleConfirmationTask?.cancel()
+    self.circleConfirmationTask = nil
+    self.unconfirmedCircleDestination = nil
     if case .circle = newDestination {
       // Quotes are unsupported in Circles
       self.quotedPost = nil
@@ -316,9 +358,17 @@ final class PostComposerViewModel {
     return submission
   }
   
-  func endSubmission() {
+  /// Ends the post in flight. `published` is true only once the post was written.
+  func endSubmission(published: Bool = false) {
     self.activeSubmission = nil
     submissionRecoveryDraft = nil
+    guard let gone = circleGoneDuringSubmission else { return }
+    circleGoneDuringSubmission = nil
+    // A failed attempt is not retried against a Circle that is gone.
+    guard !published, unresolvedCircleAudience == nil,
+          case .circle(let circle) = destination,
+          circle.uri.uriString() == gone.saved.spaceURI else { return }
+    unresolvedCircleAudience = gone
   }
   
   // MARK: - Initialization
@@ -629,6 +679,8 @@ final class PostComposerViewModel {
     let urlCards: [String: URLCardResponse]
     let selectedEmbedURL: String?
     let urlsKeptForEmbed: Set<String>
+    let destination: CircleDestination
+    let unresolvedCircleAudience: UnresolvedCircleAudience?
   }
 
   func editingContent() -> EditingContent {
@@ -644,7 +696,8 @@ final class PostComposerViewModel {
       quotedURI: quotedPost?.uri.uriString(), interactionSettings: interactionSettings,
       pendingAudioURL: pendingAudioURL, pendingAudioThreadEntryID: pendingAudioThreadEntryID,
       detectedURLs: detectedURLs, urlCards: urlCards,
-      selectedEmbedURL: selectedEmbedURL, urlsKeptForEmbed: urlsKeptForEmbed
+      selectedEmbedURL: selectedEmbedURL, urlsKeptForEmbed: urlsKeptForEmbed,
+      destination: destination, unresolvedCircleAudience: unresolvedCircleAudience
     )
   }
 
@@ -832,8 +885,34 @@ final class PostComposerViewModel {
       draftThreadgateAllow: rules.threadgate,
       hasDraftInteractionSettings: true,
       pendingAudioURLString: pendingAudioURL?.absoluteString,
-      pendingAudioThreadEntryID: pendingAudioThreadEntryID
+      pendingAudioThreadEntryID: pendingAudioThreadEntryID,
+      circleDestination: savedCircleDestination()
     )
+  }
+
+  /// The audience saved with the draft. One the author has not picked again is saved
+  /// back unchanged, so the draft stays blocked until they do.
+  private func savedCircleDestination() -> CircleDraftDestination? {
+    if var saved = unresolvedCircleAudience?.saved {
+      if !isReply { saved.reply = nil }
+      return saved
+    }
+    guard case .circle(let circle) = destination else { return nil }
+    return CircleDraftDestination(
+      circle: circle, accountDID: appState.userDID,
+      reply: circleReplyRef().map(CircleDraftDestination.Reply.init)
+    )
+  }
+
+  /// The thread a Circle reply posts into. A restored draft keeps the references it was
+  /// saved with; loading its parent only fills in the preview.
+  func circleReplyRef() -> AppBskyFeedPost.ReplyRef? {
+    guard let parentURI = parentPost?.uri.uriString() ?? pendingParentPostURI else { return nil }
+    if let restoredCircleReply, restoredCircleReply.parentURI == parentURI,
+       let ref = restoredCircleReply.ref {
+      return ref
+    }
+    return parentPost.map { PostManager.createReplyRef(for: $0) }
   }
   
   /// Records a draft file written off the main actor for an attachment's bytes. `claim` is the
@@ -927,6 +1006,13 @@ final class PostComposerViewModel {
     replyTo = nil
     quotedPost = nil
     pendingParentPostURI = nil
+    replyParentSource = .network
+    restoredCircleReply = nil
+    if unresolvedCircleAudience != nil {
+      // The restored draft is gone; a new post starts with an audience the author can see and change.
+      unresolvedCircleAudience = nil
+      isReplyLockedToCircle = false
+    }
     restoredInteractionSnapshot = nil
     
     postText = ""
@@ -987,6 +1073,7 @@ final class PostComposerViewModel {
     replyTo = nil
     quotedPost = nil
     pendingParentPostURI = draft.parentPostURI
+    restoreCircleDestination(from: draft)
     if threadEntries[0].draftQuotedPostURI == nil {
       threadEntries[0].draftQuotedPostURI = draft.quotedPostURI
       threadEntries[0].draftQuotedPostCID = draft.quotedPostCID
@@ -1010,8 +1097,7 @@ final class PostComposerViewModel {
 
     // Retain strong refs before fetching display metadata, so autosave is lossless.
     if let parentURI = draft.parentPostURI {
-      parentRestorationTask = restorePostFromURI(parentURI, entryID: nil)
-      parentRestoreFailed = parentRestorationTask == nil
+      startParentRestoration(parentURI)
     }
     for entry in threadEntries {
       if let quotedURI = entry.draftQuotedPostURI {
@@ -1039,10 +1125,225 @@ final class PostComposerViewModel {
     parentRestoreFailed = false
     parentRestorationTask?.cancel()
     parentRestorationTask = nil
+    circleConfirmationTask?.cancel()
+    circleConfirmationTask = nil
+    unconfirmedCircleDestination = nil
+    circleGoneDuringSubmission = nil
+    endCircleCapabilityWait()
+    // Only this draft's wait ends; the probe it started still answers for the account.
+    circleCapabilityRetryTask?.cancel()
+    circleCapabilityRetryTask = nil
+    parentRestoreAwaitsCircles = false
     quoteRestorationTasks.values.forEach { $0.cancel() }
     quoteRestorationTasks.removeAll()
     interactionDefaultsTask?.cancel()
     interactionDefaultsTask = nil
+  }
+
+  /// Rebuilds the audience a draft was saved for; a draft without one is Public. A Circle
+  /// of another account, or one that no longer parses, is never replaced with Public:
+  /// posting stays blocked until the author picks an audience.
+  private func restoreCircleDestination(from draft: PostComposerDraft) {
+    unresolvedCircleAudience = nil
+    restoredCircleReply = nil
+    replyParentSource = .network
+    guard let saved = draft.circleDestination else {
+      destination = .public
+      isReplyLockedToCircle = false
+      return
+    }
+    replyParentSource = .unreadable
+    guard saved.accountDID == appState.userDID, let circle = saved.circle else {
+      destination = .public
+      // A reply into a Circle never becomes a public reply: its audience can be chosen
+      // only after it is turned into a new post.
+      isReplyLockedToCircle = draft.parentPostURI != nil
+      unresolvedCircleAudience = UnresolvedCircleAudience(
+        saved: saved,
+        issue: saved.accountDID == appState.userDID ? .circleUnavailable(name: saved.name) : .otherAccount
+      )
+      return
+    }
+    destination = .circle(circle)
+    isReplyLockedToCircle = draft.parentPostURI != nil
+    replyParentSource = .circle(circle)
+    if let reply = saved.reply, reply.parentURI == draft.parentPostURI {
+      restoredCircleReply = reply
+    }
+    unconfirmedCircleDestination = saved
+    confirmRestoredCircle()
+  }
+
+  /// Circles are not known yet for this account. Capability is checked at every launch
+  /// and account switch, and a check that ends inconclusively leaves it unknown.
+  private var circleCapabilityPending: Bool {
+    CatbirdFeatures.circlesSpaces && appState.circleCapability == .unknown
+  }
+
+  /// Runs the restored Circle draft's checks that waited for Circles: the Circle is
+  /// confirmed once they are available, and a reply's parent is read, or shown as
+  /// unavailable, once their availability is known or a probe ends without an answer.
+  func circleAvailabilityChanged() {
+    confirmRestoredCircle()
+    guard case .circle = replyParentSource, let uriString = pendingParentPostURI,
+          parentPost == nil, parentRestorationTask == nil else { return }
+    if parentRestoreFailed {
+      // A reply shown unavailable only because Circles were unknown is read once they are known.
+      guard parentRestoreAwaitsCircles, !circleCapabilityPending else { return }
+    }
+    startParentRestoration(uriString)
+  }
+
+  /// Checks that a restored Circle is still one of this account's Circles. One that is
+  /// gone keeps the draft private and blocks posting until the author picks an audience.
+  /// Nothing is read while Circles are unavailable; the check runs once they are.
+  private func confirmRestoredCircle() {
+    guard appState.circlesEnabled, circleConfirmationTask == nil,
+          let saved = unconfirmedCircleDestination,
+          case .circle(let circle) = destination,
+          unresolvedCircleAudience == nil else { return }
+    let service = circleService ?? appState.circleService
+    let generation = draftRestorationGeneration
+    let accountDID = appState.userDID
+    circleConfirmationTask = Task { [weak self] in
+      let listed: CircleSummary?
+      do {
+        listed = try await service.listedCircle(circle.uri)
+      } catch {
+        // A failed listing proves nothing; posting still goes only to this Circle. The
+        // check runs again the next time Circles become available.
+        guard !Task.isCancelled, let self, self.draftRestorationGeneration == generation else { return }
+        self.circleConfirmationTask = nil
+        return
+      }
+      guard !Task.isCancelled, let self,
+            self.draftRestorationGeneration == generation,
+            self.appState.userDID == accountDID,
+            self.unresolvedCircleAudience == nil,
+            self.destination == .circle(circle) else { return }
+      self.circleConfirmationTask = nil
+      self.unconfirmedCircleDestination = nil
+      if let listed {
+        // A post in flight keeps the destination it started with.
+        if self.activeSubmission == nil { self.destination = .circle(listed) }
+      } else {
+        let gone = UnresolvedCircleAudience(saved: saved, issue: .circleUnavailable(name: circle.name))
+        // A post in flight decides whether it applies; see endSubmission(published:).
+        if self.activeSubmission == nil {
+          self.unresolvedCircleAudience = gone
+        } else {
+          self.circleGoneDuringSubmission = gone
+        }
+      }
+    }
+  }
+
+  private func startParentRestoration(_ uriString: String) {
+    parentRestorationTask?.cancel()
+    parentRestorationTask = nil
+    parentRestoreAwaitsCircles = false
+    switch replyParentSource {
+    case .network:
+      parentRestorationTask = restorePostFromURI(uriString, entryID: nil)
+    case .circle(let circle):
+      guard !circleCapabilityPending else {
+        waitForCircleCapability()
+        return
+      }
+      endCircleCapabilityWait()
+      parentRestorationTask = restoreCircleParent(uriString, circle: circle)
+    case .unreadable:
+      break
+    }
+    parentRestoreFailed = parentRestorationTask == nil
+  }
+
+  /// A Circle reply's parent is read only once Circles are known. It shows as loading while
+  /// a probe can still answer, and as unavailable, with Try Again, once a probe finished
+  /// without an answer or the wait ran out.
+  private func waitForCircleCapability() {
+    if appState.circleCapabilityProbeState == .finished, circleCapabilityRetryTask == nil {
+      showParentAwaitingCircles()
+      return
+    }
+    parentRestoreFailed = false
+    startCircleCapabilityWait()
+  }
+
+  private func startCircleCapabilityWait() {
+    guard circleCapabilityWaitTask == nil else { return }
+    let generation = draftRestorationGeneration
+    let limit = circleCapabilityWaitLimit
+    circleCapabilityWaitTask = Task { [weak self] in
+      try? await Task.sleep(for: limit)
+      guard !Task.isCancelled, let self, self.draftRestorationGeneration == generation else { return }
+      self.circleCapabilityWaitTask = nil
+      guard self.circleCapabilityPending, case .circle = self.replyParentSource,
+            self.pendingParentPostURI != nil, self.parentPost == nil,
+            self.parentRestorationTask == nil, !self.parentRestoreFailed else { return }
+      self.showParentAwaitingCircles()
+    }
+  }
+
+  private func endCircleCapabilityWait() {
+    circleCapabilityWaitTask?.cancel()
+    circleCapabilityWaitTask = nil
+  }
+
+  private func showParentAwaitingCircles() {
+    endCircleCapabilityWait()
+    parentRestoreFailed = true
+    parentRestoreAwaitsCircles = true
+  }
+
+  /// Probes Circles again for a reply that waited for them, showing it as loading meanwhile.
+  /// Its parent is read once they are known to be available.
+  private func recheckCircleCapability() {
+    guard circleCapabilityRetryTask == nil else { return }
+    parentRestoreFailed = false
+    parentRestoreAwaitsCircles = false
+    startCircleCapabilityWait()
+    let generation = draftRestorationGeneration
+    let appState = appState
+    circleCapabilityRetryTask = Task { [weak self] in
+      // The probe runs on its own task, so leaving this draft never discards its answer.
+      await Task { await appState.probeCircleCapabilities() }.value
+      guard !Task.isCancelled, let self, self.draftRestorationGeneration == generation else { return }
+      self.circleCapabilityRetryTask = nil
+      self.circleAvailabilityChanged()
+    }
+  }
+
+  /// Loads a restored Circle reply's parent through the Circle's own thread read.
+  private func restoreCircleParent(_ uriString: String, circle: CircleSummary) -> Task<Void, Never>? {
+    guard appState.circlesEnabled, let uri = try? ATProtocolURI(uriString: uriString) else { return nil }
+    let service = circleService ?? appState.circleService
+    let generation = draftRestorationGeneration
+    let accountDID = appState.userDID
+    let activeAccountDID = AppStateManager.shared.lifecycle.userDID
+    guard activeAccountDID == nil || activeAccountDID == accountDID else { return nil }
+    return Task { [weak self] in
+      do {
+        let page = try await service.getPostThread(uri: uri, space: circle.uri)
+        guard !Task.isCancelled, let self,
+              self.draftRestorationGeneration == generation,
+              self.appState.userDID == accountDID,
+              AppStateManager.shared.lifecycle.userDID == activeAccountDID,
+              self.pendingParentPostURI == uriString else { return }
+        let post = page.thread.post
+        guard post.uri.uriString() == uriString else {
+          self.markParentRestoreFailed(uriString, entryID: nil)
+          return
+        }
+        self.parentRestorationTask = nil
+        self.parentPost = post
+        self.replyTo = post
+      } catch {
+        guard !Task.isCancelled, let self, self.draftRestorationGeneration == generation else { return }
+        self.logger.error("Failed to restore Circle reply parent: \(error.localizedDescription)")
+        self.markParentRestoreFailed(uriString, entryID: nil)
+      }
+    }
   }
 
   private func loadDefaultInteractionSettings() {
@@ -1128,22 +1429,47 @@ final class PostComposerViewModel {
     parentRestoreFailed = true
   }
 
-  /// Tries again to load the original post of a restored reply draft.
+  /// Tries again to load the original post of a restored reply draft. A Circle reply that
+  /// waited for Circles probes them again first.
   func retryParentRestore() {
     guard let uriString = pendingParentPostURI, parentPost == nil else { return }
-    parentRestorationTask?.cancel()
-    parentRestoreFailed = false
-    parentRestorationTask = restorePostFromURI(uriString, entryID: nil)
-    parentRestoreFailed = parentRestorationTask == nil
+    if case .circle = replyParentSource, circleCapabilityPending {
+      recheckCircleCapability()
+      return
+    }
+    startParentRestoration(uriString)
   }
 
-  /// Turns a reply draft whose original post is unavailable into a new top-level post.
+  /// A Circle reply whose audience must be chosen again can continue only as a new post:
+  /// a reply into a Circle never becomes a public reply. One whose parent is unavailable
+  /// offers this alongside Try Again instead.
+  var offersNewPostForUnresolvedCircleReply: Bool {
+    isReply && unresolvedCircleAudience != nil && !parentRestoreFailed && activeSubmission == nil
+  }
+
+  /// Turns a reply draft into a new top-level post: one whose original post is unavailable,
+  /// or a Circle reply whose audience must be chosen again. The parent and every saved
+  /// thread reference are dropped, so a Public audience chosen next posts no Circle reply.
   func detachUnavailableParent() {
-    guard parentPost == nil, pendingParentPostURI != nil else { return }
+    guard activeSubmission == nil, isReply,
+          parentPost == nil || unresolvedCircleAudience != nil else { return }
     parentRestorationTask?.cancel()
     parentRestorationTask = nil
+    parentPost = nil
+    replyTo = nil
     pendingParentPostURI = nil
     parentRestoreFailed = false
+    parentRestoreAwaitsCircles = false
+    endCircleCapabilityWait()
+    replyParentSource = .network
+    restoredCircleReply = nil
+    if let unresolved = unresolvedCircleAudience {
+      var saved = unresolved.saved
+      saved.reply = nil
+      unresolvedCircleAudience = UnresolvedCircleAudience(saved: saved, issue: unresolved.issue)
+    }
+    // No longer a reply, so its audience can be chosen again. A Circle stays selected.
+    isReplyLockedToCircle = false
     saveDraftIfNeeded()
   }
 
@@ -1153,6 +1479,9 @@ final class PostComposerViewModel {
       _ = editingSession?.releaseEditor(editingPresentationID, claim: editingClaim)
     }
     parentRestorationTask?.cancel()
+    circleConfirmationTask?.cancel()
+    circleCapabilityWaitTask?.cancel()
+    circleCapabilityRetryTask?.cancel()
     quoteRestorationTasks.values.forEach { $0.cancel() }
     interactionDefaultsTask?.cancel()
     parentRestorationTask = nil
@@ -1177,6 +1506,7 @@ final class PostComposerViewModel {
   }
 
   var draftReferenceLoadingReason: PostComposerSubmitValidationState.Reason? {
+    if let unresolvedCircleAudience { return .circleAudienceUnresolved(unresolvedCircleAudience.issue) }
     if pendingAudioURL != nil { return .pendingAudio }
     if pendingParentPostURI != nil && parentPost == nil { return parentRestoreFailed ? .replyUnavailable : .replyLoading }
     let entries = isThreadMode ? threadEntries : Array(threadEntries.prefix(1))

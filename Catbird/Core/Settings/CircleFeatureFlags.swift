@@ -7,6 +7,14 @@ enum CircleCapabilityState: Sendable, Equatable {
   case unsupported
 }
 
+/// Where an account's latest capability probe stands. Capability still `.unknown`
+/// after a finished probe means the probe was inconclusive, not that one is coming.
+enum CircleCapabilityProbeState: Sendable, Equatable {
+  case notStarted
+  case running
+  case finished
+}
+
 /// Compatibility accessor for surfaces migrating to the account-owned gate.
 @MainActor
 enum CircleFeatureFlags {

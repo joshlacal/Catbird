@@ -145,6 +145,14 @@ struct PostComposerViewUIKit: View {
             .onAppear {
               pcUIKitLogger.info("PostComposerViewUIKit: View appeared")
             }
+            // A restored Circle draft's checks wait until Circles are known for this account.
+            .task(id: vm.appState.circleCapability) {
+              vm.circleAvailabilityChanged()
+            }
+            // A probe that ends without an answer stops a Circle reply from loading indefinitely.
+            .onChange(of: vm.appState.circleCapabilityProbeState) {
+              vm.circleAvailabilityChanged()
+            }
         }
       } else if let initializationError {
         ContentUnavailableView {
@@ -422,15 +430,19 @@ struct PostComposerViewUIKit: View {
               } else if vm.isReply {
                 ReplySourceUnavailableView(vm: vm)
               }
+              if vm.offersNewPostForUnresolvedCircleReply {
+                UnresolvedCircleReplyPrompt(vm: vm)
+              }
 
               VStack(spacing: 16) {
                 if !vm.isThreadMode {
-                  if appState.circlesEnabled || vm.destination != .public {
+                  if appState.circlesEnabled || vm.destination != .public || vm.unresolvedCircleAudience != nil {
                     CircleAudiencePicker(
                       selectedDestination: Binding(
                         get: { vm.destination },
                         set: { vm.selectDestination($0) }
                       ),
+                      needsChoice: vm.unresolvedCircleAudience != nil,
                       isReplyLocked: vm.isReplyLockedToCircle,
                       isSubmitting: isSubmitting || vm.activeSubmission != nil || vm.mediaItems.contains { $0.isLoading }
                     )
@@ -576,7 +588,7 @@ struct PostComposerViewUIKit: View {
           onTags: { showingOutlineTagsEditor = true },
           onLabels: { showingLabelSelector = true },
           onAddToThread: {
-            guard vm.destination == .public else { return }
+            guard vm.allowsThreads else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
               if vm.isThreadMode {
                 vm.addNewThreadEntry()
@@ -737,7 +749,7 @@ struct PostComposerViewUIKit: View {
         onThreadAction: { 
           guard !hasPendingMediaIntent else { return }
           pcUIKitLogger.info("PostComposerViewUIKit: Thread action triggered - isThreadMode: \(viewModel?.isThreadMode ?? false)")
-          guard let vm = viewModel, vm.destination == .public else { return }
+          guard let vm = viewModel, vm.allowsThreads else { return }
           withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
             // Properly enter thread mode and add a new entry,
             // mirroring the legacy behavior.
@@ -804,7 +816,7 @@ private struct ComposerPostToolbarButton: View {
   let action: () -> Void
 
   private var canSubmitPost: Bool {
-    guard vm.destination == .public || vm.appState.circlesEnabled else { return false }
+    guard vm.canPostToDestination else { return false }
     return vm.submitValidationState.canSubmit && !isSubmitting && !hasPendingMediaIntent
   }
 
@@ -901,7 +913,7 @@ private struct ComposerAccessoryBarLeaf: View {
       isPlusMenuOpen: $isPlusMenuOpen,
       characterCount: vm.postText.count,
       allowTenor: allowTenor,
-      isAddToThreadDisabled: isAddToThreadDisabled || vm.destination != .public,
+      isAddToThreadDisabled: isAddToThreadDisabled || !vm.allowsThreads,
       arePhotosDisabled: !vm.canAddMoreMedia,
       isPublicMediaDisabled: vm.destination != .public,
       showsThreadgate: !vm.isReply,

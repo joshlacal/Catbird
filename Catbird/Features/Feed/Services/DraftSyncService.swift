@@ -31,8 +31,10 @@ enum DraftSyncTranslator {
   /// Replies, GIF-provider state and outline tags have no lossless upstream
   /// representation. Quotes require their strong reference (URI and CID).
   /// Reject oversized content instead of silently truncating an upload.
+  /// Circle drafts are private and never leave this device.
   static func isSyncable(_ draft: PostComposerDraft) -> Bool {
-    guard draft.parentPostURI == nil,
+    guard draft.circleDestination == nil,
+          draft.parentPostURI == nil,
           draft.pendingAudioURLString == nil,
           draft.quotedPostURI == nil || (draft.quotedPostCID.flatMap { try? CID.parse($0) } != nil),
           draft.selectedGif == nil,
@@ -823,6 +825,8 @@ final class DraftSyncService {
   private func create(_ local: DraftPost, state initial: DraftSyncState, transport: any DraftSyncTransport, account: String, knownRemoteIDs: Set<String>) async throws {
     var draft = try local.decodeDraft()
     var state = initial
+    // A Circle draft stays on this device by design, so it is skipped without a sync issue.
+    guard draft.circleDestination == nil else { return }
     guard DraftSyncTranslator.isSyncable(draft) else {
       state.issue = "Kept on this device: this draft uses content Bluesky’s draft format cannot represent."
       try persistence.saveSyncState(state, for: local)
@@ -891,6 +895,8 @@ final class DraftSyncService {
       }
       return
     }
+    // A synced draft moved into a Circle keeps its edits here; the remote copy is not updated.
+    guard draft.circleDestination == nil else { return }
     guard DraftSyncTranslator.isSyncable(draft), let baseline = state.baselineLocal else {
       state.issue = "Changes are saved on this device. This draft contains content that cannot be synced safely."
       try persistence.saveSyncState(state, for: local)
