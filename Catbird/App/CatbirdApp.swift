@@ -4947,8 +4947,21 @@ extension CatbirdApp.AppDelegate {
       appState.notificationManager.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
       return
     }
-    
-    // 3. Fallback: Show standard notifications normally
+
+    // 3. Nothing for a push the extension hid, for a recipient whose session ended, or while
+    // every account is signed out. A stored account that is still signed in keeps its pushes.
+    let stateManager = AppStateManager.shared
+    if NotificationManager.isSuppressedForSignedOutAccount(
+      userInfo: userInfo,
+      recipientDID: SignedOutPushSuppression.namedRecipientDID(in: userInfo),
+      presence: stateManager.pushPresence,
+      sessionEndedAccountDIDs: stateManager.sessionEndedPushAccountDIDs
+    ) {
+      completionHandler([])
+      return
+    }
+
+    // 4. Fallback: Show standard notifications normally
     completionHandler([.banner, .sound, .badge])
   }
 }

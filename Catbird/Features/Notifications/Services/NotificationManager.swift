@@ -2218,6 +2218,39 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     notificationLogger.info("Received notification while app in foreground")
 
     let userInfo = notification.request.content.userInfo
+    Task { @MainActor in
+      // A push for an account that is not signed in shows nothing, whatever its kind:
+      // encrypted chat is neither decrypted nor shown, and Circles activity is not handled.
+      let presence = AppStateManager.shared.pushPresence
+      if Self.isSuppressedForSignedOutAccount(
+        userInfo: userInfo,
+        recipientDID: self.foregroundRecipientDID(from: userInfo),
+        presence: presence,
+        sessionEndedAccountDIDs: SignedOutPushSuppression.sessionEndedAccountDIDs(in: self.notificationDefaults)
+      ) {
+        self.notificationLogger.info("Suppressing foreground push for an account that is not signed in")
+        completionHandler([])
+        return
+      }
+      self.presentInForeground(notification, userInfo: userInfo, presence: presence, completionHandler: completionHandler)
+    }
+  }
+
+  /// The recipient of a foreground push, from the fields the extension and Nest set.
+  @MainActor
+  private func foregroundRecipientDID(from userInfo: [AnyHashable: Any]) -> String? {
+    (userInfo["recipientDid"] as? String) ?? resolveRecipientDID(from: userInfo)
+  }
+
+  /// Presents a foreground push for a signed-in account: Circles activity, encrypted chat
+  /// (decrypted here) and standard Bluesky pushes.
+  @MainActor
+  private func presentInForeground(
+    _ notification: UNNotification,
+    userInfo: [AnyHashable: Any],
+    presence: SignedOutPushSuppression.Presence,
+    completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
     // Handle generic circle_activity push notifications
     if let kind = userInfo["kind"] as? String, kind == "circle_activity" {
       notificationLogger.info("Received generic circle_activity push notification")
@@ -2300,18 +2333,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // Suppress banners for the chat conversation currently on screen —
     // the user is already reading it; the thread updates live via polling.
-    if let type = userInfo["type"] as? String, type == "chat" || type == "chat_message",
-      let convoId = Self.chatConversationID(fromUserInfo: userInfo) {
-      let activeConvoId = appState?.chatManager.activeConversationId
-      if convoId == activeConvoId {
-        notificationLogger.info("Suppressing foreground chat banner for open conversation")
-        completionHandler([])
-        return
-      }
+    let options = Self.foregroundPresentationOptions(
+      userInfo: userInfo,
+      recipientDID: foregroundRecipientDID(from: userInfo),
+      presence: presence,
+      sessionEndedAccountDIDs: SignedOutPushSuppression.sessionEndedAccountDIDs(in: notificationDefaults),
+      openConversationID: appState?.chatManager.activeConversationId
+    )
+    if options.isEmpty {
+      notificationLogger.info("Suppressing foreground chat banner for open conversation")
     }
-
-    // Show notification banner even when app is in foreground
-    completionHandler([.banner, .sound])
+    completionHandler(options)
   }
 
   /// Decrypt MLS message and present notification with decrypted content
@@ -4200,6 +4232,54 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return nil
     }
     return (userInfo["convoId"] as? String) ?? (userInfo["conversationID"] as? String)
+  }
+
+  /// Whether a foreground push must show nothing because its account is not signed in: the
+  /// extension marked it, every account is signed out, or its recipient's session ended and it
+  /// is not the active account. Applies to every push kind, encrypted chat included.
+  nonisolated static func isSuppressedForSignedOutAccount(
+    userInfo: [AnyHashable: Any],
+    recipientDID: String?,
+    presence: SignedOutPushSuppression.Presence,
+    sessionEndedAccountDIDs: [String]
+  ) -> Bool {
+    if (userInfo["suppressedForSignedOutAccount"] as? Bool) == true {
+      return true
+    }
+    return SignedOutPushSuppression.suppresses(
+      recipientDID: recipientDID,
+      presence: presence,
+      sessionEndedAccountDIDs: sessionEndedAccountDIDs
+    )
+  }
+
+  /// Foreground presentation for a standard push: nothing for an account that is not signed in
+  /// or for the chat conversation already on screen, otherwise a banner with sound.
+  nonisolated static func foregroundPresentationOptions(
+    userInfo: [AnyHashable: Any],
+    recipientDID: String?,
+    presence: SignedOutPushSuppression.Presence,
+    sessionEndedAccountDIDs: [String],
+    openConversationID: String?
+  ) -> UNNotificationPresentationOptions {
+    if isSuppressedForSignedOutAccount(
+      userInfo: userInfo,
+      recipientDID: recipientDID,
+      presence: presence,
+      sessionEndedAccountDIDs: sessionEndedAccountDIDs
+    ) {
+      return []
+    }
+
+    if let type = userInfo["type"] as? String,
+       type == "chat" || type == "chat_message",
+       let convoId = chatConversationID(fromUserInfo: userInfo),
+       let openConversationID,
+       convoId == openConversationID {
+      return []
+    }
+
+    return [.banner, .sound]
   }
 
   /// Where a tap on a social push should go. Follows open the follower's profile; likes and

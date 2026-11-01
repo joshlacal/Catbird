@@ -580,6 +580,16 @@ final class AuthenticationManager: AuthProgressDelegate {
     return !getStoredHandles().isEmpty
   }
 
+  /// Every account stored on this device, signed in or not: the listed accounts, plus stored
+  /// handles the list has not picked up yet (it stays empty until its first refresh).
+  var registeredAccountDIDs: [String] {
+    var dids = availableAccounts.map(\.did)
+    for did in getStoredHandles().keys.sorted() where !dids.contains(did) {
+      dids.append(did)
+    }
+    return dids
+  }
+
   // Biometric authentication
   private(set) var biometricAuthEnabled = false
   private(set) var biometricType: LABiometryType = .none

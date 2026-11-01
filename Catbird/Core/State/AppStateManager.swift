@@ -114,7 +114,42 @@ final class AppStateManager {
       Self.activeUserDIDBox.withLock { $0 = newDID }
       MLSCoordinationStore.shared.setActiveUserDID(newDID)
       MLSNotificationCoordinator.updateActiveUserDID(newDID)
+      publishPushPresence()
     }
+  }
+
+  @ObservationIgnored
+  private var pushPresenceDefaults: UserDefaults? = UserDefaults(suiteName: SignedOutPushSuppression.appGroupSuiteName)
+
+  #if DEBUG
+  @ObservationIgnored private var registeredAccountDIDsForTesting: [String]?
+  #endif
+
+  /// Who may receive pushes on this device, as the notification service extension also sees it.
+  var pushPresence: SignedOutPushSuppression.Presence {
+    SignedOutPushSuppression.presence(
+      for: lifecycle,
+      registeredAccountDIDs: registeredAccountDIDsForPush,
+      sessionEndedAccountDIDs: sessionEndedPushAccountDIDs
+    )
+  }
+
+  /// Accounts whose session ended on this device; their pushes stay hidden until they sign in.
+  var sessionEndedPushAccountDIDs: [String] {
+    SignedOutPushSuppression.sessionEndedAccountDIDs(in: pushPresenceDefaults)
+  }
+
+  private var registeredAccountDIDsForPush: [String] {
+    #if DEBUG
+    if let registeredAccountDIDsForTesting { return registeredAccountDIDsForTesting }
+    #endif
+    return authManager.registeredAccountDIDs
+  }
+
+  /// Publishes push presence for the extension. It depends on the lifecycle, the stored accounts
+  /// and the ended sessions, so it runs on every lifecycle change and after a logout or removal.
+  private func publishPushPresence() {
+    SignedOutPushSuppression.publish(pushPresence, in: pushPresenceDefaults)
   }
 
   #if DEBUG
@@ -124,6 +159,18 @@ final class AppStateManager {
   #if DEBUG
   nonisolated(unsafe) static var databaseDrainOverride: (@Sendable (String, TimeInterval) async -> Bool)?
   #endif
+
+  func setPushPresenceDefaultsForTesting(_ defaults: UserDefaults?) {
+    self.pushPresenceDefaults = defaults
+  }
+
+  func setRegisteredAccountDIDsForTesting(_ dids: [String]?) {
+    self.registeredAccountDIDsForTesting = dids
+  }
+
+  func writeAccountsToAppGroupForTesting(in defaults: UserDefaults?) {
+    writeAccountsToAppGroup(in: defaults)
+  }
   #endif
 
   /// Observes auth state changes and keeps lifecycle in sync (e.g. session expiry → login/reauth)
@@ -517,6 +564,7 @@ final class AppStateManager {
           self.logger.info("🔔 Auth became unauthenticated - transitioning")
           if let endedDID = self.lifecycle.userDID {
             self.sessionEndedAccountDID = endedDID
+            SignedOutPushSuppression.recordSessionEndedAccount(endedDID, in: self.pushPresenceDefaults)
           }
           self.composerSwitchQueue.invalidate()
           if #available(iOS 17.0, macOS 14.0, *) {
@@ -864,6 +912,7 @@ final class AppStateManager {
     let loggingOutState = lifecycle.appState ?? interruptedSwitchSource
     let loggingOutDID = loggingOutState?.userDID
     if let loggingOutDID {
+      SignedOutPushSuppression.recordSessionEndedAccount(loggingOutDID, in: pushPresenceDefaults)
       NotificationCenter.default.post(
         name: .circleAccountInvalidated,
         object: nil,
@@ -911,6 +960,7 @@ final class AppStateManager {
 
     // Update widget account list after logout
     writeAccountsToAppGroup()
+    publishPushPresence()
     // Stop showing the signed-out account's posts in widgets and Spotlight
     if let loggingOutDID {
       LabelerDefinitionsDiskCache.remove(accountDID: loggingOutDID)
@@ -924,10 +974,11 @@ final class AppStateManager {
   /// What logout() does for the outgoing account that needs no session, for an account whose
   /// session ended on its own and that another account is now replacing: stop its services,
   /// drop it from the cache, and clear its widget data, labeler definitions and the Spotlight
-  /// index and App Intents stores, which would otherwise show it under the next account. Its
-  /// push registration cannot be removed without its session and stays on the server.
+  /// index and App Intents stores, which would otherwise show it under the next account. Nest stops
+  /// delivery when it rejects the session, and SignedOutPushSuppression hides its pushes until then.
   private func retireSessionEndedAccount(_ did: String) async {
     logger.info("Retiring an account whose session ended, before another account signs in")
+    SignedOutPushSuppression.recordSessionEndedAccount(did, in: pushPresenceDefaults)
     if let endedState = authenticatedStates.removeValue(forKey: did) {
       await endedState.prepareMLSStorageReset()
       endedState.cleanup()
@@ -1553,8 +1604,11 @@ final class AppStateManager {
       object: self,
       userInfo: ["did": userDID]
     )
+    SignedOutPushSuppression.recordSessionEndedAccount(userDID, in: pushPresenceDefaults)
+
     // Update widget account list after removal
     writeAccountsToAppGroup()
+    publishPushPresence()
     // Stop showing the removed account's posts in widgets and Spotlight
     FeedWidgetDataProvider.shared.clearWidgetData(for: userDID)
     await SpotlightEntityDonator.shared.removeAll()
@@ -1728,8 +1782,9 @@ final class AppStateManager {
   // MARK: - Widget Data
 
   /// Write current account list to App Group for widget extension
-  private func writeAccountsToAppGroup() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+  private func writeAccountsToAppGroup(
+    in defaults: UserDefaults? = UserDefaults(suiteName: "group.blue.catbird.shared")
+  ) {
 
     struct WidgetAccountDTO: Codable {
       let did: String
@@ -1756,6 +1811,7 @@ final class AppStateManager {
     // right account on notification tap (covers accounts without an MLS DB).
     defaults?.set(accounts.map { $0.did }, forKey: "knownAccountDIDs")
 
+    // The widgets and App Intents read this as "an account is signed in".
     if let activeDID = lifecycle.userDID {
       defaults?.set(activeDID, forKey: "activeAccountDID")
     } else {
