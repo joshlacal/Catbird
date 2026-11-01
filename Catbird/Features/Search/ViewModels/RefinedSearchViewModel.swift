@@ -198,6 +198,8 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     guard !hasLoadedDiscoveryContent else { return }
     hasLoadedDiscoveryContent = true
     Task {
+      let signpost = PerformanceSignposts.beginInterval("SearchOpen")
+      defer { PerformanceSignposts.endInterval("SearchOpen", signpost) }
       let hasFreshTrends = appState.trendingTopicMediaStore.cachedTrends(for: viewerDID)?.isFresh == true
       async let trendsTask: Void = fetchTrendingTopics(client: client, displayScale: displayScale, force: !hasFreshTrends)
       async let suggestedTask: Void = fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
@@ -209,9 +211,9 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   }
 
   public func refreshDiscoveryContent(client: ATProtoClient, displayScale: CGFloat) async {
-    let signpost = PerformanceSignposts.beginInterval("SearchOpen")
+    let signpost = PerformanceSignposts.beginInterval("SearchRefresh")
     defer {
-      PerformanceSignposts.endInterval("SearchOpen", signpost)
+      PerformanceSignposts.endInterval("SearchRefresh", signpost)
     }
     hasLoadedDiscoveryContent = true
     async let trendsTask: Void = fetchTrendingTopics(client: client, displayScale: displayScale, force: true)
