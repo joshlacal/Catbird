@@ -222,6 +222,77 @@ struct CircleDraftDestinationTests {
     #expect(await listings.count == 1)
   }
 
+  @Test("A Circle reply loads while Circles are probed, offers Try Again once a probe ends without an answer, and Try Again probes again")
+  func inconclusiveProbeOffersRetry() async throws {
+    let appState = await makeAppState()
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    let probing = RecordingCircleTransport(error: CircleError.upstreamUnavailable)
+    await probing.suspendCapabilities()
+    appState.circleService = CircleService(transport: probing)
+    let transport = MockCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    model.circleCapabilityWaitLimit = .seconds(60)
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+
+    let probe = Task { await appState.probeCircleCapabilities() }
+    await probing.waitForCapabilities()
+    #expect(appState.circleCapabilityProbeState == .running)
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    model.circleAvailabilityChanged()
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+
+    // The probe ends without an answer; the composer view reports the change.
+    await probing.resumeCapabilities()
+    await probe.value
+    #expect(appState.circleCapability == .unknown)
+    #expect(appState.circleCapabilityProbeState == .finished)
+    model.circleAvailabilityChanged()
+    #expect(model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyUnavailable)
+    #expect(model.isReplyLockedToCircle)
+    #expect(await transport.threadCallCount == 0)
+
+    // Try Again probes again and reads the parent through the Circle once Circles answer.
+    appState.circleService = CircleService(transport: RecordingCircleTransport())
+    model.retryParentRestore()
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+    try await waitUntil { model.parentPost != nil }
+    #expect(appState.circleCapability == .supported)
+    #expect(model.parentPost?.uri.uriString() == parentURI)
+    #expect(!model.parentRestoreFailed)
+    #expect(await transport.threadCallCount == 1)
+    #expect(await probing.publicEndpointCallCount == 0)
+  }
+
+  @Test("A Circle reply whose Circles never become known shows as unavailable after a bounded wait")
+  func circleReplyWaitIsBounded() async throws {
+    let appState = await makeAppState()
+    let transport = MockCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    model.circleCapabilityWaitLimit = .milliseconds(50)
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    #expect(appState.circleCapabilityProbeState == .notStarted)
+    #expect(!model.parentRestoreFailed)
+    try await waitUntil { model.parentRestoreFailed }
+    #expect(model.submitValidationState.reason == .replyUnavailable)
+    #expect(model.destination == .circle(circle))
+    #expect(await transport.threadCallCount == 0)
+
+    // Circles becoming known later reads the parent without another tap.
+    appState.circleCapability = .supported
+    model.circleAvailabilityChanged()
+    try await waitUntil { model.parentPost != nil }
+    #expect(!model.parentRestoreFailed)
+    #expect(await transport.threadCallCount == 1)
+  }
+
   @Test("A Circle restored before Circles are known is checked once they are available")
   func missingCircleCheckedOnceCirclesAreAvailable() async throws {
     let appState = await makeAppState()

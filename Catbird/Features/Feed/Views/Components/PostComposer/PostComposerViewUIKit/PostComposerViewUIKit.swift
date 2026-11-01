@@ -149,6 +149,10 @@ struct PostComposerViewUIKit: View {
             .task(id: vm.appState.circleCapability) {
               vm.circleAvailabilityChanged()
             }
+            // A probe that ends without an answer stops a Circle reply from loading indefinitely.
+            .onChange(of: vm.appState.circleCapabilityProbeState) {
+              vm.circleAvailabilityChanged()
+            }
         }
       } else if let initializationError {
         ContentUnavailableView {

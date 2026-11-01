@@ -201,6 +201,15 @@ final class PostComposerViewModel {
   /// while Circles are unavailable, as they are for a moment at launch and account switch.
   private var unconfirmedCircleDestination: CircleDraftDestination?
   private var circleConfirmationTask: Task<Void, Never>?
+  /// How long a restored Circle reply shows as loading while Circles are unknown and no
+  /// probe has answered. After that it shows as unavailable, with Try Again.
+  @ObservationIgnored var circleCapabilityWaitLimit: Duration = .seconds(10)
+  private var circleCapabilityWaitTask: Task<Void, Never>?
+  /// The probe started by Try Again on a Circle reply that waited for Circles.
+  private var circleCapabilityRetryTask: Task<Void, Never>?
+  /// True when a Circle reply's parent shows as unavailable only because Circles are not
+  /// known. It is read once they are.
+  private var parentRestoreAwaitsCircles = false
   private var quoteRestorationTasks: [UUID: Task<Void, Never>] = [:]
   private var interactionDefaultsTask: Task<Void, Never>?
   private var interactionSettingsRevision = 0
@@ -1107,6 +1116,11 @@ final class PostComposerViewModel {
     circleConfirmationTask?.cancel()
     circleConfirmationTask = nil
     unconfirmedCircleDestination = nil
+    endCircleCapabilityWait()
+    // Only this draft's wait ends; the probe it started still answers for the account.
+    circleCapabilityRetryTask?.cancel()
+    circleCapabilityRetryTask = nil
+    parentRestoreAwaitsCircles = false
     quoteRestorationTasks.values.forEach { $0.cancel() }
     quoteRestorationTasks.removeAll()
     interactionDefaultsTask?.cancel()
@@ -1155,11 +1169,15 @@ final class PostComposerViewModel {
 
   /// Runs the restored Circle draft's checks that waited for Circles: the Circle is
   /// confirmed once they are available, and a reply's parent is read, or shown as
-  /// unavailable, once their availability is known.
+  /// unavailable, once their availability is known or a probe ends without an answer.
   func circleAvailabilityChanged() {
     confirmRestoredCircle()
     guard case .circle = replyParentSource, let uriString = pendingParentPostURI,
-          parentPost == nil, parentRestorationTask == nil, !parentRestoreFailed else { return }
+          parentPost == nil, parentRestorationTask == nil else { return }
+    if parentRestoreFailed {
+      // A reply shown unavailable only because Circles were unknown is read once they are known.
+      guard parentRestoreAwaitsCircles, !circleCapabilityPending else { return }
+    }
     startParentRestoration(uriString)
   }
 
@@ -1208,20 +1226,77 @@ final class PostComposerViewModel {
   private func startParentRestoration(_ uriString: String) {
     parentRestorationTask?.cancel()
     parentRestorationTask = nil
+    parentRestoreAwaitsCircles = false
     switch replyParentSource {
     case .network:
       parentRestorationTask = restorePostFromURI(uriString, entryID: nil)
     case .circle(let circle):
       guard !circleCapabilityPending else {
-        // Read once Circles are known; until then the reply is loading, not unavailable.
-        parentRestoreFailed = false
+        waitForCircleCapability()
         return
       }
+      endCircleCapabilityWait()
       parentRestorationTask = restoreCircleParent(uriString, circle: circle)
     case .unreadable:
       break
     }
     parentRestoreFailed = parentRestorationTask == nil
+  }
+
+  /// A Circle reply's parent is read only once Circles are known. It shows as loading while
+  /// a probe can still answer, and as unavailable, with Try Again, once a probe finished
+  /// without an answer or the wait ran out.
+  private func waitForCircleCapability() {
+    if appState.circleCapabilityProbeState == .finished, circleCapabilityRetryTask == nil {
+      showParentAwaitingCircles()
+      return
+    }
+    parentRestoreFailed = false
+    startCircleCapabilityWait()
+  }
+
+  private func startCircleCapabilityWait() {
+    guard circleCapabilityWaitTask == nil else { return }
+    let generation = draftRestorationGeneration
+    let limit = circleCapabilityWaitLimit
+    circleCapabilityWaitTask = Task { [weak self] in
+      try? await Task.sleep(for: limit)
+      guard !Task.isCancelled, let self, self.draftRestorationGeneration == generation else { return }
+      self.circleCapabilityWaitTask = nil
+      guard self.circleCapabilityPending, case .circle = self.replyParentSource,
+            self.pendingParentPostURI != nil, self.parentPost == nil,
+            self.parentRestorationTask == nil, !self.parentRestoreFailed else { return }
+      self.showParentAwaitingCircles()
+    }
+  }
+
+  private func endCircleCapabilityWait() {
+    circleCapabilityWaitTask?.cancel()
+    circleCapabilityWaitTask = nil
+  }
+
+  private func showParentAwaitingCircles() {
+    endCircleCapabilityWait()
+    parentRestoreFailed = true
+    parentRestoreAwaitsCircles = true
+  }
+
+  /// Probes Circles again for a reply that waited for them, showing it as loading meanwhile.
+  /// Its parent is read once they are known to be available.
+  private func recheckCircleCapability() {
+    guard circleCapabilityRetryTask == nil else { return }
+    parentRestoreFailed = false
+    parentRestoreAwaitsCircles = false
+    startCircleCapabilityWait()
+    let generation = draftRestorationGeneration
+    let appState = appState
+    circleCapabilityRetryTask = Task { [weak self] in
+      // The probe runs on its own task, so leaving this draft never discards its answer.
+      await Task { await appState.probeCircleCapabilities() }.value
+      guard !Task.isCancelled, let self, self.draftRestorationGeneration == generation else { return }
+      self.circleCapabilityRetryTask = nil
+      self.circleAvailabilityChanged()
+    }
   }
 
   /// Loads a restored Circle reply's parent through the Circle's own thread read.
@@ -1339,9 +1414,14 @@ final class PostComposerViewModel {
     parentRestoreFailed = true
   }
 
-  /// Tries again to load the original post of a restored reply draft.
+  /// Tries again to load the original post of a restored reply draft. A Circle reply that
+  /// waited for Circles probes them again first.
   func retryParentRestore() {
     guard let uriString = pendingParentPostURI, parentPost == nil else { return }
+    if case .circle = replyParentSource, circleCapabilityPending {
+      recheckCircleCapability()
+      return
+    }
     startParentRestoration(uriString)
   }
 
@@ -1352,6 +1432,8 @@ final class PostComposerViewModel {
     parentRestorationTask = nil
     pendingParentPostURI = nil
     parentRestoreFailed = false
+    parentRestoreAwaitsCircles = false
+    endCircleCapabilityWait()
     replyParentSource = .network
     restoredCircleReply = nil
     // No longer a reply, so its audience can be chosen again. A Circle stays selected.
@@ -1366,6 +1448,8 @@ final class PostComposerViewModel {
     }
     parentRestorationTask?.cancel()
     circleConfirmationTask?.cancel()
+    circleCapabilityWaitTask?.cancel()
+    circleCapabilityRetryTask?.cancel()
     quoteRestorationTasks.values.forEach { $0.cancel() }
     interactionDefaultsTask?.cancel()
     parentRestorationTask = nil
