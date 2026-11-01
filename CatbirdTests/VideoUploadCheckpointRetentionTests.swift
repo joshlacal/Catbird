@@ -103,6 +103,35 @@ struct VideoUploadCheckpointRetentionTests {
     #expect(files("video", in: folder.root).isEmpty, "an expired session can take no more parts")
   }
 
+  @Test("A snapshot cloned again for a retry is deleted when the retry fails before taking its lease")
+  func failedRetryRemovesItsClone() async throws {
+    let folder = try Folder()
+    let store = try VideoUploadCheckpointStore(rootURL: folder.root)
+    let prepared = try await store.prepare(sourceURL: folder.source, owner: owner, mimeType: "video/mp4")
+    var complete = try await startSession(prepared, store: store)
+    complete.completedJobID = "canonical"
+    complete.phase = .complete
+    try await store.save(complete)
+    await store.release(owner: owner, runID: complete.runID)
+    #expect(files("video", in: folder.root).isEmpty)
+
+    // The retry clones the snapshot, then cannot record its run: the checkpoint can't be replaced.
+    let checkpointFile = try #require(files("json", in: folder.root).first { $0.lastPathComponent == "checkpoint.json" })
+    try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: checkpointFile.path)
+    defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: checkpointFile.path) }
+    await #expect(throws: (any Error).self) {
+      _ = try await store.prepare(sourceURL: folder.source, owner: owner, mimeType: "video/mp4")
+    }
+    #expect(files("video", in: folder.root).isEmpty, "no lease holds the clone, so prepare removes it")
+
+    try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: checkpointFile.path)
+    let retry = try await store.prepare(sourceURL: folder.source, owner: owner, mimeType: "video/mp4")
+    #expect(retry.operationID == prepared.operationID)
+    #expect(files("video", in: folder.root).map(\.lastPathComponent) == [prepared.snapshotName])
+    await store.release(owner: owner, runID: retry.runID)
+    #expect(files("video", in: folder.root).isEmpty)
+  }
+
   @Test("Neither a stale release nor a pending cleanup removes a snapshot in use")
   func leasesProtectSnapshot() async throws {
     let folder = try Folder()

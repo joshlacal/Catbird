@@ -112,6 +112,7 @@ actor VideoUploadCheckpointStore {
       guard existing.owner == owner else { throw VideoUploadFileError.ownerChanged }
       if existing.sizeBytes == original.count, existing.sha256 == original.digest, existing.mimeType == mimeType {
         let snapshotFile = try snapshotURL(for: existing)
+        var cloned = false
         if fileManager.fileExists(atPath: snapshotFile.path) {
           let snapshot = try Self.fingerprint(snapshotFile)
           guard snapshot.count == existing.sizeBytes, snapshot.digest == existing.sha256
@@ -119,10 +120,17 @@ actor VideoUploadCheckpointStore {
         } else {
           // An earlier run's end deleted the snapshot; the matching source holds the same bytes.
           try cloneSnapshot(of: sourceURL, to: snapshotFile, matching: original)
+          cloned = true
         }
-        try Task.checkCancellation()
-        existing.runID = UUID()
-        try write(existing)
+        do {
+          try Task.checkCancellation()
+          existing.runID = UUID()
+          try write(existing)
+        } catch {
+          // No lease holds a clone made here, so nothing else would delete it.
+          if cloned { try? fileManager.removeItem(at: snapshotFile) }
+          throw error
+        }
         activeLeases[owner] = existing.runID
         // No earlier run still holds this owner: drop its leftover part files.
         Self.removeFiles(in: directory, keepingSnapshot: existing.snapshotName)
