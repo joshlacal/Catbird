@@ -114,15 +114,43 @@ final class AppStateManager {
       Self.activeUserDIDBox.withLock { $0 = newDID }
       MLSCoordinationStore.shared.setActiveUserDID(newDID)
       MLSNotificationCoordinator.updateActiveUserDID(newDID)
-      let newPresence = SignedOutPushSuppression.presence(for: lifecycle)
-      if SignedOutPushSuppression.presence(for: oldValue) != newPresence {
-        SignedOutPushSuppression.publish(newPresence, in: pushPresenceDefaults)
-      }
+      publishPushPresence()
     }
   }
 
   @ObservationIgnored
   private var pushPresenceDefaults: UserDefaults? = UserDefaults(suiteName: SignedOutPushSuppression.appGroupSuiteName)
+
+  #if DEBUG
+  @ObservationIgnored private var registeredAccountDIDsForTesting: [String]?
+  #endif
+
+  /// Who may receive pushes on this device, as the notification service extension also sees it.
+  var pushPresence: SignedOutPushSuppression.Presence {
+    SignedOutPushSuppression.presence(
+      for: lifecycle,
+      registeredAccountDIDs: registeredAccountDIDsForPush,
+      sessionEndedAccountDIDs: sessionEndedPushAccountDIDs
+    )
+  }
+
+  /// Accounts whose session ended on this device; their pushes stay hidden until they sign in.
+  var sessionEndedPushAccountDIDs: [String] {
+    SignedOutPushSuppression.sessionEndedAccountDIDs(in: pushPresenceDefaults)
+  }
+
+  private var registeredAccountDIDsForPush: [String] {
+    #if DEBUG
+    if let registeredAccountDIDsForTesting { return registeredAccountDIDsForTesting }
+    #endif
+    return authManager.registeredAccountDIDs
+  }
+
+  /// Publishes push presence for the extension. It depends on the lifecycle, the stored accounts
+  /// and the ended sessions, so it runs on every lifecycle change and after a logout or removal.
+  private func publishPushPresence() {
+    SignedOutPushSuppression.publish(pushPresence, in: pushPresenceDefaults)
+  }
 
   #if DEBUG
   func setLifecycleForTesting(_ newLifecycle: AppLifecycle) {
@@ -134,6 +162,10 @@ final class AppStateManager {
 
   func setPushPresenceDefaultsForTesting(_ defaults: UserDefaults?) {
     self.pushPresenceDefaults = defaults
+  }
+
+  func setRegisteredAccountDIDsForTesting(_ dids: [String]?) {
+    self.registeredAccountDIDsForTesting = dids
   }
 
   func writeAccountsToAppGroupForTesting(in defaults: UserDefaults?) {
@@ -928,6 +960,7 @@ final class AppStateManager {
 
     // Update widget account list after logout
     writeAccountsToAppGroup()
+    publishPushPresence()
     // Stop showing the signed-out account's posts in widgets and Spotlight
     if let loggingOutDID {
       LabelerDefinitionsDiskCache.remove(accountDID: loggingOutDID)
@@ -1575,6 +1608,7 @@ final class AppStateManager {
 
     // Update widget account list after removal
     writeAccountsToAppGroup()
+    publishPushPresence()
     // Stop showing the removed account's posts in widgets and Spotlight
     FeedWidgetDataProvider.shared.clearWidgetData(for: userDID)
     await SpotlightEntityDonator.shared.removeAll()

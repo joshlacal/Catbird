@@ -130,21 +130,21 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// Whether a push is for an account that is not signed in on this device: every account signed
-  /// out, or a recipient whose session ended while another account is active. A recipient that
-  /// cannot be resolved is never guessed, so it keeps its delivery.
+  /// out, or a recipient whose session ended and that is not the active account, whether or not
+  /// any account is active. A stored account whose session never ended keeps its delivery on the
+  /// sign-in screen too, and a recipient that cannot be resolved is never guessed.
   static func isAddressedToSignedOutAccount(recipientDID: String?, defaults: UserDefaults?) -> Bool {
     guard let defaults else { return false }
     if defaults.bool(forKey: signedOutKey) {
       return true
     }
-    guard let activeAccountDID = defaults.string(forKey: pushActiveAccountDIDKey), !activeAccountDID.isEmpty else {
+    guard let recipientDID, !recipientDID.isEmpty,
+      recipientDID != defaults.string(forKey: pushActiveAccountDIDKey)
+    else {
       return false
     }
     let endedDIDs = defaults.stringArray(forKey: sessionEndedAccountDIDsKey) ?? []
-    guard let recipientDID else {
-      return false
-    }
-    return recipientDID != activeAccountDID && endedDIDs.contains(recipientDID)
+    return endedDIDs.contains(recipientDID)
   }
 
   /// Replaces all displayable content with a neutralized alert marked with

@@ -10,7 +10,12 @@ import os.log
 /// inactive accounts.
 enum SignedOutPushSuppression {
   enum Presence: Equatable, Sendable {
+    /// Launching or switching accounts: nothing is decided, so nothing is suppressed.
     case unknown
+    /// No account is active, but a stored account whose session never ended can still
+    /// receive pushes: only recipients whose session ended are suppressed.
+    case noActiveAccount
+    /// No account on this device is signed in: every push is for a signed-out account.
     case signedOut
     case signedIn(accountDID: String)
   }
@@ -27,13 +32,22 @@ enum SignedOutPushSuppression {
   private static let logger = Logger(
     subsystem: "blue.catbird", category: "SignedOutPushSuppression")
 
+  /// Presence for a lifecycle. The sign-in screen is not "every account signed out": signing
+  /// out of one account, or its session expiring, leaves the other stored accounts signed in
+  /// with their push registrations intact. It is `.signedOut` only when every stored account's
+  /// session ended (or none is stored).
   @MainActor
-  static func presence(for lifecycle: AppLifecycle) -> Presence {
+  static func presence(
+    for lifecycle: AppLifecycle,
+    registeredAccountDIDs: [String],
+    sessionEndedAccountDIDs: [String]
+  ) -> Presence {
     switch lifecycle {
     case .launching:
       return .unknown
     case .unauthenticated:
-      return .signedOut
+      let hasSignedInAccount = registeredAccountDIDs.contains { !sessionEndedAccountDIDs.contains($0) }
+      return hasSignedInAccount ? .noActiveAccount : .signedOut
     case .authenticated(let state), .deactivated(let state), .takendown(let state):
       return .signedIn(accountDID: state.userDID)
     }
@@ -49,15 +63,30 @@ enum SignedOutPushSuppression {
       return false
     case .signedOut:
       return true
+    case .noActiveAccount:
+      return isEndedRecipient(recipientDID, activeDID: nil, sessionEndedAccountDIDs: sessionEndedAccountDIDs)
     case .signedIn(let activeDID):
-      guard let recipientDID, !recipientDID.isEmpty else {
-        return false
-      }
-      guard recipientDID != activeDID else {
-        return false
-      }
-      return sessionEndedAccountDIDs.contains(recipientDID)
+      return isEndedRecipient(recipientDID, activeDID: activeDID, sessionEndedAccountDIDs: sessionEndedAccountDIDs)
     }
+  }
+
+  /// Whether a named recipient is an account whose session ended and that is not the active
+  /// account. A recipient that is not named is never guessed.
+  static func isEndedRecipient(
+    _ recipientDID: String?,
+    activeDID: String?,
+    sessionEndedAccountDIDs: [String]
+  ) -> Bool {
+    guard let recipientDID, !recipientDID.isEmpty, recipientDID != activeDID else {
+      return false
+    }
+    return sessionEndedAccountDIDs.contains(recipientDID)
+  }
+
+  /// The recipient a push names outright: the extension writes `recipientDid` once it resolves
+  /// one, and older payloads carry `recipient_did`.
+  static func namedRecipientDID(in userInfo: [AnyHashable: Any]) -> String? {
+    (userInfo["recipientDid"] as? String) ?? (userInfo["recipient_did"] as? String)
   }
 
   static func sessionEndedAccountDIDs(in defaults: UserDefaults?) -> [String] {
@@ -73,6 +102,10 @@ enum SignedOutPushSuppression {
     switch presence {
     case .signedOut:
       defaults.set(true, forKey: signedOutKey)
+      defaults.removeObject(forKey: pushActiveAccountDIDKey)
+
+    case .noActiveAccount:
+      defaults.removeObject(forKey: signedOutKey)
       defaults.removeObject(forKey: pushActiveAccountDIDKey)
 
     case .signedIn(let activeDID):

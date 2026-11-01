@@ -134,14 +134,33 @@ struct NotificationServiceSignedOutPushTests {
     #expect(output.categoryIdentifier == "CHAT_MESSAGE")
   }
 
-  @Test("An undecided launch does not suppress from an ended list alone")
-  func unknownPresenceKeepsDelivery() async {
+  @Test("With no active account a recipient whose session ended is hidden")
+  func noActiveAccountHidesEndedRecipient() async {
     let fixture = PushServiceFixture()
     defer { fixture.cleanup() }
     fixture.defaults.set([PushServiceFixture.accountA], forKey: "sessionEndedPushAccountDIDs")
+    fixture.defaults.set([PushServiceFixture.accountA, PushServiceFixture.accountB], forKey: "knownAccountDIDs")
+    // The widgets' key may still name A; it is not the push active account
+    fixture.defaults.set(PushServiceFixture.accountA, forKey: "activeAccountDID")
     let output = await fixture.deliver(PushServiceFixture.request())
+    assertNeutralized(output)
+  }
+
+  @Test("With no active account a stored account that is still signed in keeps delivery",
+    arguments: ["recipientDid", "recipient_did", "recipient_account"])
+  func noActiveAccountKeepsSignedInRecipient(recipientField: String) async {
+    let fixture = PushServiceFixture()
+    defer { fixture.cleanup() }
+    // A signed out (or expired) on the sign-in screen; B is stored, signed in and registered
+    fixture.defaults.set([PushServiceFixture.accountA], forKey: "sessionEndedPushAccountDIDs")
+    fixture.defaults.set([PushServiceFixture.accountA, PushServiceFixture.accountB], forKey: "knownAccountDIDs")
+    let output = await fixture.deliver(PushServiceFixture.request(
+      recipientField: recipientField, recipient: PushServiceFixture.accountB))
+    #expect(output.title == "Alice")
     #expect(output.body == "private message")
-    #expect(output.userInfo["recipientDid"] as? String == PushServiceFixture.accountA)
+    #expect(output.categoryIdentifier == "CHAT_MESSAGE")
+    #expect(output.userInfo["recipientDid"] as? String == PushServiceFixture.accountB)
+    #expect(output.userInfo["suppressedForSignedOutAccount"] == nil)
   }
 
   @Test("Sign-out neutralizes all visible and routing fields even on non-chat mutable pushes")
@@ -219,9 +238,10 @@ private struct PushServiceFixture {
     return output
   }
 
-  static func request(type: String = "chat_message", recipientField: String = "recipientDid")
-    -> UNNotificationRequest
-  {
+  static func request(
+    type: String = "chat_message", recipientField: String = "recipientDid",
+    recipient: String = PushServiceFixture.accountA
+  ) -> UNNotificationRequest {
     let content = UNMutableNotificationContent()
     content.title = "Alice"
     content.subtitle = "Private conversation"
@@ -234,14 +254,14 @@ private struct PushServiceFixture {
     content.categoryIdentifier = "PRIVATE_ACTIONS"
     content.targetContentIdentifier = "private-target"
     content.launchImageName = "private-image"
-    let recipient = recipientField == "recipient_account"
-      ? SHA256.hash(data: Data(accountA.utf8)).map { String(format: "%02x", $0) }.joined()
-      : accountA
+    let recipientValue = recipientField == "recipient_account"
+      ? SHA256.hash(data: Data(recipient.utf8)).map { String(format: "%02x", $0) }.joined()
+      : recipient
     content.userInfo = [
       "type": type,
       "messageText": "private message",
       "convoId": "private-conversation",
-      recipientField: recipient,
+      recipientField: recipientValue,
     ]
     return UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
   }

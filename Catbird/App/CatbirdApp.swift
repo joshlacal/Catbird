@@ -4948,13 +4948,15 @@ extension CatbirdApp.AppDelegate {
       return
     }
 
-    // 3. Nothing for a push the extension hid, or while every account is signed out
-    if (userInfo["suppressedForSignedOutAccount"] as? Bool) == true {
-      completionHandler([])
-      return
-    }
-
-    if SignedOutPushSuppression.presence(for: AppStateManager.shared.lifecycle) == .signedOut {
+    // 3. Nothing for a push the extension hid, for a recipient whose session ended, or while
+    // every account is signed out. A stored account that is still signed in keeps its pushes.
+    let stateManager = AppStateManager.shared
+    if NotificationManager.isSuppressedForSignedOutAccount(
+      userInfo: userInfo,
+      recipientDID: SignedOutPushSuppression.namedRecipientDID(in: userInfo),
+      presence: stateManager.pushPresence,
+      sessionEndedAccountDIDs: stateManager.sessionEndedPushAccountDIDs
+    ) {
       completionHandler([])
       return
     }

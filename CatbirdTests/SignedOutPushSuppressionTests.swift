@@ -25,8 +25,49 @@ struct SignedOutPushSuppressionTests {
     #expect(
       !SignedOutPushSuppression.suppresses(
         recipientDID: Self.accountA, presence: .unknown, sessionEndedAccountDIDs: [Self.accountA]))
-    #expect(SignedOutPushSuppression.presence(for: .launching) == .unknown)
-    #expect(SignedOutPushSuppression.presence(for: .unauthenticated) == .signedOut)
+    #expect(
+      SignedOutPushSuppression.presence(
+        for: .launching, registeredAccountDIDs: [Self.accountA], sessionEndedAccountDIDs: []) == .unknown)
+  }
+
+  @Test("The sign-in screen is signed out only when no stored account is still signed in")
+  @MainActor
+  func signInScreenPresence() {
+    // Nothing stored, or every stored account's session ended
+    #expect(
+      SignedOutPushSuppression.presence(
+        for: .unauthenticated, registeredAccountDIDs: [], sessionEndedAccountDIDs: []) == .signedOut)
+    #expect(
+      SignedOutPushSuppression.presence(
+        for: .unauthenticated,
+        registeredAccountDIDs: [Self.accountA, Self.accountB],
+        sessionEndedAccountDIDs: [Self.accountB, Self.accountA]) == .signedOut)
+    // A signed out (or expired) while B stays stored and signed in
+    #expect(
+      SignedOutPushSuppression.presence(
+        for: .unauthenticated,
+        registeredAccountDIDs: [Self.accountA, Self.accountB],
+        sessionEndedAccountDIDs: [Self.accountA]) == .noActiveAccount)
+  }
+
+  @Test("With no active account only a recipient whose session ended is suppressed")
+  func noActiveAccountSuppressesOnlyEndedRecipients() {
+    #expect(
+      SignedOutPushSuppression.suppresses(
+        recipientDID: Self.accountA, presence: .noActiveAccount, sessionEndedAccountDIDs: [Self.accountA]))
+    #expect(
+      !SignedOutPushSuppression.suppresses(
+        recipientDID: Self.accountB, presence: .noActiveAccount, sessionEndedAccountDIDs: [Self.accountA]))
+    #expect(
+      !SignedOutPushSuppression.suppresses(
+        recipientDID: nil, presence: .noActiveAccount, sessionEndedAccountDIDs: [Self.accountA]))
+  }
+
+  @Test("The named recipient comes from the fields the extension and older payloads set")
+  func namedRecipient() {
+    #expect(SignedOutPushSuppression.namedRecipientDID(in: ["recipientDid": Self.accountA]) == Self.accountA)
+    #expect(SignedOutPushSuppression.namedRecipientDID(in: ["recipient_did": Self.accountB]) == Self.accountB)
+    #expect(SignedOutPushSuppression.namedRecipientDID(in: ["recipient_account": "hash"]) == nil)
   }
 
   @Test("The signed-in recipient is shown even if listed as ended")
@@ -81,6 +122,12 @@ struct SignedOutPushSuppressionTests {
 
     // A real session end is recorded explicitly
     SignedOutPushSuppression.recordSessionEndedAccount(Self.accountA, in: defaults)
+    #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [Self.accountA])
+
+    // No active account while another stored account is signed in: not every account is signed out
+    SignedOutPushSuppression.publish(.noActiveAccount, in: defaults)
+    #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
+    #expect(defaults.string(forKey: SignedOutPushSuppression.pushActiveAccountDIDKey) == nil)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [Self.accountA])
 
     // Sign in to B
@@ -175,6 +222,27 @@ struct NotificationForegroundPresentationTests {
       openConversationID: nil
     )
     #expect(options == [.banner, .sound])
+  }
+
+  @Test("On the sign-in screen a still-signed-in account's push shows and an ended one's does not")
+  func noActiveAccountForegroundPresentation() {
+    let signedIn = NotificationManager.foregroundPresentationOptions(
+      userInfo: ["type": "chat_message", "convoId": "other-convo"],
+      recipientDID: Self.accountB,
+      presence: .noActiveAccount,
+      sessionEndedAccountDIDs: [Self.accountA],
+      openConversationID: nil
+    )
+    #expect(signedIn == [.banner, .sound])
+
+    let ended = NotificationManager.foregroundPresentationOptions(
+      userInfo: ["type": "chat_message", "convoId": "other-convo"],
+      recipientDID: Self.accountA,
+      presence: .noActiveAccount,
+      sessionEndedAccountDIDs: [Self.accountA],
+      openConversationID: nil
+    )
+    #expect(ended.isEmpty)
   }
 
   @Test("Signed-out presence hides foreground notifications")

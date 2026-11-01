@@ -2221,7 +2221,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     Task { @MainActor in
       // A push for an account that is not signed in shows nothing, whatever its kind:
       // encrypted chat is neither decrypted nor shown, and Circles activity is not handled.
-      let presence = SignedOutPushSuppression.presence(for: AppStateManager.shared.lifecycle)
+      let presence = AppStateManager.shared.pushPresence
       if Self.isSuppressedForSignedOutAccount(
         userInfo: userInfo,
         recipientDID: self.foregroundRecipientDID(from: userInfo),
@@ -4235,8 +4235,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Whether a foreground push must show nothing because its account is not signed in: the
-  /// extension marked it, every account is signed out, or its recipient's session ended while
-  /// another account is active. Applies to every push kind, encrypted chat included.
+  /// extension marked it, every account is signed out, or its recipient's session ended and it
+  /// is not the active account. Applies to every push kind, encrypted chat included.
   nonisolated static func isSuppressedForSignedOutAccount(
     userInfo: [AnyHashable: Any],
     recipientDID: String?,
