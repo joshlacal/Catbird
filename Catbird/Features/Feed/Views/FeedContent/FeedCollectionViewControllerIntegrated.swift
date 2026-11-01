@@ -149,6 +149,22 @@ import os
     /// configuration's height is measured and cached under the new generation.
     private var hasTransientLayoutState = false
 
+    override init(frame: CGRect) {
+      super.init(frame: frame)
+      CollectionViewCellResizeAnchor.disableImplicitLayerAnimations(on: self)
+    }
+
+    required init?(coder: NSCoder) {
+      super.init(coder: coder)
+      CollectionViewCellResizeAnchor.disableImplicitLayerAnimations(on: self)
+    }
+
+    override func invalidateIntrinsicContentSize() {
+      UIView.performWithoutAnimation {
+        super.invalidateIntrinsicContentSize()
+      }
+    }
+
     func markConfigured() {
       isFreshlyConfigured = true
       hasTransientLayoutState = false
@@ -950,8 +966,14 @@ import os
             feedTypeIdentifier: self.stateManager.currentFeedType.identifier,
             tracksVisibilityForFeedback: false,
             onHeightInvalidated: { [weak self, weak cell] in
-              self?.rowHeightCache.invalidate(postID: postId)
-              cell?.markHeightNeedsRecalculation()
+              CollectionViewCellResizeAnchor.performTopAnchoredResize(
+                in: self?.collectionView,
+                for: cell
+              ) {
+                self?.rowHeightCache.invalidate(postID: postId)
+                cell?.revealGeneration = ModerationRevealStore.shared.generation
+                cell?.markHeightNeedsRecalculation()
+              }
             }
           )
           .trackingModerationPolicy(of: appState)
@@ -1816,6 +1838,7 @@ import os
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+      guard !CollectionViewCellResizeAnchor.isPerformingResize else { return }
       lastScrollAt = ProcessInfo.processInfo.systemUptime
       onScrollOffsetChanged?(scrollView.contentOffset.y)
     }

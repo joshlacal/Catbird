@@ -567,7 +567,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             opThreadPostIndex: self.mainPostIndex,
             opThreadPostCount: self.mainPostCount,
             visibilityContext: self.visibilityContext,
-            showsLineFromParent: row.lineIn
+            showsLineFromParent: row.lineIn,
+            onInvalidateHeight: { [weak self, weak cell] in
+              CollectionViewCellResizeAnchor.performTopAnchoredResize(
+                in: self?.collectionView,
+                for: cell
+              )
+            }
           )
         }
         return cell
@@ -581,7 +587,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             anchorURI: self.postURI,
             appState: self.appState,
             sceneContext: self.sceneContext,
-            path: self.path
+            path: self.path,
+            onInvalidateHeight: { [weak self, weak cell] in
+              CollectionViewCellResizeAnchor.performTopAnchoredResize(
+                in: self?.collectionView,
+                for: cell
+              )
+            }
           )
         }
         return cell
@@ -614,7 +626,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       path: path,
       visibilityContext: visibilityContext,
       isActionLoading: row.kind == .showOtherReplies && isLoadingHiddenReplies,
-      onAction: action
+      onAction: action,
+      onInvalidateHeight: { [weak self, weak cell] in
+        CollectionViewCellResizeAnchor.performTopAnchoredResize(
+          in: self?.collectionView,
+          for: cell
+        )
+      }
     )
   }
 
@@ -2177,6 +2195,7 @@ extension ThreadViewController: UICollectionViewDelegate, UICollectionViewDataSo
   }
 
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    guard !CollectionViewCellResizeAnchor.isPerformingResize else { return }
     // iOS 18: Simplified trigger detection
     let triggerThreshold = min(scrollView.frame.height * 0.2, 100.0)
     let isNearTop = scrollView.contentOffset.y < triggerThreshold

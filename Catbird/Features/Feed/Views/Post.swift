@@ -196,7 +196,6 @@ struct Post: View, Equatable {
                 #endif
                 }
                 .id(showTranslation ? "translated" : "original")
-                .animation(.easeInOut(duration: 0.3), value: showTranslation)
                     
                     // Show original text below when translated
                     if showTranslation, let _ = translatedText {
@@ -204,11 +203,10 @@ struct Post: View, Equatable {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+                            .postRevealFade(isEnabled: true)
                     }
                 }
             }
-        .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
         .onChange(of: post) { _, _ in
             showTranslation = false
             translatedText = nil
@@ -337,11 +335,6 @@ struct Post: View, Equatable {
         )
     }
 
-    // Extract complex animation value to prevent type checker explosion
-    private var shouldAnimateTranslation: Bool {
-        showTranslation && translatedText != nil && translationError == nil
-    }
-
     // Extract language name formatting to prevent type checker explosion in ForEach
     private func languageName(for language: Locale.Language) -> String {
         let identifier = language.languageCode?.identifier ?? ""
@@ -404,26 +397,27 @@ struct Post: View, Equatable {
         
 #if targetEnvironment(simulator)
         // Translation models and downloads are not available in Simulator.
-        withAnimation {
+        withoutRevealAnimation {
             translationError = NSLocalizedString("Translation isn’t available in the iOS Simulator. Please test on a physical device.", comment: "")
             showTranslation = false
             translatedText = nil
             translationConfig = nil
             shouldPrepareTranslation = false
         }
+        invalidateFeedRowHeight?()
         return
 #endif
         
         if showTranslation {
             // Hide translation and reset state
-            invalidateFeedRowHeight?()
-            withAnimation {
+            withoutRevealAnimation {
                 showTranslation = false
                 translatedText = nil
                 translationConfig = nil
                 shouldPrepareTranslation = false
                 translationError = nil
             }
+            invalidateFeedRowHeight?()
         } else {
             // Check language situation and handle accordingly
             Task {
@@ -443,9 +437,12 @@ struct Post: View, Equatable {
                 } else {
                     // No languages specified
                     await MainActor.run {
-                        translationConfig = nil
-                        shouldPrepareTranslation = false
-                        translationError = NSLocalizedString("Source language not identified.", comment: "")
+                        withoutRevealAnimation {
+                            translationConfig = nil
+                            shouldPrepareTranslation = false
+                            translationError = NSLocalizedString("Source language not identified.", comment: "")
+                        }
+                        invalidateFeedRowHeight?()
                     }
                 }
             }
@@ -495,34 +492,51 @@ struct Post: View, Equatable {
                 case .installed:
                     // iOS 18–25 fallback: use .translationTask() modifier.
                     let config = TranslationSession.Configuration(source: normalizedSourceLanguage, target: normalizedTargetLanguage)
-                    translationConfig = config
-                    shouldPrepareTranslation = false
-                    translationError = nil
+                    let hadError = translationError != nil
+                    withoutRevealAnimation {
+                        translationConfig = config
+                        shouldPrepareTranslation = false
+                        translationError = nil
+                    }
+                    if hadError { invalidateFeedRowHeight?() }
                     Self.logger.debug("Translation configuration set for installed languages (pre-iOS 26 path)")
                 case .supported:
                     let config = TranslationSession.Configuration(source: normalizedSourceLanguage, target: normalizedTargetLanguage)
-                    translationConfig = config
-                    shouldPrepareTranslation = true
-                    translationError = nil
+                    let hadError = translationError != nil
+                    withoutRevealAnimation {
+                        translationConfig = config
+                        shouldPrepareTranslation = true
+                        translationError = nil
+                    }
+                    if hadError { invalidateFeedRowHeight?() }
                     Self.logger.debug("Translation configuration set for supported languages requiring preparation")
                 case .unsupported:
                     // Handle unsupported language pairing
-                    shouldPrepareTranslation = false
-                    translationConfig = nil
-                    translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    withoutRevealAnimation {
+                        shouldPrepareTranslation = false
+                        translationConfig = nil
+                        translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    }
+                    invalidateFeedRowHeight?()
                     Self.logger.debug("Translation unsupported for language pair")
                 @unknown default:
-                    shouldPrepareTranslation = false
-                    translationConfig = nil
-                    translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    withoutRevealAnimation {
+                        shouldPrepareTranslation = false
+                        translationConfig = nil
+                        translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    }
+                    invalidateFeedRowHeight?()
                     Self.logger.debug("Translation status unknown")
                 }
             }
         } else {
             await MainActor.run {
-                translationConfig = nil
-                shouldPrepareTranslation = false
-                translationError = NSLocalizedString("Translation requires iOS 18.0 or later.", comment: "")
+                withoutRevealAnimation {
+                    translationConfig = nil
+                    shouldPrepareTranslation = false
+                    translationError = NSLocalizedString("Translation requires iOS 18.0 or later.", comment: "")
+                }
+                invalidateFeedRowHeight?()
                 Self.logger.debug("Translation not available - iOS version too old")
             }
         }
@@ -531,8 +545,12 @@ struct Post: View, Equatable {
     @MainActor @available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *)
     private func performTranslation(session: TranslationSession) async {
         Self.logger.debug("Starting translation...")
-        isTranslating = true
-        translationError = nil
+        let hadError = translationError != nil
+        withoutRevealAnimation {
+            isTranslating = true
+            translationError = nil
+        }
+        if hadError { invalidateFeedRowHeight?() }
 
         if shouldPrepareTranslation {
             do {
@@ -550,13 +568,13 @@ struct Post: View, Equatable {
 
         do {
             let target = try await attemptTranslate()
-            invalidateFeedRowHeight?()
-            withAnimation {
+            withoutRevealAnimation {
                 translatedText = target
                 showTranslation = true
                 translationError = nil
                 isTranslating = false
             }
+            invalidateFeedRowHeight?()
         } catch {
             #if compiler(>=6.2)
             // If models aren’t installed, prompt and retry once.
@@ -565,13 +583,13 @@ struct Post: View, Equatable {
                 do {
                     try await session.prepareTranslation()
                     let target = try await attemptTranslate()
-                    invalidateFeedRowHeight?()
-                    withAnimation {
+                    withoutRevealAnimation {
                         translatedText = target
                         showTranslation = true
                         translationError = nil
                         isTranslating = false
                     }
+                    invalidateFeedRowHeight?()
                     return
                 } catch {
                     // Fall through to unified error handling
@@ -580,7 +598,7 @@ struct Post: View, Equatable {
             #endif
 
             Self.logger.debug("Translation error: \(error.localizedDescription)")
-            withAnimation {
+            withoutRevealAnimation {
                 #if compiler(>=6.2)
                 if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
                     translationError = NSLocalizedString("On‑device translation languages aren’t installed. When prompted, allow the download and try again.", comment: "")
@@ -614,6 +632,7 @@ struct Post: View, Equatable {
                 #endif
                 isTranslating = false
             }
+            invalidateFeedRowHeight?()
         }
     }
 }

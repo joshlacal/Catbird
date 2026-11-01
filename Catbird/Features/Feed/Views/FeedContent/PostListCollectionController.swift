@@ -328,17 +328,38 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     }
   }
 
-  private func hosted(_ content: AnyView) -> AnyView {
+  private final class PostListRowCell: UICollectionViewListCell {
+    override init(frame: CGRect) {
+      super.init(frame: frame)
+      CollectionViewCellResizeAnchor.disableImplicitLayerAnimations(on: self)
+    }
+
+    required init?(coder: NSCoder) {
+      super.init(coder: coder)
+      CollectionViewCellResizeAnchor.disableImplicitLayerAnimations(on: self)
+    }
+
+    override func invalidateIntrinsicContentSize() {
+      UIView.performWithoutAnimation {
+        super.invalidateIntrinsicContentSize()
+      }
+    }
+  }
+
+  private func hosted(_ content: AnyView, invalidateHeight: (() -> Void)? = nil) -> AnyView {
     // UIKit hosting roots do not inherit the representable's SwiftUI environment.
     // Copy scene/custom values, then use the same live policy/font injection as the feed.
+    // Keep invalidateFeedRowHeight inside .environment(\.self, hostingEnvironment) so
+    // the base environment copy does not overwrite the per-cell callback.
+    let sizedContent = content.environment(\.invalidateFeedRowHeight, invalidateHeight)
     if let appState {
-      return AnyView(content
+      return AnyView(sizedContent
         .trackingModerationPolicy(of: appState)
         .applyAppStateEnvironment(appState)
         .environment(\.fontManager, appState.fontManager)
         .environment(\.self, hostingEnvironment))
     }
-    return AnyView(content.environment(\.self, hostingEnvironment))
+    return AnyView(sizedContent.environment(\.self, hostingEnvironment))
   }
 
   private func setupDataSource() {
@@ -347,7 +368,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
     ) { [weak self] view, _, _ in
       self?.configurePinnedHeader(view)
     }
-    let registration = UICollectionView.CellRegistration<UICollectionViewListCell, Item> {
+    let registration = UICollectionView.CellRegistration<PostListRowCell, Item> {
       [weak self] cell, _, item in
       guard let self else { return }
       cell.backgroundConfiguration = .clear()
@@ -370,7 +391,15 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
           self?.triggerLoadMoreTask()
         })
       }
-      let root = self.hosted(content)
+      let invalidateHeight: () -> Void = { [weak self, weak cell] in
+        guard let self else { return }
+        CollectionViewCellResizeAnchor.performTopAnchoredResize(
+          in: self.collectionView,
+          for: cell
+        )
+        self.updatePinnedHeaderState()
+      }
+      let root = self.hosted(content, invalidateHeight: invalidateHeight)
       let accountID = self.appState?.userDID
       cell.contentConfiguration = UIHostingConfiguration {
         // Per-item identity: a reused cell must not carry the previous row's SwiftUI state.
@@ -441,6 +470,7 @@ final class PostListCollectionController: UIViewController, UICollectionViewDele
   }
 
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    guard !CollectionViewCellResizeAnchor.isPerformingResize else { return }
     updatePinnedHeaderState()
     guard pendingScrollOffset == nil else { return }
     reportScrollOffset(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)

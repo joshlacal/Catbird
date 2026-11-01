@@ -23,6 +23,7 @@ struct BlockedContentCard: View {
 
   @Environment(AppState.self) private var appState
   @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
+  @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
 
   @State private var cardState = BlockedContentCardState()
 
@@ -94,8 +95,11 @@ struct BlockedContentCard: View {
       }
       if cardState.identity == nil {
         let profile = await appState.blockedAuthorHydrator?.profile(for: authorDid)
-        cardState.identity = profile.map { BlockedAuthorIdentity(profile: $0) }
-        cardState.hydrationSettled = true
+        withoutRevealAnimation {
+          cardState.identity = profile.map { BlockedAuthorIdentity(profile: $0) }
+          cardState.hydrationSettled = true
+        }
+        invalidateFeedRowHeight?()
       }
     }
     .alert("Unblock", isPresented: $cardState.isConfirmingUnblock) {
@@ -139,7 +143,10 @@ struct BlockedContentCard: View {
       do {
         // Tombstone stays until the mutation succeeds — no optimistic reveal.
         try await appState.unblock(did: authorDid)
-        cardState.unblockSucceeded = true
+        withoutRevealAnimation {
+          cardState.unblockSucceeded = true
+        }
+        invalidateFeedRowHeight?()
       } catch {
         Self.logger.error("unblock failed: \(error.localizedDescription)")
         appState.toastManager.show(ToastItem(
@@ -155,15 +162,22 @@ struct BlockedContentCard: View {
     Task {
       defer { cardState.isRevealing = false }
       do {
-        cardState.revealedPost = EquatableBox(try await BlockedPostLoader.load(
+        let loaded = try await BlockedPostLoader.load(
           uri: postUri.value,
           authorDid: authorDid,
           client: client,
           hydrator: appState.blockedAuthorHydrator
-        ))
+        )
+        withoutRevealAnimation {
+          cardState.revealedPost = EquatableBox(loaded)
+        }
+        invalidateFeedRowHeight?()
       } catch {
         Self.logger.error("reveal fetch failed: \(error.localizedDescription)")
-        cardState.revealFailed = true
+        withoutRevealAnimation {
+          cardState.revealFailed = true
+        }
+        invalidateFeedRowHeight?()
       }
     }
   }
@@ -327,6 +341,7 @@ private struct BlockedContentIdentityRow: View {
   @Binding var path: NavigationPath
 
   @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
+  @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
 
   var body: some View {
     HStack(spacing: 8) {
@@ -348,7 +363,10 @@ private struct BlockedContentIdentityRow: View {
             .appFont(AppTextRole.subheadline)
             .fontWeight(.medium)
           Button {
-            showIdentifier.toggle()
+            withoutRevealAnimation {
+              showIdentifier.toggle()
+            }
+            invalidateFeedRowHeight?()
           } label: {
             Text(showIdentifier ? "Identifier: \(authorDid)" : "Show identifier")
               .appFont(AppTextRole.caption)
@@ -378,7 +396,10 @@ private struct BlockedContentIdentityRow: View {
       // toggle as a discoverable, actuatable VoiceOver custom action instead.
       if identity == nil, hydrationSettled {
         Button(showIdentifier ? "Hide identifier" : "Show identifier") {
-          showIdentifier.toggle()
+          withoutRevealAnimation {
+            showIdentifier.toggle()
+          }
+          invalidateFeedRowHeight?()
         }
       }
     }
@@ -492,6 +513,7 @@ private struct BlockedContentRevealedPost: View {
   @Binding var path: NavigationPath
 
   @Environment(AppState.self) private var appState
+  @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -503,7 +525,12 @@ private struct BlockedContentRevealedPost: View {
         }
         Spacer()
         if !unblockSucceeded {
-          Button("Hide again") { revealedPost = nil }
+          Button("Hide again") {
+            withoutRevealAnimation {
+              revealedPost = nil
+            }
+            invalidateFeedRowHeight?()
+          }
             .appFont(AppTextRole.caption)
             .accessibilityHint("Returns to the blocked-post placeholder")
         }

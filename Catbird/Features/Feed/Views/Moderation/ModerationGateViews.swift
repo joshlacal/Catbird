@@ -1,4 +1,8 @@
 import SwiftUI
+#if os(iOS)
+import QuartzCore
+import UIKit
+#endif
 
 // The three ways a moderation decision shows on a post: a hidden row (a list
 // filter the surface did not apply), a body gate (`ContentHider` upstream) and
@@ -158,12 +162,12 @@ struct ModerationContentGate<Content: View>: View {
   }
 
   private func setRevealed(_ isRevealed: Bool) {
-    invalidateFeedRowHeight?()
     withoutRevealAnimation {
+      ModerationRevealStore.shared.setRevealed(
+        isRevealed, ui: ui, gate: .body, subject: storeSubject, accountDID: appState.userDID)
       localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
     }
-    ModerationRevealStore.shared.setRevealed(
-      isRevealed, ui: ui, gate: .body, subject: storeSubject, accountDID: appState.userDID)
+    invalidateFeedRowHeight?()
   }
 }
 
@@ -234,8 +238,8 @@ struct ModerationMediaGate<Content: View>: View {
   private var gatedContent: some View {
     if revealed {
       content()
-        .postRevealFade(isEnabled: true)
         .overlay(alignment: .topTrailing) { hideControl }
+        .postRevealFade(isEnabled: true)
     } else {
       cover
     }
@@ -332,12 +336,12 @@ struct ModerationMediaGate<Content: View>: View {
   }
 
   private func setRevealed(_ isRevealed: Bool) {
-    invalidateFeedRowHeight?()
     withoutRevealAnimation {
+      ModerationRevealStore.shared.setRevealed(
+        isRevealed, ui: ui, gate: .media, subject: storeSubject, accountDID: appState.userDID)
       localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
     }
-    ModerationRevealStore.shared.setRevealed(
-      isRevealed, ui: ui, gate: .media, subject: storeSubject, accountDID: appState.userDID)
+    invalidateFeedRowHeight?()
   }
 }
 
@@ -370,14 +374,22 @@ private extension ModerationRevealState {
   }
 }
 
-/// Applies a gate's Show or Hide without animation. The row lives in a
-/// self-sizing collection view cell, which takes its new height at once;
-/// animating the SwiftUI side slid the whole post inside the resized cell.
+/// Applies an in-row Show or Hide without SwiftUI, UIKit, or CoreAnimation
+/// geometry animation so self-sizing cells step cleanly in one frame.
 @MainActor
-private func withoutRevealAnimation(_ change: () -> Void) {
-  var transaction = Transaction()
+func withoutRevealAnimation(_ change: () -> Void) {
+  var transaction = Transaction(animation: nil)
   transaction.disablesAnimations = true
+  #if os(iOS)
+  CATransaction.begin()
+  CATransaction.setDisableActions(true)
+  defer { CATransaction.commit() }
+  UIView.performWithoutAnimation {
+    withTransaction(transaction, change)
+  }
+  #else
   withTransaction(transaction, change)
+  #endif
 }
 
 // MARK: - Shared copy
