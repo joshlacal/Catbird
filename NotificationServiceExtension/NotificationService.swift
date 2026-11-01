@@ -38,7 +38,7 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// App Group keys the main app publishes for push presence (`SignedOutPushSuppression`).
   static let signedOutKey = "signedOutForPush"
-  static let activeAccountDIDKey = "activeAccountDID"
+  static let pushActiveAccountDIDKey = "pushActiveAccountDID"
   static let sessionEndedAccountDIDsKey = "sessionEndedPushAccountDIDs"
 
   private let appGroupDefaults: UserDefaults?
@@ -137,7 +137,7 @@ class NotificationService: UNNotificationServiceExtension {
     if defaults.bool(forKey: signedOutKey) {
       return true
     }
-    guard let activeAccountDID = defaults.string(forKey: activeAccountDIDKey), !activeAccountDID.isEmpty else {
+    guard let activeAccountDID = defaults.string(forKey: pushActiveAccountDIDKey), !activeAccountDID.isEmpty else {
       return false
     }
     let endedDIDs = defaults.stringArray(forKey: sessionEndedAccountDIDsKey) ?? []

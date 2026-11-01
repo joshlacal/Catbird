@@ -135,6 +135,10 @@ final class AppStateManager {
   func setPushPresenceDefaultsForTesting(_ defaults: UserDefaults?) {
     self.pushPresenceDefaults = defaults
   }
+
+  func writeAccountsToAppGroupForTesting(in defaults: UserDefaults?) {
+    writeAccountsToAppGroup(in: defaults)
+  }
   #endif
 
   /// Observes auth state changes and keeps lifecycle in sync (e.g. session expiry → login/reauth)
@@ -1744,8 +1748,9 @@ final class AppStateManager {
   // MARK: - Widget Data
 
   /// Write current account list to App Group for widget extension
-  private func writeAccountsToAppGroup() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+  private func writeAccountsToAppGroup(
+    in defaults: UserDefaults? = UserDefaults(suiteName: "group.blue.catbird.shared")
+  ) {
 
     struct WidgetAccountDTO: Codable {
       let did: String
@@ -1772,8 +1777,11 @@ final class AppStateManager {
     // right account on notification tap (covers accounts without an MLS DB).
     defaults?.set(accounts.map { $0.did }, forKey: "knownAccountDIDs")
 
+    // The widgets and App Intents read this as "an account is signed in".
     if let activeDID = lifecycle.userDID {
       defaults?.set(activeDID, forKey: "activeAccountDID")
+    } else {
+      defaults?.removeObject(forKey: "activeAccountDID")
     }
   }
 

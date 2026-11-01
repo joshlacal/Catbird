@@ -29,20 +29,50 @@ struct AppStateManagerPushPresenceTests {
     // Authenticate with account A
     manager.setLifecycleForTesting(.authenticated(stateA))
     #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
-    #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountA)
+    #expect(defaults.string(forKey: SignedOutPushSuppression.pushActiveAccountDIDKey) == Self.accountA)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
 
     // Transition to unauthenticated: presence changes, but no session end is recorded
     manager.setLifecycleForTesting(.unauthenticated)
     #expect(defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
-    #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountA)
+    #expect(defaults.string(forKey: SignedOutPushSuppression.pushActiveAccountDIDKey) == nil)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
 
     // Authenticate with account B
     manager.setLifecycleForTesting(.authenticated(stateB))
     #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
-    #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountB)
+    #expect(defaults.string(forKey: SignedOutPushSuppression.pushActiveAccountDIDKey) == Self.accountB)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
+    // Push presence never writes the widgets' and App Intents' signed-in key
+    #expect(defaults.object(forKey: "activeAccountDID") == nil)
+  }
+
+  @Test("The App Group account list drops activeAccountDID when no account is active")
+  @MainActor
+  func accountListRemovesActiveAccountOnSignOut() async {
+    let suiteName = "LifecycleAccountList-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let presenceSuiteName = "LifecycleAccountListPresence-\(UUID().uuidString)"
+    let presenceDefaults = UserDefaults(suiteName: presenceSuiteName)!
+    defer { presenceDefaults.removePersistentDomain(forName: presenceSuiteName) }
+
+    let manager = AppStateManager.shared
+    manager.setPushPresenceDefaultsForTesting(presenceDefaults)
+    defer {
+      manager.setPushPresenceDefaultsForTesting(nil)
+      manager.setLifecycleForTesting(.unauthenticated)
+    }
+
+    let client = await ATProtoClient(baseURL: URL(string: "https://fixture.invalid")!)
+    manager.setLifecycleForTesting(.authenticated(AppState(userDID: Self.accountA, client: client)))
+    manager.writeAccountsToAppGroupForTesting(in: defaults)
+    #expect(defaults.string(forKey: "activeAccountDID") == Self.accountA)
+
+    // The notification widget shows "Not signed in" and intents throw notSignedIn without it
+    manager.setLifecycleForTesting(.unauthenticated)
+    manager.writeAccountsToAppGroupForTesting(in: defaults)
+    #expect(defaults.object(forKey: "activeAccountDID") == nil)
   }
 
   @Test("A failed switch that ends at sign-in records neither account as ended")

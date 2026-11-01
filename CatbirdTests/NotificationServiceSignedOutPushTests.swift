@@ -47,7 +47,7 @@ struct NotificationServiceDeliveryCharacterizationTests {
   func knownInactiveAccountKeepsDelivery(recipientField: String) async {
     let fixture = PushServiceFixture()
     defer { fixture.cleanup() }
-    fixture.defaults.set(PushServiceFixture.accountB, forKey: "activeAccountDID")
+    fixture.defaults.set(PushServiceFixture.accountB, forKey: "pushActiveAccountDID")
     fixture.defaults.set([PushServiceFixture.accountA, PushServiceFixture.accountB], forKey: "knownAccountDIDs")
     fixture.defaults.set([], forKey: "sessionEndedPushAccountDIDs")
     let output = await fixture.deliver(PushServiceFixture.request(recipientField: recipientField))
@@ -93,7 +93,7 @@ struct NotificationServiceSignedOutPushTests {
   func endedRecipientUnderAnotherAccount(recipientField: String) async {
     let fixture = PushServiceFixture()
     defer { fixture.cleanup() }
-    fixture.defaults.set(PushServiceFixture.accountB, forKey: "activeAccountDID")
+    fixture.defaults.set(PushServiceFixture.accountB, forKey: "pushActiveAccountDID")
     fixture.defaults.set([PushServiceFixture.accountA], forKey: "sessionEndedPushAccountDIDs")
     fixture.defaults.set([PushServiceFixture.accountA], forKey: "knownAccountDIDs")
     let output = await fixture.deliver(PushServiceFixture.request(recipientField: recipientField))
@@ -104,10 +104,22 @@ struct NotificationServiceSignedOutPushTests {
   func endedRecipientHashSurvivesAccountRemoval() async {
     let fixture = PushServiceFixture()
     defer { fixture.cleanup() }
-    fixture.defaults.set(PushServiceFixture.accountB, forKey: "activeAccountDID")
+    fixture.defaults.set(PushServiceFixture.accountB, forKey: "pushActiveAccountDID")
     fixture.defaults.set([PushServiceFixture.accountA], forKey: "sessionEndedPushAccountDIDs")
     fixture.defaults.set([PushServiceFixture.accountB], forKey: "knownAccountDIDs")
     let output = await fixture.deliver(PushServiceFixture.request(recipientField: "recipient_account"))
+    assertNeutralized(output)
+  }
+
+  @Test("The widgets' activeAccountDID is not the push active account")
+  func widgetActiveAccountDoesNotExemptEndedRecipient() async {
+    let fixture = PushServiceFixture()
+    defer { fixture.cleanup() }
+    // A left in the widget key must not exempt A's pushes while B is the push active account
+    fixture.defaults.set(PushServiceFixture.accountA, forKey: "activeAccountDID")
+    fixture.defaults.set(PushServiceFixture.accountB, forKey: "pushActiveAccountDID")
+    fixture.defaults.set([PushServiceFixture.accountA], forKey: "sessionEndedPushAccountDIDs")
+    let output = await fixture.deliver(PushServiceFixture.request())
     assertNeutralized(output)
   }
 
@@ -115,7 +127,7 @@ struct NotificationServiceSignedOutPushTests {
   func activeRecipientIsDelivered() async {
     let fixture = PushServiceFixture()
     defer { fixture.cleanup() }
-    fixture.defaults.set(PushServiceFixture.accountA, forKey: "activeAccountDID")
+    fixture.defaults.set(PushServiceFixture.accountA, forKey: "pushActiveAccountDID")
     fixture.defaults.set([PushServiceFixture.accountA], forKey: "sessionEndedPushAccountDIDs")
     let output = await fixture.deliver(PushServiceFixture.request())
     #expect(output.body == "private message")

@@ -16,7 +16,10 @@ enum SignedOutPushSuppression {
   }
 
   static let appGroupSuiteName = "group.blue.catbird.shared"
-  static let activeAccountDIDKey = "activeAccountDID"
+  /// The active account as push suppression sees it, published only by `publish`. Kept apart
+  /// from `activeAccountDID`, which the widgets and App Intents read as "an account is signed in"
+  /// and which `writeAccountsToAppGroup` removes on sign-out.
+  static let pushActiveAccountDIDKey = "pushActiveAccountDID"
   static let signedOutKey = "signedOutForPush"
   static let sessionEndedAccountDIDsKey = "sessionEndedPushAccountDIDs"
   static let sessionEndedAccountLimit = 16
@@ -70,11 +73,11 @@ enum SignedOutPushSuppression {
     switch presence {
     case .signedOut:
       defaults.set(true, forKey: signedOutKey)
-      // Note: activeAccountDID is preserved for widget display continuity.
+      defaults.removeObject(forKey: pushActiveAccountDIDKey)
 
     case .signedIn(let activeDID):
       defaults.removeObject(forKey: signedOutKey)
-      defaults.set(activeDID, forKey: activeAccountDIDKey)
+      defaults.set(activeDID, forKey: pushActiveAccountDIDKey)
       removeEndedAccount(activeDID, in: defaults)
 
     case .unknown:

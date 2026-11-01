@@ -69,13 +69,14 @@ struct SignedOutPushSuppressionTests {
 
     // Start with sign-in A
     SignedOutPushSuppression.publish(.signedIn(accountDID: Self.accountA), in: defaults)
-    #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountA)
+    #expect(defaults.string(forKey: SignedOutPushSuppression.pushActiveAccountDIDKey) == Self.accountA)
     #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
 
     // Signed-out presence alone is no session end: a failed switch or a launch without a
     // current account also reaches it with every stored session intact.
     SignedOutPushSuppression.publish(.signedOut, in: defaults)
     #expect(defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
+    #expect(defaults.string(forKey: SignedOutPushSuppression.pushActiveAccountDIDKey) == nil)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
 
     // A real session end is recorded explicitly
@@ -85,12 +86,15 @@ struct SignedOutPushSuppressionTests {
     // Sign in to B
     SignedOutPushSuppression.publish(.signedIn(accountDID: Self.accountB), in: defaults)
     #expect(!defaults.bool(forKey: SignedOutPushSuppression.signedOutKey))
-    #expect(defaults.string(forKey: SignedOutPushSuppression.activeAccountDIDKey) == Self.accountB)
+    #expect(defaults.string(forKey: SignedOutPushSuppression.pushActiveAccountDIDKey) == Self.accountB)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [Self.accountA])
 
     // Sign in to A again (clears A from ended list)
     SignedOutPushSuppression.publish(.signedIn(accountDID: Self.accountA), in: defaults)
     #expect(SignedOutPushSuppression.sessionEndedAccountDIDs(in: defaults) == [])
+
+    // The widgets' and App Intents' "an account is signed in" key belongs to the account list
+    #expect(defaults.object(forKey: "activeAccountDID") == nil)
 
     // Test bounded limit and deduplication
     for i in 1...20 {
