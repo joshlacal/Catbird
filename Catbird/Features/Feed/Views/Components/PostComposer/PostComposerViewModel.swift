@@ -1440,17 +1440,34 @@ final class PostComposerViewModel {
     startParentRestoration(uriString)
   }
 
-  /// Turns a reply draft whose original post is unavailable into a new top-level post.
+  /// A Circle reply whose audience must be chosen again can continue only as a new post:
+  /// a reply into a Circle never becomes a public reply. One whose parent is unavailable
+  /// offers this alongside Try Again instead.
+  var offersNewPostForUnresolvedCircleReply: Bool {
+    isReply && unresolvedCircleAudience != nil && !parentRestoreFailed && activeSubmission == nil
+  }
+
+  /// Turns a reply draft into a new top-level post: one whose original post is unavailable,
+  /// or a Circle reply whose audience must be chosen again. The parent and every saved
+  /// thread reference are dropped, so a Public audience chosen next posts no Circle reply.
   func detachUnavailableParent() {
-    guard parentPost == nil, pendingParentPostURI != nil else { return }
+    guard activeSubmission == nil, isReply,
+          parentPost == nil || unresolvedCircleAudience != nil else { return }
     parentRestorationTask?.cancel()
     parentRestorationTask = nil
+    parentPost = nil
+    replyTo = nil
     pendingParentPostURI = nil
     parentRestoreFailed = false
     parentRestoreAwaitsCircles = false
     endCircleCapabilityWait()
     replyParentSource = .network
     restoredCircleReply = nil
+    if let unresolved = unresolvedCircleAudience {
+      var saved = unresolved.saved
+      saved.reply = nil
+      unresolvedCircleAudience = UnresolvedCircleAudience(saved: saved, issue: unresolved.issue)
+    }
     // No longer a reply, so its audience can be chosen again. A Circle stays selected.
     isReplyLockedToCircle = false
     saveDraftIfNeeded()

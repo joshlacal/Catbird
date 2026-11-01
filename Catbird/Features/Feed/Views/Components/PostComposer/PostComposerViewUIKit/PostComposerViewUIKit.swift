@@ -430,6 +430,9 @@ struct PostComposerViewUIKit: View {
               } else if vm.isReply {
                 ReplySourceUnavailableView(vm: vm)
               }
+              if vm.offersNewPostForUnresolvedCircleReply {
+                UnresolvedCircleReplyPrompt(vm: vm)
+              }
 
               VStack(spacing: 16) {
                 if !vm.isThreadMode {

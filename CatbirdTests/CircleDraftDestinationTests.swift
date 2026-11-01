@@ -394,6 +394,72 @@ struct CircleDraftDestinationTests {
     #expect(await transport.threadCallCount == 0)
   }
 
+  @Test("A Circle reply whose Circle is gone continues only as a new post, which can then go Public with no Circle reference")
+  func goneCircleReplyBecomesNewPost() async throws {
+    let appState = await makeAppState(circlesEnabled: true, allowWrites: true)
+    // The account's Circles list only Family; the thread read still answers.
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: savedReply())
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    try await waitUntil { model.parentPost != nil && model.unresolvedCircleAudience != nil }
+    #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
+    #expect(!model.parentRestoreFailed)
+    #expect(model.offersNewPostForUnresolvedCircleReply)
+    #expect(!model.submitValidationState.canSubmit)
+
+    // While it is a reply its audience stays locked, so it can never become a public reply.
+    #expect(model.isReplyLockedToCircle)
+    model.selectDestination(.public)
+    #expect(model.destination == .circle(circle))
+    #expect(model.unresolvedCircleAudience != nil)
+
+    model.detachUnavailableParent()
+    #expect(!model.isReply)
+    #expect(model.parentPost == nil)
+    #expect(model.replyTo == nil)
+    #expect(model.circleReplyRef() == nil)
+    #expect(!model.offersNewPostForUnresolvedCircleReply)
+    #expect(model.canChangeDestination)
+    // Still blocked until the author picks an audience, and no thread is saved with it.
+    #expect(model.unresolvedCircleAudience?.saved.reply == nil)
+    #expect(model.saveDraftState().circleDestination?.reply == nil)
+    #expect(!model.submitValidationState.canSubmit)
+
+    model.selectDestination(.public)
+    #expect(model.destination == .public)
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(model.submitValidationState.canSubmit)
+
+    // Nothing the public post is built from refers to the Circle, its thread or its parent.
+    #expect(model.editingContent().parentURI == nil)
+    #expect(model.postingQuoteReference() == nil)
+    let draft = model.saveDraftState()
+    #expect(draft.parentPostURI == nil)
+    #expect(draft.circleDestination == nil)
+    let encoded = String(decoding: try JSONEncoder().encode(draft), as: UTF8.self)
+    let reply = savedReply()
+    let circleReferences = [
+      "blue.catbird.circle", "parent123", "root456", CircleTestFixtures.workCircleId.toString(),
+      reply.parentCID, reply.rootCID
+    ]
+    for circleReference in circleReferences {
+      #expect(!encoded.contains(circleReference), "The public draft must not carry \(circleReference)")
+    }
+
+    // Posting takes the public path; it fails only because this client has no session.
+    do {
+      _ = try await model.createPost()
+      Issue.record("The unauthenticated test client cannot post publicly")
+    } catch {
+      #expect(!(error is CircleError))
+    }
+    #expect(await transport.publishedPosts.isEmpty)
+    #expect(await transport.publicEndpointCallCount == 0)
+  }
+
   @Test("A draft waiting for an audience cannot become a thread, which would hide its picker")
   func unresolvedAudienceBlocksThreadMode() async throws {
     let appState = await makeAppState(circlesEnabled: true)
