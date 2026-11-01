@@ -186,6 +186,8 @@ struct ProfileSectionLoadingTests {
     defer { server.releaseHeldPages() }
     let viewModel = try await Self.makeLoadedViewModel(server: server, viewer: ProfileSectionStubServer.ownerDID)
     try await Self.refresh(section, on: viewModel)
+    // The copy's first page is held too, so what the next page left behind shows before it lands.
+    server.holdNextFirstPage(of: section, answering: 200)
     // The server holds every next page, so this one stays in flight until released.
     let nextPage = Task { await Self.loadNextPage(of: section, on: viewModel) }
     try await Self.waitUntil { server.heldRequestCount == 1 }
@@ -194,15 +196,23 @@ struct ProfileSectionLoadingTests {
     // that page nor takes it as its own content.
     let copy = Self.start { try await Self.refresh(section, on: viewModel) }
     await withKnownIssue(Self.uncancellableRequests) {
-      try await Self.waitUntil("the first load to return while the next page is held") { copy.hasEnded }
+      try await Self.waitUntil("the first load's request while the next page is held") {
+        server.heldRequestCount == 2
+      }
       #expect(server.cancelledHeldRequestCount == 1)
     }
-    // Once the next page's request stops, nothing is held and this returns at once.
+    // Answers the next page if its request still runs. Its load was cancelled, so its page never
+    // lands, and the first load goes on to request its own page.
+    server.releaseHeldPages()
+    await nextPage.value
+    try await Self.waitUntil("the first load's request") { server.heldRequestCount == 2 }
+    #expect(Self.count(of: section, in: viewModel) == 1)
+    #expect(Self.hasMore(section, in: viewModel), "The cancelled next page wrote its missing cursor")
+
     server.releaseHeldPages()
     try await Self.waitUntil("the first load to return") { copy.hasEnded }
     #expect(copy.error == nil)
     #expect(server.requestCount(section) == 3)
-    await nextPage.value
     #expect(Self.count(of: section, in: viewModel) == 1)
   }
 
@@ -320,6 +330,15 @@ extension ProfileSectionLoadingTests {
     case .lists: viewModel.lists.count
     case .starterPacks: viewModel.starterPacks.count
     case .feeds: viewModel.feeds.count
+    }
+  }
+
+  private static func hasMore(_ section: Section, in viewModel: ProfileViewModel) -> Bool {
+    switch section {
+    case .likes: viewModel.hasMoreLikes
+    case .lists: viewModel.hasMoreLists
+    case .starterPacks: viewModel.hasMoreStarterPacks
+    case .feeds: viewModel.hasMoreFeeds
     }
   }
 
