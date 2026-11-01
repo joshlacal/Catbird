@@ -434,9 +434,17 @@ struct RefinedSearchView: View {
                     .onAppear { logger.debug("Showing discoveryView") }
                 
             case .searching:
-                 typeaheadView
-                    .transition(.opacity)
-                    .onAppear { logger.debug("Showing typeaheadView") }
+                // The suggestions repeat this typeahead while they cover the page, so it
+                // is left out then: the page's accessibilityHidden does not reach the
+                // rows of its List, which would stay in the accessibility tree beside
+                // the suggestions' own rows.
+                if hidesPageBehindSearchSuggestions {
+                    Color.clear
+                } else {
+                    typeaheadView
+                        .transition(.opacity)
+                        .onAppear { logger.debug("Showing typeaheadView") }
+                }
                 
             case .results:
                 resultsView
