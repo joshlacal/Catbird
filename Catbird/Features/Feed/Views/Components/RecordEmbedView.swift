@@ -15,7 +15,6 @@ struct RecordEmbedView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.isReadOnlyPostPreview) private var isReadOnlyPreview
     @Environment(\.moderationPolicy) private var moderationPolicy
-    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     // When true, render full post styling for quoted posts (used in thread main post view)
     var useFullPostStyle: Bool = false
@@ -137,13 +136,10 @@ struct RecordEmbedView: View {
                 .foregroundStyle(Color.secondary)
             Spacer(minLength: 0)
             Button("Show") {
-                invalidateFeedRowHeight?()
-                withAnimation(PostRevealMotion.layoutAnimation(
-                    reduceMotion: appState.appSettings.effectiveReduceMotion,
-                    voiceOverEnabled: voiceOverEnabled
-                )) {
+                withoutRevealAnimation {
                     revealedMutedQuote = mutedQuoteIdentity(post)
                 }
+                invalidateFeedRowHeight?()
             }
             .appFont(AppTextRole.subheadline)
             .buttonStyle(.borderless)

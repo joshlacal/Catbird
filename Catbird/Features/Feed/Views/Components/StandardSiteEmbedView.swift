@@ -24,7 +24,9 @@ struct ExternalEmbedLabelGate<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
           Label("Link warning", systemImage: "exclamationmark.triangle")
           Button("Show link preview") {
-            revealed = true
+            withoutRevealAnimation {
+              revealed = true
+            }
             invalidateFeedRowHeight?()
           }
           .frame(minHeight: 44)
