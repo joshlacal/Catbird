@@ -129,6 +129,17 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
 
   init(appState: AppState) {
     self.appState = appState
+    let viewerDID = appState.userDID
+    if let cached = appState.trendingTopicMediaStore.cachedTrends(for: viewerDID), !cached.trends.isEmpty {
+      self.trendingTopics = cached.trends
+      self.hasLoadedTrendingTopics = true
+      if cached.isFresh {
+        self.lastTrendingTopicsFetch = Date()
+      }
+    }
+    if let cachedVideos = appState.trendingTopicMediaStore.cachedVideos(for: viewerDID), !cachedVideos.videos.isEmpty {
+      self.trendingVideos = TrendingVideoModeration.listed(cachedVideos.videos, policy: appState.moderationPolicy)
+    }
   }
 
   public func ensureLocalPreferencesAndStoredSearchesLoaded() {
@@ -174,10 +185,26 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
 
   public func initialize(client: ATProtoClient, displayScale: CGFloat) {
     ensureLocalPreferencesAndStoredSearchesLoaded()
+    let viewerDID = appState.userDID
+    if trendingTopics.isEmpty,
+       let cached = appState.trendingTopicMediaStore.cachedTrends(for: viewerDID),
+       !cached.trends.isEmpty {
+      trendingTopics = cached.trends
+      hasLoadedTrendingTopics = true
+      if isSubscribed {
+        appState.prefetchTopicPreviews(trends: cached.trends, displayScale: displayScale, owner: .search)
+      }
+    }
     guard !hasLoadedDiscoveryContent else { return }
     hasLoadedDiscoveryContent = true
     Task {
-      await refreshDiscoveryContent(client: client, displayScale: displayScale)
+      let hasFreshTrends = appState.trendingTopicMediaStore.cachedTrends(for: viewerDID)?.isFresh == true
+      async let trendsTask: Void = fetchTrendingTopics(client: client, displayScale: displayScale, force: !hasFreshTrends)
+      async let suggestedTask: Void = fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
+      async let videosTask: Void = fetchTrendingVideos(client: client)
+      async let interestsTask: Void = loadUserInterests()
+
+      _ = await (trendsTask, suggestedTask, videosTask, interestsTask)
     }
   }
 
@@ -222,6 +249,19 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
 
   public func fetchTrendingTopics(client: ATProtoClient, displayScale: CGFloat, force: Bool = false) async {
     guard !isTrendingTopicsLoading else { return }
+    let viewerDID = appState.userDID
+    if !force, let cached = appState.trendingTopicMediaStore.cachedTrends(for: viewerDID), !cached.trends.isEmpty {
+      if trendingTopics.isEmpty {
+        trendingTopics = cached.trends
+        hasLoadedTrendingTopics = true
+        if isSubscribed {
+          appState.prefetchTopicPreviews(trends: cached.trends, displayScale: displayScale, owner: .search)
+        }
+      }
+      if cached.isFresh {
+        return
+      }
+    }
     if !force, let last = lastTrendingTopicsFetch, Date().timeIntervalSince(last) < 900, !trendingTopics.isEmpty {
       return
     }
@@ -236,14 +276,16 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       logger.debug("Trending topics request completed in \(String(describing: elapsed), privacy: .public)")
     }
     do {
-      let viewerDID = appState.userDID
-      let input = AppBskyUnspeccedGetTrends.Parameters(limit: 10)
-      let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
-      if let topicsResponse = response, !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID {
-        trendingTopics = topicsResponse.trends
+      let trends = try await appState.trendingTopicMediaStore.fetchOrCoalesceTrends(for: viewerDID, force: force) {
+        let input = AppBskyUnspeccedGetTrends.Parameters(limit: 10)
+        let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
+        return response?.trends ?? []
+      }
+      if !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID, !trends.isEmpty {
+        trendingTopics = trends
         lastTrendingTopicsFetch = Date()
         if isSubscribed {
-          appState.prefetchTopicPreviews(trends: topicsResponse.trends, displayScale: displayScale, owner: .search)
+          appState.prefetchTopicPreviews(trends: trends, displayScale: displayScale, owner: .search)
         }
       }
     } catch {
@@ -302,17 +344,27 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       trendingVideos = []
       return
     }
+    let viewerDID = appState.userDID
+    if trendingVideos.isEmpty, let cached = appState.trendingTopicMediaStore.cachedVideos(for: viewerDID), !cached.videos.isEmpty {
+      trendingVideos = TrendingVideoModeration.listed(cached.videos, policy: appState.moderationPolicy)
+      if cached.isFresh {
+        return
+      }
+    }
 
     isTrendingVideosLoading = true
     defer { isTrendingVideosLoading = false }
     do {
-      let feedUri = try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI)
-      let (posts, _) = try await FeedManager.fetchCustomFeed(
-        client: client,
-        generatorUri: feedUri,
-        cursor: nil,
-        limit: 15
-      )
+      let posts = try await appState.trendingTopicMediaStore.fetchOrCoalesceVideos(for: viewerDID) {
+        let feedUri = try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI)
+        let (posts, _) = try await FeedManager.fetchCustomFeed(
+          client: client,
+          generatorUri: feedUri,
+          cursor: nil,
+          limit: 15
+        )
+        return posts
+      }
       // Previews the account's policy filters from lists are not kept; the
       // section re-filters with the live policy and covers moderated thumbnails.
       trendingVideos = TrendingVideoModeration.listed(posts, policy: appState.moderationPolicy)

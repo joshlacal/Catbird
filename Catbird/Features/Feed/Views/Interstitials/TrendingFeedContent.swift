@@ -20,15 +20,18 @@ struct TrendingFeedContent: Equatable {
         guard appState.appSettings.showTrendingTopics, let client = appState.atProtoClient else {
             return []
         }
+        let viewerDID = appState.userDID
         do {
-            let viewerDID = appState.userDID
-            let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
+            let trends = try await appState.trendingTopicMediaStore.fetchOrCoalesceTrends(for: viewerDID) {
+                let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
+                guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
+                return output?.trends ?? []
+            }
             guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
-            let trends = output?.trends ?? []
             appState.prefetchTopicPreviews(trends: trends, displayScale: displayScale, owner: .timeline)
             return trends
         } catch {
-            return []
+            return appState.trendingTopicMediaStore.cachedTrends(for: viewerDID)?.trends ?? []
         }
     }
 
@@ -37,18 +40,23 @@ struct TrendingFeedContent: Equatable {
         guard appState.appSettings.showTrendingVideos, let client = appState.atProtoClient else {
             return []
         }
+        let viewerDID = appState.userDID
         do {
-            let input = AppBskyFeedGetFeed.Parameters(
-                feed: try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI),
-                limit: 10,
-                cursor: nil
-            )
-            let (_, response) = try await client.app.bsky.feed.getFeed(input: input)
+            let posts = try await appState.trendingTopicMediaStore.fetchOrCoalesceVideos(for: viewerDID) {
+                let input = AppBskyFeedGetFeed.Parameters(
+                    feed: try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI),
+                    limit: 10,
+                    cursor: nil
+                )
+                let (_, response) = try await client.app.bsky.feed.getFeed(input: input)
+                return response?.feed ?? []
+            }
             // Previews the account's policy filters from lists are not kept; the
             // section re-filters with the live policy and covers moderated thumbnails.
-            return TrendingVideoModeration.listed(response?.feed ?? [], policy: appState.moderationPolicy)
+            return TrendingVideoModeration.listed(posts, policy: appState.moderationPolicy)
         } catch {
-            return []
+            let cached = appState.trendingTopicMediaStore.cachedVideos(for: viewerDID)?.videos ?? []
+            return TrendingVideoModeration.listed(cached, policy: appState.moderationPolicy)
         }
     }
 }

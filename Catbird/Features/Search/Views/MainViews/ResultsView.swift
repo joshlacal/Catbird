@@ -18,6 +18,7 @@ struct ResultsView: View {
   /// Clears the search field and returns to Discovery.
   let onReset: () -> Void
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
   @Environment(\.displayScale) private var displayScale
   private let baseUnit: CGFloat = 3
 
@@ -46,10 +47,12 @@ struct ResultsView: View {
               }
             )
             .listRowInsets(EdgeInsets())
-            .listRowBackground(Color.clear)
+            .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
           }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
       } else {
         switch selectedContentType {
         case .top, .latest:
@@ -81,6 +84,8 @@ struct ResultsView: View {
       }
     }
     .listStyle(.plain)
+    .scrollContentBackground(.hidden)
+    .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
   }
 
   // MARK: - Post Results Section (Top / Latest)
@@ -92,11 +97,18 @@ struct ResultsView: View {
         loadingResultsSection
       }
       .listStyle(.plain)
+      .scrollContentBackground(.hidden)
+      .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
     } else if viewModel.postResults.isEmpty {
       List {
-        Section { emptyResultsView(for: selectedContentType) }
+        Section {
+          emptyResultsView(for: selectedContentType)
+            .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+        }
       }
       .listStyle(.plain)
+      .scrollContentBackground(.hidden)
+      .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
     } else {
       PostListCollectionView(
         posts: viewModel.postResults,
@@ -141,7 +153,7 @@ struct ResultsView: View {
             .padding(.top, baseUnit * 3)
 
             Rectangle()
-              .fill(Color.separator)
+              .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
               .frame(height: 0.5)
               .platformIgnoresSafeArea(.container, edges: .horizontal)
           }
@@ -158,6 +170,7 @@ struct ResultsView: View {
         .mainContentFrame()
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .accessibilityLabel("Loading results")
     }
   }
@@ -195,7 +208,10 @@ struct ResultsView: View {
       if viewModel.isSearchInFlight && viewModel.profileResults.isEmpty {
         loadingResultsSection
       } else if viewModel.profileResults.isEmpty {
-        Section { emptyResultsView(for: .people) }
+        Section {
+          emptyResultsView(for: .people)
+            .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+        }
       } else {
         profileSection
         loadMoreSectionIfNeeded(cursor: viewModel.profileCursor)
@@ -215,7 +231,7 @@ struct ResultsView: View {
 
             if profile != viewModel.profileResults.last {
               Rectangle()
-                .fill(Color.separator)
+                .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
                 .frame(height: 0.5)
                 .platformIgnoresSafeArea(.container, edges: .horizontal)
             }
@@ -224,6 +240,7 @@ struct ResultsView: View {
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .onAppear {
           if profile == viewModel.profileResults.last {
             triggerLoadMoreIfNeeded()
@@ -246,7 +263,10 @@ struct ResultsView: View {
       if viewModel.isSearchInFlight && viewModel.feedResults.isEmpty {
         loadingResultsSection
       } else if viewModel.feedResults.isEmpty {
-        Section { emptyResultsView(for: .feeds) }
+        Section {
+          emptyResultsView(for: .feeds)
+            .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+        }
       } else {
         feedSection
         loadMoreSectionIfNeeded(cursor: viewModel.feedCursor)
@@ -268,13 +288,14 @@ struct ResultsView: View {
 
           if feed != viewModel.feedResults.last {
             Rectangle()
-              .fill(Color.separator)
+              .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
               .frame(height: 0.5)
               .platformIgnoresSafeArea(.container, edges: .horizontal)
           }
         }
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .onAppear {
           if feed == viewModel.feedResults.last {
             triggerLoadMoreIfNeeded()
@@ -291,7 +312,10 @@ struct ResultsView: View {
       if viewModel.isSearchInFlight && viewModel.starterPackResults.isEmpty {
         loadingResultsSection
       } else if viewModel.starterPackResults.isEmpty {
-        Section { emptyResultsView(for: .starterPacks) }
+        Section {
+          emptyResultsView(for: .starterPacks)
+            .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+        }
       } else {
         starterPackSection
         loadMoreSectionIfNeeded(cursor: viewModel.starterPackCursor)
@@ -313,7 +337,7 @@ struct ResultsView: View {
 
             if pack != viewModel.starterPackResults.last {
               Rectangle()
-                .fill(Color.separator)
+                .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
                 .frame(height: 0.5)
                 .platformIgnoresSafeArea(.container, edges: .horizontal)
             }
@@ -322,6 +346,7 @@ struct ResultsView: View {
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .onAppear {
           if pack == viewModel.starterPackResults.last {
             triggerLoadMoreIfNeeded()
@@ -369,6 +394,7 @@ struct ResultsView: View {
         .padding(.vertical, 16)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
       }
     } else if cursor != nil && !viewModel.isLoadingMoreResults {
       Section {
@@ -385,6 +411,7 @@ struct ResultsView: View {
         .padding(.vertical, 16)
         .onAppear { triggerLoadMoreIfNeeded() }
         .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
       }
     } else if viewModel.isLoadingMoreResults {
       Section {
@@ -400,6 +427,7 @@ struct ResultsView: View {
         }
         .padding(.vertical, 16)
         .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
       }
     }
   }

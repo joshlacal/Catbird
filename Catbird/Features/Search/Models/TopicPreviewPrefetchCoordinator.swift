@@ -34,6 +34,8 @@ final class TopicPreviewPrefetchCoordinator {
     return result
   }
 
+  static let maxConcurrentFetches = 2
+
   func start(owner: TopicPreviewPrefetchOwner, identity: String, links: [String],
     load: @escaping @MainActor (String) async -> Void) -> Bool {
     guard isActive, batches[owner]?.identity != identity, completed[owner] != identity else { return false }
@@ -44,8 +46,16 @@ final class TopicPreviewPrefetchCoordinator {
     let task = Task { [weak self] in
       guard self?.isActive == true, !Task.isCancelled else { return }
       await withTaskGroup(of: Void.self) { group in
-        for link in links {
-          guard self?.isActive == true, !Task.isCancelled else { break }
+        var iterator = links.makeIterator()
+        for _ in 0..<min(Self.maxConcurrentFetches, links.count) {
+          guard self?.isActive == true, !Task.isCancelled, let link = iterator.next() else { break }
+          group.addTask { @MainActor [weak self] in
+            guard self?.isActive == true, !Task.isCancelled else { return }
+            await load(link)
+          }
+        }
+        while await group.next() != nil {
+          guard self?.isActive == true, !Task.isCancelled, let link = iterator.next() else { continue }
           group.addTask { @MainActor [weak self] in
             guard self?.isActive == true, !Task.isCancelled else { return }
             await load(link)

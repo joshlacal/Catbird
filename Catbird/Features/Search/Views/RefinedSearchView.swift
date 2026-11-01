@@ -224,16 +224,24 @@ struct RefinedSearchView: View {
     private var mainContentContainer: some View {
         @Bindable var bindableViewModel = viewModel
         ZStack {
-            // Full-width background layer
-            Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme)
+            // Full-width semantic background layer (respects Dim and Black themes)
+            Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
                 .ignoresSafeArea()
             
             // Edge-to-edge content; individual rows constrain via .mainContentFrame()
             VStack(spacing: 0) {
-                if shouldShowFilterBar {
+                if shouldShowFilterBar && viewModel.filterState.activeFilterCount > 0 {
                     SearchFilterBar(
-                        activeFilterCount: viewModel.filterState.activeFilterCount,
-                        onFiltersTap: { isShowingFiltersSheet = true }
+                        filterState: viewModel.filterState,
+                        onFiltersTap: { isShowingFiltersSheet = true },
+                        onResetFilters: {
+                            if let client = appState.atProtoClient {
+                                viewModel.applyFilterState(
+                                    SearchFilterState(sort: viewModel.filterState.sort),
+                                    client: client
+                                )
+                            }
+                        }
                     )
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -339,6 +347,7 @@ struct RefinedSearchView: View {
         .searchSuggestions {
             searchSuggestionsContent
         }
+        .scrollContentBackground(.hidden)
         // Configure the native suggestions list, not just the discovery scroll view.
         // Short history must still accept a vertical pan to dismiss the keyboard.
         .scrollDismissesKeyboard(.interactively)
@@ -348,6 +357,25 @@ struct RefinedSearchView: View {
         }
         #if !targetEnvironment(macCatalyst)
         .toolbar {
+            if shouldShowFilterBar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        isShowingFiltersSheet = true
+                    } label: {
+                        Image(
+                            systemName: viewModel.filterState.activeFilterCount > 0
+                                ? "line.3.horizontal.decrease.circle.fill"
+                                : "line.3.horizontal.decrease.circle"
+                        )
+                    }
+                    .accessibilityIdentifier("searchToolbarFiltersButton")
+                    .accessibilityLabel(
+                        viewModel.filterState.activeFilterCount > 0
+                            ? "Filters, \(viewModel.filterState.activeFilterCount) active"
+                            : "Filters"
+                    )
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 searchMenuButton
             }
@@ -466,6 +494,23 @@ struct RefinedSearchView: View {
                     isShowingCopilot = true
                 } label: {
                     Label("Ask Catbird", systemImage: "sparkles")
+                }
+
+                Divider()
+            }
+
+            if shouldShowFilterBar {
+                Button {
+                    isShowingFiltersSheet = true
+                } label: {
+                    Label(
+                        viewModel.filterState.activeFilterCount > 0
+                            ? "Filters (\(viewModel.filterState.activeFilterCount))"
+                            : "Filters",
+                        systemImage: viewModel.filterState.activeFilterCount > 0
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle"
+                    )
                 }
 
                 Divider()
