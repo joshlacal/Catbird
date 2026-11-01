@@ -12,7 +12,7 @@ struct VideoUploadCheckpointRetentionTests {
 
   // MARK: - Rule
 
-  @Test("Only an unfinished, unexpired upload session keeps its snapshot")
+  @Test("Only an unfinished, unexpired, unaborted upload session keeps its snapshot")
   func retentionRule() {
     let now = Date(timeIntervalSince1970: 1_000)
     var session = VideoUploadCheckpoint(
@@ -37,7 +37,10 @@ struct VideoUploadCheckpointRetentionTests {
     unstarted.uploadJobID = nil
     var undated = session
     undated.expiresAt = nil
-    for checkpoint in [expired, finished, unstarted, undated] {
+    var aborted = session
+    aborted.phase = .abandoned
+    aborted.failureReason = "aborted"
+    for checkpoint in [expired, finished, unstarted, undated, aborted] {
       #expect(!VideoUploadCheckpointStore.keepsSnapshot(checkpoint, at: now))
     }
   }
@@ -255,6 +258,46 @@ struct VideoUploadCheckpointRetentionTests {
     #expect(await transport.startCount == 2)
     #expect(await transport.parts.map(\.bytes).reduce(into: Data()) { $0.append($1) } == Data(0..<10))
     #expect(files("video", in: fixture.root).isEmpty)
+  }
+
+  @Test("A canceled upload's snapshot is deleted once its abort is confirmed, and a retry needs no part")
+  func confirmedAbortDropsSnapshot() async throws {
+    let fixture = try VideoMultipartUploadChecks.fixture()
+    let started = VideoTestGate()
+    let transport = ScriptedVideoTransport(
+      statuses: [.success(VideoMultipartUploadChecks.status("created")),
+                 .success(VideoMultipartUploadChecks.status("aborted"))],
+      onPart: {
+        await started.open()
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+      })
+    let engine = VideoMultipartUpload(
+      transport: transport, store: fixture.store, configuration: VideoMultipartUploadChecks.configuration())
+    let operation = Task { try await VideoMultipartUploadChecks.run(engine, fixture: fixture) }
+    await started.wait()
+    operation.cancel()
+    await #expect(throws: CancellationError.self) { _ = try await operation.value }
+    // The abort runs detached; observe its lease ending, bounded independently of the fake clock.
+    var waits = 0
+    while !files("video", in: fixture.root).isEmpty, waits < 2_000 {
+      waits += 1
+      try await Task.sleep(nanoseconds: 1_000_000)
+    }
+    #expect(files("video", in: fixture.root).isEmpty)
+    #expect(files("part", in: fixture.root).isEmpty)
+    let abandoned = try #require(try await fixture.store.load(owner: owner))
+    #expect(abandoned.phase == .abandoned && abandoned.failureReason == "aborted")
+    #expect(await transport.abortCount == 1)
+
+    let partsBefore = await transport.parts.count
+    await #expect(throws: VideoMultipartError.self) {
+      _ = try await VideoMultipartUploadChecks.run(engine, fixture: fixture)
+    }
+    #expect(try await fixture.store.load(owner: owner)?.phase == .terminal)
+    #expect(await transport.parts.count == partsBefore, "an aborted session takes no part")
+    #expect(await transport.startCount == 1)
+    #expect(files("video", in: fixture.root).isEmpty)
+    #expect(try Data(contentsOf: fixture.source) == Data(0..<10))
   }
 
   // MARK: - Helpers

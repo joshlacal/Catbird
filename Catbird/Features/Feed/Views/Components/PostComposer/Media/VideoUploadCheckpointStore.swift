@@ -344,14 +344,18 @@ actor VideoUploadCheckpointStore {
 
 extension VideoUploadCheckpointStore {
   /// Whether `checkpoint`'s server session can still take parts from its snapshot: an upload
-  /// session that has not finished, failed or expired. Any other checkpoint's bytes are already
-  /// on the service or go to a new session, which a later run clones again from its source.
+  /// session that has not finished, failed, expired or been aborted. Any other checkpoint's bytes
+  /// are already on the service or go to a new session, which a later run clones again from its
+  /// source.
   static func keepsSnapshot(_ checkpoint: VideoUploadCheckpoint, at now: Date) -> Bool {
     guard checkpoint.uploadJobID?.isEmpty == false, checkpoint.completedJobID == nil,
       let expiresAt = checkpoint.expiresAt, expiresAt > now
     else { return false }
     switch checkpoint.phase {
-    case .uploading, .finishing, .abandoned: return true
+    case .uploading, .finishing: return true
+    // Cleanup records the service's answer as the failure reason: the abort went through or the
+    // session is already finishing or finished. Either way it takes no more parts.
+    case .abandoned: return checkpoint.failureReason == nil
     case .prepared, .starting, .startUncertain, .processing, .complete, .terminal: return false
     }
   }
