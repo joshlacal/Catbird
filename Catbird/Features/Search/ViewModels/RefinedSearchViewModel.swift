@@ -216,7 +216,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     hasLoadedDiscoveryContent = true
     async let trendsTask: Void = fetchTrendingTopics(client: client, displayScale: displayScale, force: true)
     async let suggestedTask: Void = fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
-    async let videosTask: Void = fetchTrendingVideos(client: client)
+    async let videosTask: Void = fetchTrendingVideos(client: client, force: true)
     async let interestsTask: Void = loadUserInterests()
 
     _ = await (trendsTask, suggestedTask, videosTask, interestsTask)
@@ -276,9 +276,11 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       logger.debug("Trending topics request completed in \(String(describing: elapsed), privacy: .public)")
     }
     do {
-      let trends = try await appState.trendingTopicMediaStore.fetchOrCoalesceTrends(for: viewerDID, force: force) {
+      let trends = try await appState.trendingTopicMediaStore.fetchOrCoalesceTrends(for: viewerDID, force: force) { [appState] in
         let input = AppBskyUnspeccedGetTrends.Parameters(limit: 10)
         let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
+        // An empty answer is never cached: a response for an account that was switched away from is dropped.
+        guard !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
         return response?.trends ?? []
       }
       if !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID, !trends.isEmpty {
@@ -333,7 +335,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     await fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
   }
 
-  public func fetchTrendingVideos(client: ATProtoClient) async {
+  public func fetchTrendingVideos(client: ATProtoClient, force: Bool = false) async {
     guard !isTrendingVideosLoading else { return }
     let started = ContinuousClock.now
     defer {
@@ -347,7 +349,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     let viewerDID = appState.userDID
     if trendingVideos.isEmpty, let cached = appState.trendingTopicMediaStore.cachedVideos(for: viewerDID), !cached.videos.isEmpty {
       trendingVideos = TrendingVideoModeration.listed(cached.videos, policy: appState.moderationPolicy)
-      if cached.isFresh {
+      if cached.isFresh && !force {
         return
       }
     }
@@ -355,7 +357,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     isTrendingVideosLoading = true
     defer { isTrendingVideosLoading = false }
     do {
-      let posts = try await appState.trendingTopicMediaStore.fetchOrCoalesceVideos(for: viewerDID) {
+      let posts = try await appState.trendingTopicMediaStore.fetchOrCoalesceVideos(for: viewerDID, force: force) { [appState] in
         let feedUri = try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI)
         let (posts, _) = try await FeedManager.fetchCustomFeed(
           client: client,
@@ -363,8 +365,10 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
           cursor: nil,
           limit: 15
         )
+        guard !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
         return posts
       }
+      guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return }
       // Previews the account's policy filters from lists are not kept; the
       // section re-filters with the live policy and covers moderated thumbnails.
       trendingVideos = TrendingVideoModeration.listed(posts, policy: appState.moderationPolicy)

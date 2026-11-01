@@ -49,6 +49,8 @@ struct TrendingFeedContent: Equatable {
                     cursor: nil
                 )
                 let (_, response) = try await client.app.bsky.feed.getFeed(input: input)
+                // An empty answer is never cached: a response for an account that was switched away from is dropped.
+                guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
                 return response?.feed ?? []
             }
             // Previews the account's policy filters from lists are not kept; the
