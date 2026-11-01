@@ -820,7 +820,7 @@ final class AppState {
         accountServiceWork.suspend()
         ageAccess.suspend()
         feedFeedbackManager.discardPending()
-        trendingTopicMediaStore.invalidateForGraphChange()
+        trendingTopicMediaStore.invalidateForSuspension()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
         backgroundPollingTask?.cancel()
@@ -993,7 +993,7 @@ final class AppState {
         accountServiceWork.suspend()
         ageAccess.suspend()
         feedFeedbackManager.discardPending()
-        trendingTopicMediaStore.invalidateForGraphChange()
+        trendingTopicMediaStore.invalidateForSuspension()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
 

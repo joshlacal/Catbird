@@ -60,103 +60,8 @@ final class TrendingTopicMediaStore {
   private(set) var canReusePrefetchedFeed = true
   private(set) var isActive = true
   @ObservationIgnored private var prefetchedLinksUsed: Set<String> = []
-  @ObservationIgnored private var cachedTrendsByAccount: [String: (trends: [AppBskyUnspeccedDefs.TrendView], fetchedAt: Date)] = [:]
-  @ObservationIgnored private var cachedVideosByAccount: [String: (videos: [AppBskyFeedDefs.FeedViewPost], fetchedAt: Date)] = [:]
-  @ObservationIgnored private var inFlightTrendsTasks: [String: Task<[AppBskyUnspeccedDefs.TrendView], Error>] = [:]
-  @ObservationIgnored private var inFlightVideosTasks: [String: Task<[AppBskyFeedDefs.FeedViewPost], Error>] = [:]
-
-  private struct PersistedTrendsEnvelope: Codable {
-    let trends: [AppBskyUnspeccedDefs.TrendView]
-    let savedAt: Date
-  }
-
-  private static func persistedTrendsKey(for accountDID: String) -> String {
-    "catbird.trendingTopics.v1.\(accountDID)"
-  }
-
-  /// Returns fresh or stale-while-revalidate trends for the given account (up to 24h on disk).
-  func cachedTrends(for accountDID: String, maxAge: TimeInterval = 600) -> (trends: [AppBskyUnspeccedDefs.TrendView], isFresh: Bool)? {
-    guard !accountDID.isEmpty else { return nil }
-    let now = Date()
-    if let memory = cachedTrendsByAccount[accountDID], !memory.trends.isEmpty {
-      return (memory.trends, now.timeIntervalSince(memory.fetchedAt) < maxAge)
-    }
-    guard let data = UserDefaults.standard.data(forKey: Self.persistedTrendsKey(for: accountDID)),
-          let envelope = try? JSONDecoder().decode(PersistedTrendsEnvelope.self, from: data),
-          !envelope.trends.isEmpty,
-          now.timeIntervalSince(envelope.savedAt) < 86_400 else {
-      return nil
-    }
-    cachedTrendsByAccount[accountDID] = (envelope.trends, envelope.savedAt)
-    return (envelope.trends, now.timeIntervalSince(envelope.savedAt) < maxAge)
-  }
-
-  func storeTrends(_ trends: [AppBskyUnspeccedDefs.TrendView], for accountDID: String) {
-    guard !accountDID.isEmpty, !trends.isEmpty else { return }
-    let now = Date()
-    cachedTrendsByAccount[accountDID] = (trends, now)
-    if let data = try? JSONEncoder().encode(PersistedTrendsEnvelope(trends: trends, savedAt: now)) {
-      UserDefaults.standard.set(data, forKey: Self.persistedTrendsKey(for: accountDID))
-    }
-  }
-
-  func fetchOrCoalesceTrends(
-    for accountDID: String,
-    force: Bool = false,
-    maxAge: TimeInterval = 600,
-    fetch: @escaping @MainActor () async throws -> [AppBskyUnspeccedDefs.TrendView]
-  ) async throws -> [AppBskyUnspeccedDefs.TrendView] {
-    if !force, let cached = cachedTrends(for: accountDID, maxAge: maxAge), cached.isFresh {
-      return cached.trends
-    }
-    if let existing = inFlightTrendsTasks[accountDID] {
-      return try await existing.value
-    }
-    let task = Task { @MainActor [weak self] () throws -> [AppBskyUnspeccedDefs.TrendView] in
-      defer { self?.inFlightTrendsTasks.removeValue(forKey: accountDID) }
-      let trends = try await fetch()
-      if !Task.isCancelled {
-        self?.storeTrends(trends, for: accountDID)
-      }
-      return trends
-    }
-    inFlightTrendsTasks[accountDID] = task
-    return try await task.value
-  }
-
-  func cachedVideos(for accountDID: String, maxAge: TimeInterval = 600) -> (videos: [AppBskyFeedDefs.FeedViewPost], isFresh: Bool)? {
-    guard !accountDID.isEmpty, let memory = cachedVideosByAccount[accountDID], !memory.videos.isEmpty else { return nil }
-    return (memory.videos, Date().timeIntervalSince(memory.fetchedAt) < maxAge)
-  }
-
-  func storeVideos(_ videos: [AppBskyFeedDefs.FeedViewPost], for accountDID: String) {
-    guard !accountDID.isEmpty, !videos.isEmpty else { return }
-    cachedVideosByAccount[accountDID] = (videos, Date())
-  }
-
-  func fetchOrCoalesceVideos(
-    for accountDID: String,
-    force: Bool = false,
-    maxAge: TimeInterval = 600,
-    fetch: @escaping @MainActor () async throws -> [AppBskyFeedDefs.FeedViewPost]
-  ) async throws -> [AppBskyFeedDefs.FeedViewPost] {
-    if !force, let cached = cachedVideos(for: accountDID, maxAge: maxAge), cached.isFresh {
-      return cached.videos
-    }
-    if let existing = inFlightVideosTasks[accountDID] {
-      return try await existing.value
-    }
-    let task = Task { @MainActor [weak self] () throws -> [AppBskyFeedDefs.FeedViewPost] in
-      defer { self?.inFlightVideosTasks.removeValue(forKey: accountDID) }
-      let videos = try await fetch()
-      if !Task.isCancelled {
-        self?.storeVideos(videos, for: accountDID)
-      }
-      return videos
-    }
-    inFlightVideosTasks[accountDID] = task
-    return try await task.value
-  }
+  /// Trend and trending-video lists per account, shared by Search and the timeline interstitial.
+  @ObservationIgnored let lists: TrendingTopicListCache
 
   func labelDefinitions(for labelers: String) -> ContentLabelDefinitionLookup.Definitions? {
     labelDefinitions?.labelers == labelers ? labelDefinitions?.definitions : nil
@@ -172,7 +77,8 @@ final class TrendingTopicMediaStore {
     return prefetchedLinksUsed.insert(link).inserted
   }
 
-  init() {
+  init(lists: TrendingTopicListCache? = nil) {
+    self.lists = lists ?? TrendingTopicListCache()
     graphObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name("UserGraphChanged"),
       object: nil, queue: .main) { [weak self] _ in
         // Graph notifications may originate off the main actor. Delivery is on the main queue.
@@ -192,7 +98,7 @@ final class TrendingTopicMediaStore {
     backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
       object: nil, queue: .main) { [weak self] _ in
         // Refresh viewer metadata and invalidate cached previews when entering background so external blocks/mutes are honored on next foreground.
-        MainActor.assumeIsolated { self?.invalidateForGraphChange() }
+        MainActor.assumeIsolated { self?.invalidateForSuspension() }
       }
     memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
       object: nil, queue: .main) { [weak self] _ in
@@ -218,8 +124,6 @@ final class TrendingTopicMediaStore {
 
   deinit {
     for request in requests.values { request.cancel() }
-    for task in inFlightTrendsTasks.values { task.cancel() }
-    for task in inFlightVideosTasks.values { task.cancel() }
     if let graphObserver { NotificationCenter.default.removeObserver(graphObserver) }
     if let activityObserver { NotificationCenter.default.removeObserver(activityObserver) }
     if let inactivityObserver { NotificationCenter.default.removeObserver(inactivityObserver) }
@@ -227,15 +131,23 @@ final class TrendingTopicMediaStore {
     if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
   }
 
+  /// A mute, block or other graph change: drops previews and lists, including every stored trend
+  /// list, since all of them predate it.
   func invalidateForGraphChange() {
+    discardCachedContent()
+    lists.invalidateIncludingDisk()
+  }
+
+  /// Leaving the foreground, or suspending or retiring the account: drops previews and lists, and
+  /// refreshes stored trends on their next use. They stay on disk to paint the next launch.
+  func invalidateForSuspension() {
+    discardCachedContent()
+    lists.invalidate()
+  }
+
+  private func discardCachedContent() {
     cancelRequests()
     cancelPrefetches()
-    for task in inFlightTrendsTasks.values { task.cancel() }
-    inFlightTrendsTasks.removeAll()
-    for task in inFlightVideosTasks.values { task.cancel() }
-    inFlightVideosTasks.removeAll()
-    cachedTrendsByAccount.removeAll()
-    cachedVideosByAccount.removeAll()
     canReusePrefetchedFeed = false
     removeAllEntries()
     revision += 1
@@ -247,12 +159,8 @@ final class TrendingTopicMediaStore {
     labelDefinitions = nil
     cancelRequests()
     cancelPrefetches()
-    for task in inFlightTrendsTasks.values { task.cancel() }
-    inFlightTrendsTasks.removeAll()
-    for task in inFlightVideosTasks.values { task.cancel() }
-    inFlightVideosTasks.removeAll()
-    cachedTrendsByAccount.removeAll()
-    cachedVideosByAccount.removeAll()
+    // Trend actors and videos carry the labels of the labeler set they were fetched with.
+    lists.invalidateIncludingDisk()
     removeAllEntries()
     revision += 1
   }
