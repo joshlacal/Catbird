@@ -44,10 +44,6 @@ enum VideoMultipartUploadChecks {
     try check(checkpoint.runID != repeated.runID, "retry rotates run lease while preserving session")
     do { try await fixture.store.save(checkpoint); throw CheckFailure("old same-session cleanup overwrote new run") }
     catch VideoUploadFileError.ownerChanged {}
-    let reopened = try VideoUploadCheckpointStore(rootURL: fixture.root)
-    try check(try await reopened.load(owner: owner)?.operationID == checkpoint.operationID, "checkpoint persists across store instances")
-    let other = VideoUploadOwner(accountDID: "did:plc:bob", draftID: owner.draftID, entryID: owner.entryID, mediaID: owner.mediaID)
-    try check(try await reopened.load(owner: other) == nil, "another account cannot recover this checkpoint")
     do {
       _ = try await fixture.store.makePart(checkpoint: checkpoint, partNumber: 3, offset: 8, count: 2)
       throw CheckFailure("stale lease created an upload part")
@@ -59,6 +55,11 @@ enum VideoMultipartUploadChecks {
     do { try await fixture.store.save(checkpoint); throw CheckFailure("old callback overwrote replacement") }
     catch VideoUploadFileError.ownerChanged {}
     await fixture.store.release(owner: owner, runID: repeated.runID)
+    // Reopen only once no run holds a lease: opening a store sweeps files no run needs.
+    let reopened = try VideoUploadCheckpointStore(rootURL: fixture.root)
+    try check(try await reopened.load(owner: owner)?.operationID == replacement.operationID, "checkpoint persists across store instances")
+    let other = VideoUploadOwner(accountDID: "did:plc:bob", draftID: owner.draftID, entryID: owner.entryID, mediaID: owner.mediaID)
+    try check(try await reopened.load(owner: other) == nil, "another account cannot recover this checkpoint")
     try Data(repeating: 99, count: 10).write(to: fixture.source)
     do {
       _ = try await fixture.store.prepare(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4")
@@ -66,8 +67,8 @@ enum VideoMultipartUploadChecks {
     } catch VideoUploadFileError.sourceChanged {}
     try check(try Data(contentsOf: fixture.source) == Data(repeating: 99, count: 10), "changed source remains intact")
     let files = FileManager.default.enumerator(at: fixture.root, includingPropertiesForKeys: nil)!.allObjects as! [URL]
-    let snapshots = files.filter { $0.pathExtension == "video" }
-    try check(snapshots.count == 1 && (try Data(contentsOf: snapshots[0])) == Data(0..<10), "original immutable snapshot retained")
+    // The released attempt never started a server session, so nothing can resume from its bytes.
+    try check(!files.contains { ["video", "part"].contains($0.pathExtension) }, "released unstarted attempt keeps no snapshot or part")
     for path in files where path.pathExtension == "json" {
       let text = String(decoding: try Data(contentsOf: path), as: UTF8.self)
       try check(!text.contains("Bearer") && !text.contains("access_token") && !text.contains("service-"), "checkpoint metadata has no credentials")
@@ -76,8 +77,9 @@ enum VideoMultipartUploadChecks {
     try check(changed.operationID != replacement.operationID && changed.sha256 != replacement.sha256, "explicit changed-source retry allocates a distinct snapshot and operation")
     let after = FileManager.default.enumerator(at: fixture.root, includingPropertiesForKeys: nil)!.allObjects as! [URL]
     let allSnapshots = after.filter { $0.pathExtension == "video" }
-    try check(allSnapshots.count == 2, "explicit source replacement retains both old and new video files")
-    try check(try Data(contentsOf: snapshots[0]) == Data(0..<10), "replacement never overwrites prior snapshot")
+    try check(allSnapshots.map(\.lastPathComponent) == [changed.snapshotName], "explicit source replacement keeps only the new video file")
+    try check(try Data(contentsOf: allSnapshots[0]) == Data(repeating: 99, count: 10), "replacement snapshot holds the changed bytes")
+    try check(after.contains { $0.lastPathComponent == "\(replacement.operationID.uuidString).json" }, "replaced reservation stays in history")
     await fixture.store.release(owner: owner, runID: changed.runID)
   }
 

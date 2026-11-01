@@ -127,7 +127,8 @@ actor VideoMultipartUpload {
   ///
   /// `allowNewSessionAfterTerminal` is for a new user submit/retry, including a previously
   /// uncertain start or changed source bytes. It never permits replaying start within this
-  /// invocation. Old session metadata and immutable source snapshots stay in local history.
+  /// invocation. Old session metadata stays in local history; a replaced session's snapshot is
+  /// deleted, because nothing can resume it.
   func run(
     attachmentURL: URL,
     copies: some VideoUploadCopyMaking,

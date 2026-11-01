@@ -536,7 +536,7 @@ struct VideoUploadSanitizerTests {
     try await expectNothingSent(transport: transport, store: store, folder: folder)
   }
 
-  @Test("A completed multipart upload releases its temporary sanitized copy and retains its retry snapshot")
+  @Test("A completed multipart upload releases its temporary sanitized copy and its snapshot")
   func completedUploadReleasesTemporaryCopy() async throws {
     let fixture = try await Fixture.make(.quickTime)
     let folder = fixture.deletingLastPathComponent()
@@ -552,13 +552,12 @@ struct VideoUploadSanitizerTests {
 
     let checkpoint = try #require(try await store.load(owner: VideoMultipartUploadChecks.owner))
     #expect(checkpoint.phase == .complete)
+    let uploaded = await transport.uploaded()
+    #expect(checkpoint.sha256 == SHA256.hash(data: uploaded).map { String(format: "%02x", $0) }.joined())
     let files = try #require(FileManager.default.enumerator(
       at: checkpointRoot, includingPropertiesForKeys: nil))
-    let snapshot = try #require(files.allObjects.compactMap { $0 as? URL }.first {
-      $0.lastPathComponent == checkpoint.snapshotName
-    })
-    let uploaded = await transport.uploaded()
-    #expect(try Data(contentsOf: snapshot) == uploaded)
+    let leftovers = files.allObjects.compactMap { $0 as? URL }.filter { ["video", "part"].contains($0.pathExtension) }
+    #expect(leftovers.isEmpty, "a completed upload keeps no snapshot or part file")
   }
 
   @Test("Losing ownership after sanitization releases the copy without creating an upload")
