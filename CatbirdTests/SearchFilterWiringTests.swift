@@ -5,36 +5,23 @@ import SwiftUI
 
 @Suite("Search filter wiring")
 struct SearchFilterWiringTests {
-  @Test("search content hides behind suggestions only where the suggestions fill the page")
+  @Test("search content hides behind suggestions exactly while they are up and fill the page")
   func suggestionsOverlayHidesPageOnlyWhereSuggestionsFillIt() {
-    func hides(
-      fill: Bool, presented: Bool = true, focused: Bool = false, state: SearchState = .idle,
-      committed: Bool = false
-    ) -> Bool {
-      SearchSuggestionsOverlayGate.hidesPageContent(
-        suggestionsFillPage: fill, isSearchPresented: presented, isSearchFieldFocused: focused,
-        searchState: state, isCommittedSearch: committed
-      )
+    func hides(fill: Bool, focused: Bool) -> Bool {
+      SearchSuggestionsOverlayGate.hidesPageContent(suggestionsFillPage: fill, isSearchFieldFocused: focused)
     }
 
-    // Compact width: the focused field or an uncommitted query owns the screen.
+    // iOS shows the suggestions exactly while the field is focused, so the page hides
+    // then (the hide-keyboard key on iPad keeps the field focused)...
     #expect(hides(fill: true, focused: true))
-    #expect(hides(fill: true, focused: true, state: .results, committed: true))
-    #expect(hides(fill: true, state: .searching))
-    #expect(!hides(fill: true, state: .searching, committed: true))
-    #expect(!hides(fill: true, state: .results, committed: true))
-    #expect(!hides(fill: true))
-
-    // Text left in a search that has closed has no suggestions over it, so the page shows.
-    #expect(!hides(fill: true, presented: false, state: .searching))
+    // ...and shows once the field loses focus, typed text or not: scrolling the
+    // keyboard away removes the suggestions from a search that stays presented, and a
+    // hidden page there would leave the screen blank.
+    #expect(!hides(fill: true, focused: false))
 
     // Suggestions that drop down from the toolbar field (macOS) never hide the page.
-    for state in [SearchState.idle, .searching, .results, .loading] {
-      for focused in [false, true] {
-        #expect(!hides(fill: false, focused: focused, state: state))
-        #expect(!hides(fill: false, presented: false, focused: focused, state: state))
-      }
-    }
+    #expect(!hides(fill: false, focused: true))
+    #expect(!hides(fill: false, focused: false))
 
     // On iOS the suggestions fill the page on every size class, a full-size iPad included.
     #if os(iOS) && !targetEnvironment(macCatalyst)
@@ -49,23 +36,16 @@ struct SearchFilterWiringTests {
     #expect(SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: true) == .hidden)
     #expect(SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: false) == .automatic)
 
-    // Wherever the container is transparent, every state that shows suggestions (a
-    // focused field, or typeahead for an uncommitted query in a presented search)
-    // hides the page.
+    // Wherever the container is transparent, the page hides whenever the suggestions
+    // are up (a focused field) and shows whenever they are not, so the page never
+    // shows through them and the screen is never left blank.
     for fill in [false, true]
     where SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: fill) == .hidden {
-      for state in [SearchState.idle, .searching, .results, .loading] {
-        for committed in [false, true] {
-          #expect(SearchSuggestionsOverlayGate.hidesPageContent(
-            suggestionsFillPage: fill, isSearchPresented: true, isSearchFieldFocused: true,
-            searchState: state, isCommittedSearch: committed
-          ))
-        }
+      for focused in [false, true] {
+        #expect(SearchSuggestionsOverlayGate.hidesPageContent(
+          suggestionsFillPage: fill, isSearchFieldFocused: focused
+        ) == focused)
       }
-      #expect(SearchSuggestionsOverlayGate.hidesPageContent(
-        suggestionsFillPage: fill, isSearchPresented: true, isSearchFieldFocused: false,
-        searchState: .searching, isCommittedSearch: false
-      ))
     }
   }
 
