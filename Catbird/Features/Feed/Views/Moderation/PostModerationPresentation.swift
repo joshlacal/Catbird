@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Petrel
 
 // What one rendered post needs from the moderation engine, computed once per
@@ -261,6 +262,12 @@ struct ModerationRevealState: Equatable, Sendable {
 /// the viewer may no longer override conceals again, as
 /// `ModerationRevealState` does.
 @MainActor
+@Observable
+fileprivate final class ModerationRevealSubjectToken {
+  var generation = 0
+}
+
+@MainActor
 final class ModerationRevealStore {
   enum Gate: Hashable {
     case body
@@ -279,6 +286,7 @@ final class ModerationRevealStore {
   private static let maxEntries = 5_000
 
   private var revealedKeys: Set<Key> = []
+  private var subjectTokens: [String: ModerationRevealSubjectToken] = [:]
 
   /// Changes whenever the recorded reveals change. A gate restores its state
   /// from here when its row is built, so the feed's row-height cache keys
@@ -286,22 +294,44 @@ final class ModerationRevealStore {
   /// row built after it.
   private(set) var generation = 0
 
+  private func token(for subject: String) -> ModerationRevealSubjectToken {
+    if let existing = subjectTokens[subject] {
+      return existing
+    }
+    if subjectTokens.count >= Self.maxEntries {
+      for existing in subjectTokens.values {
+        existing.generation &+= 1
+      }
+      subjectTokens.removeAll()
+    }
+    let created = ModerationRevealSubjectToken()
+    subjectTokens[subject] = created
+    return created
+  }
+
   func isRevealed(_ ui: ModerationUI, gate: Gate, subject: String, accountDID: String) -> Bool {
     guard !ui.noOverride, let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else {
       return false
     }
+    _ = token(for: subject).generation
     return revealedKeys.contains(key)
   }
 
   func setRevealed(_ revealed: Bool, ui: ModerationUI, gate: Gate, subject: String, accountDID: String) {
     guard let key = Self.key(ui, gate: gate, subject: subject, accountDID: accountDID) else { return }
     if revealed {
-      if revealedKeys.count >= Self.maxEntries { revealedKeys.removeAll() }
+      if revealedKeys.count >= Self.maxEntries {
+        revealedKeys.removeAll()
+        for existing in subjectTokens.values {
+          existing.generation &+= 1
+        }
+      }
       guard revealedKeys.insert(key).inserted else { return }
     } else {
       guard revealedKeys.remove(key) != nil else { return }
     }
     generation &+= 1
+    subjectTokens[subject]?.generation &+= 1
   }
 
   /// No key without a subject: such a gate keeps its reveal in view state only.

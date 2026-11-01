@@ -103,7 +103,9 @@ struct ModerationContentGate<Content: View>: View {
   private var storeSubject: String { revealSubject.isEmpty ? postID : revealSubject }
 
   private var revealed: Bool {
-    if let localReveal { return localReveal.isRevealed(ui) }
+    if storeSubject.isEmpty {
+      return localReveal?.isRevealed(ui) ?? false
+    }
     return ModerationRevealStore.shared.isRevealed(
       ui, gate: .body, subject: storeSubject, accountDID: appState.userDID)
   }
@@ -163,9 +165,13 @@ struct ModerationContentGate<Content: View>: View {
 
   private func setRevealed(_ isRevealed: Bool) {
     withoutRevealAnimation {
-      ModerationRevealStore.shared.setRevealed(
-        isRevealed, ui: ui, gate: .body, subject: storeSubject, accountDID: appState.userDID)
-      localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
+      if storeSubject.isEmpty {
+        localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
+      } else {
+        localReveal = nil
+        ModerationRevealStore.shared.setRevealed(
+          isRevealed, ui: ui, gate: .body, subject: storeSubject, accountDID: appState.userDID)
+      }
     }
     invalidateFeedRowHeight?()
   }
@@ -201,7 +207,9 @@ struct ModerationMediaGate<Content: View>: View {
   private var storeSubject: String { revealSubject.isEmpty ? postID : revealSubject }
 
   private var revealed: Bool {
-    if let localReveal { return localReveal.isRevealed(ui) }
+    if storeSubject.isEmpty {
+      return localReveal?.isRevealed(ui) ?? false
+    }
     return ModerationRevealStore.shared.isRevealed(
       ui, gate: .media, subject: storeSubject, accountDID: appState.userDID)
   }
@@ -337,9 +345,13 @@ struct ModerationMediaGate<Content: View>: View {
 
   private func setRevealed(_ isRevealed: Bool) {
     withoutRevealAnimation {
-      ModerationRevealStore.shared.setRevealed(
-        isRevealed, ui: ui, gate: .media, subject: storeSubject, accountDID: appState.userDID)
-      localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
+      if storeSubject.isEmpty {
+        localReveal = ModerationRevealState(revealing: isRevealed ? ui : nil)
+      } else {
+        localReveal = nil
+        ModerationRevealStore.shared.setRevealed(
+          isRevealed, ui: ui, gate: .media, subject: storeSubject, accountDID: appState.userDID)
+      }
     }
     invalidateFeedRowHeight?()
   }
