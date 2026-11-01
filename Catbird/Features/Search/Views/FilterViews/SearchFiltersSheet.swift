@@ -88,7 +88,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Domain & Links
         Section("Domain & Links") {
@@ -152,7 +152,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Hashtags
         Section("Hashtags") {
@@ -170,7 +170,7 @@ public struct SearchFiltersSheet: View {
           .autocorrectionDisabled()
           .platformTextInputCapitalization(.never)
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Date Range
         Section("Date Range") {
@@ -194,7 +194,7 @@ public struct SearchFiltersSheet: View {
             ), displayedComponents: .date)
           }
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Language
         Section("Language") {
@@ -205,7 +205,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Replies
         Section("Replies") {
@@ -215,7 +215,7 @@ public struct SearchFiltersSheet: View {
             }
           }
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Media & Audience
         Section("Content & Audience") {
@@ -223,7 +223,7 @@ public struct SearchFiltersSheet: View {
           Toggle("Video only", isOn: $draft.hasVideo)
           Toggle("From following only", isOn: $draft.following)
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
 
         // MARK: - Reset
         Section {
@@ -233,10 +233,10 @@ public struct SearchFiltersSheet: View {
           .disabled(draft.activeFilterCount == 0)
           .frame(maxWidth: .infinity)
         }
-        .listRowBackground(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+        .listRowBackground(Color.dynamicGroupedRowBackground(appState.themeManager, currentScheme: colorScheme))
       }
       .scrollContentBackground(.hidden)
-      .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+      .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
       .navigationTitle("Filters")
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
