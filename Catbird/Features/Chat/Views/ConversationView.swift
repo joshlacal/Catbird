@@ -14,6 +14,9 @@ struct ConversationView: View {
   @Environment(\.horizontalSizeClass) private var hSizeClass
   @Environment(\.dismiss) private var dismiss
   let convoId: String
+  /// Whether ChatTabView shows this view for its selection, at the root of its detail stack,
+  /// rather than pushed onto a navigation stack.
+  var isChatTabSelection = false
 
   private var contentMaxWidth: CGFloat {
     hSizeClass == .compact ? .infinity : 600
@@ -157,7 +160,7 @@ struct ConversationView: View {
       Task {
         await chatManager.markConversationAsRead(convoId: convoId)
       }
-      chatManager.conversationViewAppeared(convoId)
+      chatManager.conversationViewAppeared(convoId, isChatTabSelection: isChatTabSelection)
       appState.chatHeartbeatManager.viewAppeared()
     }
     .onChange(of: PendingChatShareStore.shared.revision) { _, _ in

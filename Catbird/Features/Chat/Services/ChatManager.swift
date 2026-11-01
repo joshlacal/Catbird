@@ -3017,15 +3017,17 @@ final class ChatManager: StateInvalidationSubscriber {
   
   // MARK: - Chat Tab Conversation
 
-  /// The conversation ChatTabView shows while its tab is on screen. A compact split view
-  /// hosts a programmatically opened detail twice and can send the shown ConversationView a
-  /// last onDisappear while it stays on screen, so the tab's selection, not the view's
-  /// appearance, keeps this conversation polling and owns its first load.
+  /// The conversation ChatTabView shows while its tab is on screen and nothing is pushed over
+  /// it. A compact split view hosts a programmatically opened detail twice and can send the
+  /// shown ConversationView a last onDisappear while it stays on screen, so the tab's
+  /// selection, not the view's appearance, keeps this conversation polling and owns its first
+  /// load.
   private(set) var chatTabConversationId: String?
   @ObservationIgnored private var chatTabLoadTask: Task<Void, Never>?
 
-  /// ChatTabView's selection while its tab is on screen, or `nil` when the tab leaves or
-  /// the selection clears. The previous conversation stops polling.
+  /// ChatTabView's selection while its tab is on screen, or `nil` when the tab leaves, the
+  /// selection clears or a destination is pushed over the conversation. The previous
+  /// conversation stops polling.
   @MainActor
   func setChatTabConversation(_ convoId: String?) {
     guard chatTabConversationId != convoId else { return }
@@ -3046,11 +3048,13 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 
-  /// ConversationView's onAppear. While ChatTabView shows a conversation, another
-  /// conversation's view appearing is one the split view is moving out, so it does not
-  /// take over polling.
-  func conversationViewAppeared(_ convoId: String) {
-    if let chatTabConversationId, chatTabConversationId != convoId { return }
+  /// ConversationView's onAppear. `isChatTabSelection` marks the view ChatTabView shows for
+  /// its selection, at the root of its detail stack. While the tab shows a conversation,
+  /// another conversation's view appearing there is one the split view is moving out, so it
+  /// does not take over polling. A view pushed onto a navigation stack is on screen when it
+  /// appears, so it takes over whether the tab publishes the push before or after.
+  func conversationViewAppeared(_ convoId: String, isChatTabSelection: Bool) {
+    if isChatTabSelection, let chatTabConversationId, chatTabConversationId != convoId { return }
     startMessagePolling(for: convoId)
   }
 

@@ -459,7 +459,7 @@ struct ChatTabView: View {
           }
           .id("\(convoId):\(appState.userDID)")
         } else {
-          ConversationView(convoId: convoId)
+          ConversationView(convoId: convoId, isChatTabSelection: true)
             .id(convoId)
         }
       } else {
@@ -473,6 +473,11 @@ struct ChatTabView: View {
         appState: appState,
         selectedTab: $selectedTab
       )
+    }
+    // A destination pushed over the conversation takes the screen until it is popped. Observed
+    // on the detail stack rather than added to the body's chain (see the note at its alert).
+    .onChange(of: chatNavigationPath.wrappedValue.isEmpty) { _, _ in
+      publishOpenConversation()
     }
   }
 
@@ -624,8 +629,24 @@ struct ChatTabView: View {
   /// selection rather than ConversationView's appearance, which a split view can report out
   /// of order. MLS conversations poll through their own detail view.
   private func publishOpenConversation() {
-    let convoId = isTabVisible ? selectedConvoId.flatMap { isMLSConversation($0) ? nil : $0 } : nil
-    appState.chatManager.setChatTabConversation(convoId)
+    appState.chatManager.setChatTabConversation(
+      Self.shownConversation(
+        selection: selectedConvoId,
+        isTabVisible: isTabVisible,
+        hasPushedDestination: !chatNavigationPath.wrappedValue.isEmpty,
+        isMLS: { isMLSConversation($0) }
+      )
+    )
+  }
+
+  /// The selected Bluesky conversation while it is on screen: the tab is visible and no
+  /// destination (a profile, a post) is pushed over it. A pushed ConversationView polls as
+  /// its own view appears and disappears.
+  static func shownConversation(
+    selection: String?, isTabVisible: Bool, hasPushedDestination: Bool, isMLS: (String) -> Bool
+  ) -> String? {
+    guard isTabVisible, !hasPushedDestination, let selection, !isMLS(selection) else { return nil }
+    return selection
   }
 
   @MainActor

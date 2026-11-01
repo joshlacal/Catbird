@@ -73,9 +73,9 @@ struct ChatTabConversationTests {
 
     manager.setChatTabConversation("previous")
     manager.setChatTabConversation("selected")
-    manager.conversationViewAppeared("selected")
+    manager.conversationViewAppeared("selected", isChatTabSelection: true)
     // The previously shown conversation's view appears and disappears once more in the transition.
-    manager.conversationViewAppeared("previous")
+    manager.conversationViewAppeared("previous", isChatTabSelection: true)
     manager.conversationViewDisappeared("previous")
 
     #expect(manager.activeConversationId == "selected")
@@ -86,10 +86,95 @@ struct ChatTabConversationTests {
     let manager = await makeManager(MessagePagesStub())
     defer { manager.stopAllPolling() }
 
-    manager.conversationViewAppeared("pushed")
+    manager.conversationViewAppeared("pushed", isChatTabSelection: false)
     #expect(manager.activeConversationId == "pushed")
     manager.conversationViewDisappeared("pushed")
     #expect(manager.activeConversationId == nil)
+  }
+
+  // MARK: - Destinations pushed over the selected conversation
+
+  @Test("The tab publishes its selection only while that Bluesky conversation is on screen")
+  func shownConversationIsTheVisibleBlueskySelection() {
+    func shown(_ selection: String?, visible: Bool = true, pushed: Bool = false) -> String? {
+      ChatTabView.shownConversation(
+        selection: selection, isTabVisible: visible, hasPushedDestination: pushed, isMLS: { $0 == "mls" }
+      )
+    }
+
+    #expect(shown("open") == "open")
+    #expect(shown("open", visible: false) == nil)
+    #expect(shown("open", pushed: true) == nil)
+    #expect(shown("mls") == nil)
+    #expect(shown(nil) == nil)
+  }
+
+  /// `tabUpdate` is where ChatTabView's publish falls among the view's onAppear and
+  /// onDisappear, since SwiftUI does not order them.
+  @Test(
+    "A destination pushed over the selected conversation makes it inactive until it is popped",
+    arguments: [0, 1]
+  )
+  func pushedDestinationDeactivatesSelectedConversation(tabUpdate: Int) async {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    publish("open", pushed: false, to: manager)
+    manager.conversationViewAppeared("open", isChatTabSelection: true)
+    #expect(manager.activeConversationId == "open")
+
+    // A profile is pushed over the conversation.
+    run({ publish("open", pushed: true, to: manager) }, at: tabUpdate, among: [
+      { manager.conversationViewDisappeared("open") }
+    ])
+    #expect(manager.activeConversationId == nil)
+    #expect(manager.chatTabConversationId == nil)
+
+    // The profile is popped.
+    run({ publish("open", pushed: false, to: manager) }, at: tabUpdate, among: [
+      { manager.conversationViewAppeared("open", isChatTabSelection: true) }
+    ])
+    #expect(manager.activeConversationId == "open")
+  }
+
+  @Test(
+    "Another conversation pushed over the selected one is active while shown",
+    arguments: [0, 1, 2]
+  )
+  func pushedConversationIsActiveWhileShown(tabUpdate: Int) async {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    publish("selected", pushed: false, to: manager)
+    manager.conversationViewAppeared("selected", isChatTabSelection: true)
+
+    run({ publish("selected", pushed: true, to: manager) }, at: tabUpdate, among: [
+      { manager.conversationViewAppeared("pushed", isChatTabSelection: false) },
+      { manager.conversationViewDisappeared("selected") },
+    ])
+    #expect(manager.activeConversationId == "pushed")
+
+    run({ publish("selected", pushed: false, to: manager) }, at: tabUpdate, among: [
+      { manager.conversationViewDisappeared("pushed") },
+      { manager.conversationViewAppeared("selected", isChatTabSelection: true) },
+    ])
+    #expect(manager.activeConversationId == "selected")
+  }
+
+  /// Publishes what ChatTabView publishes for `selection` while its tab is visible.
+  private func publish(_ selection: String, pushed: Bool, to manager: ChatManager) {
+    manager.setChatTabConversation(
+      ChatTabView.shownConversation(
+        selection: selection, isTabVisible: true, hasPushedDestination: pushed, isMLS: { _ in false }
+      )
+    )
+  }
+
+  /// Runs `viewEvents` in order with `tabUpdate` inserted at `position`.
+  private func run(_ tabUpdate: () -> Void, at position: Int, among viewEvents: [() -> Void]) {
+    for (index, event) in viewEvents.enumerated() {
+      if index == position { tabUpdate() }
+      event()
+    }
+    if position >= viewEvents.count { tabUpdate() }
   }
 
   private func makeManager(_ pages: MessagePagesStub) async -> ChatManager {

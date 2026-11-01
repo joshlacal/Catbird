@@ -123,6 +123,18 @@ final class MessagesNavigationUITests: XCTestCase {
     capture("13-regular-width-link-from-other-tab")
   }
 
+  /// A destination pushed over the open conversation takes the screen, so the conversation is
+  /// not active (its banners show, its messages count as unread) while it is covered.
+  /// ChatTabConversationTests cover popping back to it.
+  func testDestinationPushedOverConversationDeactivatesIt() throws {
+    launch()
+    openConversationFromList()
+    app.buttons["messages-navigation.nested-detail"].tap()
+    XCTAssertTrue(app.navigationBars["#messages-route-fixture"].waitForExistence(timeout: 10))
+    waitForState { $0["chatDepth"] as? Int == 1 && $0["activeConversation"] as? String == "" }
+    capture("14-destination-pushed-over-conversation")
+  }
+
   func testColdLaunchDoesNotRestorePreviouslySelectedConversation() throws {
     launch()
     openConversationFromList()
