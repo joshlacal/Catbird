@@ -83,10 +83,11 @@ final class SceneComposerEditingSession {
   @ObservationIgnored private var isFlushingLiveDraft = false
   @ObservationIgnored private var savedDraftBaseline: PostComposerDraft?
   @ObservationIgnored private var isInvalidated = false
-  /// Draft photo files the active composition created (CodableMediaItem.writeImageData).
-  /// A composition that ends with no saved or recovery row removes the ones nothing else names:
-  /// on discard, when an empty reply is closed, and when a new composition replaces one too
-  /// empty to keep.
+  /// Draft photo files the active composition created (CodableMediaItem.writeImageData). When the
+  /// composition ends (discarded, posted, saved as a draft, closed as an empty reply, or
+  /// replaced), these go to DraftImageFileJanitor once its last row, tombstone or replacement
+  /// envelope is stored. The janitor keeps any file a live draft, envelope, handoff or open
+  /// editor names.
   @ObservationIgnored private var createdDraftImageFiles: Set<String> = []
 
   static let legacyRecoveryKey = "composerMinimizedDraft"
@@ -258,7 +259,7 @@ final class SceneComposerEditingSession {
       // the reply is kept, so it ends like a discard: photos it picked and removed go too.
       let createdFiles = createdDraftImageFiles
       finish(snapshot: snapshot)
-      removeCreatedFiles(createdFiles, ofCompositionWithRow: snapshot.savedDraftID != nil)
+      removeUnreferencedDraftImageFiles(createdFiles)
       return true
     }
     isMinimized = true
@@ -279,10 +280,13 @@ final class SceneComposerEditingSession {
   @discardableResult
   func stash(_ snapshot: ComposerEditingSnapshot) throws -> UUID {
     try requireCurrent(snapshot)
+    let createdFiles = createdDraftImageFiles
     do {
       let id = try manager.saveEditingSnapshot(snapshot, expectedSavedDraft: savedDraftBaseline)
       manager.releaseSavedDraft(id: id, claim: snapshot.claim)
       finish(snapshot: snapshot)
+      // The saved row now names every photo it kept.
+      removeUnreferencedDraftImageFiles(createdFiles)
       return id
     } catch {
       preserveEditorAfterSavedRowConflict(error)
@@ -291,11 +295,10 @@ final class SceneComposerEditingSession {
     }
   }
 
-  /// Ends the composition. One with no saved row also removes the draft photo files it
-  /// created, except those a saved draft, another scene, a handoff or an open editor still
-  /// names. A restored, saved or recovered composition removes nothing: its row is only
-  /// tombstoned, and saved-draft media waits for the row's deletion
-  /// (SavedDraftMediaCleanupPolicy).
+  /// Ends the composition and tombstones the saved row it restored, if any. A composition
+  /// removes the draft photo files it created that nothing else names (a live saved draft,
+  /// another scene, a handoff or an open editor); files it did not create, a restored row's own
+  /// photos included, are left to DraftImageOrphanSweep.
   @discardableResult
   func discard(claim: ComposerDraftClaim) -> Bool {
     guard owns(claim), !Task.isCancelled, let snapshot = snapshot() else { return false }
@@ -306,7 +309,7 @@ final class SceneComposerEditingSession {
       }
       finish(snapshot: snapshot)
       // After finish, this session and the editor it served no longer name these files.
-      removeCreatedFiles(createdFiles, ofCompositionWithRow: snapshot.savedDraftID != nil)
+      removeUnreferencedDraftImageFiles(createdFiles)
       return true
     } catch {
       preserveEditorAfterSavedRowConflict(error)
@@ -319,12 +322,15 @@ final class SceneComposerEditingSession {
   func completeSubmission(_ snapshot: ComposerEditingSnapshot) -> Bool {
     do {
       try requireCurrent(snapshot)
+      let createdFiles = createdDraftImageFiles
       if let id = snapshot.savedDraftID {
         try manager.deleteClaimedDraft(
           id: id, claim: snapshot.claim, expectedSavedDraft: savedDraftBaseline
         )
       }
       finish(snapshot: snapshot)
+      // Posted: uploads are done and nothing reopens this composition.
+      removeUnreferencedDraftImageFiles(createdFiles)
       return true
     } catch {
       preserveEditorAfterSavedRowConflict(error)
@@ -400,14 +406,6 @@ final class SceneComposerEditingSession {
     manager.removeUnreferencedDraftImageFiles(urlStrings, recoveryDefaults: defaults)
   }
 
-  /// Cleanup for a composition that has just ended: the files it created go unless something
-  /// still names them. One with a saved or recovery row keeps everything, because saved-draft
-  /// media waits for the row's deletion (SavedDraftMediaCleanupPolicy).
-  private func removeCreatedFiles(_ createdFiles: Set<String>, ofCompositionWithRow hasRow: Bool) {
-    guard SavedDraftMediaCleanupPolicy.allowsImmediateCleanup(hasPersistedRow: hasRow) else { return }
-    removeUnreferencedDraftImageFiles(createdFiles)
-  }
-
   /// Legacy minimized bytes have no provable owner. Claiming them requires a
   /// deliberate action and a successful account-owned durable library save.
   @discardableResult
@@ -471,15 +469,13 @@ final class SceneComposerEditingSession {
           snapshot.draft == currentDraft else { throw ComposerEditingError.staleRevision }
   }
 
-  /// Keeps the composition a new one replaces in the library. One that had no saved row and
-  /// was too empty for a recovery copy simply ends; the draft photo files it created are
-  /// returned so the caller removes them once the replacement is installed.
+  /// Keeps the composition a new one replaces in the library: its saved row, or a recovery copy
+  /// that names what it kept (none when it was too empty to keep). The draft photo files it
+  /// created are returned; the caller removes the rest after the replacement envelope.
   private func preserveReplacedEditor() throws -> Set<String> {
     flushLiveDraftProvider()
     guard let snapshot = snapshot() else { return [] }
-    let recoveryID = try archiveRecovery(snapshot)
-    let hasRow = snapshot.savedDraftID != nil || recoveryID != nil
-    guard SavedDraftMediaCleanupPolicy.allowsImmediateCleanup(hasPersistedRow: hasRow) else { return [] }
+    try archiveRecovery(snapshot)
     return createdDraftImageFiles
   }
 
@@ -498,8 +494,8 @@ final class SceneComposerEditingSession {
     isMinimized = false
     createdDraftImageFiles = []
     // Media can also be referenced by another scene, a source account row or
-    // recovery envelope. Teardown never unlinks files; a composition that ends
-    // without a row removes only files it created that nothing else names.
+    // recovery envelope. Teardown never unlinks files; the caller passes the files
+    // this composition created to the janitor, which keeps any that are still named.
   }
 
   private var persistenceKey: String { Self.persistenceKey(sceneID: sceneID, accountDID: accountDID) }

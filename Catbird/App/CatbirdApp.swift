@@ -332,6 +332,30 @@ final class MLSSceneSuspensionCloseClaim {
 /// Owns the production SwiftData schema so app startup and migration tests open
 /// exactly the same store shape.
 enum CatbirdSwiftDataStore {
+  /// Recovery works on these locations and defaults; the live instance stays outside the
+  /// database files recovery can remove. Tests pass temporary locations through the same hooks.
+  struct RecoveryLocations {
+    let storeDirectory: URL?
+    let legacyDirectory: URL?
+    let additionalDatabaseDirectories: [URL]
+    let defaults: UserDefaults
+
+    var storeURL: URL? { storeDirectory?.appendingPathComponent("Catbird.store") }
+    var quarantineDirectory: URL? {
+      storeDirectory?.deletingLastPathComponent().appendingPathComponent("quarantine", isDirectory: true)
+    }
+    var databaseDirectories: [URL] {
+      var seen = Set<URL>()
+      return ([storeDirectory, legacyDirectory].compactMap { $0 } + additionalDatabaseDirectories)
+        .filter { seen.insert($0).inserted }
+    }
+    static var live: Self {
+      Self(storeDirectory: CatbirdSwiftDataStore.swiftDataStoreDirectory,
+           legacyDirectory: CatbirdSwiftDataStore.legacyAppGroupSwiftDataDirectory,
+           additionalDatabaseDirectories: CatbirdSwiftDataStore.allDatabaseDirectories(), defaults: .standard)
+    }
+  }
+
   static let modelTypes: [any PersistentModel.Type] = [
     CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
     FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
@@ -357,6 +381,41 @@ enum CatbirdSwiftDataStore {
     swiftDataStoreDirectory?.appendingPathComponent("Catbird.store")
   }
 
+  /// Where quarantineSwiftDataStore sets a store aside, one folder per quarantine.
+  static var quarantineDirectory: URL? {
+    swiftDataStoreDirectory?.deletingLastPathComponent().appendingPathComponent("quarantine", isDirectory: true)
+  }
+
+  static let storeResetDateKey = "CatbirdSwiftDataStoreResetAt"
+  private static let volatileSessionKey = "CatbirdSwiftDataVolatileSessionPending"
+
+  /// When the store last lost rows: deleted, set aside in quarantine, or stripped of its
+  /// write-ahead log. Kept in standard defaults, outside the files a reset removes, so draft
+  /// photo cleanup (DraftImageOrphanSweep) keeps photos first written before then, which a lost
+  /// draft re-imported from Bluesky may still name.
+  static var lastStoreResetDate: Date? {
+    lastStoreResetDate(in: .standard)
+  }
+
+  static func lastStoreResetDate(in defaults: UserDefaults) -> Date? {
+    (defaults.object(forKey: storeResetDateKey) as? Double).map(Date.init(timeIntervalSince1970:))
+  }
+
+  /// Records a store reset before the files go, so a crash part way still leaves the record.
+  static func recordStoreReset(at date: Date = Date(), defaults: UserDefaults = .standard) {
+    defaults.set(date.timeIntervalSince1970, forKey: storeResetDateKey)
+  }
+
+  /// Photos written during safe mode survive on disk while their rows do not. Fence through
+  /// the next durable opening, rather than only safe-mode entry, to protect every account's
+  /// photos until its remote drafts can be imported. Consume once so healthy launches do not
+  /// extend retention forever. Both values live outside the database being recovered.
+  private static func finishDurableOpening(defaults: UserDefaults, now: Date) {
+    guard defaults.bool(forKey: volatileSessionKey) else { return }
+    recordStoreReset(at: now, defaults: defaults)
+    defaults.removeObject(forKey: volatileSessionKey)
+  }
+
   static var legacyAppGroupSwiftDataDirectory: URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
       .appendingPathComponent("swiftdata", isDirectory: true)
@@ -378,13 +437,13 @@ enum CatbirdSwiftDataStore {
     return try ModelContainer(for: schema, configurations: [configuration])
   }
 
-  static func makeContainer() throws -> ModelContainer {
-    if let storeDir = swiftDataStoreDirectory {
+  static func makeContainer(locations: RecoveryLocations = .live) throws -> ModelContainer {
+    if let storeDir = locations.storeDirectory {
       try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
     }
 
     let config: ModelConfiguration
-    if let storeURL = swiftDataStoreURL {
+    if let storeURL = locations.storeURL {
       config = ModelConfiguration(
         "Catbird",
         url: storeURL,
@@ -411,11 +470,13 @@ enum CatbirdSwiftDataStore {
     )
   }
 
-  static func deleteSwiftDataSidecarsOnly() {
+  static func deleteSwiftDataSidecarsOnly(locations: RecoveryLocations = .live, now: Date = Date()) {
+    // Rows not yet checkpointed into the store go with the write-ahead log.
+    recordStoreReset(at: now, defaults: locations.defaults)
     let fileManager = FileManager.default
     let sidecars = ["-wal", "-shm"]
 
-    if let storeURL = swiftDataStoreURL {
+    if let storeURL = locations.storeURL {
       for suffix in sidecars {
         let sidecarURL = URL(fileURLWithPath: storeURL.path + suffix)
         if fileManager.fileExists(atPath: sidecarURL.path) {
@@ -434,7 +495,7 @@ enum CatbirdSwiftDataStore {
       "Catbird.sqlite-wal", "Catbird.sqlite-shm",
       "default.store-wal", "default.store-shm"
     ]
-    for directory in allDatabaseDirectories() {
+    for directory in locations.databaseDirectories {
       for fileName in legacyFiles {
         let fileURL = directory.appendingPathComponent(fileName)
         if fileManager.fileExists(atPath: fileURL.path) {
@@ -445,20 +506,20 @@ enum CatbirdSwiftDataStore {
     }
   }
 
-  static func quarantineSwiftDataStore(reason: String) {
+  static func quarantineSwiftDataStore(reason: String, locations: RecoveryLocations = .live, now: Date = Date()) {
+    recordStoreReset(at: now, defaults: locations.defaults)
     let fileManager = FileManager.default
     let dateFormatter = ISO8601DateFormatter()
     dateFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
-    let timestamp = dateFormatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+    let timestamp = dateFormatter.string(from: now).replacingOccurrences(of: ":", with: "-")
 
-    guard let storeDir = swiftDataStoreDirectory else {
+    guard let storeDir = locations.storeDirectory, let quarantineRoot = locations.quarantineDirectory else {
       logger.warning("⚠️ Cannot quarantine - store directory unavailable")
-      resetAllDatabaseFiles()
+      resetAllDatabaseFiles(locations: locations, now: now)
       return
     }
 
-    let quarantineDir = storeDir.deletingLastPathComponent()
-      .appendingPathComponent("quarantine/\(timestamp)_\(reason)", isDirectory: true)
+    let quarantineDir = quarantineRoot.appendingPathComponent("\(timestamp)_\(reason)", isDirectory: true)
 
     do {
       try fileManager.createDirectory(at: quarantineDir, withIntermediateDirectories: true)
@@ -475,7 +536,7 @@ enum CatbirdSwiftDataStore {
 
       let metadata: [String: Any] = [
         "quarantine_reason": reason,
-        "timestamp": Date().timeIntervalSince1970,
+        "timestamp": now.timeIntervalSince1970,
         "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
         "schema_version": currentSchemaVersion
       ]
@@ -486,13 +547,14 @@ enum CatbirdSwiftDataStore {
       logger.info("✅ Database quarantined to: \(quarantineDir.path)")
     } catch {
       logger.error("❌ Quarantine failed: \(error.localizedDescription) - falling back to delete")
-      resetAllDatabaseFiles()
+      resetAllDatabaseFiles(locations: locations, now: now)
     }
   }
 
-  static func resetAllDatabaseFiles() {
+  static func resetAllDatabaseFiles(locations: RecoveryLocations = .live, now: Date = Date()) {
     let resetLogger = Logger(subsystem: "blue.catbird", category: "DatabaseRecovery")
     resetLogger.warning("🗑️ RESET: Deleting all SwiftData files")
+    recordStoreReset(at: now, defaults: locations.defaults)
 
     let fileManager = FileManager.default
     let allFiles = [
@@ -501,7 +563,7 @@ enum CatbirdSwiftDataStore {
       "default.store", "default.store-wal", "default.store-shm"
     ]
 
-    for directory in allDatabaseDirectories() {
+    for directory in locations.databaseDirectories {
       for fileName in allFiles {
         let fileURL = directory.appendingPathComponent(fileName)
         if fileManager.fileExists(atPath: fileURL.path) {
@@ -515,19 +577,19 @@ enum CatbirdSwiftDataStore {
       }
     }
 
-    if let storeDir = swiftDataStoreDirectory, fileManager.fileExists(atPath: storeDir.path) {
+    if let storeDir = locations.storeDirectory, fileManager.fileExists(atPath: storeDir.path) {
       try? fileManager.removeItem(at: storeDir)
       resetLogger.info("🗑️ Deleted swiftdata directory (private container)")
     }
 
-    if let legacyDir = legacyAppGroupSwiftDataDirectory, fileManager.fileExists(atPath: legacyDir.path) {
+    if let legacyDir = locations.legacyDirectory, fileManager.fileExists(atPath: legacyDir.path) {
       try? fileManager.removeItem(at: legacyDir)
       resetLogger.info("🗑️ Deleted legacy swiftdata directory (App Group)")
     }
 
-    UserDefaults.standard.removeObject(forKey: "CatbirdSchemaVersion")
-    UserDefaults.standard.removeObject(forKey: launchAttemptCountKey)
-    UserDefaults.standard.removeObject(forKey: lastLaunchTimeKey)
+    locations.defaults.removeObject(forKey: "CatbirdSchemaVersion")
+    locations.defaults.removeObject(forKey: launchAttemptCountKey)
+    locations.defaults.removeObject(forKey: lastLaunchTimeKey)
 
     resetLogger.info("✅ Database reset complete")
   }
@@ -553,21 +615,21 @@ enum CatbirdSwiftDataStore {
     return directories
   }
 
-  static func migrateSwiftDataFromAppGroup() {
+  static func migrateSwiftDataFromAppGroup(locations: RecoveryLocations = .live, now: Date = Date()) {
     let migrationKey = "SwiftDataMigratedFromAppGroup"
-    guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+    guard !locations.defaults.bool(forKey: migrationKey) else { return }
 
     let fm = FileManager.default
-    guard let oldDir = legacyAppGroupSwiftDataDirectory,
-          let newDir = swiftDataStoreDirectory else {
-      UserDefaults.standard.set(true, forKey: migrationKey)
+    guard let oldDir = locations.legacyDirectory,
+          let newDir = locations.storeDirectory else {
+      locations.defaults.set(true, forKey: migrationKey)
       return
     }
 
     guard fm.fileExists(atPath: oldDir.path),
           let contents = try? fm.contentsOfDirectory(atPath: oldDir.path),
           !contents.isEmpty else {
-      UserDefaults.standard.set(true, forKey: migrationKey)
+      locations.defaults.set(true, forKey: migrationKey)
       return
     }
 
@@ -576,23 +638,28 @@ enum CatbirdSwiftDataStore {
     for fileName in contents {
       let oldFile = oldDir.appendingPathComponent(fileName)
       let newFile = newDir.appendingPathComponent(fileName)
-      if fm.fileExists(atPath: newFile.path) { continue }
+      if fm.fileExists(atPath: newFile.path) {
+        // The old copy is discarded below even though a different destination store wins.
+        recordStoreReset(at: now, defaults: locations.defaults)
+        continue
+      }
       do {
         try fm.moveItem(at: oldFile, to: newFile)
         logger.info("📦 Migrated SwiftData file: \(fileName)")
       } catch {
+        // The old folder is removed below, so whatever this file held is lost.
+        recordStoreReset(at: now, defaults: locations.defaults)
         logger.warning("⚠️ Failed to migrate \(fileName): \(error.localizedDescription)")
       }
     }
 
     try? fm.removeItem(at: oldDir)
-    UserDefaults.standard.set(true, forKey: migrationKey)
+    locations.defaults.set(true, forKey: migrationKey)
     logger.info("✅ SwiftData migrated from App Group to private container")
   }
 
-  static func detectCrashLoop() -> Bool {
-    let defaults = UserDefaults.standard
-    let now = Date().timeIntervalSince1970
+  static func detectCrashLoop(defaults: UserDefaults = .standard, now date: Date = Date()) -> Bool {
+    let now = date.timeIntervalSince1970
     let lastLaunch = defaults.double(forKey: lastLaunchTimeKey)
     let attemptCount = defaults.integer(forKey: launchAttemptCountKey)
 
@@ -613,18 +680,18 @@ enum CatbirdSwiftDataStore {
     return false
   }
 
-  static func resetCrashLoopCounter() {
-    UserDefaults.standard.removeObject(forKey: launchAttemptCountKey)
-    UserDefaults.standard.removeObject(forKey: lastLaunchTimeKey)
+  static func resetCrashLoopCounter(defaults: UserDefaults = .standard) {
+    defaults.removeObject(forKey: launchAttemptCountKey)
+    defaults.removeObject(forKey: lastLaunchTimeKey)
   }
 
-  static func shouldResetDatabase() -> Bool {
-    let savedVersion = UserDefaults.standard.integer(forKey: "CatbirdSchemaVersion")
+  static func shouldResetDatabase(defaults: UserDefaults = .standard) -> Bool {
+    let savedVersion = defaults.integer(forKey: "CatbirdSchemaVersion")
     return savedVersion != 0 && savedVersion < currentSchemaVersion
   }
 
-  static func saveSchemaVersion() {
-    UserDefaults.standard.set(currentSchemaVersion, forKey: "CatbirdSchemaVersion")
+  static func saveSchemaVersion(defaults: UserDefaults = .standard) {
+    defaults.set(currentSchemaVersion, forKey: "CatbirdSchemaVersion")
   }
 
   static func formatDatabaseError(_ error: Error) -> String {
@@ -639,28 +706,30 @@ enum CatbirdSwiftDataStore {
   }
 
   /// Runs the full recovery ladder off the main thread.
-  static func openWithRecovery() -> ModelContainerState {
+  static func openWithRecovery(locations: RecoveryLocations = .live, now: Date = Date()) -> ModelContainerState {
     logger.info("📦 Starting off-main ModelContainer initialization")
-    migrateSwiftDataFromAppGroup()
+    migrateSwiftDataFromAppGroup(locations: locations, now: now)
 
-    if detectCrashLoop() {
+    if detectCrashLoop(defaults: locations.defaults, now: now) {
       logger.error("🔄 CRASH LOOP DETECTED - forcing safe mode recovery")
       if let container = try? makeInMemoryContainer() {
-        resetCrashLoopCounter()
+        locations.defaults.set(true, forKey: volatileSessionKey)
+        resetCrashLoopCounter(defaults: locations.defaults)
         return .degraded(container, reason: safeModeReason)
       }
     }
 
-    if shouldResetDatabase() {
+    if shouldResetDatabase(defaults: locations.defaults) {
       logger.warning("⚠️ Schema version mismatch detected, resetting database for clean migration")
-      quarantineSwiftDataStore(reason: "schema_mismatch")
+      quarantineSwiftDataStore(reason: "schema_mismatch", locations: locations, now: now)
     }
 
     // Attempt A: Normal initialization
     do {
-      let container = try makeContainer()
-      saveSchemaVersion()
+      let container = try makeContainer(locations: locations)
+      saveSchemaVersion(defaults: locations.defaults)
       logger.info("✅ ModelContainer initialized successfully")
+      finishDurableOpening(defaults: locations.defaults, now: now)
       return .ready(container)
     } catch {
       logger.error("❌ Attempt A (normal init) failed: \(formatDatabaseError(error))")
@@ -669,10 +738,11 @@ enum CatbirdSwiftDataStore {
     // Attempt B: Delete sidecars only
     do {
       logger.warning("🔧 Attempt B: Deleting WAL/SHM sidecars and retrying...")
-      deleteSwiftDataSidecarsOnly()
-      let container = try makeContainer()
-      saveSchemaVersion()
+      deleteSwiftDataSidecarsOnly(locations: locations, now: now)
+      let container = try makeContainer(locations: locations)
+      saveSchemaVersion(defaults: locations.defaults)
       logger.warning("✅ Recovered by deleting WAL/SHM sidecars")
+      finishDurableOpening(defaults: locations.defaults, now: now)
       return .ready(container)
     } catch {
       logger.error("❌ Attempt B (sidecar recovery) failed: \(formatDatabaseError(error))")
@@ -681,10 +751,11 @@ enum CatbirdSwiftDataStore {
     // Attempt C: Quarantine store and retry fresh
     do {
       logger.warning("🔧 Attempt C: Quarantining store and creating fresh database...")
-      quarantineSwiftDataStore(reason: "corruption_recovery")
-      let container = try makeContainer()
-      saveSchemaVersion()
+      quarantineSwiftDataStore(reason: "corruption_recovery", locations: locations, now: now)
+      let container = try makeContainer(locations: locations)
+      saveSchemaVersion(defaults: locations.defaults)
       logger.warning("✅ Recovered by quarantining store and recreating")
+      finishDurableOpening(defaults: locations.defaults, now: now)
       return .ready(container)
     } catch {
       logger.error("❌ Attempt C (quarantine recovery) failed: \(formatDatabaseError(error))")
@@ -694,7 +765,8 @@ enum CatbirdSwiftDataStore {
     do {
       logger.error("⚠️ Attempt D: Falling back to in-memory storage...")
       let container = try makeInMemoryContainer()
-      resetCrashLoopCounter()
+      locations.defaults.set(true, forKey: volatileSessionKey)
+      resetCrashLoopCounter(defaults: locations.defaults)
       logger.error("⚠️ Running in DEGRADED MODE - data will not persist across restarts")
       return .degraded(container, reason: safeModeReason)
     } catch {
@@ -2049,6 +2121,10 @@ private extension CatbirdApp {
         // Reaching the background cleanly means this launch didn't crash.
         CatbirdSwiftDataStore.resetCrashLoopCounter()
         saveApplicationState()
+        // The last scene left: unlike otherScenesActive, which also keeps MLS open on macOS.
+        if !hasOtherScenes {
+          startDraftPhotoSweepIfDue()
+        }
 #if os(iOS)
         if !otherScenesActive {
           if #available(iOS 13.0, *) {
@@ -2184,6 +2260,22 @@ private extension CatbirdApp {
       logger.warning("⏭️ [RESUME] Discarded stale foreground transition")
     case .resumed:
       logger.info("✅ [RESUME] MLS transaction completed and UI projection reloaded")
+    }
+  }
+
+  /// Starts the daily draft photo sweep (ComposerDraftManager.sweepOrphanedDraftImageFilesIfDue).
+  /// Its background task begins here, while the scene transition still holds its own, and ends
+  /// when the sweep does; expiry cancels the sweep before its next batch.
+  @MainActor
+  private func startDraftPhotoSweepIfDue() {
+    guard let manager = appStateManager.lifecycle.appState?.composerDraftManager else { return }
+    let sweep = Task { @MainActor in
+      _ = await manager.sweepOrphanedDraftImageFilesIfDue()
+    }
+    let assertion = CatbirdBackgroundTask(name: "DraftPhotoSweep") { sweep.cancel() }
+    Task { @MainActor in
+      await sweep.value
+      assertion.end()
     }
   }
 

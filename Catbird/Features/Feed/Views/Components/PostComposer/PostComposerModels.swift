@@ -273,25 +273,48 @@ struct CodableMediaItem: Codable, Hashable {
 
   /// `persistImageData`, also reporting whether this call created the file. Only a composition
   /// that created a file may later remove it (DraftImageFileJanitor); a file that was already
-  /// there belongs to whoever wrote it first.
-  static func writeImageData(_ data: Data) -> DraftImageWrite? {
-    guard let draftsDir = draftImagesDirectory else { return nil }
+  /// there belongs to whoever wrote it first. A reuse marks the file used now, so
+  /// DraftImageOrphanSweep measures how long a file has gone unused.
+  ///
+  /// This runs off the main actor and its result is recorded on it afterwards. A file the
+  /// janitor or the sweep removes in between is written again by the editor's next save
+  /// (`DraftImageFile.exists`), so code that stores a draft-file URL must go through
+  /// PostComposerViewModel's save, or hold the URL in a registered DraftMediaReferenceHolder.
+  /// Existing files are never replaced just to refresh metadata: their birth dates protect
+  /// photos whose original saved rows were lost during database recovery.
+  static func writeImageData(
+    _ data: Data, directory: URL? = draftImagesDirectory, fileManager: FileManager = .default
+  ) -> DraftImageWrite? {
+    guard let draftsDir = directory else { return nil }
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     let filename = "draft_image_\(digest).jpg"
     let fileURL = draftsDir.appendingPathComponent(filename)
-    if FileManager.default.fileExists(atPath: fileURL.path) {
-      return DraftImageWrite(urlString: fileURL.absoluteString, created: false)
+    // Concurrent background preparations of the same content must not both create/replace the
+    // path: the first writer's creation date and ownership survive every later reuse.
+    draftImageWriteLock.lock()
+    defer { draftImageWriteLock.unlock() }
+    if fileManager.fileExists(atPath: fileURL.path) {
+      if (try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)) != nil {
+        return DraftImageWrite(urlString: fileURL.absoluteString, created: false)
+      }
+      // A metadata-only failure cannot transfer ownership or erase the original birth. A
+      // file removed since the check can be safely recreated by this composition.
+      if fileManager.fileExists(atPath: fileURL.path) {
+        return DraftImageWrite(urlString: fileURL.absoluteString, created: false)
+      }
     }
     do {
       try data.write(to: fileURL, options: .atomic)
       return DraftImageWrite(urlString: fileURL.absoluteString, created: true)
     } catch {
       // The directory may have been removed since it was created.
-      guard (try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)) != nil,
+      guard (try? fileManager.createDirectory(at: draftsDir, withIntermediateDirectories: true)) != nil,
             (try? data.write(to: fileURL, options: .atomic)) != nil else { return nil }
       return DraftImageWrite(urlString: fileURL.absoluteString, created: true)
     }
   }
+
+  private static let draftImageWriteLock = NSLock()
 
   /// The App Group folder draft photos are written to.
   static let draftImagesDirectory: URL? = {

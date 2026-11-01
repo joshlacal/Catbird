@@ -142,29 +142,47 @@ final class DraftPersistence {
         try saveSyncState(state, for: model)
     }
 
-    /// The stored bytes of every saved-draft row of every account, tombstones and recovery
-    /// copies included, plus the remote snapshots base64-encoded inside their sync metadata.
-    /// Draft photo cleanup searches them for file names; a row it cannot read throws, which
-    /// cancels the cleanup.
+    /// The stored bytes of every live saved-draft row of every account, recovery copies
+    /// included, plus the remote snapshots base64-encoded inside their sync metadata. Draft photo
+    /// cleanup searches them for file names; a row it cannot read throws, which cancels the
+    /// cleanup.
+    ///
+    /// A tombstoned row names nothing: nothing shows, restores or re-imports it, and its row is
+    /// never removed, so counting it would keep its photos forever. One whose Bluesky create is
+    /// still unconfirmed (`pendingCreate`) still names its files, because the next sync can
+    /// resolve it to a server draft. An "undo delete" or "Recently Deleted" for drafts would have
+    /// to count tombstones again for as long as it can bring one back.
     func storedMediaReferenceData() throws -> [Data] {
         var stored: [Data] = []
         for model in try modelContainer.mainContext.fetch(FetchDescriptor<DraftPost>()) {
+            guard let metadata = model.syncMetadata else {
+                stored.append(model.draftData)
+                continue
+            }
+            let fields = try JSONDecoder().decode(StoredSyncFields.self, from: metadata)
+            if fields.deletedAt != nil && fields.pendingCreate == nil { continue }
             stored.append(model.draftData)
-            guard let metadata = model.syncMetadata else { continue }
             // The local baseline is plain JSON inside these bytes, so searching them covers it.
             stored.append(metadata)
-            let snapshots = try JSONDecoder().decode(EncodedRemoteSnapshots.self, from: metadata)
-            stored += [snapshots.baselineRemote, snapshots.pendingCreate].compactMap { $0 }
+            stored += [fields.baselineRemote, fields.pendingCreate].compactMap { $0 }
         }
         return stored
     }
 
-    /// The two DraftSyncState fields whose bytes are base64 inside the stored JSON, so a search
-    /// of the raw metadata cannot see file names in them. Decoding only these keeps one row whose
-    /// local baseline no longer decodes as a PostComposerDraft from turning the cleanup off.
-    private struct EncodedRemoteSnapshots: Decodable {
+    /// The DraftSyncState fields draft photo cleanup needs: the tombstone date, and the two
+    /// snapshots whose bytes are base64 inside the stored JSON, so a search of the raw metadata
+    /// cannot see file names in them. Decoding only these keeps one row whose local baseline no
+    /// longer decodes as a PostComposerDraft from turning the cleanup off.
+    private struct StoredSyncFields: Decodable {
         var baselineRemote: Data?
         var pendingCreate: Data?
+        var deletedAt: Date?
+    }
+
+    /// False in safe mode, where drafts live in an in-memory store and the rows that name draft
+    /// photos are not all present.
+    var isBackedByDurableStore: Bool {
+        !modelContainer.configurations.contains(where: \.isStoredInMemoryOnly)
     }
 
     @discardableResult
