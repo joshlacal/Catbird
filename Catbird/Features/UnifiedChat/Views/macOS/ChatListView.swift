@@ -193,6 +193,12 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             reactionOverlay = (id, bubbleGlobalFrame, message.isFromCurrentUser)
           },
           onReactionLongPress: nil,
+          // A failed send keeps its row with a Retry button; the iOS transcript
+          // retries by the row's item identity, so this does the same.
+          onRetry: {
+            let pendingID = message.diffableID
+            Task { await dataSource.retryFailedSend(pendingID: pendingID) }
+          },
           groupPosition: UnifiedMessageGrouping.groupPosition(
             for: id,
             in: dataSource.messages
