@@ -1413,10 +1413,13 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   func scrollToMessage(id: String, highlight: Bool = true) {
     guard let diffableDataSource else { return }
+    // A reply quote names the server's message ID, but a send confirmed this
+    // session keeps its pending row's item identity.
+    let itemID = dataSource.message(for: id)?.diffableID ?? id
     let snapshot = diffableDataSource.snapshot()
     guard let item = snapshot.itemIdentifiers.first(where: {
-      if case .message(let itemID) = $0 {
-        return itemID == id
+      if case .message(let snapshotItemID) = $0 {
+        return snapshotItemID == itemID
       }
       return false
     }), let indexPath = diffableDataSource.indexPath(for: item) else { return }
