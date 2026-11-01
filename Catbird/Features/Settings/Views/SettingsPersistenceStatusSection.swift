@@ -3,6 +3,17 @@ import SwiftUI
 struct SettingsPersistenceStatusSection: View {
   let settings: AppSettings
 
+  /// The scroll ID of the section's first row, for a screen that scrolls back to its top.
+  static let firstRowID = "SettingsPersistenceStatus"
+
+  /// Whether the section shows for `settings`, at the top of its screen.
+  static func isShown(for settings: AppSettings) -> Bool {
+    switch settings.persistenceState {
+    case .unavailable, .saveFailed: true
+    case .ready, .saving: false
+    }
+  }
+
   var body: some View {
     switch settings.persistenceState {
     case .unavailable:
@@ -10,6 +21,7 @@ struct SettingsPersistenceStatusSection: View {
         Text("Local settings are unavailable. Retry to load your saved choices. Other settings and support remain available.")
           .foregroundStyle(.secondary)
           .accessibilityIdentifier("SettingsPersistenceStatus")
+          .id(Self.firstRowID)
         Button("Retry Loading") {
           settings.retryPersistence()
         }
@@ -20,6 +32,7 @@ struct SettingsPersistenceStatusSection: View {
         Text("Your changes weren’t saved. Your previous settings remain active. Retry Saving to apply the pending changes shown below.")
           .foregroundStyle(.secondary)
           .accessibilityIdentifier("SettingsPersistenceStatus")
+          .id(Self.firstRowID)
         Text(settings.pendingChangesDescription)
           .accessibilityIdentifier("SettingsPersistencePendingChanges")
         Button("Retry Saving") {

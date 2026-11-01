@@ -48,7 +48,7 @@ struct SettingsView: View {
         ScrollViewReader { proxy in
             Form {
                 SettingsPersistenceStatusSection(settings: appState.appSettings)
-                Section { accountHeader.id(HomeScrollAnchor.top) }
+                Section { accountHeader.id(HomeScrollAnchor.accountHeader) }
                 if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ForEach(SettingsCatalog.homeGroups, id: \.0) { group in
                         Section(group.0) {
@@ -98,7 +98,12 @@ struct SettingsView: View {
             // toolbar, so results shown after scrolling would start above the top edge.
             .onChange(of: searchQuery) { _, query in
                 guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                proxy.scrollTo(HomeScrollAnchor.top, anchor: .top)
+                // The Local Settings warning, when it shows, sits above the account header.
+                if SettingsPersistenceStatusSection.isShown(for: appState.appSettings) {
+                    proxy.scrollTo(SettingsPersistenceStatusSection.firstRowID, anchor: .top)
+                } else {
+                    proxy.scrollTo(HomeScrollAnchor.accountHeader, anchor: .top)
+                }
             }
         }
         .navigationTitle("Settings")
@@ -139,7 +144,7 @@ struct SettingsView: View {
     }
 
     private enum HomeScrollAnchor: Hashable {
-        case top
+        case accountHeader
     }
 
     private var appNavigationDepth: Int {

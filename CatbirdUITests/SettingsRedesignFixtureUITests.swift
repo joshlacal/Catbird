@@ -211,6 +211,25 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       witnesses: [("best match", moderationResult)])
   }
 
+  /// The Local Settings warning sits above the account header, so search scrolls back to it and
+  /// its Retry button stays on screen.
+  func testSearchAfterScrollingKeepsLocalSettingsWarningOnScreen() throws {
+    let app = try launch(extra: ["--settings-storage-unavailable"])
+    _ = try waitSample(app) { $0.persistenceState == "unavailable" }
+    XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
+    try reveal(app.buttons["settings.category.advanced"].firstMatch, app)
+    _ = try enterSearch("Account & Security", app)
+    XCTAssertTrue(app.buttons["settings.result.accountSecurity"].firstMatch.waitForExistence(timeout: 5))
+    let warning = app.staticTexts["SettingsPersistenceStatus"].firstMatch
+    let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
+    XCTAssertTrue(retry.waitForExistence(timeout: 5))
+    XCTAssertTrue(receivingViewport(app).insetBy(dx: -1, dy: -1).contains(warning.frame),
+      "The warning must start inside the viewport")
+    assertHitGeometry(retry, app)
+    try capture("settings-46-search-after-scroll-keeps-local-warning", app,
+      witnesses: [("local warning", warning), ("local retry", retry)])
+  }
+
   func testFullMaximumTextSizeChoicesUseActualCategoryAcrossRotation() throws {
     let app = try launch(screen: "textReadability", extra: ["--settings-large-text", "--settings-dark"])
     XCTAssertTrue(app.navigationBars["Text & Readability"].waitForExistence(timeout: 8))
