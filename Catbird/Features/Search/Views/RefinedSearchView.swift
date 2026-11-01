@@ -11,6 +11,41 @@ import OSLog
 import TipKit
 import Observation
 
+/// Whether the search page hides its own content behind `.searchSuggestions`.
+///
+/// In an iPhone-style iOS layout the suggestions list replaces the page, and
+/// `.scrollContentBackground(.hidden)` makes its container transparent, so
+/// `DiscoveryView`, `TypeaheadView` or `ResultsView` would show through below the
+/// last suggestion row; the page is hidden while the field is focused or an
+/// uncommitted query is being typed. On macOS the suggestions drop down from the
+/// toolbar field, and in a full-size iPad layout they are not assumed to cover the
+/// page, so the page stays visible behind them.
+enum SearchSuggestionsOverlayGate {
+  static func hidesPageContent(
+    suggestionsFillPage: Bool,
+    isSearchFieldFocused: Bool,
+    searchState: SearchState,
+    isCommittedSearch: Bool
+  ) -> Bool {
+    guard suggestionsFillPage else { return false }
+    return isSearchFieldFocused || (searchState == .searching && !isCommittedSearch)
+  }
+
+  /// Suggestions replace the page in an iOS layout that is compact in either
+  /// direction: an iPhone in any orientation (a large iPhone in landscape is
+  /// regular width but compact height) or an iPad window narrowed to compact width.
+  static func suggestionsFillPage(
+    horizontalSizeClass: UserInterfaceSizeClass?,
+    verticalSizeClass: UserInterfaceSizeClass?
+  ) -> Bool {
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    return horizontalSizeClass == .compact || verticalSizeClass == .compact
+    #else
+    return false
+    #endif
+  }
+}
+
 /// A modernized search view that leverages iOS 18 features for a better search experience
 struct RefinedSearchView: View {
   @Environment(SceneNavigationContext.self) private var sceneContext
@@ -19,6 +54,8 @@ struct RefinedSearchView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var viewModel: RefinedSearchViewModel
     @Binding var selectedTab: Int
     @Binding var lastTappedTab: Int?
@@ -169,6 +206,20 @@ struct RefinedSearchView: View {
         return ContentType.allCases
     }
     
+    /// True while the native `.searchSuggestions` list owns the viewport; see
+    /// `SearchSuggestionsOverlayGate`.
+    private var isShowingSearchSuggestionsOverlay: Bool {
+        SearchSuggestionsOverlayGate.hidesPageContent(
+            suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage(
+                horizontalSizeClass: horizontalSizeClass,
+                verticalSizeClass: verticalSizeClass
+            ),
+            isSearchFieldFocused: isSearchFieldFocused,
+            searchState: viewModel.searchState,
+            isCommittedSearch: viewModel.isCommittedSearch
+        )
+    }
+
     @ViewBuilder
     private var mainContentContainer: some View {
         @Bindable var bindableViewModel = viewModel
@@ -188,6 +239,9 @@ struct RefinedSearchView: View {
                 }
                 mainContentArea
             }
+            .opacity(isShowingSearchSuggestionsOverlay ? 0 : 1)
+            .allowsHitTesting(!isShowingSearchSuggestionsOverlay)
+            .accessibilityHidden(isShowingSearchSuggestionsOverlay)
         }
         .navigationTitle("Search")
         #if os(iOS)
@@ -476,34 +530,52 @@ struct RefinedSearchView: View {
 
     @ViewBuilder
     private var typeaheadSuggestions: some View {
-        Button {
-            commitSearch()
-        } label: {
-            SearchSuggestionRow(systemImage: "magnifyingglass", tint: .accentColor) {
-                Text("Search for “\(trimmedSearchText)”")
-                    .foregroundStyle(Color.accentColor)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("search.suggestion.submit")
-        .modifier(SearchSuggestionRowModifier())
-
-        ForEach(matchingRecentSearches) { entry in
+        VStack(spacing: 0) {
             Button {
-                applyRecentSearch(entry)
+                commitSearch()
             } label: {
-                SearchSuggestionRow(systemImage: "clock.arrow.circlepath", tint: .secondary) {
-                    Text(entry.query)
-                        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                SearchSuggestionRow(systemImage: "magnifyingglass", tint: .accentColor) {
+                    Text("Search for “\(trimmedSearchText)”")
+                        .fontWeight(.medium)
+                        .foregroundStyle(Color.accentColor)
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Recent search")
+            .accessibilityIdentifier("search.suggestion.submit")
+
+            if !matchingRecentSearches.isEmpty || !viewModel.typeaheadProfiles.isEmpty {
+                Rectangle()
+                    .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
+                    .frame(height: 0.5)
+                    .padding(.leading, 16)
+            }
+        }
+        .modifier(SearchSuggestionRowModifier())
+
+        ForEach(matchingRecentSearches) { entry in
+            VStack(spacing: 0) {
+                Button {
+                    applyRecentSearch(entry)
+                } label: {
+                    SearchSuggestionRow(systemImage: "clock.arrow.circlepath", tint: .secondary) {
+                        Text(entry.query)
+                            .foregroundStyle(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Recent search")
+
+                Rectangle()
+                    .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
+                    .frame(height: 0.5)
+                    .padding(.leading, 58)
+            }
             .modifier(SearchSuggestionRowModifier())
         }
 
         if !viewModel.typeaheadProfiles.isEmpty {
-            // One block, so the header doesn't take a full-height list row.
+            // Keep header and profile rows in one suggestion block so XCUITest and VoiceOver
+            // expose individual profile staticTexts while giving each row generous height.
             VStack(alignment: .leading, spacing: 0) {
                 Text("Profiles")
                     .appFont(AppTextRole.subheadline)
@@ -511,17 +583,27 @@ struct RefinedSearchView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
                     .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 2)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
 
-                ForEach(viewModel.typeaheadProfiles, id: \.did) { profile in
-                    Button {
-                        handleProfileSelection(profile)
-                    } label: {
-                        profileSuggestionRow(profile)
-                            .contentShape(Rectangle())
+                let profiles = viewModel.typeaheadProfiles
+                ForEach(Array(profiles.enumerated()), id: \.element.did) { index, profile in
+                    VStack(spacing: 0) {
+                        Button {
+                            handleProfileSelection(profile)
+                        } label: {
+                            profileSuggestionRow(profile)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if index < profiles.count - 1 {
+                            Rectangle()
+                                .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
+                                .frame(height: 0.5)
+                                .padding(.leading, 72)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .modifier(SearchSuggestionRowModifier())
@@ -576,21 +658,50 @@ struct RefinedSearchView: View {
 
     private func profileSuggestionRow(_ profile: AppBskyActorDefs.ProfileViewBasic) -> some View {
         HStack(spacing: 12) {
-            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36,
-                              did: profile.did.didString(), labels: profile.labels)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(profile.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(profile.handle)")
-                    .appFont(AppTextRole.body)
-                    .lineLimit(1)
-                Text(verbatim: "@\(profile.handle)")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                    .lineLimit(1)
+            AsyncProfileImage(
+                url: URL(string: profile.avatar?.uriString() ?? ""),
+                size: 44,
+                did: profile.did.didString(),
+                labels: profile.labels
+            )
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(profile.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(profile.handle)")
+                        .appFont(AppTextRole.body)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                        .lineLimit(1)
+
+                    if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
+                        VerificationBadgeView(kind: badgeKind)
+                            .font(.subheadline)
+                    }
+                    if AutomationBadge.isSelfDeclared(labels: profile.labels, authorDID: profile.did) {
+                        AutomationBadgeView()
+                            .layoutPriority(1)
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Text(verbatim: "@\(profile.handle)")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                        .lineLimit(1)
+
+                    if profile.viewer?.followedBy != nil {
+                        FollowsBadgeView()
+                    }
+                }
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
+        .frame(minHeight: 64)
         .accessibilityElement(children: .combine)
     }
     

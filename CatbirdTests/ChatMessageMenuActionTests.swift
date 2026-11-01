@@ -89,6 +89,25 @@ struct ChatMessageMenuActionTests {
     }
   }
 
+  @Test("A message that takes no replies, reactions or deletion hides those commands even when callbacks exist")
+  func messageCapabilitiesGateServerActions() {
+    var message = Message(canReply: false, canReact: false, canDeleteForMe: false)
+    #expect(ChatMessageMenuActions.available(for: message, callbacks: allCallbacks,
+      quickReactions: quickReactions) == [.copy, .report])
+
+    message.canDeleteForMe = true
+    #expect(ChatMessageMenuActions.available(for: message, callbacks: allCallbacks,
+      quickReactions: quickReactions) == [.copy, .deleteForMe, .report])
+
+    message.canReact = true
+    #expect(ChatMessageMenuActions.available(for: message, callbacks: allCallbacks,
+      quickReactions: quickReactions) == reactionActions + [.copy, .deleteForMe, .report])
+
+    message.canReply = true
+    #expect(ChatMessageMenuActions.available(for: message, callbacks: noCallbacks,
+      quickReactions: quickReactions) == reactionActions + [.copy])
+  }
+
   @Test("Custom quick reactions keep their supplied order and an empty list still opens the full picker")
   func configuredReactionsAndPickerRemainAvailable() {
     let message = Message(text: "")
@@ -170,5 +189,8 @@ struct ChatMessageMenuActionTests {
     var senderDisplayName: String? { isFromCurrentUser ? "Local viewer" : "Local peer" }
     var senderAvatarURL: URL? { nil }
     var sentAt: Date { Date(timeIntervalSince1970: 1_780_000_000) }
+    var canReply = true
+    var canReact = true
+    var canDeleteForMe = true
   }
 }

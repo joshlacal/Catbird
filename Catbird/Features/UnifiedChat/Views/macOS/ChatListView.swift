@@ -193,6 +193,12 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             reactionOverlay = (id, bubbleGlobalFrame, message.isFromCurrentUser)
           },
           onReactionLongPress: nil,
+          // A failed send keeps its row with a Retry button; the iOS transcript
+          // retries by the row's item identity, so this does the same.
+          onRetry: {
+            let pendingID = message.diffableID
+            Task { await dataSource.retryFailedSend(pendingID: pendingID) }
+          },
           groupPosition: UnifiedMessageGrouping.groupPosition(
             for: id,
             in: dataSource.messages
@@ -206,22 +212,28 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             }
           }
 
-          Menu("React") {
-            ForEach(["👍", "❤️", "😂", "😮", "😢"], id: \.self) { emoji in
-              Button(emoji) {
-                dataSource.addReaction(messageID: id, emoji: emoji)
+          // A send the server has not confirmed has only a local ID to react to,
+          // and one still on its way cannot be recalled by deleting its row.
+          if message.canReact {
+            Menu("React") {
+              ForEach(["👍", "❤️", "😂", "😮", "😢"], id: \.self) { emoji in
+                Button(emoji) {
+                  dataSource.addReaction(messageID: id, emoji: emoji)
+                }
               }
-            }
-            Divider()
-            Button("More...") {
-              onRequestEmojiPicker?(id)
+              Divider()
+              Button("More...") {
+                onRequestEmojiPicker?(id)
+              }
             }
           }
 
-          Divider()
+          if message.canDeleteForMe {
+            Divider()
 
-          Button("Delete", role: .destructive) {
-            Task { await dataSource.deleteMessage(messageID: id) }
+            Button("Delete", role: .destructive) {
+              Task { await dataSource.deleteMessage(messageID: id) }
+            }
           }
         }
         .id(id)

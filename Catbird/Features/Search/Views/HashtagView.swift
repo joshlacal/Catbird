@@ -209,20 +209,16 @@ struct HashtagView: View {
                     appState: appState,
                     accessibilityIdentifier: "hashtag.posts"
                 ) { post in
-                    Button {
-                        path.append(NavigationDestination.post(post.uri))
-                    } label: {
-                        PostView(
-                            post: post,
-                            grandparentAuthor: nil,
-                            isParentPost: false,
-                            isSelectable: true,
-                            path: $path,
-                            appState: appState
+                    VStack(spacing: 0) {
+                        EnhancedFeedPost(
+                            feedViewPost: AppBskyFeedDefs.FeedViewPost(post: post),
+                            path: $path
                         )
-                        .padding(.vertical, 4)
+
+                        Rectangle()
+                            .fill(Color.separator)
+                            .frame(height: 0.5)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }

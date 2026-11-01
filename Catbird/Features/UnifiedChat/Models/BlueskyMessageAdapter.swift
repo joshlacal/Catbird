@@ -26,8 +26,13 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
   let senderProfile: ChatBskyActorDefs.ProfileViewBasic?
   private let reactionViews: [ChatBskyConvoDefs.ReactionView]
   let embed: UnifiedEmbed?
+  let diffableID: String
+  let sendState: MessageSendState
   private let customID: String?
   private let customSentAt: Date?
+  private let customText: String?
+  private let customSenderID: String?
+  private let customReplyContext: UnifiedMessageReplyContext?
 
   // MARK: - Initializers
 
@@ -36,7 +41,9 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     messageView: ChatBskyConvoDefs.MessageView,
     currentUserDID: String,
     senderProfile: ChatBskyActorDefs.ProfileViewBasic? = nil,
-    reactions: [ChatBskyConvoDefs.ReactionView] = []
+    reactions: [ChatBskyConvoDefs.ReactionView] = [],
+    diffableID: String? = nil,
+    sendState: MessageSendState = .sent
   ) {
     self.messageView = messageView
     self.systemMessageView = nil
@@ -49,7 +56,42 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     self.reactionViews = reactions
     self.customID = nil
     self.embed = messageView.embed.flatMap { Self.convertEmbed($0) }
+    self.diffableID = diffableID ?? messageView.id
+    self.sendState = sendState
     self.customSentAt = nil
+    self.customText = nil
+    self.customSenderID = nil
+    self.customReplyContext = nil
+  }
+
+  /// Initialize an optimistic pending/failed user message before server confirmation
+  init(
+    pendingID: String,
+    text: String,
+    currentUserDID: String,
+    senderProfile: ChatBskyActorDefs.ProfileViewBasic? = nil,
+    sentAt: Date = Date(),
+    sendState: MessageSendState = .sending,
+    embed: UnifiedEmbed? = nil,
+    replyContext: UnifiedMessageReplyContext? = nil
+  ) {
+    self.messageView = nil
+    self.systemMessageView = nil
+    self.systemEvent = nil
+    self.systemGroupEvents = nil
+    self.isSystemGroup = false
+    self.isExpanded = false
+    self.currentUserDID = currentUserDID
+    self.senderProfile = senderProfile
+    self.reactionViews = []
+    self.customID = pendingID
+    self.embed = embed
+    self.diffableID = pendingID
+    self.sendState = sendState
+    self.customSentAt = sentAt
+    self.customText = text
+    self.customSenderID = currentUserDID
+    self.customReplyContext = replyContext
   }
 
   /// Initialize from single system message
@@ -69,7 +111,12 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     self.reactionViews = []
     self.customID = systemMessageView.id
     self.embed = nil
+    self.diffableID = systemMessageView.id
+    self.sendState = .sent
     self.customSentAt = systemMessageView.sentAt.date
+    self.customText = nil
+    self.customSenderID = nil
+    self.customReplyContext = nil
   }
 
   /// Initialize from collapsed/expanded system group
@@ -89,7 +136,12 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     self.reactionViews = []
     self.customID = groupID
     self.embed = nil
+    self.diffableID = groupID
+    self.sendState = .sent
     self.customSentAt = systemGroupEvents.first?.sentAt ?? Date()
+    self.customText = nil
+    self.customSenderID = nil
+    self.customReplyContext = nil
   }
 
   // MARK: - UnifiedChatMessage
@@ -105,7 +157,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     if let event = systemEvent {
       return event.messageText
     }
-    return messageView?.text ?? ""
+    return customText ?? messageView?.text ?? ""
   }
 
   var isSystemMessage: Bool {
@@ -113,6 +165,9 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
   }
 
   var replyContext: UnifiedMessageReplyContext? {
+    if let customReplyContext {
+      return customReplyContext
+    }
     guard let replyTo = messageView?.replyTo else { return nil }
     switch replyTo {
     case .chatBskyConvoDefsMessageView(let refView):
@@ -185,7 +240,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     return result
   }
   var senderID: String {
-    messageView?.sender.did.didString() ?? ""
+    customSenderID ?? messageView?.sender.did.didString() ?? ""
   }
 
   var senderDisplayName: String? {
@@ -215,6 +270,21 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     return senderID == currentUserDID
   }
 
+  /// Built from the server's MessageView, so `id` is the server's message ID.
+  /// An optimistic send's `id` stays a local `pending-` placeholder until then.
+  private var isServerConfirmed: Bool { messageView != nil }
+
+  var canReply: Bool { isServerConfirmed }
+
+  var canReact: Bool { isServerConfirmed }
+
+  var canDeleteForMe: Bool {
+    if isServerConfirmed { return true }
+    // A failed send is neither queued nor in flight, so discarding its row is final.
+    if case .failed = sendState { return true }
+    return false
+  }
+
   var reactions: [UnifiedReaction] {
     guard let msg = messageView else { return [] }
     return reactionViews.map { reaction in
@@ -229,24 +299,26 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     }
   }
 
-
-  var sendState: MessageSendState { .sent }
-
   // MARK: - Hashable
 
   func hash(into hasher: inout Hasher) {
+    hasher.combine(diffableID)
     hasher.combine(id)
     hasher.combine(isExpanded)
     hasher.combine(isSystemGroup)
+    hasher.combine(sendState)
   }
 
   static func == (lhs: BlueskyMessageAdapter, rhs: BlueskyMessageAdapter) -> Bool {
-    lhs.id == rhs.id &&
+    lhs.diffableID == rhs.diffableID &&
+      lhs.id == rhs.id &&
       lhs.text == rhs.text &&
       lhs.isExpanded == rhs.isExpanded &&
       lhs.isSystemGroup == rhs.isSystemGroup &&
       lhs.reactions == rhs.reactions &&
-      lhs.replyContext == rhs.replyContext
+      lhs.replyContext == rhs.replyContext &&
+      lhs.sendState == rhs.sendState &&
+      lhs.embed == rhs.embed
   }
 
   // MARK: - System Event Parsing

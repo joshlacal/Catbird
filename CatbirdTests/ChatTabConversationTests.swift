@@ -92,6 +92,275 @@ struct ChatTabConversationTests {
     #expect(manager.activeConversationId == nil)
   }
 
+  @Test("Optimistic DM send clears draft immediately on tap and preserves diffableID across server confirmation")
+  func optimisticSendClearsDraftImmediatelyAndPreservesDiffableIDOnHandover() async throws {
+    let pages = MessagePagesStub()
+    let manager = await makeManager(pages)
+    defer { manager.stopAllPolling() }
+
+    let source = BlueskyConversationDataSource(
+      chatManager: manager, convoID: "open", currentUserDID: "did:plc:alice"
+    )
+
+    let initialTrigger = source.scrollToBottomTrigger
+    let pendingID = source.beginPendingSend(text: "Hello instantly!")
+
+    #expect(source.scrollToBottomTrigger == initialTrigger + 1)
+    #expect(source.messages.count == 1)
+
+    let pendingMsg = try #require(source.messages.first)
+    #expect(pendingMsg.id == pendingID)
+    #expect(pendingMsg.diffableID == pendingID)
+    #expect(pendingMsg.text == "Hello instantly!")
+    #expect(pendingMsg.isFromCurrentUser == true)
+    #expect(pendingMsg.sendState == .sending)
+    #expect(source.message(for: pendingID)?.text == "Hello instantly!")
+
+    // Simulate server confirmation arriving with real message ID
+    let realID = "3lserverconfirmed123"
+    let confirmedView = ChatBskyConvoDefs.MessageView(
+      id: realID,
+      rev: "rev1",
+      text: "Hello instantly!",
+      facets: nil,
+      embed: nil,
+      reactions: nil,
+      replyTo: nil,
+      sender: ChatBskyConvoDefs.MessageViewSender(did: try DID(didString: "did:plc:alice")),
+      sentAt: ATProtocolDate(date: pendingMsg.sentAt)
+    )
+
+    source.completePendingSend(id: pendingID, realMessageID: realID)
+    pages.messages = [.chatBskyConvoDefsMessageView(confirmedView)]
+    await source.loadMessages()
+    await settle { source.messages.first?.sendState == .sent }
+
+    #expect(source.messages.count == 1)
+    let confirmedAdapter = try #require(source.messages.first)
+    #expect(confirmedAdapter.id == realID)
+    #expect(confirmedAdapter.diffableID == pendingID)
+    #expect(confirmedAdapter.sendState == .sent)
+    #expect(source.message(for: pendingID)?.id == realID)
+    #expect(source.message(for: realID)?.diffableID == pendingID)
+  }
+
+  // MARK: - Optimistic send queue
+
+  @Test("Quick consecutive sends reach the server one at a time, in the order they were sent")
+  func optimisticSendsReachTheServerInOrder() async {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    let source = makeSource(manager, server)
+    let mention = "hey @alice.bsky.social look at this"
+    // The mention's handle lookup keeps its send busy before the POST.
+    server.held = [mention]
+
+    source.draftText = mention
+    source.submitDraft()
+    await settle { server.isHolding(mention) }
+    source.draftText = "lol"
+    source.submitDraft()
+    #expect(source.draftText.isEmpty)
+    // Give the second send every chance to start while the first is still busy.
+    await settle { server.inFlight > 1 }
+    #expect(server.inFlight == 1)
+    #expect(server.sent.isEmpty)
+    #expect(source.messages.map(\.text) == [mention, "lol"])
+
+    server.release(mention)
+    await settle { server.sent.count == 2 }
+    #expect(server.sent.map(\.text) == [mention, "lol"])
+    #expect(server.maxInFlight == 1)
+    #expect(source.pendingSends.isEmpty)
+  }
+
+  @Test("Sends queued behind one in flight still go out when the conversation view lets the source go")
+  func queuedSendsOutliveTheConversationView() async {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    // Only the view's @State owns the source; tapping Back (or picking another
+    // conversation on macOS) drops that reference while sends are queued.
+    var source: BlueskyConversationDataSource? = makeSource(manager, server)
+    weak var releasedSource: BlueskyConversationDataSource?
+    releasedSource = source
+    let mention = "hey @alice.bsky.social look"
+    server.held = [mention]
+
+    source?.draftText = mention
+    source?.submitDraft()
+    await settle { server.isHolding(mention) }
+    source?.draftText = "ok"
+    source?.submitDraft()
+    source = nil
+
+    server.release(mention)
+    await settle { server.sent.count == 2 }
+    #expect(server.sent.map(\.text) == [mention, "ok"])
+    // The queue keeps the source only until its sends finish.
+    await settle { releasedSource == nil }
+    #expect(releasedSource == nil)
+  }
+
+  @Test("A failed send does not hold back later sends, and Retry sends it again at the back once")
+  func failedSendDoesNotWedgeTheQueue() async throws {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    let source = makeSource(manager, server)
+    server.failing = ["first"]
+
+    source.draftText = "first"
+    source.submitDraft()
+    source.draftText = "second"
+    source.submitDraft()
+    await settle { server.sent.count == 2 && source.pendingSends.first?.sendState != .sending }
+
+    #expect(server.sent.map(\.text) == ["first", "second"])
+    let failed = try #require(source.pendingSends.first)
+    #expect(source.pendingSends.count == 1)
+    #expect(failed.text == "first")
+    #expect(failed.sendState == .failed("Failed to send"))
+    #expect(source.message(for: failed.id)?.sendState == .failed("Failed to send"))
+
+    // Two taps on Retry before the row re-renders send the message once.
+    server.failing = []
+    async let firstTap: Void = source.retryFailedSend(pendingID: failed.id)
+    async let secondTap: Void = source.retryFailedSend(pendingID: failed.id)
+    _ = await (firstTap, secondTap)
+    #expect(server.sent.map(\.text) == ["first", "second", "first"])
+    #expect(source.pendingSends.isEmpty)
+  }
+
+  @Test("A send still in flight stays below confirmed messages whatever the device clock says")
+  func inFlightSendStaysAtTheBottom() async throws {
+    let pages = MessagePagesStub()
+    let manager = await makeManager(pages)
+    defer { manager.stopAllPolling() }
+    let source = BlueskyConversationDataSource(
+      chatManager: manager, convoID: "open", currentUserDID: "did:plc:alice"
+    )
+    // The device clock runs behind the server's.
+    let pendingID = source.beginPendingSend(text: "still sending", sentAt: Date(timeIntervalSince1970: 1_000))
+    pages.messages = [.chatBskyConvoDefsMessageView(
+      try messageView(id: "3lpeer", text: "from bob", senderDID: "did:plc:bob", sentAt: Date(timeIntervalSince1970: 2_000))
+    )]
+    await source.loadMessages()
+    await settle { source.messages.count == 2 }
+
+    #expect(source.messages.map(\.id) == ["3lpeer", pendingID])
+
+    // A failed send is no longer on its way and keeps the place of the time it was sent.
+    source.failPendingSend(id: pendingID)
+    #expect(source.messages.map(\.id) == [pendingID, "3lpeer"])
+  }
+
+  // MARK: - Actions on rows the server has not confirmed
+
+  @Test("A pending or failed row takes no replies or reactions, and only a failed one can be deleted")
+  func unconfirmedRowsOfferNoServerActions() async throws {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let source = BlueskyConversationDataSource(
+      chatManager: manager, convoID: "open", currentUserDID: "did:plc:alice"
+    )
+    let callbacks = ChatMessageMenuCallbacks(canReply: true, canDelete: true, canReport: true)
+
+    let pendingID = source.beginPendingSend(text: "on its way")
+    let sending = try #require(source.message(for: pendingID))
+    #expect(!sending.canReply)
+    #expect(!sending.canReact)
+    #expect(!sending.canDeleteForMe)
+    #expect(ChatMessageMenuActions.available(for: sending, callbacks: callbacks, quickReactions: ["👍"]) == [.copy])
+
+    source.failPendingSend(id: pendingID)
+    let failed = try #require(source.message(for: pendingID))
+    #expect(!failed.canReply)
+    #expect(!failed.canReact)
+    #expect(failed.canDeleteForMe)
+    #expect(ChatMessageMenuActions.available(for: failed, callbacks: callbacks, quickReactions: ["👍"])
+      == [.copy, .deleteForMe])
+
+    // Once confirmed, the row keeps its pending item identity but names the server's message.
+    let confirmed = BlueskyMessageAdapter(
+      messageView: try messageView(id: "3lconfirmed", text: "on its way", senderDID: "did:plc:alice", sentAt: Date()),
+      currentUserDID: "did:plc:alice",
+      diffableID: pendingID
+    )
+    #expect(confirmed.canReply)
+    #expect(confirmed.canReact)
+    #expect(confirmed.canDeleteForMe)
+    #expect(ChatMessageMenuActions.available(for: confirmed, callbacks: callbacks, quickReactions: ["👍"])
+      == [.reaction("👍"), .moreReactions, .reply, .copy, .deleteForMe])
+  }
+
+  @Test("Deleting a row whose send is on its way leaves the send to land; a failed row is discarded for good")
+  func deletingUnconfirmedRows() async throws {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    let source = makeSource(manager, server)
+    server.held = ["in flight"]
+
+    source.draftText = "in flight"
+    source.submitDraft()
+    await settle { server.isHolding("in flight") }
+    let inFlightID = try #require(source.pendingSends.first?.id)
+    await source.deleteMessage(messageID: inFlightID)
+    #expect(source.message(for: inFlightID)?.sendState == .sending)
+    server.release("in flight")
+    await settle { source.pendingSends.isEmpty }
+    #expect(server.sent.map(\.text) == ["in flight"])
+    #expect(source.error == nil)
+
+    server.failing = ["lost"]
+    source.draftText = "lost"
+    source.submitDraft()
+    await settle { source.pendingSends.first?.sendState == .failed("Failed to send") }
+    let failedID = try #require(source.pendingSends.first?.id)
+    await source.deleteMessage(messageID: failedID)
+    #expect(source.pendingSends.isEmpty)
+    #expect(source.message(for: failedID) == nil)
+    await source.retryFailedSend(pendingID: failedID)
+    #expect(server.sent.map(\.text) == ["in flight", "lost"])
+  }
+
+  @Test("A reply to a local send names its server ID, on Retry too, and never a pending ID")
+  func replyToLocalSendNamesTheServerID() async throws {
+    let manager = await makeManager(MessagePagesStub())
+    defer { manager.stopAllPolling() }
+    let server = MessageSendStub()
+    let source = makeSource(manager, server)
+
+    source.draftText = "original"
+    source.submitDraft()
+    let originalID = try #require(source.pendingSends.first?.id)
+    await settle { source.pendingSends.isEmpty }
+    let repliedToConfirmed = await source.sendMessage(
+      text: "reply", embed: nil, replyTo: ChatBskyConvoDefs.ReplyRef(messageId: originalID)
+    )
+    #expect(repliedToConfirmed)
+    #expect(server.sent.last == MessageSendStub.Sent(text: "reply", replyTo: "3lserver1"))
+
+    // The target has not been confirmed: the reply goes out without it rather than failing for good.
+    let unconfirmedID = source.beginPendingSend(text: "not sent yet")
+    server.failing = ["reply to unconfirmed"]
+    let repliedToUnconfirmed = await source.sendMessage(
+      text: "reply to unconfirmed", embed: nil, replyTo: ChatBskyConvoDefs.ReplyRef(messageId: unconfirmedID)
+    )
+    #expect(!repliedToUnconfirmed)
+    #expect(server.sent.last == MessageSendStub.Sent(text: "reply to unconfirmed", replyTo: nil))
+
+    // Retry names the target's server ID once it has one.
+    source.completePendingSend(id: unconfirmedID, realMessageID: "3ltarget")
+    server.failing = []
+    let failedReply = try #require(source.pendingSends.first { $0.text == "reply to unconfirmed" })
+    await source.retryFailedSend(pendingID: failedReply.id)
+    #expect(server.sent.last == MessageSendStub.Sent(text: "reply to unconfirmed", replyTo: "3ltarget"))
+    #expect(server.sent.allSatisfy { $0.replyTo?.hasPrefix(BlueskyConversationDataSource.pendingIDPrefix) != true })
+  }
+
   // MARK: - Destinations pushed over the selected conversation
 
   @Test("The tab publishes its selection only while that Bluesky conversation is on screen")
@@ -182,6 +451,15 @@ struct ChatTabConversationTests {
     return ChatManager(client: client, messagePageLoader: { _, _ in try await pages.load() })
   }
 
+  private func makeSource(_ manager: ChatManager, _ server: MessageSendStub) -> BlueskyConversationDataSource {
+    BlueskyConversationDataSource(
+      chatManager: manager, convoID: "open", currentUserDID: "did:plc:alice",
+      messageSender: { _, text, _, replyTo, confirm in
+        await server.send(text: text, replyTo: replyTo, confirm: confirm)
+      }
+    )
+  }
+
   private func settle(_ condition: () -> Bool) async {
     // Observation and the manager's own task run on the main actor; bound settling rather than sleeping.
     let deadline = ContinuousClock.now.advanced(by: .seconds(1))
@@ -196,6 +474,7 @@ struct ChatTabConversationTests {
 private final class MessagePagesStub {
   private(set) var requestCount = 0
   var pauseNextRequest = false
+  var messages: [ChatBskyConvoGetMessages.OutputMessagesUnion] = []
   private var pausedRequest: CheckedContinuation<Void, Never>?
   private var startWaiter: CheckedContinuation<Void, Never>?
 
@@ -209,7 +488,7 @@ private final class MessagePagesStub {
         startWaiter = nil
       }
     }
-    return (200, .init(messages: []))
+    return (200, .init(messages: messages))
   }
 
   func waitForPausedRequest() async {
@@ -221,4 +500,62 @@ private final class MessagePagesStub {
     pausedRequest?.resume()
     pausedRequest = nil
   }
+}
+
+/// Stands in for ChatManager.sendMessage. A send records its POST once any hold is
+/// released, then confirms with a server ID unless its text is listed as failing.
+@MainActor
+private final class MessageSendStub {
+  struct Sent: Equatable {
+    let text: String
+    let replyTo: String?
+  }
+
+  private(set) var sent: [Sent] = []
+  private(set) var inFlight = 0
+  private(set) var maxInFlight = 0
+  /// Texts whose send fails instead of being confirmed.
+  var failing: Set<String> = []
+  /// Texts whose send waits for `release(_:)` before its POST.
+  var held: Set<String> = []
+  private var holds: [String: CheckedContinuation<Void, Never>] = [:]
+
+  func send(
+    text: String,
+    replyTo: ChatBskyConvoDefs.ReplyRef?,
+    confirm: (ChatBskyConvoDefs.MessageView) -> Void
+  ) async -> Bool {
+    inFlight += 1
+    maxInFlight = max(maxInFlight, inFlight)
+    defer { inFlight -= 1 }
+    if held.contains(text) {
+      await withCheckedContinuation { holds[text] = $0 }
+    }
+    sent.append(Sent(text: text, replyTo: replyTo?.messageId))
+    guard !failing.contains(text) else { return false }
+    // swiftlint:disable:next force_try
+    confirm(try! messageView(id: "3lserver\(sent.count)", text: text, senderDID: "did:plc:alice", sentAt: Date()))
+    return true
+  }
+
+  func isHolding(_ text: String) -> Bool { holds[text] != nil }
+
+  func release(_ text: String) {
+    held.remove(text)
+    holds.removeValue(forKey: text)?.resume()
+  }
+}
+
+private func messageView(id: String, text: String, senderDID: String, sentAt: Date) throws -> ChatBskyConvoDefs.MessageView {
+  ChatBskyConvoDefs.MessageView(
+    id: id,
+    rev: "rev-\(id)",
+    text: text,
+    facets: nil,
+    embed: nil,
+    reactions: nil,
+    replyTo: nil,
+    sender: ChatBskyConvoDefs.MessageViewSender(did: try DID(didString: senderDID)),
+    sentAt: ATProtocolDate(date: sentAt)
+  )
 }

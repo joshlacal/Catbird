@@ -8,22 +8,18 @@ struct NotificationsActivityListView: View {
   
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
-  @Environment(\.horizontalSizeClass) private var hSizeClass
 
   @State private var posts: [AppBskyFeedDefs.PostView] = []
   @State private var isLoading = true
   @State private var errorMessage: String?
   @State private var hasLoaded = false
 
-  private var contentMaxWidth: CGFloat {
-    hSizeClass == .compact ? .infinity : 600
-  }
-
   var body: some View {
-    VStack {
+    Group {
       if isLoading && posts.isEmpty {
         ProgressView()
           .padding()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if let errorMessage = errorMessage {
         VStack(spacing: 12) {
           Text(errorMessage)
@@ -38,6 +34,7 @@ struct NotificationsActivityListView: View {
           .buttonStyle(.bordered)
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if posts.isEmpty {
         VStack(spacing: 8) {
           Image(systemName: "bell.slash")
@@ -48,49 +45,33 @@ struct NotificationsActivityListView: View {
             .foregroundStyle(.secondary)
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        List {
-          ForEach(posts, id: \.uri) { post in
-            Button {
-              path.append(NavigationDestination.post(post.uri))
-            } label: {
-              PostView(
-                post: post,
-                grandparentAuthor: nil,
-                isParentPost: false,
-                isSelectable: false,
-                path: $path,
-                appState: appState
-              )
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .listRowSeparator(.visible)
-            .listRowSeparatorTint(Color.separator)
-            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
-            .alignmentGuide(.listRowSeparatorTrailing) { d in d.width }
-            .listRowBackground(
-              Color.primaryBackground(
-                themeManager: appState.themeManager,
-                currentScheme: colorScheme
-              )
+        PostListCollectionView(
+          posts: posts,
+          onRefresh: { await loadPosts() },
+          appState: appState,
+          accessibilityIdentifier: "notifications.activity.posts"
+        ) { post in
+          VStack(spacing: 0) {
+            EnhancedFeedPost(
+              feedViewPost: AppBskyFeedDefs.FeedViewPost(post: post),
+              path: $path
             )
-            .listRowInsets(EdgeInsets())
+
+            Rectangle()
+              .fill(Color.separator)
+              .frame(height: 0.5)
           }
         }
-        .listStyle(.plain)
-        .background(
-          Color.primaryBackground(
-            themeManager: appState.themeManager,
-            currentScheme: colorScheme
-          )
-        )
-        .frame(maxWidth: contentMaxWidth)
-        .frame(maxWidth: .infinity, alignment: .center)
       }
     }
+    .background(
+      Color.primaryBackground(
+        themeManager: appState.themeManager,
+        currentScheme: colorScheme
+      )
+    )
     .navigationTitle("Activity")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
