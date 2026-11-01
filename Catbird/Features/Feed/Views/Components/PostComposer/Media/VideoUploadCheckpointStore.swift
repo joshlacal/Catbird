@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OSLog
 
 /// Machine-local transfer identity. This metadata never goes into a remote draft or contains tokens.
 struct VideoUploadOwner: Codable, Hashable, Sendable {
@@ -45,24 +46,53 @@ enum VideoUploadFileError: LocalizedError {
   }
 }
 
-/// Disk work is actor-isolated off MainActor. Only disposable part files are removed; snapshots
-/// and checkpoint history are retained so cancellation cannot destroy an attachment.
+/// Disk work is actor-isolated off MainActor. A snapshot is the exact bytes a server session takes
+/// parts from, so it exists only while a run or cleanup holds its owner's lease, or while its
+/// checkpoint's session can still take parts (`keepsSnapshot`). A finished, failed, replaced or
+/// expired checkpoint's snapshot is deleted; a later run on the same bytes clones it again from
+/// its matching source. The attachment is never touched. Checkpoint and history JSON hold no
+/// media and are retained. The root is excluded from device backups.
 actor VideoUploadCheckpointStore {
   static let shared: Result<VideoUploadCheckpointStore, Error> = Result { try VideoUploadCheckpointStore() }
+  /// Present once every snapshot under the root was cloned from a sanitized upload copy. Older
+  /// snapshots can be raw clones of an attachment, with its location and device metadata, and no
+  /// sanitized upload can resume from them, so the first store to open a root deletes them all.
+  static let sanitizedSnapshotsMarker = ".sanitized-snapshots"
+  private static let logger = Logger(subsystem: "blue.catbird", category: "VideoUploadCheckpointStore")
   private let rootURL: URL
   private let fileManager = FileManager.default
   private var activeLeases: [VideoUploadOwner: UUID] = [:]
   private var cleanupLeases: [VideoUploadOwner: UUID] = [:]
 
-  init(rootURL: URL? = nil) throws {
-    if let rootURL {
-      self.rootURL = rootURL
-    } else {
-      self.rootURL = try FileManager.default.url(
-        for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
-      ).appendingPathComponent("Catbird/VideoUploads", isDirectory: true)
+  /// Opens `shared` once, off the main thread. App launch calls this so an older build's raw
+  /// snapshots are purged and the root is excluded from backups even if no composer ever holds a
+  /// video again, and so that sweep never runs on the main thread. No run can hold a lease before
+  /// `shared` exists, so the sweep is safe this early.
+  @discardableResult
+  static func openSharedInBackground() -> Task<Void, Never> {
+    Task.detached(priority: .utility) {
+      if case .failure(let error) = Self.shared {
+        Self.logger.error("Couldn’t open the video upload store: \(error.localizedDescription, privacy: .public)")
+      }
     }
+  }
+
+  /// The root `shared` opens.
+  static func defaultRootURL() throws -> URL {
+    try FileManager.default.url(
+      for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+    ).appendingPathComponent("Catbird/VideoUploads", isDirectory: true)
+  }
+
+  init(rootURL: URL? = nil) throws {
+    self.rootURL = try rootURL ?? Self.defaultRootURL()
     try FileManager.default.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    var root = self.rootURL
+    try root.setResourceValues(values)
+    // Only `shared` opens the production root, so no run holds a lease in it yet.
+    Self.removeUnusedFiles(in: self.rootURL, now: Date())
   }
 
   func prepare(
@@ -77,39 +107,57 @@ actor VideoUploadCheckpointStore {
     else { throw VideoUploadFileError.invalidSource }
     let directory = try directory(for: owner)
     let existing = try load(owner: owner)
-    let original = try fingerprint(sourceURL)
+    let original = try Self.fingerprint(sourceURL)
     if var existing {
       guard existing.owner == owner else { throw VideoUploadFileError.ownerChanged }
       if existing.sizeBytes == original.count, existing.sha256 == original.digest, existing.mimeType == mimeType {
-        let snapshot = try fingerprint(try snapshotURL(for: existing))
-        guard snapshot.count == existing.sizeBytes, snapshot.digest == existing.sha256
-        else { throw VideoUploadFileError.snapshotChanged }
-        try Task.checkCancellation()
-        existing.runID = UUID()
-        try write(existing)
+        let snapshotFile = try snapshotURL(for: existing)
+        var cloned = false
+        if fileManager.fileExists(atPath: snapshotFile.path) {
+          let snapshot = try Self.fingerprint(snapshotFile)
+          guard snapshot.count == existing.sizeBytes, snapshot.digest == existing.sha256
+          else { throw VideoUploadFileError.snapshotChanged }
+        } else {
+          // An earlier run's end deleted the snapshot; the matching source holds the same bytes.
+          try cloneSnapshot(of: sourceURL, to: snapshotFile, matching: original)
+          cloned = true
+        }
+        do {
+          try Task.checkCancellation()
+          existing.runID = UUID()
+          try write(existing)
+        } catch {
+          // No lease holds a clone made here, so nothing else would delete it.
+          if cloned { try? fileManager.removeItem(at: snapshotFile) }
+          throw error
+        }
         activeLeases[owner] = existing.runID
+        // No earlier run still holds this owner: drop its leftover part files.
+        Self.removeFiles(in: directory, keepingSnapshot: existing.snapshotName)
         return existing
       }
       guard allowReplacementSource else { throw VideoUploadFileError.sourceChanged }
-      // Only a new user submit/retry can replace prepared bytes. Preserve the previous file and
-      // reservation record; the changed bytes always get a separate snapshot and server session.
+      // Only a new user submit/retry can replace prepared bytes. The previous reservation record
+      // stays in history; the changed bytes always get a separate snapshot and server session.
       try archive(existing)
     }
 
     let snapshotName = UUID().uuidString + ".video"
     let destination = directory.appendingPathComponent(snapshotName)
-    // APFS copy-on-write clonefile avoids duplicating disk space and memory (P177)
-    try fileManager.copyItem(at: sourceURL, to: destination)
-    let copied = try fingerprint(destination)
-    guard copied.digest == original.digest, copied.count == original.count
-    else { throw VideoUploadFileError.sourceChanged }
-    try fileManager.setAttributes([.posixPermissions: 0o400], ofItemAtPath: destination.path)
+    try cloneSnapshot(of: sourceURL, to: destination, matching: original)
     let checkpoint = VideoUploadCheckpoint(
       operationID: UUID(), runID: UUID(), owner: owner, snapshotName: snapshotName,
       sha256: original.digest, sizeBytes: original.count, mimeType: mimeType, phase: .prepared
     )
-    try write(checkpoint)
+    do {
+      try write(checkpoint)
+    } catch {
+      try? fileManager.removeItem(at: destination)
+      throw error
+    }
     activeLeases[owner] = checkpoint.runID
+    // No session can resume from a replaced checkpoint's bytes, and no run holds its parts.
+    Self.removeFiles(in: directory, keepingSnapshot: snapshotName)
     return checkpoint
   }
 
@@ -132,7 +180,8 @@ actor VideoUploadCheckpointStore {
     try write(checkpoint)
   }
 
-  /// Called only for a new, explicit submit/retry. Keep previous reservations and files recorded.
+  /// Called only for a new, explicit submit/retry. The previous reservation stays recorded in
+  /// history; the new attempt sends the same snapshot.
   func beginNewAttempt(from old: VideoUploadCheckpoint) throws -> VideoUploadCheckpoint {
     guard let current = try load(owner: old.owner), current.operationID == old.operationID,
       current.runID == old.runID else {
@@ -148,7 +197,9 @@ actor VideoUploadCheckpointStore {
   }
 
   func release(owner: VideoUploadOwner, runID: UUID) {
-    if activeLeases[owner] == runID { activeLeases.removeValue(forKey: owner) }
+    guard activeLeases[owner] == runID else { return }
+    activeLeases.removeValue(forKey: owner)
+    removeUnusedFiles(owner: owner)
   }
 
   func isCurrentLease(_ checkpoint: VideoUploadCheckpoint) -> Bool {
@@ -163,7 +214,9 @@ actor VideoUploadCheckpointStore {
   }
 
   func finishCleanup(owner: VideoUploadOwner, runID: UUID) {
-    if cleanupLeases[owner] == runID { cleanupLeases.removeValue(forKey: owner) }
+    guard cleanupLeases[owner] == runID else { return }
+    cleanupLeases.removeValue(forKey: owner)
+    removeUnusedFiles(owner: owner)
   }
 
   func makePart(checkpoint: VideoUploadCheckpoint, partNumber: Int, offset: Int64, count: Int) throws -> URL {
@@ -196,6 +249,35 @@ actor VideoUploadCheckpointStore {
     try JSONEncoder().encode(checkpoint).write(to: target, options: .atomic)
   }
 
+  /// Clones `source` (an APFS copy-on-write clone where the volume allows, P177) and makes the
+  /// clone read-only. The clone is kept only when its bytes are exactly `expected`.
+  private func cloneSnapshot(
+    of source: URL, to destination: URL, matching expected: (count: Int, digest: String)
+  ) throws {
+    try fileManager.copyItem(at: source, to: destination)
+    do {
+      let copied = try Self.fingerprint(destination)
+      guard copied.digest == expected.digest, copied.count == expected.count
+      else { throw VideoUploadFileError.sourceChanged }
+      try fileManager.setAttributes([.posixPermissions: 0o400], ofItemAtPath: destination.path)
+    } catch {
+      try? fileManager.removeItem(at: destination)
+      throw error
+    }
+  }
+
+  /// Deletes the owner's part files, and its snapshot unless the checkpoint still needs it. Only
+  /// once neither a run nor a cleanup holds the owner.
+  private func removeUnusedFiles(owner: VideoUploadOwner) {
+    guard activeLeases[owner] == nil, cleanupLeases[owner] == nil,
+      let directory = try? directory(for: owner)
+    else { return }
+    let kept = (try? load(owner: owner)).flatMap { checkpoint in
+      Self.keepsSnapshot(checkpoint, at: Date()) ? checkpoint.snapshotName : nil
+    }
+    Self.removeFiles(in: directory, keepingSnapshot: kept)
+  }
+
   private func archive(_ checkpoint: VideoUploadCheckpoint) throws {
     let history = try directory(for: checkpoint.owner).appendingPathComponent("history", isDirectory: true)
     try fileManager.createDirectory(at: history, withIntermediateDirectories: true)
@@ -205,10 +287,7 @@ actor VideoUploadCheckpointStore {
   }
 
   private func directory(for owner: VideoUploadOwner) throws -> URL {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = .sortedKeys
-    let key = SHA256.hash(data: try encoder.encode(owner)).map { String(format: "%02x", $0) }.joined()
-    let directory = rootURL.appendingPathComponent(key, isDirectory: true)
+    let directory = rootURL.appendingPathComponent(try Self.directoryName(for: owner), isDirectory: true)
     try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory
   }
@@ -221,7 +300,11 @@ actor VideoUploadCheckpointStore {
     return try directory(for: checkpoint.owner).appendingPathComponent(checkpoint.snapshotName)
   }
 
-  private func fingerprint(_ url: URL) throws -> (count: Int, digest: String) {
+  /// Size and SHA-256 of a local, fully downloaded file. Uses no actor state.
+  static func fingerprint(_ url: URL) throws -> (count: Int, digest: String) {
+    // A URL keeps the resource values it read; a file rewritten since must not report its old size.
+    var url = url
+    url.removeAllCachedResourceValues()
     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .ubiquitousItemDownloadingStatusKey])
     guard values.isRegularFile == true, let size = values.fileSize, size > 0,
       values.ubiquitousItemDownloadingStatus != .notDownloaded
@@ -262,5 +345,81 @@ actor VideoUploadCheckpointStore {
     }
     try output.synchronize()
     return (count, hash.finalize().map { String(format: "%02x", $0) }.joined())
+  }
+}
+
+// MARK: - Snapshot Retention
+
+extension VideoUploadCheckpointStore {
+  /// Whether `checkpoint`'s server session can still take parts from its snapshot: an upload
+  /// session that has not finished, failed, expired or been aborted. Any other checkpoint's bytes
+  /// are already on the service or go to a new session, which a later run clones again from its
+  /// source.
+  static func keepsSnapshot(_ checkpoint: VideoUploadCheckpoint, at now: Date) -> Bool {
+    guard checkpoint.uploadJobID?.isEmpty == false, checkpoint.completedJobID == nil,
+      let expiresAt = checkpoint.expiresAt, expiresAt > now
+    else { return false }
+    switch checkpoint.phase {
+    case .uploading, .finishing: return true
+    // Cleanup records the service's answer as the failure reason: the abort went through or the
+    // session is already finishing or finished. Either way it takes no more parts.
+    case .abandoned: return checkpoint.failureReason == nil
+    case .prepared, .starting, .startUncertain, .processing, .complete, .terminal: return false
+    }
+  }
+
+  /// Startup sweep of a root no run is using: every part file, every snapshot no checkpoint
+  /// references (including archived and legacy ones), and every referenced snapshot its
+  /// checkpoint no longer needs. On the first open of a root without the marker, every snapshot.
+  /// Best-effort: a file that cannot be removed now is tried again on the next open.
+  private static func removeUnusedFiles(in root: URL, now: Date) {
+    let fileManager = FileManager.default
+    let marker = root.appendingPathComponent(sanitizedSnapshotsMarker)
+    let purgeEverySnapshot = !fileManager.fileExists(atPath: marker.path)
+    var removedAll = true
+    let entries = (try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+    for directory in entries where (try? directory.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+      var kept: String?
+      if !purgeEverySnapshot,
+        let data = try? Data(contentsOf: directory.appendingPathComponent("checkpoint.json")),
+        let checkpoint = try? JSONDecoder().decode(VideoUploadCheckpoint.self, from: data),
+        (try? directoryName(for: checkpoint.owner)) == directory.lastPathComponent,
+        keepsSnapshot(checkpoint, at: now) {
+        kept = checkpoint.snapshotName
+      }
+      if !removeFiles(in: directory, keepingSnapshot: kept) { removedAll = false }
+    }
+    if purgeEverySnapshot, removedAll, !fileManager.createFile(atPath: marker.path, contents: nil) {
+      logger.error("Couldn’t record the video upload snapshot sweep")
+    }
+  }
+
+  /// Removes the directory's part files and every snapshot except `kept`; true when all are gone.
+  @discardableResult
+  private static func removeFiles(in directory: URL, keepingSnapshot kept: String?) -> Bool {
+    let fileManager = FileManager.default
+    let parts = directory.appendingPathComponent("parts", isDirectory: true)
+    let snapshots = ((try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? [])
+      .filter { $0.hasSuffix(".video") && $0 != kept }
+      .map { directory.appendingPathComponent($0) }
+    let partFiles = ((try? fileManager.contentsOfDirectory(atPath: parts.path)) ?? [])
+      .filter { $0.hasSuffix(".part") }
+      .map { parts.appendingPathComponent($0) }
+    var removedAll = true
+    for url in snapshots + partFiles {
+      do {
+        try fileManager.removeItem(at: url)
+      } catch {
+        removedAll = false
+        logger.error("Couldn’t remove a video upload file: \(error.localizedDescription, privacy: .public)")
+      }
+    }
+    return removedAll
+  }
+
+  private static func directoryName(for owner: VideoUploadOwner) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    return SHA256.hash(data: try encoder.encode(owner)).map { String(format: "%02x", $0) }.joined()
   }
 }

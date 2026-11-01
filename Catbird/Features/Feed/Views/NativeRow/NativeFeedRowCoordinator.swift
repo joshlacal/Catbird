@@ -86,7 +86,7 @@ final class NativeFeedRowCoordinator {
   /// the same kind of cell, so items whose kind changes are reloaded instead.
   private var dequeuedAsNative: [String: Bool] = [:]
   /// The latest shadow-merged post per URI, from the rows' live-count streams.
-  private var mergedPosts: [String: AppBskyFeedDefs.PostView] = [:]
+  private var mergedPosts: [String: (source: AppBskyFeedDefs.PostView, displayed: AppBskyFeedDefs.PostView)] = [:]
   /// The feed items (post IDs) whose rows recorded live counts or created models for each URI;
   /// both are kept while one of these items is in the snapshot.
   private var rowPostIDsByURI: [String: Set<String>] = [:]
@@ -183,6 +183,17 @@ final class NativeFeedRowCoordinator {
     resolveSettingsIfNeeded()
     self.posts = posts
     self.signatures = signatures
+    // Only models already requested by a menu/action need reconciliation. Refresh them now,
+    // including when an action is suspended waiting for the previous payload's actor hop.
+    for (uri, models) in postModels {
+      for postID in rowPostIDsByURI[uri, default: []].sorted() {
+        guard let cached = posts[postID], let item = try? cached.feedViewPost,
+          item.post.uri.uriString() == uri, item.post.cid == models.cid
+        else { continue }
+        models.refresh(post: item.post, displayed: displayedPost(uri: uri, fallback: item.post), appState: appState)
+        break
+      }
+    }
   }
 
   /// Forgets what belonged to posts that left the feed, once a snapshot without them is applied:
@@ -275,7 +286,7 @@ final class NativeFeedRowCoordinator {
     let layout = layoutStore.layout(
       for: Self.layoutInput(for: row, width: width, timeText: time.text, settings: settings))
     preparer.markConfigured(postID: row.postID, signature: row.signature, width: width)
-    let displayed = mergedPosts[row.post.uri.uriString()] ?? row.post
+    let displayed = displayedPost(uri: row.post.uri.uriString(), fallback: row.post)
     return NativeFeedRowContent(
       post: row.post, layout: layout, text: row.text, displayName: row.displayName, handle: row.handle,
       timeText: time.text, timeAccessibilityLabel: time.accessibilityLabel,
@@ -482,24 +493,39 @@ final class NativeFeedRowCoordinator {
   }
 
   private func displayedPost(uri: String, fallback: AppBskyFeedDefs.PostView) -> AppBskyFeedDefs.PostView {
-    guard let merged = mergedPosts[uri], merged.cid == fallback.cid else { return fallback }
-    return merged
+    guard let merged = mergedPosts[uri], merged.source == fallback else { return fallback }
+    return merged.displayed
   }
 
-  /// The models of the post a row shows, created on first use from the feed payload `post` the
-  /// row was configured with (never the shadow-merged copy; see `NativeRowPostModels`), and
+  /// The models of the post a row shows, created on first use from the latest raw snapshot
+  /// payload (never the shadow-merged copy; see `NativeRowPostModels`), and
   /// replaced when the post's record changed (a new CID) while nothing is presented for it.
   func postModels(for post: AppBskyFeedDefs.PostView, postID: String) -> NativeRowPostModels {
+    // A cell callback may have captured the previous viewer state with the same URI/CID.
+    let post = authoritativePost(forPostID: postID, fallback: post)
     let uri = post.uri.uriString()
     rowPostIDsByURI[uri, default: []].insert(postID)
-    if let existing = postModels[uri], existing.cid == post.cid || existing.postState.hasPresentation {
-      return existing
+    if let existing = postModels[uri] {
+      if existing.cid == post.cid {
+        existing.refresh(post: post, displayed: displayedPost(uri: uri, fallback: post), appState: appState)
+        return existing
+      }
+      if existing.postState.hasPresentation { return existing }
     }
     postModels[uri]?.cancel()
     let created = NativeRowPostModels(
       post: post, displayed: displayedPost(uri: uri, fallback: post), appState: appState)
     postModels[uri] = created
     return created
+  }
+
+  private func authoritativePost(
+    forPostID postID: String, fallback: AppBskyFeedDefs.PostView
+  ) -> AppBskyFeedDefs.PostView {
+    guard let cached = posts[postID], let current = try? cached.feedViewPost,
+      current.post.uri == fallback.uri
+    else { return fallback }
+    return current.post
   }
 
   /// The models created for the post at `uri`, if any.
@@ -521,7 +547,9 @@ final class NativeFeedRowCoordinator {
     return { [weak self] uri in
       Self.mergedPosts(
         of: await manager.shadowUpdates(forUri: uri), merge: { await manager.mergeShadow(post: post) },
-        onMerged: { [weak self] merged in await self?.record(merged: merged, uri: uri, postID: postID) })
+        onMerged: { [weak self] merged in
+          await self?.record(merged: merged, source: post, uri: uri, postID: postID) ?? false
+        })
     }
   }
 
@@ -529,7 +557,7 @@ final class NativeFeedRowCoordinator {
   /// `source` finishes, and stops listening to `source` when the consumer stops listening.
   nonisolated static func mergedPosts<Element: Sendable>(
     of source: AsyncStream<Element>, merge: @escaping @Sendable () async -> AppBskyFeedDefs.PostView,
-    onMerged: @escaping @Sendable (AppBskyFeedDefs.PostView) async -> Void
+    onMerged: @escaping @Sendable (AppBskyFeedDefs.PostView) async -> Bool
   ) -> AsyncStream<AppBskyFeedDefs.PostView> {
     AsyncStream { continuation in
       let task = Task {
@@ -537,7 +565,7 @@ final class NativeFeedRowCoordinator {
           guard !Task.isCancelled else { break }
           let merged = await merge()
           guard !Task.isCancelled else { break }
-          await onMerged(merged)
+          guard await onMerged(merged) else { break }
           continuation.yield(merged)
         }
         continuation.finish()
@@ -548,12 +576,18 @@ final class NativeFeedRowCoordinator {
 
   /// The latest shadow-merged copy a row's live stream delivered for the post at `uri`.
   func mergedPost(forURI uri: String) -> AppBskyFeedDefs.PostView? {
-    mergedPosts[uri]
+    mergedPosts[uri]?.displayed
   }
 
-  private func record(merged: AppBskyFeedDefs.PostView, uri: String, postID: String) {
+  private func record(
+    merged: AppBskyFeedDefs.PostView, source: AppBskyFeedDefs.PostView, uri: String, postID: String
+  ) -> Bool {
+    guard let cached = posts[postID], let item = try? cached.feedViewPost, item.post == source else {
+      return false
+    }
     rowPostIDsByURI[uri, default: []].insert(postID)
-    mergedPosts[uri] = merged
+    mergedPosts[uri] = (source, merged)
+    return true
   }
 
   // MARK: - Presentation Host

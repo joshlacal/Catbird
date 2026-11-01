@@ -204,6 +204,95 @@ struct NativeFeedRowCoordinatorTests {
     }
   }
 
+  @Test("Action models follow refreshed viewer state when the post record is unchanged",
+        arguments: [true, false], [true, false])
+  func refreshedViewerStateUpdatesExistingActionModels(liked: Bool, capturedOldRow: Bool) async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let original = try FeedRowTestPosts.cachedPost(
+      likeCount: liked ? 2 : 3, postKey: "viewerrefresh", liked: !liked, reposted: liked,
+      repostCount: liked ? 1 : 2, bookmarked: !liked)
+    fixture.show([original])
+    let originalRow = try #require(fixture.coordinator.nativeRow(forPostID: original.id))
+    // Opening the menu creates action models before a later server refresh updates this row.
+    _ = fixture.coordinator.actions(for: originalRow).optionsMenu(originalRow.post)
+    let initialModels = try #require(fixture.coordinator.activeMenuModels)
+    await initialModels.reconciled()
+    #expect(initialModels.postViewModel.isLiked == !liked)
+    #expect(initialModels.postViewModel.isReposted == liked)
+
+    let refreshed = try FeedRowTestPosts.cachedPost(
+      likeCount: liked ? 3 : 2, postKey: "viewerrefresh", liked: liked, reposted: !liked,
+      repostCount: liked ? 2 : 1, bookmarked: liked)
+    initialModels.postState.showingReportView = true
+    fixture.show([refreshed])
+    // A snapshot refresh also reaches models an already-running action is waiting on;
+    // another menu/action access is not required to enqueue the newest reconciliation.
+    await initialModels.reconciled()
+    #expect(initialModels.postViewModel.isLiked == liked)
+    #expect(initialModels.postViewModel.isBookmarked == liked)
+    let refreshedRow = try #require(fixture.coordinator.nativeRow(forPostID: refreshed.id))
+    #expect(refreshedRow.post.cid == originalRow.post.cid)
+    let content = try #require(fixture.coordinator.content(for: refreshedRow, width: 402))
+    #expect(content.actionBarState.isLiked == liked)
+    #expect(content.actionBarState.isReposted == !liked)
+
+    if capturedOldRow {
+      // The old cell's asynchronously delivered stream must not make the current menu stale.
+      for await _ in await fixture.coordinator.shadowUpdates(for: originalRow)(originalRow.post.uri.uriString()) {
+        break
+      }
+    }
+
+    // A sheet must retain its presentation object, and an old cell callback must still use
+    // the current snapshot's authoritative server payload.
+    initialModels.postState.showingReportView = true
+    let callbackPost = capturedOldRow ? originalRow.post : refreshedRow.post
+    let currentModels = fixture.coordinator.postModels(for: callbackPost, postID: refreshed.id)
+    #expect(currentModels === initialModels)
+    #expect(currentModels.postState.showingReportView)
+    await currentModels.reconciled()
+    #expect(currentModels.postViewModel.isBookmarked == liked)
+    #expect(currentModels.postViewModel.isLiked == content.actionBarState.isLiked)
+    #expect(currentModels.postViewModel.isReposted == content.actionBarState.isReposted)
+    #expect(currentModels.postViewModel.likeUri == refreshedRow.post.viewer?.like)
+    #expect(currentModels.postViewModel.repostUri == refreshedRow.post.viewer?.repost)
+    #expect(currentModels.postViewModel.likeCount == refreshedRow.post.likeCount)
+    #expect(currentModels.postViewModel.repostCount == refreshedRow.post.repostCount)
+    #expect(currentModels.postState.currentPost.viewer?.bookmarked == liked)
+    #expect(currentModels.postState.currentPost.viewer?.like == refreshedRow.post.viewer?.like)
+    #expect(currentModels.postState.currentPost.viewer?.repost == refreshedRow.post.viewer?.repost)
+    #expect(currentModels.contextMenuViewModel.post.viewer?.bookmarked == liked)
+    #expect(currentModels.contextMenuViewModel.post.viewer?.like == refreshedRow.post.viewer?.like)
+    #expect(currentModels.contextMenuViewModel.post.viewer?.repost == refreshedRow.post.viewer?.repost)
+  }
+
+  @Test("A changed raw snapshot preserves local unlike and unrepost decisions while the server disagrees")
+  func refreshedModelsPreserveLocalDecisions() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.tearDown() }
+    let original = try FeedRowTestPosts.cachedPost(
+      likeCount: 2, postKey: "localrefresh", liked: true, reposted: true, repostCount: 2)
+    fixture.show([original])
+    let row = try #require(fixture.coordinator.nativeRow(forPostID: original.id))
+    let models = fixture.coordinator.postModels(for: row.post, postID: original.id)
+    await models.reconciled()
+    let uri = row.post.uri.uriString()
+    await fixture.appState.postShadowManager.setLiked(postUri: uri, isLiked: false)
+    await fixture.appState.postShadowManager.setReposted(postUri: uri, isReposted: false)
+    let refreshed = try FeedRowTestPosts.cachedPost(
+      likeCount: 3, postKey: "localrefresh", liked: true, reposted: true, repostCount: 3)
+    fixture.show([refreshed])
+    await models.reconciled()
+    #expect(!models.postViewModel.isLiked)
+    #expect(!models.postViewModel.isReposted)
+    #expect(models.postViewModel.likeCount == 2)
+    #expect(models.postViewModel.repostCount == 2)
+    let shadow = await fixture.appState.postShadowManager.getShadow(forUri: uri)
+    #expect(shadow?.likeDecided == true)
+    #expect(shadow?.repostDecided == true)
+  }
+
   @Test("The action bar's like reconciles against the feed payload, so an unlike made elsewhere stays")
   func likeKeepsUnlikeMadeElsewhere() async throws {
     let fixture = try await Fixture()
@@ -348,7 +437,7 @@ struct NativeFeedRowCoordinatorTests {
   func mergedStreamFinishesWithSource() async throws {
     let post = try FeedRowTestPosts.cachedPost().feedViewPost.post
     let (source, continuation) = AsyncStream<Int>.makeStream()
-    let merged = NativeFeedRowCoordinator.mergedPosts(of: source, merge: { post }, onMerged: { _ in })
+    let merged = NativeFeedRowCoordinator.mergedPosts(of: source, merge: { post }, onMerged: { _ in true })
     continuation.yield(1)
     continuation.yield(2)
     continuation.finish()
@@ -369,7 +458,7 @@ struct NativeFeedRowCoordinatorTests {
       terminated.yield()
       terminated.finish()
     }
-    let merged = NativeFeedRowCoordinator.mergedPosts(of: source, merge: { post }, onMerged: { _ in })
+    let merged = NativeFeedRowCoordinator.mergedPosts(of: source, merge: { post }, onMerged: { _ in true })
     let consumer = Task {
       for await _ in merged {}
     }

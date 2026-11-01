@@ -82,6 +82,14 @@ struct VideoMultipartPreviewTests {
     #expect(!message.contains("private service detail"))
     #expect(!message.contains("pds_upload_unsupported_blob_size"))
   }
+  @Test func sanitizationFailureKeepsAttachment() throws {
+    let message = try #require(PostComposerErrorCopy.message(for: VideoUploadSanitizationError.metadataRemained, isThread: false))
+    #expect(message.contains("location"))
+    #expect(message.contains("still here"))
+    let storage = try #require(PostComposerErrorCopy.message(for: VideoUploadSanitizationError.insufficientStorage, isThread: true))
+    #expect(storage.contains("free space"))
+    #expect(storage.contains("still here"))
+  }
   @Test func videoAuthorizationFailureDoesNotRequestSignOut() throws {
     let error = VideoMultipartTransportError(statusCode: 401, code: "AuthRequired", message: "sign out of everything")
     let message = try #require(PostComposerErrorCopy.message(for: error, isThread: false))

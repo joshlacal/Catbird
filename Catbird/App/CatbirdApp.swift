@@ -1127,6 +1127,9 @@ struct CatbirdApp: App {
     Task { @MainActor in
       await AppStateManager.shared.initialize()
     }
+    // Purges older builds' raw video upload snapshots and keeps that folder out of backups even if
+    // no composer opens a video again, off the main thread and before any upload can start.
+    VideoUploadCheckpointStore.openSharedInBackground()
     logger.info("🚀 CatbirdApp initializing")
 
     // Register blue.catbird.* / place.stream.* lexicon types with Petrel's decoder registry

@@ -74,6 +74,26 @@ struct VideoUploadPartPlan: Sendable {
   }
 }
 
+// MARK: - Upload Copies
+
+/// The file the engine uploads in place of an attachment, and its MIME type.
+struct VideoUploadCopy: Sendable, Equatable {
+  let url: URL
+  let mimeType: String
+  /// Unique to this reader, even when another reader has the same URL.
+  let leaseID: UUID
+}
+
+/// Makes the file the engine uploads for an attachment. The engine never reads an attachment
+/// itself, only what this returns. In the app, `VideoUploadSanitizer` is the only conformer, so
+/// every byte the transport sends comes from its metadata-free copy.
+protocol VideoUploadCopyMaking: Sendable {
+  func uploadCopy(of attachmentURL: URL) async throws -> VideoUploadCopy
+  func releaseUploadCopy(_ copy: VideoUploadCopy) async
+}
+
+// MARK: - Engine
+
 /// A single owned operation. Transport owns direct service requests/auth; this actor owns retry,
 /// reconciliation and persistence. A restored checkpoint never creates a post on its own.
 actor VideoMultipartUpload {
@@ -101,13 +121,18 @@ actor VideoMultipartUpload {
     self.configuration = configuration
   }
 
+  /// Uploads the file `copies` makes for `attachmentURL`; the attachment's own bytes are never
+  /// read here. A retry gets the same copy for the same attachment bytes, so a saved session
+  /// resumes.
+  ///
   /// `allowNewSessionAfterTerminal` is for a new user submit/retry, including a previously
   /// uncertain start or changed source bytes. It never permits replaying start within this
-  /// invocation. Old session metadata and immutable source snapshots stay in local history.
+  /// invocation. Old session metadata stays in local history; a replaced session's snapshot is
+  /// deleted, because nothing can resume it.
   func run(
-    sourceURL: URL,
+    attachmentURL: URL,
+    copies: some VideoUploadCopyMaking,
     owner: VideoUploadOwner,
-    mimeType: String,
     durationMilliseconds: Int? = nil,
     allowNewSessionAfterTerminal: Bool = false,
     progress: @escaping @Sendable (VideoMultipartProgress) async -> Void,
@@ -127,10 +152,22 @@ actor VideoMultipartUpload {
     do {
       try await ensureCurrent(context)
       await progress(.init(phase: .preparing, fraction: 0))
-      var saved = try await store.prepare(
-        sourceURL: sourceURL, owner: owner, mimeType: mimeType,
-        allowReplacementSource: allowNewSessionAfterTerminal
-      )
+      // A removed attachment or switched account has already stopped here, before any copy.
+      let copy = try await copies.uploadCopy(of: attachmentURL)
+      let prepared: VideoUploadCheckpoint
+      do {
+        try await ensureCurrent(context)
+        prepared = try await store.prepare(
+          sourceURL: copy.url, owner: owner, mimeType: copy.mimeType,
+          allowReplacementSource: allowNewSessionAfterTerminal
+        )
+      } catch {
+        await copies.releaseUploadCopy(copy)
+        throw error
+      }
+      // prepare has finished reading and owns its independent durable snapshot now.
+      await copies.releaseUploadCopy(copy)
+      var saved = prepared
       checkpoint = saved
       try await ensureCurrent(context)
       if saved.phase == .abandoned, saved.uploadJobID != nil {

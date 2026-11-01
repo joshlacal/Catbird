@@ -22,6 +22,9 @@ final class NativeRowPostModels {
   /// Reconciles the interaction view model with the shadow state, as `PostView` does when a row
   /// appears. Actions that toggle state wait for it, so a like or repost never starts from stale state.
   private var reconciliation: Task<Void, Never>?
+  private var sourcePost: AppBskyFeedDefs.PostView?
+  private var revision = 0
+  private var isCancelled = false
 
   var uri: String { postState.currentPostBox.value.uri.uriString() }
   var cid: CID { postState.currentPostBox.value.cid }
@@ -45,8 +48,10 @@ final class NativeRowPostModels {
 
     menuViewModel.onReportPost = { state.showingReportView = true }
     menuViewModel.onAddAuthorToList = { state.showingAddToListSheet = true }
-    menuViewModel.onToggleBookmark = {
-      Task {
+    menuViewModel.onToggleBookmark = { [weak self] in
+      Task { [weak self] in
+        guard let self else { return }
+        await self.reconciled()
         do {
           try await viewModel.toggleBookmark()
         } catch {
@@ -62,20 +67,47 @@ final class NativeRowPostModels {
       PostThreadSummarizer.summarize(state: state, appState: appState)
     }
 #endif
-    reconciliation = Task {
-      if let merged = await viewModel.start(post: post), merged != state.currentPost {
-        state.currentPost = merged
-      }
+    refresh(post: post, displayed: displayed, appState: appState)
+  }
+
+  /// Keeps presentation objects, but replaces their payload when the server refreshes viewer state.
+  /// Each raw payload reconciles after the previous one, so an old actor hop cannot run after a
+  /// newer reconciliation and acknowledge a fresh optimistic decision against stale server state.
+  func refresh(post: AppBskyFeedDefs.PostView, displayed: AppBskyFeedDefs.PostView, appState: AppState) {
+    guard !isCancelled, sourcePost != post else { return }
+    let isRefresh = sourcePost != nil
+    sourcePost = post
+    revision += 1
+    let requestedRevision = revision
+    if isRefresh {
+      postState.currentPost = displayed
+      contextMenuViewModel.configure(appState: appState, post: displayed, visibilityContext: .public)
+      postViewModel.configure(post: displayed, appState: appState, visibilityContext: .public)
+    }
+    let previous = reconciliation
+    reconciliation = Task { [weak self] in
+      await previous?.value
+      guard let self, !self.isCancelled, !Task.isCancelled, self.revision == requestedRevision else { return }
+      let merged = await appState.postShadowManager.reconcileAndMergeShadow(post: post, authoritative: isRefresh)
+      guard !self.isCancelled, !Task.isCancelled, self.revision == requestedRevision else { return }
+      self.postViewModel.configure(post: merged, appState: appState, visibilityContext: .public)
+      self.postState.currentPost = merged
+      self.contextMenuViewModel.configure(appState: appState, post: merged, visibilityContext: .public)
     }
   }
 
-  /// Waits until the interaction view model reflects the shadow state.
+  /// Waits through any refresh that arrived while the previous reconciliation suspended.
   func reconciled() async {
-    await reconciliation?.value
+    while !isCancelled {
+      let waitingFor = revision
+      await reconciliation?.value
+      if waitingFor == revision { return }
+    }
   }
 
   /// Stops the reconciliation and any thread summary still streaming.
   func cancel() {
+    isCancelled = true
     reconciliation?.cancel()
     postState.threadSummaryTask?.cancel()
     postState.threadSummaryTask = nil

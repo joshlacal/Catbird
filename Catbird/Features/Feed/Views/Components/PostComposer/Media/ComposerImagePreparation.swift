@@ -104,7 +104,10 @@ enum ComposerImagePreparation {
         throw PreparationError.unreadableImage
       }
       let pixelSize = CGSize(width: image.width, height: image.height)
-      let (encoded, smallestSize) = try encodeWithinLimit(image, maxBytes: maxBytes)
+      guard let opaque = imageForJPEG(image, source: source) else {
+        throw PreparationError.encodingFailed
+      }
+      let (encoded, smallestSize) = try encodeWithinLimit(opaque, maxBytes: maxBytes)
       if let encoded {
         logger.debug("Prepared \(image.width)x\(image.height) upload: \(encoded.count) bytes")
         return PreparedUpload(data: encoded, pixelSize: pixelSize)
@@ -166,6 +169,50 @@ enum ComposerImagePreparation {
     return output as Data
   }
 
+  /// JPEG has no alpha. HEIF-family decoder images can lose alpha without blending in
+  /// ImageIO's JPEG encoder, exposing the colour underneath fully transparent pixels.
+  /// Composite once before quality search, rather than once per candidate encoding.
+  private static func imageForJPEG(_ image: CGImage, source: CGImageSource? = nil) -> CGImage? {
+    if let source,
+       let properties = CGImageSourceCopyPropertiesAtIndex(
+         source, primaryImageIndex(in: source), nil
+       ) as? [CFString: Any] {
+      // ImageIO omits HasAlpha for opaque sources, including opaque HEICs that decode
+      // with an alpha channel. Avoid copying those camera photos unnecessarily.
+      let alpha = properties[kCGImagePropertyHasAlpha]
+      if alpha == nil || (alpha as? Bool) == false { return image }
+    }
+    // Unreadable/unknown source properties and edited bitmaps stay conservative.
+    switch image.alphaInfo {
+    case .none, .noneSkipFirst, .noneSkipLast:
+      return image
+    default:
+      break
+    }
+    return renderedForJPEG(image)
+  }
+
+  private static func renderedForJPEG(_ image: CGImage, croppingTo crop: CGRect? = nil) -> CGImage? {
+    let crop = crop ?? CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    let bounds = CGRect(origin: .zero, size: crop.size)
+    let sourceSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+    for space in [sourceSpace, CGColorSpace(name: CGColorSpace.sRGB)].compactMap({ $0 }) {
+      guard let context = CGContext(
+        data: nil, width: Int(crop.width), height: Int(crop.height), bitsPerComponent: 8,
+        bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+      ) else { continue }
+      context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+      context.fill(bounds)
+      // `crop` is top-left based like CGImage.cropping(to:); CGContext's origin is bottom-left.
+      context.draw(image, in: CGRect(
+        x: -crop.minX, y: crop.maxY - CGFloat(image.height),
+        width: CGFloat(image.width), height: CGFloat(image.height)
+      ))
+      return context.makeImage()
+    }
+    return nil
+  }
+
   // MARK: - Preview
 
   /// Decodes a thumbnail rendition on a background thread.
@@ -203,8 +250,18 @@ enum ComposerImagePreparation {
           let upright = downsample(source, maxPixelSize: Int(max(size.width, size.height))) else { return nil }
     let side = min(upright.width, upright.height)
     let square = CGRect(x: (upright.width - side) / 2, y: (upright.height - side) / 2, width: side, height: side)
-    guard let cropped = upright.cropping(to: square),
-          let jpeg = encodeJPEG(cropped, quality: editedImageQuality) else { return nil }
+    let type = CGImageSourceGetType(source).flatMap { UTType($0 as String) }
+    let opaque: CGImage?
+    if type?.conforms(to: .heic) == true || type?.conforms(to: .heif) == true {
+      // Cropping an ImageIO-backed HEIF CGImage can expose a broken subimage provider
+      // on iOS. Draw the upright source into a crop-sized bitmap instead; no full-size
+      // intermediate copy is needed, even for opaque camera photos.
+      opaque = renderedForJPEG(upright, croppingTo: square)
+    } else {
+      opaque = upright.cropping(to: square).flatMap { imageForJPEG($0, source: source) }
+    }
+    guard let opaque,
+          let jpeg = encodeJPEG(opaque, quality: editedImageQuality) else { return nil }
     return editedImage(from: jpeg)
   }
 
@@ -220,7 +277,8 @@ enum ComposerImagePreparation {
   static func prepareEditedImage(_ image: NSImage) async -> EditedImage? {
     guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
     return await Task.detached(priority: .userInitiated) {
-      encodeJPEG(cgImage, quality: editedImageQuality).flatMap(editedImage(from:))
+      imageForJPEG(cgImage).flatMap { encodeJPEG($0, quality: editedImageQuality) }
+        .flatMap(editedImage(from:))
     }.value
   }
   #endif
@@ -248,11 +306,13 @@ enum ComposerImagePreparation {
       kCGImageSourceShouldCacheImmediately: true,
       kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
     ] as [CFString: Any] as CFDictionary
-    return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
+    return CGImageSourceCreateThumbnailAtIndex(source, primaryImageIndex(in: source), options)
   }
 
   private static func orientedPixelSize(of source: CGImageSource) -> CGSize? {
-    guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+    guard let properties = CGImageSourceCopyPropertiesAtIndex(
+      source, primaryImageIndex(in: source), nil
+    ) as? [CFString: Any],
           let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
           let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
           width > 0, height > 0 else { return nil }
@@ -263,6 +323,18 @@ enum ComposerImagePreparation {
     default:
       return CGSize(width: width, height: height)
     }
+  }
+
+  private static func primaryImageIndex(in source: CGImageSource) -> Int {
+    let count = CGImageSourceGetCount(source)
+    guard count > 1 else { return 0 }
+    // The container follows HEIF's designated primary item even for plain HEIF,
+    // where CGImageSourceGetPrimaryImageIndex can incorrectly return zero.
+    let properties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any]
+    if let index = properties?[kCGImagePropertyPrimaryImage] as? Int,
+       (0..<count).contains(index) { return index }
+    let index = CGImageSourceGetPrimaryImageIndex(source)
+    return (0..<count).contains(index) ? index : 0
   }
 }
 

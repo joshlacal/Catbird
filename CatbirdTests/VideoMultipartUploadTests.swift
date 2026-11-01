@@ -44,10 +44,6 @@ enum VideoMultipartUploadChecks {
     try check(checkpoint.runID != repeated.runID, "retry rotates run lease while preserving session")
     do { try await fixture.store.save(checkpoint); throw CheckFailure("old same-session cleanup overwrote new run") }
     catch VideoUploadFileError.ownerChanged {}
-    let reopened = try VideoUploadCheckpointStore(rootURL: fixture.root)
-    try check(try await reopened.load(owner: owner)?.operationID == checkpoint.operationID, "checkpoint persists across store instances")
-    let other = VideoUploadOwner(accountDID: "did:plc:bob", draftID: owner.draftID, entryID: owner.entryID, mediaID: owner.mediaID)
-    try check(try await reopened.load(owner: other) == nil, "another account cannot recover this checkpoint")
     do {
       _ = try await fixture.store.makePart(checkpoint: checkpoint, partNumber: 3, offset: 8, count: 2)
       throw CheckFailure("stale lease created an upload part")
@@ -59,6 +55,11 @@ enum VideoMultipartUploadChecks {
     do { try await fixture.store.save(checkpoint); throw CheckFailure("old callback overwrote replacement") }
     catch VideoUploadFileError.ownerChanged {}
     await fixture.store.release(owner: owner, runID: repeated.runID)
+    // Reopen only once no run holds a lease: opening a store sweeps files no run needs.
+    let reopened = try VideoUploadCheckpointStore(rootURL: fixture.root)
+    try check(try await reopened.load(owner: owner)?.operationID == replacement.operationID, "checkpoint persists across store instances")
+    let other = VideoUploadOwner(accountDID: "did:plc:bob", draftID: owner.draftID, entryID: owner.entryID, mediaID: owner.mediaID)
+    try check(try await reopened.load(owner: other) == nil, "another account cannot recover this checkpoint")
     try Data(repeating: 99, count: 10).write(to: fixture.source)
     do {
       _ = try await fixture.store.prepare(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4")
@@ -66,8 +67,8 @@ enum VideoMultipartUploadChecks {
     } catch VideoUploadFileError.sourceChanged {}
     try check(try Data(contentsOf: fixture.source) == Data(repeating: 99, count: 10), "changed source remains intact")
     let files = FileManager.default.enumerator(at: fixture.root, includingPropertiesForKeys: nil)!.allObjects as! [URL]
-    let snapshots = files.filter { $0.pathExtension == "video" }
-    try check(snapshots.count == 1 && (try Data(contentsOf: snapshots[0])) == Data(0..<10), "original immutable snapshot retained")
+    // The released attempt never started a server session, so nothing can resume from its bytes.
+    try check(!files.contains { ["video", "part"].contains($0.pathExtension) }, "released unstarted attempt keeps no snapshot or part")
     for path in files where path.pathExtension == "json" {
       let text = String(decoding: try Data(contentsOf: path), as: UTF8.self)
       try check(!text.contains("Bearer") && !text.contains("access_token") && !text.contains("service-"), "checkpoint metadata has no credentials")
@@ -76,8 +77,9 @@ enum VideoMultipartUploadChecks {
     try check(changed.operationID != replacement.operationID && changed.sha256 != replacement.sha256, "explicit changed-source retry allocates a distinct snapshot and operation")
     let after = FileManager.default.enumerator(at: fixture.root, includingPropertiesForKeys: nil)!.allObjects as! [URL]
     let allSnapshots = after.filter { $0.pathExtension == "video" }
-    try check(allSnapshots.count == 2, "explicit source replacement retains both old and new video files")
-    try check(try Data(contentsOf: snapshots[0]) == Data(0..<10), "replacement never overwrites prior snapshot")
+    try check(allSnapshots.map(\.lastPathComponent) == [changed.snapshotName], "explicit source replacement keeps only the new video file")
+    try check(try Data(contentsOf: allSnapshots[0]) == Data(repeating: 99, count: 10), "replacement snapshot holds the changed bytes")
+    try check(after.contains { $0.lastPathComponent == "\(replacement.operationID.uuidString).json" }, "replaced reservation stays in history")
     await fixture.store.release(owner: owner, runID: changed.runID)
   }
 
@@ -124,7 +126,7 @@ enum VideoMultipartUploadChecks {
     var config = configuration()
     config.workerCount = 4
     let engine = VideoMultipartUpload(transport: transport, store: store, configuration: config)
-    let result = try await engine.run(sourceURL: source, owner: owner, mimeType: "video/mp4",
+    let result = try await engine.run(attachmentURL: source, copies: SyntheticVideoCopies.mp4, owner: owner,
       progress: { _ in }, isOwnerCurrent: { true })
     try check(result == completed, "parallel upload returns the canonical blob")
     try check(await probe.maximum == 4, "exactly four part requests run concurrently")
@@ -244,7 +246,7 @@ enum VideoMultipartUploadChecks {
     let changed = ScriptedVideoTransport(statuses: [.success(status("created"))], onPart: { await ownership.invalidate() })
     do {
       _ = try await VideoMultipartUpload(transport: changed, store: switched.store, configuration: configuration()).run(
-        sourceURL: switched.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { await ownership.current })
+        attachmentURL: switched.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { await ownership.current })
       throw CheckFailure("account change returned a blob")
     } catch VideoMultipartError.ownerChanged {}
     try check(await [changed.finishCount, changed.abortCount] == [0, 0], "changed account neither finalizes nor mints cleanup authority")
@@ -259,16 +261,16 @@ enum VideoMultipartUploadChecks {
       jobs: [.success(try job("canonical", state: "JOB_STATE_COMPLETED", blob: blob))])
     let engine = VideoMultipartUpload(transport: transport, store: fixture.store, configuration: configuration())
     do {
-      _ = try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
+      _ = try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
         await quota.record()
         throw VideoMultipartTransportError(statusCode: 403, code: "UploadForbidden")
       })
       throw CheckFailure("denied allowance created an upload")
     } catch let error as VideoMultipartTransportError { try check(error.code == "UploadForbidden", "grant denial propagated unchanged") }
     try check(await transport.startCount == 0, "denied allowance makes no start request")
-    _ = try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: { await quota.record() })
+    _ = try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: { await quota.record() })
     try check(await quota.count == 2, "fresh session checks existing account allowance")
-    _ = try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
+    _ = try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
       throw CheckFailure("processing resume must not ask to reserve new quota")
     })
     try check(await transport.startCount == 1, "completed processing retry does not reserve again")
@@ -281,7 +283,7 @@ enum VideoMultipartUploadChecks {
     await uploading.store.release(owner: owner, runID: saved.runID)
     let resumeTransport = ScriptedVideoTransport(statuses: [.success(status("completed", completedID: "canonical", job: try job("canonical", state: "JOB_STATE_COMPLETED", blob: blob)))])
     _ = try await VideoMultipartUpload(transport: resumeTransport, store: uploading.store, configuration: configuration()).run(
-      sourceURL: uploading.source, owner: owner, mimeType: "video/mp4", progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
+      attachmentURL: uploading.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
         throw CheckFailure("upload resume must use existing reservation")
       })
     try check(await resumeTransport.startCount == 0, "uploading resume never allocates another session")
@@ -374,7 +376,7 @@ enum VideoMultipartUploadChecks {
       let transport = ScriptedVideoTransport(statuses: [.success(status("finishing")),
         .success(status("completed", completedID: "canonical", job: ready))], jobs: [.success(ready)])
       let result = try await VideoMultipartUpload(transport: transport, store: fixture.store, configuration: configuration()).run(
-        sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", allowNewSessionAfterTerminal: true,
+        attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, allowNewSessionAfterTerminal: true,
         progress: { _ in }, isOwnerCurrent: { true }, authorizeNewSession: {
           throw CheckFailure("retry of canceled uncertain-finalization job must reconcile its existing reservation")
         })
@@ -495,7 +497,7 @@ enum VideoMultipartUploadChecks {
     .init(jobId: id, did: try DID(didString: did), state: state, progress: 20, blob: blob, failureCode: code)
   }
   static func run(_ engine: VideoMultipartUpload, fixture: Fixture, progress: @escaping @Sendable (VideoMultipartProgress) async -> Void = { _ in }) async throws -> Blob {
-    try await engine.run(sourceURL: fixture.source, owner: owner, mimeType: "video/mp4", progress: progress, isOwnerCurrent: { true })
+    try await engine.run(attachmentURL: fixture.source, copies: SyntheticVideoCopies.mp4, owner: owner, progress: progress, isOwnerCurrent: { true })
   }
   static func retained(_ fixture: Fixture) throws {
     try check(try Data(contentsOf: fixture.source) == Data(0..<10), "original source preserved byte for byte")
@@ -542,6 +544,17 @@ final class VideoTestClock: @unchecked Sendable {
   func now() -> Date { lock.withLock { value } }
   func advance(_ seconds: TimeInterval) { lock.withLock { value.addTimeInterval(seconds) } }
 }
+/// Hands the engine its synthetic few-byte source unchanged, so these checks can drive the
+/// engine's part math directly. The app's only conformer is `VideoUploadSanitizer`.
+struct SyntheticVideoCopies: VideoUploadCopyMaking {
+  static let mp4 = SyntheticVideoCopies(mimeType: "video/mp4")
+  let mimeType: String
+  func uploadCopy(of attachmentURL: URL) async throws -> VideoUploadCopy {
+    VideoUploadCopy(url: attachmentURL, mimeType: mimeType, leaseID: UUID())
+  }
+  // Synthetic sources belong to the fixture; this fake creates no disposable copy.
+  func releaseUploadCopy(_ copy: VideoUploadCopy) async {}
+}
 
 actor ScriptedVideoTransport: VideoMultipartTransporting {
   struct SentPart: Sendable { let number: Int; let bytes: Data }
@@ -554,8 +567,13 @@ actor ScriptedVideoTransport: VideoMultipartTransporting {
   private var onJob: (@Sendable () async throws -> Void)?
   private let onAbort: (@Sendable () async throws -> Void)?
   private let abortResult: AppBskyVideoAbortUpload.Output
-  private let partCount: Int
+  private let partSizeBytes: Int
+  private let partCount: Int?
+  private let reportsReceivedParts: Bool
+  private var plannedPartCount = 0
+  private var receivedBytes: [Int: Data] = [:]
   private(set) var startCount = 0
+  private(set) var starts: [AppBskyVideoStartUpload.Input] = []
   private(set) var statusCount = 0
   private(set) var finishCount = 0
   private(set) var abortCount = 0
@@ -567,29 +585,45 @@ actor ScriptedVideoTransport: VideoMultipartTransporting {
        onPart: (@Sendable () async throws -> Void)? = nil,
        onJob: (@Sendable () async throws -> Void)? = nil,
        onAbort: (@Sendable () async throws -> Void)? = nil,
-       abortResult: AppBskyVideoAbortUpload.Output = .init(state: "aborted"), partCount: Int = 3) {
+       abortResult: AppBskyVideoAbortUpload.Output = .init(state: "aborted"),
+       partSizeBytes: Int = 4, partCount: Int? = 3, reportsReceivedParts: Bool = false) {
     self.statuses = statuses; self.finishes = finishes; self.jobs = jobs
     self.startFailure = startFailure; self.onPart = onPart; self.onJob = onJob
     self.onAbort = onAbort; self.abortResult = abortResult
+    self.partSizeBytes = partSizeBytes
     self.partCount = partCount
+    self.reportsReceivedParts = reportsReceivedParts
+  }
+  /// Parts the service acknowledged, in part order: the bytes a real upload would store.
+  func uploaded() -> Data {
+    receivedBytes.keys.sorted().reduce(into: Data()) { $0.append(receivedBytes[$1]!) }
   }
   func failPart(_ number: Int, with errors: [Error]) { partFailures[number] = errors }
   func replaceJobs(_ values: [Result<AppBskyVideoDefs.JobStatus, Error>]) { jobs = values }
   func replaceJobHook(_ hook: (@Sendable () async throws -> Void)?) { onJob = hook }
   func start(input: AppBskyVideoStartUpload.Input) async throws -> AppBskyVideoStartUpload.Output {
     startCount += 1
+    starts.append(input)
     if let startFailure { throw startFailure }
-    return .init(jobId: "upload", partSizeBytes: 4, partCount: partCount, expiresAt: ATProtocolDate(date: VideoMultipartUploadChecks.expiry))
+    // nil plans the parts the started size needs, as the service does.
+    plannedPartCount = partCount ?? 1 + (input.sizeBytes - 1) / partSizeBytes
+    return .init(jobId: "upload", partSizeBytes: partSizeBytes, partCount: plannedPartCount, expiresAt: ATProtocolDate(date: VideoMultipartUploadChecks.expiry))
   }
   func uploadPart(jobID: String, partNumber: Int, fileURL: URL, byteCount: Int, onProgress: (@Sendable (Int64) -> Void)?) async throws -> AppBskyVideoUploadPart.Output {
     let bytes = try Data(contentsOf: fileURL)
     parts.append(SentPart(number: partNumber, bytes: bytes))
     try await onPart?()
     if partFailures[partNumber]?.isEmpty == false { throw partFailures[partNumber]!.removeFirst() }
+    receivedBytes[partNumber] = bytes
     return .init(partNumber: partNumber, sizeBytes: bytes.count)
   }
   func status(jobID: String) async throws -> AppBskyVideoGetUploadStatus.Output {
     statusCount += 1
+    if statuses.isEmpty, reportsReceivedParts {
+      return .init(jobId: "upload", partSizeBytes: partSizeBytes, partCount: plannedPartCount,
+                   receivedParts: receivedBytes.keys.sorted(),
+                   expiresAt: ATProtocolDate(date: VideoMultipartUploadChecks.expiry), state: "created")
+    }
     guard let first = statuses.first else { throw CheckFailure("Unexpected upload status request") }
     if statuses.count > 1 { statuses.removeFirst() }
     return try first.get()

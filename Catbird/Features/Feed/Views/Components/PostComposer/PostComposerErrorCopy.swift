@@ -22,6 +22,9 @@ enum PostComposerErrorCopy {
       return videoError.errorDescription
     }
     if let fileError = error as? VideoUploadFileError { return fileError.errorDescription }
+    if let sanitizationError = error as? VideoUploadSanitizationError {
+      return sanitizationError.errorDescription
+    }
     if let uploadError = error as? VideoMultipartError {
       switch uploadError {
       case .startUncertain, .processingTimedOut, .transferTimedOut, .alreadyRunning, .ownerChanged:

@@ -412,7 +412,7 @@ final class MediaUploadManager {
     }
     guard isCurrent(), url.isFileURL,
       let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber,
-      size.int64Value > 0, let mimeType = VideoUploadPolicy.mimeType(for: url)
+      size.int64Value > 0, VideoUploadPolicy.mimeType(for: url) != nil
     else { throw VideoUploadError.unsupportedFormat }
     guard size.int64Value <= VideoUploadPolicy.maximumBytes else { throw VideoUploadError.tooLarge }
 
@@ -433,12 +433,10 @@ final class MediaUploadManager {
     let tokens = VideoServiceTokenProvider(isOwner: isAccountCurrent) { [self] expiry in
       try await self.mintMultipartServiceToken(accountDID: owner.accountDID, expiry: expiry, forUpload: true)
     }
-    let uploader = VideoMultipartUpload(
-      transport: VideoMultipartTransport(tokens: tokens), store: try VideoUploadCheckpointStore.shared.get()
-    )
-    return try await uploader.run(
-      sourceURL: url, owner: owner, mimeType: mimeType,
-      durationMilliseconds: Int(duration * 1_000), allowNewSessionAfterTerminal: true,
+    return try await Self.uploadMultipartVideo(
+      attachmentURL: url, owner: owner, durationMilliseconds: Int(duration * 1_000),
+      transport: VideoMultipartTransport(tokens: tokens), store: try VideoUploadCheckpointStore.shared.get(),
+      sanitizer: try VideoUploadSanitizer.shared.get(),
       progress: { [weak self] progress in
         await MainActor.run {
           guard let self, isCurrent() else { return }
@@ -464,6 +462,27 @@ final class MediaUploadManager {
         guard await isCurrent() else { throw CancellationError() }
         guard limits.canUpload else { throw VideoUploadError.uploadLimitReached(limits.message) }
       }
+    )
+  }
+
+  /// The multipart route's only use of the upload engine. The engine is handed the sanitizer's
+  /// metadata-free copy of the attachment, never the attachment itself, and every new submit or
+  /// retry may replace a finished or uncertain session.
+  nonisolated static func uploadMultipartVideo(
+    attachmentURL: URL, owner: VideoUploadOwner, durationMilliseconds: Int,
+    transport: any VideoMultipartTransporting, store: VideoUploadCheckpointStore,
+    sanitizer: VideoUploadSanitizer, configuration: VideoMultipartConfiguration = .init(),
+    progress: @escaping @Sendable (VideoMultipartProgress) async -> Void,
+    isOwnerCurrent: @escaping @Sendable () async -> Bool,
+    canAuthorizeCleanup: @escaping @Sendable () async -> Bool,
+    authorizeNewSession: @Sendable () async throws -> Void
+  ) async throws -> Blob {
+    let uploader = VideoMultipartUpload(transport: transport, store: store, configuration: configuration)
+    return try await uploader.run(
+      attachmentURL: attachmentURL, copies: sanitizer, owner: owner,
+      durationMilliseconds: durationMilliseconds, allowNewSessionAfterTerminal: true,
+      progress: progress, isOwnerCurrent: isOwnerCurrent,
+      canAuthorizeCleanup: canAuthorizeCleanup, authorizeNewSession: authorizeNewSession
     )
   }
 
@@ -563,8 +582,21 @@ final class MediaUploadManager {
         "Could not validate video: \(assetError.localizedDescription)")
     }
 
-    try Task.checkCancellation()
+    // Only the metadata-free copy is sent, never the attachment itself.
+    let sanitizer = try VideoUploadSanitizer.shared.get()
+    let (responseData, response) = try await sanitizer.withSanitizedCopy(of: url) { sanitized in
+      try Task.checkCancellation()
+      guard sanitized.byteCount <= maxVideoSize else { throw VideoUploadError.legacyTooLarge }
+      return try await self.sendLegacyVideo(sanitized, uploadID: uploadID)
+    }
+    // Processing polls use only the job ID; the completed request no longer needs the file.
+    return try await processLegacyVideoResponse(responseData, response: response)
+  }
 
+  /// The legacy route's network half. It is handed only the sanitizer's copy, so the attachment
+  /// itself is out of reach of every request made here.
+  @MainActor
+  private func sendLegacyVideo(_ sanitized: SanitizedVideo, uploadID: UUID) async throws -> (Data, URLResponse) {
     // Get authentication token
     let authToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getUploadLimits")
 
@@ -606,19 +638,8 @@ final class MediaUploadManager {
     var request = URLRequest(url: uploadURL)
     request.httpMethod = "POST"
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    // Derive MIME type from file extension when possible
-    let ext = url.pathExtension.lowercased()
-    let mime: String
-    switch ext {
-    case "mp4": mime = "video/mp4"
-    case "mov": mime = "video/quicktime"
-    case "webm": mime = "video/webm"
-    case "mpeg", "mpg": mime = "video/mpeg"
-    case "gif": mime = "image/gif"
-    default: mime = "video/mp4"
-    }
-    request.setValue(mime, forHTTPHeaderField: "Content-Type")
-    request.setValue(fileSize.stringValue, forHTTPHeaderField: "Content-Length")
+    request.setValue(sanitized.mimeType, forHTTPHeaderField: "Content-Type")
+    request.setValue(String(sanitized.byteCount), forHTTPHeaderField: "Content-Length")
 
     let progressDelegate = UploadProgressDelegate { [weak self] progress in
       Task { @MainActor in
@@ -637,7 +658,7 @@ final class MediaUploadManager {
     do {
       (responseData, response) = try await URLSession.shared.upload(
         for: request,
-        fromFile: url,
+        fromFile: sanitized.url,
         delegate: progressDelegate
       )
       logger.debug(
@@ -655,7 +676,12 @@ final class MediaUploadManager {
 
     try Task.checkCancellation()
 
-    // Process response
+    return (responseData, response)
+  }
+
+  @MainActor
+  private func processLegacyVideoResponse(_ responseData: Data, response: URLResponse) async throws -> Blob {
+    try Task.checkCancellation()
     guard let httpResponse = response as? HTTPURLResponse else {
       logger.error("ERROR: Invalid HTTP response type")
       throw VideoUploadError.uploadFailed
