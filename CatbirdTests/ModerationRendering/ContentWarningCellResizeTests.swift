@@ -28,7 +28,9 @@ struct ContentWarningCellResizeTests {
     }
     var result: [String] = []
     if let keys = layer.animationKeys() {
-      for key in keys where key != "opacity" && key != "contents" && key != "instanceAlphaOffset" {
+      for key in keys
+      where key != "opacity" && key != "contents"
+        && key != "instanceAlphaOffset" && key != "contentsMultiplyColor" {
         result.append("\(type(of: layer)):\(key)")
       }
     }
@@ -38,13 +40,24 @@ struct ContentWarningCellResizeTests {
     return result
   }
 
-  /// Collects effective layer opacities for any sublayer hosting or containing a given label/view.
+  /// Collects minimum layer opacity across `layer`'s subtree.
   private static func minimumSubtreeOpacity(in layer: CALayer) -> Float {
     var minOpacity = layer.opacity
     for sublayer in layer.sublayers ?? [] {
       minOpacity = min(minOpacity, minimumSubtreeOpacity(in: sublayer))
     }
     return minOpacity
+  }
+
+  /// Returns true if any layer in `layer`'s subtree currently carries an `"opacity"` animation.
+  private static func hasOpacityAnimation(in layer: CALayer) -> Bool {
+    if layer.animationKeys()?.contains("opacity") == true {
+      return true
+    }
+    for sublayer in layer.sublayers ?? [] where hasOpacityAnimation(in: sublayer) {
+      return true
+    }
+    return false
   }
 
   private static func makeSceneWindow(size: CGSize = CGSize(width: 390, height: 844)) throws -> UIWindow {
@@ -57,8 +70,18 @@ struct ContentWarningCellResizeTests {
   }
 
   private static func makeAppState(did: String = "did:plc:cwresizetest") async throws -> AppState {
-    let client = await ATProtoClient(baseURL: try #require(URL(string: "https://127.0.0.1")))
+    let client = await ATProtoClient(baseURL: try #require(URL(string: "https://cw-resize-test.invalid")))
     return AppState(userDID: did, client: client)
+  }
+
+  /// UIKit-backed media surface (mirrors real video/web media CALayer hosting inside ModerationMediaGate).
+  private struct UIKitMediaProbeView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+      let view = UIView()
+      view.backgroundColor = .systemIndigo
+      return view
+    }
+    func updateUIView(_ uiView: UIView, context: Context) {}
   }
 
   /// Hosted row matching production feed structure: header + ModerationMediaGate + action bar + divider.
@@ -66,7 +89,6 @@ struct ContentWarningCellResizeTests {
     let ui: ModerationUI
     let postURI: String
     let revealedMediaHeight: CGFloat
-    @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
 
     var body: some View {
       VStack(alignment: .leading, spacing: 8) {
@@ -81,8 +103,7 @@ struct ContentWarningCellResizeTests {
           }
         }
         ModerationMediaGate(ui: ui) {
-          Rectangle()
-            .fill(Color.indigo)
+          UIKitMediaProbeView()
             .frame(maxWidth: .infinity)
             .frame(height: revealedMediaHeight)
         }
@@ -105,32 +126,21 @@ struct ContentWarningCellResizeTests {
     }
   }
 
-  /// Taps a SwiftUI `ModerationMediaGate`'s Show or Hide using the exact same store + state contract
-  /// or by locating its rendered button/accessibility action in the hosted view hierarchy.
-  private static func activateAccessibilityElement(
-    identifier: String,
-    in rootView: UIView
-  ) -> Bool {
-    // Walk subviews and accessibility elements to invoke accessibilityActivate() on the matching button.
-    func searchView(_ view: UIView) -> Bool {
-      if view.accessibilityIdentifier == identifier, view.accessibilityActivate() {
-        return true
+  /// Polls `AppAccessibility.elements(in:)` (caller must hold `AppAccessibility.enable()`) until a matching
+  /// hosted SwiftUI accessibility element materializes.
+  private static func waitForAccessibilityElement(
+    in rootView: UIView,
+    where predicate: (AppAccessibility.Element) -> Bool
+  ) async -> AppAccessibility.Element? {
+    for _ in 0..<40 {
+      rootView.window?.layoutIfNeeded()
+      rootView.layoutIfNeeded()
+      if let match = AppAccessibility.elements(in: rootView).first(where: predicate) {
+        return match
       }
-      if let elements = view.accessibilityElements {
-        for case let obj as NSObject in elements {
-          if let ident = (obj as? UIAccessibilityIdentification)?.accessibilityIdentifier,
-             ident == identifier,
-             obj.accessibilityActivate() {
-            return true
-          }
-        }
-      }
-      for subview in view.subviews {
-        if searchView(subview) { return true }
-      }
-      return false
+      try? await Task.sleep(for: .milliseconds(20))
     }
-    return searchView(rootView)
+    return nil
   }
 
   /// Controllable gate wrapper that exercises `withoutRevealAnimation` + `\.invalidateFeedRowHeight`
@@ -465,8 +475,11 @@ struct ContentWarningCellResizeTests {
     #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
   }
 
-  @Test("ThreadRowCell and MainPostCell wire invalidateFeedRowHeight and resize top-anchored in 1 frame")
+  @Test("MainPostCell, ThreadRowCell, and BlockedAnchorCell wire invalidateFeedRowHeight and resize top-anchored in 1 frame")
   func threadCellsWireInvalidateAndResizeInOneFrame() async throws {
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
+
     let window = try Self.makeSceneWindow()
     let appState = try await Self.makeAppState(did: "did:plc:threadresize")
     let sceneContext = SceneNavigationContext(appState: appState, sceneID: UUID())
@@ -486,44 +499,154 @@ struct ContentWarningCellResizeTests {
       return NSCollectionLayoutSection(group: group)
     }
     let collectionView = UICollectionView(frame: window.bounds, collectionViewLayout: layout)
+    collectionView.contentInset = UIEdgeInsets(top: 88, left: 0, bottom: 34, right: 0)
     collectionView.register(MainPostCell.self, forCellWithReuseIdentifier: "MainPostCell")
     collectionView.register(ThreadRowCell.self, forCellWithReuseIdentifier: "ThreadRowCell")
+    collectionView.register(BlockedAnchorCell.self, forCellWithReuseIdentifier: "BlockedAnchorCell")
+    collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "BottomSpacerCell")
 
-    let post = try F.post(
-      uri: "at://did:web:bob.test/app.bsky.feed.post/threadmain",
-      labels: [try F.label("!warn", uri: "at://did:web:bob.test/app.bsky.feed.post/threadmain")],
+    let mainURI = "at://did:web:bob.test/app.bsky.feed.post/threadmain-\(UUID().uuidString)"
+    let replyURI = "at://did:web:bob.test/app.bsky.feed.post/threadreply-\(UUID().uuidString)"
+    let blockedURI = try ATProtocolURI(uriString: "at://did:plc:blockedanchor/app.bsky.feed.post/blocked1")
+
+    let mainPost = try F.post(
+      uri: mainURI,
+      labels: [try F.label("!warn", uri: mainURI)],
       embed: F.imageEmbed
     )
-    #expect(
-      PostModerationPresentation.make(post: post, policy: appState.moderationPolicy).concealsBody,
-      "!warn system label must conceal post body under default failClosed ModerationPolicy"
+    let replyPost = try F.post(
+      uri: replyURI,
+      labels: [try F.label("!warn", uri: replyURI)],
+      embed: F.imageEmbed
+    )
+    #expect(PostModerationPresentation.make(post: mainPost, policy: appState.moderationPolicy).concealsBody)
+    #expect(PostModerationPresentation.make(post: replyPost, policy: appState.moderationPolicy).concealsBody)
+
+    let anchorThreadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+      uri: mainPost.uri,
+      depth: 0,
+      value: .appBskyUnspeccedDefsThreadItemPost(
+        AppBskyUnspeccedDefs.ThreadItemPost(
+          post: mainPost,
+          moreParents: false,
+          moreReplies: 0,
+          opThread: false,
+          opThreadPostIndex: nil,
+          opThreadPostCount: nil,
+          hiddenByThreadgate: false,
+          mutedByViewer: false
+        )
+      )
+    )
+    let replyThreadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+      uri: replyPost.uri,
+      depth: 1,
+      value: .appBskyUnspeccedDefsThreadItemPost(
+        AppBskyUnspeccedDefs.ThreadItemPost(
+          post: replyPost,
+          moreParents: false,
+          moreReplies: 0,
+          opThread: false,
+          opThreadPostIndex: nil,
+          opThreadPostCount: nil,
+          hiddenByThreadgate: false,
+          mutedByViewer: false
+        )
+      )
+    )
+    let builtRows = ThreadRowBuilder.build(
+      items: [anchorThreadItem, replyThreadItem].map(ThreadRowBuilder.Item.init),
+      mode: .linear,
+      maxIndentLevels: ThreadReplyGeometry.compactMaxIndentLevels
+    )
+    let replyRow = try #require(builtRows.last)
+    let blockedAnchor = AppBskyUnspeccedDefs.ThreadItemBlocked(
+      author: AppBskyFeedDefs.BlockedAuthor(
+        did: try DID(didString: "did:plc:blockedanchor"),
+        viewer: AppBskyActorDefs.ViewerState(blockedBy: true)
+      )
     )
 
     var path = NavigationPath()
     let pathBinding = Binding(get: { path }, set: { path = $0 })
     var mainPostInvalidateCount = 0
+    var threadRowInvalidateCount = 0
+    var blockedAnchorInvalidateCount = 0
+    var lastMainResizeMs: Double = 0
+    var lastReplyResizeMs: Double = 0
 
     let dataSource = UICollectionViewDiffableDataSource<Int, Int>(collectionView: collectionView) {
       cv, indexPath, item in
-      guard let cell = cv.dequeueReusableCell(
-        withReuseIdentifier: "MainPostCell",
-        for: indexPath
-      ) as? MainPostCell else {
-        return UICollectionViewCell()
-      }
-      if item == 0 {
+      switch item {
+      case 0:
+        guard let cell = cv.dequeueReusableCell(
+          withReuseIdentifier: "MainPostCell",
+          for: indexPath
+        ) as? MainPostCell else {
+          return UICollectionViewCell()
+        }
         cell.configure(
-          post: post,
+          post: mainPost,
           appState: appState,
           sceneContext: sceneContext,
           path: pathBinding,
           onInvalidateHeight: { [weak cv, weak cell] in
             mainPostInvalidateCount += 1
+            let start = CACurrentMediaTime()
+            CollectionViewCellResizeAnchor.performTopAnchoredResize(in: cv, for: cell)
+            lastMainResizeMs = (CACurrentMediaTime() - start) * 1000.0
+          }
+        )
+        return cell
+      case 1:
+        guard let cell = cv.dequeueReusableCell(
+          withReuseIdentifier: "ThreadRowCell",
+          for: indexPath
+        ) as? ThreadRowCell else {
+          return UICollectionViewCell()
+        }
+        cell.configure(
+          row: replyRow,
+          threadItem: replyThreadItem,
+          parentAuthor: mainPost.author,
+          appState: appState,
+          sceneContext: sceneContext,
+          path: pathBinding,
+          onInvalidateHeight: { [weak cv, weak cell] in
+            threadRowInvalidateCount += 1
+            let start = CACurrentMediaTime()
+            CollectionViewCellResizeAnchor.performTopAnchoredResize(in: cv, for: cell)
+            lastReplyResizeMs = (CACurrentMediaTime() - start) * 1000.0
+          }
+        )
+        return cell
+      case 2:
+        guard let cell = cv.dequeueReusableCell(
+          withReuseIdentifier: "BlockedAnchorCell",
+          for: indexPath
+        ) as? BlockedAnchorCell else {
+          return UICollectionViewCell()
+        }
+        cell.configure(
+          blocked: blockedAnchor,
+          anchorURI: blockedURI,
+          appState: appState,
+          sceneContext: sceneContext,
+          path: pathBinding,
+          onInvalidateHeight: { [weak cv, weak cell] in
+            blockedAnchorInvalidateCount += 1
             CollectionViewCellResizeAnchor.performTopAnchoredResize(in: cv, for: cell)
           }
         )
+        return cell
+      default:
+        let cell = cv.dequeueReusableCell(withReuseIdentifier: "BottomSpacerCell", for: indexPath)
+        cell.contentConfiguration = UIHostingConfiguration {
+          Color.clear.frame(height: 800)
+        }
+        .margins(.all, 0)
+        return cell
       }
-      return cell
     }
 
     let vc = UIViewController()
@@ -534,36 +657,138 @@ struct ContentWarningCellResizeTests {
 
     var snapshot = NSDiffableDataSourceSnapshot<Int, Int>()
     snapshot.appendSections([0])
-    snapshot.appendItems([0])
+    snapshot.appendItems([0, 1, 2, 3])
     await dataSource.apply(snapshot, animatingDifferences: false)
 
-    for _ in 0..<6 {
+    for _ in 0..<8 {
       try await Task.sleep(for: .milliseconds(25))
       window.layoutIfNeeded()
       collectionView.layoutIfNeeded()
     }
 
     let mainCell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? MainPostCell)
-    let concealedHeight = mainCell.frame.height
-    let anchorViewportY = mainCell.frame.minY - collectionView.contentOffset.y
+    let replyCell = try #require(collectionView.cellForItem(at: IndexPath(item: 1, section: 0)) as? ThreadRowCell)
+    let blockedCell = try #require(collectionView.cellForItem(at: IndexPath(item: 2, section: 0)) as? BlockedAnchorCell)
 
-    // Activate ModerationContentGate's Show button inside MainPostCell!
-    let activated = Self.activateAccessibilityElement(
-      identifier: "moderation.contentGate.show",
-      in: mainCell.contentView
+    // 1. MainPostCell: genuinely activate ModerationContentGate Show & Hide while partially tucked under top inset.
+    collectionView.contentOffset = CGPoint(x: 0, y: mainCell.frame.minY - collectionView.adjustedContentInset.top + 32)
+    collectionView.layoutIfNeeded()
+    let mainConcealedHeight = mainCell.frame.height
+    let mainAnchorViewportY = mainCell.frame.minY - collectionView.contentOffset.y
+
+    let mainShowButton = try #require(
+      await Self.waitForAccessibilityElement(in: mainCell.contentView) {
+        $0.identifier == "moderation.contentGate.toggle" && $0.label == "Show"
+      },
+      "MainPostCell must expose moderation.contentGate.toggle Show button"
     )
-    if activated {
-      #expect(mainPostInvalidateCount == 1, "MainPostCell Show must invoke injected invalidateFeedRowHeight")
-      #expect(abs((mainCell.frame.minY - collectionView.contentOffset.y) - anchorViewportY) < 0.05)
-      #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
-      _ = concealedHeight
-    } else {
-      // Even when iOS Simulator accessibility server is inactive in unit-test host, directly verify
-      // CollectionViewCellResizeAnchor on MainPostCell keeps 0pt top-anchor delta and zero animations.
-      CollectionViewCellResizeAnchor.performTopAnchoredResize(in: collectionView, for: mainCell)
-      #expect(abs((mainCell.frame.minY - collectionView.contentOffset.y) - anchorViewportY) < 0.05)
-      #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
-    }
+    #expect(mainShowButton.object.accessibilityActivate())
+
+    #expect(mainPostInvalidateCount == 1, "MainPostCell Show must invoke injected invalidateFeedRowHeight")
+    #expect(mainCell.frame.height > mainConcealedHeight + 60,
+      "MainPostCell must genuinely expand on Show (was \(mainConcealedHeight), now \(mainCell.frame.height))")
+    #expect(abs((mainCell.frame.minY - collectionView.contentOffset.y) - mainAnchorViewportY) < 0.05,
+      "Partially tucked MainPostCell top must remain anchored at 0.0pt jump on Show")
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+
+    let mainHideButton = try #require(
+      await Self.waitForAccessibilityElement(in: mainCell.contentView) {
+        $0.identifier == "moderation.contentGate.toggle" && $0.label == "Hide"
+      }
+    )
+    #expect(mainHideButton.object.accessibilityActivate())
+    #expect(mainPostInvalidateCount == 2)
+    #expect(abs(mainCell.frame.height - mainConcealedHeight) < 2.0,
+      "MainPostCell must shrink back synchronously on Hide")
+    #expect(abs((mainCell.frame.minY - collectionView.contentOffset.y) - mainAnchorViewportY) < 0.05,
+      "Partially tucked MainPostCell top must remain anchored at 0.0pt jump on Hide")
+    #expect(lastMainResizeMs < Self.proMotionFrameBudgetMs,
+      "Warm MainPostCell 1-frame resize (\(lastMainResizeMs)ms) must stay under 8.33ms ProMotion budget")
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+
+    // ModerationContentGate intentionally destroys content() on Hide so concealed media cannot load or play,
+    // making every Show a fresh PostEmbed + LazyImage + AX-tree materialization under Debug (-Onone) + AppAccessibility.
+    let mainWarmShowButton = try #require(
+      await Self.waitForAccessibilityElement(in: mainCell.contentView) {
+        $0.identifier == "moderation.contentGate.toggle" && $0.label == "Show"
+      }
+    )
+    #expect(mainWarmShowButton.object.accessibilityActivate())
+    #expect(mainPostInvalidateCount == 3)
+    #expect(lastMainResizeMs < 35.0,
+      "Debug -Onone + AX MainPostCell Show materialization (\(lastMainResizeMs)ms) must stay bounded")
+    #expect(abs((mainCell.frame.minY - collectionView.contentOffset.y) - mainAnchorViewportY) < 0.05)
+
+    // 2. ThreadRowCell: genuinely activate ModerationContentGate Show & Hide while partially tucked under top inset.
+    collectionView.contentOffset = CGPoint(x: 0, y: replyCell.frame.minY - collectionView.adjustedContentInset.top + 28)
+    collectionView.layoutIfNeeded()
+    let replyConcealedHeight = replyCell.frame.height
+    let replyAnchorViewportY = replyCell.frame.minY - collectionView.contentOffset.y
+
+    let replyShowButton = try #require(
+      await Self.waitForAccessibilityElement(in: replyCell.contentView) {
+        $0.identifier == "moderation.contentGate.toggle" && $0.label == "Show"
+      },
+      "ThreadRowCell must expose moderation.contentGate.toggle Show button"
+    )
+    #expect(replyShowButton.object.accessibilityActivate())
+
+    #expect(threadRowInvalidateCount == 1, "ThreadRowCell Show must invoke injected invalidateFeedRowHeight")
+    #expect(replyCell.frame.height > replyConcealedHeight + 60,
+      "ThreadRowCell must genuinely expand on Show (was \(replyConcealedHeight), now \(replyCell.frame.height))")
+    #expect(abs((replyCell.frame.minY - collectionView.contentOffset.y) - replyAnchorViewportY) < 0.05,
+      "Partially tucked ThreadRowCell top must remain anchored at 0.0pt jump on Show")
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+
+    let replyHideButton = try #require(
+      await Self.waitForAccessibilityElement(in: replyCell.contentView) {
+        $0.identifier == "moderation.contentGate.toggle" && $0.label == "Hide"
+      }
+    )
+    #expect(replyHideButton.object.accessibilityActivate())
+    #expect(threadRowInvalidateCount == 2)
+    #expect(abs(replyCell.frame.height - replyConcealedHeight) < 2.0,
+      "ThreadRowCell must shrink back synchronously on Hide")
+    #expect(abs((replyCell.frame.minY - collectionView.contentOffset.y) - replyAnchorViewportY) < 0.05,
+      "Partially tucked ThreadRowCell top must remain anchored at 0.0pt jump on Hide")
+    #expect(lastReplyResizeMs < Self.proMotionFrameBudgetMs,
+      "Warm ThreadRowCell 1-frame resize (\(lastReplyResizeMs)ms) must stay under 8.33ms ProMotion budget")
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+
+    let replyWarmShowButton = try #require(
+      await Self.waitForAccessibilityElement(in: replyCell.contentView) {
+        $0.identifier == "moderation.contentGate.toggle" && $0.label == "Show"
+      }
+    )
+    #expect(replyWarmShowButton.object.accessibilityActivate())
+    #expect(threadRowInvalidateCount == 3)
+    #expect(lastReplyResizeMs < 35.0,
+      "Debug -Onone + AX ThreadRowCell Show materialization (\(lastReplyResizeMs)ms) must stay bounded")
+    #expect(abs((replyCell.frame.minY - collectionView.contentOffset.y) - replyAnchorViewportY) < 0.05)
+
+    // 3. BlockedAnchorCell: verify hydration task + custom action ("Show identifier") invoke onInvalidateHeight cleanly.
+    collectionView.contentOffset = CGPoint(x: 0, y: blockedCell.frame.minY - collectionView.adjustedContentInset.top + 16)
+    collectionView.layoutIfNeeded()
+    #expect(blockedAnchorInvalidateCount >= 1,
+      "BlockedAnchorCell .task hydration settlement must invoke onInvalidateHeight")
+    let blockedAnchorViewportY = blockedCell.frame.minY - collectionView.contentOffset.y
+    let identityElement = try #require(
+      await Self.waitForAccessibilityElement(in: blockedCell.contentView) {
+        ($0.label ?? "").contains("Blocked account")
+      },
+      "BlockedAnchorCell must render BlockedContentCard identity row"
+    )
+    let showIdentifierAction = try #require(
+      identityElement.object.accessibilityCustomActions?.first { $0.name == "Show identifier" },
+      "Settled BlockedContentCard without profile must expose Show identifier custom action"
+    )
+    let preToggleCount = blockedAnchorInvalidateCount
+    #expect(showIdentifierAction.target?.perform(showIdentifierAction.selector, with: showIdentifierAction) != nil
+      || (showIdentifierAction.actionHandler?(showIdentifierAction) ?? false))
+    #expect(blockedAnchorInvalidateCount == preToggleCount + 1,
+      "BlockedAnchorCell identifier disclosure must invoke onInvalidateHeight")
+    #expect(abs((blockedCell.frame.minY - collectionView.contentOffset.y) - blockedAnchorViewportY) < 0.05)
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
   }
 
   @Test("Shrinking a cell near the bottom of a short list clamps contentOffset cleanly without overscroll")
@@ -746,6 +971,584 @@ struct ContentWarningCellResizeTests {
     #expect(abs(collectionView.contentSize.height - beforeContentHeight) < 0.5,
       "Unchanged-height reveal must not reset off-screen solved heights (was \(beforeContentHeight), now \(collectionView.contentSize.height))")
     #expect(abs((targetCell.frame.minY - collectionView.contentOffset.y) - beforeViewportY) < 0.5)
+  }
+
+  @Test("ModerationMediaGate Hide pill and revealed media share opacity-only crossfade without floating at 1.0 over 0.0 media")
+  func mediaGateHidePillAndContentShareOpacityOnlyRevealFade() async throws {
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
+
+    let window = try Self.makeSceneWindow()
+    let appState = try await Self.makeAppState(did: "did:plc:hidepillfade")
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      appState.cleanup()
+    }
+
+    let postURI = "at://did:web:bob.test/app.bsky.feed.post/fadecheck-\(UUID().uuidString)"
+    let post = try F.post(uri: postURI, labels: [try F.label("porn", uri: postURI)], embed: F.imageEmbed)
+    let mediaUI = PostModerationPresentation.make(post: post, policy: F.policy(labels: ["porn": "warn"])).media
+    #expect(mediaUI.blur && !mediaUI.noOverride)
+
+    var listConfig = UICollectionLayoutListConfiguration(appearance: .plain)
+    listConfig.showsSeparators = false
+    let collectionView = UICollectionView(
+      frame: window.bounds,
+      collectionViewLayout: UICollectionViewCompositionalLayout.list(using: listConfig)
+    )
+
+    let registration = UICollectionView.CellRegistration<FeedPostCollectionViewCell, Int> {
+      [weak collectionView] cell, _, _ in
+      cell.postID = postURI
+      let invalidate: () -> Void = { [weak collectionView, weak cell] in
+        CollectionViewCellResizeAnchor.performTopAnchoredResize(in: collectionView, for: cell)
+      }
+      cell.contentConfiguration = UIHostingConfiguration {
+        HostedMediaGateRow(ui: mediaUI, postURI: postURI, revealedMediaHeight: 360)
+          .environment(appState)
+          .environment(\.fontManager, appState.fontManager)
+          .environment(\.invalidateFeedRowHeight, invalidate)
+      }
+      .margins(.all, 0)
+    }
+
+    let dataSource = UICollectionViewDiffableDataSource<Int, Int>(collectionView: collectionView) {
+      cv, indexPath, item in
+      cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
+    }
+
+    let vc = UIViewController()
+    vc.view.frame = window.bounds
+    vc.view.addSubview(collectionView)
+    window.rootViewController = vc
+    window.isHidden = false
+
+    var snapshot = NSDiffableDataSourceSnapshot<Int, Int>()
+    snapshot.appendSections([0])
+    snapshot.appendItems([0])
+    await dataSource.apply(snapshot, animatingDifferences: false)
+
+    for _ in 0..<5 {
+      try await Task.sleep(for: .milliseconds(20))
+      window.layoutIfNeeded()
+      collectionView.layoutIfNeeded()
+    }
+
+    let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? FeedPostCollectionViewCell)
+    let concealedHeight = cell.frame.height
+    let anchorViewportY = cell.frame.minY - collectionView.contentOffset.y
+
+    let showButton = try #require(
+      await Self.waitForAccessibilityElement(in: cell.contentView) {
+        $0.identifier == "moderation.mediaGate.show"
+      }
+    )
+    #expect(showButton.object.accessibilityActivate())
+
+    // Synchronously right after performTopAnchoredResize:
+    // 1. Height expanded in 1 single frame; top anchor did not move; zero geometry animations.
+    // 2. Both media AND Hide pill live inside PostRevealFadeModifier at opacity == 0 prior to fade kickoff.
+    #expect(cell.frame.height > concealedHeight + 120)
+    #expect(abs((cell.frame.minY - collectionView.contentOffset.y) - anchorViewportY) < 0.05)
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+    #expect(Self.minimumSubtreeOpacity(in: cell.contentView.layer) == 0,
+      "Revealed media + Hide pill container must start at opacity 0 synchronously before crossfade begins")
+
+    // Step real RunLoop frames + CATransaction.flush() so SwiftUI's ViewGraph commits hasAppeared = true
+    // and drives the 0.18s opacity-only crossfade to completion with zero geometry animations on any frame.
+    var sawOpacityTransition = false
+    for _ in 0..<12 {
+      try await Task.sleep(for: .milliseconds(16))
+      CATransaction.flush()
+      window.layoutIfNeeded()
+      #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty,
+        "Opacity fade must never introduce geometry animations on any frame")
+      let currentMinOpacity = Self.minimumSubtreeOpacity(in: cell.contentView.layer)
+      if Self.hasOpacityAnimation(in: cell.contentView.layer)
+        || (currentMinOpacity > 0.0 && currentMinOpacity < 1.0) {
+        sawOpacityTransition = true
+      }
+    }
+    try await Task.sleep(for: .milliseconds(100))
+    CATransaction.flush()
+    window.layoutIfNeeded()
+    let settledMinOpacity = Self.minimumSubtreeOpacity(in: cell.contentView.layer)
+    #expect(settledMinOpacity == 1.0,
+      "Revealed media + Hide pill container must transition from opacity 0.0 to 1.0 after 0.18s fade (got \(settledMinOpacity))")
+    #expect(sawOpacityTransition || settledMinOpacity == 1.0)
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty,
+      "Opacity fade must never introduce geometry animations")
+
+    // Conceal via Hide pill: immediate removal without lingering fade or jump.
+    let hideButton = try #require(
+      await Self.waitForAccessibilityElement(in: cell.contentView) {
+        $0.identifier == "moderation.mediaGate.hide"
+      }
+    )
+    #expect(hideButton.object.accessibilityActivate())
+    #expect(abs(cell.frame.height - concealedHeight) < 2.0)
+    #expect(abs((cell.frame.minY - collectionView.contentOffset.y) - anchorViewportY) < 0.05)
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+  }
+
+  @Test("Duplicate visible FeedPostCollectionViewCells sharing postID advance revealGeneration, prevent cache poisoning, and keep tapped row anchored")
+  func duplicateVisibleCellsAdvanceRevealGenerationAndResizeTogether() async throws {
+    let window = try Self.makeSceneWindow()
+    let appState = try await Self.makeAppState(did: "did:plc:duplicaterows")
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      appState.cleanup()
+    }
+
+    var listConfig = UICollectionLayoutListConfiguration(appearance: .plain)
+    listConfig.showsSeparators = false
+    let collectionView = UICollectionView(
+      frame: window.bounds,
+      collectionViewLayout: UICollectionViewCompositionalLayout.list(using: listConfig)
+    )
+
+    let sharedPostID = "at://did:plc:shared/app.bsky.feed.post/shared-cw"
+    let sharedModel = ContentWarningGateTriggerModel()
+    let heightCache = FeedRowHeightCache()
+    var secondRowInvalidate: (() -> Void)?
+
+    let postRecord = AppBskyFeedPost(
+      text: "Shared post text", entities: nil, facets: nil, reply: nil, embed: nil,
+      langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)))
+    let author = try F.profile(did: "did:plc:shared")
+    let postView = AppBskyFeedDefs.PostView(
+      uri: try ATProtocolURI(uriString: sharedPostID),
+      cid: CID.fromDAGCBOR(Data("cid-shared".utf8)),
+      author: author,
+      record: .knownType(postRecord),
+      indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0))
+    )
+    let cachedPost = try #require(
+      CachedFeedViewPost(
+        from: AppBskyFeedDefs.FeedViewPost(post: postView, reply: nil, reason: nil, feedContext: nil, reqId: nil),
+        feedType: "timeline"
+      )
+    )
+    let signature = FeedPostContentSignature(cachedPost)
+
+    let registration = UICollectionView.CellRegistration<FeedPostCollectionViewCell, Int> {
+      [weak collectionView] cell, _, index in
+      cell.heightCache = heightCache
+      cell.postID = (index == 0 || index == 2) ? sharedPostID : "at://did:plc:other/app.bsky.feed.post/\(index)"
+      cell.contentSignature = signature
+      cell.fontGeneration = 0
+      cell.contentSizeCategory = .large
+      cell.revealGeneration = ModerationRevealStore.shared.generation
+      cell.markConfigured()
+
+      let rowPostID = cell.postID ?? ""
+      let invalidate: () -> Void = { [weak collectionView, weak cell] in
+        let duplicateVisibleCells = (collectionView?.visibleCells ?? [])
+          .compactMap { $0 as? FeedPostCollectionViewCell }
+          .filter { $0 !== cell && $0.postID == rowPostID }
+        CollectionViewCellResizeAnchor.performTopAnchoredResize(
+          in: collectionView,
+          for: cell,
+          additionalCells: duplicateVisibleCells
+        ) {
+          let currentGeneration = ModerationRevealStore.shared.generation
+          heightCache.invalidate(postID: rowPostID)
+          cell?.revealGeneration = currentGeneration
+          cell?.markHeightNeedsRecalculation()
+          for dup in duplicateVisibleCells {
+            dup.revealGeneration = currentGeneration
+            dup.markHeightNeedsRecalculation()
+          }
+        }
+      }
+      if index == 2 { secondRowInvalidate = invalidate }
+
+      cell.contentConfiguration = UIHostingConfiguration {
+        Group {
+          if index == 0 || index == 2 {
+            ControllableGatedPostRow(
+              model: sharedModel,
+              collapsedGateHeight: 110,
+              expandedGateHeight: 270
+            )
+          } else {
+            Color.gray.opacity(0.15).frame(height: 80)
+          }
+        }
+        .environment(appState)
+        .environment(\.fontManager, appState.fontManager)
+        .environment(\.invalidateFeedRowHeight, invalidate)
+      }
+      .margins(.all, 0)
+    }
+
+    let dataSource = UICollectionViewDiffableDataSource<Int, Int>(collectionView: collectionView) {
+      cv, indexPath, item in
+      cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
+    }
+
+    let vc = UIViewController()
+    vc.view.frame = window.bounds
+    vc.view.addSubview(collectionView)
+    window.rootViewController = vc
+    window.isHidden = false
+
+    var snapshot = NSDiffableDataSourceSnapshot<Int, Int>()
+    snapshot.appendSections([0])
+    snapshot.appendItems([0, 1, 2, 3, 4, 5])
+    await dataSource.apply(snapshot, animatingDifferences: false)
+
+    for _ in 0..<5 {
+      try await Task.sleep(for: .milliseconds(20))
+      window.layoutIfNeeded()
+      collectionView.layoutIfNeeded()
+    }
+
+    // Scroll slightly so there is scroll headroom at the top when row 0 above row 2 also expands.
+    collectionView.contentOffset = CGPoint(x: 0, y: 40)
+    collectionView.layoutIfNeeded()
+
+    let firstCell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? FeedPostCollectionViewCell)
+    let tappedCell = try #require(collectionView.cellForItem(at: IndexPath(item: 2, section: 0)) as? FeedPostCollectionViewCell)
+    let collapsedFirstH = firstCell.frame.height
+    let collapsedTappedH = tappedCell.frame.height
+    let tappedAnchorViewportY = tappedCell.frame.minY - collectionView.contentOffset.y
+
+    let ui = PostModerationPresentation.make(
+      post: try F.post(uri: sharedPostID, labels: [try F.label("porn", uri: sharedPostID)], embed: F.imageEmbed),
+      policy: F.policy(labels: ["porn": "warn"])
+    ).media
+    let invalidate = try #require(secondRowInvalidate)
+    withoutRevealAnimation {
+      ModerationRevealStore.shared.setRevealed(true, ui: ui, gate: .media, subject: sharedPostID, accountDID: appState.userDID)
+      sharedModel.isExpanded = true
+    }
+    invalidate()
+
+    let expectedGen = ModerationRevealStore.shared.generation
+    #expect(firstCell.revealGeneration == expectedGen)
+    #expect(tappedCell.revealGeneration == expectedGen)
+    #expect(abs((firstCell.frame.height - collapsedFirstH) - 160) < 2.0,
+      "Companion duplicate cell above must resize in the same 1-frame pass")
+    #expect(abs((tappedCell.frame.height - collapsedTappedH) - 160) < 2.0,
+      "Tapped cell must resize in the same 1-frame pass")
+    #expect(abs((tappedCell.frame.minY - collectionView.contentOffset.y) - tappedAnchorViewportY) < 0.05,
+      "Tapped cell must stay pinned at 0.0pt jump even when duplicate cell above also expanded (+160pt)")
+    #expect(
+      heightCache.height(
+        for: sharedPostID,
+        width: Int(window.bounds.width),
+        fontGeneration: 0,
+        contentSizeCategory: .large,
+        contentSignature: signature,
+        revealGeneration: expectedGen
+      ) == nil,
+      "Transiently resized duplicate cells must never write heights back into FeedRowHeightCache"
+    )
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+  }
+
+  @Test("ExternalEmbedView inline web player expand and Hide Embed step in 1 frame with zero geometry animations")
+  func externalEmbedShowAndHideStepsInOneFrameWithoutGeometryAnimations() async throws {
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
+
+    let testDID = "did:plc:externalembedresize-\(UUID().uuidString)"
+    let scopedConsentKey = AppSettingsModel.scopedKey("externalMediaConsent.youtube", accountDID: testDID)
+    UserDefaults.standard.set(ExternalMediaConsent.allow.rawValue, forKey: scopedConsentKey)
+    defer { UserDefaults.standard.removeObject(forKey: scopedConsentKey) }
+
+    let window = try Self.makeSceneWindow()
+    let appState = try await Self.makeAppState(did: testDID)
+    appState.appSettings.configure(accountDID: testDID)
+    let sceneContext = SceneNavigationContext(appState: appState, sceneID: UUID())
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      appState.cleanup()
+    }
+
+    var listConfig = UICollectionLayoutListConfiguration(appearance: .plain)
+    listConfig.showsSeparators = false
+    let collectionView = UICollectionView(
+      frame: window.bounds,
+      collectionViewLayout: UICollectionViewCompositionalLayout.list(using: listConfig)
+    )
+
+    let external = AppBskyEmbedExternal.ViewExternal(
+      uri: URI(uriString: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+      title: "Synthetic YouTube Video Card",
+      description: "Verifies ExternalEmbedView Show and Hide Embed use 1-frame resize"
+    )
+    var invalidateCount = 0
+
+    let registration = UICollectionView.CellRegistration<FeedPostCollectionViewCell, Int> {
+      [weak collectionView] cell, _, _ in
+      let invalidate: () -> Void = { [weak collectionView, weak cell] in
+        invalidateCount += 1
+        CollectionViewCellResizeAnchor.performTopAnchoredResize(in: collectionView, for: cell)
+      }
+      cell.contentConfiguration = UIHostingConfiguration {
+        ExternalEmbedView(
+          external: external,
+          shouldBlur: false,
+          postID: "at://did:plc:test/app.bsky.feed.post/youtube1"
+        )
+        .padding(12)
+        .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
+        .environment(\.invalidateFeedRowHeight, invalidate)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+      .margins(.all, 0)
+    }
+
+    let dataSource = UICollectionViewDiffableDataSource<Int, Int>(collectionView: collectionView) {
+      cv, indexPath, item in
+      cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
+    }
+
+    let vc = UIViewController()
+    vc.view.frame = window.bounds
+    vc.view.addSubview(collectionView)
+    window.rootViewController = vc
+    window.isHidden = false
+
+    var snapshot = NSDiffableDataSourceSnapshot<Int, Int>()
+    snapshot.appendSections([0])
+    snapshot.appendItems([0])
+    await dataSource.apply(snapshot, animatingDifferences: false)
+
+    for _ in 0..<5 {
+      try await Task.sleep(for: .milliseconds(20))
+      window.layoutIfNeeded()
+      collectionView.layoutIfNeeded()
+    }
+
+    let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? FeedPostCollectionViewCell)
+    let cardHeight = cell.frame.height
+    let anchorViewportY = cell.frame.minY - collectionView.contentOffset.y
+
+    let cardButton = try #require(
+      await Self.waitForAccessibilityElement(in: cell.contentView) {
+        $0.identifier == "externalEmbed.linkCard"
+      },
+      "ExternalEmbedView link card must be reachable as an activatable button"
+    )
+    #expect(cardButton.object.accessibilityActivate())
+
+    #expect(invalidateCount == 1, "Expanding ExternalEmbedView web player must invoke invalidateFeedRowHeight")
+    #expect(cell.frame.height > cardHeight + 60,
+      "Expanding YouTube web embed must synchronously grow cell height (was \(cardHeight), now \(cell.frame.height))")
+    #expect(abs((cell.frame.minY - collectionView.contentOffset.y) - anchorViewportY) < 0.05)
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+
+    let hideEmbedButton = try #require(
+      await Self.waitForAccessibilityElement(in: cell.contentView) {
+        $0.identifier == "externalEmbed.hide" || ($0.label ?? "").contains("Hide Embed")
+      },
+      "Expanded ExternalEmbedView must expose Hide Embed button"
+    )
+    #expect(hideEmbedButton.object.accessibilityActivate())
+
+    #expect(invalidateCount == 2, "Tapping Hide Embed must invoke invalidateFeedRowHeight")
+    #expect(abs(cell.frame.height - cardHeight) < 2.0,
+      "Collapsing ExternalEmbedView must synchronously restore link card height")
+    #expect(abs((cell.frame.minY - collectionView.contentOffset.y) - anchorViewportY) < 0.05)
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+  }
+
+  @Test("Dynamic Type AX5 multi-line warning cover shrinks and re-expands accurately in 1 frame")
+  func dynamicTypeAX5MediaGateShowAndHideMeasuresAccurately() async throws {
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
+
+    let window = try Self.makeSceneWindow()
+    let appState = try await Self.makeAppState(did: "did:plc:ax5resize")
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      appState.cleanup()
+    }
+
+    let longExplanation = String(
+      repeating: "Detailed spoiler warning description that wraps across many lines under Accessibility Extra Extra Extra Large. ",
+      count: 6
+    )
+    let policy = F.customLabelerPolicy(
+      blurs: "media",
+      severity: "none",
+      locales: [
+        ComAtprotoLabelDefs.LabelValueDefinitionStrings(
+          lang: LanguageCodeContainer(languageCode: "en"),
+          name: "Major Plot Spoilers",
+          description: longExplanation
+        )
+      ]
+    )
+    let postURI = "at://did:web:bob.test/app.bsky.feed.post/ax5-\(UUID().uuidString)"
+    let post = try F.post(
+      uri: postURI,
+      labels: [try F.label("custom", uri: postURI, src: F.customLabelerDID)],
+      embed: F.imageEmbed
+    )
+    let mediaUI = PostModerationPresentation.make(post: post, policy: policy).media
+    #expect(mediaUI.blur)
+
+    var listConfig = UICollectionLayoutListConfiguration(appearance: .plain)
+    listConfig.showsSeparators = false
+    let collectionView = UICollectionView(
+      frame: window.bounds,
+      collectionViewLayout: UICollectionViewCompositionalLayout.list(using: listConfig)
+    )
+    collectionView.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+
+    // Short revealed media (80pt) < tall AX5 warning cover (> 300pt), testing shrink on Show and grow on Hide!
+    let registration = UICollectionView.CellRegistration<FeedPostCollectionViewCell, Int> {
+      [weak collectionView] cell, _, _ in
+      let invalidate: () -> Void = { [weak collectionView, weak cell] in
+        CollectionViewCellResizeAnchor.performTopAnchoredResize(in: collectionView, for: cell)
+      }
+      cell.contentConfiguration = UIHostingConfiguration {
+        HostedMediaGateRow(ui: mediaUI, postURI: postURI, revealedMediaHeight: 80)
+          .environment(appState)
+          .environment(\.fontManager, appState.fontManager)
+          .environment(\.dynamicTypeSize, .accessibility5)
+          .environment(\.invalidateFeedRowHeight, invalidate)
+      }
+      .margins(.all, 0)
+    }
+
+    let dataSource = UICollectionViewDiffableDataSource<Int, Int>(collectionView: collectionView) {
+      cv, indexPath, item in
+      cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
+    }
+
+    let vc = UIViewController()
+    vc.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+    vc.view.frame = window.bounds
+    vc.view.addSubview(collectionView)
+    window.rootViewController = vc
+    window.isHidden = false
+
+    var snapshot = NSDiffableDataSourceSnapshot<Int, Int>()
+    snapshot.appendSections([0])
+    snapshot.appendItems([0, 1])
+    await dataSource.apply(snapshot, animatingDifferences: false)
+
+    for _ in 0..<6 {
+      try await Task.sleep(for: .milliseconds(25))
+      window.layoutIfNeeded()
+      collectionView.layoutIfNeeded()
+    }
+
+    let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? FeedPostCollectionViewCell)
+    let ax5CoverRowHeight = cell.frame.height
+    #expect(ax5CoverRowHeight > 500, "AX5 multi-line warning cover row must be tall (got \(ax5CoverRowHeight))")
+
+    let showButton = try #require(
+      await Self.waitForAccessibilityElement(in: cell.contentView) {
+        $0.identifier == "moderation.mediaGate.show"
+      }
+    )
+    #expect(showButton.object.accessibilityActivate())
+
+    let revealedRowHeight = cell.frame.height
+    #expect(revealedRowHeight < ax5CoverRowHeight - 100,
+      "Showing compact 80pt media from tall AX5 cover must shrink row synchronously (was \(ax5CoverRowHeight), now \(revealedRowHeight))")
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+
+    let hideButton = try #require(
+      await Self.waitForAccessibilityElement(in: cell.contentView) {
+        $0.identifier == "moderation.mediaGate.hide"
+      }
+    )
+    #expect(hideButton.object.accessibilityActivate())
+
+    #expect(abs(cell.frame.height - ax5CoverRowHeight) < 2.0,
+      "Hiding back to AX5 multi-line warning cover must restore full height without clipping (expected \(ax5CoverRowHeight), got \(cell.frame.height))")
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
+  }
+
+  @Test("Top rubber-band overscroll is preserved without downward snap during cell resize")
+  func topOverscrollPreservesRubberBandOffset() async throws {
+    let window = try Self.makeSceneWindow()
+    let appState = try await Self.makeAppState(did: "did:plc:overscroll")
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      appState.cleanup()
+    }
+
+    var listConfig = UICollectionLayoutListConfiguration(appearance: .plain)
+    listConfig.showsSeparators = false
+    let collectionView = UICollectionView(
+      frame: window.bounds,
+      collectionViewLayout: UICollectionViewCompositionalLayout.list(using: listConfig)
+    )
+    collectionView.contentInset = UIEdgeInsets(top: 96, left: 0, bottom: 34, right: 0)
+
+    let gateModel = ContentWarningGateTriggerModel()
+    var invalidateClosure: (() -> Void)?
+
+    let registration = UICollectionView.CellRegistration<FeedPostCollectionViewCell, Int> {
+      [weak collectionView] cell, _, index in
+      let invalidate: () -> Void = { [weak collectionView, weak cell] in
+        CollectionViewCellResizeAnchor.performTopAnchoredResize(in: collectionView, for: cell)
+      }
+      if index == 0 { invalidateClosure = invalidate }
+      cell.contentConfiguration = UIHostingConfiguration {
+        Group {
+          if index == 0 {
+            ControllableGatedPostRow(model: gateModel, collapsedGateHeight: 150, expandedGateHeight: 360)
+          } else {
+            Color.gray.opacity(0.15).frame(height: 180)
+          }
+        }
+        .environment(appState)
+        .environment(\.fontManager, appState.fontManager)
+        .environment(\.invalidateFeedRowHeight, invalidate)
+      }
+      .margins(.all, 0)
+    }
+
+    let dataSource = UICollectionViewDiffableDataSource<Int, Int>(collectionView: collectionView) {
+      cv, indexPath, item in
+      cv.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: item)
+    }
+
+    let vc = UIViewController()
+    vc.view.frame = window.bounds
+    vc.view.addSubview(collectionView)
+    window.rootViewController = vc
+    window.isHidden = false
+
+    var snapshot = NSDiffableDataSourceSnapshot<Int, Int>()
+    snapshot.appendSections([0])
+    snapshot.appendItems([0, 1, 2, 3, 4])
+    await dataSource.apply(snapshot, animatingDifferences: false)
+
+    for _ in 0..<5 {
+      try await Task.sleep(for: .milliseconds(20))
+      window.layoutIfNeeded()
+      collectionView.layoutIfNeeded()
+    }
+
+    // Simulate rubber-band pull-to-refresh overscroll (-140 < -96).
+    let overscrollY: CGFloat = -140
+    collectionView.contentOffset = CGPoint(x: 0, y: overscrollY)
+    let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+    let anchorViewportY = cell.frame.minY - overscrollY
+
+    let invalidate = try #require(invalidateClosure)
+    ControllableGatedPostRow.setExpanded(true, model: gateModel, invalidate: invalidate)
+
+    #expect(abs(collectionView.contentOffset.y - overscrollY) < 0.05,
+      "Top rubber-band overscroll (\(overscrollY)) must be preserved instead of snapping to -inset.top (got \(collectionView.contentOffset.y))")
+    #expect(abs((cell.frame.minY - collectionView.contentOffset.y) - anchorViewportY) < 0.05)
+    #expect(Self.nonFadeAnimationKeys(in: collectionView.layer).isEmpty)
   }
 }
 #endif

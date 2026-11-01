@@ -70,7 +70,9 @@ struct ModerationFixtureViewportProbe: UIViewRepresentable {
       }
       var found: [String] = []
       if let keys = layer.animationKeys() {
-        for key in keys where key != "opacity" && key != "contents" && key != "instanceAlphaOffset" {
+        for key in keys
+        where key != "opacity" && key != "contents"
+          && key != "instanceAlphaOffset" && key != "contentsMultiplyColor" {
           found.append("\(type(of: layer)):\(key)")
         }
       }
@@ -114,7 +116,7 @@ struct ModerationFixtureViewportProbe: UIViewRepresentable {
           let inWindow = superlayer.convert(presentation.frame, to: window.layer)
           geometry["cellPresentationWindowFrame"] = rectangle(inWindow)
         }
-        let animKeys = activeGeometryAnimationKeys(in: cell.layer)
+        let animKeys = activeGeometryAnimationKeys(in: collection.layer)
         geometry["geometryAnimationCount"] = animKeys.count
         if !animKeys.isEmpty {
           geometry["geometryAnimationKeys"] = animKeys

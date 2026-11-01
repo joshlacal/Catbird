@@ -183,11 +183,23 @@ private struct PostRevealFadeModifier: ViewModifier {
             content
         } else {
             content
-                .animation(nil, value: hasAppeared)
+                .compositingGroup()
                 .opacity(!hasAppeared ? 0 : 1)
-                .animation(.easeInOut(duration: 0.18), value: hasAppeared)
                 .onAppear {
-                    if !hasAppeared { hasAppeared = true }
+                    guard !hasAppeared else { return }
+                    #if os(iOS)
+                    if CollectionViewCellResizeAnchor.isPerformingResize {
+                        DispatchQueue.main.async {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                hasAppeared = true
+                            }
+                        }
+                        return
+                    }
+                    #endif
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        hasAppeared = true
+                    }
                 }
         }
     }

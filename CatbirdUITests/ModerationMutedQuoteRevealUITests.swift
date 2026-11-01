@@ -243,6 +243,79 @@ final class ModerationMutedQuoteRevealUITests: XCTestCase {
       startHeight: beforeHideHeight,
       endHeight: afterHideHeight
     )
+
+    // Scroll with zero-momentum hold-drag so the cell's top header/avatar are partially tucked
+    // ~30pt above adjustedTop while both Show and Hide remain comfortably inside viewport —
+    // the exact geometry where UIKit's default self-sizing anchor previously jumped contentOffset.
+    for _ in 0..<8 {
+      let current = try lastGeometry(probe)
+      let cellFrame = try XCTUnwrap(current["cellWindowFrame"] as? [String: Any])
+      let collectionFrame = try XCTUnwrap(current["collectionWindow"] as? [String: Any])
+      let topVisibleBoundary = try number(collectionFrame, "y") + (try number(current, "adjustedTop"))
+      let cellTopY = try number(cellFrame, "y")
+      let targetCellTopY = topVisibleBoundary - 28
+      let delta = cellTopY - targetCellTopY
+      if cellTopY < topVisibleBoundary - 8 && cellTopY > topVisibleBoundary - 56 {
+        break
+      }
+      let dragOffset = delta + (delta > 0 ? 14 : -14)
+      let clampedDelta = min(max(dragOffset, -240), 240)
+      let start = feed.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.6))
+      let end = start.withOffset(CGVector(dx: 0, dy: -clampedDelta))
+      start.press(forDuration: 0.02, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.25)
+      waitForDiagnosticLayout(cell)
+    }
+
+    let tuckedBaseline = try lastGeometry(probe)
+    let tuckedCollectionFrame = try XCTUnwrap(tuckedBaseline["collectionWindow"] as? [String: Any])
+    let topVisibleBoundary = try number(tuckedCollectionFrame, "y") + (try number(tuckedBaseline, "adjustedTop"))
+    let tuckedCellFrame = try XCTUnwrap(tuckedBaseline["cellWindowFrame"] as? [String: Any])
+    XCTAssertLessThan(
+      try number(tuckedCellFrame, "y"),
+      topVisibleBoundary,
+      "Cell top must be partially tucked above top inset before partial-tuck Show/Hide check"
+    )
+    capture("Partially tucked CW media before Show", app)
+
+    let tuckedBeforeShow = try tapVisibleControlPreservingViewport(mediaShow, in: feed, cell: cell, probe: probe)
+    let tuckedBeforeShowCell = try XCTUnwrap(tuckedBeforeShow["cellWindowFrame"] as? [String: Any])
+    XCTAssertLessThan(
+      try number(tuckedBeforeShowCell, "y"),
+      topVisibleBoundary,
+      "Cell top must still be partially tucked above top inset at the moment Show is tapped"
+    )
+    let tuckedBeforeShowH = try number(tuckedBeforeShowCell, "height")
+    XCTAssertTrue(mediaHide.waitForExistence(timeout: 5))
+    capture("Partially tucked CW media after Show", app)
+    let tuckedAfterShow = try lastGeometry(probe)
+    let tuckedAfterShowH = try number(try XCTUnwrap(tuckedAfterShow["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertGreaterThan(tuckedAfterShowH - tuckedBeforeShowH, 30)
+    try assertOneFrameStepAndZeroGeometryAnimations(
+      probe,
+      since: tuckedBeforeShow,
+      startHeight: tuckedBeforeShowH,
+      endHeight: tuckedAfterShowH
+    )
+
+    let tuckedBeforeHide = try tapVisibleControlPreservingViewport(mediaHide, in: feed, cell: cell, probe: probe)
+    let tuckedBeforeHideCell = try XCTUnwrap(tuckedBeforeHide["cellWindowFrame"] as? [String: Any])
+    XCTAssertLessThan(
+      try number(tuckedBeforeHideCell, "y"),
+      topVisibleBoundary,
+      "Cell top must remain partially tucked above top inset at the moment Hide is tapped"
+    )
+    let tuckedBeforeHideH = try number(tuckedBeforeHideCell, "height")
+    XCTAssertTrue(mediaShow.waitForExistence(timeout: 5))
+    capture("Partially tucked CW media after Hide", app)
+    let tuckedAfterHide = try lastGeometry(probe)
+    let tuckedAfterHideH = try number(try XCTUnwrap(tuckedAfterHide["cellWindowFrame"] as? [String: Any]), "height")
+    XCTAssertEqual(tuckedAfterHideH, tuckedBeforeShowH, accuracy: 2)
+    try assertOneFrameStepAndZeroGeometryAnimations(
+      probe,
+      since: tuckedBeforeHide,
+      startHeight: tuckedBeforeHideH,
+      endHeight: tuckedAfterHideH
+    )
   }
 
   private func assertOneFrameStepAndZeroGeometryAnimations(

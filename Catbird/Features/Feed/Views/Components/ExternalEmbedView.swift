@@ -37,6 +37,7 @@ struct ExternalEmbedView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.containerViewportSize) private var containerViewportSize
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
     @State private var hostingWindowSize = CGSize.zero
     @State private var videoModel: VideoModel?
     @State private var gifError: String?
@@ -226,10 +227,11 @@ struct ExternalEmbedView: View {
                             consentSaveFailed = true
                             return
                         }
-                        withAnimation(.easeInOut(duration: 0.3)) {
+                        withoutRevealAnimation {
                             userTappedToShowEmbed = true
+                            retryAttempt += 1
                         }
-                        retryAttempt += 1
+                        invalidateFeedRowHeight?()
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: { provider in
@@ -345,9 +347,10 @@ struct ExternalEmbedView: View {
             HStack {
                 Spacer()
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.3)) {
+                    withoutRevealAnimation {
                         userTappedToShowEmbed = false
                     }
+                    invalidateFeedRowHeight?()
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "minus.rectangle.fill")
@@ -359,6 +362,8 @@ struct ExternalEmbedView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                 }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("externalEmbed.hide")
             }
         }
     }
@@ -380,7 +385,13 @@ struct ExternalEmbedView: View {
         .padding(6)
         .feedEmbedCardStyle()
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("externalEmbed.linkCard")
         .onTapGesture {
+            handleCardTap(embedType: detectedEmbedType)
+        }
+        .accessibilityAction {
             handleCardTap(embedType: detectedEmbedType)
         }
         .linkCardContextMenu(
@@ -991,10 +1002,11 @@ struct ExternalEmbedView: View {
                 if isGifURL {
                     retryAttempt += 1
 
-                } else if appSettings.useWebViewEmbeds, let embedType = embedType ?? ExternalMediaType.detect(from: url) {
-                    withAnimation(.easeInOut(duration: 0.3)) {
+                } else if appSettings.useWebViewEmbeds, (embedType ?? ExternalMediaType.detect(from: url)) != nil {
+                    withoutRevealAnimation {
                         userTappedToShowEmbed = true
                     }
+                    invalidateFeedRowHeight?()
                 } else {
                     _ = sceneContext.urlHandler.handle(url)
                 }
