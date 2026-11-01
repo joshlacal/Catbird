@@ -102,7 +102,15 @@ private var isMessagesNavigationUIFixture: Bool {
 
 /// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
 private var isPresentationUIFixture: Bool {
-  isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
+  isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isOnboardingIntelUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
+}
+
+private var isOnboardingIntelUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains(OnboardingIntelligenceUIFixture.launchArgument)
+  #else
+  false
+  #endif
 }
 
 private var isFeedPerformanceFixture: Bool {
@@ -1469,6 +1477,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             #endif
           } else if isSettingsUIFixture {
             SettingsUIFixture()
+          } else if isOnboardingIntelUIFixture {
+            OnboardingIntelligenceUIFixture()
           } else if isModerationUIFixture {
             #if os(iOS)
             ModerationUIFixture()

@@ -41,13 +41,17 @@ struct FeedFilter: Identifiable, Hashable {
   // Tracking of active filters
   private(set) var activeFilterIds: Set<String> = []
 
+  // Per-author "Originals Only" repost tamer (hides reposts by specific high-repost accounts while keeping their originals)
+  private(set) var mutedRepostAuthorDIDs: Set<String> = []
+
   // Content processors
   private var contentProcessors: [PostContentProcessor] = []
   private var muteWordProcessor: MuteWordProcessor?
   private var languageProcessor: LanguageFilterProcessor?
+  private var mutedRepostProcessor: MutedRepostAuthorProcessor?
   private var hasLanguageObserver = false
 
-  private let accountDID: String
+  let accountDID: String
   private let defaults: UserDefaults
   private var isLoadingStoredSettings = true
 
@@ -87,6 +91,7 @@ struct FeedFilter: Identifiable, Hashable {
     activeFilterIds = Set(filters.filter(\.isEnabled).map(\.id))
     loadSavedSettings()
     loadMuteWords()
+    loadMutedRepostAuthors()
     loadLanguageFilter()
     isLoadingStoredSettings = false
   }
@@ -448,8 +453,55 @@ struct FeedFilter: Identifiable, Hashable {
     activeFilterIds.formUnion(filters.filter(\.isEnabled).map(\.id))
     defaults.set(Array(activeFilterIds), forKey: key("FeedFilterActiveFilters"))
     defaults.set(sortMode.rawValue, forKey: key("FeedSortMode"))
+    if !accountDID.isEmpty {
+      defaults.set(Array(mutedRepostAuthorDIDs).sorted(), forKey: key("MutedRepostAuthorDIDs"))
+    }
     NotificationCenter.default.post(name: NSNotification.Name("FeedFiltersChanged"), object: self,
       userInfo: ["accountDID": accountDID])
+  }
+
+  private func loadMutedRepostAuthors() {
+    guard !accountDID.isEmpty else {
+      mutedRepostAuthorDIDs = []
+      rebuildMutedRepostProcessor()
+      return
+    }
+    let saved = defaults.stringArray(forKey: key("MutedRepostAuthorDIDs")) ?? []
+    mutedRepostAuthorDIDs = Set(saved.filter { !$0.isEmpty })
+    rebuildMutedRepostProcessor()
+  }
+
+  private func rebuildMutedRepostProcessor() {
+    contentProcessors.removeAll { $0 is MutedRepostAuthorProcessor }
+    mutedRepostProcessor = nil
+    guard !mutedRepostAuthorDIDs.isEmpty else { return }
+    let processor = MutedRepostAuthorProcessor(mutedAuthorDIDs: mutedRepostAuthorDIDs)
+    contentProcessors.append(processor)
+    mutedRepostProcessor = processor
+  }
+
+  func isRepostMuted(for authorDID: String) -> Bool {
+    mutedRepostAuthorDIDs.contains(authorDID)
+  }
+
+  func setRepostMuted(_ muted: Bool, for authorDID: String) {
+    guard !accountDID.isEmpty, !authorDID.isEmpty else { return }
+    if muted {
+      mutedRepostAuthorDIDs.insert(authorDID)
+    } else {
+      mutedRepostAuthorDIDs.remove(authorDID)
+    }
+    rebuildMutedRepostProcessor()
+    saveSettings()
+  }
+
+  func mergeMutedRepostAuthors(_ dids: Set<String>) {
+    guard !accountDID.isEmpty else { return }
+    let cleaned = Set(dids.filter { !$0.isEmpty })
+    guard !cleaned.isEmpty else { return }
+    mutedRepostAuthorDIDs.formUnion(cleaned)
+    rebuildMutedRepostProcessor()
+    saveSettings()
   }
 
   // Update the mute word processor
@@ -634,6 +686,29 @@ final class LanguageFilterProcessor: PostContentProcessor {
 
     // Check if the post's language matches our content languages
     return detector.matchesContentLanguages(feedPost.text, contentLanguages: contentLanguages)
+  }
+
+  func metadataForPost(uri: String) -> [String: Any]? {
+    return nil
+  }
+}
+
+// MARK: - Per-Author Repost Tamer ("Originals Only")
+
+final class MutedRepostAuthorProcessor: PostContentProcessor {
+  private let mutedAuthorDIDs: Set<String>
+
+  init(mutedAuthorDIDs: Set<String>) {
+    self.mutedAuthorDIDs = mutedAuthorDIDs
+  }
+
+  func process(post: AppBskyFeedDefs.FeedViewPost) -> Bool {
+    if case .appBskyFeedDefsReasonRepost(let reasonRepost) = post.reason {
+      if mutedAuthorDIDs.contains(reasonRepost.by.did.didString()) {
+        return false
+      }
+    }
+    return true
   }
 
   func metadataForPost(uri: String) -> [String: Any]? {
