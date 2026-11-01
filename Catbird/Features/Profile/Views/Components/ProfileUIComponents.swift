@@ -16,7 +16,8 @@ struct ProfileTabSelector: View {
     }
     
     var body: some View {
-        Picker("", selection: $selectedTab) {
+        // Named for VoiceOver; the segments are the visible labels.
+        Picker("Profile sections", selection: $selectedTab) {
             ForEach(sections, id: \.self) { section in
                 if section == .more {
                     Text("More")
@@ -26,12 +27,33 @@ struct ProfileTabSelector: View {
                 }
             }
         }
-        .pickerStyle(.segmented)
+        .labelsHidden()
+        // labelsHidden() also takes the name off the segmented control's accessibility element.
+        .accessibilityLabel("Profile sections")
+        .profileTabPickerStyle()
+        .accessibilityIdentifier("profileTabPicker")
         .onChange(of: selectedTab) { _, newValue in
             if newValue != .more {
                 onTabChange?(newValue)
             }
         }
+    }
+}
+
+private extension View {
+    /// The tabs picker style on iOS 27 and later; the segmented control before that,
+    /// and on macOS, whose profile is unchanged.
+    @ViewBuilder
+    func profileTabPickerStyle() -> some View {
+        #if os(iOS) && compiler(>=6.4)
+        if #available(iOS 27.0, *) {
+            pickerStyle(.tabs)
+        } else {
+            pickerStyle(.segmented)
+        }
+        #else
+        pickerStyle(.segmented)
+        #endif
     }
 }
 

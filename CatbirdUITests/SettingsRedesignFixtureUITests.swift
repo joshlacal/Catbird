@@ -186,6 +186,50 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       witnesses: [("feed retry", retry), ("unconfirmed feed control", remote)])
   }
 
+  /// The root keeps its scroll offset when search begins, and on iPhone the field sits in the
+  /// bottom toolbar, so nothing scrolls the Form back up. Results must start from the top.
+  func testSearchAfterScrollingShowsBestMatchWithoutScrolling() throws {
+    let app = try launch()
+    XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
+    try reveal(app.buttons["settings.category.advanced"].firstMatch, app)
+    _ = try enterSearch("Account & Security", app)
+    let accountResult = app.buttons["settings.result.accountSecurity"].firstMatch
+    XCTAssertTrue(accountResult.waitForExistence(timeout: 5), "The best match must be shown without scrolling")
+    assertHitGeometry(accountResult, app)
+    try capture("settings-44-search-after-scroll-best-match", app,
+      witnesses: [("best match", accountResult)])
+
+    // Scroll the results away from the top, then change the query.
+    try reveal(app.buttons["settings.result.account.signOut"].firstMatch, app)
+    let field = app.searchFields["Search settings"].firstMatch
+    field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Account & Security".count))
+    field.typeText("Moderation")
+    let moderationResult = app.buttons["settings.result.moderation"].firstMatch
+    XCTAssertTrue(moderationResult.waitForExistence(timeout: 5), "A changed query must show its best match")
+    assertHitGeometry(moderationResult, app)
+    try capture("settings-45-changed-query-best-match", app,
+      witnesses: [("best match", moderationResult)])
+  }
+
+  /// The Local Settings warning sits above the account header, so search scrolls back to it and
+  /// its Retry button stays on screen.
+  func testSearchAfterScrollingKeepsLocalSettingsWarningOnScreen() throws {
+    let app = try launch(extra: ["--settings-storage-unavailable"])
+    _ = try waitSample(app) { $0.persistenceState == "unavailable" }
+    XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
+    try reveal(app.buttons["settings.category.advanced"].firstMatch, app)
+    _ = try enterSearch("Account & Security", app)
+    XCTAssertTrue(app.buttons["settings.result.accountSecurity"].firstMatch.waitForExistence(timeout: 5))
+    let warning = app.staticTexts["SettingsPersistenceStatus"].firstMatch
+    let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
+    XCTAssertTrue(retry.waitForExistence(timeout: 5))
+    XCTAssertTrue(receivingViewport(app).insetBy(dx: -1, dy: -1).contains(warning.frame),
+      "The warning must start inside the viewport")
+    assertHitGeometry(retry, app)
+    try capture("settings-46-search-after-scroll-keeps-local-warning", app,
+      witnesses: [("local warning", warning), ("local retry", retry)])
+  }
+
   func testFullMaximumTextSizeChoicesUseActualCategoryAcrossRotation() throws {
     let app = try launch(screen: "textReadability", extra: ["--settings-large-text", "--settings-dark"])
     XCTAssertTrue(app.navigationBars["Text & Readability"].waitForExistence(timeout: 8))
@@ -293,19 +337,27 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       let viewport = receivingViewport(app)
       if element.exists && element.isHittable && viewport.insetBy(dx: -1, dy: -1).contains(element.frame) { return }
       guard attempt < 23 else { break }
-      // Move toward the control's actual position in momentum-free steps, so a
-      // fling cannot carry it past the viewport and away from a one-way search.
-      var moveContentUp = upward
-      if element.exists, !element.frame.isEmpty {
-        if element.frame.maxY > viewport.maxY { moveContentUp = true }
-        else if element.frame.minY < viewport.minY { moveContentUp = false }
-      }
       let origin = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
       let x = viewport.midX
+      if element.exists, !element.frame.isEmpty {
+        guard element.frame.height <= viewport.height else {
+          XCTFail("\(element.identifier) is \(element.frame.height) pt tall in a \(viewport.height) pt viewport")
+          throw FixtureError.controlNotReached
+        }
+        // Drag by the distance that centres the control. A fixed step can overshoot a
+        // short landscape viewport and leave the control alternating past either edge.
+        let shift = min(max(element.frame.midY - viewport.midY, -viewport.height * 0.8), viewport.height * 0.8)
+        origin.withOffset(CGVector(dx: x, dy: viewport.midY + shift / 2))
+          .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: viewport.midY - shift / 2)),
+                 withVelocity: .slow, thenHoldForDuration: 0.3)
+        continue
+      }
+      // Lazy rows are not in the tree until scrolled near. Move toward them in momentum-free
+      // steps, so a fling cannot carry the control past the viewport.
       let lower = viewport.minY + viewport.height * 0.7
       let upper = viewport.minY + viewport.height * 0.3
-      origin.withOffset(CGVector(dx: x, dy: moveContentUp ? lower : upper))
-        .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: moveContentUp ? upper : lower)),
+      origin.withOffset(CGVector(dx: x, dy: upward ? lower : upper))
+        .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: upward ? upper : lower)),
                withVelocity: .default, thenHoldForDuration: 0.2)
     }
     XCTFail("Expected a fully reachable native control: \(element.identifier)")

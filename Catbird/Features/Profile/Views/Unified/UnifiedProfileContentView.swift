@@ -41,7 +41,10 @@ struct UnifiedProfileContentView: View {
       PostListCollectionView(
         boxedPosts: currentBoxedPosts,
         headerView: AnyView(profileHeaderView),
-        emptyView: nil,
+        pinnedHeaderView: AnyView(profileTabPicker),
+        // Labeler info, More, and the loading and empty states. Each shows only while the
+        // tab has no rows, so it sits under the picker in the rows' place.
+        emptyView: AnyView(VStack(spacing: 0) { tabContent }),
         hasMore: currentHasMore,
         isLoadingMore: currentIsLoadingMore,
         footerState: currentFooterState,
@@ -53,6 +56,7 @@ struct UnifiedProfileContentView: View {
         },
         scrollsToTop: true,
         scrollPositionKey: currentScrollPositionKey,
+        scrollPositionScope: scrollPositionScope,
         scrollToTopRequestID: scrollToTopRequestID,
         appState: appState,
         accessibilityIdentifier: "profile.posts"
@@ -64,6 +68,11 @@ struct UnifiedProfileContentView: View {
       .ignoresSafeArea(edges: .top)
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     }
+    // Loads a tab when it is chosen. Not from the picker's own onChange: the picker lives in a
+    // collection view supplementary view, and a tab switch can remove that view for a moment.
+    .onChange(of: viewModel.selectedProfileTab) { _, tab in
+      if tab != .more { onTabChange(tab) }
+    }
     .entityContext(
       EntityIdentifier(
         for: ProfileEntity.self,
@@ -73,7 +82,12 @@ struct UnifiedProfileContentView: View {
   }
 
   private var currentScrollPositionKey: String {
-    "\(appState.userDID):\(profile.did.didString()):\(viewModel.selectedProfileTab.rawValue)"
+    "\(scrollPositionScope):\(viewModel.selectedProfileTab.rawValue)"
+  }
+
+  /// This account's view of this profile: its tabs share the pinned picker's position.
+  private var scrollPositionScope: String {
+    "\(appState.userDID):\(profile.did.didString())"
   }
 
   private var currentBoxedPosts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>] {
@@ -149,8 +163,6 @@ struct UnifiedProfileContentView: View {
 
   @ViewBuilder
   private var profileHeaderView: some View {
-    @Bindable var viewModel = viewModel
-
     VStack(spacing: 0) {
       ProfileBannerHeader(
         bannerURL: profile.banner.flatMap { URL(string: $0.uriString()) },
@@ -195,26 +207,32 @@ struct UnifiedProfileContentView: View {
         .frame(maxWidth: contentMaxWidth, alignment: .center)
         .frame(maxWidth: .infinity, alignment: .center)
       }
-
-      ProfileTabSelector(
-        path: $navigationPath,
-        selectedTab: $viewModel.selectedProfileTab,
-        onTabChange: onTabChange,
-        isLabeler: viewModel.isLabeler
-      )
-      .padding(.top, 12)
-      .padding(.horizontal, 16)
-      .frame(maxWidth: contentMaxWidth, alignment: .center)
-      .frame(maxWidth: .infinity, alignment: .center)
-
-      tabContentInHeader
     }
     .frame(maxWidth: .infinity, alignment: .center)
     .environment(headerGeometry)
   }
 
+  /// Under the profile information, and pinned below the navigation bar once scrolled up to it.
   @ViewBuilder
-  private var tabContentInHeader: some View {
+  private var profileTabPicker: some View {
+    @Bindable var viewModel = viewModel
+
+    // Tabs load from `iosBody`'s onChange, not from the picker.
+    ProfileTabSelector(
+      path: $navigationPath,
+      selectedTab: $viewModel.selectedProfileTab,
+      isLabeler: viewModel.isLabeler
+    )
+    .profileTabPickerTrackBacking(appState)
+    .padding(.top, 12)
+    .padding(.bottom, 8)
+    .padding(.horizontal, 16)
+    .frame(maxWidth: contentMaxWidth, alignment: .center)
+    .frame(maxWidth: .infinity, alignment: .center)
+  }
+
+  @ViewBuilder
+  private var tabContent: some View {
     switch viewModel.selectedProfileTab {
     case .labelerInfo:
       if let labelerDetails = viewModel.labelerDetails {
@@ -227,7 +245,7 @@ struct UnifiedProfileContentView: View {
           .padding()
       }
     case .more:
-      MoreView(profileDID: viewModel.profile?.did.didString() ?? viewModel.userDID, path: $navigationPath)
+      MoreView(viewModel: viewModel, path: $navigationPath)
         .frame(maxWidth: contentMaxWidth, alignment: .center)
         .frame(maxWidth: .infinity, alignment: .center)
     case .posts:
@@ -334,7 +352,11 @@ struct UnifiedProfileContentView: View {
         id: boxedPost.value.id,
         path: $navigationPath
       )
-      .frame(maxWidth: contentMaxWidth, alignment: .center)
+      // The widest the content gets, not `contentMaxWidth`: the list keeps a row as built until
+      // its post changes, and `contentMaxWidth` follows a GeometryReader that mid-rotation briefly
+      // measures a narrower screen. In a cell, which is never wider than that screen, this cap
+      // comes to the same width, and is right whenever the row was built.
+      .frame(maxWidth: UnifiedProfileView.maxResponsiveContentWidth, alignment: .center)
       .frame(maxWidth: .infinity, alignment: .center)
 
       Divider()
@@ -395,6 +417,27 @@ struct UnifiedProfileContentView: View {
   }
   #endif
 }
+
+#if os(iOS)
+private extension View {
+  /// The tab picker's track is translucent. Pinned, rows scroll behind it, and the soft scroll
+  /// edge blur fades out across it, so their text would read through its labels. This backs the
+  /// track (a capsule from iOS 26) with the list's own background, which it sits on at rest
+  /// anyway. Earlier systems put a bar material behind the whole pinned header instead.
+  @ViewBuilder
+  func profileTabPickerTrackBacking(_ appState: AppState) -> some View {
+    if #available(iOS 26.0, *) {
+      background {
+        Color.clear
+          .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+          .clipShape(Capsule())
+      }
+    } else {
+      self
+    }
+  }
+}
+#endif
 
 private struct ProfileBlockRelationshipView: View {
   let viewer: AppBskyActorDefs.ViewerState?
@@ -564,7 +607,7 @@ private struct ProfileCurrentTabView: View {
         navigationPath: $navigationPath
       )
     case .more:
-      MoreView(profileDID: viewModel.profile?.did.didString() ?? viewModel.userDID, path: $navigationPath)
+      MoreView(viewModel: viewModel, path: $navigationPath)
     default:
       EmptyView()
     }

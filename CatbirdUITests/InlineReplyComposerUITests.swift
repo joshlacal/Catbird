@@ -253,7 +253,7 @@ final class InlineReplyComposerUITests: XCTestCase {
     let window = app.windows.firstMatch.frame
     let bar = app.navigationBars["Reply"]
     let keyboard = app.keyboards.firstMatch
-    let add = app.buttons["Attachments and post settings"]
+    let add = app.buttons["Attachments and Post Settings"]
     let thread = app.buttons["composer-add-thread-post"]
     guard bar.exists, keyboard.exists, add.exists, thread.exists else { return nil }
     let chips = app.otherElements.matching(NSPredicate(format: "label == %@", "Language English"))

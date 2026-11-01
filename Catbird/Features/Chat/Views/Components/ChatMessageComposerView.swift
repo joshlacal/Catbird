@@ -12,6 +12,37 @@ struct ChatSharedPostPreview: Equatable {
   let text: String?
 }
 
+// MARK: - Editor Metrics
+
+@MainActor
+enum ChatComposerEditorMetrics {
+  /// TextEditor's own top and bottom text inset.
+  static let textInset: CGFloat = 8
+
+  #if os(iOS)
+  private static var minimumHeights: [DynamicTypeSize: CGFloat] = [:]
+  #endif
+
+  /// One body line as TextEditor's text view lays it out, plus its insets. TextKit's line
+  /// is taller than `UIFont.lineHeight`, so a minimum built from the font alone lets the
+  /// editor settle a point short of its text on some layouts.
+  static func minimumHeight(for dynamicTypeSize: DynamicTypeSize) -> CGFloat {
+    #if os(iOS)
+    if let height = minimumHeights[dynamicTypeSize] { return height }
+    let traits = UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize))
+    let sizingView = UITextView()
+    sizingView.font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traits)
+    sizingView.textContainerInset = UIEdgeInsets(top: textInset, left: 0, bottom: textInset, right: 0)
+    let lineHeight = sizingView.sizeThatFits(CGSize(width: 10_000, height: CGFloat.greatestFiniteMagnitude)).height
+    let height = max(36, ceil(lineHeight))
+    minimumHeights[dynamicTypeSize] = height
+    return height
+    #else
+    return 36
+    #endif
+  }
+}
+
 /// Message composer for Bluesky DM conversations: a growing text field, an
 /// optional staged post preview, and a send button.
 struct ChatMessageComposerView: View {
@@ -38,17 +69,10 @@ struct ChatMessageComposerView: View {
   @FocusState private var isTextFieldFocused: Bool
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-  private let editorTextInset: CGFloat = 8
+  private let editorTextInset = ChatComposerEditorMetrics.textInset
 
   private var minimumEditorHeight: CGFloat {
-    #if os(iOS)
-    let traits = UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize))
-    let font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traits)
-    // Keep a complete body-font line inside TextEditor at accessibility sizes.
-    return max(36, ceil(font.lineHeight + 2 * editorTextInset))
-    #else
-    return 36
-    #endif
+    ChatComposerEditorMetrics.minimumHeight(for: dynamicTypeSize)
   }
 
   private var composerCornerRadius: CGFloat {

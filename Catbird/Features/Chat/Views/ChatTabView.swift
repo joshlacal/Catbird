@@ -96,6 +96,7 @@ struct ChatTabView: View {
   @State private var coordinatorAccountDID: String?
   // Eager-fetch coalescing: prevents redundant batches when mount + scene-active fire close together
   @State private var lastEagerRefreshAt: Date?
+  @State private var isTabVisible = false
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
   @State private var mlsConversationPrompt: MLSConversationPrompt?
 
@@ -155,6 +156,7 @@ struct ChatTabView: View {
     }
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
+      publishOpenConversation()
       preferredCompactColumn = newValue != nil ? .detail : .sidebar
       if !shouldUseSplitView {
         columnVisibility = newValue != nil ? .detailOnly : .doubleColumn
@@ -457,7 +459,7 @@ struct ChatTabView: View {
           }
           .id("\(convoId):\(appState.userDID)")
         } else {
-          ConversationView(convoId: convoId)
+          ConversationView(convoId: convoId, isChatTabSelection: true)
             .id(convoId)
         }
       } else {
@@ -471,6 +473,11 @@ struct ChatTabView: View {
         appState: appState,
         selectedTab: $selectedTab
       )
+    }
+    // A destination pushed over the conversation takes the screen until it is popped. Observed
+    // on the detail stack rather than added to the body's chain (see the note at its alert).
+    .onChange(of: chatNavigationPath.wrappedValue.isEmpty) { _, _ in
+      publishOpenConversation()
     }
   }
 
@@ -558,6 +565,7 @@ struct ChatTabView: View {
   // MARK: - Event Handlers
 
   private func handleOnAppear() {
+    isTabVisible = true
     appState.chatManager.setChatTabVisible(true)
     resetUnifiedListForCurrentAccountIfNeeded()
 
@@ -607,11 +615,38 @@ struct ChatTabView: View {
         }
       }
     }
+    publishOpenConversation()
   }
 
   private func handleOnDisappear() {
+    isTabVisible = false
     appState.chatManager.setChatTabVisible(false)
+    publishOpenConversation()
     stopMLSPolling()
+  }
+
+  /// Tells ChatManager which Bluesky conversation this tab shows. Its polling follows this
+  /// selection rather than ConversationView's appearance, which a split view can report out
+  /// of order. MLS conversations poll through their own detail view.
+  private func publishOpenConversation() {
+    appState.chatManager.setChatTabConversation(
+      Self.shownConversation(
+        selection: selectedConvoId,
+        isTabVisible: isTabVisible,
+        hasPushedDestination: !chatNavigationPath.wrappedValue.isEmpty,
+        isMLS: { isMLSConversation($0) }
+      )
+    )
+  }
+
+  /// The selected Bluesky conversation while it is on screen: the tab is visible and no
+  /// destination (a profile, a post) is pushed over it. A pushed ConversationView polls as
+  /// its own view appears and disappears.
+  static func shownConversation(
+    selection: String?, isTabVisible: Bool, hasPushedDestination: Bool, isMLS: (String) -> Bool
+  ) -> String? {
+    guard isTabVisible, !hasPushedDestination, let selection, !isMLS(selection) else { return nil }
+    return selection
   }
 
   @MainActor

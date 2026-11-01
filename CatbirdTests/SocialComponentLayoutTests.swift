@@ -153,7 +153,9 @@ final class SocialComponentLayoutTests: XCTestCase {
     }
   }
 
-  func testProfileGermActionResizesAtLargeText() async throws {
+  /// The Germ action lives in the profile's More Options menu, which a hosted component capture
+  /// cannot open; `SocialActionsUITests.testGermMenuActionResizesAtLargeText` covers it there.
+  func testProfileHeaderResizesAtLargeText() async throws {
     try await withFixture { state, client in
       let model = ProfileViewModel(
         client: client, userDID: SocialActionsFixtureData.profile.did.didString(), currentUserDID: state.userDID
@@ -165,7 +167,7 @@ final class SocialComponentLayoutTests: XCTestCase {
       try await self.captureSizes(
         component: "profile-germ", state: state, content: profile,
         expectedText: { name in
-          name == "short" ? ["River"] : ["joined-may", "Germ DM", "Following", "Followers", "Posts"]
+          name == "short" ? ["River"] : ["joined-may", "Following", "Followers", "Posts"]
         }
       ) { _ in
         XCTAssertEqual(model.selectedProfileTab, .media)

@@ -568,6 +568,9 @@ final class ChatManager: StateInvalidationSubscriber {
     convoRevisions = [:]
     pausedPollingActiveConvoId = nil
     activeConversationId = nil
+    chatTabLoadTask?.cancel()
+    chatTabLoadTask = nil
+    chatTabConversationId = nil
     logger.debug("Chat data cleared")
   }
 
@@ -1909,7 +1912,11 @@ final class ChatManager: StateInvalidationSubscriber {
         return (nil, nil, .skipped)
       }
       logger.error("Error getting conversation log: \(error.localizedDescription)")
-      setErrorState(error)
+      // getLog only runs from background polls, which back off through `logPollPolicy`.
+      // Like a background conversation load, only a failure that needs sign-in is shown.
+      if UserFacingError.kind(of: error) == .signInRequired {
+        setErrorState(error)
+      }
       if case let Petrel.NetworkError.responseError(statusCode) = error {
         return (nil, nil, ChatLogPollPolicy.outcome(forStatusCode: statusCode))
       }
@@ -3008,6 +3015,56 @@ final class ChatManager: StateInvalidationSubscriber {
     logger.debug("Stopped conversations polling")
   }
   
+  // MARK: - Chat Tab Conversation
+
+  /// The conversation ChatTabView shows while its tab is on screen and nothing is pushed over
+  /// it. A compact split view hosts a programmatically opened detail twice and can send the
+  /// shown ConversationView a last onDisappear while it stays on screen, so the tab's
+  /// selection, not the view's appearance, keeps this conversation polling and owns its first
+  /// load.
+  private(set) var chatTabConversationId: String?
+  @ObservationIgnored private var chatTabLoadTask: Task<Void, Never>?
+
+  /// ChatTabView's selection while its tab is on screen, or `nil` when the tab leaves, the
+  /// selection clears or a destination is pushed over the conversation. The previous
+  /// conversation stops polling.
+  @MainActor
+  func setChatTabConversation(_ convoId: String?) {
+    guard chatTabConversationId != convoId else { return }
+    let previous = chatTabConversationId
+    chatTabConversationId = convoId
+    chatTabLoadTask?.cancel()
+    chatTabLoadTask = nil
+    if let previous { stopMessagePolling(for: previous) }
+    guard let convoId else { return }
+    startMessagePolling(for: convoId)
+    // Loaded here rather than only in the view's task, which the spurious onDisappear
+    // cancels; the view's own load then finds this one in flight.
+    if messageLoadStates[convoId] == nil || messageLoadStates[convoId] == .idle
+      || messageLoadStates[convoId] == .interrupted {
+      chatTabLoadTask = Task { @MainActor [weak self] in
+        await self?.loadMessages(convoId: convoId, refresh: true)
+      }
+    }
+  }
+
+  /// ConversationView's onAppear. `isChatTabSelection` marks the view ChatTabView shows for
+  /// its selection, at the root of its detail stack. While the tab shows a conversation,
+  /// another conversation's view appearing there is one the split view is moving out, so it
+  /// does not take over polling. A view pushed onto a navigation stack is on screen when it
+  /// appears, so it takes over whether the tab publishes the push before or after.
+  func conversationViewAppeared(_ convoId: String, isChatTabSelection: Bool) {
+    if isChatTabSelection, let chatTabConversationId, chatTabConversationId != convoId { return }
+    startMessagePolling(for: convoId)
+  }
+
+  /// ConversationView's onDisappear. A conversation ChatTabView still shows keeps polling,
+  /// since SwiftUI can send this while the view stays on screen; any other stops.
+  func conversationViewDisappeared(_ convoId: String) {
+    guard convoId != chatTabConversationId else { return }
+    stopMessagePolling(for: convoId)
+  }
+
   /// Starts polling for messages in a specific conversation
   func startMessagePolling(for convoId: String) {
     guard !pollingBarrier.isSuspended else { return }

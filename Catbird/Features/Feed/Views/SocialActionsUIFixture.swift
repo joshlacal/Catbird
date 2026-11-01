@@ -1,13 +1,15 @@
 #if DEBUG && os(iOS)
-import Petrel
+@testable import Petrel
 import SwiftData
 import SwiftUI
 
 /// Offline presentation entry point. No account bootstrap or authenticated
-/// transport is available; individual action destinations are injected below.
+/// transport is available; individual action destinations are injected below,
+/// and the profile screen's reads are served by `SocialFixtureProtocol`.
 struct SocialActionsUIFixture: View {
   @State private var appState: AppState?
   @State private var sceneContext: SceneNavigationContext?
+  @State private var failure: String?
   @State private var result = "No action selected"
   @State private var showingRecipients = false
   @State private var inspectingOwnLabels: Bool?
@@ -62,7 +64,7 @@ struct SocialActionsUIFixture: View {
             Button("Other account labels") { inspectingOwnLabels = false }
               .accessibilityIdentifier("fixtureOtherLabels")
             NavigationLink("Profile with Germ") {
-              SocialFixtureProfile(appState: appState)
+              SocialFixtureProfile(appState: appState, sceneContext: sceneContext)
             }
             .accessibilityIdentifier("fixtureGermProfile")
           }
@@ -122,13 +124,21 @@ struct SocialActionsUIFixture: View {
           .environment(appState)
           .environment(sceneContext)
         }
+      } else if let failure {
+        Text(failure)
       } else {
         ProgressView("Loading fixture")
       }
     }
     .dynamicTypeSize(ProcessInfo.processInfo.arguments.contains("--social-large-text") ? .accessibility3 : .large)
     .task {
-      let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
+      guard URLProtocol.registerClass(SocialFixtureProtocol.self) else {
+        failure = "The fixture transport could not be registered."
+        return
+      }
+      NetworkService.setNetworkTestProtocolClasses([SocialFixtureProtocol.self])
+      // 127.0.0.1 is the only host Petrel's URL policy accepts without DNS.
+      let client = await ATProtoClient(baseURL: URL(string: "https://127.0.0.1")!)
       let state = AppState(userDID: SocialActionsFixtureData.viewerDID, client: client)
       state.currentUserProfile = SocialActionsFixtureData.viewer
       AppStateManager.shared.setLifecycleForTesting(.authenticated(state))
@@ -155,39 +165,72 @@ struct SocialActionsUIFixture: View {
   }
 }
 
+/// The production profile screen for the fixture's Germ profile, loaded through
+/// `SocialFixtureProtocol`.
 private struct SocialFixtureProfile: View {
   let appState: AppState
+  let sceneContext: SceneNavigationContext
   @State private var path = NavigationPath()
-  @State private var editing = false
-  @State private var viewModel: ProfileViewModel
-
-  init(appState: AppState) {
-    self.appState = appState
-    _viewModel = State(initialValue: ProfileViewModel(
-      client: appState.atProtoClient!,
-      userDID: SocialActionsFixtureData.profile.did.didString(),
-      currentUserDID: appState.userDID
-    ))
-  }
+  @State private var selectedTab = 3
 
   var body: some View {
-    GeometryReader { geometry in
-      ScrollView {
-        ProfileHeader(
-          profile: SocialActionsFixtureData.profile,
-          viewModel: viewModel,
-          appState: appState,
-          isEditingProfile: $editing,
-          path: $path,
-          screenWidth: geometry.size.width,
-          hideAvatar: true
-        )
-        .padding(.top, 20)
-      }
-    }
+    UnifiedProfileView(
+      did: SocialActionsFixtureData.profile.did.didString(),
+      selectedTab: $selectedTab,
+      appState: appState,
+      path: $path
+    )
     .environment(appState)
-    .navigationTitle("Profile")
+    .environment(sceneContext)
   }
+}
+
+// MARK: - Transport
+
+/// Serves the profile screen's declared reads from fixture data. Every other
+/// request, and every write, fails locally without reaching a real service.
+private final class SocialFixtureProtocol: URLProtocol, @unchecked Sendable {
+  private static let responses: [String: Data] = [
+    "app.bsky.actor.getProfile": SocialActionsFixtureData.profileJSON,
+    "app.bsky.graph.getKnownFollowers": Data(
+      #"{"subject":{"did":"did:plc:socialfixtureauthor","handle":"river.test"},"followers":[]}"#.utf8)
+  ]
+
+  /// Enough posts and replies to scroll the profile past its tab picker; no media posts,
+  /// so the Media tab is a short one.
+  private static let authorFeeds: [String: Data] = [
+    "posts_and_author_threads": SocialActionsFixtureData.authorFeed(SocialActionsFixtureData.profilePosts),
+    "posts_with_replies": SocialActionsFixtureData.authorFeed(SocialActionsFixtureData.profileReplies),
+    "posts_with_media": SocialActionsFixtureData.authorFeed([])
+  ].compactMapValues { $0 }
+
+  private static func body(for url: URL) -> Data? {
+    let method = String(url.path.dropFirst("/xrpc/".count))
+    guard method == "app.bsky.feed.getAuthorFeed" else { return responses[method] }
+    let filter = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+      .queryItems?.first { $0.name == "filter" }?.value
+    return authorFeeds[filter ?? "posts_with_replies"]
+  }
+
+  override class func canInit(with request: URLRequest) -> Bool {
+    ["http", "https"].contains(request.url?.scheme?.lowercased() ?? "")
+  }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    guard let url = request.url, url.scheme == "https", url.host == "127.0.0.1",
+          request.httpMethod == "GET", url.path.hasPrefix("/xrpc/"),
+          let body = Self.body(for: url) else {
+      client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
+      return
+    }
+    let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+      headerFields: ["Content-Type": "application/json"])!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: body)
+    client?.urlProtocolDidFinishLoading(self)
+  }
+  override func stopLoading() {}
 }
 
 enum SocialActionsFixtureData {
@@ -200,7 +243,8 @@ enum SocialActionsFixtureData {
     )
   }
   static let viewer = try! JSONDecoder().decode(AppBskyActorDefs.ProfileViewBasic.self, from: Data(#"{"did":"did:plc:socialfixtureviewer","handle":"viewer.test","displayName":"Fixture Viewer"}"#.utf8))
-  static let profile = try! JSONDecoder().decode(AppBskyActorDefs.ProfileViewDetailed.self, from: Data(#"{"did":"did:plc:socialfixtureauthor","handle":"river.test","displayName":"River","description":"A profile with a declared external messaging action.","followersCount":12,"followsCount":24,"postsCount":50,"labels":[{"src":"did:plc:ar7c4by46qjdydhdevvrndac","uri":"did:plc:socialfixtureauthor","val":"joined-may","cts":"2026-05-28T00:00:00Z"}],"associated":{"germ":{"showButtonTo":"everyone","messageMeUrl":"https://germ.example/message"}}}"#.utf8))
+  static let profileJSON = Data(#"{"did":"did:plc:socialfixtureauthor","handle":"river.test","displayName":"River","description":"A profile with a declared external messaging action.","followersCount":12,"followsCount":24,"postsCount":50,"labels":[{"src":"did:plc:ar7c4by46qjdydhdevvrndac","uri":"did:plc:socialfixtureauthor","val":"joined-may","cts":"2026-05-28T00:00:00Z"}],"associated":{"germ":{"showButtonTo":"everyone","messageMeUrl":"https://germ.example/message"}}}"#.utf8)
+  static let profile = try! JSONDecoder().decode(AppBskyActorDefs.ProfileViewDetailed.self, from: profileJSON)
 
   static func labels(owned: Bool) -> [ComAtprotoLabelDefs.Label] {
     [ComAtprotoLabelDefs.Label(
@@ -244,5 +288,70 @@ enum SocialActionsFixtureData {
       labels: nil, threadgate: nil, debug: nil
     )
   }()
+
+  // MARK: Profile feeds
+
+  private static let sentences = [
+    "Fog lifted off the river just after nine.",
+    "Trying a new bread recipe. Third attempt, and the crust is finally right.",
+    "Two herons on the far bank, standing perfectly still for the better part of an hour.",
+    "Short walk today.",
+    "Reading on the porch until the light goes. Recommendations welcome for something long and slow."
+  ]
+
+  /// The Posts tab: 30 of River's own posts, newest first.
+  static let profilePosts: [AppBskyFeedDefs.FeedViewPost] = (try? (0..<30).map { index in
+    AppBskyFeedDefs.FeedViewPost(post: try makePost(
+      rkey: "3fixturepost\(index)", text: "\(sentences[index % sentences.count]) (\(index + 1))",
+      author: post.author, age: index
+    ))
+  }) ?? []
+
+  /// The Replies tab: 12 of River's replies to Brook.
+  static let profileReplies: [AppBskyFeedDefs.FeedViewPost] = (try? makeReplies()) ?? []
+
+  /// A getAuthorFeed response body with no further pages.
+  static func authorFeed(_ feed: [AppBskyFeedDefs.FeedViewPost]) -> Data? {
+    try? JSONEncoder().encode(AppBskyFeedGetAuthorFeed.Output(cursor: nil, feed: feed))
+  }
+
+  private static func makeReplies() throws -> [AppBskyFeedDefs.FeedViewPost] {
+    let friend = try JSONDecoder().decode(AppBskyActorDefs.ProfileViewBasic.self, from: Data(
+      #"{"did":"did:plc:socialfixturefriend","handle":"brook.test","displayName":"Brook"}"#.utf8
+    ))
+    return try (0..<12).map { index in
+      let parent = try makePost(
+        rkey: "3fixtureparent\(index)", text: "What are you reading this week? (\(index + 1))",
+        author: friend, age: index + 1
+      )
+      return AppBskyFeedDefs.FeedViewPost(
+        post: try makePost(
+          rkey: "3fixturereply\(index)", text: "\(sentences[(index + 2) % sentences.count]) (reply \(index + 1))",
+          author: post.author, age: index
+        ),
+        reply: .init(root: .appBskyFeedDefsPostView(parent), parent: .appBskyFeedDefsPostView(parent))
+      )
+    }
+  }
+
+  /// A text post `age` hours older than the fixture's reference date.
+  private static func makePost(
+    rkey: String, text: String, author: AppBskyActorDefs.ProfileViewBasic, age: Int
+  ) throws -> AppBskyFeedDefs.PostView {
+    let date = ATProtocolDate(date: Date(timeIntervalSince1970: 1_780_000_000 - Double(age) * 3_600))
+    return AppBskyFeedDefs.PostView(
+      uri: try ATProtocolURI(uriString: "at://\(author.did.didString())/app.bsky.feed.post/\(rkey)"),
+      cid: CID.fromDAGCBOR(Data(rkey.utf8)),
+      author: author,
+      record: .knownType(AppBskyFeedPost(
+        text: text,
+        entities: nil, facets: nil, reply: nil, embed: nil, langs: nil,
+        labels: nil, tags: nil, createdAt: date
+      )),
+      embed: nil, bookmarkCount: nil, replyCount: 0, repostCount: 0,
+      likeCount: 0, quoteCount: nil, indexedAt: date, viewer: nil,
+      labels: nil, threadgate: nil, debug: nil
+    )
+  }
 }
 #endif

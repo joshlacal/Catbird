@@ -15,8 +15,10 @@ final class SettingsSupportJourneyTests: XCTestCase {
     let app = launch(screen: "root", extra: ["--settings-appearance-custom"])
     XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
     capture(app, "Settings grouped by intent")
-    let appearance = app.buttons["Appearance"].firstMatch
+    // Home rows read "<title>, <summary>"; the category identifier names the row exactly.
+    let appearance = app.buttons["settings.category.appearance"].firstMatch
     reveal(appearance, in: app)
+    XCTAssertTrue(appearance.label.hasPrefix("Appearance"))
     appearance.tap()
     XCTAssertTrue(app.navigationBars["Appearance"].waitForExistence(timeout: 5))
     capture(app, "Appearance controls")
@@ -44,12 +46,14 @@ final class SettingsSupportJourneyTests: XCTestCase {
   }
 
   func testAccessibilityLargeTextAndLandscape() {
-    let app = launch(screen: "accessibility", extra: ["--settings-large-text", "--settings-dark"])
-    XCTAssertTrue(app.navigationBars["Accessibility"].waitForExistence(timeout: 10))
-    capture(app, "Accessibility large text dark")
-    let dynamicType = app.switches["Dynamic Type"].firstMatch
+    let app = launch(screen: "textReadability", extra: ["--settings-large-text", "--settings-dark"])
+    XCTAssertTrue(app.navigationBars["Text & Readability"].waitForExistence(timeout: 10))
+    capture(app, "Text and Readability large text dark")
+    let dynamicType = app.switches["text.dynamicType"].firstMatch
     reveal(dynamicType, in: app)
-    let maximum = app.buttons["MaximumTextSizePicker"].firstMatch
+    XCTAssertEqual(dynamicType.label, "Use System Text Size")
+    XCTAssertEqual(dynamicType.value as? String, "1")
+    let maximum = app.buttons["text.maxSize"].firstMatch
     reveal(maximum, in: app)
     XCTAssertEqual(maximum.value as? String, "Accessibility Extra Extra Extra Large")
     capture(app, "Accessibility Dynamic Type large text")
@@ -65,7 +69,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
     let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
       let window = app.windows.firstMatch.frame
       let form = app.collectionViews.firstMatch.frame
-      let navigation = app.navigationBars["Accessibility"].frame
+      let navigation = app.navigationBars["Text & Readability"].frame
       let frames = [window, form, navigation]
       let laidOut = window.width > window.height && form.width > form.height
         && frames.dropFirst().allSatisfy {
@@ -77,13 +81,13 @@ final class SettingsSupportJourneyTests: XCTestCase {
       return stableReadings >= 2
     }, object: app)
     XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 10), .completed)
-    let geometry = XCTAttachment(string: "window=\(app.windows.firstMatch.frame); form=\(app.collectionViews.firstMatch.frame); navigation=\(app.navigationBars["Accessibility"].frame)")
-    geometry.name = "Accessibility receiving geometry after settled rotation"
+    let geometry = XCTAttachment(string: "window=\(app.windows.firstMatch.frame); form=\(app.collectionViews.firstMatch.frame); navigation=\(app.navigationBars["Text & Readability"].frame)")
+    geometry.name = "Text and Readability receiving geometry after settled rotation"
     geometry.lifetime = .keepAlways
     add(geometry)
-    capture(app, "Accessibility large text landscape")
+    capture(app, "Text and Readability large text landscape")
     let fullScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-    fullScreen.name = "Accessibility-large-text-landscape-full-screen-comparison"
+    fullScreen.name = "Text-and-Readability-large-text-landscape-full-screen-comparison"
     fullScreen.lifetime = .keepAlways
     add(fullScreen)
   }
@@ -92,9 +96,23 @@ final class SettingsSupportJourneyTests: XCTestCase {
     let app = launch(screen: "content", extra: ["--settings-server-unavailable"])
     XCTAssertTrue(app.navigationBars["Content & Media"].waitForExistence(timeout: 10))
     capture(app, "Content and media local controls")
-    let retry = app.buttons["Retry Loading Preferences"].firstMatch
+    let feeds = row(beginningWith: "Feeds & Discovery", in: app)
+    reveal(feeds, in: app)
+    feeds.tap()
+    XCTAssertTrue(app.navigationBars["Feeds & Discovery"].waitForExistence(timeout: 5))
+    let filtering = row(beginningWith: "Feed Filtering", in: app)
+    reveal(filtering, in: app)
+    filtering.tap()
+    XCTAssertTrue(app.navigationBars["Feed Filtering"].waitForExistence(timeout: 5))
+    // The server-preferences retry, not the local persistence retry that shares its title.
+    let retry = app.buttons.matching(NSPredicate(
+      format: "label == %@ AND identifier != %@", "Retry Loading", "SettingsPersistenceRetry"
+    )).firstMatch
     reveal(retry, in: app)
     XCTAssertTrue(retry.isEnabled)
+    XCTAssertTrue(app.staticTexts["Load your Bluesky preferences to change which posts appear."].exists)
+    let replies = app.switches["feed.replies"].firstMatch
+    XCTAssertTrue(!replies.exists || !replies.isEnabled, "Unloaded server values must not be editable")
     capture(app, "Content server preferences unavailable")
     // This unauthenticated fixture cannot recover a server request. This journey
     // verifies error/retry presentation; it does not claim a successful remote retry.
@@ -126,20 +144,30 @@ final class SettingsSupportJourneyTests: XCTestCase {
   }
 
   func testRemovedControlsAreAbsentThroughoutForms() {
-    for screen in ["accessibility", "content", "about"] {
+    for screen in ["accessibility", "textReadability", "content", "about"] {
       let app = launch(screen: screen)
-      let title = ["accessibility": "Accessibility", "content": "Content & Media", "about": "About & Support"][screen]!
+      let title = [
+        "accessibility": "Accessibility", "textReadability": "Text & Readability",
+        "content": "Content & Media", "about": "About & Support"
+      ][screen]!
       XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
+      // The last element of each form.
       let endMarker = [
-        "accessibility": "Adult content and label filtering are managed in Moderation. Video autoplay is managed in Content & Media.",
-        "content": "External Media Preferences",
-        "about": "Version"
+        "accessibility": app.switches["accessibility.haptics"],
+        "textReadability": app.staticTexts[
+          "Reading time estimates appear on posts with at least 100 words. Link appearance follows this account’s accent color."
+        ],
+        "content": row(beginningWith: "Languages", in: app),
+        // LabeledContent combines the title and the version into one element.
+        "about": app.descendants(matching: .any).matching(NSPredicate(
+          format: "label == %@ OR label BEGINSWITH %@", "Version", "Version,"
+        )).firstMatch
       ][screen]!
       var reachedFinalSection = false
       // Native Form rows are lazy. Check each viewport while traversing the complete form,
       // instead of treating a missing offscreen accessibility node as evidence of removal.
       for _ in 0..<16 {
-        let marker = app.staticTexts[endMarker].firstMatch
+        let marker = endMarker.firstMatch
         reachedFinalSection = reachedFinalSection || (marker.exists && marker.isHittable)
         XCTAssertFalse(app.sliders["Long Press Duration"].exists)
         XCTAssertFalse(app.switches["Shake to Undo"].exists)
@@ -185,7 +213,12 @@ final class SettingsSupportJourneyTests: XCTestCase {
   func testUnavailableLocalSettingsKeepsSupportNavigation() {
     let app = launch(screen: "root", extra: ["--settings-storage-unavailable"])
     XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
-    let about = app.buttons["About & Support"].firstMatch
+    let helpAbout = app.buttons["settings.category.helpAbout"].firstMatch
+    reveal(helpAbout, in: app)
+    XCTAssertTrue(helpAbout.isEnabled)
+    helpAbout.tap()
+    XCTAssertTrue(app.navigationBars["Help & About"].waitForExistence(timeout: 5))
+    let about = row(beginningWith: "About & Support", in: app)
     reveal(about, in: app)
     XCTAssertTrue(about.isEnabled)
     about.tap()
@@ -232,6 +265,11 @@ final class SettingsSupportJourneyTests: XCTestCase {
     ]
     app.launch()
     return app
+  }
+
+  /// A navigation row, whose label is its title followed by its summary.
+  private func row(beginningWith title: String, in app: XCUIApplication) -> XCUIElement {
+    app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
   }
 
   private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
@@ -331,7 +369,7 @@ private extension SettingsSupportJourneyTests {
     for attempt in 0..<8 {
       let form = app.collectionViews.firstMatch
       var viewport = app.windows.firstMatch.frame.intersection(form.frame)
-      let top = max(viewport.minY, app.navigationBars["Accessibility"].frame.maxY)
+      let top = max(viewport.minY, app.navigationBars["Text & Readability"].frame.maxY)
       viewport = CGRect(x: viewport.minX, y: top, width: viewport.width, height: viewport.maxY - top)
       if picker.exists && picker.isHittable && fullyContains(picker.frame, in: viewport) { return }
       if attempt < 7 {

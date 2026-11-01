@@ -88,6 +88,53 @@ final class MessagesNavigationUITests: XCTestCase {
     assertConversationList()
   }
 
+  /// Regular width shows the list beside the conversation (landscape; the automatic portrait
+  /// split view collapses the list). The selected conversation stays active while the list
+  /// stays on screen, moves with the selection, stops when the tab is left, and a link from
+  /// another tab activates its conversation.
+  func testRegularWidthSplitViewKeepsSelectedConversationActive() throws {
+    XCUIDevice.shared.orientation = .landscapeLeft
+    defer { XCUIDevice.shared.orientation = .portrait }
+    launch()
+    try XCTSkipUnless(app.windows.firstMatch.horizontalSizeClass == .regular,
+      "The side-by-side split view needs a regular-width window")
+    app.staticTexts["Local Chat Partner"].firstMatch.tap()
+    waitForState { $0["activeConversation"] as? String == self.conversationID }
+    XCTAssertTrue(app.staticTexts["No Messages Yet"].firstMatch.waitForExistence(timeout: 10))
+    let otherRow = app.staticTexts["Another Local Chat"].firstMatch
+    XCTAssertTrue(otherRow.isHittable, "The list stays beside the conversation")
+    capture("12-regular-width-selected-conversation")
+
+    otherRow.tap()
+    waitForState { $0["activeConversation"] as? String == "messages-navigation-other" }
+
+    tapTab("home")
+    waitForState { $0["selectedTab"] as? Int == 0 && $0["activeConversation"] as? String == "" }
+    tapTab("messages")
+    waitForState { $0["activeConversation"] as? String == "messages-navigation-other" }
+
+    tapTab("home")
+    waitForState { $0["selectedTab"] as? Int == 0 && $0["activeConversation"] as? String == "" }
+    app.buttons["messages-navigation.conversation-link"].tap()
+    waitForState {
+      $0["selectedTab"] as? Int == 4 && $0["activeConversation"] as? String == self.conversationID
+        && $0["pendingConversation"] as? String == ""
+    }
+    capture("13-regular-width-link-from-other-tab")
+  }
+
+  /// A destination pushed over the open conversation takes the screen, so the conversation is
+  /// not active (its banners show, its messages count as unread) while it is covered.
+  /// ChatTabConversationTests cover popping back to it.
+  func testDestinationPushedOverConversationDeactivatesIt() throws {
+    launch()
+    openConversationFromList()
+    app.buttons["messages-navigation.nested-detail"].tap()
+    XCTAssertTrue(app.navigationBars["#messages-route-fixture"].waitForExistence(timeout: 10))
+    waitForState { $0["chatDepth"] as? Int == 1 && $0["activeConversation"] as? String == "" }
+    capture("14-destination-pushed-over-conversation")
+  }
+
   func testColdLaunchDoesNotRestorePreviouslySelectedConversation() throws {
     launch()
     openConversationFromList()
@@ -125,11 +172,12 @@ final class MessagesNavigationUITests: XCTestCase {
     XCTAssertTrue(retry.waitForExistence(timeout: 10))
     let readsBeforeRecovery = try XCTUnwrap(state()["messageReads"] as? Int)
     retry.tap()
-    // Text-only bubbles expose one VoiceOver label containing sender, text and
-    // localized time. Match its fixed prefix while leaving the time variable.
-    let recovered = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
-      "Local Chat Partner, Recovered local message after retry., ")).firstMatch
+    // Text-only bubbles expose one VoiceOver element, whatever its element type, labelled
+    // with sender, text and localized time. Match its fixed prefix, leaving the time variable.
+    let recovered = app.descendants(matching: .any)["chat.message.recovered-message"]
     XCTAssertTrue(recovered.waitForExistence(timeout: 15), "The production retry must render the recovered response")
+    XCTAssertTrue(recovered.label.hasPrefix("Local Chat Partner, Recovered local message after retry., "),
+      "Unexpected VoiceOver label: \(recovered.label)")
     XCTAssertTrue(recovered.isHittable, "The recovered message must be visible in the transcript")
     waitForState { ($0["messageReads"] as? Int ?? 0) > readsBeforeRecovery }
     XCTAssertFalse(failure.exists)
@@ -189,8 +237,10 @@ final class MessagesNavigationUITests: XCTestCase {
 
   private func tapTab(_ name: String) {
     let identified = app.buttons["tab_\(name)"].firstMatch
+    // A regular-width window shows the tabs as sidebar rows.
+    let sidebarRow = app.cells["tab_\(name)"].firstMatch
     let named = app.tabBars.buttons[name.capitalized].firstMatch
-    let tab = identified.exists ? identified : named
+    let tab = identified.exists ? identified : sidebarRow.exists ? sidebarRow : named
     XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected native \(name) tab")
     XCTAssertTrue(tab.isHittable)
     tab.tap()

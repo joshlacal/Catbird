@@ -2,7 +2,9 @@
 //  RepostGhostPhysicalUITests.swift
 //  CatbirdUITests
 //
-//  Focused manual-evidence UI tests for the iOS 27 repost/notification ghost.
+//  Focused evidence UI tests for the iOS 27 repost/notification ghost. They run the
+//  production tab container on the local tab fixture: a Home timeline with repost buttons
+//  and a notification that another account reposted the viewer's post.
 //
 
 import XCTest
@@ -13,6 +15,7 @@ final class RepostGhostPhysicalUITests: XCTestCase {
   override func setUpWithError() throws {
     continueAfterFailure = false
     app = XCUIApplication()
+    app.launchArguments = ["--search-tab-reselection-ui-fixture", "--repost-notification-fixture"]
   }
 
   override func tearDownWithError() throws {

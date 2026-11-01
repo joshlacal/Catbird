@@ -45,51 +45,64 @@ struct SettingsView: View {
     }
 
     private var home: some View {
-        Form {
-            SettingsPersistenceStatusSection(settings: appState.appSettings)
-            Section { accountHeader }
-            if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                ForEach(SettingsCatalog.homeGroups, id: \.0) { group in
-                    Section(group.0) {
-                        ForEach(group.1, id: \.self) { screen in
-                            SettingsLink(screen: screen, summary: summary(for: screen), systemImage: symbol(for: screen), family: family(for: screen))
-                                .accessibilityIdentifier("settings.category." + screen.rawValue)
+        ScrollViewReader { proxy in
+            Form {
+                SettingsPersistenceStatusSection(settings: appState.appSettings)
+                Section { accountHeader.id(HomeScrollAnchor.accountHeader) }
+                if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ForEach(SettingsCatalog.homeGroups, id: \.0) { group in
+                        Section(group.0) {
+                            ForEach(group.1, id: \.self) { screen in
+                                SettingsLink(screen: screen, summary: summary(for: screen), systemImage: symbol(for: screen), family: family(for: screen))
+                                    .accessibilityIdentifier("settings.category." + screen.rawValue)
+                            }
+                        }
+                    }
+                    // Diagnostics only covers encrypted chat, so Release builds without these features show no section.
+                    if CatbirdFeatures.repositoryTools || CatbirdFeatures.mlsChat {
+                    Section("Encrypted Chat & Data") {
+                        if CatbirdFeatures.repositoryTools {
+                            NavigationLink(destination: DataBackupSettingsView()) {
+                                SettingsNavigationRow(title: "Data & Backup", systemImage: "externaldrive.fill", family: .advanced)
+                            }
+                        }
+                        if CatbirdFeatures.mlsChat, #available(iOS 18.0, macOS 13.0, *) {
+                            NavigationLink(destination: DeviceManagementView()) {
+                                SettingsNavigationRow(title: "Devices", systemImage: "ipad.landscape.and.iphone", family: .account)
+                            }
+                        }
+                        if CatbirdFeatures.mlsChat {
+                            NavigationLink(destination: DiagnosticsSettingsView()) {
+                                SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope", family: .advanced)
+                            }
+                        }
+                    }
+                    }
+                } else {
+                    Section("Search Results") {
+                        let results = SettingsCatalog.search(searchQuery).filter { $0.target.control?.rawValue != "account.appLock" || AppStateManager.shared.authentication.biometricType != .none }
+                        if results.isEmpty {
+                            Text("No settings found. Try a setting name, such as autoplay, muted words, or text size.")
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(results) { entry in
+                            NavigationLink(value: entry.target) {
+                                SettingsNavigationRow(title: entry.title, summary: resultSummary(entry), systemImage: symbol(for: entry.target.screen), family: family(for: entry.target.screen))
+                            }
+                            .accessibilityIdentifier("settings.result." + (entry.target.control?.rawValue ?? entry.target.screen.rawValue))
                         }
                     }
                 }
-                // Diagnostics only covers encrypted chat, so Release builds without these features show no section.
-                if CatbirdFeatures.repositoryTools || CatbirdFeatures.mlsChat {
-                Section("Encrypted Chat & Data") {
-                    if CatbirdFeatures.repositoryTools {
-                        NavigationLink(destination: DataBackupSettingsView()) {
-                            SettingsNavigationRow(title: "Data & Backup", systemImage: "externaldrive.fill", family: .advanced)
-                        }
-                    }
-                    if CatbirdFeatures.mlsChat, #available(iOS 18.0, macOS 13.0, *) {
-                        NavigationLink(destination: DeviceManagementView()) {
-                            SettingsNavigationRow(title: "Devices", systemImage: "ipad.landscape.and.iphone", family: .account)
-                        }
-                    }
-                    if CatbirdFeatures.mlsChat {
-                        NavigationLink(destination: DiagnosticsSettingsView()) {
-                            SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope", family: .advanced)
-                        }
-                    }
-                }
-                }
-            } else {
-                Section("Search Results") {
-                    let results = SettingsCatalog.search(searchQuery).filter { $0.target.control?.rawValue != "account.appLock" || AppStateManager.shared.authentication.biometricType != .none }
-                    if results.isEmpty {
-                        Text("No settings found. Try a setting name, such as autoplay, muted words, or text size.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(results) { entry in
-                        NavigationLink(value: entry.target) {
-                            SettingsNavigationRow(title: entry.title, summary: resultSummary(entry), systemImage: symbol(for: entry.target.screen), family: family(for: entry.target.screen))
-                        }
-                        .accessibilityIdentifier("settings.result." + (entry.target.control?.rawValue ?? entry.target.screen.rawValue))
-                    }
+            }
+            // Search keeps the Form's offset, and on iPhone the field sits in the bottom
+            // toolbar, so results shown after scrolling would start above the top edge.
+            .onChange(of: searchQuery) { _, query in
+                guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                // The Local Settings warning, when it shows, sits above the account header.
+                if SettingsPersistenceStatusSection.isShown(for: appState.appSettings) {
+                    proxy.scrollTo(SettingsPersistenceStatusSection.firstRowID, anchor: .top)
+                } else {
+                    proxy.scrollTo(HomeScrollAnchor.accountHeader, anchor: .top)
                 }
             }
         }
@@ -128,6 +141,10 @@ struct SettingsView: View {
             profileError = nil
             await loadProfile(for: appState.userDID)
         }
+    }
+
+    private enum HomeScrollAnchor: Hashable {
+        case accountHeader
     }
 
     private var appNavigationDepth: Int {
