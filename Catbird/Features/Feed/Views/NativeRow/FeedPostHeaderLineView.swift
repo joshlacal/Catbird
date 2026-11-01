@@ -66,18 +66,24 @@ final class FeedPostHeaderLineView: UIView {
     timeAccessibilityLabel: String, verification: VerificationBadgeKind?, typography: FeedRowTypography,
     metadataColor: UIColor, originX: CGFloat, hideVerificationBadges: Bool
   ) {
-    func local(_ frame: CGRect) -> CGRect { frame.offsetBy(dx: -originX, dy: 0) }
+    func local(_ frame: CGRect, _ line: AppLineHeightPlacement?) -> CGRect {
+      let frame = frame.offsetBy(dx: -originX, dy: 0)
+      return line?.labelFrame(textFrame: frame) ?? frame
+    }
 
     nameLabel.attributedText = NSAttributedString(
       string: displayName,
-      attributes: [.font: typography.name, .kern: CGFloat(0), .foregroundColor: UIColor.label])
-    nameLabel.frame = local(layout.nameFrame)
+      attributes: Self.attributes(
+        font: typography.name, kerning: 0, color: .label, line: typography.nameLine, lineBreakMode: .byTruncatingTail))
+    nameLabel.frame = local(layout.nameFrame, typography.nameLine)
 
     if let handleFrame = layout.handleFrame {
       handleLabel.attributedText = NSAttributedString(
         string: handle,
-        attributes: [.font: typography.metadata, .kern: typography.kerning, .foregroundColor: metadataColor])
-      handleLabel.frame = local(handleFrame)
+        attributes: Self.attributes(
+          font: typography.metadata, kerning: typography.kerning, color: metadataColor, line: typography.metadataLine,
+          lineBreakMode: .byTruncatingTail))
+      handleLabel.frame = local(handleFrame, typography.metadataLine)
       handleLabel.isHidden = false
     } else {
       handleLabel.isHidden = true
@@ -85,9 +91,11 @@ final class FeedPostHeaderLineView: UIView {
 
     timeLabel.attributedText = NSAttributedString(
       string: "·  " + timeText,
-      attributes: [.font: typography.metadata, .kern: CGFloat(0), .foregroundColor: metadataColor])
+      attributes: Self.attributes(
+        font: typography.metadata, kerning: 0, color: metadataColor, line: typography.metadataLine,
+        lineBreakMode: .byClipping))
     timeLabel.accessibilityLabel = timeAccessibilityLabel
-    timeLabel.frame = local(layout.timeFrame)
+    timeLabel.frame = local(layout.timeFrame, typography.metadataLine)
 
     if let badgeFrame = layout.badgeFrame, let verification, !hideVerificationBadges {
       if badgeKind != verification {
@@ -99,11 +107,26 @@ final class FeedPostHeaderLineView: UIView {
         badgeSymbolSide = badgeFrame.height
         badgeView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: badgeFrame.height)
       }
-      badgeView.frame = local(badgeFrame)
+      badgeView.frame = local(badgeFrame, nil)
       badgeView.isHidden = false
     } else {
       badgeView.isHidden = true
     }
+  }
+
+  /// A header label's attributes. At "Tight" (`line`) they carry the constant line height in a
+  /// paragraph style, which also sets the label's line break mode, so it carries the label's own.
+  private static func attributes(
+    font: UIFont, kerning: CGFloat, color: UIColor, line: AppLineHeightPlacement?, lineBreakMode: NSLineBreakMode
+  ) -> [NSAttributedString.Key: Any] {
+    var attributes: [NSAttributedString.Key: Any] = [.font: font, .kern: kerning, .foregroundColor: color]
+    if let line {
+      let paragraph = NSMutableParagraphStyle()
+      line.apply(to: paragraph)
+      paragraph.lineBreakMode = lineBreakMode
+      attributes[.paragraphStyle] = paragraph
+    }
+    return attributes
   }
 }
 #endif

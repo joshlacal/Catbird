@@ -118,7 +118,7 @@ struct PostHeaderView: View {
                         handleText(color: metaColor)
                             .padding(.leading, spacing)
                     }
-                    .clipped()
+                    .clipShape(HorizontalClipShape())
                     .layoutPriority(0)
                 } else {
                     handleText(color: metaColor)
@@ -134,6 +134,8 @@ struct PostHeaderView: View {
                                // Separator and Time
             HStack(alignment: .top, spacing: spacing) {
                 Text("·")
+                    // At Tight the separator's line takes the constant line height like the time's.
+                    .appLineSpacing()
                     .foregroundStyle(metaColor)
                     .accessibilityHidden(true)
                     .lineLimit(1)
@@ -195,5 +197,15 @@ private struct HandleFitLayout: Layout {
 
     func updateCache(_ cache: inout CGSize, subviews: Subviews) {
         cache = makeCache(subviews: subviews)
+    }
+}
+
+/// Clips to the frame's width only. A handle squeezed to nothing disappears, while ink above and
+/// below its line stays: at Tight (`AppLineHeightModifier`) the descenders of "g", "j", "p", "y"
+/// and "@" draw below the line's frame.
+private struct HorizontalClipShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        // A line's ink reaches at most one line height past its frame.
+        Path(rect.insetBy(dx: 0, dy: -rect.height))
     }
 }

@@ -67,7 +67,7 @@ final class TrendingDisclosureButton: UIControl {
       title.origin.x = bounds.width - title.maxX
       chevron.origin.x = bounds.width - chevron.maxX
     }
-    titleLabel.frame = title
+    titleLabel.frame = TrendingInterstitialText.labelFrame(title, for: titleLabel.attributedText)
     glyphView.frame = chevron
   }
 }

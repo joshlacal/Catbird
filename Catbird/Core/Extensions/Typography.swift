@@ -334,6 +334,7 @@ struct FontManagerCustomFontModifier: ViewModifier {
         content
             .font(createFont())
             .lineSpacing(fontManager.getLineSpacing(for: effectiveSize))
+            .modifier(AppLineHeightModifier(factor: fontManager.lineHeightFactor))
     }
     
     private var effectiveSize: CGFloat {

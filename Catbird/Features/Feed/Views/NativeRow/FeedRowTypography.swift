@@ -10,6 +10,11 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
   let name: UIFont
   let metadata: UIFont
   let bodyLineSpacing: CGFloat
+  /// Where the body, name and metadata (handle and time) lines draw at "Tight", which the hosted
+  /// row's `appFont` draws at a constant line height; nil at Normal and Relaxed.
+  let bodyLine: AppLineHeightPlacement?
+  let nameLine: AppLineHeightPlacement?
+  let metadataLine: AppLineHeightPlacement?
   let kerning: CGFloat
   /// The size of the options ellipsis glyph. The SwiftUI row draws it as an `Image` in the
   /// environment's font, the system body style, so its size follows Dynamic Type but not the
@@ -17,7 +22,8 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
   let optionsGlyphSize: CGSize
   /// The line height of the header's "·" separator. The SwiftUI header draws it as a `Text` in the
   /// environment's font, the system body style, so it follows Dynamic Type but not the app's font
-  /// settings, and from Extra Extra Extra Large up it is the header's tallest line.
+  /// settings, and from Extra Extra Extra Large up it is the header's tallest line. At "Tight" it
+  /// takes the constant line height like the time beside it (`appLineSpacing()`).
   let separatorLineHeight: CGFloat
   /// Changes whenever any input above changes; part of every layout cache key.
   let generationKey: Int
@@ -40,6 +46,7 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
     hasher.combine(fontManager.dynamicTypeEnabled)
     hasher.combine(fontManager.dynamicTypeLimit?.uiContentSizeCategory.rawValue)
     hasher.combine(fontManager.lineSpacingMultiplier)
+    hasher.combine(fontManager.lineHeightFactor)
     hasher.combine(fontManager.letterSpacingValue)
     hasher.combine(boldText)
     hasher.combine(contentSize.rawValue)
@@ -48,28 +55,23 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
 
     let body = AppUIFont.font(
       fontManager, size: Typography.Size.body, weight: boldText ? .semibold : .regular, textStyle: .body)
+    let name = AppUIFont.font(
+      fontManager, size: Typography.Size.headline, weight: boldText ? .bold : .semibold, textStyle: .headline)
+    let metadata = AppUIFont.font(
+      fontManager, size: Typography.Size.body, weight: boldText ? .semibold : .regular, textStyle: .body)
     let resolved = FeedRowTypography(
-      body: body,
-      name: AppUIFont.font(
-        fontManager, size: Typography.Size.headline, weight: boldText ? .bold : .semibold, textStyle: .headline),
-      metadata: AppUIFont.font(
-        fontManager, size: Typography.Size.body, weight: boldText ? .semibold : .regular, textStyle: .body),
-      bodyLineSpacing: bodyLineSpacing(fontManager: fontManager),
-      kerning: fontManager.letterSpacingValue,
-      optionsGlyphSize: optionsGlyphSize(contentSize: contentSize),
-      separatorLineHeight: separatorLineHeight(contentSize: contentSize),
+      body: body, name: name, metadata: metadata, fontManager: fontManager, contentSize: contentSize,
       generationKey: key)
     cache = resolved
     return resolved
   }
 
   /// The line spacing the hosted row's `Text` gets from `AppFontModifier`: the spacing of the app's
-  /// body size scaled by the line-spacing multiplier, the same at every Dynamic Type size. `Text`,
-  /// like `UILabel`, ignores a negative value, so "Tight" draws with no extra spacing; the layout
-  /// engine's measurement would honour a negative value and come out shorter than the drawn text.
+  /// body size scaled by the line-spacing multiplier, the same at every Dynamic Type size. "Tight"
+  /// adds none; it tightens the lines with `bodyLine`.
   @MainActor
   static func bodyLineSpacing(fontManager: FontManager) -> CGFloat {
-    max(0, fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
+    fontManager.roleLineSpacing
   }
 
   /// The environment's font in the SwiftUI row: the system body style at `contentSize`.
@@ -83,9 +85,12 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
     UIImage.SymbolConfiguration(font: environmentFont(contentSize: contentSize))
   }
 
-  /// The line height of the header's "·" separator, drawn in the system body style at `contentSize`.
-  static func separatorLineHeight(contentSize: UIContentSizeCategory) -> CGFloat {
-    environmentFont(contentSize: contentSize).lineHeight
+  /// The line height of the header's "·" separator, drawn in the system body style at `contentSize`:
+  /// the font's own, or at "Tight" (`lineHeightFactor`) the constant line height.
+  static func separatorLineHeight(contentSize: UIContentSizeCategory, lineHeightFactor: CGFloat? = nil) -> CGFloat {
+    let font = environmentFont(contentSize: contentSize)
+    return lineHeightFactor.map { AppLineHeightPlacement.resolve(font: font, factor: $0).height(lines: 1) }
+      ?? font.lineHeight
   }
 
   /// The size of the ellipsis glyph drawn with `optionsGlyphConfiguration(contentSize:)`.
@@ -95,5 +100,27 @@ struct FeedRowTypography: Equatable, @unchecked Sendable {
   }
 
   @MainActor private static var cache: FeedRowTypography?
+}
+
+extension FeedRowTypography {
+  /// The typography of rows drawn in these fonts under `fontManager`'s spacing settings: the hosted
+  /// row's line spacing and tracking, and at "Tight" the constant line height of every line.
+  /// `generationKey` must change whenever the fonts or settings do.
+  @MainActor
+  init(
+    body: UIFont, name: UIFont, metadata: UIFont, fontManager: FontManager, contentSize: UIContentSizeCategory,
+    generationKey: Int
+  ) {
+    let lineHeightFactor = fontManager.lineHeightFactor
+    self.init(
+      body: body, name: name, metadata: metadata, bodyLineSpacing: Self.bodyLineSpacing(fontManager: fontManager),
+      bodyLine: lineHeightFactor.map { .resolve(font: body, factor: $0) },
+      nameLine: lineHeightFactor.map { .resolve(font: name, factor: $0) },
+      metadataLine: lineHeightFactor.map { .resolve(font: metadata, factor: $0) },
+      kerning: fontManager.letterSpacingValue,
+      optionsGlyphSize: Self.optionsGlyphSize(contentSize: contentSize),
+      separatorLineHeight: Self.separatorLineHeight(contentSize: contentSize, lineHeightFactor: lineHeightFactor),
+      generationKey: generationKey)
+  }
 }
 #endif

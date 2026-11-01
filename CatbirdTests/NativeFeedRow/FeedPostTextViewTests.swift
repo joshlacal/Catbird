@@ -8,9 +8,15 @@ import UIKit
 struct FeedPostTextViewTests {
   private static let font = UIFont.systemFont(ofSize: 17)
 
-  private func attributes(lineSpacing: CGFloat = 0, kerning: CGFloat = 0) -> [NSAttributedString.Key: Any] {
+  /// The constant line height "Tight" gives this font.
+  private static let tightPlacement = AppLineHeightPlacement.resolve(font: font, factor: FontManager.tightLineHeightFactor)
+
+  private func attributes(
+    lineSpacing: CGFloat = 0, kerning: CGFloat = 0, placement: AppLineHeightPlacement? = nil
+  ) -> [NSAttributedString.Key: Any] {
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineSpacing = lineSpacing
+    placement?.apply(to: paragraph)
     paragraph.lineBreakMode = .byWordWrapping
     return [.font: Self.font, .kern: kerning, .paragraphStyle: paragraph, .foregroundColor: UIColor.black]
   }
@@ -98,10 +104,12 @@ struct FeedPostTextViewTests {
   /// the view with link runs in red and require that every solidly red pixel is a link hit and
   /// every solidly black pixel is not.
   private func expectHitsMatchDrawing(
-    lineSpacing: CGFloat, kerning: CGFloat, direction: UISemanticContentAttribute
+    lineSpacing: CGFloat, kerning: CGFloat, tight: Bool = false, direction: UISemanticContentAttribute
   ) throws {
     let string = Self.mixedDirectionString
-    let text = NSMutableAttributedString(string: string, attributes: attributes(lineSpacing: lineSpacing, kerning: kerning))
+    let placement = tight ? Self.tightPlacement : nil
+    let text = NSMutableAttributedString(
+      string: string, attributes: attributes(lineSpacing: lineSpacing, kerning: kerning, placement: placement))
     for token in Self.mixedDirectionTokens {
       let range = (string as NSString).range(of: token)
       try #require(range.location != NSNotFound, "missing \(token)")
@@ -114,6 +122,7 @@ struct FeedPostTextViewTests {
     view.semanticContentAttribute = direction
     view.backgroundColor = .white
     view.attributedText = text
+    view.linePlacement = placement
     view.layoutIfNeeded()
 
     let scale: CGFloat = 2
@@ -140,20 +149,67 @@ struct FeedPostTextViewTests {
   }
 
   @Test("Link hits agree with the pixels the label draws, in left-to-right and right-to-left paragraphs", arguments: [
-    (lineSpacing: CGFloat(0), kerning: CGFloat(0)),
-    (lineSpacing: CGFloat(4), kerning: CGFloat(0.1)),
-    (lineSpacing: CGFloat(8), kerning: CGFloat(-0.3))
+    (lineSpacing: CGFloat(0), kerning: CGFloat(0), tight: false),
+    (lineSpacing: CGFloat(4), kerning: CGFloat(0.1), tight: false),
+    (lineSpacing: CGFloat(8), kerning: CGFloat(-0.3), tight: false),
+    (lineSpacing: CGFloat(0), kerning: CGFloat(0.1), tight: true)
   ])
-  func hitsMatchDrawing(lineSpacing: CGFloat, kerning: CGFloat) throws {
-    try expectHitsMatchDrawing(lineSpacing: lineSpacing, kerning: kerning, direction: .forceLeftToRight)
+  func hitsMatchDrawing(lineSpacing: CGFloat, kerning: CGFloat, tight: Bool) throws {
+    try expectHitsMatchDrawing(lineSpacing: lineSpacing, kerning: kerning, tight: tight, direction: .forceLeftToRight)
   }
 
   @Test("Link hits agree with the pixels the label draws in a right-to-left interface", arguments: [
-    (lineSpacing: CGFloat(0), kerning: CGFloat(0)),
-    (lineSpacing: CGFloat(4), kerning: CGFloat(0.1))
+    (lineSpacing: CGFloat(0), kerning: CGFloat(0), tight: false),
+    (lineSpacing: CGFloat(4), kerning: CGFloat(0.1), tight: false),
+    (lineSpacing: CGFloat(0), kerning: CGFloat(0.1), tight: true)
   ])
-  func hitsMatchDrawingInRightToLeftInterface(lineSpacing: CGFloat, kerning: CGFloat) throws {
-    try expectHitsMatchDrawing(lineSpacing: lineSpacing, kerning: kerning, direction: .forceRightToLeft)
+  func hitsMatchDrawingInRightToLeftInterface(lineSpacing: CGFloat, kerning: CGFloat, tight: Bool) throws {
+    try expectHitsMatchDrawing(lineSpacing: lineSpacing, kerning: kerning, tight: tight, direction: .forceRightToLeft)
+  }
+
+  @Test("At Tight the label draws the lines lower by the glyph offset, and link frames follow")
+  func tightLabelAndLinkFramesFollowPlacement() throws {
+    let string = "see #swift today"
+    let text = NSMutableAttributedString(string: string, attributes: attributes(placement: Self.tightPlacement))
+    text.addAttribute(.feedLink, value: URL(string: "tag://swift")!, range: NSRange(location: 4, length: 6))
+    let height = ceil(Self.tightPlacement.height(lines: 1) * 3) / 3
+    let plain = FeedPostTextView(frame: CGRect(x: 0, y: 0, width: 300, height: height))
+    plain.attributedText = text
+    let tight = FeedPostTextView(frame: CGRect(x: 0, y: 0, width: 300, height: height))
+    tight.attributedText = text
+    tight.linePlacement = Self.tightPlacement
+    // UIAccessibility converts a view's geometry to screen coordinates. On iOS 26 it returns
+    // an empty frame for unattached views, so both drawings need a real window for this check.
+    let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 300, height: 100)
+    let controller = UIViewController()
+    window.rootViewController = controller
+    controller.view.addSubview(plain)
+    controller.view.addSubview(tight)
+    window.isHidden = false
+    defer { window.isHidden = true; window.rootViewController = nil }
+    window.layoutIfNeeded()
+    let x = width(of: "see ") + 10
+    // A point just below the TextKit line is on the link only once the label moves down.
+    let lowered = CGPoint(x: x, y: Self.tightPlacement.lineHeight + Self.tightPlacement.glyphOffset / 2)
+    #expect(plain.link(at: lowered) == nil)
+    #expect(tight.link(at: lowered) == URL(string: "tag://swift"))
+    // The band the label leaves above the first line belongs to that line.
+    #expect(tight.link(at: CGPoint(x: x, y: Self.tightPlacement.glyphOffset / 2)) == URL(string: "tag://swift"))
+    #expect(tight.link(at: CGPoint(x: x, y: -1)) == nil)
+
+    // The link's VoiceOver frame moves with the drawn text.
+    func linkFrame(_ view: FeedPostTextView) throws -> CGRect {
+      let rotor = try #require(view.accessibilityCustomRotors?.first)
+      let predicate = UIAccessibilityCustomRotorSearchPredicate()
+      predicate.currentItem = UIAccessibilityCustomRotorItemResult(targetElement: view, targetRange: nil)
+      predicate.searchDirection = .next
+      let element = try #require(rotor.itemSearchBlock(predicate)?.targetElement as? UIAccessibilityElement)
+      return element.accessibilityFrame
+    }
+    let shift = try linkFrame(tight).minY - linkFrame(plain).minY
+    #expect(abs(shift - Self.tightPlacement.glyphOffset) < 0.01, "shift \(shift)")
   }
 
   @Test("Links on later paragraphs are found")

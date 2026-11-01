@@ -25,12 +25,17 @@ struct TrendingInterstitialTypography: Equatable, @unchecked Sendable {
   /// Options ellipsis glyph: `appFont(AppTextRole.subheadline)`.
   let optionsGlyph: UIFont
 
-  /// `lineSpacing` the SwiftUI modifiers apply: role fonts and `appFont(Font)` use the body size,
-  /// `appFont(size:)` uses its own size.
+  /// `lineSpacing` the SwiftUI modifiers apply: role fonts the body size's scaled by the line-spacing
+  /// multiplier (`AppFontModifier`), `appFont(Font)` the body size's alone (`DirectFontModifier`,
+  /// the section heading and topic title), `appFont(size:)` its own size's.
   let roleLineSpacing: CGFloat
+  let headingLineSpacing: CGFloat
   let videosButtonLineSpacing: CGFloat
   let videoAuthorLineSpacing: CGFloat
   let kerning: CGFloat
+  /// The constant line height every label draws at "Tight" (`AppLineHeightModifier`), as a multiple
+  /// of its font's point size; nil at Normal and Relaxed.
+  let lineHeightFactor: CGFloat?
 
   /// `TrendingTopicCategoryMark(diameter: 28)`: `@ScaledMetric(relativeTo: .title3)`.
   let markDiameter: CGFloat
@@ -106,10 +111,12 @@ struct TrendingInterstitialTypography: Equatable, @unchecked Sendable {
       videosButton: videosButton,
       videoAuthor: role(Typography.Size.caption, .medium, .caption1),
       optionsGlyph: role(Typography.Size.subheadline, .medium, .subheadline),
-      roleLineSpacing: bodyLineSpacing * fontManager.lineSpacingMultiplier,
+      roleLineSpacing: fontManager.roleLineSpacing,
+      headingLineSpacing: bodyLineSpacing,
       videosButtonLineSpacing: fontManager.getLineSpacing(for: Typography.Size.subheadline),
       videoAuthorLineSpacing: authorLineSpacing,
       kerning: fontManager.letterSpacingValue,
+      lineHeightFactor: fontManager.lineHeightFactor,
       markDiameter: min(diameter, 60),
       markIconPointSize: min(metrics(.title3, 14), min(diameter, 60) * 0.5),
       videoAuthorHeight: max(36, authorLine * 2 + max(0, authorLineSpacing)),

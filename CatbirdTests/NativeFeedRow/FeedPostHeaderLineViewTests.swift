@@ -223,6 +223,44 @@ struct FeedPostHeaderLineViewTests {
     }
   }
 
+  @Test("At Tight the labels draw lower by their glyph offsets, and still truncate or clip",
+    .enabled(if: FontManager.supportsLineHeight))
+  func tightLabelsKeepTruncation() throws {
+    let fontManager = FontManager()
+    fontManager.lineSpacing = "tight"
+    let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+    // A long handle beside a short name: truncated by tail, the time whole.
+    let fixture = try fixture(
+      handle: "@a-very-long-handle-name.bsky.social", timeText: "12mo", width: 390, fontManager: fontManager)
+    let name = try #require(fixture.typography.nameLine)
+    let metadata = try #require(fixture.typography.metadataLine)
+    let handleFrame = try #require(fixture.layout.handleFrame)
+    let view = configured(fixture)
+    let labels = [
+      (view.nameLabelForTesting, name, fixture.layout.nameFrame, NSLineBreakMode.byTruncatingTail),
+      (view.handleLabelForTesting, metadata, handleFrame, .byTruncatingTail),
+      (view.timeLabelForTesting, metadata, fixture.layout.timeFrame, .byClipping),
+    ]
+    for (label, line, frame, lineBreakMode) in labels {
+      #expect(label.frame == line.labelFrame(textFrame: frame))
+      #expect(label.lineBreakMode == lineBreakMode)
+      let paragraph = label.attributedText?.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+      #expect(paragraph?.maximumLineHeight == line.lineHeight)
+      #expect(paragraph?.lineBreakMode == lineBreakMode)
+    }
+    #expect(view.handleLabelForTesting.sizeThatFits(unbounded).width > handleFrame.width)
+    #expect(view.timeLabelForTesting.attributedText?.string == "·  12mo")
+    #expect(view.timeLabelForTesting.sizeThatFits(unbounded).width <= view.timeLabelForTesting.frame.width + 0.5)
+
+    // A name given less room than it needs truncates by tail too.
+    let longName = try self.fixture(
+      displayName: String(repeating: "Very Long Name ", count: 3), timeText: "12mo", width: 390, fontManager: fontManager)
+    let nameView = configured(longName)
+    #expect(nameView.nameLabelForTesting.lineBreakMode == .byTruncatingTail)
+    #expect(nameView.nameLabelForTesting.sizeThatFits(unbounded).width > nameView.nameLabelForTesting.frame.width)
+  }
+
   @Test("A handle the engine truncated is narrower than its text and truncates by tail")
   func truncatedHandle() throws {
     let fixture = try fixture(handle: "@a-very-long-handle-name.bsky.social", width: 390)

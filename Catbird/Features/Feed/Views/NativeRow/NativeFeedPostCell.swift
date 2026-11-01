@@ -15,7 +15,8 @@ private let nativeRowLogger = Logger(subsystem: "blue.catbird", category: "Nativ
 /// Taps: the avatar opens the profile, a link run opens the link, the action bar and the options
 /// button handle their own taps, and a tap anywhere else opens the post. For VoiceOver the content
 /// view keeps the hosted row's `post.<uri>` identifier, and the content view, the post text and
-/// the author's name offer an "Open post" action.
+/// the author's name offer an "Open post" action. The post text is identified
+/// `textAccessibilityIdentifier`, which tells UI tests a native row from a hosted one.
 ///
 /// When the cell is sized to a width its layout was not computed for, it logs a fault and asks
 /// the controller for a new layout through `NativeFeedRowActions.layoutWidthChanged`; until then it
@@ -42,6 +43,9 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
   /// The last width reported through `layoutWidthChanged` for the current configuration.
   private var reportedMismatchWidth: CGFloat?
 
+  /// The post text's accessibility identifier; only native rows have it.
+  static let textAccessibilityIdentifier = "feedRow.native.text"
+
   var postURI: String? { post?.uri.uriString() }
   var textViewForTesting: FeedPostTextView { textView }
   var avatarViewForTesting: FeedPostAvatarView { avatarView }
@@ -58,6 +62,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
       contentView.addSubview(view)
     }
     optionsGlyph.contentMode = .center
+    textView.accessibilityIdentifier = Self.textAccessibilityIdentifier
     // The hosted row draws the glyph in the environment's font, the system body style.
     optionsGlyph.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
     optionsGlyph.tintColor = .secondaryLabel
@@ -111,6 +116,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
       typography: typography, metadataColor: content.metadataColor, originX: 0, hideVerificationBadges: false)
     optionsGlyph.tintColor = content.metadataColor
     textView.attributedText = content.text
+    textView.linePlacement = typography.bodyLine
     textView.onOpenLink = actions.openLink
     actionBar.actions = actions.actionBar(content.post)
     barState = content.actionBarState

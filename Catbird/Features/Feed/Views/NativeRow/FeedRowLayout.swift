@@ -117,8 +117,9 @@ enum FeedRowLayoutEngine {
     // The header's labels are as tall as its tallest line. The SwiftUI header top-aligns its
     // texts, each as tall as its line rounded up to a whole pixel, the "·" separator (in the
     // system body style) among them; the header is as tall as the tallest text or the options
-    // button.
-    let lineHeight = max(t.name.lineHeight, t.metadata.lineHeight)
+    // button. At "Tight" every line has the constant line height.
+    let lineHeight = max(
+      t.nameLine?.height(lines: 1) ?? t.name.lineHeight, t.metadataLine?.height(lines: 1) ?? t.metadata.lineHeight)
     let headerLineHeight = pixelCeil(max(lineHeight, t.separatorLineHeight), scale: input.displayScale)
     let headerHeight = max(headerLineHeight, optionsHeight)
     let timeWidth = singleLineWidth("·  " + input.timeText, font: t.metadata, kerning: 0)

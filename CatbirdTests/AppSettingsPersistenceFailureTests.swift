@@ -640,6 +640,31 @@ struct AppSettingsPersistenceFailureTests {
     #expect(fixture.saveCount == 0)
   }
 
+  /// Where Tight is not offered, Settings shows a stored "tight" as Normal, and so does the
+  /// retained-attempt summary beside it.
+  @Test("A retained line spacing is named as Settings shows it")
+  func retainedLineSpacingIsNamedAsShown() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed { $0.lineSpacing = "relaxed" }
+    fixture.initialize()
+    await fixture.drainPublications()
+
+    fixture.settings.lineSpacing = "tight"
+    fixture.failSave = true
+    fixture.fireLatestSave()
+    await fixture.drainPublications()
+
+    #expect(fixture.settings.persistenceState == .saveFailed)
+    let offered = fixture.settings.pendingChangesDescription(supportsLineHeight: true)
+    #expect(offered.contains("Line Spacing: Tight"), "\(offered)")
+    let notOffered = fixture.settings.pendingChangesDescription(supportsLineHeight: false)
+    #expect(notOffered.contains("Line Spacing: Normal"), "\(notOffered)")
+    #expect(!notOffered.contains("Tight"), "\(notOffered)")
+    #expect(fixture.settings.pendingChangesDescription
+      == fixture.settings.pendingChangesDescription(supportsLineHeight: FontManager.supportsLineHeight))
+  }
+
 }
 
 @MainActor

@@ -160,7 +160,8 @@ struct FeedRowLayoutEngineTests {
     let base = try input(text: "hello", displayScale: scale)
     let t = base.typography
     let typography = FeedRowTypography(
-      body: t.body, name: t.name, metadata: t.metadata, bodyLineSpacing: t.bodyLineSpacing, kerning: t.kerning,
+      body: t.body, name: t.name, metadata: t.metadata, bodyLineSpacing: t.bodyLineSpacing, bodyLine: t.bodyLine,
+      nameLine: t.nameLine, metadataLine: t.metadataLine, kerning: t.kerning,
       optionsGlyphSize: CGSize(width: t.optionsGlyphSize.width, height: glyphHeight),
       separatorLineHeight: t.separatorLineHeight, generationKey: t.generationKey &+ 1)
     let input = FeedRowLayoutInput(
@@ -208,7 +209,8 @@ struct FeedRowLayoutEngineTests {
     let t = base.typography
     let name = UIFont.systemFont(ofSize: 30, weight: UIFont.Weight.semibold)
     let typography = FeedRowTypography(
-      body: t.body, name: name, metadata: t.metadata, bodyLineSpacing: t.bodyLineSpacing, kerning: t.kerning,
+      body: t.body, name: name, metadata: t.metadata, bodyLineSpacing: t.bodyLineSpacing, bodyLine: t.bodyLine,
+      nameLine: t.nameLine, metadataLine: t.metadataLine, kerning: t.kerning,
       optionsGlyphSize: t.optionsGlyphSize, separatorLineHeight: t.separatorLineHeight,
       generationKey: t.generationKey &+ 2)
     let input = FeedRowLayoutInput(
@@ -223,6 +225,42 @@ struct FeedRowLayoutEngineTests {
     #expect(abs(layout.textFrame.minY - (Self.contentTop + header + FeedRowMetrics.textTop)) < 0.001)
     // The name keeps its own line height; only the header's extent is rounded.
     #expect(abs(layout.nameFrame.height - line) < 0.001)
+  }
+
+  @Test("Tight line spacing shortens a post's text and row", .enabled(if: FontManager.supportsLineHeight))
+  func tightShortensTextAndRow() throws {
+    let text = "First line of the post\nSecond line of the post\nThird line\nFourth line"
+    let tightManager = FontManager()
+    tightManager.lineSpacing = "tight"
+    let tight = FeedRowLayoutEngine.layout(try input(text: text, displayScale: 3, fontManager: tightManager))
+    let normal = FeedRowLayoutEngine.layout(try input(text: text, displayScale: 3))
+    // Each of the three line gaps closes by at least a point and a half.
+    #expect(tight.textFrame.height < normal.textFrame.height - 3 * 1.5,
+      "tight \(tight.textFrame.height) normal \(normal.textFrame.height)")
+    #expect(normal.height - tight.height == normal.textFrame.height - tight.textFrame.height)
+  }
+
+  @Test("At Tight the text and header lines take the constant line height", .enabled(if: FontManager.supportsLineHeight))
+  func tightTextFrameUsesConstantLineHeights() throws {
+    let scale: CGFloat = 3
+    let text = "First line of the post\nSecond line of the post\nThird line\nFourth line"
+    let tightManager = FontManager()
+    tightManager.lineSpacing = "tight"
+    let tightInput = try input(text: text, displayScale: scale, fontManager: tightManager)
+    let layout = FeedRowLayoutEngine.layout(tightInput)
+    let t = tightInput.typography
+    let body = try #require(t.bodyLine)
+    let name = try #require(t.nameLine)
+    let metadata = try #require(t.metadataLine)
+    #expect(body == .resolve(font: t.body, factor: FontManager.tightLineHeightFactor))
+    #expect(abs(layout.textFrame.height - ceil(body.height(lines: 4) * scale - 0.0001) / scale) < 0.001)
+    let line = max(name.height(lines: 1), metadata.height(lines: 1))
+    #expect(abs(layout.nameFrame.height - line) < 0.001)
+    #expect(abs(layout.timeFrame.height - line) < 0.001)
+
+    let normal = FeedRowLayoutEngine.layout(try input(text: text, displayScale: scale))
+    let saved = 4 * (t.body.lineHeight - body.lineHeight)
+    #expect(layout.height <= normal.height - saved + 1 / scale, "tight \(layout.height) normal \(normal.height)")
   }
 
   @Test("A maximum content width centers the row's content and keeps a full-width divider")

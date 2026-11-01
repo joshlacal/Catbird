@@ -170,7 +170,7 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
   }
 
   private func makeLabel() -> UILabel {
-    let label = UILabel()
+    let label = FooterTextLabel()
     label.numberOfLines = 0
     label.textColor = .secondaryLabel
     label.isAccessibilityElement = true
@@ -198,7 +198,7 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
       let weight: UIFont.Weight = boldText ? .semibold : .medium
       let font = AppUIFont.font(fontManager, size: Typography.Size.subheadline, weight: weight, textStyle: .subheadline)
       failureLabel.attributedText = Self.styled(
-        Self.failureMessage, font: font, kerning: kerning, lineSpacing: lineSpacing, alignment: .center)
+        Self.failureMessage, font: font, kerning: kerning, lineSpacing: lineSpacing, lineHeightFactor: fontManager.lineHeightFactor, alignment: .center)
       return true
     }
     if state == .end, let endLabel, endTextKey != key {
@@ -206,18 +206,22 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
       let weight: UIFont.Weight = boldText ? .semibold : .regular
       let font = AppUIFont.font(fontManager, size: Typography.Size.footnote, weight: weight, textStyle: .footnote)
       endLabel.attributedText = Self.styled(
-        Self.endMessage, font: font, kerning: kerning, lineSpacing: lineSpacing, alignment: .natural)
+        Self.endMessage, font: font, kerning: kerning, lineSpacing: lineSpacing, lineHeightFactor: fontManager.lineHeightFactor, alignment: .natural)
       return true
     }
     return false
   }
 
   private static func styled(
-    _ string: String, font: UIFont, kerning: CGFloat, lineSpacing: CGFloat, alignment: NSTextAlignment
+    _ string: String, font: UIFont, kerning: CGFloat, lineSpacing: CGFloat,
+    lineHeightFactor: CGFloat?, alignment: NSTextAlignment
   ) -> NSAttributedString {
     let paragraph = NSMutableParagraphStyle()
     paragraph.alignment = alignment
     paragraph.lineSpacing = lineSpacing
+    if let lineHeightFactor {
+      AppLineHeightPlacement.resolve(font: font, factor: lineHeightFactor).apply(to: paragraph)
+    }
     // `Text`'s line breaking: a last line is never left with a single word when a word can move
     // down to it ("Couldn’t load / more posts."), which also sets the measured width.
     paragraph.lineBreakStrategy = .standard
@@ -240,6 +244,7 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
     hasher.combine(fontManager.dynamicTypeEnabled)
     hasher.combine(fontManager.dynamicTypeLimit?.uiContentSizeCategory.rawValue)
     hasher.combine(fontManager.lineSpacingMultiplier)
+    hasher.combine(fontManager.lineHeightFactor)
     hasher.combine(fontManager.letterSpacingValue)
     hasher.combine(boldText)
     hasher.combine(traits.preferredContentSizeCategory.rawValue)
@@ -358,6 +363,44 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
 
   private static func pixelRound(_ value: CGFloat, scale: CGFloat) -> CGFloat {
     (value * scale).rounded() / scale
+  }
+}
+
+// MARK: - Footer Text
+
+/// Keeps the logical and accessibility frame at the hosted text box. A child label draws Tight's
+/// glyphs beyond that box, as SwiftUI does, without clipping the final line's descenders.
+private final class FooterTextLabel: UILabel {
+  private var tightLabel: UILabel?
+
+  override var attributedText: NSAttributedString? {
+    didSet { setNeedsLayout() }
+  }
+
+  override func drawText(in rect: CGRect) {
+    if AppLineHeightPlacement(of: attributedText) == nil { super.drawText(in: rect) }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    guard let placement = AppLineHeightPlacement(of: attributedText) else {
+      tightLabel?.isHidden = true
+      return
+    }
+    let label: UILabel
+    if let tightLabel {
+      label = tightLabel
+    } else {
+      label = UILabel()
+      label.numberOfLines = 0
+      label.isAccessibilityElement = false
+      label.isUserInteractionEnabled = false
+      addSubview(label)
+      tightLabel = label
+    }
+    label.isHidden = false
+    label.attributedText = attributedText
+    label.frame = placement.labelFrame(textFrame: bounds)
   }
 }
 

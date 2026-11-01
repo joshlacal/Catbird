@@ -14,6 +14,7 @@ struct TappableTextView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.colorSchemeContrast) private var colorSchemeContrast
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.fontManager) private var fontManager
 
@@ -69,7 +70,7 @@ struct TappableTextView: View {
             if containsOnlyEmojis {
                 // If the string contains only emojis, use a larger font size with accessibility support
                 if let effectiveSize = effectiveTextSize {
-                    Text(attributedString)
+                    PostAttributedText(attributedString, textColor: themedTextColor)
                         .appFont(size: effectiveSize, weight: textWeight, relativeTo: textStyle)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
@@ -77,7 +78,7 @@ struct TappableTextView: View {
                         .lineSpacing(fontManager.getLineSpacing(for: effectiveSize))
                         .lineLimit(nil)
                 } else {
-                    Text(attributedString)
+                    PostAttributedText(attributedString, textColor: themedTextColor)
                         .appFont(textStyle)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
@@ -87,7 +88,7 @@ struct TappableTextView: View {
             } else {
                 // Regular text handling with FontManager integration
                 if let effectiveSize = effectiveTextSize {
-                    Text(attributedString)
+                    PostAttributedText(attributedString, textColor: themedTextColor)
                         .appFont(size: effectiveSize, weight: textWeight, relativeTo: textStyle)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
@@ -103,7 +104,7 @@ struct TappableTextView: View {
                                  return sceneContext.urlHandler.handle(url)
                              })
                 } else {
-                    Text(attributedString)
+                    PostAttributedText(attributedString, textColor: themedTextColor)
                         .appFont(textStyle)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
@@ -123,6 +124,12 @@ struct TappableTextView: View {
         .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
     }
     
+    private var themedTextColor: Color {
+        Color.dynamicText(
+            appState.themeManager, style: .primary, currentScheme: colorScheme,
+            increaseContrast: colorSchemeContrast == .increased || appState.appSettings.effectiveIncreaseContrast)
+    }
+
     // Helper function to convert Font.TextStyle to AppTextRole
     private func textStyleToRole(_ textStyle: Font.TextStyle) -> AppTextRole {
         switch textStyle {
