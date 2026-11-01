@@ -19,10 +19,12 @@ import Observation
 /// orientation and a full-size iPad alike. Its container is made transparent so the
 /// themed (Dim, Black) background shows below the last suggestion row, which would
 /// also let `DiscoveryView`, `TypeaheadView` or `ResultsView` show through, so the
-/// page is hidden while the field is focused or an uncommitted query is being typed.
-/// On macOS the suggestions drop down from the toolbar field, so the page stays
-/// visible behind them and they keep their default background. The container is
-/// transparent only where the page is hidden behind it.
+/// page is hidden while the field is focused, and while an uncommitted query keeps
+/// its typeahead up in a presented search after the keyboard is dismissed. Text left
+/// in a search that has closed shows the page, since no suggestions cover it. On
+/// macOS the suggestions drop down from the toolbar field, so the page stays visible
+/// behind them and they keep their default background. The container is transparent
+/// only where the page is hidden behind it.
 enum SearchSuggestionsOverlayGate {
   /// True on iOS, where the native suggestions cover the whole page on every size
   /// class. False on macOS, where they drop down from the toolbar field; Mac Catalyst
@@ -37,18 +39,34 @@ enum SearchSuggestionsOverlayGate {
 
   static func hidesPageContent(
     suggestionsFillPage: Bool,
+    isSearchPresented: Bool,
     isSearchFieldFocused: Bool,
     searchState: SearchState,
     isCommittedSearch: Bool
   ) -> Bool {
     guard suggestionsFillPage else { return false }
-    return isSearchFieldFocused || (searchState == .searching && !isCommittedSearch)
+    if isSearchFieldFocused { return true }
+    return isSearchPresented && searchState == .searching && !isCommittedSearch
   }
 
   /// The native suggestions container's background: hidden (transparent) only where
   /// the suggestions fill the page and so hide it, never over a visible page.
   static func suggestionsBackground(suggestionsFillPage: Bool) -> Visibility {
     suggestionsFillPage ? .hidden : .automatic
+  }
+}
+
+/// Mirrors `isSearching`, which only views inside the `.searchable` content can read.
+private struct SearchPresentationReader: View {
+  @Environment(\.isSearching) private var isSearching
+  @Binding var isPresented: Bool
+
+  var body: some View {
+    Color.clear
+      .frame(width: 0, height: 0)
+      .accessibilityHidden(true)
+      .onAppear { isPresented = isSearching }
+      .onChange(of: isSearching) { _, newValue in isPresented = newValue }
   }
 }
 
@@ -73,6 +91,7 @@ struct RefinedSearchView: View {
     @State private var isShowingAddFeedSheet = false
     @State private var isShowingFiltersSheet = false
     @FocusState private var isSearchFieldFocused: Bool
+    @State private var isSearchPresented = false
     @State private var lastHandledSearchRequestID: UUID?
     @State private var isApplyingPendingSearchRequest = false
     @State private var showingSettings = false
@@ -215,6 +234,7 @@ struct RefinedSearchView: View {
     private var hidesPageBehindSearchSuggestions: Bool {
         SearchSuggestionsOverlayGate.hidesPageContent(
             suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage,
+            isSearchPresented: isSearchPresented,
             isSearchFieldFocused: isSearchFieldFocused,
             searchState: viewModel.searchState,
             isCommittedSearch: viewModel.isCommittedSearch
@@ -228,6 +248,8 @@ struct RefinedSearchView: View {
             // Full-width semantic background layer (respects Dim and Black themes)
             Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
                 .ignoresSafeArea()
+
+            SearchPresentationReader(isPresented: $isSearchPresented)
             
             // Edge-to-edge content; individual rows constrain via .mainContentFrame()
             VStack(spacing: 0) {

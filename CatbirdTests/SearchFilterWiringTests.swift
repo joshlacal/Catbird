@@ -8,10 +8,12 @@ struct SearchFilterWiringTests {
   @Test("search content hides behind suggestions only where the suggestions fill the page")
   func suggestionsOverlayHidesPageOnlyWhereSuggestionsFillIt() {
     func hides(
-      fill: Bool, focused: Bool = false, state: SearchState = .idle, committed: Bool = false
+      fill: Bool, presented: Bool = true, focused: Bool = false, state: SearchState = .idle,
+      committed: Bool = false
     ) -> Bool {
       SearchSuggestionsOverlayGate.hidesPageContent(
-        suggestionsFillPage: fill, isSearchFieldFocused: focused, searchState: state, isCommittedSearch: committed
+        suggestionsFillPage: fill, isSearchPresented: presented, isSearchFieldFocused: focused,
+        searchState: state, isCommittedSearch: committed
       )
     }
 
@@ -23,10 +25,14 @@ struct SearchFilterWiringTests {
     #expect(!hides(fill: true, state: .results, committed: true))
     #expect(!hides(fill: true))
 
+    // Text left in a search that has closed has no suggestions over it, so the page shows.
+    #expect(!hides(fill: true, presented: false, state: .searching))
+
     // Suggestions that drop down from the toolbar field (macOS) never hide the page.
     for state in [SearchState.idle, .searching, .results, .loading] {
       for focused in [false, true] {
         #expect(!hides(fill: false, focused: focused, state: state))
+        #expect(!hides(fill: false, presented: false, focused: focused, state: state))
       }
     }
 
@@ -44,18 +50,21 @@ struct SearchFilterWiringTests {
     #expect(SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: false) == .automatic)
 
     // Wherever the container is transparent, every state that shows suggestions (a
-    // focused field, or typeahead for an uncommitted query) hides the page.
+    // focused field, or typeahead for an uncommitted query in a presented search)
+    // hides the page.
     for fill in [false, true]
     where SearchSuggestionsOverlayGate.suggestionsBackground(suggestionsFillPage: fill) == .hidden {
       for state in [SearchState.idle, .searching, .results, .loading] {
         for committed in [false, true] {
           #expect(SearchSuggestionsOverlayGate.hidesPageContent(
-            suggestionsFillPage: fill, isSearchFieldFocused: true, searchState: state, isCommittedSearch: committed
+            suggestionsFillPage: fill, isSearchPresented: true, isSearchFieldFocused: true,
+            searchState: state, isCommittedSearch: committed
           ))
         }
       }
       #expect(SearchSuggestionsOverlayGate.hidesPageContent(
-        suggestionsFillPage: fill, isSearchFieldFocused: false, searchState: .searching, isCommittedSearch: false
+        suggestionsFillPage: fill, isSearchPresented: true, isSearchFieldFocused: false,
+        searchState: .searching, isCommittedSearch: false
       ))
     }
   }
