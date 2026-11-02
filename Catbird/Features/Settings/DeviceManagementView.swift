@@ -315,7 +315,7 @@ final class DeviceManagementViewModel {
                 _ = try? await coordinator.revokeLabyrinthDevice(targetDeviceId: device.deviceId)
             }
             if let repo = try? ATIdentifier(string: appState.userDID),
-               let collection = try? NSID(nsidString: "blue.catbird.mlsChat.device"),
+               let collection = try? NSID(nsidString: "blue.catbird.chat.device"),
                let rkey = try? RecordKey(keyString: device.deviceId) {
                 _ = try? await client.com.atproto.repo.deleteRecord(
                     input: .init(repo: repo, collection: collection, rkey: rkey)

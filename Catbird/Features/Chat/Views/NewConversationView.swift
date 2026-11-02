@@ -528,6 +528,7 @@ struct NewConversationView: View {
       let created = try await mlsCoordinator.createGroup(
         conversationId: conversationID,
         sequencerDid: appState.defaultMLSSequencerDID,
+        memberDids: membersSnapshot,
         title: nameSnapshot.isEmpty ? nil : nameSnapshot,
         description: nil
       )

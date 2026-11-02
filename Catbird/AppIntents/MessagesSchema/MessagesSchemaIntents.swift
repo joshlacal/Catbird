@@ -225,6 +225,7 @@ struct CatbirdSendMessageSchemaIntent {
       _ = try await coordinator.createGroup(
         conversationId: conversationID,
         sequencerDid: sequencerDID,
+        memberDids: [draft.recipientDID],
         title: nil,
         description: nil
       )

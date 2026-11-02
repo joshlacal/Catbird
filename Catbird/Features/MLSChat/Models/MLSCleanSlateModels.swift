@@ -351,6 +351,7 @@ struct MLSDirectComposeView: View {
       _ = try await coordinator.createGroup(
         conversationId: conversationID,
         sequencerDid: sequencerDID,
+        memberDids: [draft.recipientDID],
         title: draft.recipientDisplayName ?? draft.recipientHandle,
         description: nil
       )

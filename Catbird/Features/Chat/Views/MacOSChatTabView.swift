@@ -193,6 +193,7 @@ struct MacOSChatContentView: View {
       resetUnifiedListForCurrentAccountIfNeeded()
       await appState.chatManager.loadConversations(refresh: true)
       if mlsChatEnabledForCurrentAccount {
+        await appState.reloadMLSConversations()
         await loadMLSConversations()
         startMLSPolling()
       }
@@ -289,6 +290,17 @@ struct MacOSChatContentView: View {
 
         var seenMemberDIDs = Set<String>()
         var convoMembers: [MLSMemberModel] = []
+        let treeMembers = (try? await mlsCoordinator.listMembers(conversationId: convoID)) ?? []
+        for memberDID in treeMembers where seenMemberDIDs.insert(memberDID).inserted {
+          convoMembers.append(
+            MLSMemberModel(
+              memberID: "\(convoID):\(memberDID)",
+              conversationID: convoID,
+              currentUserDID: userDID,
+              did: memberDID
+            )
+          )
+        }
         for message in recentMessages where seenMemberDIDs.insert(message.senderID).inserted {
           convoMembers.append(
             MLSMemberModel(
@@ -457,6 +469,7 @@ struct MacOSChatContentView: View {
           while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(120))
             guard !Task.isCancelled else { break }
+            await self.appState.reloadMLSConversations()
             await self.loadMLSConversations()
           }
         }

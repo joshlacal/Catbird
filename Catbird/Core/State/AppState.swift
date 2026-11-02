@@ -2249,9 +2249,12 @@ final class AppState {
         }
     }
 
-    /// Reload MLS conversations (called when new messages arrive)
+    /// Reload MLS conversations (syncs remote mls-ds Welcomes/entries, then refreshes local projection)
     @MainActor
     func reloadMLSConversations() async {
+        if isMLSRuntimeAllowed, let coordinator = await getOrOpenMLSCoordinator() {
+            _ = try? await coordinator.sync()
+        }
         await loadMLSConversations()
     }
 

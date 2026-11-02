@@ -255,6 +255,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
     let currentObservation = observationID
     startObservingCoordinatorIfNeeded(coordinator, observationID: currentObservation)
+    _ = try? await coordinator.sync()
     await refreshFromCoordinator(coordinator, observationID: currentObservation)
   }
 

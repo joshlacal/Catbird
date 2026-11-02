@@ -2480,6 +2480,7 @@ private extension CatbirdApp {
         _ = try await coordinator.createGroup(
           conversationId: conversationID,
           sequencerDid: appState.defaultMLSSequencerDID,
+          memberDids: [recipient],
           title: nil,
           description: nil
         )
