@@ -502,7 +502,7 @@ struct MLSRequestConversationGate<Content: View>: View {
       pendingRequest = nil
       return
     }
-    let requests = (try? await coordinator.listRequests(consentFilter: "incoming_pending")) ?? []
+    let requests = (try? await coordinator.listRequests(consentFilter: "incomingPending")) ?? []
     pendingRequest = requests.first {
       $0.conversationId == conversationID || $0.requestId == conversationID
     }
@@ -705,7 +705,7 @@ final class MLSBlockCoordinator {
     if !(await graphManager.isBlocking(did: did)) {
       _ = try await graphManager.block(did: did)
     }
-    if let requests = try? await coordinator.listRequests(consentFilter: "incoming_pending") {
+    if let requests = try? await coordinator.listRequests(consentFilter: "incomingPending") {
       for request in requests where request.senderDid == did {
         try? await coordinator.declineDirectRequest(requestId: request.requestId)
       }

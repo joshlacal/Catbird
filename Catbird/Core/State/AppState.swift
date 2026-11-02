@@ -2128,7 +2128,7 @@ final class AppState {
             }
         }
 
-        await loadMLSConversations()
+        await reloadMLSConversations()
         scheduleBlockReconcileIfNeeded()
         logger.info("MLS: Initialized via MLSClientCoordinator")
     }
@@ -2154,7 +2154,7 @@ final class AppState {
             }
             if spacesEligibility?.eligible == true {
                 _ = try? await coordinator.enrollDevice(grantedScopes: scopes)
-                await loadMLSConversations()
+                await reloadMLSConversations()
             } else if !wasEnabled {
                 ExperimentalSettings.shared.disableMLSChat(for: userDID)
                 await prepareMLSStorageReset()
@@ -2190,7 +2190,7 @@ final class AppState {
                   let coordinator = await self.getOrOpenMLSCoordinator() else { return }
             _ = try? await self.graphManager.refreshBlockCache()
             let blocks = await self.graphManager.blockCache
-            if let pending = try? await coordinator.listRequests(consentFilter: "incoming_pending") {
+            if let pending = try? await coordinator.listRequests(consentFilter: "incomingPending") {
                 for request in pending where blocks.contains(request.senderDid) {
                     try? await coordinator.declineDirectRequest(requestId: request.requestId)
                 }
@@ -2282,7 +2282,7 @@ final class AppState {
                 self.updateChatUnreadCount()
                 if self.isMLSRuntimeAllowed {
                     self.accountServiceWork.start { [weak self] in
-                        await self?.loadMLSConversations()
+                        await self?.reloadMLSConversations()
                     }
                 }
             }
@@ -2297,7 +2297,7 @@ final class AppState {
         // Load MLS conversations initially only if MLS is enabled for this account
         if isMLSRuntimeAllowed {
             accountServiceWork.start { [self] in
-                await loadMLSConversations()
+                await reloadMLSConversations()
             }
         }
 
@@ -2321,7 +2321,7 @@ final class AppState {
 
                     // Reload MLS conversations only if MLS is enabled for this account
                     if self.isMLSRuntimeAllowed {
-                        await self.loadMLSConversations()
+                        await self.reloadMLSConversations()
                     }
                 }
             }

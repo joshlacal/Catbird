@@ -241,7 +241,7 @@ struct MessageRequestsButton: View {
       return
     }
     do {
-      let count = try await coordinator.listRequests(consentFilter: "incoming_pending").count
+      let count = try await coordinator.listRequests(consentFilter: "incomingPending").count
       guard !Task.isCancelled, countGeneration == generation, appState.userDID == userDID,
             appState.mlsCoordinator === coordinator, !coordinator.isClosedForSession else { return }
       pendingCatbirdCount = count

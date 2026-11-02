@@ -392,18 +392,21 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     let hasConvo = conversations.contains { $0.conversationId == conversationId }
 
     if let matchingRequest {
-      let pending = matchingRequest.consent == "incoming_pending" || matchingRequest.consent == "outgoing_pending"
+      let isIncoming = matchingRequest.consent == "incomingPending" || matchingRequest.consent == "incoming_pending"
+      let isOutgoing = matchingRequest.consent == "outgoingPending" || matchingRequest.consent == "outgoing_pending"
+      let pending = isIncoming || isOutgoing
       isPendingRequest = pending
       hasResolvedConsent = !pending
       directRequestCapabilities = RequestCapabilities(
         canPreview: true,
-        canAccept: matchingRequest.consent == "incoming_pending",
+        canAccept: isIncoming,
         canClose: true,
         canSend: !pending,
         canEmitReceipts: !pending,
         canAdminister: false
       )
-      conversationRecoveryState = matchingRequest.consent == "closed" ? .closed : .healthy
+      let isClosed = matchingRequest.consent == "declined" || matchingRequest.consent == "closed"
+      conversationRecoveryState = isClosed ? .closed : .healthy
     } else if hasConvo {
       isPendingRequest = false
       hasResolvedConsent = true
