@@ -904,7 +904,7 @@ struct ChatTabView: View {
         for message in recentMessages {
           guard let payload = message.parsedPayload() else { continue }
           switch payload.messageType {
-          case .text, .system, nil:
+          case .text, .system:
             if let plaintext = payload.text, !plaintext.isEmpty {
               canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: plaintext)
             } else if case .some(.image(_)) = payload.embed {
@@ -915,7 +915,7 @@ struct ChatTabView: View {
           case .reaction:
             canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
           case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest,
-               .edit, .delete, .unknown:
+               .edit, .unknown:
             continue
           }
           break

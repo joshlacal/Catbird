@@ -48,6 +48,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
   @State private var hasPerformedInitialScroll = false
   @State private var lastScrollToBottomTrigger: Int = 0
   @State private var isLoadingOlderMessages = false
+  @State private var unsendStatus: String?
 
   // MARK: - Body
 
@@ -98,6 +99,22 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
       // Reaction overlay
       if let overlay = reactionOverlay {
         reactionOverlayView(overlay: overlay)
+      }
+    }
+    .overlay(alignment: .top) {
+      if let unsendStatus {
+        Label(
+          unsendStatus,
+          systemImage: unsendStatus.hasPrefix("Message unsent")
+            ? "checkmark.circle.fill"
+            : "exclamationmark.triangle.fill"
+        )
+        .font(.footnote)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .accessibilityLabel(unsendStatus)
+        .accessibilityIdentifier("mls-unsend-status")
       }
     }
     .safeAreaInset(edge: .bottom) {
@@ -228,10 +245,19 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             }
           }
 
-          if message.canDeleteForMe {
+          if message.canUnsend {
             Divider()
-
-            Button("Delete", role: .destructive) {
+            Button("Unsend", role: .destructive) {
+              Task {
+                await dataSource.deleteMessage(messageID: id)
+                unsendStatus = dataSource.message(for: id) == nil
+                  ? "Message unsent for everyone."
+                  : "Message could not be unsent. Try again."
+              }
+            }
+          } else if message.canDeleteForMe {
+            Divider()
+            Button("Delete for Me", role: .destructive) {
               Task { await dataSource.deleteMessage(messageID: id) }
             }
           }

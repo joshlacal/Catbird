@@ -459,7 +459,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         let text = MLSSystemMessagePresentation.text(payload)
         return (text, true, nil)
       case .reaction, .readReceipt, .typing, .deliveryAck, .recoveryRequest,
-           .adminRoster, .adminAction, .edit, .delete, .unknown:
+           .adminRoster, .adminAction, .edit, .unknown:
         return nil
       }
     }
@@ -671,9 +671,12 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
   }
 
-  func unsendMessage(messageID: String) async {
-    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
-    guard let target = message(for: messageID), target.canUnsend else { return }
+  @discardableResult
+  func unsendMessage(messageID: String) async -> Bool {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else {
+      return false
+    }
+    guard let target = message(for: messageID), target.canUnsend else { return false }
     let resolvedMessageID = target.id
 
     do {
@@ -687,24 +690,26 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             userInfo: [NSLocalizedDescriptionKey: "MLS service not available"]
           )
         }
-        let payload = try MLSMessagePayload.unsend(targetMessageId: resolvedMessageID).encodeToJSON()
-        if let json = String(data: payload, encoding: .utf8) {
-          _ = try await coordinator.sendMessage(conversationId: conversationId, text: json)
-        }
+        _ = try await coordinator.unsendMessage(
+          conversationId: conversationId,
+          messageId: resolvedMessageID
+        )
       }
 
       confirmedMessages.removeAll { $0.id == resolvedMessageID }
       pendingIDAliases.removeValue(forKey: resolvedMessageID)
       localReactions.removeValue(forKey: resolvedMessageID)
+      return true
     } catch {
       self.error = error
       logger.error("Failed to unsend MLS message: \(error.localizedDescription)")
       await refreshRecoveryState()
+      return false
     }
   }
 
   func deleteMessage(messageID: String) async {
-    await unsendMessage(messageID: messageID)
+    _ = await unsendMessage(messageID: messageID)
   }
 
   // MARK: - Profile Enrichment

@@ -13,6 +13,7 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
 
   @State private var showingEmojiPicker = false
   @State private var emojiPickerMessageID: String?
+  @State private var unsendStatus: String?
 
   var body: some View {
     chatContent
@@ -20,6 +21,17 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
       #endif
+      .overlay(alignment: .top) {
+        if let unsendStatus {
+          Label(unsendStatus, systemImage: unsendStatus.hasPrefix("Message unsent") ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            .font(.footnote)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .accessibilityLabel(unsendStatus)
+            .accessibilityIdentifier("mls-unsend-status")
+        }
+      }
       .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
         guard let messageID = emojiPickerMessageID else { return }
         dataSource.addReaction(messageID: messageID, emoji: emoji)
@@ -44,6 +56,15 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
       },
       onRetryMessage: { messageID in
         Task { await dataSource.retryFailedSend(pendingID: messageID) }
+      },
+      onUnsendMessage: { message in
+        Task {
+          let messageID = message.id
+          await dataSource.deleteMessage(messageID: messageID)
+          unsendStatus = dataSource.message(for: messageID) == nil
+            ? "Message unsent for everyone."
+            : "Message could not be unsent. Try again."
+        }
       }
     )
     #else

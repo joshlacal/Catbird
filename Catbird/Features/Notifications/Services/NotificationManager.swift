@@ -2656,10 +2656,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         completionHandler([])  // Suppress original notification
         return
 
-      case .edit, .delete, .unknown:
-        // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
-        // Non-displayable control message — suppress like readReceipt/deliveryAck.
-        notificationLogger.info("✏️ [FG] Edit/delete/unknown payload - suppressing notification")
+      case .edit, .unknown:
+        // Edits and unrecognized payloads are non-displayable control messages.
+        notificationLogger.info("✏️ [FG] Edit/unknown payload - suppressing notification")
         completionHandler([])  // Suppress original notification
         return
 

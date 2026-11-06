@@ -83,8 +83,7 @@ import PetrelCatbird
       case .reaction:
         return true
       case .text, .readReceipt, .typing, .adminRoster, .adminAction, .system, .deliveryAck, .recoveryRequest,
-           // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
-           .edit, .delete, .unknown:
+           .edit, .unknown:
         return false
       }
     }

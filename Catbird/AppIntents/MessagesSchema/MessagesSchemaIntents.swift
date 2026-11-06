@@ -341,11 +341,10 @@ struct CatbirdUnsendMessageSchemaIntent {
       message.conversation.id,
       coordinator: coordinator
     )
-    let payloadData = try MLSMessagePayload.unsend(targetMessageId: message.id).encodeToJSON()
-    guard let payloadJSON = String(data: payloadData, encoding: .utf8) else {
-      throw IntentError.serviceUnavailable("Could not encode message unsend payload.")
-    }
-    _ = try await coordinator.sendMessage(conversationId: conversationID, text: payloadJSON)
+    _ = try await coordinator.unsendMessage(
+      conversationId: conversationID,
+      messageId: message.id
+    )
     return .result(dialog: "Unsent message.")
   }
 }

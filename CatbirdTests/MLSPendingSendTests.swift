@@ -167,6 +167,8 @@ struct MLSPendingSendTests {
     #expect(own.canUnsend == true)
     #expect(remote.canEdit == false)
     #expect(remote.canUnsend == false)
+    #expect(own.canDeleteForMe == false)
+    #expect(remote.canDeleteForMe == false)
   }
 
   @Test func acknowledgedPendingMessageDoesNotExposeServerActionsBeforeHandoff() {
@@ -359,10 +361,39 @@ struct MLSPendingSendTests {
       )
     )
 
-    await dataSource.unsendMessage(messageID: "pending:stable")
+    let succeeded = await dataSource.unsendMessage(messageID: "pending:stable")
 
     #expect(dispatched?.conversationID == "convo-1")
     #expect(dispatched?.messageID == "msg-real")
+    #expect(succeeded == true)
     #expect(dataSource.messages.isEmpty)
+  }
+
+  @Test func failedUnsendReturnsFailureAndKeepsTheRow() async {
+    let actions = MLSMessageActionPerformer(
+      edit: { _, _, _ in },
+      unsend: { _, _ in throw ActionFailure.rejected }
+    )
+    let dataSource = MLSConversationDataSource(
+      conversationId: "convo-1",
+      currentUserDID: "did:plc:tester",
+      appState: nil,
+      actionPerformer: actions
+    )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
+    dataSource.ingestConfirmedMessageForTesting(
+      MLSMessageAdapter(
+        id: "msg-real",
+        text: "keep me",
+        senderDID: "did:plc:tester",
+        currentUserDID: "did:plc:tester",
+        sentAt: Date()
+      )
+    )
+
+    let succeeded = await dataSource.unsendMessage(messageID: "msg-real")
+
+    #expect(succeeded == false)
+    #expect(dataSource.message(for: "msg-real") != nil)
   }
 }

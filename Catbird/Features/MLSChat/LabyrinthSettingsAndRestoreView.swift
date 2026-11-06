@@ -1,7 +1,13 @@
+import AuthenticationServices
 import CatbirdMLSCore
 import CryptoKit
 import OSLog
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// Labyrinth 1.1 backup, recovery code, WebAuthn Passkey PRF, hybrid PQ `OTC` pairing,
 /// device revocation, and Space history import screen (`Spec §6.7`, `D4`, `I16`).
@@ -19,6 +25,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   @State private var importConversationId = ""
   @State private var importedCount: UInt32?
   @State private var statusBanner: String?
+  @State private var warningBanner: String?
   @State private var errorMessage: String?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "LabyrinthUI")
@@ -26,11 +33,23 @@ struct LabyrinthSettingsAndRestoreView: View {
   var body: some View {
     Form {
       backupStatusSection
+      recoveryWarningsSection
       recoveryCodeSection
       passkeyPrfSection
       otcPairingSection
       deviceListSection
       historyImportSection
+
+      if let warningBanner {
+        Section {
+          Label(warningBanner, systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .font(.footnote)
+        }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Recovery warning: \(warningBanner)")
+            .accessibilityIdentifier("labyrinth-warning-status")
+      }
 
       if let statusBanner {
         Section {
@@ -38,6 +57,9 @@ struct LabyrinthSettingsAndRestoreView: View {
             .foregroundStyle(.green)
             .font(.footnote)
         }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Success: \(statusBanner)")
+            .accessibilityIdentifier("labyrinth-success-status")
       }
 
       if let errorMessage {
@@ -46,6 +68,9 @@ struct LabyrinthSettingsAndRestoreView: View {
             .foregroundStyle(.red)
             .font(.footnote)
         }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Error: \(errorMessage)")
+            .accessibilityIdentifier("labyrinth-error-status")
       }
     }
     .navigationTitle("Labyrinth Backup & Recovery")
@@ -89,6 +114,58 @@ struct LabyrinthSettingsAndRestoreView: View {
           .foregroundStyle(.secondary)
       } else {
         ProgressView("Loading Labyrinth status...")
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var recoveryWarningsSection: some View {
+    if let status, status.recoveryMethodStale || !status.rotationExclusions.isEmpty {
+      Section {
+        if status.recoveryMethodStale {
+          Label(
+            "This keychain or passkey recovery method is older than 180 days. It still works, but recreate it before the next recovery rotation.",
+            systemImage: "clock.badge.exclamationmark"
+          )
+          .foregroundStyle(.orange)
+          .font(.footnote)
+        }
+          .accessibilityLabel(
+            "Recovery warning: This recovery method is older than 180 days. Recreate it before the next rotation."
+          )
+          .accessibilityIdentifier("labyrinth-stale-recovery-warning")
+
+        ForEach(Array(status.rotationExclusions.enumerated()), id: \.offset) { offset, exclusion in
+          let method = exclusion.recoveryMethod?.capitalized ?? "Device"
+          VStack(alignment: .leading, spacing: 4) {
+            Label(
+              "\(method) recovery was removed during rotation",
+              systemImage: "key.slash.fill"
+            )
+            .foregroundStyle(.red)
+
+            Text("Reason: \(exclusion.reason.replacingOccurrences(of: "-", with: " "))")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+
+            if let deviceKey = exclusion.deviceKeyHex {
+              Text("Device key: \(deviceKey)")
+                .font(.caption2.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(.secondary)
+            }
+          }
+          .accessibilityElement(children: .combine)
+          .accessibilityLabel(
+            "\(method) recovery removed during rotation. Reason: \(exclusion.reason.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " "))."
+          )
+          .accessibilityIdentifier("labyrinth-rotation-exclusion-\(offset)")
+        }
+      } header: {
+        Text("Recovery Attention Required")
+      } footer: {
+        Text("Generate a new recovery code or register the affected passkey again below.")
       }
     }
   }
@@ -271,6 +348,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         self.generatedRecoveryCode = code
         self.status = try await coordinator.labyrinthStatus()
         self.statusBanner = "40-character recovery code sealed into your personal Space."
+        self.warningBanner = nil
         self.errorMessage = nil
       } catch {
         self.errorMessage = error.localizedDescription
@@ -286,9 +364,17 @@ struct LabyrinthSettingsAndRestoreView: View {
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
-        self.status = try await coordinator.restoreWithRecoveryCode(trimmed)
+        let restored = try await coordinator.restoreWithRecoveryCode(trimmed)
+        self.status = restored
         self.restoreCodeInput = ""
         self.statusBanner = "Restored Labyrinth epoch keys and rotated virtual device."
+        if restored.recoveryMethodStale {
+          self.warningBanner = "This recovery method is stale but still valid. Recreate it before a future rotation removes it."
+        } else if !restored.rotationExclusions.isEmpty {
+          self.warningBanner = "Some recovery methods were removed during rotation. Recreate the affected methods below."
+        } else {
+          self.warningBanner = nil
+        }
         self.errorMessage = nil
       } catch {
         self.errorMessage = error.localizedDescription
@@ -302,18 +388,20 @@ struct LabyrinthSettingsAndRestoreView: View {
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
-        var credBytes = [UInt8](repeating: 0, count: 32)
-        var prfBytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, credBytes.count, &credBytes)
-        let prfSeed = SymmetricKey(size: .bits256)
-        prfSeed.withUnsafeBytes { raw in
-          for idx in 0..<min(32, raw.count) { prfBytes[idx] = raw[idx] }
+        guard #available(iOS 18.0, macOS 15.0, *) else {
+          throw LabyrinthPasskeyRegistrationError.unsupportedPlatform
         }
+        guard let anchor = labyrinthPasskeyPresentationAnchor() else {
+          throw LabyrinthPasskeyRegistrationError.missingPresentationAnchor
+        }
+        let registrar = LabyrinthPasskeyRegistrar(anchor: anchor)
+        let passkey = try await registrar.register(accountDid: coordinator.accountDid)
         self.status = try await coordinator.registerPasskeyPrf(
-          credentialId: Data(credBytes),
-          prfOutput32: Data(prfBytes)
+          credentialId: passkey.credentialID,
+          prfOutput32: passkey.prfOutput
         )
         self.statusBanner = "Passkey PRF recovery secret registered."
+        self.warningBanner = nil
         self.errorMessage = nil
       } catch {
         self.errorMessage = error.localizedDescription
@@ -363,6 +451,11 @@ struct LabyrinthSettingsAndRestoreView: View {
       do {
         self.status = try await coordinator.revokeLabyrinthDevice(targetDeviceId: targetDeviceId)
         self.statusBanner = "Revoked device \(targetDeviceId) and rotated Labyrinth epoch."
+        if self.status?.rotationExclusions.isEmpty == false {
+          self.warningBanner = "Some recovery methods were removed during rotation. Recreate the affected methods below."
+        } else {
+          self.warningBanner = nil
+        }
         self.errorMessage = nil
       } catch {
         self.errorMessage = error.localizedDescription
@@ -389,5 +482,131 @@ struct LabyrinthSettingsAndRestoreView: View {
         self.errorMessage = error.localizedDescription
       }
     }
+  }
+}
+
+private enum LabyrinthPasskeyRegistrationError: LocalizedError {
+  case invalidCredential
+  case missingPresentationAnchor
+  case prfUnsupported
+  case unsupportedPlatform
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidCredential:
+      "The passkey provider returned an invalid credential."
+    case .missingPresentationAnchor:
+      "Catbird cannot present passkey registration right now."
+    case .prfUnsupported:
+      "This passkey provider does not support encrypted PRF recovery."
+    case .unsupportedPlatform:
+      "Passkey PRF recovery requires iOS 18 or macOS 15."
+    }
+  }
+}
+
+private func labyrinthPasskeyPresentationAnchor() -> ASPresentationAnchor? {
+  #if os(iOS)
+  for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+    if let window = scene.windows.first(where: \.isKeyWindow) ?? scene.windows.first {
+      return window
+    }
+  }
+  return nil
+  #elseif os(macOS)
+  return NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first
+  #endif
+}
+
+@available(iOS 18.0, macOS 15.0, *)
+@MainActor
+private final class LabyrinthPasskeyRegistrar: NSObject,
+  ASAuthorizationControllerDelegate,
+  ASAuthorizationControllerPresentationContextProviding
+{
+  struct Result {
+    let credentialID: Data
+    let prfOutput: Data
+  }
+
+  private let anchor: ASPresentationAnchor
+  private var continuation: CheckedContinuation<Result, Error>?
+  private var controller: ASAuthorizationController?
+
+  init(anchor: ASPresentationAnchor) {
+    self.anchor = anchor
+    super.init()
+  }
+
+  func register(accountDid: String) async throws -> Result {
+    let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
+      relyingPartyIdentifier: "catbird.blue"
+    )
+    let challengeKey = SymmetricKey(size: .bits256)
+    let challenge = challengeKey.withUnsafeBytes { Data($0) }
+    let userID = Data(SHA256.hash(data: Data(accountDid.utf8)))
+    let request = provider.createCredentialRegistrationRequest(
+      challenge: challenge,
+      name: accountDid,
+      userID: userID
+    )
+    let salt = Data(
+      SHA256.hash(
+        data: Data("catbird.labyrinth.passkey-recovery.v1:\(accountDid)".utf8)
+      )
+    )
+    request.prf = .inputValues(.init(saltInput1: salt))
+
+    return try await withCheckedThrowingContinuation { continuation in
+      self.continuation = continuation
+      let controller = ASAuthorizationController(authorizationRequests: [request])
+      self.controller = controller
+      controller.delegate = self
+      controller.presentationContextProvider = self
+      controller.performRequests()
+    }
+  }
+
+  func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+    self.anchor
+  }
+
+  func authorizationController(
+    controller: ASAuthorizationController,
+    didCompleteWithAuthorization authorization: ASAuthorization
+  ) {
+    guard
+      let credential =
+        authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialRegistration
+    else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.invalidCredential))
+      return
+    }
+    guard let prf = credential.prf, prf.isSupported, let first = prf.first else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.prfUnsupported))
+      return
+    }
+    let output = first.withUnsafeBytes { Data($0) }
+    guard output.count == 32, !credential.credentialID.isEmpty else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.invalidCredential))
+      return
+    }
+    self.finish(
+      .success(Result(credentialID: credential.credentialID, prfOutput: output))
+    )
+  }
+
+  func authorizationController(
+    controller: ASAuthorizationController,
+    didCompleteWithError error: Error
+  ) {
+    self.finish(.failure(error))
+  }
+
+  private func finish(_ result: Swift.Result<Result, Error>) {
+    guard let continuation else { return }
+    self.continuation = nil
+    self.controller = nil
+    continuation.resume(with: result)
   }
 }

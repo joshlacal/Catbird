@@ -329,6 +329,10 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     isFromCurrentUser && !isSystemMessage && !isTombstone && isServerConfirmed
   }
 
+  var canDeleteForMe: Bool {
+    false
+  }
+
   private var isServerConfirmed: Bool {
     guard !id.hasPrefix(PendingMLSSend.idPrefix) else { return false }
     switch sendState {
