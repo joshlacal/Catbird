@@ -222,15 +222,18 @@ struct CatbirdSendMessageSchemaIntent {
       let sequencerDID = await MainActor.run {
         AppStateManager.shared.lifecycle.appState?.defaultMLSSequencerDID ?? "did:web:chat.catbird.blue"
       }
-      _ = try await coordinator.createGroup(
+      let created = try await coordinator.createGroup(
         conversationId: conversationID,
         sequencerDid: sequencerDID,
         memberDids: [draft.recipientDID],
         title: nil,
         description: nil
       )
-      let row = try await coordinator.sendMessage(conversationId: conversationID, text: text)
-      finalConvoId = conversationID
+      let row = try await coordinator.sendMessage(
+        conversationId: created.conversationId,
+        text: text
+      )
+      finalConvoId = created.conversationId
       sentMessageID = row.messageId
       sentAt = Date(timeIntervalSince1970: Double(row.createdAtMs) / 1_000.0)
       MLSDirectComposeDraftStore.archive(draft)

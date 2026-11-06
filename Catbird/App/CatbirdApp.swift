@@ -2477,19 +2477,22 @@ private extension CatbirdApp {
         draft.submitted = true
         MLSDirectComposeDraftStore.save(draft)
         let conversationID = UUID().uuidString.lowercased()
-        _ = try await coordinator.createGroup(
+        let created = try await coordinator.createGroup(
           conversationId: conversationID,
           sequencerDid: appState.defaultMLSSequencerDID,
           memberDids: [recipient],
           title: nil,
           description: nil
         )
-        let sent = try await coordinator.sendMessage(conversationId: conversationID, text: text)
+        let sent = try await coordinator.sendMessage(
+          conversationId: created.conversationId,
+          text: text
+        )
         MLSDirectComposeDraftStore.archive(draft)
         await writeE2EResult(command: command, success: true, data: [
           "draftId": draft.id.uuidString.lowercased(),
           "status": "requestSent",
-          "conversationId": conversationID,
+          "conversationId": created.conversationId,
           "messageId": sent.messageId
         ])
       }

@@ -348,16 +348,19 @@ struct MLSDirectComposeView: View {
       defer { isSubmitting = false }
       let conversationID = UUID().uuidString.lowercased()
       let sequencerDID = appState.defaultMLSSequencerDID
-      _ = try await coordinator.createGroup(
+      let created = try await coordinator.createGroup(
         conversationId: conversationID,
         sequencerDid: sequencerDID,
         memberDids: [draft.recipientDID],
         title: draft.recipientDisplayName ?? draft.recipientHandle,
         description: nil
       )
-      _ = try await coordinator.sendMessage(conversationId: conversationID, text: trimmed)
+      _ = try await coordinator.sendMessage(
+        conversationId: created.conversationId,
+        text: trimmed
+      )
       MLSDirectComposeDraftStore.archive(draft)
-      onCreated(conversationID)
+      onCreated(created.conversationId)
       dismiss()
     } catch {
       errorMessage = error.localizedDescription
