@@ -129,11 +129,11 @@ struct LabyrinthSettingsAndRestoreView: View {
           )
           .foregroundStyle(.orange)
           .font(.footnote)
-        }
           .accessibilityLabel(
             "Recovery warning: This recovery method is older than 180 days. Recreate it before the next rotation."
           )
           .accessibilityIdentifier("labyrinth-stale-recovery-warning")
+        }
 
         ForEach(Array(status.rotationExclusions.enumerated()), id: \.offset) { offset, exclusion in
           let method = exclusion.recoveryMethod?.capitalized ?? "Device"
