@@ -23,7 +23,7 @@ struct MLSSystemMessageAdapterTests {
     let body = BlueCatbirdChatDefs.ApplicationSendBody(
       signatureDomain: "blue.catbird.chat.application",
       messageId: "650e8400-e29b-41d4-a716-446655440000",
-      actorDid: did, actorDeviceId: "device-1", keyId: "key-1", authGeneration: 1,
+      actorDid: did, actorDeviceId: "device-1", keyId: "key-1", authGeneration: 1, sendCounter: 1,
       prior: coordinates,
       aad: BlueCatbirdChatDefs.ApplicationAad(
         protocolVersion: .value_1, conversationId: bytes, generation: 1,
@@ -53,6 +53,9 @@ struct MLSSystemMessageAdapterTests {
     #expect(ordinary.canEdit && ordinary.canUnsend)
     let unverifiedLeave = try adapter(payload: MLSMessagePayload(messageType: .system, text: "membership.left"))
     #expect(unverifiedLeave.text == "Conversation membership changed")
+    let undecryptable = try adapter(payload: MLSMessagePayload(messageType: .system, text: "message.undecryptable"))
+    #expect(undecryptable.isSystemMessage)
+    #expect(undecryptable.text == "This message couldn't be decrypted on this device")
   }
 
   @Test func profileRebuildPreservesSystemStyleAndIdentity() throws {
