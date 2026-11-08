@@ -5,6 +5,9 @@ import Petrel
 import Security
 import Testing
 @testable import Catbird
+#if os(macOS)
+import SwiftUI
+#endif
 
 private final class InMemoryKeyStore: PlatformKeyStore, @unchecked Sendable {
   private let lock = NSLock()
@@ -376,4 +379,48 @@ struct MLSCleanSlateDataSourceAndGateTests {
     dataSource.stopObserving()
     await coordinator.close()
   }
+
+  #if os(macOS)
+  @Test("macOS sidebar row draws the sync-incomplete indicator only for a marked conversation (R4)")
+  @MainActor
+  func macOSSidebarRowShowsSyncIncompleteIndicator() async throws {
+    let accountDid = "did:plc:macsyncincompleteaaaaaa"
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:1")!)
+    let appState = AppState(userDID: accountDid, client: client)
+    defer { appState.cleanup() }
+    let failed = UUID().uuidString.lowercased()
+    let healthy = UUID().uuidString.lowercased()
+    appState.recordMLSSyncFailure(MlsError.SyncIncomplete(
+      message: "sync incomplete (1 applied): conversation \(failed): Cryptography(\"receipt does not verify\")"
+    ))
+
+    // In-process AppKit accessibility exposes no SwiftUI children without an assistive client, so
+    // this renders the row: the indicator is its only orange element (no member change shown).
+    func orangePixels(_ conversationID: String) throws -> Int {
+      let row = MacOSUnifiedConversationRow(
+        item: .mls(
+          conversation: MLSConversationModel(
+            conversationID: conversationID, currentUserDID: accountDid, groupID: Data([1])),
+          participants: [], unreadCount: 0, lastMessage: nil, memberChange: nil,
+          lastActivityDate: Date()),
+        currentUserDID: accountDid
+      )
+      let renderer = ImageRenderer(content: row.environment(appState).frame(width: 320))
+      renderer.scale = 2
+      let image = try #require(renderer.cgImage)
+      let width = image.width, height = image.height
+      var pixels = [UInt8](repeating: 0, count: width * height * 4)
+      let context = try #require(CGContext(
+        data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return stride(from: 0, to: pixels.count, by: 4).filter { i in
+        pixels[i + 3] > 200 && pixels[i] > 200 && (100..<190).contains(pixels[i + 1]) && pixels[i + 2] < 80
+      }.count
+    }
+
+    #expect(try orangePixels(failed) > 20)
+    #expect(try orangePixels(healthy) == 0)
+  }
+  #endif
 }

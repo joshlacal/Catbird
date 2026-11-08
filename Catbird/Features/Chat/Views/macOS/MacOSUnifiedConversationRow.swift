@@ -10,6 +10,7 @@ import SwiftUI
 /// and MLS encrypted conversation types with Mac-native density and styling.
 @available(macOS 13.0, *)
 struct MacOSUnifiedConversationRow: View {
+  @Environment(AppState.self) private var appState
   let item: UnifiedConversation
   let currentUserDID: String
 
@@ -122,6 +123,15 @@ struct MacOSUnifiedConversationRow: View {
               .font(.body)
               .fontWeight(unreadCount > 0 ? .semibold : .regular)
               .lineLimit(1)
+
+            if appState.mlsSyncIncompleteConversationIDs.contains(convo.conversationID) {
+              Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .help("Couldn't update. Catbird will try again.")
+                .accessibilityLabel("Couldn't update. Catbird will try again.")
+                .accessibilityIdentifier("mls-sync-incomplete-row")
+            }
           }
 
           Spacer()

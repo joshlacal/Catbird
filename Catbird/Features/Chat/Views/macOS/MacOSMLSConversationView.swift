@@ -62,6 +62,19 @@ struct MacOSMLSOrdinaryConversationView: View {
             showingEmojiPicker = true
           }
         )
+        .overlay(alignment: .top) {
+          if appState.mlsSyncIncompleteConversationIDs.contains(conversationId) {
+            Label(
+              "Couldn't update this conversation. Catbird will try again.",
+              systemImage: "exclamationmark.arrow.triangle.2.circlepath"
+            )
+            .font(.footnote)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .accessibilityIdentifier("mls-sync-incomplete-status")
+          }
+        }
       } else {
         ProgressView("Loading encrypted conversation…")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
