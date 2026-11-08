@@ -330,4 +330,50 @@ struct MLSCleanSlateDataSourceAndGateTests {
 
     await coordinator.close()
   }
+
+  @Test("SyncIncomplete marks only the conversations it names, without its failure text; a completed sync clears them (R4)")
+  @MainActor
+  func syncIncompleteMarksOnlyTheNamedConversations() async throws {
+    let tempRoot = try makeTempStorageRoot()
+    defer { archiveTempStorageRoot(tempRoot) }
+    let accountDid = "did:plc:syncincompletemarksaaaaa"
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:1")!)
+    let appState = AppState(userDID: accountDid, client: client)
+    defer { appState.cleanup() }
+
+    let failed = UUID().uuidString.lowercased()
+    let healthy = UUID().uuidString.lowercased()
+    appState.recordMLSSyncFailure(MlsError.SyncIncomplete(
+      message: "sync incomplete (1 applied): conversation \(failed): Cryptography(\"receipt does not verify\")"
+    ))
+    #expect(appState.mlsSyncIncompleteConversationIDs == [failed])
+    // A whole-sync failure verified nothing: the marks stay.
+    appState.recordMLSSyncFailure(MlsError.Internal(message: "conversation \(healthy): offline"))
+    #expect(appState.mlsSyncIncompleteConversationIDs == [failed])
+
+    // The conversation data source syncs through the same state; an unenrolled device's sync
+    // completes with nothing to apply, which clears the marks.
+    let coordinator = try MLSClientCoordinator(
+      config: CatbirdMlsClientConfig(
+        storageRoot: tempRoot.path,
+        accountDid: accountDid,
+        deviceId: UUID().uuidString.lowercased(),
+        homeDsDid: "did:web:chat.catbird.blue",
+        homeDsEndpoint: "https://chat.catbird.blue",
+        pdsEndpoint: "https://pds.catbird.blue"
+      ),
+      keystore: InMemoryKeyStore(),
+      transport: InMemoryTransport()
+    )
+    let dataSource = MLSConversationDataSource(
+      conversationId: healthy,
+      currentUserDID: accountDid,
+      appState: appState,
+      mlsCoordinator: coordinator
+    )
+    await dataSource.loadMessages()
+    #expect(appState.mlsSyncIncompleteConversationIDs.isEmpty)
+    dataSource.stopObserving()
+    await coordinator.close()
+  }
 }

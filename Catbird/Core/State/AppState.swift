@@ -500,6 +500,11 @@ final class AppState {
     /// Observable counter that triggers SwiftUI updates when MLS conversations change
     var mlsConversationsDidChange: Int = 0
 
+    /// Conversations the last MLS sync could not finish (`MlsError.SyncIncomplete`); every other
+    /// conversation in that sync was applied. Only canonical IDs are kept: the native failure text
+    /// can carry internal detail and is never presented.
+    private(set) var mlsSyncIncompleteConversationIDs: Set<String> = []
+
     /// Observable counter that triggers active chat views to reload messages from DB.
     var nseStateReloadTrigger: Int = 0
 
@@ -1653,6 +1658,7 @@ final class AppState {
         let coordinator = mlsCoordinator
         mlsCoordinator = nil
         mlsBlockCoordinatorStorage = nil
+        mlsSyncIncompleteConversationIDs = []
         await coordinator?.close()
     }
 
@@ -1693,6 +1699,7 @@ final class AppState {
         mlsBlockCoordinatorStorage = nil
         mlsConversations = []
         mlsConversationsDidChange += 1
+        mlsSyncIncompleteConversationIDs = []
         mlsUnreadCount = 0
         try? await coordinator?.signOutAndWipe()
     }
@@ -2253,9 +2260,31 @@ final class AppState {
     @MainActor
     func reloadMLSConversations() async {
         if isMLSRuntimeAllowed, let coordinator = await getOrOpenMLSCoordinator() {
-            _ = try? await coordinator.sync()
+            await syncMLS(using: coordinator)
         }
         await loadMLSConversations()
+    }
+
+    /// One MLS sync pass. A `SyncIncomplete` still applied every conversation it does not name, so
+    /// callers go on to refresh; only the named conversations are marked.
+    @MainActor
+    func syncMLS(using coordinator: MLSClientCoordinator) async {
+        do {
+            try await coordinator.sync()
+            mlsSyncIncompleteConversationIDs = []
+        } catch {
+            recordMLSSyncFailure(error)
+        }
+    }
+
+    /// Any failure other than `SyncIncomplete` keeps the previous marks: nothing verified those
+    /// conversations since.
+    @MainActor
+    func recordMLSSyncFailure(_ error: Error) {
+        if let failed = (error as? MlsError)?.syncIncompleteConversationIDs {
+            mlsSyncIncompleteConversationIDs = failed
+        }
+        logger.error("MLS: sync did not complete: \(error.localizedDescription)")
     }
 
     /// Update MLS conversation list when a message is received

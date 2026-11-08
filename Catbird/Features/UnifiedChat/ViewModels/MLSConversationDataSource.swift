@@ -255,7 +255,15 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
     let currentObservation = observationID
     startObservingCoordinatorIfNeeded(coordinator, observationID: currentObservation)
-    _ = try? await coordinator.sync()
+    if let appState {
+      await appState.syncMLS(using: coordinator)
+    } else {
+      do {
+        try await coordinator.sync()
+      } catch {
+        logger.error("MLS sync did not complete: \(error.localizedDescription)")
+      }
+    }
     await refreshFromCoordinator(coordinator, observationID: currentObservation)
   }
 

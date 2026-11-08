@@ -52,6 +52,14 @@ struct MLSConversationRowView: View {
             .foregroundStyle(.green)
             .accessibilityLabel("End-to-end encrypted")
 
+          if appState.mlsSyncIncompleteConversationIDs.contains(conversation.conversationID) {
+            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+              .font(.system(size: 12))
+              .foregroundStyle(.orange)
+              .accessibilityLabel("Couldn't update. Catbird will try again.")
+              .accessibilityIdentifier("mls-sync-incomplete-row")
+          }
+
           Spacer()
 
           // Unread count badge
