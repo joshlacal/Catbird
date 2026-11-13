@@ -171,6 +171,7 @@ struct CircleServiceTests {
 
   @Test("An enabled incompatible service is rejected")
   func incompatibleProtocolIsRejected() async {
+    #expect(CircleConfiguration.protocolRevision == "d4def6e9f521896ed8222f576d54923d00b5fbeb")
     let service = CircleService(transport: RecordingCircleTransport(capabilities:
       CircleCapability(enabled: true, protocolRevision: "old-profile", supportsImages: true)))
     await #expect(throws: CircleError.protocolRevisionMismatch) { try await service.capabilities() }
@@ -453,8 +454,8 @@ struct CircleServiceTests {
     #expect(!appState.circlesEnabled)
   }
 
-  @Test("Only documented Spaces unsupported status and code pairs are definitive")
-  func unsupportedErrorClassification() {
+  @Test("Protocol error classification uses current Spaces names")
+  func protocolErrorClassification() {
     let cases: [(Int, String, Bool)] = [
       (501, "MethodNotImplemented", true),
       (404, "permissioned_endpoint_unavailable", true),
@@ -473,6 +474,18 @@ struct CircleServiceTests {
     }
     #expect(!GatewayCircleTransport.isUnsupportedSpacesError(URLError(.timedOut)))
     #expect(!GatewayCircleTransport.isUnsupportedSpacesError(CircleError.upstreamUnavailable))
+    let refusals: [any Error] = [
+      ComAtprotoMemberspacePutMembers.Error.notAuthorized,
+      ComAtprotoSpaceAuthorizeSpaceSync.Error.accountNotAuthorized,
+      ComAtprotoSpaceAuthorizeSpaceSync.Error.spaceNotFound,
+      ATProtoXRPCError(error: "SpaceNotFound", message: "refused", statusCode: 400)
+    ]
+    for error in refusals {
+      #expect(circleError(from: error) == .notAuthorized)
+    }
+    #expect(circleError(from:
+      ATProtoXRPCError(error: "UpstreamFailure", message: "transient", statusCode: 502))
+      == .upstreamUnavailable)
   }
 
 }
