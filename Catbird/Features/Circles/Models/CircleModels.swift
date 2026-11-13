@@ -33,9 +33,9 @@ extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
 /// `clientID` and `serviceDID` are NOT interchangeable. `clientID` is the
 /// AppView's OAuth client identifier — the HTTPS URL of its client-metadata
 /// document — and is the value named in the memberspace policy's `allowedApps`. `serviceDID`
-/// is only the `atproto-proxy` target and `registerNotify` subscriber.
+/// is only the `atproto-proxy` target, not an OAuth client identifier.
 enum CircleConfiguration {
-  static let protocolRevision = "5d88b414a98de1ada22c94c78fa0667a7028163c"
+  static let protocolRevision = "d4def6e9f521896ed8222f576d54923d00b5fbeb"
 
   /// Service identifier the gateway proxies Circle reads to.
   static let serviceDID = "did:web:circles.catbird.blue#atproto_circles"
@@ -377,7 +377,8 @@ func circleError(from error: any Error) -> CircleError {
     case "AccessRemoved": return .accessRemoved
     case "UnsupportedPDS": return .unsupportedPDS
     case "ProtocolRevisionMismatch": return .protocolRevisionMismatch
-    case "UpstreamUnavailable": return .upstreamUnavailable
+    case "UpstreamUnavailable", "UpstreamFailure": return .upstreamUnavailable
+    case "NotAuthorized", "AccountNotAuthorized", "SpaceNotFound": return .notAuthorized
     default: break
     }
   }
@@ -388,7 +389,8 @@ func circleError(from error: any Error) -> CircleError {
     case "AccessRemoved": return .accessRemoved
     case "UnsupportedPDS": return .unsupportedPDS
     case "ProtocolRevisionMismatch": return .protocolRevisionMismatch
-    case "UpstreamUnavailable": return .upstreamUnavailable
+    case "UpstreamUnavailable", "UpstreamFailure": return .upstreamUnavailable
+    case "NotAuthorized", "AccountNotAuthorized", "SpaceNotFound": return .notAuthorized
     default: break
     }
   }

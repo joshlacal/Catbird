@@ -4,6 +4,12 @@ Catbird's Circles client consumes the revised Spaces API through Petrel and the 
 
 Governing plan: [Spaces implementation](workspace/docs/execution-plans/2026-10-23-spaces-release-implementation.md). Provisional choices: [decision log](workspace/docs/DECISIONS.md).
 
+## November 12, 2026 alpha compatibility
+
+Catbird now speaks the Nov-12 Spaces surface through Petrel: Circle creation reads the renamed `space` result, member changes use one-element `putMembers` and `removeMembers` batches, `allowedApps` is a URI, and current PDS refusal and transient-upstream errors preserve the existing user-facing states. The Circle/AppView lockstep revision is `d4def6e9f521896ed8222f576d54923d00b5fbeb`.
+
+Labyrinth Space history remains off pending a matching FFI rebuild. The default CatbirdMLSCore package path selects the public pre-Nov-12 artifact and leaves `CATBIRD_MLS_VERIFIED_SPACE_FFI` undefined; only an explicit verified local framework selection can open that gate.
+
 ## Behavior
 
 - Spaces calls use `spaceType`; member grants and roster results preserve actual read/write permissions.

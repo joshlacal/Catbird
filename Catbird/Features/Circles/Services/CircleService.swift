@@ -116,12 +116,12 @@ actor GatewayCircleTransport: CircleTransport {
         spaceType: try NSID(nsidString: CircleConfiguration.spaceType),
         skey: try RecordKey(keyString: skey),
         policy: ComAtprotoSpaceCreateSpace.InputPolicyUnion(
-          ComAtprotoMemberspacePolicy(allowedApps: [CircleConfiguration.clientID])
+          ComAtprotoMemberspacePolicy(allowedApps: [try URI(uriString: CircleConfiguration.clientID)])
         )
       )
     )
     guard let created else { throw CircleError.invalidResponse }
-    let space = created.uri
+    let space = created.space
 
     let metadata = BlueCatbirdCircleMetadata(
       circleId: tid,
@@ -171,19 +171,17 @@ actor GatewayCircleTransport: CircleTransport {
   }
 
   func addMember(space: SpaceRef, did: DID) async throws {
-    _ = try await client.com.atproto.memberspace.putMember(
-      input: ComAtprotoMemberspacePutMember.Input(
+    _ = try await client.com.atproto.memberspace.putMembers(
+      input: ComAtprotoMemberspacePutMembers.Input(
         space: space,
-        did: did,
-        read: true,
-        write: true
+        members: [ComAtprotoMemberspaceDefs.Member(did: did, read: true, write: true)]
       )
     )
   }
 
   func removeMember(space: SpaceRef, did: DID) async throws {
-    _ = try await client.com.atproto.memberspace.removeMember(
-      input: ComAtprotoMemberspaceRemoveMember.Input(space: space, did: did)
+    _ = try await client.com.atproto.memberspace.removeMembers(
+      input: ComAtprotoMemberspaceRemoveMembers.Input(space: space, dids: [did])
     )
   }
 
