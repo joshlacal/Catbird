@@ -1544,7 +1544,7 @@ private extension CatbirdApp {
 
     #if os(iOS)
     var taskId: UIBackgroundTaskIdentifier = .invalid
-    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
+    if newPhase == .background && !otherScenesActive {
       taskId = UIApplication.shared.beginBackgroundTask(withName: "CatbirdMLSPrepareForBackground") {
         logger.warning("CatbirdMLSPrepareForBackground expired — cancelling MLS tasks and ending background assertion")
         MainActor.assumeIsolated {
@@ -1558,11 +1558,11 @@ private extension CatbirdApp {
     }
     #endif
 
-    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
+    if newPhase == .background && !otherScenesActive {
       appStateManager.lifecycle.appState?.cancelMLSInitialization()
     }
 
-    let shouldSuspendGRDB = (newPhase != .active) && !otherScenesActive
+    let shouldSuspendGRDB = (newPhase == .background) && !otherScenesActive
     GRDBSuspensionCoordinator.setLifecycleSuspended(
       shouldSuspendGRDB,
       reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
@@ -1586,7 +1586,7 @@ private extension CatbirdApp {
         return
       }
 
-      if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
+      if newPhase == .background && !otherScenesActive {
         await appStateManager.lifecycle.appState?.prepareMLSForBackground()
         logger.info("Rust CatbirdMlsClient checkpointed WAL and closed SQLite handle before suspension")
       } else if newPhase == .active && oldPhase != .active {

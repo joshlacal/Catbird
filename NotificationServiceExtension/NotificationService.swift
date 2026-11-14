@@ -144,7 +144,8 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    if let wakeRecipient = resolvePublishedAccountDID(fromHash: wake.recipientAccountHash),
+    let wakeRecipient = resolvePublishedAccountDID(fromHash: wake.recipientAccountHash)
+    if let wakeRecipient,
        Self.isAddressedToSignedOutAccount(recipientDID: wakeRecipient, defaults: appGroupDefaults)
     {
       contentHandler(Self.neutralizedForSignedOutAccount(mutable))
@@ -184,7 +185,14 @@ class NotificationService: UNNotificationServiceExtension {
       postDarwinNotification: true
     )
 
-    contentHandler(Self.buildCommunicationNotification(base: mutable, preview: preview, wake: wake))
+    contentHandler(
+      Self.buildCommunicationNotification(
+        base: mutable,
+        preview: preview,
+        wake: wake,
+        recipientAccountDID: wakeRecipient
+      )
+    )
   }
 
   override func serviceExtensionTimeWillExpire() {
@@ -272,11 +280,89 @@ class NotificationService: UNNotificationServiceExtension {
     content.categoryIdentifier = "MLS_MESSAGE"
   }
 
-  private static func buildCommunicationNotification(
+  /// Strips any `#<deviceId>` credential fragment and normalizes an account DID for same-account checks.
+  static func canonicalRootDID(_ did: String?) -> String {
+    guard let did else { return "" }
+    let trimmed = did.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    let root = String(trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !root.isEmpty else { return "" }
+    return ((try? MLSAppGroupStorage.canonicalizeAccountDid(root)) ?? root).lowercased()
+  }
+
+  static func isSameAccount(_ senderDID: String?, as recipientAccountDID: String?) -> Bool {
+    let lhs = canonicalRootDID(senderDID)
+    let rhs = canonicalRootDID(recipientAccountDID)
+    return !lhs.isEmpty && lhs == rhs
+  }
+
+  /// Returns `true` when an authenticated (`receiptVerified`) MLS preview was authored by one of the
+  /// recipient account's own sibling devices (matching either `recipientAccountDID` or `wake.recipientAccountHash`).
+  static func isOwnSiblingSender(
+    preview: NotificationPreview,
+    wake: PushWakePayload,
+    recipientAccountDID: String? = nil
+  ) -> Bool {
+    guard preview.receiptVerified else { return false }
+    let senderRoot = canonicalRootDID(preview.senderDid)
+    guard !senderRoot.isEmpty else { return false }
+    if let recipientAccountDID, isSameAccount(senderRoot, as: recipientAccountDID) {
+      return true
+    }
+    let normalizedHash = wake.recipientAccountHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalizedHash.count == 64 && sha256Hex(senderRoot) == normalizedHash
+  }
+
+  private static func suppressedForOwnSiblingDevice(
+    wake: PushWakePayload,
+    preview: NotificationPreview
+  ) -> UNMutableNotificationContent {
+    let content = UNMutableNotificationContent()
+    content.title = ""
+    content.subtitle = ""
+    content.body = ""
+    content.sound = nil
+    content.badge = nil
+    content.interruptionLevel = .passive
+    content.relevanceScore = 0
+    content.attachments = []
+    content.threadIdentifier = "catbird-own-device-suppressed"
+    content.categoryIdentifier = ""
+    content.targetContentIdentifier = nil
+    #if os(iOS)
+    content.launchImageName = ""
+    #endif
+    content.userInfo = [
+      "suppressedForOwnSiblingDevice": true,
+      "convo_id": preview.conversationId,
+      "message_id": preview.messageId,
+      "recipient_account": wake.recipientAccountHash,
+    ]
+    return content
+  }
+
+  static func buildCommunicationNotification(
     base: UNMutableNotificationContent,
     preview: NotificationPreview,
-    wake: PushWakePayload
+    wake: PushWakePayload,
+    recipientAccountDID: String? = nil
   ) -> UNNotificationContent {
+    guard preview.receiptVerified else {
+      Self.applyFallback(to: base, wake: wake)
+      var info = base.userInfo
+      info["type"] = wake.kind.contains("request") ? "mls_message_request" : "mls_message"
+      info["protocol_version"] = "2"
+      info["convo_id"] = wake.conversationId
+      info["recipient_account"] = wake.recipientAccountHash
+      base.userInfo = info
+      return base
+    }
+
+    if Self.isOwnSiblingSender(preview: preview, wake: wake, recipientAccountDID: recipientAccountDID) {
+      return Self.suppressedForOwnSiblingDevice(wake: wake, preview: preview)
+    }
+
     let senderName = preview.senderDisplayName ?? "Catbird"
     base.title = preview.groupTitle ?? senderName
     base.body = preview.body

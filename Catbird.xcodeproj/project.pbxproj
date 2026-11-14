@@ -855,7 +855,7 @@
 				CODE_SIGN_ENTITLEMENTS = CatbirdNotificationWidgetExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -893,7 +893,7 @@
 				CODE_SIGN_ENTITLEMENTS = CatbirdNotificationWidgetExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -930,7 +930,7 @@
 				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -984,7 +984,7 @@
 				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1044,7 +1044,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Catbird/Catbird-Debug.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
@@ -1135,7 +1135,7 @@
 				CODE_SIGN_ENTITLEMENTS = Catbird/Catbird.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
@@ -1357,7 +1357,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "*";
 				"INCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = MLSCleanSlateDataSourceAndGateTests.swift;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1378,7 +1378,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "*";
 				"INCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = MLSCleanSlateDataSourceAndGateTests.swift;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1398,7 +1398,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = arm64;
@@ -1417,7 +1417,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = arm64;
@@ -1438,7 +1438,7 @@
 				CODE_SIGN_ENTITLEMENTS = SharedDraftImporter/SharedDraftImporter.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1471,7 +1471,7 @@
 				CODE_SIGN_ENTITLEMENTS = SharedDraftImporter/SharedDraftImporter.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1506,7 +1506,7 @@
 				CODE_SIGN_ENTITLEMENTS = CatbirdFeedWidget/CatbirdFeedWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1549,7 +1549,7 @@
 				CODE_SIGN_ENTITLEMENTS = CatbirdFeedWidget/CatbirdFeedWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 173;
+				CURRENT_PROJECT_VERSION = 225;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_HARDENED_RUNTIME = YES;

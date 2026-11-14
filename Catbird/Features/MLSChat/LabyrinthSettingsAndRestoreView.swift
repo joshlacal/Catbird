@@ -2,6 +2,7 @@ import AuthenticationServices
 import CatbirdMLSCore
 import CryptoKit
 import OSLog
+import PetrelCatbird
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -14,8 +15,12 @@ import AppKit
 @MainActor
 struct LabyrinthSettingsAndRestoreView: View {
   let coordinator: MLSClientCoordinator?
+  var currentDeviceId: String? = nil
+  var deviceMetadataByID: [String: DeviceRowModel] = [:]
 
+  @Environment(AppState.self) private var appState: AppState?
   @State private var status: LabyrinthBackupStatus?
+  @State private var fetchedDeviceMetadataByID: [String: DeviceRowModel] = [:]
   @State private var isLoading = false
   @State private var generatedRecoveryCode: String?
   @State private var restoreCodeInput = ""
@@ -275,24 +280,129 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
+  nonisolated static func canRevokeDevice(
+    _ targetDeviceId: String,
+    currentDeviceId: String?,
+    totalActiveCount: Int
+  ) -> Bool {
+    let trimmed = targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, totalActiveCount > 1 else { return false }
+    if DeviceRowModel.matchesDeviceID(trimmed, currentDeviceId) {
+      return false
+    }
+    return true
+  }
+
+  nonisolated static func mapOwnDevicesByID(
+    _ items: [BlueCatbirdChatDefs.OwnDeviceView],
+    currentDeviceId: String?,
+    now: Date = Date()
+  ) -> [String: DeviceRowModel] {
+    var mapped: [String: DeviceRowModel] = [:]
+    for item in items {
+      let row = DeviceRowModel(item, currentDeviceId: currentDeviceId, now: now)
+      let key = row.deviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      if !key.isEmpty {
+        mapped[key] = row
+      }
+    }
+    return mapped
+  }
+
+  nonisolated static func resolveDeviceMetadata(
+    for deviceId: String,
+    explicit: [String: DeviceRowModel],
+    fetched: [String: DeviceRowModel]
+  ) -> DeviceRowModel? {
+    let normalized = deviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !normalized.isEmpty else { return nil }
+    if let match = explicit[normalized] {
+      return match
+    }
+    if let caseInsensitiveExplicit = explicit.first(where: { $0.key.lowercased() == normalized })?.value {
+      return caseInsensitiveExplicit
+    }
+    return fetched[normalized]
+  }
+
+  private var resolvedCurrentDeviceId: String? {
+    if let currentDeviceId, !currentDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return currentDeviceId
+    }
+    guard let coordinator else { return nil }
+    let sharedDefaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+    if let stored = sharedDefaults?.string(forKey: "mlsDeviceId_\(coordinator.accountDidHash)"),
+       !stored.isEmpty
+    {
+      return stored
+    }
+    let key = AppState.mlsDeviceIDDefaultsKey(for: coordinator.accountDid)
+    return sharedDefaults?.string(forKey: key) ?? UserDefaults.standard.string(forKey: key)
+  }
+
   private var deviceListSection: some View {
     Section("Authorized Labyrinth Devices") {
       if let devices = status?.activeDeviceIds, !devices.isEmpty {
+        let activeLocalId = resolvedCurrentDeviceId
         ForEach(devices, id: \.self) { deviceId in
-          HStack {
-            Label(deviceId, systemImage: "iphone")
-              .font(.footnote.monospaced())
-              .lineLimit(1)
-              .truncationMode(.middle)
+          let isThisDevice = DeviceRowModel.matchesDeviceID(deviceId, activeLocalId)
+          let meta = Self.resolveDeviceMetadata(
+            for: deviceId,
+            explicit: deviceMetadataByID,
+            fetched: fetchedDeviceMetadataByID
+          )
+          let displayName = meta?.deviceName
+            ?? (isThisDevice
+              ? AppState.localMLSDeviceDisplayName(shortDeviceId: deviceId)
+              : "Device \(deviceId.prefix(8))")
+          let state = meta?.activityState ?? .active
+          let allowRevoke = Self.canRevokeDevice(
+            deviceId,
+            currentDeviceId: activeLocalId,
+            totalActiveCount: devices.count
+          )
+
+          HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+              HStack(spacing: 6) {
+                Label(displayName, systemImage: isThisDevice ? "laptopcomputer.and.iphone" : "iphone")
+                  .font(.subheadline.weight(.medium))
+                  .lineLimit(1)
+                if isThisDevice {
+                  Text("This Device")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.18))
+                    .foregroundStyle(.blue)
+                    .clipShape(Capsule())
+                    .accessibilityIdentifier("labyrinth-this-device-badge")
+                }
+                Text(state.badgeTitle)
+                  .font(.caption2.weight(.medium))
+                  .padding(.horizontal, 6)
+                  .padding(.vertical, 2)
+                  .background(state.badgeTint.opacity(0.16))
+                  .foregroundStyle(state.badgeTint)
+                  .clipShape(Capsule())
+              }
+              Text(deviceId)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            }
             Spacer()
-            if devices.count > 1 {
+            if allowRevoke {
               Button("Revoke", role: .destructive) {
                 self.revokeDevice(deviceId)
               }
               .buttonStyle(.borderless)
               .font(.caption)
+              .accessibilityIdentifier("labyrinth-revoke-\(deviceId)")
             }
           }
+          .padding(.vertical, 2)
         }
       } else {
         Text("No active Labyrinth devices enrolled yet.")
@@ -325,6 +435,23 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   // MARK: - Actions
 
+  private func refreshDeviceMetadata() async {
+    guard let appState, appState.client != nil else { return }
+    let actorDeviceId = resolvedCurrentDeviceId ?? appState.resolvedMLSDeviceID()
+    guard !actorDeviceId.isEmpty else { return }
+    do {
+      guard let mlsClient = await appState.getMLSAPIClient() else { return }
+      if let output = try await mlsClient.getOwnDevices(actorDeviceId: actorDeviceId) {
+        self.fetchedDeviceMetadataByID = Self.mapOwnDevicesByID(
+          output.items,
+          currentDeviceId: actorDeviceId
+        )
+      }
+    } catch {
+      self.logger.debug("Skipping optional device metadata enrichment in Labyrinth settings: \(error.localizedDescription)")
+    }
+  }
+
   private func refreshStatus() async {
     guard let coordinator else { return }
     self.isLoading = true
@@ -336,6 +463,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       self.logger.error("Failed to fetch Labyrinth status: \(error.localizedDescription)")
       self.errorMessage = error.localizedDescription
     }
+    await self.refreshDeviceMetadata()
   }
 
   private func generateRecoveryCode() {
@@ -376,6 +504,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           self.warningBanner = nil
         }
         self.errorMessage = nil
+        await self.refreshDeviceMetadata()
       } catch {
         self.errorMessage = error.localizedDescription
       }
@@ -437,6 +566,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         self.status = try await coordinator.labyrinthStatus()
         self.statusBanner = "Device paired at Labyrinth epoch \(completion.newEpochSeq)."
         self.errorMessage = nil
+        await self.refreshDeviceMetadata()
       } catch {
         self.errorMessage = error.localizedDescription
       }
@@ -445,11 +575,23 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private func revokeDevice(_ targetDeviceId: String) {
     guard let coordinator else { return }
+    let totalCount = status?.activeDeviceIds.count ?? 2
+    guard Self.canRevokeDevice(
+      targetDeviceId,
+      currentDeviceId: resolvedCurrentDeviceId,
+      totalActiveCount: totalCount
+    ) else {
+      self.errorMessage = DeviceManagementViewModel.selfRevokeBlockedMessage
+      return
+    }
     self.isLoading = true
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
         self.status = try await coordinator.revokeLabyrinthDevice(targetDeviceId: targetDeviceId)
+        self.fetchedDeviceMetadataByID.removeValue(
+          forKey: targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        )
         self.statusBanner = "Revoked device \(targetDeviceId) and rotated Labyrinth epoch."
         if self.status?.rotationExclusions.isEmpty == false {
           self.warningBanner = "Some recovery methods were removed during rotation. Recreate the affected methods below."
@@ -457,6 +599,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           self.warningBanner = nil
         }
         self.errorMessage = nil
+        await self.refreshDeviceMetadata()
       } catch {
         self.errorMessage = error.localizedDescription
       }

@@ -1539,15 +1539,8 @@ final class AppStateManager {
     if let appState = authenticatedStates[userDID] {
       await appState.wipeMLSOnSignOut()
       appState.cleanup()
-    } else if let storageRoot = try? MLSAppGroupStorage.defaultStorageRoot(),
-              let dbURL = try? MLSAppGroupStorage.databaseURL(storageRoot: storageRoot, accountDid: userDID)
-    {
-      try? FileManager.default.removeItem(at: dbURL)
-      try? FileManager.default.removeItem(atPath: dbURL.path + "-wal")
-      try? FileManager.default.removeItem(atPath: dbURL.path + "-shm")
-      if let didHash = try? MLSAppGroupStorage.accountDidHash(for: userDID) {
-        try? KeychainPlatformKeyStore().deleteAccountKeys(accountDidHash: didHash)
-      }
+    } else {
+      AppState.wipeLocalMLSArtifacts(for: userDID)
     }
 
     await MLSImageCache.shared.purge(for: userDID)

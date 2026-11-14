@@ -56,8 +56,9 @@ struct DeviceManagementView: View {
                     ForEach(viewModel.devices, id: \.deviceId) { device in
                         DeviceRow(
                             device: device,
-                            isCurrentDevice: device.deviceId == viewModel.currentDeviceId,
+                            isCurrentDevice: device.isCurrentDevice(currentDeviceId: viewModel.currentDeviceId),
                             onDelete: {
+                                guard device.canRevoke(currentDeviceId: viewModel.currentDeviceId) else { return }
                                 viewModel.deviceToDelete = device
                                 viewModel.showDeleteConfirmation = true
                             }
@@ -72,12 +73,12 @@ struct DeviceManagementView: View {
         #endif
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                let otherDevices = viewModel.devices.filter { $0.deviceId != viewModel.currentDeviceId }
+                let otherDevices = viewModel.devices.filter { $0.canRevoke(currentDeviceId: viewModel.currentDeviceId) }
                 if !otherDevices.isEmpty {
                     Button(role: .destructive) {
                         viewModel.showClearAllConfirmation = true
                     } label: {
-                        Text("Clear All Garbage")
+                        Text("Revoke Other Devices")
                             .foregroundStyle(.red)
                     }
                 }
@@ -87,25 +88,25 @@ struct DeviceManagementView: View {
             await viewModel.initialize(appState: appState)
             await viewModel.loadDevices()
         }
-        .alert("Delete Device", isPresented: $viewModel.showDeleteConfirmation, presenting: viewModel.deviceToDelete) { device in
+        .alert("Revoke Device", isPresented: $viewModel.showDeleteConfirmation, presenting: viewModel.deviceToDelete) { device in
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button("Revoke", role: .destructive) {
                 Task {
                     await viewModel.deleteDevice(device)
                 }
             }
         } message: { device in
-            Text("Delete “\(device.deviceName)”? This removes the key packages for this device.")
+            Text("Revoke “\(device.deviceName)”? This removes its MLS key packages and rotates your encrypted backup epoch.")
         }
-        .alert("Clear Garbage Devices", isPresented: $viewModel.showClearAllConfirmation) {
+        .alert("Revoke All Other Devices", isPresented: $viewModel.showClearAllConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Clear All", role: .destructive) {
+            Button("Revoke Others", role: .destructive) {
                 Task {
                     await viewModel.clearAllOtherDevices()
                 }
             }
         } message: {
-            Text("Are you sure you want to delete all other device records? This will clear all garbage device registrations.")
+            Text("Are you sure you want to revoke all other authorized devices? This device will remain active.")
         }
         .alert("Couldn’t Delete Device", isPresented: Binding(get: { viewModel.deleteError != nil }, set: { if !$0 { viewModel.deleteError = nil } })) {
             Button("OK") {
@@ -119,25 +120,200 @@ struct DeviceManagementView: View {
     }
 }
 
-/// The canonical chat inventory intentionally exposes protocol fields instead
-/// of the legacy display-only device metadata. Keep the view model's small
-/// presentation adapter local so the product flow can use the generated API
-/// without inventing fields in generated code.
-struct DeviceRowModel: Identifiable {
+enum MLSDeviceActivityState: String, Equatable, Sendable {
+    case active
+    case dormant
+    case pendingApproval = "pending_approval"
+    case revoked
+
+    /// Matches the 48-hour dormant threshold for multi-device ack-driven pruning.
+    static let dormancyThresholdSeconds: TimeInterval = 48 * 3600
+
+    var badgeTitle: String {
+        switch self {
+        case .active: "Active"
+        case .dormant: "Dormant"
+        case .pendingApproval: "Pending Approval"
+        case .revoked: "Revoked"
+        }
+    }
+
+    var badgeTint: Color {
+        switch self {
+        case .active: .green
+        case .dormant: .orange
+        case .pendingApproval: .yellow
+        case .revoked: .secondary
+        }
+    }
+}
+
+private struct ForwardCompatibleDeviceMetadata: Decodable {
+    let deviceId: String?
+    let deviceName: String?
+    let status: String?
+    let updatedAt: String?
+    let lastActiveAt: String?
+    let dormantAt: String?
+    let availablePackageCount: Int?
+}
+
+struct DeviceRowModel: Identifiable, Equatable, Sendable {
     let deviceId: String
     let deviceName: String
     let deviceUUID: String?
     let lastSeenAt: Date
     let keyPackageCount: Int
+    let activityState: MLSDeviceActivityState
 
     var id: String { deviceId }
 
-    init(_ ownDevice: BlueCatbirdChatDefs.OwnDeviceView) {
-        deviceId = ownDevice.device.deviceId
-        deviceName = "Device \(ownDevice.device.deviceId.prefix(8))"
-        deviceUUID = nil
-        lastSeenAt = ownDevice.device.updatedAt.date
-        keyPackageCount = ownDevice.device.availablePackageCount
+    /// Parses `#canonicalDatetime` (`YYYY-MM-DDTHH:MM:SS.sssZ`) as well as standard ISO-8601 strings.
+    static func parseISO8601(_ raw: String?) -> Date? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let parsed = fractional.date(from: trimmed) {
+            return parsed
+        }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        if let parsed = plain.date(from: trimmed) {
+            return parsed
+        }
+        return ATProtocolDate(iso8601String: trimmed)?.date
+    }
+
+    init(
+        deviceId: String,
+        deviceName: String? = nil,
+        deviceUUID: String? = nil,
+        lastSeenAt: Date = Date(),
+        keyPackageCount: Int = 0,
+        activityState: MLSDeviceActivityState? = nil,
+        currentDeviceId: String? = nil,
+        now: Date = Date()
+    ) {
+        let normalizedId = deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isCurrent = Self.matchesDeviceID(normalizedId, currentDeviceId)
+        self.deviceId = normalizedId
+        let trimmedName = deviceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedName.isEmpty {
+            self.deviceName = String(trimmedName.prefix(128))
+        } else if isCurrent {
+            self.deviceName = AppState.localMLSDeviceDisplayName(shortDeviceId: normalizedId)
+        } else {
+            self.deviceName = "Device \(normalizedId.prefix(8))"
+        }
+        self.deviceUUID = deviceUUID
+        self.lastSeenAt = lastSeenAt
+        self.keyPackageCount = keyPackageCount
+        if let activityState {
+            self.activityState = activityState
+        } else if isCurrent {
+            self.activityState = .active
+        } else if now.timeIntervalSince(lastSeenAt) >= MLSDeviceActivityState.dormancyThresholdSeconds {
+            self.activityState = .dormant
+        } else {
+            self.activityState = .active
+        }
+    }
+
+    init?(
+        wireDeviceJSON: Data,
+        fallbackDevice: BlueCatbirdChatDefs.DeviceView? = nil,
+        currentDeviceId: String? = nil,
+        now: Date = Date()
+    ) {
+        let extra = try? JSONDecoder().decode(ForwardCompatibleDeviceMetadata.self, from: wireDeviceJSON)
+        guard let rawId = fallbackDevice?.deviceId ?? extra?.deviceId,
+              !rawId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+        let isCurrent = Self.matchesDeviceID(rawId, currentDeviceId)
+        let parsedLastActive = Self.parseISO8601(extra?.lastActiveAt)
+        let fallbackUpdated = fallbackDevice?.updatedAt.date
+            ?? Self.parseISO8601(extra?.updatedAt)
+            ?? now
+        let effectiveLastSeen = parsedLastActive ?? fallbackUpdated
+        let parsedDormantAt = Self.parseISO8601(extra?.dormantAt)
+
+        let resolvedState: MLSDeviceActivityState
+        if fallbackDevice?.status == .value_revoked || extra?.status == "revoked" {
+            resolvedState = .revoked
+        } else if extra?.status == "pending_approval" {
+            resolvedState = .pendingApproval
+        } else if isCurrent {
+            resolvedState = .active
+        } else if parsedDormantAt != nil
+            || now.timeIntervalSince(effectiveLastSeen) >= MLSDeviceActivityState.dormancyThresholdSeconds
+        {
+            resolvedState = .dormant
+        } else {
+            resolvedState = .active
+        }
+
+        self.init(
+            deviceId: rawId,
+            deviceName: extra?.deviceName,
+            deviceUUID: nil,
+            lastSeenAt: effectiveLastSeen,
+            keyPackageCount: fallbackDevice?.availablePackageCount ?? extra?.availablePackageCount ?? 0,
+            activityState: resolvedState,
+            currentDeviceId: currentDeviceId,
+            now: now
+        )
+    }
+
+    init(
+        _ ownDevice: BlueCatbirdChatDefs.OwnDeviceView,
+        currentDeviceId: String? = nil,
+        now: Date = Date()
+    ) {
+        let encoded = (try? JSONEncoder().encode(ownDevice.device)) ?? Data("{}".utf8)
+        if let decoded = DeviceRowModel(
+            wireDeviceJSON: encoded,
+            fallbackDevice: ownDevice.device,
+            currentDeviceId: currentDeviceId,
+            now: now
+        ) {
+            self = decoded
+        } else {
+            self.init(
+                deviceId: ownDevice.device.deviceId,
+                deviceName: nil,
+                deviceUUID: nil,
+                lastSeenAt: ownDevice.device.updatedAt.date,
+                keyPackageCount: ownDevice.device.availablePackageCount,
+                activityState: ownDevice.device.status == .value_revoked ? .revoked : nil,
+                currentDeviceId: currentDeviceId,
+                now: now
+            )
+        }
+    }
+
+    static func matchesDeviceID(_ lhs: String?, _ rhs: String?) -> Bool {
+        guard let lhs = lhs?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let rhs = rhs?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !lhs.isEmpty,
+              !rhs.isEmpty
+        else {
+            return false
+        }
+        return lhs.caseInsensitiveCompare(rhs) == .orderedSame
+    }
+
+    func isCurrentDevice(currentDeviceId: String?) -> Bool {
+        Self.matchesDeviceID(deviceId, currentDeviceId)
+    }
+
+    func canRevoke(currentDeviceId: String?) -> Bool {
+        !isCurrentDevice(currentDeviceId: currentDeviceId) && activityState != .revoked
     }
 }
 
@@ -155,18 +331,33 @@ struct DeviceRow: View {
                             .font(.headline)
                         if isCurrentDevice {
                             Text("This Device")
-                                .font(.caption)
+                                .font(.caption2.weight(.semibold))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.2))
+                                .background(Color.blue.opacity(0.18))
                                 .foregroundStyle(.blue)
-                                .cornerRadius(4)
+                                .clipShape(Capsule())
+                                .accessibilityIdentifier("device-this-device-badge")
                         }
+                        Text(device.activityState.badgeTitle)
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(device.activityState.badgeTint.opacity(0.16))
+                            .foregroundStyle(device.activityState.badgeTint)
+                            .clipShape(Capsule())
+                            .accessibilityIdentifier("device-status-badge-\(device.activityState.rawValue)")
                     }
 
-                    Text(formatDate(device.lastSeenAt))
+                    Text("\(device.deviceId.prefix(8))… · \(formatDate(device.lastSeenAt))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    if isCurrentDevice {
+                        Text("Sign out in Account & Security to remove this device.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Spacer()
@@ -191,17 +382,21 @@ struct DeviceRow: View {
         }
         .padding(.vertical, 4)
         .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("Delete", systemImage: "trash")
+            if !isCurrentDevice && device.activityState != .revoked {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Revoke", systemImage: "trash")
+                }
             }
         }
         .contextMenu {
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("Delete Device", systemImage: "trash")
+            if !isCurrentDevice && device.activityState != .revoked {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Revoke Device", systemImage: "trash")
+                }
             }
 
             Button {
@@ -246,6 +441,7 @@ final class DeviceManagementViewModel {
     var showClearAllConfirmation = false
     var deviceToDelete: DeviceRowModel?
     var currentDeviceId: String?
+    var customRevokerForTesting: (@MainActor (_ targetDeviceId: String) async throws -> Void)?
 
     private var appState: AppState?
 
@@ -263,7 +459,7 @@ final class DeviceManagementViewModel {
         }
 
         isLoading = true
-        let otherDevices = devices.filter { $0.deviceId != currentId }
+        let otherDevices = devices.filter { $0.canRevoke(currentDeviceId: currentId) }
         for device in otherDevices {
             await deleteDevice(device)
         }
@@ -272,7 +468,7 @@ final class DeviceManagementViewModel {
 
     @MainActor
     func loadDevices() async {
-        guard let client = appState?.client,
+        guard appState?.client != nil,
               let appState
         else {
             logger.error("No authenticated client available")
@@ -292,7 +488,13 @@ final class DeviceManagementViewModel {
                 return
             }
             let output = try await mlsClient.getOwnDevices(actorDeviceId: actorDeviceId)
-            devices = output?.items.map(DeviceRowModel.init) ?? []
+            let loaded = output?.items.map { DeviceRowModel($0, currentDeviceId: actorDeviceId) } ?? []
+            devices = loaded.sorted { lhs, rhs in
+                let lhsCurrent = lhs.isCurrentDevice(currentDeviceId: actorDeviceId)
+                let rhsCurrent = rhs.isCurrentDevice(currentDeviceId: actorDeviceId)
+                if lhsCurrent != rhsCurrent { return lhsCurrent }
+                return lhs.lastSeenAt > rhs.lastSeenAt
+            }
             logger.info("Loaded \(self.devices.count) devices")
         } catch {
             logger.error("Failed to load devices: \(error.localizedDescription)")
@@ -302,28 +504,57 @@ final class DeviceManagementViewModel {
         isLoading = false
     }
 
+    static let selfRevokeBlockedMessage =
+        "You cannot revoke the device you are currently using. Sign out in Account & Security to remove this device."
+    static let coordinatorUnavailableMessage =
+        "Encrypted chat coordinator is unavailable. Open Messages and try revoking this device again."
+
     @MainActor
     func deleteDevice(_ device: DeviceRowModel) async {
-        guard let client = appState?.client, let appState else {
-            logger.error("No authenticated client available")
+        let activeCurrentId = currentDeviceId ?? appState?.resolvedMLSDeviceID()
+        guard device.canRevoke(currentDeviceId: activeCurrentId) else {
+            logger.warning("Blocked attempt to self-revoke or re-revoke device \(device.deviceId)")
+            deleteError = NSError(
+                domain: "DeviceManagement",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: Self.selfRevokeBlockedMessage]
+            )
             return
         }
 
         do {
-            logger.info("Deleting device: \(device.deviceId)")
-            if let coordinator = await appState.getOrOpenMLSCoordinator() {
-                _ = try? await coordinator.revokeLabyrinthDevice(targetDeviceId: device.deviceId)
+            logger.info("Revoking device: \(device.deviceId)")
+            if let customRevoker = customRevokerForTesting {
+                try await customRevoker(device.deviceId)
+            } else {
+                guard let appState else {
+                    throw NSError(
+                        domain: "DeviceManagement",
+                        code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "No authenticated account session is active."]
+                    )
+                }
+                guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
+                    throw NSError(
+                        domain: "DeviceManagement",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: Self.coordinatorUnavailableMessage]
+                    )
+                }
+                _ = try await coordinator.revokeLabyrinthDevice(targetDeviceId: device.deviceId)
+                if let repo = try? ATIdentifier(string: appState.userDID),
+                   let collection = try? NSID(nsidString: "blue.catbird.chat.device"),
+                   let rkey = try? RecordKey(keyString: device.deviceId)
+                {
+                    _ = try? await appState.client.com.atproto.repo.deleteRecord(
+                        input: .init(repo: repo, collection: collection, rkey: rkey)
+                    )
+                }
             }
-            if let repo = try? ATIdentifier(string: appState.userDID),
-               let collection = try? NSID(nsidString: "blue.catbird.chat.device"),
-               let rkey = try? RecordKey(keyString: device.deviceId) {
-                _ = try? await client.com.atproto.repo.deleteRecord(
-                    input: .init(repo: repo, collection: collection, rkey: rkey)
-                )
-            }
-            devices.removeAll { $0.deviceId == device.deviceId }
+            devices.removeAll { DeviceRowModel.matchesDeviceID($0.deviceId, device.deviceId) }
+            deleteError = nil
         } catch {
-            logger.error("Failed to delete device: \(error.localizedDescription)")
+            logger.error("Failed to revoke device: \(error.localizedDescription)")
             deleteError = error
         }
     }

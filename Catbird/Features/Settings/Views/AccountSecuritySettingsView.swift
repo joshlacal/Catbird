@@ -28,6 +28,56 @@ struct AccountSecuritySettingsView: View {
                 .disabled(signingOut)
                 .settingsControl(.init(rawValue: "account.delete"))
             }
+            if CatbirdFeatures.mlsChat, #available(iOS 18.0, macOS 13.0, *) {
+                Section {
+                    let localDeviceId = appState.resolvedMLSDeviceID()
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(AppState.localMLSDeviceDisplayName(shortDeviceId: localDeviceId))
+                                    .font(.subheadline.weight(.medium))
+                                Text("This Device")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.18))
+                                    .foregroundStyle(.blue)
+                                    .clipShape(Capsule())
+                                let isActive = appState.mlsCoordinator != nil
+                                Text(isActive ? "Active" : "Standby")
+                                    .font(.caption2.weight(.medium))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background((isActive ? Color.green : Color.secondary).opacity(0.16))
+                                    .foregroundStyle(isActive ? .green : .secondary)
+                                    .clipShape(Capsule())
+                            }
+                            Text("Device ID: \(localDeviceId.prefix(8))…")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    NavigationLink(destination: DeviceManagementView()) {
+                        Label("Authorized Devices", systemImage: "ipad.landscape.and.iphone")
+                    }
+                    .settingsControl(.init(rawValue: "account.mlsDevices"))
+
+                    NavigationLink(
+                        destination: LabyrinthSettingsAndRestoreView(
+                            coordinator: appState.mlsCoordinator,
+                            currentDeviceId: localDeviceId
+                        )
+                    ) {
+                        Label("Labyrinth Backup & Device Pairing", systemImage: "key.icloud.fill")
+                    }
+                    .settingsControl(.init(rawValue: "account.labyrinthBackup"))
+                } header: {
+                    Text("Encrypted Chat Devices")
+                } footer: {
+                    Text("Pair another device with a 6-digit post-quantum code, inspect active or dormant devices, or revoke lost devices. Sign out below to remove this device.")
+                }
+            }
             if AppStateManager.shared.authentication.biometricType != .none {
                 Section {
                     Toggle("Require App Unlock", isOn: Binding(

@@ -1,4 +1,8 @@
+import CatbirdMLSCore
 import Foundation
+import Petrel
+import PetrelCatbird
+import Security
 import SwiftData
 import os
 
@@ -124,50 +128,136 @@ struct AccountDeletionCoordinator {
   private static let logger = Logger(subsystem: "blue.catbird", category: "AccountDeletionCoordinator")
 
   /// Erases all account data held by Catbird:
-  /// 1. Remote: Nest gateway session/push revocation via POST /auth/logout with Bearer token.
-  /// 2. Local SwiftData: modelContext.delete for AppSettingsModel, Preferences, DraftPost matching DID.
-  /// 3. Filesystem: purge draft media/video directories for account.
-  /// 4. Keychain: delete stored OAuth/refresh tokens and stored handles.
-  /// 5. State: transition appState.signOut() and notify widget/spotlight.
+  /// 1. Remote: Server-side Labyrinth/MLS erasure (`blue.catbird.labyrinth.deleteAccountData`) while
+  ///    authenticated, plus Nest gateway session/push revocation via `POST /auth/logout` using
+  ///    tokens resolved *before* `removeAccount` wipes credentials.
+  /// 2. Local SwiftData: `modelContext.delete` for `AppSettingsModel`, `Preferences`, `DraftPost` matching DID.
+  /// 3. Filesystem & MLS Caches: purge draft/widget/spotlight caches + `MLSImageCache` + unconditional
+  ///    local MLS SQLCipher DB (`<did_hash>.db*`) and Keychain key wipe (`KeychainPlatformKeyStore`).
+  /// 4. Keychain & State: sign out and remove account from Petrel/Keychain and AppState.
   static func eraseCatbirdData(
     forDID did: String,
     token: String? = nil,
+    storageRoot: URL? = nil,
+    keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
     modelContext: ModelContext? = nil
   ) async throws {
     guard !did.isEmpty else { return }
     logger.info("🗑️ Starting Catbird data erasure for account: \(did)")
 
-    // 1. Remote: Revoke Nest gateway session and push registrations
-    await revokeNestGatewaySession(forDID: did, explicitToken: token)
+    // 1a. Resolve active/stored auth tokens BEFORE removeAccount wipes Keychain credentials.
+    let resolvedTokens = await resolveAuthTokensForRevocation(forDID: did, explicitToken: token)
 
-    // 2. Local SwiftData: Purge account-scoped models
+    // 1b. Erase server-side encrypted messaging / mailbox data while the client is still authenticated.
+    await eraseServerSideLabyrinthDataIfAuthenticated(forDID: did)
+
+    // 1c. Remote: Revoke Nest gateway session and push registrations.
+    await revokeNestGatewaySession(forDID: did, tokens: resolvedTokens)
+
+    // 2. Local SwiftData: Purge account-scoped models.
     if let context = modelContext {
       purgeSwiftData(forDID: did, in: context)
     }
 
-    // 3. Filesystem: Purge draft media, captured videos, and local caches
+    // 3. Filesystem & MLS artifacts: Purge local caches, image cache, SQLCipher DB, and Keychain keys
+    // unconditionally (even when mlsCoordinator == nil).
     await purgeFilesystemData(forDID: did)
+    await MLSImageCache.shared.purge(for: did)
+    AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
 
-    // 4 & 5. Keychain & State: Sign out and remove account from Petrel/Keychain and AppState
+    // 4 & 5. Keychain & State: Sign out and remove account from Petrel/Keychain and AppState.
     do {
       try await AppStateManager.shared.authentication.removeAccount(did: did)
+      AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
+      await MLSImageCache.shared.purge(for: did)
       logger.info("✅ Finished Catbird data erasure for account: \(did)")
     } catch {
+      AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
+      await MLSImageCache.shared.purge(for: did)
       logger.error("Failed to remove account from AuthManager: \(error.localizedDescription)")
       throw error
     }
   }
 
-  private static func revokeNestGatewaySession(forDID did: String, explicitToken: String?) async {
+  private static func eraseServerSideLabyrinthDataIfAuthenticated(forDID did: String) async {
+    guard let client = AppStateManager.shared.authentication.client,
+          (await client.getCurrentAccount())?.did == did else {
+      return
+    }
+    do {
+      let (code, _) = try await client.blue.catbird.labyrinth.deleteAccountData(
+        input: BlueCatbirdLabyrinthDeleteAccountData.Input()
+      )
+      logger.info("🗑️ Server-side account data erasure returned HTTP \(code)")
+    } catch {
+      logger.warning("🗑️ Server-side account data erasure failed (continuing local erasure): \(error.localizedDescription)")
+    }
+  }
+
+  static func resolveAuthTokensForRevocation(
+    forDID did: String,
+    explicitToken: String?
+  ) async -> [String] {
+    var tokens: [String] = []
+    func appendUnique(_ candidate: String?) {
+      guard let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty,
+            !tokens.contains(trimmed) else { return }
+      tokens.append(trimmed)
+    }
+
+    appendUnique(explicitToken)
+
+    #if targetEnvironment(simulator)
+    let accessGroup: String? = nil
+    #else
+    let accessGroup: String? = KeychainPlatformKeyStore.resolvedAccessGroup(suffix: "blue.catbird.shared")
+    #endif
+
+    let storage = KeychainStorage(namespace: "blue.catbird", accessGroup: accessGroup)
+    if let session = try? await storage.getSession(for: did) {
+      appendUnique(session.accessToken)
+    }
+
+    for accountKey in ["blue.catbird.gatewaySession.\(did)", "gatewaySession.\(did)"] {
+      appendUnique(readGenericPasswordUTF8(account: accountKey, accessGroup: accessGroup))
+      if accessGroup != nil {
+        appendUnique(readGenericPasswordUTF8(account: accountKey, accessGroup: nil))
+      }
+    }
+
+    return tokens
+  }
+
+  private static func readGenericPasswordUTF8(account: String, accessGroup: String?) -> String? {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    if let accessGroup, !accessGroup.isEmpty {
+      query[kSecAttrAccessGroup as String] = accessGroup
+    }
+    #if os(macOS)
+    query[kSecUseDataProtectionKeychain as String] = true
+    #endif
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    guard status == errSecSuccess,
+          let data = item as? Data,
+          let text = String(data: data, encoding: .utf8) else {
+      return nil
+    }
+    return text
+  }
+
+  private static func revokeNestGatewaySession(forDID did: String, tokens: [String]) async {
+    guard !tokens.isEmpty else { return }
     let gatewayURL = CatbirdGatewayConfiguration.current.origin
     let logoutURL = gatewayURL.appendingPathComponent("auth/logout")
 
-    var tokensToRevoke: [String] = []
-    if let explicitToken, !explicitToken.isEmpty {
-      tokensToRevoke.append(explicitToken)
-    }
-
-    for token in tokensToRevoke {
+    for token in tokens {
       var request = URLRequest(url: logoutURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
       request.httpMethod = "POST"
       request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -178,7 +268,7 @@ struct AccountDeletionCoordinator {
       do {
         let (_, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse {
-          logger.info("🚪 Gateway logout returned status \(http.statusCode)")
+          logger.info("🚪 Gateway logout for \(did, privacy: .private) returned status \(http.statusCode)")
         }
       } catch {
         logger.warning("🚪 Gateway logout request failed (continuing erasure): \(error.localizedDescription)")

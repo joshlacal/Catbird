@@ -36,6 +36,19 @@ struct PendingMLSSend: Identifiable, Equatable, Sendable {
 struct MLSMessageActionPerformer {
   let edit: @MainActor (_ conversationID: String, _ messageID: String, _ text: String) async throws -> Void
   let unsend: @MainActor (_ conversationID: String, _ messageID: String) async throws -> Void
+  var react: (@MainActor (_ conversationID: String, _ messageID: String, _ emoji: String, _ action: MLSReactionPayload.ReactionAction) async throws -> Void)? = nil
+}
+
+private enum DecodedMLSRowEvent {
+  case display(text: String, isSystemMessage: Bool, embed: MLSEmbedData?)
+  case edit(MLSEditPayload)
+  case reaction(MLSReactionPayload)
+}
+
+private struct OptimisticReactionMutation {
+  let emoji: String
+  let action: MLSReactionPayload.ReactionAction
+  let reactedAt: Date
 }
 
 private struct SimpleTextEnvelope: Decodable {
@@ -94,12 +107,33 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   var draftText = ""
   var attachedEmbed: MLSEmbedData?
 
-  private var localReactions: [String: [MLSMessageReaction]] = [:]
+  private var loadedRowsByID: [String: MLSMessageRow] = [:]
+  private var optimisticReactionsByMessageID: [String: [OptimisticReactionMutation]] = [:]
   private var oldestLoadedSeq: Int = Int.max
   private var remoteReadCutoff: (epoch: Int64, sequenceNumber: Int64)?
   private var observationID = UUID()
   private var isObservingCoordinator = false
   private var hasReceivedInitialMessages = false
+
+  var enrichedProfilesSnapshot: [String: MLSProfileEnricher.ProfileData] {
+    profileCache
+  }
+
+  /// Canonical DIDs of non-self participants observed in the conversation.
+  var participantDIDs: [String] {
+    var seen = Set<String>()
+    var result: [String] = []
+    for message in confirmedMessages where !message.isSystemMessage {
+      let rootDID = MLSCredentialBinding.credentialRootDID(message.senderID)
+      guard !rootDID.isEmpty,
+            !MLSCredentialBinding.isSameAccount(rootDID, as: currentUserDID),
+            seen.insert(rootDID).inserted else {
+        continue
+      }
+      result.append(rootDID)
+    }
+    return result
+  }
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDataSource")
 
@@ -206,6 +240,16 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     prunePendingSendsSupersededByConfirmed()
   }
 
+  func ingestRowsForTesting(_ rows: [MLSMessageRow]) {
+    for row in rows {
+      loadedRowsByID[row.messageId] = row
+    }
+    confirmedMessages = MLSMessageAdapter.sortedForDisplay(
+      buildAdapters(from: Array(loadedRowsByID.values))
+    )
+    prunePendingSendsSupersededByConfirmed()
+  }
+
   private func resolveRealMessageID(_ id: String) -> String {
     guard id.hasPrefix(PendingMLSSend.idPrefix) else { return id }
     return confirmedMessages.first(where: { $0.diffableID == id })?.id ?? id
@@ -289,16 +333,17 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         hasMoreMessages = false
         return
       }
-      let olderAdapters = buildAdapters(from: olderRows)
-      for adapter in olderAdapters {
-        if let seq = adapter.mlsSequence, seq > 0, seq < oldestLoadedSeq {
-          oldestLoadedSeq = seq
+      for row in olderRows {
+        loadedRowsByID[row.messageId] = row
+        if row.seq > 0, Int(row.seq) < oldestLoadedSeq {
+          oldestLoadedSeq = Int(row.seq)
         }
       }
-      let existingIDs = Set(confirmedMessages.map(\.id))
-      let unique = olderAdapters.filter { !existingIDs.contains($0.id) }
-      confirmedMessages = MLSMessageAdapter.sortedForDisplay(unique + confirmedMessages)
-      hasMoreMessages = olderRows.count >= 50 && !unique.isEmpty
+      let previousCount = confirmedMessages.count
+      confirmedMessages = MLSMessageAdapter.sortedForDisplay(
+        buildAdapters(from: Array(loadedRowsByID.values))
+      )
+      hasMoreMessages = olderRows.count >= 50 && confirmedMessages.count > previousCount
       await enrichMissingProfilesIfNeeded(observationID: currentObservation)
     } catch {
       self.error = error
@@ -353,14 +398,18 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         limit: 50
       )
       guard self.observationID == observationID else { return }
-      var adapters = buildAdapters(from: rows)
-      var minSeq = Int.max
+      var minSeq = oldestLoadedSeq
       var maxSeq: Int64 = 0
-      for row in rows where row.seq > 0 {
-        minSeq = min(minSeq, Int(row.seq))
-        maxSeq = max(maxSeq, row.seq)
+      for row in rows {
+        loadedRowsByID[row.messageId] = row
+        if row.seq > 0 {
+          minSeq = min(minSeq, Int(row.seq))
+          maxSeq = max(maxSeq, row.seq)
+        }
       }
       oldestLoadedSeq = minSeq
+      optimisticReactionsByMessageID.removeAll()
+      var adapters = buildAdapters(from: Array(loadedRowsByID.values))
       adapters = MLSMessageAdapter.sortedForDisplay(adapters)
 
       let existingIDs = Set(confirmedMessages.map(\.id))
@@ -429,25 +478,117 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func buildAdapters(from rows: [MLSMessageRow]) -> [MLSMessageAdapter] {
-    rows.compactMap { row in
-      guard let decoded = decodeRowPayload(row) else { return nil }
+    let chronologicalRows = rows.sorted { lhs, rhs in
+      if lhs.seq > 0 && rhs.seq > 0 && lhs.seq != rhs.seq {
+        return lhs.seq < rhs.seq
+      }
+      if lhs.createdAtMs != rhs.createdAtMs {
+        return lhs.createdAtMs < rhs.createdAtMs
+      }
+      return lhs.messageId < rhs.messageId
+    }
+
+    struct BaseDisplayEntry {
+      let row: MLSMessageRow
+      var text: String
+      let isSystemMessage: Bool
+      let embed: MLSEmbedData?
+      var isEdited: Bool
+      var editedAt: Date?
+    }
+
+    var baseByID: [String: BaseDisplayEntry] = [:]
+    var orderedIDs: [String] = []
+    var pendingEdits: [(row: MLSMessageRow, payload: MLSEditPayload)] = []
+    var foldedReactions: [String: [MLSMessageReaction]] = [:]
+
+    for row in chronologicalRows {
+      guard let event = decodeRowEvent(row) else { continue }
+      switch event {
+      case let .display(text, isSystemMessage, embed):
+        baseByID[row.messageId] = BaseDisplayEntry(
+          row: row,
+          text: text,
+          isSystemMessage: isSystemMessage,
+          embed: embed,
+          isEdited: false,
+          editedAt: nil
+        )
+        orderedIDs.append(row.messageId)
+      case let .edit(editPayload):
+        pendingEdits.append((row, editPayload))
+      case let .reaction(reactionPayload):
+        let targetID = reactionPayload.messageId
+        let emoji = reactionPayload.emoji
+        guard !targetID.isEmpty, !emoji.isEmpty else { continue }
+        var list = foldedReactions[targetID] ?? []
+        let senderRootDID = MLSCredentialBinding.credentialRootDID(row.senderDid)
+        let senderIdentity = senderRootDID.isEmpty ? row.senderDid : senderRootDID
+        switch reactionPayload.action {
+        case .add:
+          if !list.contains(where: {
+            $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: senderIdentity)
+          }) {
+            list.append(
+              MLSMessageReaction(
+                messageId: targetID,
+                reaction: emoji,
+                senderDID: senderIdentity,
+                reactedAt: Date(timeIntervalSince1970: Double(row.createdAtMs) / 1_000.0)
+              )
+            )
+          }
+        case .remove:
+          list.removeAll {
+            $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: senderIdentity)
+          }
+        }
+        foldedReactions[targetID] = list.isEmpty ? nil : list
+      }
+    }
+
+    // Apply edits in chronological order, enforcing same-account authorship.
+    for (editRow, editPayload) in pendingEdits {
+      let targetID = editPayload.targetMessageId
+      let trimmedNewText = editPayload.newText.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmedNewText.isEmpty,
+            var target = baseByID[targetID],
+            !target.isSystemMessage,
+            MLSCredentialBinding.isSameAccount(editRow.senderDid, as: target.row.senderDid)
+      else {
+        continue
+      }
+      target.text = trimmedNewText
+      target.isEdited = true
+      target.editedAt = Date(timeIntervalSince1970: Double(editRow.createdAtMs) / 1_000.0)
+      baseByID[targetID] = target
+    }
+
+    return orderedIDs.compactMap { id -> MLSMessageAdapter? in
+      guard let entry = baseByID[id] else { return nil }
+      let row = entry.row
       let canonicalSender = MLSProfileEnricher.canonicalDID(row.senderDid)
       let profile = profileCache[canonicalSender]
-      let sendState: MessageSendState = row.isOwn ? .sent : .sent
+      let effectiveReactions = mergedReactions(
+        base: foldedReactions[id] ?? [],
+        messageID: id
+      )
       return MLSMessageAdapter(
         id: row.messageId,
         convoID: row.conversationId,
-        text: decoded.displayText,
+        text: entry.text,
         senderDID: row.senderDid,
         currentUserDID: currentUserDID,
         sentAt: Date(timeIntervalSince1970: Double(row.createdAtMs) / 1_000.0),
-        isSystemMessage: decoded.isSystemMessage,
+        isSystemMessage: entry.isSystemMessage,
+        isEdited: entry.isEdited,
+        editedAt: entry.editedAt,
         senderProfile: profile.map {
           .init(displayName: $0.displayName, avatarURL: $0.avatarURL, handle: $0.handle)
         },
-        reactions: localReactions[row.messageId] ?? [],
-        embed: decoded.embed,
-        sendState: sendState,
+        reactions: effectiveReactions,
+        embed: entry.embed,
+        sendState: .sent,
         epoch: Int(row.epoch),
         sequence: Int(row.seq),
         diffableID: pendingIDAliases[row.messageId]
@@ -455,41 +596,73 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
   }
 
-  private func decodeRowPayload(
-    _ row: MLSMessageRow
-  ) -> (displayText: String, isSystemMessage: Bool, embed: MLSEmbedData?)? {
+  private func mergedReactions(
+    base: [MLSMessageReaction],
+    messageID: String
+  ) -> [MLSMessageReaction] {
+    guard let mutations = optimisticReactionsByMessageID[messageID], !mutations.isEmpty else {
+      return base
+    }
+    var result = base
+    for mutation in mutations {
+      switch mutation.action {
+      case .add:
+        if !result.contains(where: {
+          $0.reaction == mutation.emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
+        }) {
+          result.append(
+            MLSMessageReaction(
+              messageId: messageID,
+              reaction: mutation.emoji,
+              senderDID: currentUserDID,
+              reactedAt: mutation.reactedAt
+            )
+          )
+        }
+      case .remove:
+        result.removeAll {
+          $0.reaction == mutation.emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
+        }
+      }
+    }
+    return result
+  }
+
+  private func decodeRowEvent(_ row: MLSMessageRow) -> DecodedMLSRowEvent? {
     let rawData = Data(row.plaintextJson.utf8)
     if let payload = try? MLSMessagePayload.decodeFromJSON(rawData) {
-      switch payload.messageType {
-      case .text:
-        return (payload.text ?? "", false, payload.embed)
-      case .system:
-        let text = MLSSystemMessagePresentation.text(payload)
-        return (text, true, nil)
-      case .reaction, .readReceipt, .typing, .deliveryAck, .recoveryRequest,
-           .adminRoster, .adminAction, .edit, .unknown:
-        return nil
-      }
+      return classifyPayload(payload)
     }
 
     if let simple = try? JSONDecoder().decode(SimpleTextEnvelope.self, from: rawData),
        let text = simple.text
     {
       if let nestedPayload = try? MLSMessagePayload.decodeFromJSON(Data(text.utf8)) {
-        switch nestedPayload.messageType {
-        case .text:
-          return (nestedPayload.text ?? "", false, nestedPayload.embed)
-        case .system:
-          return (MLSSystemMessagePresentation.text(nestedPayload), true, nil)
-        default:
-          return nil
-        }
+        return classifyPayload(nestedPayload)
       }
-      return (text, false, nil)
+      return .display(text: text, isSystemMessage: false, embed: nil)
     }
 
     guard !row.plaintextJson.hasPrefix("[control:") else { return nil }
-    return (row.plaintextJson, false, nil)
+    return .display(text: row.plaintextJson, isSystemMessage: false, embed: nil)
+  }
+
+  private func classifyPayload(_ payload: MLSMessagePayload) -> DecodedMLSRowEvent? {
+    switch payload.messageType {
+    case .text:
+      return .display(text: payload.text ?? "", isSystemMessage: false, embed: payload.embed)
+    case .system:
+      return .display(text: MLSSystemMessagePresentation.text(payload), isSystemMessage: true, embed: nil)
+    case .edit:
+      guard let edit = payload.edit else { return nil }
+      return .edit(edit)
+    case .reaction:
+      guard let reaction = payload.reaction else { return nil }
+      return .reaction(reaction)
+    case .readReceipt, .typing, .deliveryAck, .recoveryRequest,
+         .adminRoster, .adminAction, .unknown:
+      return nil
+    }
   }
 
   // MARK: - Sending, Reactions, Edit, Unsend
@@ -546,6 +719,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         conversationId: conversationId,
         text: wireText
       )
+      loadedRowsByID[sentRow.messageId] = sentRow
       completePendingSend(id: pendingID, realMessageID: sentRow.messageId)
 
       let profile = profileCache[MLSProfileEnricher.canonicalDID(currentUserDID)]
@@ -582,44 +756,140 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func toggleReaction(messageID: String, emoji: String) {
-    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false,
+          !isSendBlockedByRecovery
+    else { return }
     let resolvedID = resolveRealMessageID(messageID)
-    var current = localReactions[resolvedID] ?? []
-    if let existingIndex = current.firstIndex(where: {
+    guard !resolvedID.hasPrefix(PendingMLSSend.idPrefix),
+          let target = confirmedMessages.first(where: { $0.id == resolvedID })
+    else { return }
+
+    let hasExisting = target.mlsReactions.contains {
       $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
-    }) {
-      current.remove(at: existingIndex)
-    } else {
-      current.append(
-        MLSMessageReaction(
-          messageId: resolvedID,
-          reaction: emoji,
-          senderDID: currentUserDID,
-          reactedAt: Date()
-        )
-      )
     }
-    localReactions[resolvedID] = current.isEmpty ? nil : current
-    rebuildMessagesWithProfiles()
+    let action: MLSReactionPayload.ReactionAction = hasExisting ? .remove : .add
+    applyAndSendReaction(messageID: resolvedID, emoji: emoji, action: action)
   }
 
   func addReaction(messageID: String, emoji: String) {
-    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false,
+          !isSendBlockedByRecovery
+    else { return }
     let resolvedID = resolveRealMessageID(messageID)
-    var current = localReactions[resolvedID] ?? []
-    guard !current.contains(where: {
+    guard !resolvedID.hasPrefix(PendingMLSSend.idPrefix),
+          let target = confirmedMessages.first(where: { $0.id == resolvedID })
+    else { return }
+
+    let hasExisting = target.mlsReactions.contains {
       $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
-    }) else { return }
-    current.append(
-      MLSMessageReaction(
-        messageId: resolvedID,
-        reaction: emoji,
-        senderDID: currentUserDID,
-        reactedAt: Date()
-      )
+    }
+    guard !hasExisting else { return }
+    applyAndSendReaction(messageID: resolvedID, emoji: emoji, action: .add)
+  }
+
+  private func applyAndSendReaction(
+    messageID: String,
+    emoji: String,
+    action: MLSReactionPayload.ReactionAction
+  ) {
+    let mutation = OptimisticReactionMutation(emoji: emoji, action: action, reactedAt: Date())
+    var list = optimisticReactionsByMessageID[messageID] ?? []
+    list.append(mutation)
+    optimisticReactionsByMessageID[messageID] = list
+    applyOptimisticReactionToConfirmedAdapter(messageID: messageID, mutation: mutation)
+
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      do {
+        if let reactPerformer = self.actionPerformer?.react {
+          try await reactPerformer(self.conversationId, messageID, emoji, action)
+        } else if let coordinator = self.activeCoordinator {
+          let payloadData = try MLSMessagePayload.reaction(
+            messageId: messageID,
+            emoji: emoji,
+            action: action
+          ).encodeToJSON()
+          if let json = String(data: payloadData, encoding: .utf8) {
+            let sentRow = try await coordinator.sendMessage(
+              conversationId: self.conversationId,
+              text: json
+            )
+            self.loadedRowsByID[sentRow.messageId] = sentRow
+            self.optimisticReactionsByMessageID[messageID] = nil
+            self.confirmedMessages = MLSMessageAdapter.sortedForDisplay(
+              self.buildAdapters(from: Array(self.loadedRowsByID.values))
+            )
+          }
+        }
+      } catch {
+        self.error = error
+        self.logger.error("Failed to send MLS reaction: \(error.localizedDescription)")
+        self.optimisticReactionsByMessageID[messageID] = nil
+        if !self.loadedRowsByID.isEmpty {
+          self.confirmedMessages = MLSMessageAdapter.sortedForDisplay(
+            self.buildAdapters(from: Array(self.loadedRowsByID.values))
+          )
+        } else {
+          let inverseAction: MLSReactionPayload.ReactionAction = action == .add ? .remove : .add
+          self.applyOptimisticReactionToConfirmedAdapter(
+            messageID: messageID,
+            mutation: OptimisticReactionMutation(emoji: emoji, action: inverseAction, reactedAt: Date())
+          )
+        }
+        await self.refreshRecoveryState()
+      }
+    }
+  }
+
+  private func applyOptimisticReactionToConfirmedAdapter(
+    messageID: String,
+    mutation: OptimisticReactionMutation
+  ) {
+    guard let idx = confirmedMessages.firstIndex(where: { $0.id == messageID }) else { return }
+    let existing = confirmedMessages[idx]
+    var updatedReactions = existing.mlsReactions
+    switch mutation.action {
+    case .add:
+      if !updatedReactions.contains(where: {
+        $0.reaction == mutation.emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
+      }) {
+        updatedReactions.append(
+          MLSMessageReaction(
+            messageId: messageID,
+            reaction: mutation.emoji,
+            senderDID: currentUserDID,
+            reactedAt: mutation.reactedAt
+          )
+        )
+      }
+    case .remove:
+      updatedReactions.removeAll {
+        $0.reaction == mutation.emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
+      }
+    }
+    confirmedMessages[idx] = MLSMessageAdapter(
+      id: existing.id,
+      convoID: existing.mlsConversationID,
+      text: existing.text,
+      senderDID: existing.senderID,
+      currentUserDID: currentUserDID,
+      sentAt: existing.sentAt,
+      isSystemMessage: existing.isSystemMessage,
+      isEdited: existing.isEdited,
+      editedAt: existing.editedAt,
+      isTombstone: existing.isTombstone,
+      deletedAt: existing.deletedAt,
+      senderProfile: existing.mlsProfile,
+      reactions: updatedReactions,
+      embed: existing.mlsEmbed,
+      sendState: existing.sendState,
+      epoch: existing.mlsEpoch,
+      sequence: existing.mlsSequence,
+      processingError: existing.processingError,
+      processingAttempts: existing.processingAttempts,
+      validationFailureReason: existing.validationFailureReason,
+      diffableID: existing.diffableID
     )
-    localReactions[resolvedID] = current
-    rebuildMessagesWithProfiles()
   }
 
   @discardableResult
@@ -644,7 +914,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         }
         let payload = try MLSMessagePayload.edit(targetMessageId: resolvedMessageID, newText: trimmedText).encodeToJSON()
         if let json = String(data: payload, encoding: .utf8) {
-          _ = try await coordinator.sendMessage(conversationId: conversationId, text: json)
+          let editRow = try await coordinator.sendMessage(conversationId: conversationId, text: json)
+          loadedRowsByID[editRow.messageId] = editRow
         }
       }
       if let index = confirmedMessages.firstIndex(where: { $0.id == resolvedMessageID }) {
@@ -662,7 +933,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           isTombstone: old.isTombstone,
           deletedAt: old.deletedAt,
           senderProfile: old.mlsProfile,
-          reactions: localReactions[old.id] ?? [],
+          reactions: old.mlsReactions,
           embed: old.mlsEmbed,
           sendState: old.sendState,
           epoch: old.mlsEpoch,
@@ -705,8 +976,9 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       }
 
       confirmedMessages.removeAll { $0.id == resolvedMessageID }
+      loadedRowsByID.removeValue(forKey: resolvedMessageID)
       pendingIDAliases.removeValue(forKey: resolvedMessageID)
-      localReactions.removeValue(forKey: resolvedMessageID)
+      optimisticReactionsByMessageID.removeValue(forKey: resolvedMessageID)
       return true
     } catch {
       self.error = error
@@ -784,7 +1056,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         isTombstone: adapter.isTombstone,
         deletedAt: adapter.deletedAt,
         senderProfile: senderProfile,
-        reactions: adapter.isDecryptedAndValid ? (localReactions[adapter.id] ?? []) : [],
+        reactions: adapter.isDecryptedAndValid ? adapter.mlsReactions : [],
         embed: adapter.mlsEmbed,
         sendState: adapter.sendState,
         epoch: adapter.mlsEpoch,

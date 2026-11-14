@@ -451,7 +451,9 @@ struct ChatSettingsView: View {
   private func markAllConversationsAsRead() {
     Task {
       isMarkingAllRead = true
-      let success = await appState.chatManager.markAllConversationsAsRead()
+      let bskySuccess = await appState.chatManager.markAllConversationsAsRead()
+      let mlsSuccess = await appState.markAllMLSConversationsAsRead()
+      let success = bskySuccess && mlsSuccess
       isMarkingAllRead = false
       if success {
         appState.toastManager.show(ToastItem(message: "All conversations marked as read"))

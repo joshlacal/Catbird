@@ -14,7 +14,8 @@ struct ChatToolbarMenu: View {
     Menu {
       Button {
         Task {
-          await appState.chatManager.markAllConversationsAsRead()
+          _ = await appState.chatManager.markAllConversationsAsRead()
+          _ = await appState.markAllMLSConversationsAsRead()
         }
       } label: {
         Label("Mark All as Read", systemImage: "envelope.open")

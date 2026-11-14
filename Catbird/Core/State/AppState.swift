@@ -6,6 +6,7 @@ import NaturalLanguage
 import Nuke
 import OSLog
 import Petrel
+import Security
 import SwiftData
 import SwiftUI
 import UserNotifications
@@ -1500,20 +1501,79 @@ final class AppState {
         return mlsClient
     }
 
-    /// Resolve stable per-account logical device identifier (canonical lowercase UUID).
-    @MainActor
-    func resolvedMLSDeviceID() -> String {
-        let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-        let key = "blue.catbird.mls.deviceId.\(userDID.lowercased())"
-        if let existing = defaults.string(forKey: key), !existing.isEmpty {
-            let trimmed = existing.hasPrefix("dev-") ? String(existing.dropFirst(4)) : existing
-            if UUID(uuidString: trimmed) != nil {
-                return trimmed.lowercased()
+    /// UserDefaults key storing the per-account installation `deviceId` UUIDv4.
+    nonisolated static func mlsDeviceIDDefaultsKey(for accountDid: String) -> String {
+        let normalized = accountDid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "blue.catbird.mls.deviceId.\(normalized)"
+    }
+
+    /// Resolves or creates a canonical lowercase UUIDv4 `deviceId` for `accountDid` inside `defaults`.
+    nonisolated static func resolveOrCreateMLSDeviceID(
+        for accountDid: String,
+        in defaults: UserDefaults
+    ) -> String {
+        let canonical = ((try? MLSAppGroupStorage.canonicalizeAccountDid(accountDid)) ?? accountDid)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let canonicalKey = mlsDeviceIDDefaultsKey(for: canonical)
+        let rawKey = mlsDeviceIDDefaultsKey(for: accountDid)
+
+        for candidateKey in [canonicalKey, rawKey] {
+            if let existing = defaults.string(forKey: candidateKey), !existing.isEmpty {
+                let trimmed = existing.hasPrefix("dev-") ? String(existing.dropFirst(4)) : existing
+                if UUID(uuidString: trimmed) != nil {
+                    let normalizedUUID = trimmed.lowercased()
+                    if candidateKey != canonicalKey {
+                        defaults.set(normalizedUUID, forKey: canonicalKey)
+                    }
+                    return normalizedUUID
+                }
             }
         }
+
         let created = UUID().uuidString.lowercased()
-        defaults.set(created, forKey: key)
+        defaults.set(created, forKey: canonicalKey)
         return created
+    }
+
+    /// Human-readable platform display name for the current device (capped at 128 characters).
+    nonisolated static func localMLSDeviceDisplayName(shortDeviceId: String? = nil) -> String {
+        let baseName: String = {
+            #if os(iOS)
+                let raw = Self.assumeIsolatedFallbackDeviceName()
+                return raw.isEmpty ? "iPhone" : raw
+            #elseif os(macOS)
+                let host = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return host.isEmpty ? "Mac" : host
+            #else
+                return "Catbird Device"
+            #endif
+        }()
+        let sanitized = String(baseName.prefix(96))
+        if let shortDeviceId, !shortDeviceId.isEmpty {
+            return String("\(sanitized) · \(shortDeviceId.prefix(8))".prefix(128))
+        }
+        return sanitized
+    }
+
+    #if os(iOS)
+    private nonisolated static func assumeIsolatedFallbackDeviceName() -> String {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return "iOS Device"
+    }
+    #endif
+
+    /// Resolve stable per-account logical device identifier (canonical lowercase UUID).
+    @MainActor
+    func resolvedMLSDeviceID(in defaultsOverride: UserDefaults? = nil) -> String {
+        let defaults = defaultsOverride
+            ?? UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+            ?? .standard
+        return Self.resolveOrCreateMLSDeviceID(for: userDID, in: defaults)
     }
 
     /// Resolve granted OAuth scopes for Spaces eligibility checks (`I15`).
@@ -1600,11 +1660,27 @@ final class AppState {
                     actorDeviceId: deviceId
                 )
 
-                let coordinator = try MLSClientCoordinator(
-                    config: config,
-                    keystore: keystore,
-                    transport: transport
-                )
+                let coordinator: MLSClientCoordinator
+                do {
+                    coordinator = try MLSClientCoordinator(
+                        config: config,
+                        keystore: keystore,
+                        transport: transport
+                    )
+                } catch CatbirdMLS.MlsError.LocalStateFormatUnsupported(let message) {
+                    self.logger.warning(
+                        "MLS: Local database format unsupported (\(message, privacy: .public)); wiping SQLite files while preserving Keychain recovery keys and retrying once"
+                    )
+                    Self.wipeUnsupportedLocalMLSDatabaseFiles(
+                        storageRoot: storageRoot,
+                        accountDid: targetUserDID
+                    )
+                    coordinator = try MLSClientCoordinator(
+                        config: config,
+                        keystore: keystore,
+                        transport: transport
+                    )
+                }
                 if let sharedDefaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) {
                     sharedDefaults.set(deviceId, forKey: "mlsDeviceId_\(coordinator.accountDidHash)")
                     sharedDefaults.set(homeDsEndpointString, forKey: "mlsHomeDsEndpoint_\(coordinator.accountDidHash)")
@@ -1694,9 +1770,194 @@ final class AppState {
         await reloadMLSProjectionFromDisk()
     }
 
+    /// Removes only `<did_hash>.db*` SQLite artifacts for `accountDid` while keeping Keychain
+    /// recovery and identity keys intact (used when upgrading across an unsupported local DB schema).
+    nonisolated static func wipeUnsupportedLocalMLSDatabaseFiles(
+        storageRoot: URL,
+        accountDid: String
+    ) {
+        let fm = FileManager.default
+        if let dbURL = try? MLSAppGroupStorage.databaseURL(storageRoot: storageRoot, accountDid: accountDid) {
+            for suffix in ["", "-wal", "-shm", "-journal"] {
+                try? fm.removeItem(atPath: dbURL.path + suffix)
+            }
+        }
+        guard let didHash = try? MLSAppGroupStorage.accountDidHash(for: accountDid) else { return }
+        let mlsDir = MLSAppGroupStorage.mlsDirectoryURL(storageRoot: storageRoot)
+        let prefix = "\(didHash).db"
+        if let entries = try? fm.contentsOfDirectory(at: mlsDir, includingPropertiesForKeys: nil) {
+            for entry in entries where entry.lastPathComponent == prefix || entry.lastPathComponent.hasPrefix(prefix + "-") || entry.lastPathComponent.hasPrefix(prefix + ".") {
+                try? fm.removeItem(at: entry)
+            }
+        }
+    }
+
+    /// Pure prefix-safe filter identifying Keychain item `kSecAttrAccount` keys belonging strictly
+    /// to `accountDid` / `didHash` across MLS (`sigkey:*`) and E2EE Circles (`<accountDID>|<spaceURI>`),
+    /// never matching sibling accounts signed in on the same device.
+    nonisolated static func filterAccountScopedKeychainAccounts(
+        mlsAccounts: [String],
+        circleAccounts: [String],
+        accountDid: String,
+        didHash: String,
+        previousDeviceId: String? = nil
+    ) -> (mlsSigKeyAccounts: [String], circleKeyAccounts: [String]) {
+        let normalizedHash = didHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawTrimmed = accountDid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canonicalDid = (try? MLSAppGroupStorage.canonicalizeAccountDid(rawTrimmed)) ?? rawTrimmed
+        let lowerDid = canonicalDid.lowercased()
+        let normalizedPrevDevice = previousDeviceId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        let matchedMLS: [String]
+        if normalizedHash.count == 64 {
+            matchedMLS = mlsAccounts.filter { account in
+                let lower = account.lowercased()
+                guard lower.hasPrefix("sigkey:") else { return false }
+                let segments = lower.dropFirst("sigkey:".count).split(separator: ":").map(String.init)
+                if segments.contains(normalizedHash) {
+                    return true
+                }
+                if let dev = normalizedPrevDevice, !dev.isEmpty,
+                   lower.contains("\(normalizedHash):\(dev)") || lower.contains("\(normalizedHash)-\(dev)")
+                {
+                    return true
+                }
+                return false
+            }
+        } else {
+            matchedMLS = []
+        }
+
+        let matchedCircles = circleAccounts.filter { account in
+            guard let pipeIdx = account.firstIndex(of: "|") else { return false }
+            let prefixDid = String(account[..<pipeIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return !prefixDid.isEmpty && (
+                prefixDid == canonicalDid
+                    || prefixDid == rawTrimmed
+                    || prefixDid.lowercased() == lowerDid
+            )
+        }
+
+        return (matchedMLS, matchedCircles)
+    }
+
+    private nonisolated static func wipeAccountScopedSystemKeychainResiduals(
+        accountDid: String,
+        didHash: String,
+        previousDeviceId: String?
+    ) {
+        let mlsService = "blue.catbird.mls.clean-slate"
+        let circlesService = "blue.catbird.circles.keys"
+        let accessGroup = KeychainPlatformKeyStore.resolvedAccessGroup()
+
+        func listAccounts(service: String, accessGroup: String?, dataProtection: Bool) -> [String] {
+            var query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecReturnAttributes as String: kCFBooleanTrue as Any,
+                kSecMatchLimit as String: kSecMatchLimitAll,
+            ]
+            if let accessGroup, !accessGroup.isEmpty {
+                query[kSecAttrAccessGroup as String] = accessGroup
+            }
+            if dataProtection {
+                query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue as Any
+                query[kSecAttrSynchronizable as String] = kCFBooleanFalse as Any
+            }
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            guard status == errSecSuccess, let items = result as? [[String: Any]] else {
+                return []
+            }
+            return items.compactMap { $0[kSecAttrAccount as String] as? String }
+        }
+
+        let mlsAccounts = listAccounts(service: mlsService, accessGroup: accessGroup, dataProtection: false)
+        let circleAccounts = listAccounts(service: circlesService, accessGroup: nil, dataProtection: true)
+        let (sigKeysToDelete, circleKeysToDelete) = filterAccountScopedKeychainAccounts(
+            mlsAccounts: mlsAccounts,
+            circleAccounts: circleAccounts,
+            accountDid: accountDid,
+            didHash: didHash,
+            previousDeviceId: previousDeviceId
+        )
+
+        for sigAccount in sigKeysToDelete {
+            var deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: mlsService,
+                kSecAttrAccount as String: sigAccount,
+            ]
+            if let accessGroup, !accessGroup.isEmpty {
+                deleteQuery[kSecAttrAccessGroup as String] = accessGroup
+            }
+            _ = SecItemDelete(deleteQuery as CFDictionary)
+        }
+
+        for circleAccount in circleKeysToDelete {
+            let deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: circlesService,
+                kSecAttrAccount as String: circleAccount,
+                kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
+                kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+            ]
+            _ = SecItemDelete(deleteQuery as CFDictionary)
+        }
+    }
+
+    /// Unconditionally wipes all local MLS SQLite artifacts, Keychain keys (`I8`), E2EE Circle
+    /// cached keys, and per-installation `deviceId` metadata for `accountDid`, even when
+    /// `mlsCoordinator` was never opened in this launch. Clearing `blue.catbird.mls.deviceId.<did>`
+    /// guarantees a subsequent sign-in on the same hardware mints a fresh `deviceId` UUIDv4 matching
+    /// its freshly generated Keychain signing keypair.
+    nonisolated static func wipeLocalMLSArtifacts(
+        for accountDid: String,
+        storageRoot: URL? = nil,
+        keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
+        sharedDefaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+    ) {
+        let trimmedDid = accountDid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDid.isEmpty else { return }
+        if let root = storageRoot ?? (try? MLSAppGroupStorage.defaultStorageRoot()) {
+            wipeUnsupportedLocalMLSDatabaseFiles(storageRoot: root, accountDid: trimmedDid)
+        }
+
+        let canonicalDid = (try? MLSAppGroupStorage.canonicalizeAccountDid(trimmedDid)) ?? trimmedDid
+        let rawDeviceKey = mlsDeviceIDDefaultsKey(for: trimmedDid)
+        let canonicalDeviceKey = mlsDeviceIDDefaultsKey(for: canonicalDid)
+        let previousDeviceId = sharedDefaults?.string(forKey: canonicalDeviceKey)
+            ?? sharedDefaults?.string(forKey: rawDeviceKey)
+
+        sharedDefaults?.removeObject(forKey: rawDeviceKey)
+        sharedDefaults?.removeObject(forKey: canonicalDeviceKey)
+        if sharedDefaults == nil || sharedDefaults === UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) {
+            UserDefaults.standard.removeObject(forKey: rawDeviceKey)
+            UserDefaults.standard.removeObject(forKey: canonicalDeviceKey)
+        }
+
+        if let didHash = try? MLSAppGroupStorage.accountDidHash(for: trimmedDid) {
+            let resolvedPrevDevice = previousDeviceId ?? sharedDefaults?.string(forKey: "mlsDeviceId_\(didHash)")
+            try? keystore.deleteAccountKeys(accountDidHash: didHash)
+            if keystore is KeychainPlatformKeyStore {
+                wipeAccountScopedSystemKeychainResiduals(
+                    accountDid: canonicalDid,
+                    didHash: didHash,
+                    previousDeviceId: resolvedPrevDevice
+                )
+            }
+            sharedDefaults?.removeObject(forKey: "mlsDeviceId_\(didHash)")
+            sharedDefaults?.removeObject(forKey: "mlsHomeDsEndpoint_\(didHash)")
+            sharedDefaults?.removeObject(forKey: "blue.catbird.mls.deviceNames.\(didHash)")
+        }
+    }
+
     /// Wipe local SQLCipher DB + Keychain items on sign-out (`I8`).
     @MainActor
     func wipeMLSOnSignOut() async {
+        let accountDid = userDID
         mlsCoordinatorInitTask?.cancel()
         mlsCoordinatorInitTask = nil
         let coordinator = mlsCoordinator
@@ -1707,6 +1968,48 @@ final class AppState {
         mlsSyncIncompleteConversationIDs = []
         mlsUnreadCount = 0
         try? await coordinator?.signOutAndWipe()
+        Self.wipeLocalMLSArtifacts(for: accountDid)
+        await MLSImageCache.shared.purge(for: accountDid)
+    }
+
+    /// Marks every MLS conversation as read up to its latest known sequence number and refreshes unread counts.
+    @MainActor
+    func markAllMLSConversationsAsRead() async -> Bool {
+        guard isMLSRuntimeAllowed else { return true }
+        guard let coordinator = await getOrOpenMLSCoordinator() else {
+            return mlsConversations.isEmpty
+        }
+        do {
+            let rows = try await coordinator.listConversations(limit: 200)
+            var allSucceeded = true
+            for row in rows where row.unreadCount > 0 || row.lastSeq > 0 {
+                var targetSeq = row.lastSeq
+                if targetSeq <= 0,
+                   let latest = try? await coordinator.listMessages(
+                       conversationId: row.conversationId,
+                       beforeSeq: nil,
+                       limit: 1
+                   ).first
+                {
+                    targetSeq = latest.seq
+                }
+                guard targetSeq > 0 else { continue }
+                do {
+                    try await coordinator.acknowledgeEntriesUpTo(
+                        conversationId: row.conversationId,
+                        upToSeq: targetSeq
+                    )
+                } catch {
+                    allSucceeded = false
+                    logger.error("MLS: Failed to mark conversation \(row.conversationId, privacy: .public) read: \(error.localizedDescription)")
+                }
+            }
+            await loadMLSConversations()
+            return allSucceeded
+        } catch {
+            logger.error("MLS: Failed to list conversations for markAllMLSConversationsAsRead: \(error.localizedDescription)")
+            return false
+        }
     }
 
     @MainActor
@@ -2403,15 +2706,9 @@ final class AppState {
 
         if did == userDID {
             await wipeMLSOnSignOut()
-        } else if let storageRoot = try? MLSAppGroupStorage.defaultStorageRoot(),
-                  let dbURL = try? MLSAppGroupStorage.databaseURL(storageRoot: storageRoot, accountDid: did)
-        {
-            try? FileManager.default.removeItem(at: dbURL)
-            try? FileManager.default.removeItem(atPath: dbURL.path + "-wal")
-            try? FileManager.default.removeItem(atPath: dbURL.path + "-shm")
-            if let didHash = try? MLSAppGroupStorage.accountDidHash(for: did) {
-                try? KeychainPlatformKeyStore().deleteAccountKeys(accountDidHash: didHash)
-            }
+        } else {
+            Self.wipeLocalMLSArtifacts(for: did)
+            await MLSImageCache.shared.purge(for: did)
         }
 
         try await AppStateManager.shared.authentication.removeAccount(did: did)

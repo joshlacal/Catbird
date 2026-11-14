@@ -567,17 +567,30 @@ struct BlockChatSenderSheet: View {
   let senderDid: String
   let senderHandle: String?
   let senderDisplayName: String?
-  let requestId: String
+  var requestId: String = ""
+  var conversationId: String? = nil
   let onBlocked: () -> Void
 
   @State private var isSubmitting = false
+  @State private var leaveConversationToo = true
   @State private var errorMessage: String?
+
+  private var displayTarget: String {
+    senderDisplayName ?? senderHandle.map { "@\($0)" } ?? "this account"
+  }
 
   var body: some View {
     NavigationStack {
       Form {
         Section {
-          Text("Block \(senderDisplayName ?? senderHandle.map { "@\($0)" } ?? "this account") and close this encrypted request?")
+          if !requestId.isEmpty {
+            Text("Block \(displayTarget) and close this encrypted request?")
+          } else {
+            Text("Block \(displayTarget) on Bluesky? Blocked accounts cannot start new encrypted chats with you.")
+            if conversationId != nil {
+              Toggle("Also leave this encrypted conversation", isOn: $leaveConversationToo)
+            }
+          }
         }
         if let errorMessage {
           Section {
@@ -587,7 +600,7 @@ struct BlockChatSenderSheet: View {
           }
         }
       }
-      .navigationTitle("Block Sender")
+      .navigationTitle("Block Account")
       .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -608,10 +621,34 @@ struct BlockChatSenderSheet: View {
     isSubmitting = true
     defer { isSubmitting = false }
     do {
-      if !(await appState.graphManager.isBlocking(did: senderDid)) {
+      if let coordinator = appState.mlsCoordinator {
+        let blockCoordinator = MLSBlockCoordinator(
+          coordinator: coordinator,
+          graphManager: appState.graphManager
+        )
+        try await blockCoordinator.block(did: senderDid)
+      } else if !(await appState.graphManager.isBlocking(did: senderDid)) {
         _ = try await appState.graphManager.block(did: senderDid)
       }
-      try? await appState.mlsCoordinator?.declineDirectRequest(requestId: requestId)
+      if !requestId.isEmpty {
+        try? await appState.mlsCoordinator?.declineDirectRequest(requestId: requestId)
+      }
+      if let conversationId, leaveConversationToo, let coordinator = appState.mlsCoordinator {
+        do {
+          try await coordinator.removeGroupMember(
+            actorRole: .member,
+            conversationId: conversationId,
+            targetDid: coordinator.accountDid
+          )
+        } catch {
+          try? await coordinator.removeGroupMember(
+            actorRole: .admin,
+            conversationId: conversationId,
+            targetDid: coordinator.accountDid
+          )
+        }
+        await appState.loadMLSConversations()
+      }
       onBlocked()
       dismiss()
     } catch {

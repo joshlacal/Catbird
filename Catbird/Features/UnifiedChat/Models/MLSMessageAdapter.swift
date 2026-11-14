@@ -359,8 +359,12 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   /// True if the message has valid decrypted content and is not a placeholder/error state
   /// Used by UI to suppress reaction display for undecryptable messages
   var isDecryptedAndValid: Bool {
-    // A message is valid if it has non-empty text and no processing errors
-    !text.isEmpty && processingError == nil && validationFailureReason == nil
+    // A message is valid if it has non-empty text or an attachment embed and no processing errors
+    (!text.isEmpty || metadata.embed != nil) && processingError == nil && validationFailureReason == nil
+  }
+
+  var mlsReactions: [MLSMessageReaction] {
+    reactionsList
   }
 
   var debugInfo: MLSMessageDebugInfo? {

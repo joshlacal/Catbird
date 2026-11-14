@@ -10,8 +10,68 @@ import Foundation
 /// capability probe): a feature runs only when its switch here is on *and* its runtime
 /// gate allows it.
 enum CatbirdFeatures {
+  static let appGroupSuiteName = "group.blue.catbird.shared"
+  static let mlsPublicBetaEnabledKey = "mls_public_beta_enabled"
+
+  /// Whether the current binary has MLS chat compiled in via `Info.plist`.
+  static var isMLSChatCompiledIn: Bool { isEnabled("MLSChat") }
+
+  /// Runtime server capability / rollout flag (`mls_public_beta_enabled`).
+  /// Defaults to `true` in `DEBUG` and TestFlight (`sandboxReceipt`) builds, and `false`
+  /// on production App Store builds until enabled by server capability configuration.
+  static var mlsPublicBetaEnabled: Bool {
+    mlsPublicBetaEnabled(in: nil, defaultValue: nil)
+  }
+
+  static func mlsPublicBetaEnabled(
+    in defaults: UserDefaults?,
+    defaultValue: Bool? = nil
+  ) -> Bool {
+    if let defaults, let explicit = defaults.object(forKey: mlsPublicBetaEnabledKey) as? Bool {
+      return explicit
+    }
+    if defaults == nil {
+      if let shared = UserDefaults(suiteName: appGroupSuiteName),
+         let explicit = shared.object(forKey: mlsPublicBetaEnabledKey) as? Bool {
+        return explicit
+      }
+      if let explicit = UserDefaults.standard.object(forKey: mlsPublicBetaEnabledKey) as? Bool {
+        return explicit
+      }
+    }
+    return defaultValue ?? defaultMLSPublicBetaEnabled
+  }
+
+  /// Persists or clears the server-driven `mls_public_beta_enabled` capability override.
+  static func setMLSPublicBetaEnabled(_ enabled: Bool?, in defaults: UserDefaults? = nil) {
+    if let defaults {
+      if let enabled {
+        defaults.set(enabled, forKey: mlsPublicBetaEnabledKey)
+      } else {
+        defaults.removeObject(forKey: mlsPublicBetaEnabledKey)
+      }
+      return
+    }
+    let targets = [UserDefaults(suiteName: appGroupSuiteName), .standard].compactMap { $0 }
+    for target in targets {
+      if let enabled {
+        target.set(enabled, forKey: mlsPublicBetaEnabledKey)
+      } else {
+        target.removeObject(forKey: mlsPublicBetaEnabledKey)
+      }
+    }
+  }
+
+  private static var defaultMLSPublicBetaEnabled: Bool {
+    #if DEBUG
+    return true
+    #else
+    return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+    #endif
+  }
+
   /// End-to-end encrypted MLS group chat ("Catbird Groups").
-  static var mlsChat: Bool { isEnabled("MLSChat") }
+  static var mlsChat: Bool { isMLSChatCompiledIn && mlsPublicBetaEnabled }
 
   /// Circles backed by private AT Protocol Spaces.
   static var circlesSpaces: Bool { isEnabled("CirclesSpaces") }

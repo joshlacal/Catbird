@@ -1,3 +1,5 @@
+import Petrel
+import PetrelCatbird
 import SwiftUI
 import SwiftData
 #if canImport(SafariServices)
@@ -19,6 +21,17 @@ struct AccountDeletionSheet: View {
   @State private var confirmingDataErasure = false
   @State private var isErasingData = false
   @State private var erasureError: String?
+
+  // Native 2-step PDS permanent account deletion (Guideline 5.1.1(v))
+  @State private var isRequestingDeletionCode = false
+  @State private var hasRequestedDeletionCode = false
+  @State private var showManualCodeEntry = false
+  @State private var deletionConfirmationToken = ""
+  @State private var deletionPassword = ""
+  @State private var confirmingPermanentDeletion = false
+  @State private var isDeletingHostedAccount = false
+  @State private var permanentDeletionNotice: String?
+  @State private var permanentDeletionError: String?
 
   init(target: AccountDeletionTarget) {
     _flow = State(initialValue: AccountDeletionFlow(target: target))
@@ -50,9 +63,83 @@ struct AccountDeletionSheet: View {
           }
         }
 
+        if flow.target.purpose == .deletionOptions {
+          Section {
+            Text("Permanently delete your hosted Bluesky / AT Protocol account and all Catbird data directly in the app. Your hosting provider will email a one-time confirmation code.")
+              .foregroundStyle(.secondary)
+
+            Button(action: requestDeletionCode) {
+              HStack {
+                Text(hasRequestedDeletionCode ? "Resend Email Confirmation Code" : "Send Email Confirmation Code")
+                Spacer()
+                if isRequestingDeletionCode {
+                  ProgressView()
+                } else {
+                  Image(systemName: "envelope.badge.shield.half.filled")
+                }
+              }
+            }
+            .disabled(!isCurrentAccount || isRequestingDeletionCode || isDeletingHostedAccount)
+            .accessibilityIdentifier("AccountDeletion.RequestDeleteCode")
+
+            if !hasRequestedDeletionCode {
+              Button(showManualCodeEntry ? "Hide Code Entry" : "I Already Have a Confirmation Code") {
+                showManualCodeEntry.toggle()
+              }
+              .disabled(!isCurrentAccount || isDeletingHostedAccount)
+              .accessibilityIdentifier("AccountDeletion.ToggleCodeEntry")
+            }
+
+            if let permanentDeletionNotice {
+              Text(permanentDeletionNotice)
+                .appFont(AppTextRole.footnote)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("AccountDeletion.CodeSentNotice")
+            }
+
+            if hasRequestedDeletionCode || showManualCodeEntry {
+              TextField("Email confirmation code", text: $deletionConfirmationToken)
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("AccountDeletion.ConfirmationToken")
+
+              SecureField("Account password", text: $deletionPassword)
+                .accessibilityIdentifier("AccountDeletion.Password")
+
+              Button(role: .destructive) {
+                confirmingPermanentDeletion = true
+              } label: {
+                HStack {
+                  Text("Permanently Delete Account")
+                  Spacer()
+                  if isDeletingHostedAccount {
+                    ProgressView()
+                  }
+                }
+              }
+              .disabled(!canSubmitPermanentDeletion)
+              .accessibilityIdentifier("AccountDeletion.ConfirmDelete")
+            }
+
+            if let permanentDeletionError {
+              Text(permanentDeletionError)
+                .appFont(AppTextRole.footnote)
+                .foregroundStyle(.red)
+                .accessibilityIdentifier("AccountDeletion.PermanentDeleteError")
+            }
+          } header: {
+            Text("Delete Account Permanently")
+          } footer: {
+            Text("Deleting your hosted account permanently removes your profile, posts, social graph, and all Catbird encrypted chat data, and cannot be undone.")
+          }
+        }
+
         Section {
           if flow.target.purpose == .deletionOptions {
-            Text("Deleting your hosted account is permanent.")
+            Text("External Hosting Provider Fallback")
+              .appFont(AppTextRole.subheadline)
           }
           Text(handoffExplanation)
             .foregroundStyle(.secondary)
@@ -146,6 +233,14 @@ struct AccountDeletionSheet: View {
       } message: {
         Text("This will revoke your gateway session, unregister push notifications, remove all drafts and local settings for this account on this device, and sign you out.")
       }
+      .confirmationDialog("Permanently Delete Hosted Account?", isPresented: $confirmingPermanentDeletion, titleVisibility: .visible) {
+        Button("Permanently Delete Account", role: .destructive) {
+          performPermanentAccountDeletion()
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("This permanently deletes your hosted AT Protocol account and erases all Catbird data on our servers and this device. This action cannot be undone.")
+      }
       .task {
         await resolveAccountPage()
       }
@@ -191,12 +286,19 @@ struct AccountDeletionSheet: View {
 
   private var handoffExplanation: String {
     if flow.target.purpose == .deletionOptions {
-      return "Catbird can’t delete your hosted account directly. Open your provider’s website to complete deletion of your account and hosted data."
+      return "If your external hosting provider uses passwordless OAuth and does not accept password confirmation above, you can also complete deletion on your provider’s website."
     }
     if flow.destination?.kind == .providerWebsite {
       return "Open your hosting provider’s website and look for account settings to manage your handle, email, or sign-in options."
     }
     return "Manage your handle, email, and sign-in options on your hosting provider’s website."
+  }
+
+  private var canSubmitPermanentDeletion: Bool {
+    isCurrentAccount
+      && !isDeletingHostedAccount
+      && !deletionConfirmationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !deletionPassword.isEmpty
   }
 
   private var statusMessage: String? {
@@ -261,6 +363,96 @@ struct AccountDeletionSheet: View {
       flow.finishOpening(attempt.id, accepted: accepted, currentDID: appState.userDID, currentRevision: accountRevision)
     }
     #endif
+  }
+
+  private func requestDeletionCode() {
+    guard isCurrentAccount, !isRequestingDeletionCode, let client = appState.atProtoClient else { return }
+    isRequestingDeletionCode = true
+    permanentDeletionError = nil
+    permanentDeletionNotice = nil
+    let target = flow.target
+    let originatingAppState = appState
+    Task { @MainActor in
+      defer { isRequestingDeletionCode = false }
+      do {
+        let statusCode = try await originatingAppState.performSettingsAccountOperation {
+          try Task.checkCancellation()
+          guard (await client.getCurrentAccount())?.did == target.did,
+                SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
+            throw CancellationError()
+          }
+          return try await client.com.atproto.server.requestAccountDelete()
+        }
+        guard (200...299).contains(statusCode) else {
+          permanentDeletionError = "Your hosting provider declined the deletion code request (HTTP \(statusCode)). Use the provider website fallback below if your provider uses passwordless sign-in."
+          return
+        }
+        hasRequestedDeletionCode = true
+        permanentDeletionNotice = "Check your email for the deletion confirmation code, then enter it with your account password below."
+      } catch is CancellationError {
+        return
+      } catch {
+        permanentDeletionError = error.localizedDescription
+      }
+    }
+  }
+
+  private func performPermanentAccountDeletion() {
+    guard canSubmitPermanentDeletion, let client = appState.atProtoClient else { return }
+    let trimmedToken = deletionConfirmationToken.trimmingCharacters(in: .whitespacesAndNewlines)
+    let password = deletionPassword
+    let target = flow.target
+    let originatingAppState = appState
+    isDeletingHostedAccount = true
+    permanentDeletionError = nil
+
+    Task { @MainActor in
+      do {
+        let did = try DID(didString: target.did)
+        let statusCode = try await originatingAppState.performSettingsAccountOperation {
+          try Task.checkCancellation()
+          guard (await client.getCurrentAccount())?.did == target.did,
+                SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
+            throw CancellationError()
+          }
+          _ = try? await client.blue.catbird.labyrinth.deleteAccountData(
+            input: BlueCatbirdLabyrinthDeleteAccountData.Input()
+          )
+          return try await client.com.atproto.server.deleteAccount(
+            input: ComAtprotoServerDeleteAccount.Input(
+              did: did,
+              password: password,
+              token: trimmedToken
+            )
+          )
+        }
+        guard (200...299).contains(statusCode) else {
+          permanentDeletionError = "Your hosting provider rejected the account deletion request (HTTP \(statusCode)). Verify your confirmation code and password, or use the provider website fallback below."
+          isDeletingHostedAccount = false
+          return
+        }
+        deletionPassword = ""
+        deletionConfirmationToken = ""
+        try await AccountDeletionCoordinator.eraseCatbirdData(forDID: target.did, modelContext: modelContext)
+        dismiss()
+      } catch is CancellationError {
+        isDeletingHostedAccount = false
+      } catch {
+        permanentDeletionError = Self.describePermanentDeletionError(error)
+        isDeletingHostedAccount = false
+      }
+    }
+  }
+
+  static func describePermanentDeletionError(_ error: Error) -> String {
+    let raw = String(describing: error)
+    if raw.contains("ExpiredToken") {
+      return "That confirmation code has expired. Request a new email confirmation code and try again."
+    }
+    if raw.contains("InvalidToken") {
+      return "That confirmation code is invalid. Check the code from your email and try again."
+    }
+    return error.localizedDescription
   }
 
   private func eraseAccountData() {

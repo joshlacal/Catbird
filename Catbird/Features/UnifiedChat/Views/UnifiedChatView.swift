@@ -10,6 +10,14 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
   @Bindable var dataSource: DataSource
   @Binding var navigationPath: NavigationPath
   var title: String = "Chat"
+  #if os(iOS)
+  var composerConfig: InlineComposerConfig? = nil
+  #endif
+  var onMessageLongPress: ((DataSource.Message) -> Void)? = nil
+  var onEditMessage: ((DataSource.Message) -> Void)? = nil
+  var onReportMessage: ((DataSource.Message) -> Void)? = nil
+  var onReply: ((DataSource.Message) -> Void)? = nil
+  var onDeleteMessage: ((DataSource.Message) -> Void)? = nil
 
   @State private var showingEmojiPicker = false
   @State private var emojiPickerMessageID: String?
@@ -50,6 +58,7 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
     ChatCollectionViewBridge(
       dataSource: dataSource,
       navigationPath: $navigationPath,
+      onMessageLongPress: onMessageLongPress,
       onRequestEmojiPicker: { messageID in
         emojiPickerMessageID = messageID
         showingEmojiPicker = true
@@ -57,6 +66,7 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
       onRetryMessage: { messageID in
         Task { await dataSource.retryFailedSend(pendingID: messageID) }
       },
+      onEditMessage: onEditMessage,
       onUnsendMessage: { message in
         Task {
           let messageID = message.id
@@ -65,7 +75,11 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
             ? "Message unsent for everyone."
             : "Message could not be unsent. Try again."
         }
-      }
+      },
+      onReply: onReply,
+      composerConfig: composerConfig,
+      onDeleteMessage: onDeleteMessage,
+      onReportMessage: onReportMessage
     )
     #else
     ChatListView(

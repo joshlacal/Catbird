@@ -93,7 +93,12 @@ struct MLSChatSettingsView: View {
       // MARK: - Backup & Recovery
 
       Section("Backup & Recovery") {
-        NavigationLink(destination: LabyrinthSettingsAndRestoreView(coordinator: appState.mlsCoordinator)) {
+        NavigationLink(
+          destination: LabyrinthSettingsAndRestoreView(
+            coordinator: appState.mlsCoordinator,
+            currentDeviceId: appState.resolvedMLSDeviceID()
+          )
+        ) {
           Label {
             VStack(alignment: .leading, spacing: 2) {
               Text("Labyrinth Backup & Recovery")

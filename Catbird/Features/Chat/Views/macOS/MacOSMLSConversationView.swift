@@ -11,6 +11,13 @@ import OSLog
 import Petrel
 import SwiftUI
 
+private struct MacOSModerationTarget: Identifiable {
+  let id = UUID()
+  let did: String
+  let handle: String?
+  let displayName: String?
+}
+
 struct MacOSMLSConversationView: View {
   let conversationId: String
 
@@ -36,6 +43,10 @@ struct MacOSMLSOrdinaryConversationView: View {
   @State private var groupTitle: String = "Encrypted Chat"
   @State private var groupDescription: String = ""
   @State private var spaceURI: String?
+  @State private var moderationDIDInput: String = ""
+  @State private var reportTarget: MacOSModerationTarget?
+  @State private var blockTarget: MacOSModerationTarget?
+  @State private var showingReactionsSheet = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSMLSConvo")
 
@@ -124,8 +135,77 @@ struct MacOSMLSOrdinaryConversationView: View {
               .textSelection(.enabled)
           }
         }
+        Section("Safety & Moderation") {
+          let participants = dataSource?.participantDIDs ?? []
+          ForEach(participants, id: \.self) { peerDID in
+            let profile = dataSource?.enrichedProfilesSnapshot[MLSProfileEnricher.canonicalDID(peerDID)]
+            let handleLabel = profile.map { "@\($0.handle)" }
+            let label = profile?.displayName ?? handleLabel ?? peerDID
+            HStack {
+              Text(label)
+                .lineLimit(1)
+              Spacer()
+              Button("Report") {
+                reportTarget = MacOSModerationTarget(did: peerDID, handle: profile?.handle, displayName: label)
+              }
+              Button("Block", role: .destructive) {
+                blockTarget = MacOSModerationTarget(did: peerDID, handle: profile?.handle, displayName: profile?.displayName)
+              }
+            }
+          }
+          TextField("Participant DID", text: $moderationDIDInput)
+          let trimmedDID = moderationDIDInput.trimmingCharacters(in: .whitespacesAndNewlines)
+          HStack {
+            Button("Report DID") {
+              reportTarget = MacOSModerationTarget(did: trimmedDID, handle: nil, displayName: trimmedDID)
+            }
+            .disabled(trimmedDID.isEmpty)
+            Button("Block DID", role: .destructive) {
+              blockTarget = MacOSModerationTarget(did: trimmedDID, handle: nil, displayName: trimmedDID)
+            }
+            .disabled(trimmedDID.isEmpty)
+          }
+          if dataSource?.messages.contains(where: { !$0.mlsReactions.isEmpty }) == true {
+            Button("View Message Reactions") {
+              showingReactionsSheet = true
+            }
+          }
+        }
       }
       .inspectorColumnWidth(min: 220, ideal: 280, max: 360)
+    }
+    .sheet(item: $reportTarget) { target in
+      MLSReportSpamSheet(
+        conversationId: conversationId,
+        reportedDid: target.did,
+        reportedDisplayName: target.displayName ?? target.handle.map { "@\($0)" } ?? target.did
+      )
+      .environment(appState)
+    }
+    .sheet(item: $blockTarget) { target in
+      BlockChatSenderSheet(
+        senderDid: target.did,
+        senderHandle: target.handle,
+        senderDisplayName: target.displayName,
+        conversationId: conversationId,
+        onBlocked: {}
+      )
+      .environment(appState)
+    }
+    .sheet(isPresented: $showingReactionsSheet) {
+      if let dataSource, let reactedMessage = dataSource.messages.last(where: { !$0.mlsReactions.isEmpty }) {
+        MLSReactionDetailsSheet(
+          reactions: reactedMessage.mlsReactions,
+          participantProfiles: dataSource.enrichedProfilesSnapshot,
+          currentUserDID: appState.userDID,
+          onAddReaction: { emoji in
+            dataSource.addReaction(messageID: reactedMessage.id, emoji: emoji)
+          },
+          onRemoveReaction: { emoji in
+            dataSource.toggleReaction(messageID: reactedMessage.id, emoji: emoji)
+          }
+        )
+      }
     }
     .task(id: "\(appState.userDID):\(conversationId)") {
       await initializeConversation()
