@@ -415,8 +415,12 @@ struct AccountDeletionSheet: View {
                 SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
             throw CancellationError()
           }
-          _ = try? await client.blue.catbird.labyrinth.deleteAccountData(
-            input: BlueCatbirdLabyrinthDeleteAccountData.Input()
+          // D-3 / 5.1.1(v) fail-closed remote MLS & Labyrinth erasure MUST succeed while
+          // OAuth/DPoP/Spaces credentials are still live, before deleting the PDS account.
+          try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
+            forDID: target.did,
+            appStateOverride: originatingAppState,
+            clientOverride: client
           )
           return try await client.com.atproto.server.deleteAccount(
             input: ComAtprotoServerDeleteAccount.Input(
@@ -433,7 +437,11 @@ struct AccountDeletionSheet: View {
         }
         deletionPassword = ""
         deletionConfirmationToken = ""
-        try await AccountDeletionCoordinator.eraseCatbirdData(forDID: target.did, modelContext: modelContext)
+        try await AccountDeletionCoordinator.eraseCatbirdData(
+          forDID: target.did,
+          modelContext: modelContext,
+          skipRemoteMLSErasure: true
+        )
         dismiss()
       } catch is CancellationError {
         isDeletingHostedAccount = false

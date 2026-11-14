@@ -30,13 +30,23 @@ struct MessagesNavigationFixture: View {
     ProcessInfo.processInfo.arguments.contains("--messages-navigation-initial-link")
   }
 
+  private var hideFixtureControls: Bool {
+    ProcessInfo.processInfo.arguments.contains("--hide-messages-fixture-controls")
+  }
+
+  private var mlsDetailScenario: Bool {
+    ProcessInfo.processInfo.arguments.contains("--mls-detail-ui-fixture")
+  }
+
   var body: some View {
     Group {
       if let account, let context, let storage {
         SceneNavigationHost(appState: account, appStateManager: .shared, context: context) {
           MainContentView(selectedTab: $selectedTab, lastTappedTab: $lastTappedTab)
             .safeAreaInset(edge: .top, spacing: 0) {
-              fixtureControls(account: account, context: context)
+              if !hideFixtureControls {
+                fixtureControls(account: account, context: context)
+              }
             }
             .overlay(alignment: .topLeading) {
               MessagesNavigationProbe(account: account, scene: context,
@@ -131,6 +141,13 @@ struct MessagesNavigationFixture: View {
         // Deliver the real URL before publishing the context: ChatTabView has
         // not mounted yet and must consume its pending target on appearance.
         guard await scene.urlHandler.handleURL(URL(string: "https://bsky.app/messages/\(Self.conversationID)")!) else {
+          throw URLError(.unsupportedURL)
+        }
+        deliveredLinks = 1
+      } else if mlsDetailScenario {
+        guard await scene.urlHandler.handleURL(
+          URL(string: "https://bsky.app/messages/11111111-2222-4333-8444-555555555555")!
+        ) else {
           throw URLError(.unsupportedURL)
         }
         deliveredLinks = 1

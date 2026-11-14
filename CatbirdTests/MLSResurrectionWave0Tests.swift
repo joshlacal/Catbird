@@ -55,9 +55,21 @@ private final class Wave0RecordingKeyStore: PlatformKeyStore, @unchecked Sendabl
     defer { lock.unlock() }
     dpopTokens[accountDidHash] = (token, expiresAtMs)
   }
+
+  func hasDbKey(accountDidHash: String) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return dbKeys[accountDidHash] != nil
+  }
+
+  var signatureKeypairCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return sigKeypairs.count
+  }
 }
 
-@Suite("MLS Client Resurrection & Release Readiness Tests")
+@Suite("MLS Client Resurrection & Release Readiness Tests", .serialized)
 struct MLSResurrectionWave0Tests {
   private func makeTempStorageRoot() throws -> URL {
     let dir = FileManager.default.temporaryDirectory
@@ -971,5 +983,121 @@ struct MLSResurrectionWave0Tests {
     #expect(!vm.devices.contains { $0.deviceId == siblingID })
     #expect(vm.devices.contains { $0.deviceId == currentID })
     #expect(vm.deleteError == nil)
+  }
+
+  @Test("D-3 / 5.1.1(v): eraseCatbirdData fails closed when remote deleteAccountData fails, preserving SQLite DB and Keychain keys until retry succeeds")
+  @MainActor
+  func eraseCatbirdDataFailsClosedWhenRemoteDeleteAccountDataFails() async throws {
+    let network = NativeArchiveMockNetwork.shared
+    network.reset()
+    let tempRoot = try makeTempStorageRoot()
+    defer { archiveTempDir(tempRoot) }
+
+    let accountDid = "did:plc:failclosederaseaaaaaaaaa"
+    let deviceId = "dddddddd-1111-4222-8333-eeeeeeeeeeee"
+    let keystore = Wave0RecordingKeyStore()
+
+    final class DeleteFaultGate: @unchecked Sendable {
+      let lock = NSLock()
+      var failRemoteDelete = false
+      func setFail(_ value: Bool) {
+        lock.lock()
+        failRemoteDelete = value
+        lock.unlock()
+      }
+      func shouldFail() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return failRemoteDelete
+      }
+    }
+    let faultGate = DeleteFaultGate()
+
+    let transport = PetrelPlatformTransport(
+      homeDsEndpoint: URL(string: NativeArchiveMockNetwork.dsEndpoint),
+      homeDsDid: NativeArchiveMockNetwork.dsDid,
+      ownPdsEndpoint: URL(string: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)),
+      actorDeviceId: deviceId,
+      httpOverride: { req in
+        if faultGate.shouldFail(),
+           req.url.contains("deleteAccountData") || req.url.contains("deleteSpace")
+        {
+          return PlatformHttpResponse(
+            status: 503,
+            headers: [PlatformHttpHeader(name: "Content-Type", value: "application/json")],
+            body: Data(#"{"error":"ServiceUnavailable","message":"Simulated DS outage"}"#.utf8)
+          )
+        }
+        return network.handle(req)
+      }
+    )
+
+    let coordinator = try await MLSClientCoordinator.open(
+      config: CatbirdMlsClientConfig(
+        storageRoot: tempRoot.path,
+        accountDid: accountDid,
+        deviceId: deviceId,
+        homeDsDid: NativeArchiveMockNetwork.dsDid,
+        homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+        pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)
+      ),
+      keystore: keystore,
+      transport: transport
+    )
+    _ = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
+
+    let didHash = coordinator.accountDidHash
+    let dbURL = try MLSAppGroupStorage.databaseURL(storageRoot: tempRoot, accountDid: accountDid)
+    #expect(FileManager.default.fileExists(atPath: dbURL.path))
+    #expect(keystore.hasDbKey(accountDidHash: didHash))
+    #expect(keystore.signatureKeypairCount >= 1)
+
+    let schema = Schema([AppSettingsModel.self, Preferences.self, DraftPost.self])
+    let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
+    let context = ModelContext(container)
+
+    // 1. Inject remote deleteAccountData failure: eraseCatbirdData MUST throw fail-closed
+    //    BEFORE wiping <did_hash>.db or Keychain keys so the user can retry.
+    faultGate.setFail(true)
+    await #expect(throws: Error.self) {
+      try await AccountDeletionCoordinator.eraseCatbirdData(
+        forDID: accountDid,
+        storageRoot: tempRoot,
+        keystore: keystore,
+        modelContext: context,
+        coordinatorOverride: coordinator
+      )
+    }
+    #expect(
+      FileManager.default.fileExists(atPath: dbURL.path),
+      "D-3 fail-closed: <did_hash>.db must remain intact when remote deleteAccountData fails"
+    )
+    #expect(
+      keystore.hasDbKey(accountDidHash: didHash),
+      "D-3 fail-closed: SQLCipher DB key must remain intact when remote deleteAccountData fails"
+    )
+    #expect(
+      keystore.signatureKeypairCount >= 1,
+      "D-3 fail-closed: MLS signing keypair must remain intact when remote deleteAccountData fails"
+    )
+
+    // 2. Restore remote service and retry: remote deletion succeeds and local DB + keys are wiped.
+    faultGate.setFail(false)
+    try await AccountDeletionCoordinator.eraseCatbirdData(
+      forDID: accountDid,
+      storageRoot: tempRoot,
+      keystore: keystore,
+      modelContext: context,
+      coordinatorOverride: coordinator
+    )
+
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+      #expect(
+        !FileManager.default.fileExists(atPath: dbURL.path + suffix),
+        "Expected \(dbURL.lastPathComponent)\(suffix) to be wiped after successful deleteAccountData"
+      )
+    }
+    #expect(!keystore.hasDbKey(accountDidHash: didHash))
+    await coordinator.close()
   }
 }

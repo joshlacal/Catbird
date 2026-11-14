@@ -1,3 +1,4 @@
+import CatbirdMLS
 import CatbirdMLSCore
 import Foundation
 import Petrel
@@ -140,7 +141,10 @@ struct AccountDeletionCoordinator {
     token: String? = nil,
     storageRoot: URL? = nil,
     keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
-    modelContext: ModelContext? = nil
+    modelContext: ModelContext? = nil,
+    skipRemoteMLSErasure: Bool = false,
+    coordinatorOverride: MLSClientCoordinator? = nil,
+    remoteMLSErasure: (@MainActor @Sendable (String) async throws -> Void)? = nil
   ) async throws {
     guard !did.isEmpty else { return }
     logger.info("🗑️ Starting Catbird data erasure for account: \(did)")
@@ -148,8 +152,18 @@ struct AccountDeletionCoordinator {
     // 1a. Resolve active/stored auth tokens BEFORE removeAccount wipes Keychain credentials.
     let resolvedTokens = await resolveAuthTokensForRevocation(forDID: did, explicitToken: token)
 
-    // 1b. Erase server-side encrypted messaging / mailbox data while the client is still authenticated.
-    await eraseServerSideLabyrinthDataIfAuthenticated(forDID: did)
+    // 1b. D-3 / 5.1.1(v) fail-closed remote MLS & Labyrinth erasure while credentials are live.
+    //     If remote deletion fails, throw BEFORE wiping local SQLCipher DB, Keychain keys,
+    //     SwiftData, or the OAuth session so the user can retry without orphaning server state.
+    if !skipRemoteMLSErasure {
+      try await eraseServerSideLabyrinthDataIfAuthenticated(
+        forDID: did,
+        storageRoot: storageRoot,
+        keystore: keystore,
+        coordinatorOverride: coordinatorOverride,
+        remoteMLSErasure: remoteMLSErasure
+      )
+    }
 
     // 1c. Remote: Revoke Nest gateway session and push registrations.
     await revokeNestGatewaySession(forDID: did, tokens: resolvedTokens)
@@ -182,31 +196,150 @@ struct AccountDeletionCoordinator {
     }
   }
 
-  private static func eraseServerSideLabyrinthDataIfAuthenticated(forDID did: String) async {
-    if let appState = AppStateManager.shared.lifecycle.appState,
-       appState.userDID == did,
-       let coordinator = appState.mlsCoordinator
-    {
-      do {
-        try await coordinator.deleteAccountData()
-        logger.info("🗑️ Erased server-side & local MLS/Labyrinth account data via MLSClientCoordinator")
-        return
-      } catch {
-        logger.warning("🗑️ Coordinator deleteAccountData failed, falling back to XRPC: \(error.localizedDescription)")
-      }
-    }
-    guard let client = AppStateManager.shared.authentication.client,
-          (await client.getCurrentAccount())?.did == did else {
+  static func eraseServerSideLabyrinthDataIfAuthenticated(
+    forDID did: String,
+    storageRoot: URL? = nil,
+    keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
+    appStateOverride: AppState? = nil,
+    clientOverride: ATProtoClient? = nil,
+    coordinatorOverride: MLSClientCoordinator? = nil,
+    remoteMLSErasure: (@MainActor @Sendable (String) async throws -> Void)? = nil
+  ) async throws {
+    if let remoteMLSErasure {
+      try await remoteMLSErasure(did)
       return
     }
+
+    if let coordinatorOverride {
+      if coordinatorOverride.isHandleClosed {
+        try await coordinatorOverride.resumeFromBackground()
+      }
+      try await coordinatorOverride.deleteAccountData()
+      return
+    }
+
+    let resolvedAppState: AppState? = if let appStateOverride, appStateOverride.userDID == did {
+      appStateOverride
+    } else if let currentAppState = AppStateManager.shared.lifecycle.appState, currentAppState.userDID == did {
+      currentAppState
+    } else {
+      nil
+    }
+
+    let resolvedClient = clientOverride ?? resolvedAppState?.atProtoClient ?? AppStateManager.shared.authentication.client
+    guard let client = resolvedClient,
+          (await client.getCurrentAccount())?.did == did
+    else {
+      // Unauthenticated / offline local cleanup: no active authenticated session for `did`.
+      return
+    }
+
+    var coordinator = resolvedAppState?.mlsCoordinator
+    if coordinator == nil, let appState = resolvedAppState {
+      coordinator = await appState.getOrOpenMLSCoordinator()
+    }
+
+    var openedTransientCoordinator = false
+    if coordinator == nil,
+       hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
+    {
+      coordinator = try await openTransientCoordinatorForErasure(
+        forDID: did,
+        client: client,
+        appState: resolvedAppState,
+        storageRoot: storageRoot,
+        keystore: keystore
+      )
+      openedTransientCoordinator = true
+    }
+
+    if let coordinator {
+      defer {
+        if openedTransientCoordinator {
+          Task { await coordinator.close() }
+        }
+      }
+      if coordinator.isHandleClosed {
+        try await coordinator.resumeFromBackground()
+      }
+      try await coordinator.deleteAccountData()
+      await coordinator.close()
+      logger.info("🗑️ Erased server-side & local MLS/Labyrinth account data via MLSClientCoordinator")
+      return
+    }
+
     do {
       let (code, _) = try await client.blue.catbird.labyrinth.deleteAccountData(
         input: BlueCatbirdLabyrinthDeleteAccountData.Input()
       )
+      guard (200...299).contains(code) || code == 404 || code == 501 else {
+        throw ATProtoXRPCError(
+          error: "AccountDeletionFailed",
+          message: "Server-side encrypted account data erasure returned HTTP \(code)",
+          statusCode: code
+        )
+      }
       logger.info("🗑️ Server-side account data erasure returned HTTP \(code)")
     } catch {
-      logger.warning("🗑️ Server-side account data erasure failed (continuing local erasure): \(error.localizedDescription)")
+      if GatewayCircleTransport.isUnsupportedSpacesError(error) {
+        logger.info("🗑️ Hosting PDS does not support Spaces/Labyrinth; skipping server-side Labyrinth erasure")
+        return
+      }
+      throw error
     }
+  }
+
+  private static func hasLocalMLSArtifacts(forDID did: String, storageRoot: URL?) -> Bool {
+    guard let root = try? (storageRoot ?? MLSAppGroupStorage.defaultStorageRoot()),
+          let dbURL = try? MLSAppGroupStorage.databaseURL(storageRoot: root, accountDid: did)
+    else {
+      return false
+    }
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+      if FileManager.default.fileExists(atPath: dbURL.path + suffix) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private static func openTransientCoordinatorForErasure(
+    forDID did: String,
+    client: ATProtoClient,
+    appState: AppState?,
+    storageRoot: URL?,
+    keystore: any PlatformKeyStore
+  ) async throws -> MLSClientCoordinator {
+    let resolvedRoot = try storageRoot ?? MLSAppGroupStorage.defaultStorageRoot()
+    let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+    let environment: MLSEnvironment = if let mlsServiceDID {
+      .custom(serviceDID: mlsServiceDID)
+    } else {
+      .production
+    }
+    let clientBaseURL = await client.networkService.baseURL
+    let pdsEndpoint = clientBaseURL.absoluteString
+    let deviceId = appState?.resolvedMLSDeviceID() ?? UUID().uuidString.lowercased()
+    let config = CatbirdMlsClientConfig(
+      storageRoot: resolvedRoot.path,
+      accountDid: did,
+      deviceId: deviceId,
+      homeDsDid: environment.bareServiceDID,
+      homeDsEndpoint: environment.endpointURL.absoluteString,
+      pdsEndpoint: pdsEndpoint
+    )
+    let transport = PetrelPlatformTransport(
+      atProtoClient: client,
+      homeDsEndpoint: environment.endpointURL,
+      homeDsDid: environment.bareServiceDID,
+      ownPdsEndpoint: clientBaseURL,
+      actorDeviceId: deviceId
+    )
+    return try await MLSClientCoordinator.open(
+      config: config,
+      keystore: keystore,
+      transport: transport
+    )
   }
 
   static func resolveAuthTokensForRevocation(

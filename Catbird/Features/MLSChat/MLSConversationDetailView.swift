@@ -702,6 +702,78 @@ struct MLSOrdinaryConversationDetailView: View {
   @MainActor
   private func initializeConversation() async {
     dataSource?.stopObserving()
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--mls-detail-ui-fixture") {
+      let noopPerformer = MLSMessageActionPerformer(
+        edit: { _, _, _ in },
+        unsend: { _, _ in },
+        react: { _, _, _, _ in }
+      )
+      let fixtureSource = MLSConversationDataSource(
+        conversationId: conversationId,
+        currentUserDID: appState.userDID,
+        appState: nil,
+        actionPerformer: noopPerformer
+      )
+      fixtureSource.setActionConsentForTesting(resolved: true, pending: false)
+      let peerDID = "did:plc:bob234567234567234567234"
+      fixtureSource.ingestConfirmedMessageForTesting(
+        MLSMessageAdapter(
+          id: "mls-fixture-msg-1",
+          convoID: conversationId,
+          text: "Welcome to Project Labyrinth — Space epoch 3 end-to-end encrypted.",
+          senderDID: peerDID,
+          currentUserDID: appState.userDID,
+          sentAt: Date().addingTimeInterval(-120),
+          senderProfile: .init(displayName: "Bob", avatarURL: nil, handle: "bob.test"),
+          reactions: [
+            MLSMessageReaction(
+              messageId: "mls-fixture-msg-1",
+              reaction: "🔒",
+              senderDID: appState.userDID,
+              reactedAt: Date().addingTimeInterval(-90)
+            )
+          ],
+          embed: nil,
+          sendState: .sent,
+          epoch: 3,
+          sequence: 1
+        )
+      )
+      fixtureSource.ingestConfirmedMessageForTesting(
+        MLSMessageAdapter(
+          id: "mls-fixture-msg-2",
+          convoID: conversationId,
+          text: "Resurrected MLS composer, voice, images, reactions, and Passkey PRF ready!",
+          senderDID: appState.userDID,
+          currentUserDID: appState.userDID,
+          sentAt: Date().addingTimeInterval(-30),
+          senderProfile: .init(
+            displayName: "Local Messages Viewer",
+            avatarURL: nil,
+            handle: "messages-viewer.test"
+          ),
+          reactions: [
+            MLSMessageReaction(
+              messageId: "mls-fixture-msg-2",
+              reaction: "🎉",
+              senderDID: peerDID,
+              reactedAt: Date().addingTimeInterval(-15)
+            )
+          ],
+          embed: nil,
+          sendState: .read,
+          epoch: 3,
+          sequence: 2
+        )
+      )
+      groupTitle = "Project Labyrinth (E2EE)"
+      memberDIDs = [appState.userDID, peerDID]
+      dataSource = fixtureSource
+      consumePendingChatDraft()
+      return
+    }
+    #endif
     let source = MLSConversationDataSource(
       conversationId: conversationId,
       currentUserDID: appState.userDID,
