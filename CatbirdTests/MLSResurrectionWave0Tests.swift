@@ -481,7 +481,8 @@ struct MLSResurrectionWave0Tests {
       fromCache: false,
       fallbackGeneric: false,
       darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
-      receiptVerified: false
+      receiptVerified: false,
+      isOwnSiblingSender: false
     )
 
     let unverifiedResult = NotificationService.buildCommunicationNotification(
@@ -507,7 +508,8 @@ struct MLSResurrectionWave0Tests {
       fromCache: false,
       fallbackGeneric: false,
       darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
-      receiptVerified: true
+      receiptVerified: true,
+      isOwnSiblingSender: false
     )
 
     let verifiedResult = NotificationService.buildCommunicationNotification(
@@ -630,7 +632,8 @@ struct MLSResurrectionWave0Tests {
       fromCache: false,
       fallbackGeneric: false,
       darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
-      receiptVerified: true
+      receiptVerified: true,
+      isOwnSiblingSender: true
     )
 
     let suppressed = NotificationService.buildCommunicationNotification(
@@ -658,7 +661,8 @@ struct MLSResurrectionWave0Tests {
       fromCache: false,
       fallbackGeneric: false,
       darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
-      receiptVerified: false
+      receiptVerified: false,
+      isOwnSiblingSender: false
     )
     let fallback = NotificationService.buildCommunicationNotification(
       base: UNMutableNotificationContent(),
@@ -683,7 +687,8 @@ struct MLSResurrectionWave0Tests {
       fromCache: false,
       fallbackGeneric: false,
       darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
-      receiptVerified: true
+      receiptVerified: true,
+      isOwnSiblingSender: false
     )
     let delivered = NotificationService.buildCommunicationNotification(
       base: UNMutableNotificationContent(),

@@ -273,6 +273,9 @@ private struct ThreadTombstoneRow: View {
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
 
+      case .circlePlaceholder(let placeholder):
+        CircleEncryptedStatusRow(state: placeholder.state, ownerHandle: placeholder.ownerHandle)
+
       case .unexpected:
         Text("This post can’t be displayed")
           .appFont(AppTextRole.subheadline)
@@ -285,6 +288,8 @@ private struct ThreadTombstoneRow: View {
     case blocked(BlockRelationship, authorDID: String)
     case notFound
     case noUnauthenticated
+    /// An encrypted Circle post that cannot be shown (`CircleThreadOpening`).
+    case circlePlaceholder(CircleThreadPlaceholder)
     case unexpected
   }
 
@@ -301,6 +306,9 @@ private struct ThreadTombstoneRow: View {
     case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
       return .noUnauthenticated
     case .unexpected:
+      if let placeholder = CircleThreadOpening.placeholder(in: threadItem.value.value) {
+        return .circlePlaceholder(placeholder)
+      }
       return .unexpected
     }
   }

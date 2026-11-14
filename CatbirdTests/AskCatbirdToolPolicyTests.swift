@@ -130,7 +130,7 @@ struct AskCatbirdThreadFormatterTests {
     @Test(.enabled(if: formatterAvailable)) func rawAttachmentOnlyFocusAndUnhydratedQuoteRetainCoverage() throws {
         guard #available(iOS 26.0, macOS 26.0, *) else { return }
         let cid = try CID.parse("bafyreie5cvw4ly5exbmswkevvohgmc4uh5u5axhmxj3apcgu5wmlmj7x7i")
-        let raw = try AppBskyEmbedRecord(record: .init(uri: ATProtocolURI(uriString: uri(10)), cid: cid))
+        let raw = try AppBskyEmbedRecord(record: .init(uri: ATProtocolURI(uriString: uri(10)), cid: CIDString(cid)))
         let focus = try item(index: 0, depth: 0, text: "", rawEmbed: .appBskyEmbedRecord(raw))
         let transcript = try AskCatbirdThreadFormatter.format(.init(thread: [focus], hasOtherReplies: false))
         let object = try payload(transcript.text)
@@ -146,7 +146,7 @@ struct AskCatbirdThreadFormatterTests {
         let cid = try CID.parse("bafyreie5cvw4ly5exbmswkevvohgmc4uh5u5axhmxj3apcgu5wmlmj7x7i")
         let timestamp = ATProtocolDate(date: Date(timeIntervalSince1970: 1_700_000_000))
         let quote = try AppBskyEmbedRecord.View(record: .appBskyEmbedRecordViewRecord(.init(
-            uri: ATProtocolURI(uriString: uri(10)), cid: cid,
+            uri: ATProtocolURI(uriString: uri(10)), cid: CIDString(cid),
             author: .init(did: DID(didString: "did:plc:quoted"), handle: Handle(handleString: "quoted.bsky.social")),
             value: .knownType(AppBskyFeedPost(text: "Hydrated quoted claim", createdAt: timestamp)), indexedAt: timestamp
         )))
@@ -186,15 +186,15 @@ struct AskCatbirdThreadFormatterTests {
         let reply: AppBskyFeedPost.ReplyRef?
         if index > 0 {
             reply = try .init(
-                root: .init(uri: ATProtocolURI(uriString: uri(0)), cid: cid),
-                parent: .init(uri: ATProtocolURI(uriString: uri(index - 1)), cid: cid)
+                root: .init(uri: ATProtocolURI(uriString: uri(0)), cid: CIDString(cid)),
+                parent: .init(uri: ATProtocolURI(uriString: uri(index - 1)), cid: CIDString(cid))
             )
         } else {
             reply = nil
         }
         let post = try AppBskyFeedDefs.PostView(
             uri: postURI,
-            cid: cid,
+            cid: CIDString(cid),
             author: .init(did: DID(didString: "did:plc:example"), handle: Handle(handleString: "alice.bsky.social")),
             record: .knownType(AppBskyFeedPost(text: text, reply: reply, embed: rawEmbed, createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 1_700_000_000)))),
             embed: embed, indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 1_700_000_000))

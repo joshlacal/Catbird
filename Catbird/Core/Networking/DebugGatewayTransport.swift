@@ -11,7 +11,7 @@ import CatbirdMLSCore
 import CryptoKit
 import Foundation
 import Network
-import Petrel
+@_spi(Fixtures) import Petrel
 import Security
 
 public enum DebugGatewayTransportError: Error, Equatable, LocalizedError {
@@ -142,7 +142,7 @@ public final class DebugGatewayTransport: @unchecked Sendable {
     public private(set) var activeConfig: LaunchConfig?
     public private(set) var activeManifest: ManifestInfo?
     public private(set) var activeAccount: AccountInfo?
-    public private(set) var underlyingTransport: DebugFixtureTransport?
+    internal private(set) var underlyingTransport: DebugFixtureTransport?
     public private(set) var isActivated = false
 
     public init() {}
@@ -159,6 +159,9 @@ public final class DebugGatewayTransport: @unchecked Sendable {
         guard let configPath = Self.resolveConfigPath(arguments: arguments, environment: environment) else {
             return false
         }
+        #if os(macOS)
+        _ = try FixtureLaunch.activateKeychain(configPath: configPath)
+        #endif
         let config = try loadLaunchConfig(from: configPath)
         try activate(with: config)
         return true
@@ -189,7 +192,14 @@ public final class DebugGatewayTransport: @unchecked Sendable {
                 let sema = DispatchSemaphore(value: 0)
                 Task {
                     do {
-                        installedTransport = try await DebugFixtureTransport.install(manifest: manifestData, certificateDER: manifestInfo.caCertificateDER)
+                        installedTransport = try await DebugFixtureTransport.install(
+                            manifest: manifestData,
+                            certificateDER: manifestInfo.caCertificateDER,
+                            hostPolicy: try .init(
+                                fixtureDomain: "request-fixture.catbird.blue",
+                                additionalHosts: ["chat.catbird.blue", "public.api.bsky.app"]
+                            )
+                        )
                     } catch {
                         installError = error
                     }
@@ -222,7 +232,16 @@ public final class DebugGatewayTransport: @unchecked Sendable {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
-        FixtureLaunch.resolveConfigPath(arguments: arguments, environment: environment)
+        if let env = environment["CATBIRD_RUNTIME_FIXTURE_CONFIG"], !env.isEmpty { return env }
+        if let env = environment["CATMOS_RUNTIME_FIXTURE_CONFIG"], !env.isEmpty { return env }
+        for (index, arg) in arguments.enumerated() {
+            if arg == "--catbird-runtime-fixture-config" || arg == "-CatbirdRuntimeFixtureConfig" {
+                if index + 1 < arguments.count { return arguments[index + 1] }
+            } else if arg.hasPrefix("--catbird-runtime-fixture-config=") {
+                return String(arg.dropFirst("--catbird-runtime-fixture-config=".count))
+            }
+        }
+        return nil
     }
 
     // MARK: - Private File Reader

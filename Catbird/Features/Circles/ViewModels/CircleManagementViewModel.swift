@@ -1,12 +1,52 @@
 import Foundation
 import Observation
+import OSLog
 import Petrel
 import PetrelCatbird
 
 /// Copy constants for Circle management disclosures and confirmations.
 enum CircleManagementCopy {
+  static let metadataReadFailed = "Couldn't read this Circle's settings. Try again."
   static let addMemberDisclosure = "Newly added members will receive the entire Circle history."
   static let removeMemberDisclosure = "Removed members cannot access future posts, but prior downloads cannot be recalled."
+
+  // Encrypted Circles (spec §6, §7, §9)
+  static let historyToggleLabel = "New members can see earlier posts"
+  static let historyOffAddConfirmation = "They will only see new posts."
+  static let rotateKeyNow = "Rotate key now"
+  static let rotateKeyConfirmation = "Members will need to refresh. Posts you make from now on use a new key."
+  static let retryNow = "Retry now"
+  static let upgradeToEncrypted = "Upgrade to encrypted"
+  static let upgradeIncomplete = "Upgrade incomplete — tap to retry"
+  static let removalPending = "Removal pending"
+  static let accessPending = "Access pending"
+  static let keyRefreshPending = "Key refresh pending"
+  static let waitingToRefreshAccess = "Waiting to refresh access"
+  static let encryptionUnavailableHint = "Encrypted Circles need encrypted features turned on."
+  static let encryptionCheckFailed = "Couldn't check whether this Circle can be encrypted. Try again."
+  static let eligibilityCheckFailed = "Couldn't check who can be carried over. Try again."
+  static let noMembersCanBeCarriedOver = "No members can be carried over yet"
+
+  static func ineligibleMember(handle: String) -> String {
+    "Can't add: \(handle) hasn't enabled encrypted features."
+  }
+
+  /// Badge copy for a pending entry's reason (`CircleKeyManager` reasons; any
+  /// other reason is an FFI exclusion, which may be transient: always retryable).
+  static func pendingBadge(reason: String) -> String {
+    if reason.hasPrefix(CircleKeyManager.aclRemoveReason) { return removalPending }
+    if reason == CircleKeyManager.aclAddReason { return accessPending }
+    let lowered = reason.lowercased()
+    if lowered.contains("history") || lowered.contains("rewrap") { return keyRefreshPending }
+    return waitingToRefreshAccess
+  }
+}
+
+/// Result of a dry-run wrap over a set of members. A failed check is not
+/// "everyone ineligible": nothing may be created or migrated on it.
+enum CircleUpgradeEligibility: Sendable {
+  case checked(eligible: [DID], ineligible: [(did: DID, reason: String)])
+  case checkFailed(message: String)
 }
 
 /// Observable lifecycle state for Circle management operations.
@@ -16,6 +56,8 @@ enum CircleManagementState: Equatable, Sendable {
   case complete
   case failed(message: String)
   case activationFailed(message: String)
+  /// A D17 upgrade stopped after its new Space was created; retrying resumes it.
+  case upgradeIncomplete(message: String)
 
   /// Whether AppView activation can be retried.
   var canRetryActivation: Bool {
@@ -36,6 +78,30 @@ final class CircleManagementViewModel {
   var members: [DID] = []
   private(set) var memberPermissions: [CircleMember] = []
   var validationError: String?
+
+  // Encrypted Circles
+  /// §7, stored in the Space's metadata record (owner-written). Off: adds rotate
+  /// and the newcomer gets only the new version (§6 rule 3).
+  var historyForNewMembers: Bool = true
+  /// Pending re-wraps by member DID (ACL prefixes stripped, markers dropped),
+  /// with the stored reason.
+  private(set) var pendingRewraps: [(did: String, reason: String)] = []
+  /// Handles for DIDs the view knows (picker selections, hydrated roster), used
+  /// in ineligible-member copy; the DID is shown otherwise.
+  var knownHandles: [String: String] = [:]
+  /// The dry run shown before an upgrade is confirmed.
+  private(set) var upgradeEligibility: CircleUpgradeEligibility?
+  /// Spec §9 gate (create default and upgrade row); nil until checked.
+  private(set) var encryptionAvailability: CircleEncryptionAvailability?
+  /// Create flow: whether the Circle will be encrypted, and the picked members
+  /// a dry run excluded (they are left out of an encrypted create).
+  private(set) var createEncrypted = false
+  private(set) var createIneligible: [(did: DID, reason: String)] = []
+  /// True while a history-toggle write is in flight (writes are serialized).
+  private(set) var isWritingHistorySetting = false
+  /// New Space of an unfinished upgrade (resumed by `upgradeToEncrypted`).
+  private(set) var upgradeTarget: CircleSummary?
+  private var didReconcile = false
 
   let service: CircleService
   let userDID: String
@@ -180,7 +246,30 @@ final class CircleManagementViewModel {
       finalDIDs = members
     }
 
+    // Marked before the first await so a concurrent second submit is refused.
     state = .submitting
+    // Spec §9: encrypted by default when this device can, plaintext otherwise.
+    let availability = await service.encryptionAvailability()
+    encryptionAvailability = availability
+    createEncrypted = availability.isAvailable
+    // I9: enrolled but the capability check failed: never create plaintext.
+    if availability == .checkFailed {
+      state = .failed(message: CircleManagementCopy.encryptionCheckFailed)
+      throw CircleError.invalidParameter(CircleManagementCopy.encryptionCheckFailed)
+    }
+    var createMembers = finalDIDs
+    if availability.isAvailable && !finalDIDs.isEmpty {
+      switch await eligibleMembers(finalDIDs) {
+      case .checkFailed:
+        let error = CircleError.invalidParameter(CircleManagementCopy.eligibilityCheckFailed)
+        state = .failed(message: CircleManagementCopy.eligibilityCheckFailed)
+        throw error
+      case .checked(let eligible, let ineligible):
+        createMembers = eligible
+        createIneligible = ineligible
+      }
+    }
+
     let skey = await TIDGenerator.shared.nextStr()
     let circleId = await TIDGenerator.shared.nextStr()
 
@@ -190,7 +279,8 @@ final class CircleManagementViewModel {
         skey: skey,
         circleId: circleId,
         name: validName,
-        memberDIDs: finalDIDs
+        memberDIDs: createMembers,
+        encrypted: availability.isAvailable
       )
       self.circle = createdSummary
     } catch {
@@ -254,16 +344,46 @@ final class CircleManagementViewModel {
       throw error
     }
 
+    if circle.isEncrypted {
+      switch await eligibleMembers([did]) {
+      case .checkFailed(let message):
+        state = .failed(message: message)
+        throw CircleError.invalidParameter(message)
+      case .checked(_, let ineligible) where !ineligible.isEmpty:
+        let message = ineligibleMessage(for: did)
+        state = .failed(message: message)
+        throw CircleError.ineligibleMember(reason: message)
+      case .checked:
+        break
+      }
+    }
+
+    // I4: the history policy is read from the Space at add time and fails
+    // closed. A failed or missing read blocks the add; it never falls back to
+    // history ON (which would hand the new member every earlier post).
+    var historyVisible = false
+    if circle.isEncrypted {
+      guard let metadata = try? await service.metadata(space: circle.uri) else {
+        let message = CircleManagementCopy.metadataReadFailed
+        state = .failed(message: message)
+        throw CircleError.invalidParameter(message)
+      }
+      historyVisible = metadata.historyForNewMembers ?? true
+      historyForNewMembers = historyVisible
+    }
+
     state = .submitting
     do {
-      try await service.addMember(space: circle.uri, did: did)
+      try await service.addMember(circle: circle, did: did, historyVisible: historyVisible)
       if !members.contains(where: { $0.didString() == did.didString() }) {
         members.append(did)
       }
       state = .complete
+      if circle.isEncrypted { await refreshPendingRewraps() }
     } catch {
       let cError = circleError(from: error)
       state = .failed(message: cError.localizedDescription)
+      if circle.isEncrypted { await refreshPendingRewraps() }
       throw cError
     }
   }
@@ -278,13 +398,16 @@ final class CircleManagementViewModel {
 
     state = .submitting
     do {
-      try await service.removeMember(space: circle.uri, did: did)
+      try await service.removeMember(circle: circle, did: did)
       members.removeAll(where: { $0.didString() == did.didString() })
       memberPermissions.removeAll(where: { $0.did == did })
       state = .complete
+      if circle.isEncrypted { await refreshPendingRewraps() }
     } catch {
       let cError = circleError(from: error)
       state = .failed(message: cError.localizedDescription)
+      // A removal whose rotation landed stays pending (badge + Retry now).
+      if circle.isEncrypted { await refreshPendingRewraps() }
       throw cError
     }
   }
@@ -346,6 +469,246 @@ final class CircleManagementViewModel {
       let cError = circleError(from: error)
       state = .failed(message: cError.localizedDescription)
       throw cError
+    }
+  }
+  // MARK: - Encrypted Circles
+
+  /// Whether the active owner can rotate now: never while a removal is
+  /// unresolved (its own rotation, then the ACL call, must finish first).
+  var canRotateKeyNow: Bool {
+    canManageMembers && !isCreating && circle.isEncrypted && !hasPendingRemoval && state != .submitting
+  }
+
+  var hasPendingRemoval: Bool {
+    pendingRewraps.contains { $0.reason.hasPrefix(CircleKeyManager.aclRemoveReason) }
+  }
+
+  /// Whether an upgrade stopped midway and can be resumed.
+  var hasIncompleteUpgrade: Bool { upgradeTarget != nil }
+
+  var encryptionAvailable: Bool { encryptionAvailability?.isAvailable == true }
+
+  /// Members the last upgrade dry run excluded.
+  var upgradeIneligible: [(did: DID, reason: String)] {
+    if case .checked(_, let ineligible) = upgradeEligibility { return ineligible }
+    return []
+  }
+
+  /// Why the upgrade cannot be confirmed now, or nil when it can.
+  var upgradeBlockedReason: String? {
+    switch upgradeEligibility {
+    case nil:
+      return nil
+    case .checkFailed:
+      return CircleManagementCopy.eligibilityCheckFailed
+    case .checked(let eligible, _):
+      return eligible.isEmpty && !members.isEmpty ? CircleManagementCopy.noMembersCanBeCarriedOver : nil
+    }
+  }
+
+  var canConfirmUpgrade: Bool {
+    encryptionAvailable && upgradeEligibility != nil && upgradeBlockedReason == nil
+  }
+
+  /// Badge copy for a member row, or nil when the member has nothing pending.
+  func pendingBadge(for did: DID) -> String? {
+    pendingRewraps.first { $0.did == did.didString() }.map { CircleManagementCopy.pendingBadge(reason: $0.reason) }
+  }
+
+  func ineligibleMessage(for did: DID) -> String {
+    CircleManagementCopy.ineligibleMember(handle: knownHandles[did.didString()] ?? did.didString())
+  }
+
+  /// Owner only: the history toggle from the metadata record, the pending
+  /// re-wrap list (encrypted), or an unfinished upgrade (plaintext).
+  func loadEncryptionState() async {
+    guard canManageMembers, !isCreating else { return }
+    if let metadata = try? await service.metadata(space: circle.uri) {
+      historyForNewMembers = metadata.historyForNewMembers ?? true
+    }
+    if circle.isEncrypted {
+      await refreshPendingRewraps()
+      return
+    }
+    encryptionAvailability = await service.encryptionAvailability()
+    if upgradeTarget == nil, encryptionAvailable, let target = try? await service.pendingUpgradeTarget(from: circle) {
+      upgradeTarget = target
+      state = .upgradeIncomplete(message: CircleManagementCopy.upgradeIncomplete)
+    }
+  }
+
+  /// §7: writes the toggle to the metadata record. Off affects only future adds.
+  func setHistoryForNewMembers(_ value: Bool) async {
+    guard canManageMembers, !isCreating, !isWritingHistorySetting else { return }
+    isWritingHistorySetting = true
+    defer { isWritingHistorySetting = false }
+    let previous = historyForNewMembers
+    historyForNewMembers = value
+    do {
+      try await service.setHistoryForNewMembers(circle: circle, value)
+    } catch {
+      historyForNewMembers = previous
+      state = .failed(message: circleError(from: error).localizedDescription)
+    }
+  }
+
+  /// §6 rule 7: `rotate(reason: "manualRotation")`. A no-op while a removal is
+  /// pending (rechecked against the store first).
+  func rotateKeyNow() async {
+    await refreshPendingRewraps()
+    guard canRotateKeyNow else { return }
+    state = .submitting
+    do {
+      try await service.rotateKey(circle: circle, reason: "manualRotation")
+      state = .complete
+    } catch {
+      state = .failed(message: circleError(from: error).localizedDescription)
+    }
+    await refreshPendingRewraps()
+  }
+
+  /// D15 "Retry now": completes pending removals/grants and re-wraps excluded members.
+  func retryPendingNow() async {
+    guard canManageMembers, circle.isEncrypted, state != .submitting else { return }
+    state = .submitting
+    do {
+      try await service.retryPendingRewraps(circle: circle)
+      state = .complete
+    } catch {
+      state = .failed(message: circleError(from: error).localizedDescription)
+    }
+    await refreshPendingRewraps()
+    await loadMembers()
+  }
+
+  /// Rules 5–6 on management appear (owner, encrypted): once per view model,
+  /// fire-and-forget; failures are logged by type name only.
+  func reconcileOnAppear() {
+    guard !didReconcile, canManageMembers, !isCreating, circle.isEncrypted else { return }
+    didReconcile = true
+    let service = service
+    let circle = circle
+    Task { [weak self] in
+      // No encryption context yet (MLS client not up): skip silently.
+      guard await service.encryptionContextAvailable() else { return }
+      do {
+        try await service.reconcileEpochs(circle: circle)
+      } catch {
+        Logger(subsystem: "blue.catbird", category: "CircleKeys")
+          .info("Circles: reconcile on appear failed: \(String(describing: type(of: error)), privacy: .public)")
+      }
+      await self?.refreshPendingRewraps()
+    }
+  }
+
+  /// Dry-run wrap (nothing written). A failed check is `.checkFailed`, never
+  /// "everyone ineligible".
+  func eligibleMembers(_ dids: [DID]) async -> CircleUpgradeEligibility {
+    do {
+      let result = try await service.eligibility(circle: circle, dids: dids)
+      return .checked(eligible: result.eligible, ineligible: result.ineligible.map { (did: $0.0, reason: $0.reason) })
+    } catch {
+      return .checkFailed(message: circleError(from: error).localizedDescription)
+    }
+  }
+
+  /// Computes the members an upgrade can carry over; the view shows
+  /// `upgradeIneligible` / `upgradeBlockedReason` and asks the owner to confirm.
+  func prepareUpgrade() async {
+    if encryptionAvailability == nil { encryptionAvailability = await service.encryptionAvailability() }
+    upgradeEligibility = await eligibleMembers(members)
+  }
+
+  /// Create flow: whether the new Circle will be encrypted, and which picked
+  /// members an encrypted create would leave out (shown before creating).
+  func prepareCreate(memberDIDs: [DID]) async {
+    let availability = await service.encryptionAvailability()
+    encryptionAvailability = availability
+    createEncrypted = availability.isAvailable
+    guard availability.isAvailable, !memberDIDs.isEmpty,
+          case .checked(_, let ineligible) = await eligibleMembers(memberDIDs)
+    else {
+      createIneligible = []
+      return
+    }
+    createIneligible = ineligible
+  }
+
+  /// D17 upgrade (owner, plaintext Circle), resuming an unfinished one if any:
+  /// `CircleService.upgradeToEncrypted` runs steps 1–4, then the new Space is
+  /// activated (step 5; a failure there is the usual activation retry).
+  func upgradeToEncrypted() async throws {
+    guard canManageMembers, !isCreating else {
+      let error = CircleError.notAuthorized
+      state = .failed(message: error.localizedDescription)
+      throw error
+    }
+    guard state != .submitting else { return }
+    if encryptionAvailability == nil { encryptionAvailability = await service.encryptionAvailability() }
+    guard encryptionAvailable else {
+      state = .failed(message: CircleManagementCopy.encryptionUnavailableHint)
+      throw CircleError.invalidParameter(CircleManagementCopy.encryptionUnavailableHint)
+    }
+    // A resume grants the persisted v1 recipients; only a fresh upgrade needs
+    // a (successful, non-empty) dry run.
+    var eligible: [DID] = []
+    if upgradeTarget == nil {
+      if upgradeEligibility == nil { await prepareUpgrade() }
+      if let blocked = upgradeBlockedReason {
+        state = .failed(message: blocked)
+        throw CircleError.invalidParameter(blocked)
+      }
+      if case .checked(let checked, _) = upgradeEligibility { eligible = checked }
+    }
+
+    state = .submitting
+    let upgraded: CircleSummary
+    do {
+      upgraded = try await service.upgradeToEncrypted(from: circle, eligible: eligible, resuming: upgradeTarget)
+    } catch let incomplete as CircleUpgradeIncompleteError {
+      upgradeTarget = incomplete.target
+      state = .upgradeIncomplete(message: CircleManagementCopy.upgradeIncomplete)
+      throw incomplete.underlying
+    } catch {
+      let cError = circleError(from: error)
+      state = .failed(message: cError.localizedDescription)
+      throw cError
+    }
+    upgradeTarget = nil
+    upgradeEligibility = nil
+    circle = upgraded
+    members = []
+    memberPermissions = []
+
+    do {
+      circle = try await service.activateCircle(space: upgraded.uri)
+      state = .complete
+    } catch {
+      let cError = circleError(from: error)
+      switch cError {
+      case .authRequired, .notAuthorized, .accessExpired:
+        CircleAppViewAuthCoordinator.shared.invalidate(for: userDID)
+      default:
+        break
+      }
+      state = .activationFailed(message: cError.localizedDescription)
+    }
+    await loadMembers()
+    await loadEncryptionState()
+  }
+
+  private func refreshPendingRewraps() async {
+    guard circle.isEncrypted, canManageMembers, !isCreating,
+          let raw = try? await service.pendingRewraps(circle: circle)
+    else { return }
+    pendingRewraps = raw.compactMap { entry in
+      if entry.did.hasPrefix(CircleKeyManager.aclRemovePrefix) {
+        return (did: String(entry.did.dropFirst(CircleKeyManager.aclRemovePrefix.count)), reason: entry.reason)
+      }
+      if entry.did.hasPrefix(CircleKeyManager.aclAddPrefix) {
+        return (did: String(entry.did.dropFirst(CircleKeyManager.aclAddPrefix.count)), reason: entry.reason)
+      }
+      return entry.did.hasPrefix("__") ? nil : entry
     }
   }
 }

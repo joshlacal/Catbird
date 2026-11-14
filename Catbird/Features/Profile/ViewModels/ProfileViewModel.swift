@@ -1041,7 +1041,7 @@ import AppKit
         collection: try NSID(nsidString: "app.bsky.actor.profile"),
         rkey: try RecordKey(keyString: "self"),
         record: ATProtocolValueContainer.knownType(updatedProfile),
-        swapRecord: existingRecord.cid
+        swapRecord: existingRecord.cid.map { .value($0) }
       )
 
       let (putRecordCode, _) = try await client.com.atproto.repo.putRecord(input: putRecordInput)

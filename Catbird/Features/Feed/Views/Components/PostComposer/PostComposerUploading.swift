@@ -24,7 +24,11 @@ extension PostComposerViewModel {
             return nil 
         }
 
-        if case .circle = destination {
+        if case .circle(let circle) = destination {
+            // Plaintext images must never be uploaded for an encrypted Circle.
+            guard !circle.isEncrypted else {
+                throw CircleError.invalidParameter("Images for encrypted Circles must be encrypted first.")
+            }
             try await appState.circleService.requireImages()
         }
 
@@ -127,6 +131,76 @@ extension PostComposerViewModel {
         }
 
         return .appBskyEmbedImages(AppBskyEmbedImages(images: imageEmbeds))
+    }
+
+    /// Encrypted Circles (spec §4.3): each photo is prepared as for a public
+    /// post, its metadata stripped, encrypted with `BlobCrypto`, and only the
+    /// ciphertext is uploaded (`application/octet-stream`). The keys go into the
+    /// sealed payload via `CirclePostDraft.encryptedMedia`; no thumbnail is
+    /// uploaded for photos, so there is no second blob.
+    func createEncryptedCircleImages(items: [MediaItem]? = nil) async throws -> [CircleEncryptedMedia] {
+        let items = items ?? mediaItems
+        guard !items.isEmpty else { return [] }
+        guard let client = appState.atProtoClient else { throw CircleError.clientNotInitialized }
+        guard items.count <= CirclePostSealer.maxAttachments else {
+            throw CircleError.invalidParameter("Encrypted Circles allow up to \(CirclePostSealer.maxAttachments) images per post.")
+        }
+        try await (circleService ?? appState.circleService).requireImages()
+
+        var sources: [Data] = []
+        for item in items {
+            guard let rawData = item.rawData, item.image != nil, !item.isGifConversion else {
+                throw NSError(domain: "ComposerMedia", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "An attachment couldn’t be loaded. Retry it or remove it before posting."
+                ])
+            }
+            sources.append(rawData)
+        }
+
+        var media: [CircleEncryptedMedia] = []
+        var nextPreparation: Task<ComposerImagePreparation.PreparedUpload, Error>? = Self.startImagePreparation(sources[0])
+        defer { nextPreparation?.cancel() }
+        for (index, item) in items.enumerated() {
+            guard let preparation = nextPreparation else { break }
+            let prepared = try await preparation.value
+            nextPreparation = index + 1 < sources.count ? Self.startImagePreparation(sources[index + 1]) : nil
+
+            var width = Int(prepared.pixelSize.width)
+            var height = Int(prepared.pixelSize.height)
+            if width <= 0 || height <= 0, let ratio = item.aspectRatio, ratio.width > 0, ratio.height > 0 {
+                width = Int(ratio.width)
+                height = Int(ratio.height)
+            }
+            let alt = item.altText.isEmpty ? nil : item.altText
+            let encrypted = try await CircleMediaSealer.encryptAndUpload(
+                jpeg: prepared.data,
+                alt: alt,
+                width: width > 0 ? width : nil,
+                height: height > 0 ? height : nil
+            ) { ciphertext, mimeType in
+                if let upload = self.encryptedBlobUploadForTesting {
+                    return try await upload(ciphertext, mimeType)
+                }
+                #if DEBUG
+                if let transport = self.appState.e2eCircleTransport {
+                    return try await transport.uploadImage(ciphertext)
+                }
+                #endif
+                let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
+                    data: ciphertext,
+                    mimeType: mimeType,
+                    stripMetadata: false
+                )
+                guard responseCode == 200, let uploadedBlob = blobOutput?.blob else {
+                    logger.error("PostComposerUploading: Encrypted blob upload failed - response code: \(responseCode)")
+                    throw PostComposerUploadError.badResponse(responseCode)
+                }
+                return uploadedBlob
+            }
+            logger.info("PostComposerUploading: Encrypted image \(index + 1)/\(items.count) uploaded")
+            media.append(encrypted)
+        }
+        return media
     }
 
     func createVideoEmbed(

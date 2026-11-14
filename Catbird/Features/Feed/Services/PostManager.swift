@@ -385,6 +385,32 @@ final class PostManager {
     labels: ComAtprotoLabelDefs.SelfLabels,
     createdAt: ATProtocolDate
   ) throws -> AppBskyFeedDefs.PostView {
+    try createTemporaryPost(
+      text: text,
+      did: did,
+      uri: uri,
+      cid: CIDString(cid),
+      parentPost: parentPost,
+      embed: embed,
+      facets: facets,
+      languages: languages,
+      labels: labels,
+      createdAt: createdAt
+    )
+  }
+
+  private func createTemporaryPost(
+    text: String,
+    did: String,
+    uri: ATProtocolURI,
+    cid: CIDString,
+    parentPost: AppBskyFeedDefs.PostView?,
+    embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?,
+    facets: [AppBskyRichtextFacet]?,
+    languages: [LanguageCodeContainer],
+    labels: ComAtprotoLabelDefs.SelfLabels,
+    createdAt: ATProtocolDate
+  ) throws -> AppBskyFeedDefs.PostView {
     // Create author using current user's profile if available
     let author: AppBskyActorDefs.ProfileViewBasic
     
@@ -707,7 +733,7 @@ final class PostManager {
         // Encode post to CBOR to generate CID
         logger.debug("Encoding post #\(index+1) to DAGCBOR")
         let postData = try post.encodedDAGCBOR()
-        let cid = CID.fromDAGCBOR(postData)
+        let cid = CIDString(CID.fromDAGCBOR(postData))
         logger.debug("Post #\(index+1) CID: \(cid)")
 
         if index == 0 {
@@ -902,7 +928,7 @@ final class PostManager {
       collection: try NSID(nsidString: "app.bsky.actor.profile"),
       rkey: try RecordKey(keyString: "self"),
       record: ATProtocolValueContainer.knownType(updatedProfile),
-      swapRecord: existingRecord.cid
+      swapRecord: existingRecord.cid.map { .value($0) }
     )
 
     let (putRecordCode, _) = try await client.com.atproto.repo.putRecord(input: putRecordInput)
@@ -914,7 +940,7 @@ final class PostManager {
 
   /// Pins a post to the authenticated user's profile.
   func pinPost(uri: ATProtocolURI, cid: String) async throws {
-    let strongRef = ComAtprotoRepoStrongRef(uri: uri, cid: try CID.parse(cid))
+    let strongRef = ComAtprotoRepoStrongRef(uri: uri, cid: try CIDString(cidString: cid))
     try await updatePinnedPost(strongRef)
   }
 
@@ -943,7 +969,7 @@ final class PostManager {
     repo: String,
     collection: String,
     rkey: RecordKey
-  ) async throws -> (record: T?, cid: CID?) {
+  ) async throws -> (record: T?, cid: CIDString?) {
     guard let client = client else { throw AuthError.clientNotInitialized }
     let params = ComAtprotoRepoGetRecord.Parameters(
       repo: try ATIdentifier(string: repo),
@@ -980,10 +1006,10 @@ final class PostManager {
     let rootRkey = try RecordKey(keyString: rootPostURI.recordKey ?? "")
 
     var existingTg: AppBskyFeedThreadgate?
-    var tgSwapCid: CID?
+    var tgSwapCid: CIDString?
     let shouldCheckTg = rootPostURI.authority == did
     if shouldCheckTg {
-      let (tgRecord, cid): (AppBskyFeedThreadgate?, CID?) = try await getOptionalRecord(
+      let (tgRecord, cid): (AppBskyFeedThreadgate?, CIDString?) = try await getOptionalRecord(
         repo: did,
         collection: "app.bsky.feed.threadgate",
         rkey: rootRkey
@@ -993,10 +1019,10 @@ final class PostManager {
     }
 
     var existingPg: AppBskyFeedPostgate?
-    var pgSwapCid: CID?
+    var pgSwapCid: CIDString?
     let shouldCheckPg = postURI.authority == did
     if shouldCheckPg {
-      let (pgRecord, cid): (AppBskyFeedPostgate?, CID?) = try await getOptionalRecord(
+      let (pgRecord, cid): (AppBskyFeedPostgate?, CIDString?) = try await getOptionalRecord(
         repo: did,
         collection: "app.bsky.feed.postgate",
         rkey: postRkey
@@ -1088,7 +1114,7 @@ final class PostManager {
         collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
         rkey: rootRkey,
         record: ATProtocolValueContainer.knownType(updatedTg),
-        swapRecord: tgSwapCid
+        swapRecord: tgSwapCid.map { .value($0) }
       )
       let (code, _) = try await client.com.atproto.repo.putRecord(input: putTgInput)
       guard (200...299).contains(code) else {
@@ -1100,7 +1126,7 @@ final class PostManager {
         collection: try NSID(nsidString: "app.bsky.feed.postgate"),
         rkey: postRkey,
         record: ATProtocolValueContainer.knownType(updatedPg),
-        swapRecord: pgSwapCid
+        swapRecord: pgSwapCid.map { .value($0) }
       )
       let (code, _) = try await client.com.atproto.repo.putRecord(input: putPgInput)
       guard (200...299).contains(code) else {
@@ -1118,7 +1144,7 @@ final class PostManager {
     let did = try await client.getDid()
     let rootRkey = try RecordKey(keyString: rootPostURI.recordKey ?? "")
 
-    let (existingTg, swapCid): (AppBskyFeedThreadgate?, CID?) = try await getOptionalRecord(
+    let (existingTg, swapCid): (AppBskyFeedThreadgate?, CIDString?) = try await getOptionalRecord(
       repo: did,
       collection: "app.bsky.feed.threadgate",
       rkey: rootRkey
@@ -1154,7 +1180,7 @@ final class PostManager {
       collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
       rkey: rootRkey,
       record: ATProtocolValueContainer.knownType(updatedTg),
-      swapRecord: swapCid
+      swapRecord: swapCid.map { .value($0) }
     )
     let (code, _) = try await client.com.atproto.repo.putRecord(input: putTgInput)
     guard (200...299).contains(code) else {
@@ -1168,7 +1194,7 @@ final class PostManager {
     let did = try await client.getDid()
     let quotedRkey = try RecordKey(keyString: quotedPostURI.recordKey ?? "")
 
-    let (existingPg, swapCid): (AppBskyFeedPostgate?, CID?) = try await getOptionalRecord(
+    let (existingPg, swapCid): (AppBskyFeedPostgate?, CIDString?) = try await getOptionalRecord(
       repo: did,
       collection: "app.bsky.feed.postgate",
       rkey: quotedRkey
@@ -1197,7 +1223,7 @@ final class PostManager {
       collection: try NSID(nsidString: "app.bsky.feed.postgate"),
       rkey: quotedRkey,
       record: ATProtocolValueContainer.knownType(updatedPg),
-      swapRecord: swapCid
+      swapRecord: swapCid.map { .value($0) }
     )
     let (code, _) = try await client.com.atproto.repo.putRecord(input: putPgInput)
     guard (200...299).contains(code) else {

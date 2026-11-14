@@ -192,13 +192,23 @@ struct CircleMediaView: View {
     hasError = false
 
     do {
+      // Encrypted Circles serve ciphertext: decrypt with the key from the
+      // opened post, and never try to decode a blob without one.
+      var keyRef: CircleMediaKeyRef?
+      if space.spaceType == CircleConfiguration.encryptedSpaceType {
+        keyRef = await CircleMediaLoader.shared.registeredKey(
+          accountDID: accountDID, space: space, authorDID: authorDID, cid: cid
+        )
+        guard keyRef != nil else { throw CircleMediaError.decryptionFailed }
+      }
       let image = try await CircleMediaLoader.shared.image(
         accountDID: accountDID,
         space: space,
         authorDID: authorDID,
         cid: cid,
         targetBucket: bucket,
-        service: appState.circleService
+        service: appState.circleService,
+        decryptWith: keyRef
       )
       guard !Task.isCancelled, lifecycleGeneration == requestGeneration, appState.userDID == accountDID else { return }
       self.renderedAccountDID = accountDID

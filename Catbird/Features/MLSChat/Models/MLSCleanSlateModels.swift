@@ -6,6 +6,7 @@
 //  compose draft store, moderation report sheet, and block coordinator.
 //
 
+import AVFoundation
 import CatbirdMLSCore
 import Foundation
 import OSLog
@@ -77,7 +78,7 @@ enum MLSSpaceBlobLocator {
       input: ComAtprotoSpaceGetBlob.Parameters(
         space: parsed.space,
         repo: parsed.repo,
-        cid: parsed.cid
+        cid: CIDString(parsed.cid)
       )
     )
     return (responseCode, output?.data)
@@ -634,19 +635,7 @@ struct BlockChatSenderSheet: View {
         try? await appState.mlsCoordinator?.declineDirectRequest(requestId: requestId)
       }
       if let conversationId, leaveConversationToo, let coordinator = appState.mlsCoordinator {
-        do {
-          try await coordinator.removeGroupMember(
-            actorRole: .member,
-            conversationId: conversationId,
-            targetDid: coordinator.accountDid
-          )
-        } catch {
-          try? await coordinator.removeGroupMember(
-            actorRole: .admin,
-            conversationId: conversationId,
-            targetDid: coordinator.accountDid
-          )
-        }
+        _ = try await coordinator.leaveConversation(conversationId: conversationId)
         await appState.loadMLSConversations()
       }
       onBlocked()
@@ -815,15 +804,21 @@ final class MLSImageSender {
   var uploadError: String?
 
   private let client: ATProtoClient
+  @ObservationIgnored private weak var coordinator: MLSClientCoordinator?
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSImageSender")
   private static let maxBlobBytes = 10 * 1024 * 1024
 
-  init(client: ATProtoClient) {
+  init(client: ATProtoClient, coordinator: MLSClientCoordinator? = nil) {
     self.client = client
+    self.coordinator = coordinator
   }
 
-  func processImage(from item: PhotosPickerItem, convoId: String) async -> MLSImageEmbed? {
-    _ = convoId
+  @MainActor
+  func processImage(
+    from item: PhotosPickerItem,
+    convoId: String,
+    coordinator overrideCoordinator: MLSClientCoordinator? = nil
+  ) async -> MLSImageEmbed? {
     _ = client
     isUploading = true
     uploadError = nil
@@ -871,17 +866,33 @@ final class MLSImageSender {
         contentType = "image/jpeg"
       }
 
-      let encrypted = try BlobCrypto.encrypt(plaintext: finalData)
-      let blobId = UUID().uuidString.lowercased()
-      logger.info("Prepared Space-encrypted image blob \(blobId, privacy: .public)")
+      let resolvedCoordinator: MLSClientCoordinator?
+      if let overrideCoordinator {
+        resolvedCoordinator = overrideCoordinator
+      } else if let coordinator {
+        resolvedCoordinator = coordinator
+      } else {
+        resolvedCoordinator = AppStateManager.shared.lifecycle.appState?.mlsCoordinator
+      }
+      guard let activeCoordinator = resolvedCoordinator else {
+        uploadError = "Encrypted chat coordinator is unavailable"
+        return nil
+      }
+
+      let uploaded = try await activeCoordinator.uploadConversationAttachment(
+        conversationId: convoId,
+        plaintext: finalData,
+        mimeType: contentType
+      )
+      logger.info("Uploaded Space-encrypted image attachment \(uploaded.locator, privacy: .public)")
 
       return MLSImageEmbed(
-        blobId: blobId,
-        key: encrypted.key,
-        iv: encrypted.iv,
-        sha256: encrypted.sha256,
-        contentType: contentType,
-        size: finalData.count,
+        blobId: uploaded.locator,
+        key: uploaded.symmetricKey,
+        iv: uploaded.iv,
+        sha256: uploaded.ciphertextSha256.hexEncodedString(),
+        contentType: uploaded.mimeType,
+        size: Int(clamping: uploaded.ciphertextSize),
         width: finalWidth,
         height: finalHeight,
         altText: nil,
@@ -969,6 +980,324 @@ final class MLSImageSender {
       scale *= 0.75
     }
     return nil
+  }
+}
+
+// MARK: - Encrypted Voice Message Recording & Opus Preparation (FC-09)
+
+@MainActor
+@Observable
+final class MLSVoiceSender {
+  #if os(iOS)
+  private(set) var voiceMode: ComposerMode = .compose
+  #endif
+  private(set) var voicePreviewURL: URL?
+  private(set) var recordingDuration: TimeInterval = 0
+  private(set) var isUploading = false
+  var voiceError: String?
+
+  @ObservationIgnored private var recorder: AVAudioRecorder?
+  @ObservationIgnored private var durationTimer: Timer?
+  @ObservationIgnored private var recordingStartDate: Date?
+  @ObservationIgnored private var activeWavURL: URL?
+  @ObservationIgnored private var activePcmURL: URL?
+  @ObservationIgnored private var preparedVoice: VoicePrepareResult?
+  private let logger = Logger(subsystem: "blue.catbird", category: "MLSVoiceSender")
+
+  private static let sampleRate: Double = 48_000
+
+  func startRecording() {
+    cancelOrDiscard()
+    voiceError = nil
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      let permitted = await Self.requestMicrophonePermission()
+      guard permitted else {
+        self.voiceError = "Microphone access is required to record voice messages."
+        return
+      }
+      do {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setActive(true)
+        #endif
+
+        let wavURL = FileManager.default.temporaryDirectory
+          .appendingPathComponent("catbird-mls-voice-\(UUID().uuidString.lowercased()).wav")
+        let settings: [String: Any] = [
+          AVFormatIDKey: Int(kAudioFormatLinearPCM),
+          AVSampleRateKey: Self.sampleRate,
+          AVNumberOfChannelsKey: 1,
+          AVLinearPCMBitDepthKey: 16,
+          AVLinearPCMIsBigEndianKey: false,
+          AVLinearPCMIsFloatKey: false,
+          AVLinearPCMIsNonInterleaved: false,
+        ]
+        let newRecorder = try AVAudioRecorder(url: wavURL, settings: settings)
+        newRecorder.prepareToRecord()
+        guard newRecorder.record() else {
+          self.voiceError = "Couldn't start voice recording."
+          return
+        }
+        self.recorder = newRecorder
+        self.activeWavURL = wavURL
+        self.recordingStartDate = Date()
+        self.recordingDuration = 0
+        #if os(iOS)
+        self.voiceMode = .recording(locked: false)
+        #endif
+        self.startDurationTimer()
+      } catch {
+        self.logger.error("Failed to start voice recorder: \(error.localizedDescription)")
+        self.voiceError = error.localizedDescription
+      }
+    }
+  }
+
+  func lockRecording() {
+    #if os(iOS)
+    if case .recording = voiceMode {
+      voiceMode = .recording(locked: true)
+    }
+    #endif
+  }
+
+  func stopRecordingToPreview() async {
+    stopDurationTimer()
+    let elapsed = recordingStartDate.map { Date().timeIntervalSince($0) } ?? recordingDuration
+    recorder?.stop()
+    recorder = nil
+    #if os(iOS)
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    #endif
+
+    guard let wavURL = activeWavURL else {
+      cancelOrDiscard()
+      return
+    }
+
+    do {
+      let pcmURL = try Self.writeRawS16LEPcmFile(fromWavURL: wavURL)
+      activePcmURL = pcmURL
+      let prepared = try await MLSClientCoordinator.prepareVoiceMessage(
+        pcmPath: pcmURL.path,
+        sampleRate: UInt32(Self.sampleRate)
+      )
+      preparedVoice = prepared
+      voicePreviewURL = wavURL
+      let durationSeconds = max(elapsed, Double(prepared.durationMs) / 1_000.0)
+      recordingDuration = durationSeconds
+      #if os(iOS)
+      voiceMode = .preview(duration: durationSeconds, waveform: prepared.waveform)
+      #endif
+    } catch {
+      logger.error("Failed to encode Opus voice preview: \(error.localizedDescription)")
+      voiceError = "Couldn't prepare voice message: \(error.localizedDescription)"
+      cancelOrDiscard()
+    }
+  }
+
+  func cancelOrDiscard() {
+    stopDurationTimer()
+    recorder?.stop()
+    recorder = nil
+    recordingStartDate = nil
+    recordingDuration = 0
+    preparedVoice = nil
+    voicePreviewURL = nil
+    #if os(iOS)
+    voiceMode = .compose
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    #endif
+    archiveTempFile(activeWavURL)
+    archiveTempFile(activePcmURL)
+    activeWavURL = nil
+    activePcmURL = nil
+  }
+
+  func sendPreview(
+    convoId: String,
+    coordinator: MLSClientCoordinator?
+  ) async -> MLSAudioEmbed? {
+    let resolvedCoordinator = coordinator ?? AppStateManager.shared.lifecycle.appState?.mlsCoordinator
+    guard let activeCoordinator = resolvedCoordinator else {
+      voiceError = "Encrypted chat coordinator is unavailable."
+      return nil
+    }
+    guard let prepared = preparedVoice else {
+      voiceError = "No recorded voice message to send."
+      return nil
+    }
+
+    isUploading = true
+    voiceError = nil
+    defer { isUploading = false }
+
+    do {
+      let uploaded = try await activeCoordinator.uploadConversationAttachment(
+        conversationId: convoId,
+        plaintext: prepared.opusData,
+        mimeType: "audio/ogg; codecs=opus"
+      )
+      let embed = MLSAudioEmbed(
+        blobId: uploaded.locator,
+        key: uploaded.symmetricKey,
+        iv: uploaded.iv,
+        sha256: uploaded.ciphertextSha256.hexEncodedString(),
+        contentType: uploaded.mimeType,
+        size: uploaded.ciphertextSize,
+        durationMs: prepared.durationMs,
+        waveform: prepared.waveform,
+        transcript: nil
+      )
+      cancelOrDiscard()
+      return embed
+    } catch {
+      logger.error("Voice upload failed: \(error.localizedDescription)")
+      voiceError = "Failed to upload voice message: \(error.localizedDescription)"
+      return nil
+    }
+  }
+
+  nonisolated static func extractRawPcmBytes(fromWavData wavData: Data) -> Data {
+    // Standard RIFF/WAVE header starts with "RIFF" <size:u32> "WAVE", followed by subchunks.
+    if wavData.count > 12,
+       String(data: wavData.subdata(in: 0..<4), encoding: .ascii) == "RIFF",
+       String(data: wavData.subdata(in: 8..<12), encoding: .ascii) == "WAVE"
+    {
+      var offset = 12
+      while offset + 8 <= wavData.count {
+        let chunkID = String(data: wavData.subdata(in: offset..<(offset + 4)), encoding: .ascii)
+        let chunkSize = wavData.subdata(in: (offset + 4)..<(offset + 8)).withUnsafeBytes { raw -> Int in
+          Int(raw.loadUnaligned(as: UInt32.self).littleEndian)
+        }
+        let payloadStart = offset + 8
+        let payloadEnd = min(wavData.count, payloadStart + max(0, chunkSize))
+        if chunkID == "data" {
+          return wavData.subdata(in: payloadStart..<payloadEnd)
+        }
+        let paddedAdvance = chunkSize + (chunkSize % 2)
+        guard paddedAdvance >= 0, payloadStart + paddedAdvance <= wavData.count else { break }
+        offset = payloadStart + paddedAdvance
+      }
+    }
+    return wavData
+  }
+
+  nonisolated private static func writeRawS16LEPcmFile(fromWavURL wavURL: URL) throws -> URL {
+    let wavData = try Data(contentsOf: wavURL)
+    let rawPcm = extractRawPcmBytes(fromWavData: wavData)
+    let pcmURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("catbird-mls-voice-\(UUID().uuidString.lowercased()).pcm")
+    try rawPcm.write(to: pcmURL, options: .atomic)
+    return pcmURL
+  }
+
+  private func startDurationTimer() {
+    stopDurationTimer()
+    durationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self, let start = self.recordingStartDate else { return }
+        self.recordingDuration = Date().timeIntervalSince(start)
+      }
+    }
+  }
+
+  private func stopDurationTimer() {
+    durationTimer?.invalidate()
+    durationTimer = nil
+  }
+
+  private func archiveTempFile(_ url: URL?) {
+    guard let url, FileManager.default.fileExists(atPath: url.path) else { return }
+    let trashDir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("catbird-voice-trash", isDirectory: true)
+    try? FileManager.default.createDirectory(at: trashDir, withIntermediateDirectories: true)
+    let dest = trashDir.appendingPathComponent("\(UUID().uuidString.lowercased())-\(url.lastPathComponent)")
+    try? FileManager.default.moveItem(at: url, to: dest)
+  }
+
+  private static func requestMicrophonePermission() async -> Bool {
+    if #available(iOS 17.0, macOS 14.0, *) {
+      switch AVAudioApplication.shared.recordPermission {
+      case .granted:
+        return true
+      case .denied:
+        return false
+      case .undetermined:
+        return await AVAudioApplication.requestRecordPermission()
+      @unknown default:
+        return false
+      }
+    } else {
+      #if os(iOS)
+      return await withCheckedContinuation { continuation in
+        AVAudioSession.sharedInstance().requestRecordPermission { granted in
+          continuation.resume(returning: granted)
+        }
+      }
+      #else
+      return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+      #endif
+    }
+  }
+}
+
+// MARK: - Pending Group Creation Recovery Banner (P1-1)
+
+struct MLSPendingGroupCreationBanner: View {
+  let status: PendingGroupCreationStatus
+  var isBusy: Bool = false
+  let onRetry: () -> Void
+  let onCancel: () -> Void
+
+  private var statusMessage: String {
+    switch status.state {
+    case .pendingRetry:
+      return "Finishing encrypted group setup. Catbird can retry right now or cancel."
+    case .needsUserAction:
+      if let code = status.lastErrorCode, !code.isEmpty {
+        return "Encrypted group setup paused (\(code)). Retry or cancel this pending group."
+      }
+      return "Encrypted group setup needs your confirmation to retry or cancel."
+    }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Label("Pending Encrypted Group Creation", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.orange)
+      Text(statusMessage)
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+      HStack(spacing: 12) {
+        Button {
+          onRetry()
+        } label: {
+          Label("Retry Setup", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(isBusy)
+        .accessibilityIdentifier("mls-pending-group-retry")
+
+        Button(role: .destructive) {
+          onCancel()
+        } label: {
+          Text("Cancel Group")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(isBusy)
+        .accessibilityIdentifier("mls-pending-group-cancel")
+      }
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .accessibilityIdentifier("mls-pending-group-banner")
   }
 }
 

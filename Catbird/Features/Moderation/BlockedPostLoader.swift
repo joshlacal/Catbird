@@ -197,7 +197,7 @@ enum BlockedPostLoader {
     let base = "https://video.bsky.app/watch/\(encodedDid)/\(cid.string)"
     guard let playlist = URI("\(base)/playlist.m3u8") else { return nil }
     return AppBskyEmbedVideo.View(
-      cid: cid,
+      cid: CIDString(cid),
       playlist: playlist,
       thumbnail: URI("\(base)/thumbnail.jpg"),
       alt: video.alt,

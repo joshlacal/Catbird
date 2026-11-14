@@ -47,6 +47,8 @@ struct MacOSMLSOrdinaryConversationView: View {
   @State private var reportTarget: MacOSModerationTarget?
   @State private var blockTarget: MacOSModerationTarget?
   @State private var showingReactionsSheet = false
+  @State private var pendingCreationStatus: PendingGroupCreationStatus?
+  @State private var isMutatingPendingCreation = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSMLSConvo")
 
@@ -74,16 +76,47 @@ struct MacOSMLSOrdinaryConversationView: View {
           }
         )
         .overlay(alignment: .top) {
-          if appState.mlsSyncIncompleteConversationIDs.contains(conversationId) {
-            Label(
-              "Couldn't update this conversation. Catbird will try again.",
-              systemImage: "exclamationmark.arrow.triangle.2.circlepath"
-            )
-            .font(.footnote)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.regularMaterial, in: Capsule())
-            .accessibilityIdentifier("mls-sync-incomplete-status")
+          VStack(spacing: 8) {
+            if let pendingCreationStatus {
+              MLSPendingGroupCreationBanner(
+                status: pendingCreationStatus,
+                isBusy: isMutatingPendingCreation,
+                onRetry: {
+                  Task {
+                    guard let coordinator = appState.mlsCoordinator else { return }
+                    isMutatingPendingCreation = true
+                    defer { isMutatingPendingCreation = false }
+                    _ = try? await coordinator.retryPendingGroupCreation(conversationId: conversationId)
+                    self.pendingCreationStatus = try? await coordinator.pendingGroupCreationStatus(conversationId: conversationId)
+                    await dataSource.loadMessages()
+                    await appState.loadMLSConversations()
+                  }
+                },
+                onCancel: {
+                  Task {
+                    guard let coordinator = appState.mlsCoordinator else { return }
+                    isMutatingPendingCreation = true
+                    defer { isMutatingPendingCreation = false }
+                    _ = try? await coordinator.cancelPendingGroupCreation(conversationId: conversationId)
+                    self.pendingCreationStatus = nil
+                    await appState.loadMLSConversations()
+                  }
+                }
+              )
+              .padding(.horizontal, 12)
+              .padding(.top, 8)
+            }
+            if appState.mlsSyncIncompleteConversationIDs.contains(conversationId) {
+              Label(
+                "Couldn't update this conversation. Catbird will try again.",
+                systemImage: "exclamationmark.arrow.triangle.2.circlepath"
+              )
+              .font(.footnote)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .background(.regularMaterial, in: Capsule())
+              .accessibilityIdentifier("mls-sync-incomplete-status")
+            }
           }
         }
       } else {
@@ -170,6 +203,18 @@ struct MacOSMLSOrdinaryConversationView: View {
               showingReactionsSheet = true
             }
           }
+          Button("Leave Conversation", role: .destructive) {
+            Task {
+              guard let coordinator = appState.mlsCoordinator else { return }
+              do {
+                _ = try await coordinator.leaveConversation(conversationId: conversationId)
+                await appState.loadMLSConversations()
+                showingGroupInfo = false
+              } catch {
+                logger.error("Failed to leave MLS conversation on macOS: \(error.localizedDescription)")
+              }
+            }
+          }
         }
       }
       .inspectorColumnWidth(min: 220, ideal: 280, max: 360)
@@ -236,6 +281,7 @@ struct MacOSMLSOrdinaryConversationView: View {
     dataSource = source
     await source.loadMessages()
     guard let coordinator = appState.mlsCoordinator else { return }
+    pendingCreationStatus = try? await coordinator.pendingGroupCreationStatus(conversationId: conversationId)
     if let meta = try? await coordinator.getGroupMetadata(conversationId: conversationId),
        let title = meta.title,
        !title.isEmpty

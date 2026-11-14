@@ -17,7 +17,7 @@ struct TrendingVideoModerationTests {
 
   private func videoEmbed(alt: String? = nil) -> AppBskyEmbedVideo.View {
     AppBskyEmbedVideo.View(
-      cid: CID.fromDAGCBOR(Data("video".utf8)), playlist: URI(uriString: "https://video.example.test/p.m3u8"),
+      cid: CIDString(CID.fromDAGCBOR(Data("video".utf8))), playlist: URI(uriString: "https://video.example.test/p.m3u8"),
       thumbnail: URI(uriString: Self.thumbnail), alt: alt)
   }
 

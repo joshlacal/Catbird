@@ -432,7 +432,10 @@ struct PostComposerViewUIKit: View {
                         set: { vm.selectDestination($0) }
                       ),
                       isReplyLocked: vm.isReplyLockedToCircle,
-                      isSubmitting: isSubmitting || vm.activeSubmission != nil || vm.mediaItems.contains { $0.isLoading }
+                      isSubmitting: isSubmitting || vm.activeSubmission != nil || vm.mediaItems.contains { $0.isLoading },
+                      rowState: { vm.audienceRowState(for: $0) },
+                      evaluate: { await vm.evaluateEncryptedPostingReadiness(for: $0) },
+                      refresh: { await vm.refreshEncryptedKeys(circle: $0) }
                     )
                     .padding(.horizontal, 16)
                   }
@@ -441,6 +444,14 @@ struct PostComposerViewUIKit: View {
                   mentionSuggestionsSection(vm: vm)
                   mediaAttachmentsSection(vm: vm)
                   metadataSection(vm: vm)
+                  if let notice = vm.droppedLinkCardNotice {
+                    Label(notice, systemImage: "link.badge.plus")
+                      .font(.footnote)
+                      .foregroundStyle(.secondary)
+                      .frame(maxWidth: .infinity, alignment: .leading)
+                      .padding(.horizontal, 16)
+                      .onAppear { vm.markDroppedLinkCardNoticeShown() }
+                  }
                   submitValidationMessageView(vm: vm)
                     .padding(.horizontal, 16)
                 }

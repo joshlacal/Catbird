@@ -29,8 +29,8 @@ import SwiftUI
 
 
   enum VideoType: Equatable {
-    case hlsStream(playlistURL: URL, cid: CID, aspectRatio: AspectRatio?)
-    case bskyGif(playlistURL: URL, cid: CID, aspectRatio: AspectRatio?)
+    case hlsStream(playlistURL: URL, cid: CIDString, aspectRatio: AspectRatio?)
+    case bskyGif(playlistURL: URL, cid: CIDString, aspectRatio: AspectRatio?)
     case tenorGif(URI)
     case giphyGif(URI)
 

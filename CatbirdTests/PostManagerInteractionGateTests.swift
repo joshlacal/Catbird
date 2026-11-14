@@ -21,12 +21,12 @@ struct PostManagerInteractionGateTests {
         let websiteURI = URI(uriString: "https://example.com")
         let starterPackURI = try ATProtocolURI(uriString: "at://did:plc:alice/app.bsky.graph.starterpack/3l5xyz")
         let dummyCID = try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")
-        let starterPackRef = ComAtprotoRepoStrongRef(uri: starterPackURI, cid: dummyCID)
+        let starterPackRef = ComAtprotoRepoStrongRef(uri: starterPackURI, cid: CIDString(dummyCID))
         let labelValue = ComAtprotoLabelDefs.Label(
             ver: nil,
             src: try DID(didString: "did:plc:alice"),
             uri: URI(uriString: "at://did:plc:alice/app.bsky.actor.profile/self"),
-            cid: dummyCID,
+            cid: CIDString(dummyCID),
             val: "custom-label",
             neg: nil,
             cts: originalDate,
@@ -52,7 +52,7 @@ struct PostManagerInteractionGateTests {
 
         // 1. Simulate pinPost logic
         let postURI = try ATProtocolURI(uriString: "at://did:plc:alice/app.bsky.feed.post/3l5pin123")
-        let pinnedRef = ComAtprotoRepoStrongRef(uri: postURI, cid: dummyCID)
+        let pinnedRef = ComAtprotoRepoStrongRef(uri: postURI, cid: CIDString(dummyCID))
         let pinnedProfile = AppBskyActorProfile(
             displayName: initialProfile.displayName,
             description: initialProfile.description,

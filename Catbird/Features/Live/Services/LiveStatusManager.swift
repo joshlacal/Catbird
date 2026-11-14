@@ -51,7 +51,7 @@ final class LiveStatusManager {
     ]
 
     private(set) var currentStatus: AppBskyActorStatus?
-    private(set) var currentCID: CID?
+    private(set) var currentCID: CIDString?
     private(set) var isPublishing: Bool = false
     var errorMessage: String?
 
@@ -255,7 +255,7 @@ final class LiveStatusManager {
             collection: try NSID(nsidString: "app.bsky.actor.status"),
             rkey: try RecordKey(keyString: "self"),
             record: ATProtocolValueContainer.knownType(statusRecord),
-            swapRecord: currentCID
+            swapRecord: currentCID.map { .value($0) }
         )
 
         do {
@@ -326,7 +326,7 @@ final class LiveStatusManager {
             collection: try NSID(nsidString: "app.bsky.actor.status"),
             rkey: try RecordKey(keyString: "self"),
             record: ATProtocolValueContainer.knownType(updatedRecord),
-            swapRecord: currentCID
+            swapRecord: currentCID.map { .value($0) }
         )
 
         do {

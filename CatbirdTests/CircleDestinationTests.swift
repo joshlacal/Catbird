@@ -1,8 +1,14 @@
 import Foundation
+import ImageIO
 import Petrel
 import PetrelCatbird
 import SwiftUI
 import Testing
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
 @testable import Catbird
 
 /// Recording transport that tracks publish calls and asserts no public fallback.
@@ -70,7 +76,7 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     )
     let postView = AppBskyFeedDefs.PostView(
       uri: uri,
-      cid: CID.fromDAGCBOR(Data("test-thread-root".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("test-thread-root".utf8))),
       author: author,
       record: ATProtocolValueContainer.knownType(post),
       embed: nil,
@@ -279,7 +285,7 @@ struct CircleDestinationTests {
     )
     return AppBskyFeedDefs.PostView(
       uri: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent123"),
-      cid: CID.fromDAGCBOR(Data("test-parent-post".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("test-parent-post".utf8))),
       author: author,
       record: ATProtocolValueContainer.knownType(post),
       embed: nil,
@@ -435,11 +441,11 @@ struct CircleDestinationTests {
 
     let rootURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/root123")
     let rootCID = CID.fromDAGCBOR(Data("root-cid".utf8))
-    let rootRef = ComAtprotoRepoStrongRef(uri: rootURI, cid: rootCID)
+    let rootRef = ComAtprotoRepoStrongRef(uri: rootURI, cid: CIDString(rootCID))
 
     let parentURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/child123")
     let parentCID = CID.fromDAGCBOR(Data("child-cid".utf8))
-    let parentRef = ComAtprotoRepoStrongRef(uri: parentURI, cid: parentCID)
+    let parentRef = ComAtprotoRepoStrongRef(uri: parentURI, cid: CIDString(parentCID))
 
     let replyRef = AppBskyFeedPost.ReplyRef(root: rootRef, parent: parentRef)
     let parentRecord = AppBskyFeedPost(
@@ -455,7 +461,7 @@ struct CircleDestinationTests {
     )
     let nestedParent = AppBskyFeedDefs.PostView(
       uri: parentURI,
-      cid: parentCID,
+      cid: CIDString(parentCID),
       author: AppBskyActorDefs.ProfileViewBasic(
         did: try DID(didString: "did:plc:bob"),
         handle: try Handle(handleString: "bob.bsky.social"),
@@ -501,9 +507,9 @@ struct CircleDestinationTests {
     }
     #expect(draft.reply != nil)
     #expect(draft.reply?.root.uri == rootURI)
-    #expect(draft.reply?.root.cid == rootCID)
+    #expect(draft.reply?.root.cid == CIDString(rootCID))
     #expect(draft.reply?.parent.uri == parentURI)
-    #expect(draft.reply?.parent.cid == parentCID)
+    #expect(draft.reply?.parent.cid == CIDString(parentCID))
   }
 
   @Test("Circle destination blocks thread mode and exiting exits cleanly")
@@ -634,12 +640,12 @@ struct CircleDestinationTests {
       reqId: nil
     )
     let feedItem = BlueCatbirdCircleDefs.FeedItem(
-      post: feedViewPost,
+      post: .init(feedViewPost),
       circle: family
     )
 
     // PostViewModel factory from FeedItem
-    let vmFromItem = PostViewModel.forCircleItem(feedItem, appState: appState)
+    let vmFromItem = PostViewModel.forCircleItem(feedItem, appState: appState)!
     #expect(vmFromItem.visibilityContext == .circle(family))
     #expect(vmFromItem.capabilities.canRepost == false)
     #expect(vmFromItem.capabilities.canQuote == false)
@@ -650,7 +656,7 @@ struct CircleDestinationTests {
     #expect(vmFromPost.visibilityContext == .circle(family))
 
     // PostContextMenuViewModel factory & delete dispatch
-    let menuVm = PostContextMenuViewModel.forCircleItem(feedItem, appState: appState)
+    let menuVm = PostContextMenuViewModel.forCircleItem(feedItem, appState: appState)!
     #expect(menuVm.visibilityContext == .circle(family))
     await menuVm.deletePost()
     let deletedPosts = await transport.deletedPosts
@@ -660,7 +666,7 @@ struct CircleDestinationTests {
 
     // PostView factory from FeedItem
     let binding = Binding.constant(NavigationPath())
-    let rowView = PostView.circleRow(item: feedItem, path: binding, appState: appState)
+    let rowView = PostView.circleRow(item: feedItem, path: binding, appState: appState)!
     #expect(rowView.visibilityContext == .circle(family))
 
     let detailView = PostView.circleDetail(post: circlePost, circle: family, path: binding, appState: appState)
@@ -886,7 +892,7 @@ struct CircleDestinationTests {
     let standardLike = AppBskyFeedLike(
       subject: ComAtprotoRepoStrongRef(
         uri: try ATProtocolURI(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc/did:plc:alice/app.bsky.feed.post/123"),
-        cid: CID.fromDAGCBOR(Data("like-subject-cid".utf8))
+        cid: CIDString(CID.fromDAGCBOR(Data("like-subject-cid".utf8)))
       ),
       createdAt: createdAt,
       via: nil
@@ -1041,5 +1047,416 @@ struct CircleDestinationTests {
       try await service.getFeed(space: CircleTestFixtures.family.uri)
     }
     #expect(await transport.publicEndpointCallCount == 0)
+  }
+}
+
+// MARK: - Encrypted Circle composer gating and placeholders (Task 17)
+
+/// An encrypted-Circle stack for composer tests: the scripted crypto and
+/// recording transport from `CirclePostSealerTests`, an in-memory keychain,
+/// and a service that seals as `sealingAccount`.
+private struct EncryptedComposerHarness {
+  let crypto = SealRecordingCrypto()
+  let transport = SealRecordingTransport()
+  let manager: CircleKeyManager
+  let service: CircleService
+  static let sealingAccount = try! DID(didString: "did:plc:alice")
+  static var circle: CircleSummary { CircleOpenFixtures.circle }
+
+  init(supportsEncryptedPosts: Bool = true, serviceTransport: (any CircleTransport)? = nil) async {
+    let store = CircleKeyStore(accountDID: Self.sealingAccount.didString(), keychain: InMemoryCircleKeychain())
+    manager = CircleKeyManager(crypto: crypto, store: store, transport: transport, ownerDID: CircleOpenFixtures.owner)
+    service = CircleService(
+      transport: serviceTransport ?? transport, keyManager: manager, crypto: crypto, accountDID: Self.sealingAccount
+    )
+    await transport.setSupportsEncryptedPosts(supportsEncryptedPosts)
+  }
+
+  /// `v1` exists on the server and is openable; it is NOT stored locally until a refresh.
+  func publishRemoteKey() async throws {
+    await transport.setKeyEntries([try CircleOpenFixtures.keyEntry(version: 1)])
+    await crypto.setOpenable([1: CircleOpenFixtures.key(1)])
+  }
+
+  /// `v1` is held on this device.
+  func holdKey() async throws {
+    try await publishRemoteKey()
+    _ = try await manager.refreshKeys(circle: Self.circle)
+  }
+}
+
+/// An AppState whose age gate allows general content (the publish path checks it).
+@MainActor
+private func ageClearedAppState() async -> AppState {
+  let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
+  let checker = AgeAccessControlledChecker()
+  let appState = AppState(userDID: "did:plc:testuser", client: client, regulatoryChecker: checker)
+  let joined = await ageAccessJoinedRefresh(appState.ageAccess)
+  await checker.waitForCalls(1)
+  await checker.resolve(1, with: .none)
+  await joined.value
+  return appState
+}
+
+private func smallJPEG() throws -> Data {
+  let context = try #require(CGContext(
+    data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+  ))
+  context.setFillColor(CGColor(red: 0.3, green: 0.6, blue: 0.2, alpha: 1))
+  context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+  let image = try #require(context.makeImage())
+  let output = NSMutableData()
+  let destination = try #require(CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil))
+  CGImageDestinationAddImage(destination, image, nil)
+  #expect(CGImageDestinationFinalize(destination))
+  return output as Data
+}
+
+@MainActor
+private func loadedPhoto() throws -> PostComposerViewModel.MediaItem {
+  let data = try smallJPEG()
+  var item = PostComposerViewModel.MediaItem()
+  item.rawData = data
+  #if os(iOS)
+  item.image = Image(uiImage: try #require(UIImage(data: data)))
+  #else
+  item.image = Image(nsImage: try #require(NSImage(data: data)))
+  #endif
+  item.aspectRatio = CGSize(width: 8, height: 8)
+  item.isLoading = false
+  return item
+}
+
+extension CircleDestinationTests {
+  @MainActor
+  @Test("An encrypted Circle without a local key (or without service support) is not selectable")
+  func encryptedCircleDisabledWithoutKey() async throws {
+    let encrypted = EncryptedComposerHarness.circle
+    let h = await EncryptedComposerHarness()
+    let model = await composer(destination: .public, circleService: h.service)
+
+    await model.evaluateEncryptedPostingReadiness(for: [encrypted, CircleTestFixtures.family])
+    #expect(model.canPostToDestination(.circle(encrypted)) == false)
+    #expect(model.audienceRowState(for: encrypted) == .keysUnavailable)
+    #expect(CircleAudienceRowState.keysUnavailable.message == "Encryption keys not available yet")
+    // I10: the reason is in the row's single title (iOS 27 menus drop subtitles).
+    #expect(
+      CircleAudienceRowState.keysUnavailable.disabledTitle(circleName: "Close")
+        == "Close — Encryption keys not available yet"
+    )
+    #expect(CircleAudienceRowState.selectable.disabledTitle(circleName: "Close") == "Close")
+    // A plaintext Circle and Public are unaffected.
+    #expect(model.canPostToDestination(.circle(CircleTestFixtures.family)))
+    #expect(model.canPostToDestination(.public))
+    #expect(model.audienceRowState(for: CircleTestFixtures.family) == .selectable)
+
+    model.selectDestination(.circle(encrypted))
+    #expect(model.destination == .public)
+
+    // A key on the server is not enough while the AppView lacks encrypted posts.
+    let unsupported = await EncryptedComposerHarness(supportsEncryptedPosts: false)
+    try await unsupported.holdKey()
+    let unsupportedModel = await composer(destination: .public, circleService: unsupported.service)
+    await unsupportedModel.evaluateEncryptedPostingReadiness(for: [encrypted])
+    #expect(unsupportedModel.canPostToDestination(.circle(encrypted)) == false)
+
+    // A composer that starts on the encrypted Circle (a locked reply) is blocked and fails closed.
+    let appState = await ageClearedAppState()
+    let locked = await composer(destination: .circle(encrypted), appState: appState, circleService: h.service)
+    locked.postText = "Hello close friends"
+    await locked.evaluateEncryptedPostingReadiness(for: [encrypted])
+    #expect(locked.submitValidationState.canSubmit == false)
+    #expect(locked.submitValidationState.reason == .circleEncryptionKeysUnavailable)
+    #expect(locked.submitValidationState.message == "Encryption keys not available yet")
+    await #expect(throws: CircleError.encryptionUnavailable) { try await locked.createPost() }
+    #expect(await h.transport.encryptedWrites.isEmpty)
+    #expect(await h.transport.plaintextPublishes == 0)
+    #expect(locked.postText == "Hello close friends")
+  }
+
+  @MainActor
+  @Test("An encrypted Circle becomes selectable once its key is held; Refresh fetches it once")
+  func encryptedCircleEnabledWithKey() async throws {
+    let encrypted = EncryptedComposerHarness.circle
+    let h = await EncryptedComposerHarness()
+    try await h.publishRemoteKey()
+    let model = await composer(destination: .public, circleService: h.service)
+
+    // The picker's read is local: a key that exists only on the server does not count.
+    await model.evaluateEncryptedPostingReadiness(for: [encrypted])
+    #expect(model.canPostToDestination(.circle(encrypted)) == false)
+    #expect(await h.transport.getKeysCalls == 0)
+
+    // Refresh runs exactly one key fetch, then re-evaluates.
+    await model.refreshEncryptedKeys(circle: encrypted)
+    #expect(await h.transport.getKeysCalls == 1)
+    #expect(model.canPostToDestination(.circle(encrypted)))
+    #expect(model.audienceRowState(for: encrypted) == .selectable)
+
+    model.selectDestination(.circle(encrypted))
+    #expect(model.destination == .circle(encrypted))
+    model.postText = "Hello close friends"
+    #expect(model.submitValidationState.canSubmit)
+
+    // Held key from the start: enabled without any refresh.
+    let held = await EncryptedComposerHarness()
+    try await held.holdKey()
+    let heldModel = await composer(destination: .public, circleService: held.service)
+    await heldModel.evaluateEncryptedPostingReadiness(for: [encrypted])
+    #expect(heldModel.canPostToDestination(.circle(encrypted)))
+  }
+
+  @MainActor
+  @Test("An unknown feed union renders the update placeholder; unverifiable rows name the author check")
+  func unknownUnionRendersUpdatePlaceholder() async throws {
+    let unknown = BlueCatbirdCircleDefs.FeedItem(
+      post: .unexpected(.unknownType("blue.catbird.circle.defs#encryptedPostView", .object([:]))),
+      circle: EncryptedComposerHarness.circle
+    )
+    #expect(CircleFeedItemRow.statusState(item: unknown, opened: nil) == .updateRequired)
+    #expect(CircleEncryptedStatusRow.copy(for: .updateRequired, ownerHandle: nil).detail == "Update Catbird to view this post")
+
+    let envelope = CircleOpenFixtures.encryptedItem(0)
+    #expect(CircleFeedItemRow.statusState(item: envelope, opened: nil) == .opening)
+    #expect(CircleEncryptedStatusRow.copy(for: .opening, ownerHandle: nil).detail == "Opening…")
+    let unverifiable = CircleOpenedItem.unverifiable(uri: CircleOpenFixtures.postURI(0))
+    #expect(CircleFeedItemRow.statusState(item: envelope, opened: unverifiable) == .unverifiable)
+    #expect(CircleEncryptedStatusRow.copy(for: .unverifiable, ownerHandle: nil).detail == "Couldn’t verify this post’s author")
+    // I12: a post older than the earliest held key predates this member's access.
+    let beforeJoined = CircleOpenedItem.postedBeforeJoined(uri: CircleOpenFixtures.postURI(0), keyVersion: 1)
+    #expect(CircleFeedItemRow.statusState(item: envelope, opened: beforeJoined) == .postedBeforeJoined)
+    #expect(CircleEncryptedStatusRow.copy(for: .postedBeforeJoined, ownerHandle: nil).detail == "Posted before you joined")
+    #expect(CircleThreadOpening.placeholder(
+      in: CircleThreadOpening.placeholderValue(CircleThreadPlaceholder(state: .postedBeforeJoined, ownerHandle: nil))
+    )?.state == .postedBeforeJoined)
+  }
+
+  @Test("A sealed post is refused when the sealing account is not the repo being written")
+  func publishRefusesWhenSealingAccountDiffersFromRepo() async throws {
+    let encrypted = EncryptedComposerHarness.circle
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
+    let draft = CirclePostDraft(text: "for the circle", langs: [], createdAt: ATProtocolDate(date: Date()))
+
+    // The repo is bob's; the sealing account (bound into the AAD) is alice.
+    let otherRepo = GatewayCircleTransport(client: client, repoDID: { "did:plc:bob" })
+    let h = await EncryptedComposerHarness(serviceTransport: otherRepo)
+    try await h.holdKey()
+    await #expect(throws: CircleError.encryptionUnavailable) {
+      try await h.service.publishPost(destination: encrypted, draft: draft)
+    }
+    #expect(await h.crypto.seals.count == 1)
+
+    // Positive control: the same write from alice's repo passes the check and
+    // reaches the network (which fails here for an unrelated reason).
+    let sameRepo = GatewayCircleTransport(client: client, repoDID: { "did:plc:alice" })
+    let control = await EncryptedComposerHarness(serviceTransport: sameRepo)
+    try await control.holdKey()
+    do {
+      _ = try await control.service.publishPost(destination: encrypted, draft: draft)
+      Issue.record("An unauthenticated client must not complete the write")
+    } catch let error as CircleError {
+      #expect(error != .encryptionUnavailable)
+    } catch {
+      // A transport error: the author check passed.
+    }
+  }
+
+  @MainActor
+  @Test("The composer checks the posting key before uploading any encrypted media")
+  func composerDoesNotUploadMediaWithoutKey() async throws {
+    let encrypted = EncryptedComposerHarness.circle
+    let appState = await ageClearedAppState()
+    let h = await EncryptedComposerHarness()
+    let model = await composer(destination: .circle(encrypted), appState: appState, circleService: h.service)
+    model.postText = "A photo for the circle"
+    model.mediaItems = [try loadedPhoto()]
+    var uploads = 0
+    model.encryptedBlobUploadForTesting = { _, _ in
+      uploads += 1
+      return Blob(type: "blob", ref: ATProtoLink(cid: CID.fromDAGCBOR(Data("ct".utf8))),
+                      mimeType: "application/octet-stream", size: 64)
+    }
+
+    await #expect(throws: CircleError.encryptionUnavailable) { try await model.createPost() }
+    #expect(uploads == 0)
+    #expect(model.mediaItems.count == 1)
+    #expect(model.postText == "A photo for the circle")
+    #expect(await h.transport.encryptedWrites.isEmpty)
+
+    // Positive control: with the key held, the same draft uploads and posts.
+    try await h.holdKey()
+    try await model.createPost()
+    #expect(uploads == 1)
+    #expect(await h.transport.encryptedWrites.count == 1)
+  }
+
+  @MainActor
+  @Test("A link card selected for an encrypted Circle is surfaced before posting without it")
+  func encryptedCircleSurfacesDroppedLinkCard() async throws {
+    let encrypted = EncryptedComposerHarness.circle
+    let appState = await ageClearedAppState()
+    let h = await EncryptedComposerHarness()
+    try await h.holdKey()
+    let model = await composer(destination: .circle(encrypted), appState: appState, circleService: h.service)
+    model.postText = "Look at https://example.com/article"
+    let card = URLCardResponse(error: "", likelyType: "html", url: "https://example.com/article",
+      title: "Article", description: "", image: "")
+    model.urlCards[card.url] = card
+    model.selectedEmbedURL = card.url
+
+    #expect(model.droppedLinkCardNotice == "Link cards aren’t included in encrypted Circle posts")
+
+    // Not yet seen: the first submit surfaces the notice and posts nothing.
+    do {
+      try await model.createPost()
+      Issue.record("The first submit must surface the dropped link card")
+    } catch let CircleError.invalidParameter(message) {
+      #expect(message == "Link cards aren’t included in encrypted Circle posts")
+    }
+    #expect(await h.transport.encryptedWrites.isEmpty)
+
+    // Seen: the post goes out without the card.
+    try await model.createPost()
+    #expect(await h.transport.encryptedWrites.count == 1)
+    let seal = try #require(await h.crypto.seals.first)
+    #expect(!seal.payloadJSON.contains("app.bsky.embed.external"))
+
+    // A plaintext Circle keeps its link card and shows no notice.
+    let plain = await composer(destination: .circle(CircleTestFixtures.family), circleService: h.service)
+    plain.urlCards[card.url] = card
+    plain.selectedEmbedURL = card.url
+    #expect(plain.droppedLinkCardNotice == nil)
+  }
+
+  @Test("Thread status nodes are placeholders, not posts attributed to the author")
+  func threadPlaceholderIsNotAttributedToAuthor() async throws {
+    func item(_ node: AppBskyFeedDefs.PostView, depth: Int) -> AppBskyUnspeccedGetPostThreadV2.ThreadItem {
+      AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+        uri: node.uri, depth: depth,
+        value: .appBskyUnspeccedDefsThreadItemPost(AppBskyUnspeccedDefs.ThreadItemPost(
+          post: node, moreParents: false, moreReplies: 0, opThread: false,
+          hiddenByThreadgate: false, mutedByViewer: false
+        ))
+      )
+    }
+
+    // I11: no opener yet (the MLS client is not up): "Waiting…", not a verification failure.
+    let unverifiable = await CircleThreadOpening.open(
+      [item(CircleOpenFixtures.threadNode(0), depth: 0)],
+      circle: CircleOpenFixtures.circle, opener: nil, ownerHandle: { nil }
+    )
+    #expect(unverifiable.count == 1)
+    if case .appBskyUnspeccedDefsThreadItemPost = unverifiable[0].value {
+      Issue.record("A status node must not be a post carrying the author")
+    }
+    #expect(unverifiable[0].uri == CircleOpenFixtures.postURI(0))
+    #expect(CircleThreadOpening.placeholder(in: unverifiable[0].value)
+      == CircleThreadPlaceholder(state: .waiting, ownerHandle: nil))
+    #expect(CircleEncryptedStatusRow.copy(for: .waiting, ownerHandle: nil) == ("Encrypted post", "Waiting…"))
+    #expect(ThreadRowBuilder.Item(unverifiable[0]).isPost == false)
+
+    // Sealed under a key newer than any held: the waiting placeholder, with the owner's handle.
+    let harness = OpenerHarness()
+    try await harness.holdKeys([1])
+    let pending = await CircleThreadOpening.open(
+      [item(CircleOpenFixtures.threadNode(1, keyVersion: 3), depth: 1)],
+      circle: CircleOpenFixtures.circle, opener: harness.opener, ownerHandle: { "owner.test" }
+    )
+    #expect(CircleThreadOpening.placeholder(in: pending[0].value)
+      == CircleThreadPlaceholder(state: .waitingForKey, ownerHandle: "owner.test"))
+    #expect(CircleEncryptedStatusRow.copy(for: .waitingForKey, ownerHandle: "owner.test").detail
+      == "Waiting for @owner.test to refresh your access.")
+  }
+
+  @MainActor
+  @Test("A transient key failure on a locked reply does not disable Post; the next submit succeeds")
+  func lockedReplyRecoversAfterTransientKeyFailure() async throws {
+    // Posting always refreshes keys first (fix wave 2 removed the no-fetch fast path).
+    let base = EncryptedComposerHarness.circle
+    let encrypted = CircleSummary(
+      uri: base.uri, circleId: base.circleId, name: base.name, owner: base.owner,
+      memberCount: base.memberCount, muted: base.muted, latestKeyVersion: nil
+    )
+    let appState = await ageClearedAppState()
+    let h = await EncryptedComposerHarness()
+    try await h.holdKey()
+    let model = await composer(
+      destination: .circle(encrypted), replyingTo: circlePost, appState: appState, circleService: h.service
+    )
+    #expect(model.isReplyLockedToCircle)
+    model.postText = "Replying in the circle"
+    await model.evaluateEncryptedPostingReadiness(for: [encrypted])
+    #expect(model.submitValidationState.canSubmit)
+
+    // Offline: the key sync inside keyForPosting fails, so this submit fails closed
+    // with the retryable "waiting to reach keys" error (fix wave 2 I3), not a hard failure.
+    await h.transport.setGetKeysError(.networkError("offline"))
+    await #expect(throws: CircleError.keysTemporarilyUnavailable) { try await model.createPost() }
+    #expect(await h.transport.encryptedWrites.isEmpty)
+    // The failure is not sticky: Post stays enabled and no Refresh is demanded.
+    #expect(model.submitValidationState.canSubmit)
+    #expect(model.inlineKeyRefreshCircle == nil)
+
+    // Back online: the same composer posts.
+    await h.transport.setGetKeysError(nil)
+    try await model.createPost()
+    #expect(await h.transport.encryptedWrites.count == 1)
+  }
+
+  @MainActor
+  @Test("The inline Refresh is offered and works when the audience picker is locked")
+  func inlineRefreshAvailableWhenPickerLocked() async throws {
+    let encrypted = EncryptedComposerHarness.circle
+    let h = await EncryptedComposerHarness()
+    try await h.publishRemoteKey()
+    let model = await composer(destination: .circle(encrypted), replyingTo: circlePost, circleService: h.service)
+    #expect(model.isReplyLockedToCircle)
+    #expect(model.canChangeDestination == false)
+    model.postText = "Replying in the circle"
+
+    await model.evaluateEncryptedPostingReadiness(for: [encrypted])
+    #expect(model.submitValidationState.reason == .circleEncryptionKeysUnavailable)
+    #expect(model.submitValidationState.shouldShowInlineMessage)
+    #expect(model.inlineKeyRefreshCircle == encrypted)
+
+    await model.refreshDestinationKeys()
+    #expect(await h.transport.getKeysCalls == 1)
+    #expect(model.inlineKeyRefreshCircle == nil)
+    #expect(model.submitValidationState.canSubmit)
+    #expect(model.destination == .circle(encrypted))
+  }
+
+  @Test("A wire item carrying the local placeholder marker is not trusted as a placeholder")
+  func wirePlaceholderMarkerIsNotTrusted() async throws {
+    let json = """
+    {"uri":"at://did:plc:bob/blue.catbird.circle.post/3l7postaaaazz","depth":1,\
+    "value":{"$type":"\(CircleThreadOpening.placeholderType)","state":"waitingForKey","ownerHandle":"evil.test"}}
+    """
+    let forged = try JSONDecoder().decode(AppBskyUnspeccedGetPostThreadV2.ThreadItem.self, from: Data(json.utf8))
+    guard case .unexpected = forged.value else {
+      Issue.record("The forged marker should decode into the unexpected arm, got \(forged.value)")
+      return
+    }
+    #expect(CircleThreadOpening.placeholder(in: forged.value) == nil)
+
+    // Through the opener path (with an encrypted node, so opening runs): still not a placeholder.
+    let node = CircleOpenFixtures.threadNode(0)
+    let anchor = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+      uri: node.uri, depth: 0,
+      value: .appBskyUnspeccedDefsThreadItemPost(AppBskyUnspeccedDefs.ThreadItemPost(
+        post: node, moreParents: false, moreReplies: 0, opThread: false,
+        hiddenByThreadgate: false, mutedByViewer: false
+      ))
+    )
+    let opened = await CircleThreadOpening.open(
+      [anchor, forged], circle: CircleOpenFixtures.circle, opener: nil, ownerHandle: { "owner.test" }
+    )
+    #expect(CircleThreadOpening.placeholder(in: opened[1].value) == nil)
+    if case .unexpected(.unknownType(let type, _)) = opened[1].value {
+      #expect(type != CircleThreadOpening.placeholderType)
+    }
+    // The genuine placeholder made out-of-band for the anchor still is one.
+    #expect(CircleThreadOpening.placeholder(in: opened[0].value)?.state == .waiting)
   }
 }

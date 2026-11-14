@@ -107,7 +107,7 @@ struct ProfileLabelAndGermTests {
   func profileRecordLabels() throws {
     let profileURI = "at://\(owner)/app.bsky.actor.profile/self"
     let cid = try CID.parse("bafyreihyrnm3tmsrqwuk74vffv4s6gq52l7q3b2uyd4zfv3i6v6a5z3z4u")
-    let profileLabel = ComAtprotoLabelDefs.Label(src: try DID(didString: issuer), uri: URI(uriString: profileURI), cid: cid,
+    let profileLabel = ComAtprotoLabelDefs.Label(src: try DID(didString: issuer), uri: URI(uriString: profileURI), cid: CIDString(cid),
       val: "joined-may-23", cts: ATProtocolDate(date: Date()))
     let selfLabel = ComAtprotoLabelDefs.Label(src: try DID(didString: owner), uri: URI(uriString: profileURI),
       val: "bot", cts: ATProtocolDate(date: Date()))
@@ -129,7 +129,7 @@ struct ProfileLabelAndGermTests {
   private func makeLabeler() throws -> AppBskyLabelerDefs.LabelerViewDetailed {
     .init(
       uri: try ATProtocolURI(uriString: "at://\(issuer)/app.bsky.labeler.service/self"),
-      cid: try CID.parse("bafyreihyrnm3tmsrqwuk74vffv4s6gq52l7q3b2uyd4zfv3i6v6a5z3z4u"),
+      cid: CIDString(try CID.parse("bafyreihyrnm3tmsrqwuk74vffv4s6gq52l7q3b2uyd4zfv3i6v6a5z3z4u")),
       creator: .init(did: try DID(didString: issuer), handle: try Handle(handleString: "dates.example"), displayName: "Date Labeler"),
       policies: .init(labelValues: [.init(rawValue: "joined-may-23")], labelValueDefinitions: [
         .init(identifier: "joined-may-23", severity: "inform", blurs: "none", locales: [

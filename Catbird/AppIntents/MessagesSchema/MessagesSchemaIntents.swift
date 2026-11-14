@@ -373,6 +373,12 @@ struct CatbirdSetMessageReadStatusSchemaIntent {
           conversationId: canonicalID,
           upToSeq: targetRow.seq
         )
+        if targetRow.seq > 0 {
+          _ = try? await coordinator.advanceReadState(
+            conversationId: canonicalID,
+            candidateSeq: UInt64(targetRow.seq)
+          )
+        }
       }
     }
 

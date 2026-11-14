@@ -122,8 +122,7 @@ struct GatewayOAuthExchangeTests {
         scope: "atproto"
       ),
       namespace: namespace,
-      authMode: .gateway,
-      gatewayURL: URL(string: "https://api.catbird.blue")!
+      authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: URL(string: "https://api.catbird.blue")!))
     )
 
     var capturedOverrides = AuthenticationDependencyOverrides()
@@ -156,8 +155,7 @@ struct GatewayOAuthExchangeTests {
         scope: "atproto"
       ),
       namespace: namespace,
-      authMode: .gateway,
-      gatewayURL: URL(string: "https://api.catbird.blue")!
+      authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: URL(string: "https://api.catbird.blue")!))
     )
 
     var cancelCalled = false
@@ -205,8 +203,7 @@ struct GatewayOAuthExchangeTests {
         scope: "atproto"
       ),
       namespace: namespace,
-      authMode: .gateway,
-      gatewayURL: URL(string: "https://api.catbird.blue")!
+      authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: URL(string: "https://api.catbird.blue")!))
     )
 
     var capturedOverrides = AuthenticationDependencyOverrides()

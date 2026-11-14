@@ -26,7 +26,7 @@ enum ChatPrivacyOption: String, CaseIterable, Identifiable, Sendable {
 private struct ChatPrivacySettingsRecord {
   var allowIncoming: String
   var allowGroupInvites: String?
-  var cid: CID?
+  var cid: CIDString?
 }
 
 struct ChatSettingsView: View {
@@ -383,7 +383,7 @@ struct ChatSettingsView: View {
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(ChatBskyActorDeclaration(allowIncoming: value.allowIncoming,
               allowGroupInvites: value.allowGroupInvites)),
-            swapRecord: value.cid
+            swapRecord: value.cid.map { .value($0) }
           ))
           guard code == 200, let output else { throw ChatPrivacySettingsError.response(code) }
           return ChatPrivacySettingsRecord(allowIncoming: value.allowIncoming,

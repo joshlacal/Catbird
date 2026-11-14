@@ -1,0 +1,25 @@
+{
+  "$type": "blue.catbird.circle.post",
+  "circleId": "3kcircleid22a",
+  "keyVersion": 3,
+  "createdAt": "2026-11-07T12:05:00.000Z",
+  "reply": {
+    "parent": {
+      "cid": "bafyreigkbxzmswvbita5b7zp6pepsz75yhpj54geciftojsbm4a3kgowde",
+      "uri": "at://did:plc:alicefixturecirclesaaaaa/blue.catbird.circle.post/3l7prnt2222aa"
+    },
+    "root": {
+      "cid": "bafyreigkbxzmswvbita5b7zp6pepsz75yhpj54geciftojsbm4a3kgowde",
+      "uri": "at://did:plc:ownerfixturecirclesaaaaa/blue.catbird.circle.post/3l7root2222aa"
+    }
+  },
+  "ciphertext": {
+    "$bytes": "AuOEJsCddbKbr0QcTCZ83vKwWVU5XU3lB40tgeo9VB+D02HolrtxU+Nd/K5dFiyyhh0zC/GrgaJufdjQWaul7x2eVsDJzY1kA5VEQB50IJ9whN1E4tFI7P1qvwixoNqVMQW0x1e7nYP6beVJOK4eTFrtmDH826zO4Saz8TrxvGVoi+R+G3DsquGY4lYeXnufKSuUKvvCiRgFEs7sAaxYaHEIvEsHROXko2QV7vWjaLC3JCW96doRSluZFeUnmcQUjgsCP9mgXLxRn83i4OwmhkIMG4ia+eRaXtvr5EwDpx76RLlrnJrGp4NqztpAgDI7ug2rfIqefIcCsiZ8xEdnd4joug+Pcav5aare/pO1TgjxmWUn8wG1fQlrPTkUTm+0U8XWgIspR3yxF+IXWZjDykB+sigsGXQqQPRdjDbSdMfTyLvOovqRLa0WpsGnwnfi7LzWTGOSpAyXOEP8kV60Zs2YVVIrWoyxjFxWPN6vteL0aT/er/Fr/YzEH1+X1nfOrNu1G25cv8Bh8BPpxit3gPhq7ixrsI1xIyckBaapD2Fqo9HOJZeMpEtYhmufq7foQ+uDle75sN1A4vmJ3QGAchrIUxX9e1AM/GAunuy1WoiciDXib/yYfJukjbXbhfQrQqW1DZb9CLH9g1TtXBlhd8uIv7O0augU1qM0rPdQQVuSV5p09PLqF+ymOtoKb7oIQBD7sILw4H3R1FJsHgjinQIir4ehUD/H5irDqrLhQcdwop8UIzLyaavWKuITXjvr8jBVk2KSS3lEgLX5BOQXEGe+7aO2DGpl9PPfxB8QmwijUNitvtSzI7sLWSuolBIR9O5l4/TKmt8Tl8+SKc2J+UtEJ/tvkrHTxAdAKjEKlZX5RaUBU/nWBfL5XvE/KIkMbNpz7PTQTJUOIqdQM7YeFnBqcgRffgi/EMcbc88bvNVG013SasqZ7NsT2XGXTiaVFE2FLL6c7Mkya8MmqWeGPfLHjr+X3qBrJoKm9R6jcNp/l5UOrOcku7x5AYpEzcG+az5nXzvXycSvtj7+MDO6Igdlhx5U28t6xuoOnynxyeeNZc0lNxK4E9C1AubAc7LXMXQt+rgxsNC1CuX43dpilh6RqwCoBc2XwEX41qLqZOxxcbsH0Mo91aQ963zSZV8NCJHyp7qSoR9igIxQOQYPQCyyvdSxm83hXlBw/yKdps43FKoFAHPTCnWP8hOPbRLltawhutxmE2BaHJ2qK2G0/qS35QJ5KXMn89h9Kb4"
+  },
+  "sig": {
+    "$bytes": "Ck5Rs86VLXtJh9EvadkDgiHP5zN5e6KUq8wi9Tcu7yQ5dCYWgUIKCj4JEXwMkskzMlGGJ0zofbHg61Rkl3I6Cw"
+  },
+  "authorEpochHead": {
+    "$bytes": "ylcjssAdSP2dFafbnMoCHfEUYq31AvyHWyE95H8SIcg"
+  }
+}

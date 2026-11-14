@@ -786,9 +786,9 @@ extension FeedsSearchPresentationTests {
       labels: nil, createdAt: nil, verification: nil, status: nil, debug: nil)
     let post = AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:presentationauthor/app.bsky.feed.post/video"),
-      cid: cid, author: author,
+      cid: CIDString(cid), author: author,
       record: .knownType(AppBskyFeedPost(text: "Fixture video", createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 1_749_000_000)))),
-      embed: .appBskyEmbedVideoView(.init(cid: cid, playlist: URI(uriString: "file:///nonexistent/fixture.m3u8"),
+      embed: .appBskyEmbedVideoView(.init(cid: CIDString(cid), playlist: URI(uriString: "file:///nonexistent/fixture.m3u8"),
         thumbnail: nil, alt: "A river through a garden", aspectRatio: .init(width: 9, height: 16))),
       bookmarkCount: nil, replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 1_749_000_100)), viewer: nil,

@@ -68,6 +68,30 @@ struct CreateCircleView: View {
           Text("You can also add members after the Circle is created.")
         }
 
+        if let vm = viewModel, vm.encryptionAvailability != nil {
+          if vm.encryptionAvailability == .checkFailed {
+            Section {
+              Label(CircleManagementCopy.encryptionCheckFailed, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          } else if !vm.createEncrypted {
+            Section {
+              Text(CircleManagementCopy.encryptionUnavailableHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          } else if !vm.createIneligible.isEmpty {
+            Section {
+              ForEach(vm.createIneligible, id: \.did) { entry in
+                Label(vm.ineligibleMessage(for: entry.did), systemImage: "lock.slash")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+        }
+
         Section("Privacy & History Disclosure") {
           Label {
             Text(CircleManagementCopy.addMemberDisclosure)
@@ -92,7 +116,7 @@ struct CreateCircleView: View {
                   .foregroundStyle(.secondary)
               }
             }
-          case .failed(let message):
+          case .failed(let message), .upgradeIncomplete(let message):
             Section {
               Label(message, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
@@ -183,6 +207,21 @@ struct CreateCircleView: View {
           )
         }
       }
+      .task(id: selectedMembers.map { $0.did.didString() }) {
+        // Spec §9: shows whether this Circle will be encrypted and which picked
+        // members an encrypted create would leave out, before Create.
+        if viewModel == nil {
+          viewModel = CircleManagementViewModel(
+            service: appState.circleService,
+            userDID: appState.userDID ?? ""
+          )
+        }
+        guard let vm = viewModel else { return }
+        for profile in selectedMembers {
+          vm.knownHandles[profile.did.didString()] = "\(profile.handle)"
+        }
+        await vm.prepareCreate(memberDIDs: selectedMembers.map(\.did))
+      }
     }
   }
 
@@ -196,9 +235,9 @@ struct CreateCircleView: View {
   /// `manage=create` on `space:blue.catbird.circle`, which is not part of the
   /// initial sign-in grant.
   @MainActor
-  private func ensureCirclePermission() async throws {
+  private func ensureCirclePermission(_ permission: GatewayPermission) async throws {
     let expectedDID = appState.userDID
-    try await appStateManager.authentication.ensureGatewayPermission(.circleSpaces) { authURL in
+    try await appStateManager.authentication.ensureGatewayPermission(permission) { authURL in
       if #available(iOS 17.4, macOS 14.4, *) {
         return try await webAuthenticationSession.authenticate(
           using: authURL,
@@ -251,7 +290,8 @@ struct CreateCircleView: View {
     Task {
       defer { isSubmitting = false }
       do {
-        try await ensureCirclePermission()
+        // An encrypted create (spec §9) needs the encrypted Space type's scope.
+        try await ensureCirclePermission(vm.createEncrypted ? .circleEncryptedSpaces : .circleSpaces)
         try await ensureAppViewConsent()
         guard vm.userDID == appStateManager.lifecycle.userDID else {
           throw GatewayPermissionError.stateChanged

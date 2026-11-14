@@ -113,7 +113,7 @@ struct FeedRowHeightCachingTests {
         createdAt: nil, verification: nil, status: nil, debug: nil)
       let post = AppBskyFeedDefs.PostView(
         uri: try ATProtocolURI(uriString: "at://did:plc:heightfixture/app.bsky.feed.post/one"),
-        cid: CID.fromDAGCBOR(Data("cid-height".utf8)), author: author,
+        cid: CIDString(CID.fromDAGCBOR(Data("cid-height".utf8))), author: author,
         record: .knownType(record), embed: nil, bookmarkCount: nil,
         replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
         indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)),

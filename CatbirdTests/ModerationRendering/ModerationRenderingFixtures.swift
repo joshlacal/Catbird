@@ -119,7 +119,7 @@ enum RenderingFixtures {
     }
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: uri),
-      cid: CID.fromDAGCBOR(Data(uri.utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data(uri.utf8))),
       author: try author ?? profile(),
       record: record(selfLabels: selfLabels),
       embed: embed,
@@ -137,7 +137,7 @@ enum RenderingFixtures {
       ? [.appBskyEmbedImagesView(AppBskyEmbedImages.View(images: []))] : nil
     return AppBskyEmbedRecord.ViewRecord(
       uri: try ATProtocolURI(uriString: quotedURI),
-      cid: CID.fromDAGCBOR(Data(quotedURI.utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data(quotedURI.utf8))),
       author: try profile(did: quotedAuthorDID, labels: authorLabels),
       value: record(text: "Quoted text"),
       labels: labels,

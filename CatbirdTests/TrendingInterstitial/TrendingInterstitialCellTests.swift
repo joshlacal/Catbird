@@ -58,9 +58,9 @@ struct TrendingInterstitialCellTests {
     let postRKey = thumbnail != nil || avatar != nil ? "with-media" : "\(authorName.count)"
     let post = AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:trendingcellauthor/app.bsky.feed.post/\(postRKey)"),
-      cid: cid, author: author,
+      cid: CIDString(cid), author: author,
       record: .knownType(AppBskyFeedPost(text: "Fixture video", createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)))),
-      embed: .appBskyEmbedVideoView(.init(cid: cid, playlist: URI(uriString: "file:///nonexistent/fixture.m3u8"),
+      embed: .appBskyEmbedVideoView(.init(cid: CIDString(cid), playlist: URI(uriString: "file:///nonexistent/fixture.m3u8"),
         thumbnail: thumbnail.map { URI(uriString: $0.absoluteString) }, alt: alt, aspectRatio: .init(width: 9, height: 16))),
       bookmarkCount: nil, replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)), viewer: nil,

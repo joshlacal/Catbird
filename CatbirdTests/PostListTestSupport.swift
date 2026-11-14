@@ -13,7 +13,7 @@ enum PostListTestSupport {
     try (0..<count).map { index -> PostListEntry in
       let uri = try ATProtocolURI(uriString: "at://did:plc:scrollfixture/app.bsky.feed.post/\(index)")
       let bookmark = AppBskyBookmarkDefs.BookmarkView(
-        subject: .init(uri: uri, cid: CID.fromDAGCBOR(Data("post-\(index)".utf8))),
+        subject: .init(uri: uri, cid: CIDString(CID.fromDAGCBOR(Data("post-\(index)".utf8)))),
         item: .appBskyFeedDefsNotFoundPost(.init(uri: uri, notFound: true))
       )
       return .bookmark(EquatableBox(bookmark))

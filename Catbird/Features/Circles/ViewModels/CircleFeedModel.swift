@@ -14,6 +14,14 @@ import PetrelCatbird
 /// through public feed persistence (`FeedModel`, `CachedFeedViewPost`, or
 /// `DatabaseModelActor`). Access state transitions (.expired, .removed,
 /// .unsupported) are modeled explicitly.
+///
+/// Encrypted Circles (spec §4.5, §6 rule 9, Review Focus 5): `items` keep the
+/// envelopes; after every page the encrypted ones are opened through the
+/// account's `CirclePostOpener` into `opened`. Items sealed under a key version
+/// this device lacks are `.pendingKey`: each page load triggers one key
+/// refresh per Circle and re-opens the items the refresh made openable.
+/// Decrypted posts are cached only in `CircleFeedCache`'s per-account opened
+/// store, never in stored pages, the public feed cache or on disk.
 @MainActor
 @Observable
 final class CircleFeedModel {
@@ -23,11 +31,18 @@ final class CircleFeedModel {
   private(set) var isLoading: Bool = false
   private(set) var error: CircleError?
   private(set) var isInvalidated: Bool = false
+  /// Opening results for encrypted items, by post URI. Plaintext items are
+  /// never entered here.
+  private(set) var opened: [ATProtocolURI: CircleOpenedItem] = [:]
+  /// Owner handles (by DID) for the "waiting for access" row.
+  private(set) var ownerHandles: [String: String] = [:]
   let service: CircleService
   let space: SpaceRef?
   let accountDID: String
   private let cache: CircleFeedCache
   private let activeDIDProvider: (@MainActor () -> String?)?
+  @ObservationIgnored private let openerProvider: (@MainActor () -> CirclePostOpener?)?
+  @ObservationIgnored private let ownerHandleResolver: (@Sendable (DID) async -> String?)?
   private var currentGeneration: Int = 0
   @ObservationIgnored private var muteObserver: NSObjectProtocol?
   @ObservationIgnored private var deleteObserver: NSObjectProtocol?
@@ -39,13 +54,17 @@ final class CircleFeedModel {
     space: SpaceRef? = nil,
     accountDID: String = "",
     cache: CircleFeedCache = .shared,
-    activeDIDProvider: (@MainActor () -> String?)? = nil
+    activeDIDProvider: (@MainActor () -> String?)? = nil,
+    openerProvider: (@MainActor () -> CirclePostOpener?)? = nil,
+    ownerHandleResolver: (@Sendable (DID) async -> String?)? = nil
   ) {
     self.service = service
     self.space = space
     self.accountDID = accountDID
     self.cache = cache
     self.activeDIDProvider = activeDIDProvider
+    self.openerProvider = openerProvider
+    self.ownerHandleResolver = ownerHandleResolver
 
     if space == nil {
       self.muteObserver = NotificationCenter.default.addObserver(
@@ -137,8 +156,34 @@ final class CircleFeedModel {
     return accountDID
   }
 
-  /// Initial load or pull-to-refresh. Restores memory cache if items are empty.
+  /// Initial load or pull-to-refresh. Restores memory cache if items are empty,
+  /// then opens the page's encrypted items.
   func load(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+    guard !isInvalidated, !isLoading else { return }
+    let requestGeneration = currentGeneration
+    do {
+      try await fetchFirstPage(activeAccountCheck: activeAccountCheck)
+    } catch {
+      await openEncryptedItems(generation: requestGeneration, activeAccountCheck: activeAccountCheck)
+      throw error
+    }
+    await openEncryptedItems(generation: requestGeneration, activeAccountCheck: activeAccountCheck)
+  }
+
+  /// Paging load for infinite scroll; opens the new page's encrypted items.
+  func loadMore(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+    guard !isInvalidated, let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
+    let requestGeneration = currentGeneration
+    try await fetchNextPage(activeAccountCheck: activeAccountCheck)
+    await openEncryptedItems(generation: requestGeneration, activeAccountCheck: activeAccountCheck)
+  }
+
+  /// The owner handle shown on a `.pendingKey` row, once resolved.
+  func ownerHandle(for circle: CircleSummary) -> String? {
+    ownerHandles[circle.owner.didString()]
+  }
+
+  private func fetchFirstPage(activeAccountCheck: (@MainActor () -> String?)?) async throws {
     guard !isInvalidated, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
@@ -216,8 +261,7 @@ final class CircleFeedModel {
     }
   }
 
-  /// Paging load for infinite scroll.
-  func loadMore(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+  private func fetchNextPage(activeAccountCheck: (@MainActor () -> String?)?) async throws {
     guard !isInvalidated, let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
@@ -236,12 +280,12 @@ final class CircleFeedModel {
         return
       }
 
-      let existingURIs = Set(self.items.map { $0.post.post.uri.uriString() })
+      let existingURIs = Set(self.items.compactMap { $0.post.postURI?.uriString() })
       let filteredNewItems: [BlueCatbirdCircleDefs.FeedItem]
       if space == nil {
-        filteredNewItems = nextPage.items.filter { !($0.circle.muted ?? false) && !existingURIs.contains($0.post.post.uri.uriString()) }
+        filteredNewItems = nextPage.items.filter { !($0.circle.muted ?? false) && !existingURIs.contains($0.post.postURI?.uriString() ?? "") }
       } else {
-        filteredNewItems = nextPage.items.filter { !existingURIs.contains($0.post.post.uri.uriString()) }
+        filteredNewItems = nextPage.items.filter { !existingURIs.contains($0.post.postURI?.uriString() ?? "") }
       }
       self.items.append(contentsOf: filteredNewItems)
       self.cursor = nextPage.cursor
@@ -274,11 +318,67 @@ final class CircleFeedModel {
       throw typedError
     }
   }
+  // MARK: - Encrypted items
+
+  /// Opens every encrypted item on each load, with one key refresh per Circle
+  /// for pending items (inside `CirclePostOpener.openBatch`). Items already
+  /// opened cost a memo lookup and pick up the current envelope's counts and
+  /// viewer state. Results are dropped if the model was purged, switched or
+  /// invalidated meanwhile.
+  private func openEncryptedItems(
+    generation: Int,
+    activeAccountCheck: (@MainActor () -> String?)?
+  ) async {
+    guard !isInvalidated, generation == currentGeneration else { return }
+    let targets = items.filter { $0.post.isEncrypted && $0.post.postURI != nil }
+    guard !targets.isEmpty else { return }
+    // No opener yet (the MLS client is still starting): the items stay
+    // unopened ("Opening…") and are opened by the next load.
+    guard let opener = openerProvider?() else { return }
+
+    let requestAccountDID = accountDID
+    let results = await opener.openBatch(targets.map { .feedItem($0) })
+    guard !isInvalidated, generation == currentGeneration,
+          resolveActiveDID(override: activeAccountCheck) == requestAccountDID else { return }
+    let liveURIs = Set(items.compactMap { $0.post.postURI })
+    for (uri, item) in results where liveURIs.contains(uri) {
+      opened[uri] = item
+    }
+    await resolveOwnerHandles(for: targets.filter { opened[$0.post.postURI ?? CirclePostOpener.unknownURI]?.isPendingKey == true })
+  }
+
+  private func resolveOwnerHandles(for pendingItems: [BlueCatbirdCircleDefs.FeedItem]) async {
+    var owners: [String: DID] = [:]
+    for item in pendingItems where ownerHandles[item.circle.owner.didString()] == nil {
+      owners[item.circle.owner.didString()] = item.circle.owner
+    }
+    for (key, did) in owners {
+      // An item the owner wrote already carries their hydrated profile.
+      if let handle = items.lazy.compactMap({ Self.author(of: $0) }).first(where: { $0.did == did })?.handle {
+        ownerHandles[key] = handle.description
+      } else if let handle = await ownerHandleResolver?(did) {
+        guard !isInvalidated else { return }
+        ownerHandles[key] = handle
+      }
+    }
+  }
+
+  private static func author(of item: BlueCatbirdCircleDefs.FeedItem) -> AppBskyActorDefs.ProfileViewBasic? {
+    item.post.feedViewPost?.post.author ?? item.post.encryptedPostView?.author
+  }
+
+  /// Drops opened results whose item is gone.
+  private func pruneOpened() {
+    let live = Set(items.compactMap { $0.post.postURI })
+    opened = opened.filter { live.contains($0.key) }
+  }
+
   /// Purges in-memory cached posts and images for an unavailable Space.
   func purgeUnavailableSpace(_ space: SpaceRef) async {
     guard !isInvalidated else { return }
     currentGeneration += 1
     items.removeAll(where: { $0.circle.uri == space })
+    pruneOpened()
     cursor = nil
     await service.retireSpace(space)
     NotificationCenter.default.post(name: .circleDeleted, object: nil,
@@ -297,6 +397,7 @@ final class CircleFeedModel {
     if self.space == nil {
       currentGeneration += 1
       items.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
+      pruneOpened()
       Task { [accountDID, cache] in
         await cache.purgeMutedSpaceFromUnified(accountDID: accountDID, space: space)
       }
@@ -310,11 +411,13 @@ final class CircleFeedModel {
     Task { [service] in await service.retireSpace(deletedSpace) }
     if self.space == nil {
       items.removeAll(where: { $0.circle.uri.uriString() == deletedSpace.uriString() })
+      pruneOpened()
       Task { [accountDID, cache] in
         await cache.purge(accountDID: accountDID, space: deletedSpace)
       }
     } else if self.space?.uriString() == deletedSpace.uriString() {
       items.removeAll()
+      opened.removeAll()
       accessState = .removed
       cursor = nil
       Task { [accountDID, cache] in
@@ -328,6 +431,8 @@ final class CircleFeedModel {
     isInvalidated = true
     currentGeneration += 1
     items.removeAll()
+    opened.removeAll()
+    ownerHandles.removeAll()
     cursor = nil
     error = nil
   }

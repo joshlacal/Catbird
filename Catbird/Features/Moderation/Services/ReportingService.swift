@@ -316,12 +316,12 @@ final class ReportingService {
     }
     
     /// Create a subject for reporting a post
+    func createPostSubject(uri: ATProtocolURI, cid: CIDString) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
+        .comAtprotoRepoStrongRef(ComAtprotoRepoStrongRef(uri: uri, cid: cid))
+    }
+
     func createPostSubject(uri: ATProtocolURI, cid: CID) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
-        let strongRef = ComAtprotoRepoStrongRef(
-            uri: uri,
-            cid: cid
-        )
-        return .comAtprotoRepoStrongRef(strongRef)
+        createPostSubject(uri: uri, cid: CIDString(cid))
     }
     
     /// Create a subject for reporting a user
@@ -331,30 +331,30 @@ final class ReportingService {
     }
     
     /// Create a subject for reporting a feed generator
+    func createFeedSubject(uri: ATProtocolURI, cid: CIDString) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
+        .comAtprotoRepoStrongRef(ComAtprotoRepoStrongRef(uri: uri, cid: cid))
+    }
+
     func createFeedSubject(uri: ATProtocolURI, cid: CID) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
-        let strongRef = ComAtprotoRepoStrongRef(
-            uri: uri,
-            cid: cid
-        )
-        return .comAtprotoRepoStrongRef(strongRef)
+        createFeedSubject(uri: uri, cid: CIDString(cid))
     }
     
     /// Create a subject for reporting a list
+    func createListSubject(uri: ATProtocolURI, cid: CIDString) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
+        .comAtprotoRepoStrongRef(ComAtprotoRepoStrongRef(uri: uri, cid: cid))
+    }
+
     func createListSubject(uri: ATProtocolURI, cid: CID) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
-        let strongRef = ComAtprotoRepoStrongRef(
-            uri: uri,
-            cid: cid
-        )
-        return .comAtprotoRepoStrongRef(strongRef)
+        createListSubject(uri: uri, cid: CIDString(cid))
     }
     
     /// Create a subject for reporting any strongRef record
+    func createRecordSubject(uri: ATProtocolURI, cid: CIDString) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
+        .comAtprotoRepoStrongRef(ComAtprotoRepoStrongRef(uri: uri, cid: cid))
+    }
+
     func createRecordSubject(uri: ATProtocolURI, cid: CID) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
-        let strongRef = ComAtprotoRepoStrongRef(
-            uri: uri,
-            cid: cid
-        )
-        return .comAtprotoRepoStrongRef(strongRef)
+        createRecordSubject(uri: uri, cid: CIDString(cid))
     }
     
     /// Checks whether a reason must be handled by the official Bluesky moderation service

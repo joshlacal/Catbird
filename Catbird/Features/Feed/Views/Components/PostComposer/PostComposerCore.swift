@@ -138,6 +138,9 @@ extension PostComposerViewModel {
         if case .circle = destination, !mediaItems.isEmpty, !appState.circleSupportsImages {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .circleImagesUnavailable)
         }
+        if !canPostToDestination(destination) {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: .circleEncryptionKeysUnavailable)
+        }
 
         if let reason = draftReferenceLoadingReason {
             return PostComposerSubmitValidationState(canSubmit: false, reason: reason)
@@ -713,9 +716,36 @@ extension PostComposerViewModel {
 
         // Create embed if needed
         var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
+        // Encrypted Circles: photos are sealed (keys inside the ciphertext); no
+        // plaintext embed of any kind is built or uploaded.
+        var encryptedMedia: [CircleEncryptedMedia] = []
+        let isEncryptedCircle: Bool = {
+            if case let .circle(circle) = submission.destination { return circle.isEncrypted }
+            return false
+        }()
 
-        // Check if we have both a quoted post AND media - this requires recordWithMedia
-        if let strongRef = postingQuoteReference() {
+        if isEncryptedCircle, case let .circle(circle) = submission.destination {
+            guard postingQuoteReference() == nil else {
+                throw CircleError.invalidParameter("Quote posts are unavailable in encrypted Circles.")
+            }
+            // The sealed payload carries no embed: the user sees that the
+            // selected link card is left out before anything is posted.
+            if let notice = droppedLinkCardNotice, !hasShownDroppedLinkCardNotice {
+                hasShownDroppedLinkCardNotice = true
+                throw CircleError.invalidParameter(notice)
+            }
+            // D13 before any upload: no current key, nothing is uploaded. This
+            // check is authoritative on every submit; its result only ever
+            // marks the destination ready. A failure (possibly transient, e.g.
+            // offline) never disables Post: the next submit checks again.
+            try await (circleService ?? appState.circleService).requireEncryptedPostingKey(circle: circle)
+            encryptedPostingReadiness[circle.uri] = true
+            if !mediaItems.isEmpty {
+                logger.debug("Encrypting \(self.mediaItems.count) images for an encrypted Circle")
+                encryptedMedia = try await createEncryptedCircleImages()
+            }
+        } else if let strongRef = postingQuoteReference() {
+            // Check if we have both a quoted post AND media - this requires recordWithMedia
             let record = AppBskyEmbedRecord(record: strongRef)
 
             if let gif = selectedGif {
@@ -811,11 +841,21 @@ extension PostComposerViewModel {
                     : AppBskyFeedPost.AppBskyFeedPostLabelsUnion
                         .comAtprotoLabelDefsSelfLabels(selfLabels),
                 embed: embed,
-                createdAt: ATProtocolDate(date: submission.createdAt)
+                createdAt: ATProtocolDate(date: submission.createdAt),
+                encryptedMedia: encryptedMedia
             )
             do {
                 try appState.ageAccess.require(.generalContent)
-                _ = try await service.publishPost(destination: circle, draft: circleDraft)
+                let published = try await service.publish(destination: circle, draft: circleDraft)
+                if published.repostedAfterKeyRefresh {
+                    appState.toastManager.show(
+                        ToastItem(message: CirclePostCopy.repostedAfterKeyRefresh, icon: "key.fill")
+                    )
+                } else if published.keyCheckFailed {
+                    appState.toastManager.show(
+                        ToastItem(message: CirclePostCopy.keyCheckFailed, icon: "exclamationmark.triangle")
+                    )
+                }
                 NotificationCenter.default.post(
                     name: .circlePostPublished,
                     object: nil,

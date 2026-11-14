@@ -74,7 +74,9 @@ struct CirclesFeedView: View {
       let newModel = CircleFeedModel(
         service: appState.circleService,
         accountDID: currentDID,
-        activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
+        activeDIDProvider: { AppStateManager.shared.lifecycle.userDID },
+        openerProvider: { [weak appState] in appState?.circlePostOpener() },
+        ownerHandleResolver: appState.circleOwnerHandleResolver
       )
       model = newModel
       do {
@@ -106,20 +108,24 @@ struct CirclesFeedView: View {
           emptyStateView(model: model)
             .padding(.top, 40)
         } else {
-          ForEach(Array(model.items.enumerated()), id: \.element.post.post.uri) { index, item in
-          PostView.circleRow(
-            item: item,
-            path: $path,
-            appState: appState
-          )
-          .id("\(item.post.post.uri.uriString())-\(item.post.post.replyCount ?? 0)-\(item.post.post.likeCount ?? 0)-\(item.post.post.viewer?.like != nil)")
-          .onAppear {
-            if index >= model.items.count - 3 {
-              Task {
-                try? await model.loadMore()
+          // A post variant this build cannot read has no URI; key it by position.
+          ForEach(Array(model.items.enumerated()), id: \.element.post.feedRowKey) { index, item in
+            let opened = item.post.postURI.flatMap { model.opened[$0] }
+            CircleFeedItemRow(
+              item: item,
+              opened: opened,
+              ownerHandle: model.ownerHandle(for: item.circle),
+              path: $path,
+              appState: appState
+            )
+            .id(CircleFeedItemRow.identity(item: item, opened: opened))
+            .onAppear {
+              if index >= model.items.count - 3 {
+                Task {
+                  try? await model.loadMore()
+                }
               }
             }
-          }
 
             Divider()
           }

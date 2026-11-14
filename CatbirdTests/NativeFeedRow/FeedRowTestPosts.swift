@@ -110,7 +110,7 @@ enum FeedRowTestPosts {
       createdAt: ATProtocolDate(date: createdAt))
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: uri),
-      cid: CID.fromDAGCBOR(Data(uri.utf8)), author: author,
+      cid: CIDString(CID.fromDAGCBOR(Data(uri.utf8))), author: author,
       record: .knownType(record), embed: embed, bookmarkCount: nil,
       replyCount: replyCount, repostCount: repostCount, likeCount: likeCount, quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)),

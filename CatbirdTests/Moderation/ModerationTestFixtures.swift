@@ -104,7 +104,7 @@ enum ModerationFixtures {
   ) throws -> AppBskyEmbedRecord.ViewRecord {
     AppBskyEmbedRecord.ViewRecord(
       uri: try ATProtocolURI(uriString: "at://\(author.did)/app.bsky.feed.post/quoted"),
-      cid: CID.fromDAGCBOR(Data("quoted".utf8)), author: author, value: postRecord(),
+      cid: CIDString(CID.fromDAGCBOR(Data("quoted".utf8))), author: author, value: postRecord(),
       labels: labels, indexedAt: ATProtocolDate(date: Date()))
   }
 
@@ -140,7 +140,7 @@ enum ModerationFixtures {
     }
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://\(author.did)/app.bsky.feed.post/fake"),
-      cid: CID.fromDAGCBOR(Data("post".utf8)), author: author, record: postRecord(), embed: embed,
+      cid: CIDString(CID.fromDAGCBOR(Data("post".utf8))), author: author, record: postRecord(), embed: embed,
       indexedAt: ATProtocolDate(date: Date()), labels: labels)
   }
 

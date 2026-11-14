@@ -83,7 +83,7 @@ struct ThreadResizabilityTests {
     )
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:resizability/app.bsky.feed.post/one"),
-      cid: CID.fromDAGCBOR(Data("resizability".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("resizability".utf8))),
       author: author,
       record: .knownType(AppBskyFeedPost(
         text: String(repeating: "Text that wraps as the available width changes. ", count: 12),

@@ -203,7 +203,7 @@ enum PostViewModelTestFixtures {
         )
         return AppBskyFeedDefs.PostView(
             uri: try! ATProtocolURI(uriString: "at://did:plc:testauthor/app.bsky.feed.post/post123"),
-            cid: CID.fromDAGCBOR(Data("test-lifecycle-post".utf8)),
+            cid: CIDString(CID.fromDAGCBOR(Data("test-lifecycle-post".utf8))),
             author: author,
             record: ATProtocolValueContainer.knownType(post),
             embed: nil,
@@ -258,7 +258,7 @@ enum PostViewModelTestFixtures {
         )
         return AppBskyFeedDefs.PostView(
             uri: try! ATProtocolURI(uriString: "at://did:plc:testauthor/app.bsky.feed.post/post123"),
-            cid: CID.fromDAGCBOR(Data("test-lifecycle-post-like-repost".utf8)),
+            cid: CIDString(CID.fromDAGCBOR(Data("test-lifecycle-post-like-repost".utf8))),
             author: author,
             record: ATProtocolValueContainer.knownType(post),
             embed: nil,

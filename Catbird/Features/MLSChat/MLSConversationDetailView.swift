@@ -57,12 +57,15 @@ struct MLSOrdinaryConversationDetailView: View {
   // Resurrected inline composer, attachment pickers, edit session, & draft handoff
   @State private var editSession = MLSMessageEditSession()
   @State private var imageSender: MLSImageSender?
+  @State private var voiceSender = MLSVoiceSender()
   @State private var showingPhotoPicker = false
   @State private var selectedPhotoItem: PhotosPickerItem?
   @State private var embedPreviewUIImage: PlatformImage?
   @State private var showingGifPicker = false
   @State private var showingPostPicker = false
   @State private var pendingDraftText: String?
+  @State private var pendingCreationStatus: PendingGroupCreationStatus?
+  @State private var isMutatingPendingCreation = false
 
   // In-conversation moderation & reaction details sheets
   @State private var reportTarget: MLSModerationTarget?
@@ -139,16 +142,28 @@ struct MLSOrdinaryConversationDetailView: View {
           }
         )
         .overlay(alignment: .top) {
-          if appState.mlsSyncIncompleteConversationIDs.contains(conversationId) {
-            Label(
-              "Couldn't update this conversation. Catbird will try again.",
-              systemImage: "exclamationmark.arrow.triangle.2.circlepath"
-            )
-            .font(.footnote)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.regularMaterial, in: Capsule())
-            .accessibilityIdentifier("mls-sync-incomplete-status")
+          VStack(spacing: 8) {
+            if let pendingCreationStatus {
+              MLSPendingGroupCreationBanner(
+                status: pendingCreationStatus,
+                isBusy: isMutatingPendingCreation,
+                onRetry: { Task { await retryPendingCreation() } },
+                onCancel: { Task { await cancelPendingCreation() } }
+              )
+              .padding(.horizontal, 12)
+              .padding(.top, 8)
+            }
+            if appState.mlsSyncIncompleteConversationIDs.contains(conversationId) {
+              Label(
+                "Couldn't update this conversation. Catbird will try again.",
+                systemImage: "exclamationmark.arrow.triangle.2.circlepath"
+              )
+              .font(.footnote)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .background(.regularMaterial, in: Capsule())
+              .accessibilityIdentifier("mls-sync-incomplete-status")
+            }
           }
         }
       } else {
@@ -280,10 +295,14 @@ struct MLSOrdinaryConversationDetailView: View {
       selectedPhotoItem = nil
       Task { @MainActor in
         if imageSender == nil {
-          imageSender = MLSImageSender(client: appState.client)
+          imageSender = MLSImageSender(client: appState.client, coordinator: appState.mlsCoordinator)
         }
         guard let sender = imageSender else { return }
-        if let embed = await sender.processImage(from: newItem, convoId: conversationId) {
+        if let embed = await sender.processImage(
+          from: newItem,
+          convoId: conversationId,
+          coordinator: appState.mlsCoordinator
+        ) {
           dataSource?.attachedEmbed = .image(embed)
           if let data = try? await newItem.loadTransferable(type: Data.self),
              let image = PlatformImage(data: data)
@@ -349,6 +368,7 @@ struct MLSOrdinaryConversationDetailView: View {
       showingPhotoPicker = false
       showingGifPicker = false
       showingPostPicker = false
+      voiceSender.cancelOrDiscard()
       editSession.cancel()
     }
     .onChange(of: scenePhase) { _, phase in
@@ -380,6 +400,7 @@ struct MLSOrdinaryConversationDetailView: View {
     }
     .onDisappear {
       MLSActiveConversationTracker.shared.setInactive(conversationId)
+      voiceSender.cancelOrDiscard()
       dataSource?.stopObserving()
     }
   }
@@ -388,7 +409,7 @@ struct MLSOrdinaryConversationDetailView: View {
     guard showsComposer else { return nil }
     return InlineComposerConfig(
       placeholderText: dataSource.composerPlaceholder,
-      isSendBlocked: dataSource.isSendBlockedByRecovery,
+      isSendBlocked: dataSource.isSendBlockedByRecovery || voiceSender.isUploading,
       onSend: { text in
         if let messageToEdit = editSession.prepareSubmission(draftText: text) {
           Task { @MainActor in
@@ -423,6 +444,39 @@ struct MLSOrdinaryConversationDetailView: View {
       onEmbedRemoved: {
         dataSource.attachedEmbed = nil
         embedPreviewUIImage = nil
+      },
+      voiceMode: voiceSender.voiceMode,
+      voicePreviewURL: voiceSender.voicePreviewURL,
+      voiceRecordingDuration: voiceSender.recordingDuration,
+      onVoiceRecordingStarted: {
+        guard showsComposer, !dataSource.isSendBlockedByRecovery else { return }
+        voiceSender.startRecording()
+      },
+      onVoiceRecordingLocked: {
+        voiceSender.lockRecording()
+      },
+      onVoiceRecordingStopped: {
+        Task { @MainActor in
+          await voiceSender.stopRecordingToPreview()
+        }
+      },
+      onVoiceRecordingCancelled: {
+        voiceSender.cancelOrDiscard()
+      },
+      onVoicePreviewSend: {
+        Task { @MainActor in
+          if let audioEmbed = await voiceSender.sendPreview(
+            convoId: conversationId,
+            coordinator: appState.mlsCoordinator
+          ) {
+            await dataSource.sendVoiceMessage(audioEmbed)
+          } else if let voiceError = voiceSender.voiceError {
+            groupInfoError = voiceError
+          }
+        }
+      },
+      onVoicePreviewDiscard: {
+        voiceSender.cancelOrDiscard()
       },
       isEditMode: editSession.message != nil,
       editMessageText: editSession.draftText,
@@ -604,24 +658,44 @@ struct MLSOrdinaryConversationDetailView: View {
   private func leaveCurrentConversation() async {
     guard let coordinator = appState.mlsCoordinator else { return }
     do {
-      do {
-        try await coordinator.removeGroupMember(
-          actorRole: .member,
-          conversationId: conversationId,
-          targetDid: coordinator.accountDid
-        )
-      } catch {
-        try await coordinator.removeGroupMember(
-          actorRole: .admin,
-          conversationId: conversationId,
-          targetDid: coordinator.accountDid
-        )
-      }
+      _ = try await coordinator.leaveConversation(conversationId: conversationId)
       await appState.loadMLSConversations()
       dismiss()
     } catch {
       groupInfoError = error.localizedDescription
       showingGroupInfo = true
+    }
+  }
+
+  @MainActor
+  private func retryPendingCreation() async {
+    guard let coordinator = appState.mlsCoordinator else { return }
+    isMutatingPendingCreation = true
+    defer { isMutatingPendingCreation = false }
+    do {
+      _ = try await coordinator.retryPendingGroupCreation(conversationId: conversationId)
+      pendingCreationStatus = try? await coordinator.pendingGroupCreationStatus(conversationId: conversationId)
+      await dataSource?.loadMessages()
+      await refreshMetadata()
+      await appState.loadMLSConversations()
+    } catch {
+      pendingCreationStatus = try? await coordinator.pendingGroupCreationStatus(conversationId: conversationId)
+      groupInfoError = error.localizedDescription
+    }
+  }
+
+  @MainActor
+  private func cancelPendingCreation() async {
+    guard let coordinator = appState.mlsCoordinator else { return }
+    isMutatingPendingCreation = true
+    defer { isMutatingPendingCreation = false }
+    do {
+      _ = try await coordinator.cancelPendingGroupCreation(conversationId: conversationId)
+      pendingCreationStatus = nil
+      await appState.loadMLSConversations()
+      dismiss()
+    } catch {
+      groupInfoError = error.localizedDescription
     }
   }
 
@@ -642,6 +716,7 @@ struct MLSOrdinaryConversationDetailView: View {
   @MainActor
   private func refreshMetadata() async {
     guard let coordinator = appState.mlsCoordinator else { return }
+    pendingCreationStatus = try? await coordinator.pendingGroupCreationStatus(conversationId: conversationId)
     if let metadata = try? await coordinator.getGroupMetadata(conversationId: conversationId) {
       groupTitle = metadata.title
       groupDescription = metadata.description ?? ""

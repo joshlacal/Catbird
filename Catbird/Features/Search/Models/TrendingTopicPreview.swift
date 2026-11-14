@@ -352,12 +352,12 @@ enum TrendingTopicPreviewPolicy {
       }
     case .appBskyEmbedVideoView(let video):
       guard let url = video.thumbnail.flatMap({ imageURL($0.uriString()) }) else { return nil }
-      let cid: CID
+      let cid: CID?
       if case .appBskyEmbedVideo(let original) = record {
-        cid = blobCID(original.video) ?? video.cid
-      } else { cid = video.cid }
+        cid = blobCID(original.video) ?? video.cid.cid
+      } else { cid = video.cid.cid }
       // View.cid names the video blob, not the enclosing post record or generated poster JPEG.
-      return Thumbnail(sourceID: sourceID, url: url, asset: .blob(cid))
+      return Thumbnail(sourceID: sourceID, url: url, asset: cid.map(AssetIdentity.blob) ?? .url(url))
     case .appBskyEmbedGalleryView(let gallery):
       let blobs: [AppBskyEmbedGallery.AppBskyEmbedGalleryItemsUnion]
       if case .appBskyEmbedGallery(let original) = record, original.items.count == gallery.items.count {

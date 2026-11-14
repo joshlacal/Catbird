@@ -242,7 +242,7 @@ enum DraftSyncTranslator {
 
     let records: [AppBskyDraftDefs.DraftEmbedRecord]?
     if let quoteURI, let quoteCID,
-       let uri = try? ATProtocolURI(uriString: quoteURI), let cid = try? CID.parse(quoteCID) {
+       let uri = try? ATProtocolURI(uriString: quoteURI), let cid = try? CIDString(cidString: quoteCID) {
       records = [.init(record: .init(uri: uri, cid: cid))]
     } else {
       records = nil

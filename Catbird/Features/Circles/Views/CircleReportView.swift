@@ -27,6 +27,14 @@ struct CircleReportView: View {
             .foregroundStyle(.secondary)
         }
 
+        if circle.isEncrypted {
+          Section {
+            Label(CircleReportCopy.disclosureConsent, systemImage: "key")
+              .font(.subheadline)
+              .accessibilityLabel(CircleReportCopy.disclosureConsent)
+          }
+        }
+
         Section("Reason") {
           Picker("Reason", selection: $selectedReason) {
             Text("Harassment / Abuse").tag(CircleReportReason.abuse)
@@ -101,7 +109,8 @@ struct CircleReportView: View {
           post: post.uri,
           circle: circle,
           reason: selectedReason,
-          details: details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : details
+          details: details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : details,
+          cid: post.cid
         )
         await MainActor.run {
           self.isSubmitting = false

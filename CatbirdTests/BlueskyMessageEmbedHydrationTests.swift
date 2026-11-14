@@ -26,7 +26,7 @@ struct BlueskyMessageEmbedHydrationTests {
   private func sharedPostRecord(uri: String? = nil) throws -> AppBskyEmbedRecord.ViewRecordUnion {
     .appBskyEmbedRecordViewRecord(AppBskyEmbedRecord.ViewRecord(
       uri: try ATProtocolURI(uriString: uri ?? postURI),
-      cid: CID.fromBlob(Data("shared-post".utf8)),
+      cid: CIDString(CID.fromBlob(Data("shared-post".utf8))),
       author: AppBskyActorDefs.ProfileViewBasic(
         did: try DID(didString: "did:plc:author1234567890123456"),
         handle: try Handle(handleString: "author.bsky.social"),

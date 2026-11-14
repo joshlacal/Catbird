@@ -135,7 +135,7 @@ struct ReportingFlowTests {
             ver: 1,
             src: labelerDID,
             uri: URI(uriString: postURI.uriString()),
-            cid: postCID,
+            cid: CIDString(postCID),
             val: "spam",
             neg: false,
             cts: ATProtocolDate(date: Date()),

@@ -49,7 +49,7 @@ struct LabelAppealTests {
             ver: 1,
             src: labelerDID,
             uri: URI(uriString: postURI.uriString()),
-            cid: postCID,
+            cid: CIDString(postCID),
             val: "nsfw",
             neg: false,
             cts: ATProtocolDate(date: Date()),
@@ -169,7 +169,7 @@ struct LabelAppealDispatchTests {
   private let issuer = "did:plc:customlabeler999999"
 
   private func label(subject: String? = nil, cid: CID? = nil) throws -> ComAtprotoLabelDefs.Label {
-    .init(src: try DID(didString: issuer), uri: URI(uriString: subject ?? owner), cid: cid,
+    .init(src: try DID(didString: issuer), uri: URI(uriString: subject ?? owner), cid: cid.map { CIDString($0) },
       val: "joined-may-23", cts: ATProtocolDate(date: Date()))
   }
 

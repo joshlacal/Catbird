@@ -287,8 +287,72 @@ final class PostComposerViewModel {
     return true
   }
   
+  /// Per encrypted Circle: whether this composer may post there now
+  /// (`CircleService.canPostEncrypted`: service support + a locally held key).
+  /// Unknown means not yet; the picker evaluates its Circles on appear.
+  var encryptedPostingReadiness: [SpaceRef: Bool] = [:]
+  /// Whether the dropped-link-card notice has been shown for this draft.
+  var hasShownDroppedLinkCardNotice = false
+  /// Replaces the encrypted blob upload in tests.
+  var encryptedBlobUploadForTesting: ((Data, String) async throws -> Blob)?
+
+  static let droppedLinkCardMessage = "Link cards aren’t included in encrypted Circle posts"
+
+  /// Public and plaintext Circles always; an encrypted Circle only once it
+  /// has been evaluated ready (spec §9: no key, no encrypted posting).
+  func canPostToDestination(_ destination: CircleDestination) -> Bool {
+    guard case let .circle(circle) = destination, circle.isEncrypted else { return true }
+    return encryptedPostingReadiness[circle.uri] == true
+  }
+
+  func audienceRowState(for circle: CircleSummary) -> CircleAudienceRowState {
+    canPostToDestination(.circle(circle)) ? .selectable : .keysUnavailable
+  }
+
+  /// Evaluates the encrypted Circles among `circles` (a local key read each).
+  func evaluateEncryptedPostingReadiness(for circles: [CircleSummary]) async {
+    let service = circleService ?? appState.circleService
+    for circle in circles where circle.isEncrypted {
+      encryptedPostingReadiness[circle.uri] = await service.canPostEncrypted(circle: circle)
+    }
+  }
+
+  /// The picker's Refresh: one key refresh, then re-evaluates.
+  func refreshEncryptedKeys(circle: CircleSummary) async {
+    let service = circleService ?? appState.circleService
+    encryptedPostingReadiness[circle.uri] = await service.refreshEncryptionKeys(circle: circle)
+  }
+
+  /// The selected encrypted Circle while it is not ready: the inline
+  /// validation message then offers Refresh, which stays reachable when the
+  /// picker is locked (a reply locked to the Circle) or disabled.
+  var inlineKeyRefreshCircle: CircleSummary? {
+    guard case let .circle(circle) = destination, circle.isEncrypted,
+          !canPostToDestination(destination) else { return nil }
+    return circle
+  }
+
+  /// The inline Refresh: one key refresh for the selected Circle, then re-evaluates.
+  func refreshDestinationKeys() async {
+    guard let circle = inlineKeyRefreshCircle else { return }
+    await refreshEncryptedKeys(circle: circle)
+  }
+
+  /// Shown inline while a selected link card would be left out of an
+  /// encrypted Circle post (the sealed payload carries no embeds).
+  var droppedLinkCardNotice: String? {
+    guard case let .circle(circle) = destination, circle.isEncrypted,
+          let url = selectedEmbedURL, urlCards[url] != nil else { return nil }
+    return Self.droppedLinkCardMessage
+  }
+
+  func markDroppedLinkCardNoticeShown() {
+    if droppedLinkCardNotice != nil { hasShownDroppedLinkCardNotice = true }
+  }
+
   func selectDestination(_ newDestination: CircleDestination) {
     guard canChangeDestination else { return }
+    guard canPostToDestination(newDestination) else { return }
     self.destination = newDestination
     if case .circle = newDestination {
       // Quotes are unsupported in Circles
@@ -1169,7 +1233,7 @@ final class PostComposerViewModel {
     if let uriString = source?.draftQuotedPostURI,
        let cidString = source?.draftQuotedPostCID,
        let uri = try? ATProtocolURI(uriString: uriString),
-       let cid = try? CID.parse(cidString) {
+       let cid = try? CIDString(cidString: cidString) {
       return .init(uri: uri, cid: cid)
     }
     let post = entry == nil ? quotedPost : entry?.quotedPost

@@ -134,7 +134,7 @@ struct StarterPackServiceTests {
         let listCid = try! CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")
         let listBasic = AppBskyGraphDefs.ListViewBasic(
             uri: listUri,
-            cid: listCid,
+            cid: CIDString(listCid),
             name: "Mute List",
             purpose: .appbskygraphdefsmodlist,
             avatar: nil,
@@ -190,7 +190,7 @@ struct StarterPackServiceTests {
         let listCid = try! CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")
         let listBasic = AppBskyGraphDefs.ListViewBasic(
             uri: listUri,
-            cid: listCid,
+            cid: CIDString(listCid),
             name: "Block List",
             purpose: .appbskygraphdefsmodlist,
             avatar: nil,
@@ -401,7 +401,7 @@ struct StarterPackServiceTests {
         draft.feeds = (1...3).map { i in
             AppBskyFeedDefs.GeneratorView(
                 uri: try! ATProtocolURI(uriString: "at://did:plc:creator1234567890abcde1/app.bsky.feed.generator/feed\(i)"),
-                cid: try! CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"),
+                cid: CIDString(try! CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")),
                 did: try! DID(didString: "did:plc:creator1234567890abcde1"),
                 creator: makeProfileView(did: targetDID1),
                 displayName: "Feed \(i)",
@@ -423,7 +423,7 @@ struct StarterPackServiceTests {
         draft.feeds.append(
             AppBskyFeedDefs.GeneratorView(
                 uri: try! ATProtocolURI(uriString: "at://did:plc:creator1234567890abcde1/app.bsky.feed.generator/feed4"),
-                cid: try! CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"),
+                cid: CIDString(try! CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")),
                 did: try! DID(didString: "did:plc:creator1234567890abcde1"),
                 creator: makeProfileView(did: targetDID1),
                 displayName: "Feed 4",
@@ -625,7 +625,7 @@ struct StarterPackServiceTests {
             let expectedDID = index == 0 ? targetDID1 : targetDID2
             #expect(follow.subject == expectedDID)
             #expect(follow.via?.uri == packURI)
-            #expect(follow.via?.cid == packCID)
+            #expect(follow.via?.cid == CIDString(packCID))
         }
     }
 }

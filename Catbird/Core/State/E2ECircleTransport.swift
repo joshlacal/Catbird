@@ -24,6 +24,19 @@ struct E2EConstants {
 
   static let publicAlicePostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/app.bsky.feed.post/publicpost1")
   static let publicAlicePostText = "Hello public world from Alice"
+
+  // Encrypted Circles (`--e2e-encrypted-circles`): Alice owns Close Friends
+  // (she holds key v1, Bob has a pending history re-wrap); Bob owns Book Club
+  // (Alice is a member who holds no key yet).
+  static let closeFriendsURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle.encrypted/closefriends1")
+  static let closeFriendsCircleId = try! TID(tidString: "3l7closefrien")
+  static let bookClubURI = try! SpaceRef(uriString: "at://did:plc:bobe2efixture/space/blue.catbird.circle.encrypted/bookclub1")
+  static let bookClubCircleId = try! TID(tidString: "3l7bookclubaa")
+  static let encryptedReadablePostURI = try! ATProtocolURI(uriString: "at://did:plc:bobe2efixture/blue.catbird.circle.post/3l7encreadabl")
+  static let encryptedUnverifiablePostURI = try! ATProtocolURI(uriString: "at://did:plc:bobe2efixture/blue.catbird.circle.post/3l7encunverif")
+  static let encryptedPendingPostURI = try! ATProtocolURI(uriString: "at://did:plc:bobe2efixture/blue.catbird.circle.post/3l7encpending")
+  static let encryptedReadableText = "Encrypted hello from Bob (opened by the E2E fake crypto)"
+  static let encryptedAuthorHead = Data(repeating: 0x5A, count: 32)
 }
 
 /// Shared in-memory storage for E2E circle tests.
@@ -42,6 +55,8 @@ actor E2ECircleStore {
   private var likes: [ATProtocolURI: Set<String>] = [:]
   private var mediaBlobs: [String: StoredMedia] = [:]
   private var notifications: [(recipient: DID, notification: BlueCatbirdCircleDefs.Notification)] = []
+  /// Sealed envelopes served as `encryptedPostView` items (newest first).
+  private var encryptedPosts: [(view: BlueCatbirdCircleDefs.EncryptedPostView, circle: BlueCatbirdCircleDefs.CircleSummary)] = []
   private var postSeq: Int = 1
   private var circleSeq: Int = 1
   private var likeSeq: Int = 1
@@ -86,7 +101,7 @@ actor E2ECircleStore {
 
     let post1 = AppBskyFeedDefs.PostView(
       uri: E2EConstants.familyPostURI,
-      cid: CID.fromDAGCBOR(Data("post1-cid".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("post1-cid".utf8))),
       author: aliceAuthor,
       record: .knownType(
         AppBskyFeedPost(
@@ -118,7 +133,7 @@ actor E2ECircleStore {
 
     let post2 = AppBskyFeedDefs.PostView(
       uri: E2EConstants.aliceOnlyPostURI,
-      cid: CID.fromDAGCBOR(Data("post2-cid".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("post2-cid".utf8))),
       author: aliceAuthor,
       record: .knownType(
         AppBskyFeedPost(
@@ -183,6 +198,107 @@ actor E2ECircleStore {
       cid: post2CID,
       data: E2ECircleTransport.fixtureImageData
     )
+    if E2EEncryptedCircleFixture.isEnabled {
+      let fixture = Self.encryptedFixture()
+      for circle in fixture.circles {
+        circles[circle.uri] = circle
+        members[circle.uri] = fixture.members[circle.uri] ?? []
+      }
+      encryptedPosts = fixture.posts
+      // An invite row is the fixture's way into Close Friends' detail and
+      // management screens (Notifications → Circle Activity).
+      if let closeFriends = fixture.circles.first(where: { $0.uri == E2EConstants.closeFriendsURI }) {
+        let invite = BlueCatbirdCircleDefs.Notification(
+          id: "notif-close-friends",
+          reason: .value_invite,
+          actor: aliceAuthor,
+          subject: nil,
+          indexedAt: ATProtocolDate(date: Date()),
+          circle: closeFriends
+        )
+        notifications.insert((recipient: E2EConstants.aliceDID, notification: invite), at: 0)
+      }
+    }
+  }
+
+  /// Encrypted Circles and their envelopes (no plaintext anywhere: the fake
+  /// crypto supplies the opened payload).
+  private static func encryptedFixture() -> (
+    circles: [BlueCatbirdCircleDefs.CircleSummary],
+    members: [SpaceRef: Set<DID>],
+    posts: [(view: BlueCatbirdCircleDefs.EncryptedPostView, circle: BlueCatbirdCircleDefs.CircleSummary)]
+  ) {
+    let closeFriends = BlueCatbirdCircleDefs.CircleSummary(
+      uri: E2EConstants.closeFriendsURI,
+      circleId: E2EConstants.closeFriendsCircleId,
+      name: "Close Friends",
+      owner: E2EConstants.aliceDID,
+      memberCount: 1,
+      muted: false,
+      latestKeyVersion: 1
+    )
+
+    let bookClub = BlueCatbirdCircleDefs.CircleSummary(
+      uri: E2EConstants.bookClubURI,
+      circleId: E2EConstants.bookClubCircleId,
+      name: "Book Club",
+      owner: E2EConstants.bobDID,
+      memberCount: 1,
+      muted: false,
+      latestKeyVersion: 2
+    )
+
+    let bob = AppBskyActorDefs.ProfileViewBasic(
+      did: E2EConstants.bobDID, handle: try! Handle(handleString: "bob.test"), displayName: "Bob",
+      pronouns: nil, avatar: nil, associated: nil, viewer: nil, labels: nil,
+      createdAt: nil, verification: nil, status: nil, debug: nil
+    )
+    func envelope(_ uri: ATProtocolURI, circle: BlueCatbirdCircleDefs.CircleSummary, keyVersion: Int, minutesAgo: Double)
+      -> (view: BlueCatbirdCircleDefs.EncryptedPostView, circle: BlueCatbirdCircleDefs.CircleSummary) {
+      let record = BlueCatbirdCirclePost(
+        circleId: circle.circleId,
+        keyVersion: keyVersion,
+        createdAt: ATProtocolDate(date: Date().addingTimeInterval(-minutesAgo * 60)),
+        ciphertext: Bytes(data: Data(repeating: 0x02, count: 48)),
+        sig: Bytes(data: Data(repeating: 0x11, count: 64)),
+        authorEpochHead: Bytes(data: E2EConstants.encryptedAuthorHead),
+        reply: nil,
+        attachments: nil
+      )
+      let view = BlueCatbirdCircleDefs.EncryptedPostView(
+        uri: uri,
+        cid: CIDString(CID.fromDAGCBOR(Data(uri.uriString().utf8))),
+        author: bob,
+        record: record,
+        indexedAt: ATProtocolDate(date: Date().addingTimeInterval(-minutesAgo * 60)),
+        likeCount: 0,
+        replyCount: 0,
+        viewer: nil
+      )
+      // The opener reads served bytes; the fixture's served bytes are this
+      // encoding (its fake crypto ignores them).
+      if let raw = try? JSONEncoder().encode(record) {
+        CircleRawRecordCache.shared.register(raw: raw, uri: uri, cid: view.cid)
+      }
+      return (view, circle)
+    }
+    return (
+      circles: [closeFriends, bookClub],
+      members: [E2EConstants.closeFriendsURI: [E2EConstants.bobDID], E2EConstants.bookClubURI: [E2EConstants.aliceDID]],
+      posts: [
+        envelope(E2EConstants.encryptedPendingPostURI, circle: bookClub, keyVersion: 2, minutesAgo: 1),
+        envelope(E2EConstants.encryptedUnverifiablePostURI, circle: closeFriends, keyVersion: 1, minutesAgo: 2),
+        envelope(E2EConstants.encryptedReadablePostURI, circle: closeFriends, keyVersion: 1, minutesAgo: 3),
+      ]
+    )
+  }
+
+  private func encryptedFeedItems(userDID: DID, space: SpaceRef?) -> [BlueCatbirdCircleDefs.FeedItem] {
+    encryptedPosts.compactMap { entry in
+      if let space, entry.circle.uri.uriString() != space.uriString() { return nil }
+      guard isMember(space: entry.circle.uri, userDID: userDID) else { return nil }
+      return BlueCatbirdCircleDefs.FeedItem(post: .init(entry.view), circle: entry.circle)
+    }
   }
 
   private func isMember(space: SpaceRef, userDID: DID) -> Bool {
@@ -256,7 +372,8 @@ actor E2ECircleStore {
     CircleCapability(
       enabled: !ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds"),
       protocolRevision: CircleConfiguration.protocolRevision,
-      supportsImages: !ProcessInfo.processInfo.arguments.contains("--circles-images-unavailable")
+      supportsImages: !ProcessInfo.processInfo.arguments.contains("--circles-images-unavailable"),
+      supportsEncryptedPosts: E2EEncryptedCircleFixture.isEnabled
     )
   }
 
@@ -279,9 +396,9 @@ actor E2ECircleStore {
         guard let entry = posts[uri], entry.circle.uri.uriString() == space.uriString(), entry.replyTo == nil else { return nil }
         let postView = postWithViewerState(entry.post, userDID: userDID)
         let fvp = AppBskyFeedDefs.FeedViewPost(post: postView, reply: nil, reason: nil, feedContext: nil, reqId: nil)
-        return BlueCatbirdCircleDefs.FeedItem(post: fvp, circle: entry.circle)
+        return BlueCatbirdCircleDefs.FeedItem(post: .init(fvp), circle: entry.circle)
       }
-      return CircleFeedPage(items: filtered, cursor: nil)
+      return CircleFeedPage(items: encryptedFeedItems(userDID: userDID, space: space) + filtered, cursor: nil)
     }
 
     let items = order.compactMap { uri -> BlueCatbirdCircleDefs.FeedItem? in
@@ -290,9 +407,9 @@ actor E2ECircleStore {
             entry.replyTo == nil else { return nil }
       let postView = postWithViewerState(entry.post, userDID: userDID)
       let fvp = AppBskyFeedDefs.FeedViewPost(post: postView, reply: nil, reason: nil, feedContext: nil, reqId: nil)
-      return BlueCatbirdCircleDefs.FeedItem(post: fvp, circle: entry.circle)
+      return BlueCatbirdCircleDefs.FeedItem(post: .init(fvp), circle: entry.circle)
     }
-    return CircleFeedPage(items: items, cursor: nil)
+    return CircleFeedPage(items: encryptedFeedItems(userDID: userDID, space: nil) + items, cursor: nil)
   }
 
   func getPostThread(userDID: DID, uri: ATProtocolURI, space: SpaceRef?) throws -> CircleThreadPage {
@@ -643,7 +760,7 @@ actor E2ECircleStore {
           if let ref = vid.video.ref {
             mediaUnion = .appBskyEmbedVideoView(
               AppBskyEmbedVideo.View(
-                cid: ref.cid,
+                cid: CIDString(ref.cid),
                 playlist: try! URI(uriString: "https://example.com/video/\(ref.cid)/playlist.m3u8"),
                 thumbnail: nil,
                 alt: vid.alt,
@@ -702,7 +819,7 @@ actor E2ECircleStore {
       createdAt: draft.createdAt
     )
 
-    let postCID = CID.fromDAGCBOR(Data("e2e-post-cid-\(rkey)".utf8))
+    let postCID = CIDString(CID.fromDAGCBOR(Data("e2e-post-cid-\(rkey)".utf8)))
     let post = AppBskyFeedDefs.PostView(
       uri: postURI,
       cid: postCID,
@@ -885,6 +1002,24 @@ final class E2ECircleTransport: CircleTransport, @unchecked Sendable {
 
   func enqueueGenericActivity() async {
     await store.enqueueGenericActivity(userDID: accountDID)
+  }
+
+  // MARK: Encrypted Circles (`--e2e-encrypted-circles`)
+
+  /// No key records are delivered: keys the fixture account holds are seeded
+  /// straight into its in-memory key store, so everything else stays pending.
+  func getKeys(space: SpaceRef, sinceVersion: Int?) async throws -> CircleKeysResponse {
+    guard E2EEncryptedCircleFixture.isEnabled else {
+      throw CircleError.invalidParameter("Encrypted Circles are not supported by this transport.")
+    }
+    return CircleKeysResponse(entries: [], latestKeyVersion: 0)
+  }
+
+  func getMetadata(space: SpaceRef) async throws -> BlueCatbirdCircleMetadata? {
+    guard E2EEncryptedCircleFixture.isEnabled else {
+      throw CircleError.invalidParameter("Circle metadata is not supported by this transport.")
+    }
+    return nil
   }
 }
 #endif

@@ -259,7 +259,7 @@ enum SocialActionsFixtureData {
     let creator = try! JSONDecoder().decode(AppBskyActorDefs.ProfileView.self, from: Data(#"{"did":"did:plc:ar7c4by46qjdydhdevvrndac","handle":"labels.test","displayName":"Community Labels"}"#.utf8))
     return AppBskyLabelerDefs.LabelerViewDetailed(
       uri: try! ATProtocolURI(uriString: "at://did:plc:ar7c4by46qjdydhdevvrndac/app.bsky.labeler.service/self"),
-      cid: CID.fromDAGCBOR(Data("labeler-fixture".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("labeler-fixture".utf8))),
       creator: creator,
       policies: .init(labelValues: [.init(rawValue: "joined-may")], labelValueDefinitions: [
         .init(identifier: "joined-may", severity: "inform", blurs: "none", locales: [
@@ -276,7 +276,7 @@ enum SocialActionsFixtureData {
     let date = ATProtocolDate(date: Date(timeIntervalSince1970: 1_780_000_000))
     return AppBskyFeedDefs.PostView(
       uri: try! ATProtocolURI(uriString: "at://did:plc:socialfixtureauthor/app.bsky.feed.post/3socialfixture"),
-      cid: CID.fromDAGCBOR(Data("social-fixture".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("social-fixture".utf8))),
       author: author,
       record: .knownType(AppBskyFeedPost(
         text: "A quiet afternoon by the water. A post to share with a friend.",
@@ -341,7 +341,7 @@ enum SocialActionsFixtureData {
     let date = ATProtocolDate(date: Date(timeIntervalSince1970: 1_780_000_000 - Double(age) * 3_600))
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://\(author.did.didString())/app.bsky.feed.post/\(rkey)"),
-      cid: CID.fromDAGCBOR(Data(rkey.utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data(rkey.utf8))),
       author: author,
       record: .knownType(AppBskyFeedPost(
         text: text,

@@ -8,7 +8,7 @@ struct CopilotPostEvidenceTests {
   func retainsSelectedIdentityCompleteTextAndReplyRelationships() throws {
     let text = String(repeating: "A", count: 250) + "\nThis conclusion is NOT supported."
     let reply = try AppBskyFeedPost.ReplyRef(
-      root: .init(uri: uri("root"), cid: cid()), parent: .init(uri: uri("parent"), cid: cid())
+      root: .init(uri: uri("root"), cid: CIDString(cid())), parent: .init(uri: uri("parent"), cid: CIDString(cid()))
     )
     let evidence = CopilotPostEvidenceBuilder.build(try post(text: text, reply: reply))
     #expect(evidence.selectedPost.text == text)
@@ -24,7 +24,7 @@ struct CopilotPostEvidenceTests {
 
   @Test
   func keepsAuthoredTextSelectedMediaAndQuotedTextAndMediaTogether() throws {
-    let video = try AppBskyEmbedVideo.View(cid: cid(), playlist: URI(uriString: "https://example.test/video.m3u8"), alt: "Quoted video description")
+    let video = try AppBskyEmbedVideo.View(cid: CIDString(cid()), playlist: URI(uriString: "https://example.test/video.m3u8"), alt: "Quoted video description")
     let quote = try quoted("quoted", text: "The original claim", embeds: [.appBskyEmbedVideoView(video)])
     let embed = AppBskyFeedDefs.PostViewEmbedUnion.appBskyEmbedRecordWithMediaView(.init(
       record: quote, media: .appBskyEmbedImagesView(images(alt: "Selected image description"))
@@ -138,7 +138,7 @@ struct CopilotPostEvidenceTests {
 
   @Test
   func unhydratedQuoteKeepsReferenceAndExplicitMissingCoverage() throws {
-    let quote = try AppBskyEmbedRecord(record: .init(uri: uri("unhydrated"), cid: cid()))
+    let quote = try AppBskyEmbedRecord(record: .init(uri: uri("unhydrated"), cid: CIDString(cid())))
     let evidence = CopilotPostEvidenceBuilder.build(try post(rawEmbed: .appBskyEmbedRecord(quote)))
     #expect(evidence.selectedPost.quotedPostURI == uriString("unhydrated"))
     #expect(evidence.selectedPost.coverage.contains("Quoted post contents were not supplied."))
@@ -185,14 +185,14 @@ struct CopilotPostEvidenceTests {
   private func post(text: String = "Selected", reply: AppBskyFeedPost.ReplyRef? = nil,
                     embed: AppBskyFeedDefs.PostViewEmbedUnion? = nil,
                     rawEmbed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion? = nil) throws -> AppBskyFeedDefs.PostView {
-    try .init(uri: uri("selected"), cid: cid(), author: author(),
+    try .init(uri: uri("selected"), cid: CIDString(cid()), author: author(),
               record: .knownType(AppBskyFeedPost(text: text, reply: reply, embed: rawEmbed, createdAt: timestamp)),
               embed: embed, indexedAt: timestamp)
   }
 
   private func quoted(_ name: String, text: String, embeds: [AppBskyEmbedRecord.ViewRecordEmbedsUnion]? = nil) throws -> AppBskyEmbedRecord.View {
     try .init(record: .appBskyEmbedRecordViewRecord(.init(
-      uri: uri(name), cid: cid(), author: author(),
+      uri: uri(name), cid: CIDString(cid()), author: author(),
       value: .knownType(AppBskyFeedPost(text: text, createdAt: timestamp)), embeds: embeds, indexedAt: timestamp
     )))
   }

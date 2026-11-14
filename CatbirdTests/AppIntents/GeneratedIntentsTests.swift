@@ -124,7 +124,7 @@ private enum Fixture {
   ) throws -> AppBskyFeedDefs.GeneratorView {
     AppBskyFeedDefs.GeneratorView(
       uri: try ATProtocolURI(uriString: "at://did:plc:creator1234567890123456/app.bsky.feed.generator/myfeed"),
-      cid: CID.fromBlob(Data("generator-fixture".utf8)),
+      cid: CIDString(CID.fromBlob(Data("generator-fixture".utf8))),
       did: try DID(didString: "did:plc:feedservice1234567890"),
       creator: try creator ?? profileView(),
       displayName: displayName,
@@ -156,7 +156,7 @@ private enum Fixture {
       } ?? .string("post-record-fixture")
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:author1234567890123456/app.bsky.feed.post/\(rkey)"),
-      cid: CID.fromBlob(Data("post-fixture".utf8)),
+      cid: CIDString(CID.fromBlob(Data("post-fixture".utf8))),
       author: try author ?? profileViewBasic(),
       record: record,
       embed: nil,

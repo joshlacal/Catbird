@@ -44,7 +44,7 @@ struct AutomationLabelSettingsView: View {
     @State private var errorMessage: String?
     @State private var showErrorAlert: Bool = false
     @State private var profileDetailed: AppBskyActorDefs.ProfileViewDetailed?
-    @State private var profileRecord: (cid: CID?, profile: AppBskyActorProfile)?
+    @State private var profileRecord: (cid: CIDString?, profile: AppBskyActorProfile)?
     
     @State private var mountedAccountDID: String?
     @State private var mountedAccountRevision: UInt64 = 0
@@ -293,7 +293,7 @@ struct AutomationLabelSettingsView: View {
     
     private func putProfileBotLabel(
         _ isBot: Bool,
-        record: (cid: CID, profile: AppBskyActorProfile),
+        record: (cid: CIDString, profile: AppBskyActorProfile),
         client: ATProtoClient,
         accountDID: String
     ) async throws {
@@ -315,7 +315,7 @@ struct AutomationLabelSettingsView: View {
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(updatedProfile),
-            swapRecord: record.cid
+            swapRecord: .value(record.cid)
         )
         let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
         guard code == 200 else {

@@ -1,4 +1,5 @@
 import Foundation
+import Petrel
 
 enum CatbirdGatewayConfigurationError: Error, Equatable {
   case e2eModeRequired
@@ -123,5 +124,23 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
       throw CatbirdGatewayConfigurationError.invalidOverride
     }
     return Self(deployment: .stagingE2E)
+  }
+
+  static func petrelGateway(origin: URL) throws -> GatewayConfiguration {
+    try GatewayConfiguration(
+      gatewayURL: origin,
+      callbackURL: URL(string: "https://catbird.blue/oauth/callback")!,
+      permissionCallbackURL: URL(string: "https://catbird.blue/oauth/permission-callback")!
+    )
+  }
+}
+
+extension CIDString {
+  static func != (lhs: CIDString, rhs: CID) -> Bool {
+    lhs.string != rhs.string
+  }
+
+  static func != (lhs: CID, rhs: CIDString) -> Bool {
+    lhs.string != rhs.string
   }
 }

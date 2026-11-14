@@ -405,7 +405,7 @@ final class AppStateManager {
         let publicPostURI = try! ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.post/publicpost1")
         let publicPost = AppBskyFeedDefs.PostView(
           uri: publicPostURI,
-          cid: CID.fromDAGCBOR(Data("publicpost1-cid".utf8)),
+          cid: CIDString(CID.fromDAGCBOR(Data("publicpost1-cid".utf8))),
           author: author,
           record: .knownType(
             AppBskyFeedPost(

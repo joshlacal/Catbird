@@ -50,7 +50,7 @@ struct ThreadBlockedItemsTests {
     )
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.post/\(rkey)"),
-      cid: CID.fromDAGCBOR(Data("post-\(rkey)".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("post-\(rkey)".utf8))),
       author: try makeProfile(did: did),
       record: .knownType(record),
       embed: nil,

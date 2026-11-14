@@ -19,7 +19,7 @@ final class PostViewModel {
     private(set) var postId: String
     
     /// The content identifier (CID) for the post
-    private(set) var postCid: CID
+    private(set) var postCid: CIDString
     
     /// Reference to the app state
     private(set) var appState: AppState
@@ -64,9 +64,26 @@ final class PostViewModel {
     ///   - authorDid: Optional author DID of the post
     ///   - visibilityContext: The visibility context of the post
     @MainActor
-    init(
+    convenience init(
         postId: String,
         postCid: CID,
+        appState: AppState,
+        authorDid: String? = nil,
+        visibilityContext: PostVisibilityContext = .public
+    ) {
+        self.init(
+            postId: postId,
+            postCid: CIDString(postCid),
+            appState: appState,
+            authorDid: authorDid,
+            visibilityContext: visibilityContext
+        )
+    }
+
+    @MainActor
+    init(
+        postId: String,
+        postCid: CIDString,
         appState: AppState,
         authorDid: String? = nil,
         visibilityContext: PostVisibilityContext = .public
@@ -718,12 +735,15 @@ final class PostViewModel {
 
 extension PostViewModel {
     @MainActor
-    public static func forCircleItem(
+    /// Plaintext items, or an encrypted item's decrypted post from `opened`.
+    static func forCircleItem(
         _ item: BlueCatbirdCircleDefs.FeedItem,
+        opened: CircleOpenedItem? = nil,
         appState: AppState
-    ) -> PostViewModel {
-        PostViewModel(
-            post: item.post.post,
+    ) -> PostViewModel? {
+        guard let feedViewPost = item.post.feedViewPost ?? opened?.feedViewPost else { return nil }
+        return PostViewModel(
+            post: feedViewPost.post,
             appState: appState,
             visibilityContext: .circle(item.circle)
         )

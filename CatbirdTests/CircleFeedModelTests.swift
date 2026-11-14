@@ -425,7 +425,7 @@ struct CircleFeedModelTests {
     let bobCached = await cache.page(accountDID: "did:plc:bob", space: familyCircle.uri)
     #expect(bobCached != nil)
     #expect(bobCached?.items.count == 1)
-    #expect(bobCached?.items.first?.post.post.uri == itemBob.post.post.uri)
+    #expect(bobCached?.items.first?.post.feedViewPost!.post.uri == itemBob.post.feedViewPost!.post.uri)
   }
 
   @Test("Barrier test: in-flight feed network refresh overlapped with account switch discards old response and retains sibling")
@@ -492,7 +492,7 @@ struct CircleFeedModelTests {
     let bobCached = await cache.page(accountDID: "did:plc:bob", space: familyCircle.uri)
     #expect(bobCached != nil)
     #expect(bobCached?.items.count == 1)
-    #expect(bobCached?.items.first?.post.post.uri == itemBob.post.post.uri)
+    #expect(bobCached?.items.first?.post.feedViewPost!.post.uri == itemBob.post.feedViewPost!.post.uri)
   }
 
   @Test("Invalidated CircleFeedModel permanently rejects all new operations")
@@ -529,5 +529,103 @@ struct CircleFeedModelTests {
     try await model.loadMore()
     #expect(model.items.isEmpty)
     #expect(await transport.feedCallCount == 0)
+  }
+}
+
+// MARK: - Encrypted Circle posts (Task 15)
+
+extension CircleFeedModelTests {
+  private func makeModel(
+    harness: OpenerHarness,
+    items: [BlueCatbirdCircleDefs.FeedItem]
+  ) -> CircleFeedModel {
+    let opener = harness.opener
+    return CircleFeedModel(
+      service: CircleService(transport: MockCircleTransport(feedItems: items)),
+      space: CircleOpenFixtures.spaceURI,
+      accountDID: CircleOpenFixtures.accountDID,
+      cache: harness.cache,
+      openerProvider: { opener },
+      ownerHandleResolver: { did in did == CircleOpenFixtures.owner ? "owner.test" : nil }
+    )
+  }
+
+  @Test("A pendingKey item triggers one key refresh per Circle per load and flips to a post once the version arrives")
+  func feedModelRetriesPendingAfterKeyRefresh() async throws {
+    let harness = OpenerHarness()
+    try await harness.holdKeys([1])
+    await harness.keyTransport.setResponses([[], [try CircleOpenFixtures.keyEntry(version: 2)]])
+    await harness.crypto.setOpenable([2: CircleOpenFixtures.key(2)])
+    let first = CircleOpenFixtures.encryptedItem(0, keyVersion: 2)
+    let second = CircleOpenFixtures.encryptedItem(1, keyVersion: 2)
+    let model = makeModel(harness: harness, items: [first, second])
+    let uri = CircleOpenFixtures.postURI(0)
+
+    try await model.load()
+
+    guard case .pendingKey(_, let version)? = model.opened[uri] else {
+      Issue.record("expected .pendingKey, got \(String(describing: model.opened[uri]))")
+      return
+    }
+    #expect(version == 2)
+    #expect(await harness.keyTransport.getKeysCalls == 1) // one refresh for the Circle, not one per item
+    #expect(model.ownerHandle(for: CircleOpenFixtures.circle) == "owner.test")
+    #expect(await harness.crypto.openCalls.isEmpty)
+
+    try await model.load()
+
+    guard case .post(let feedViewPost, _)? = model.opened[uri] else {
+      Issue.record("expected .post after the refresh, got \(String(describing: model.opened[uri]))")
+      return
+    }
+    #expect(feedViewPost.post.uri == uri)
+    guard case .post? = model.opened[CircleOpenFixtures.postURI(1)] else {
+      Issue.record("expected the second item to open too")
+      return
+    }
+    #expect(await harness.keyTransport.getKeysCalls == 2)
+    #expect(await harness.crypto.openCalls.allSatisfy { $0.circleKey == CircleOpenFixtures.key(2) })
+  }
+
+  @Test("Decrypted posts live only in the per-account opened store, never in the shared feed cache or stored pages")
+  func decryptedPostsNeverTouchSharedFeedCache() async throws {
+    let harness = OpenerHarness()
+    try await harness.holdKeys([1])
+    let item = CircleOpenFixtures.encryptedItem(0)
+    let model = makeModel(harness: harness, items: [item])
+    let uri = CircleOpenFixtures.postURI(0)
+    let cid = CID.fromDAGCBOR(Data("enc-0".utf8))
+
+    try await model.load()
+
+    guard case .post? = model.opened[uri] else {
+      Issue.record("expected .post, got \(String(describing: model.opened[uri]))")
+      return
+    }
+    // The shared cache has no entry for the URI, opened or paged.
+    #expect(CircleFeedCache.shared.openedPayload(accountDID: CircleOpenFixtures.accountDID, space: CircleOpenFixtures.spaceURI, uri: uri, cid: cid) == nil)
+    #expect(await CircleFeedCache.shared.page(accountDID: CircleOpenFixtures.accountDID, space: CircleOpenFixtures.spaceURI) == nil)
+
+    // The account's page stores the envelope only; plaintext never enters it.
+    let page = try #require(await harness.cache.page(accountDID: CircleOpenFixtures.accountDID, space: CircleOpenFixtures.spaceURI))
+    #expect(page.items.allSatisfy { $0.post.isEncrypted })
+    let pageJSON = String(decoding: try JSONEncoder().encode(page.items), as: UTF8.self)
+    #expect(!pageJSON.contains(CircleOpenFixtures.secretText))
+
+    // The decrypted post sits in the per-account opened store, and logout purges it.
+    #expect(harness.cache.openedPayload(accountDID: CircleOpenFixtures.accountDID, space: CircleOpenFixtures.spaceURI, uri: uri, cid: cid) != nil)
+    await harness.cache.purge(accountDID: CircleOpenFixtures.accountDID)
+    #expect(harness.cache.openedPayload(accountDID: CircleOpenFixtures.accountDID, space: CircleOpenFixtures.spaceURI, uri: uri, cid: cid) == nil)
+  }
+
+  @Test("Plaintext items pass through unchanged and are never sent to the opener")
+  func plaintextItemsBypassOpener() async throws {
+    let harness = OpenerHarness()
+    let plain = makeFeedItem(circle: CircleTestFixtures.family, rkey: "p1", text: "plain")
+    let model = makeModel(harness: harness, items: [plain])
+    try await model.load()
+    #expect(model.items.count == 1)
+    #expect(model.opened.isEmpty)
+    #expect(await harness.crypto.openCalls.isEmpty)
   }
 }

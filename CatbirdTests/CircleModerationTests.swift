@@ -54,7 +54,7 @@ actor ModerationRecordingCircleTransport: CircleTransport {
     )
     let postView = AppBskyFeedDefs.PostView(
       uri: uri,
-      cid: CID.fromDAGCBOR(Data("test-thread-root".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("test-thread-root".utf8))),
       author: author,
       record: ATProtocolValueContainer.knownType(post),
       embed: nil,

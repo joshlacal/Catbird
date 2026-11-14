@@ -132,7 +132,7 @@ struct FeedHeaderEnvironmentTests {
       tags: nil, createdAt: timestamp)
     let post = AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:headerfixtureauthor/app.bsky.feed.post/header"),
-      cid: CID.fromDAGCBOR(Data("feed-header-environment".utf8)), author: author,
+      cid: CIDString(CID.fromDAGCBOR(Data("feed-header-environment".utf8))), author: author,
       record: .knownType(record), embed: nil, bookmarkCount: nil,
       replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
       indexedAt: timestamp, viewer: nil, labels: nil, threadgate: nil, debug: nil)

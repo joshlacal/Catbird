@@ -19,6 +19,10 @@ public enum GatewayPermission: String, CaseIterable, Sendable, Hashable, Equatab
   /// string-matches the gateway's normalized granted scopes.
   case circleSpaces = "space:blue.catbird.circle?action=create&action=delete&action=read_self&action=update&authority=*&collection=*&manage=create&manage=delete&manage=update"
 
+  /// Same grant as `circleSpaces`, for end-to-end encrypted Circles
+  /// (`blue.catbird.circle.encrypted`); scopes are granted per space type.
+  case circleEncryptedSpaces = "space:blue.catbird.circle.encrypted?action=create&action=delete&action=read_self&action=update&authority=*&collection=*&manage=create&manage=delete&manage=update"
+
   /// The raw OAuth scope string requested from the authorization server.
   public var scopeString: String {
     rawValue

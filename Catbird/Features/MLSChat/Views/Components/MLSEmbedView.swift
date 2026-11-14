@@ -21,12 +21,21 @@ struct MLSEmbedView: View {
     case .image(let imageEmbed):
       MLSImageView(imageEmbed: imageEmbed)
 
-    case .audio:
-      Text("Voice message")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .padding()
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    case .audio(let audioEmbed):
+      VoiceMessagePlayerView(
+        audioData: AudioEmbedData(
+          blobId: audioEmbed.blobId,
+          key: audioEmbed.key,
+          iv: audioEmbed.iv,
+          sha256: audioEmbed.sha256,
+          contentType: audioEmbed.contentType,
+          size: audioEmbed.size,
+          durationMs: audioEmbed.durationMs,
+          waveform: audioEmbed.waveform,
+          transcript: audioEmbed.transcript
+        ),
+        isOwnMessage: false
+      )
 
     case .groupInvitation(let reference):
       MLSGroupInvitationCard(reference: reference)

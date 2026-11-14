@@ -67,8 +67,30 @@ private final class InMemoryTransport: PlatformTransport, @unchecked Sendable {
   func disconnectRealtimeStream() throws {}
 }
 
-@Suite("MLS Clean-Slate DataSource, Spaces Gate, & Labyrinth Tests")
+private struct StubPushWakeKeys: PushWakeKeyLookup {
+  let record: PushWakeKeyRecord?
+
+  func pushWakeKey(forKid kid: String) -> PushWakeKeyRecord? {
+    record?.kid == kid ? record : nil
+  }
+}
+
+@Suite("MLS Clean-Slate DataSource, Spaces Gate, & Labyrinth Tests", .serialized)
 struct MLSCleanSlateDataSourceAndGateTests {
+  private func makeMockTransport(
+    network: NativeArchiveMockNetwork,
+    accountDid: String,
+    deviceId: String
+  ) -> PetrelPlatformTransport {
+    PetrelPlatformTransport(
+      homeDsEndpoint: URL(string: NativeArchiveMockNetwork.dsEndpoint),
+      homeDsDid: NativeArchiveMockNetwork.dsDid,
+      ownPdsEndpoint: URL(string: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)),
+      actorDeviceId: deviceId,
+      httpOverride: { req in network.handle(req) }
+    )
+  }
+
   private func makeTempStorageRoot() throws -> URL {
     let dir = FileManager.default.temporaryDirectory
       .appendingPathComponent("CatbirdAppCleanSlate-\(UUID().uuidString)", isDirectory: true)
@@ -89,28 +111,32 @@ struct MLSCleanSlateDataSourceAndGateTests {
   @Test("MLSConversationDataSource loads, sends, reconciles, and closes cleanly on background (I8, I9, I11)")
   @MainActor
   func dataSourceRoundtripAndLifecycle() async throws {
+    let network = NativeArchiveMockNetwork.shared
+    network.reset()
     let tempRoot = try makeTempStorageRoot()
     defer { archiveTempStorageRoot(tempRoot) }
 
-    let accountDid = "did:plc:alicecleanslate001"
+    let accountDid = "did:plc:alicecleanslateaaaaaaaaa"
+    let deviceId = "11111111-2222-4333-8444-555555555555"
     let config = CatbirdMlsClientConfig(
       storageRoot: tempRoot.path,
       accountDid: accountDid,
-      deviceId: "11111111-2222-4333-8444-555555555555",
-      homeDsDid: "did:web:chat.catbird.blue",
-      homeDsEndpoint: "https://chat.catbird.blue",
-      pdsEndpoint: "https://pds.catbird.blue"
+      deviceId: deviceId,
+      homeDsDid: NativeArchiveMockNetwork.dsDid,
+      homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+      pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)
     )
     let coordinator = try MLSClientCoordinator(
       config: config,
       keystore: InMemoryKeyStore(),
-      transport: InMemoryTransport()
+      transport: makeMockTransport(network: network, accountDid: accountDid, deviceId: deviceId)
     )
+    _ = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
 
     let conversationId = UUID().uuidString.lowercased()
     let created = try await coordinator.createGroup(
       conversationId: conversationId,
-      sequencerDid: "did:web:chat.catbird.blue",
+      sequencerDid: NativeArchiveMockNetwork.dsDid,
       title: "Spaces Team",
       description: "Clean-slate group"
     )
@@ -189,41 +215,88 @@ struct MLSCleanSlateDataSourceAndGateTests {
   @Test("Labyrinth backup is enabled by default with optional recovery code and PQ OTC pairing (D4, I16)")
   @MainActor
   func labyrinthRecoveryAndPqOtcPairing() async throws {
+    let network = NativeArchiveMockNetwork.shared
+    network.reset()
     let tempRoot = try makeTempStorageRoot()
     defer { archiveTempStorageRoot(tempRoot) }
 
+    let accountDid = "did:plc:labyrinthaliceaaaaaaaaaa"
+    let device1Id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    let companionId = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+    let restoreId = "cccccccc-dddd-4eee-8fff-111111111111"
+
+    let dev1Root = tempRoot.appendingPathComponent("dev1", isDirectory: true)
+    let companionRoot = tempRoot.appendingPathComponent("companion", isDirectory: true)
+    let restoreRoot = tempRoot.appendingPathComponent("restore", isDirectory: true)
+    try FileManager.default.createDirectory(at: dev1Root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: companionRoot, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: restoreRoot, withIntermediateDirectories: true)
+
     let coordinator = try MLSClientCoordinator(
       config: CatbirdMlsClientConfig(
-        storageRoot: tempRoot.path,
-        accountDid: "did:plc:labyrinthalice99",
-        deviceId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-        homeDsDid: "did:web:chat.catbird.blue",
-        homeDsEndpoint: "https://chat.catbird.blue",
-        pdsEndpoint: "https://pds.catbird.blue"
+        storageRoot: dev1Root.path,
+        accountDid: accountDid,
+        deviceId: device1Id,
+        homeDsDid: NativeArchiveMockNetwork.dsDid,
+        homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+        pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)
       ),
       keystore: InMemoryKeyStore(),
-      transport: InMemoryTransport()
+      transport: makeMockTransport(network: network, accountDid: accountDid, deviceId: device1Id)
     )
+    _ = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
 
     let initialStatus = try await coordinator.labyrinthStatus()
     #expect(initialStatus.backupEnabled)
     #expect(!initialStatus.hasRecoveryCode)
 
-    let code = try await coordinator.setupRecoveryCode()
-    let bareChars = code.filter { !$0.isWhitespace && $0 != "-" }
-    #expect(bareChars.count == 40)
-
-    let restored = try await coordinator.restoreWithRecoveryCode(code)
-    #expect(restored.hasRecoveryCode)
+    let companion = try MLSClientCoordinator(
+      config: CatbirdMlsClientConfig(
+        storageRoot: companionRoot.path,
+        accountDid: accountDid,
+        deviceId: companionId,
+        homeDsDid: NativeArchiveMockNetwork.dsDid,
+        homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+        pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)
+      ),
+      keystore: InMemoryKeyStore(),
+      transport: makeMockTransport(network: network, accountDid: accountDid, deviceId: companionId)
+    )
+    _ = try await companion.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
 
     let offer = try await coordinator.initiateOtcPairing()
     #expect(offer.sixDigitCode.count == 6)
 
-    let completion = try await coordinator.completeOtcPairing(sixDigitCode: offer.sixDigitCode)
+    let otcInitiated = try await companion.startOtcPairing(sixDigitCode: offer.sixDigitCode)
+    try await coordinator.respondOtcPairing(sessionIdHex: otcInitiated.sessionIdHex, sixDigitCode: nil)
+    let completion = try await companion.completeOtcPairing(sixDigitCode: offer.sixDigitCode)
     #expect(completion.initiatorMlkem768EkLen == 1184)
     #expect(completion.responderMlkem768CtLen == 1088)
     #expect(completion.newEpochSeq >= 1)
+    await companion.close()
 
+    let code = try await coordinator.setupRecoveryCode()
+    let bareChars = code.filter { !$0.isWhitespace && $0 != "-" }
+    #expect(bareChars.count == 40)
+
+    let restoreDevice = try MLSClientCoordinator(
+      config: CatbirdMlsClientConfig(
+        storageRoot: restoreRoot.path,
+        accountDid: accountDid,
+        deviceId: restoreId,
+        homeDsDid: NativeArchiveMockNetwork.dsDid,
+        homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+        pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)
+      ),
+      keystore: InMemoryKeyStore(),
+      transport: makeMockTransport(network: network, accountDid: accountDid, deviceId: restoreId)
+    )
+    _ = try await restoreDevice.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
+    let restored = try await restoreDevice.restoreWithRecoveryCode(code)
+    #expect(restored.backupEnabled)
+    #expect(restored.epochSeq >= 2)
+
+    await restoreDevice.close()
     await coordinator.close()
   }
 
@@ -331,6 +404,38 @@ struct MLSCleanSlateDataSourceAndGateTests {
     #expect(wake?.entrySeq == 9)
     #expect(wake?.recipientAccountHash == coordinator.accountDidHash)
 
+    // The same wake sealed as version 2: only `v`, `kid` and `sealed` are visible, and the
+    // account hash is recovered from the stored pushKey's `kid -> account DID` index.
+    let pushKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    let wakeKeys = StubPushWakeKeys(
+      record: PushWakeKeyRecord(pushKey: pushKey, appId: "blue.catbird", accountDid: "did:plc:pushgwuser001")
+    )
+    let sealed = try PushWakeEnvelope.seal(
+      header: Data(
+        #"{"wakeKind":"application","conversationId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","generation":1,"seq":9,"epoch":2,"fetchRequired":true}"#
+          .utf8
+      ),
+      ciphertext: nil,
+      keys: PushWakeEnvelope.Keys(pushKey: pushKey),
+      appId: "blue.catbird"
+    )
+    #expect(Set(sealed.keys) == ["v", "kid", "sealed"])
+    let sealedUserInfo: [AnyHashable: Any] = ["aps": ["mutable-content": 1], "catbird": sealed]
+    let sealedWake = MLSPushExtensionProcessor.decodePushWakePayload(from: sealedUserInfo, wakeKeys: wakeKeys)
+    #expect(sealedWake?.kind == wake?.kind)
+    #expect(sealedWake?.conversationId == wake?.conversationId)
+    #expect(sealedWake?.generation == wake?.generation)
+    #expect(sealedWake?.entrySeq == 9)
+    #expect(sealedWake?.fetchRequired == true)
+    #expect(sealedWake?.inlineCiphertext == nil)
+    #expect(sealedWake?.recipientAccountHash == coordinator.accountDidHash)
+    #expect(
+      MLSPushExtensionProcessor.decodePushWakePayload(
+        from: sealedUserInfo,
+        wakeKeys: StubPushWakeKeys(record: nil)
+      ) == nil
+    )
+
     await coordinator.close()
   }
 
@@ -376,6 +481,78 @@ struct MLSCleanSlateDataSourceAndGateTests {
     )
     await dataSource.loadMessages()
     #expect(appState.mlsSyncIncompleteConversationIDs.isEmpty)
+    dataSource.stopObserving()
+    await coordinator.close()
+  }
+
+  @Test("T7-SEND-RETRY-1: retryFailedSend preserves identical clientMessageID across failure and recovery")
+  @MainActor
+  func retryFailedSendPreservesIdempotentClientMessageID() async throws {
+    let network = NativeArchiveMockNetwork.shared
+    network.reset()
+    let tempRoot = try makeTempStorageRoot()
+    defer { archiveTempStorageRoot(tempRoot) }
+
+    let accountDid = "did:plc:tsevsendretryuseraaaaaaa"
+    let deviceId = "22222222-3333-4444-8555-666666666666"
+    let coordinator = try await MLSClientCoordinator.open(
+      config: CatbirdMlsClientConfig(
+        storageRoot: tempRoot.path,
+        accountDid: accountDid,
+        deviceId: deviceId,
+        homeDsDid: NativeArchiveMockNetwork.dsDid,
+        homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+        pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)
+      ),
+      keystore: InMemoryKeyStore(),
+      transport: makeMockTransport(network: network, accountDid: accountDid, deviceId: deviceId)
+    )
+    _ = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
+
+    let conversationId = UUID().uuidString.lowercased()
+    _ = try await coordinator.createGroup(
+      conversationId: conversationId,
+      sequencerDid: NativeArchiveMockNetwork.dsDid,
+      title: "Retry Idempotency",
+      description: nil
+    )
+
+    let dataSource = MLSConversationDataSource(
+      conversationId: conversationId,
+      currentUserDID: accountDid,
+      appState: nil,
+      mlsCoordinator: coordinator
+    )
+    await dataSource.loadMessages()
+
+    // Simulate transient background/handle suspension causing send attempt #1 to fail.
+    _ = try await coordinator.prepareForBackground()
+    await dataSource.sendMessage(text: "Idempotent retry message")
+    #expect(dataSource.pendingSends.count == 1)
+    let firstPending = try #require(dataSource.pendingSends.first)
+    let originalClientMessageID = firstPending.clientMessageID
+    #expect(!originalClientMessageID.isEmpty)
+    if case .failed = firstPending.state {
+      // Expected failed state on attempt #1
+    } else {
+      Issue.record("Expected failed state on attempt #1, got \(firstPending.state)")
+    }
+
+    // Retry #1 while still suspended: must keep the exact same clientMessageID.
+    await dataSource.retryFailedSend(pendingID: firstPending.id)
+    #expect(dataSource.pendingSends.count == 1)
+    let secondPending = try #require(dataSource.pendingSends.first)
+    #expect(secondPending.clientMessageID == originalClientMessageID)
+
+    // Resume coordinator and retry #2: committed SQLite row must carry originalClientMessageID.
+    try await coordinator.resumeFromBackground()
+    await dataSource.retryFailedSend(pendingID: secondPending.id)
+
+    let persisted = try await coordinator.listMessages(conversationId: conversationId, limit: 10)
+    #expect(persisted.count == 1)
+    #expect(persisted.first?.messageId == originalClientMessageID)
+    #expect(dataSource.messages.first?.id == originalClientMessageID)
+
     dataSource.stopObserving()
     await coordinator.close()
   }

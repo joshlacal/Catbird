@@ -67,6 +67,17 @@ extension PostComposerViewUIKit {
       .background(Color.red.opacity(0.08))
       .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
       .accessibilityElement(children: .combine)
+      if vm.inlineKeyRefreshCircle != nil {
+        Button {
+          Task { await vm.refreshDestinationKeys() }
+        } label: {
+          Label("Refresh", systemImage: "arrow.clockwise")
+            .appFont(AppTextRole.caption)
+        }
+        .buttonStyle(.borderless)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("composer.encryptionKeysRefresh")
+      }
     }
   }
 

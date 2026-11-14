@@ -109,7 +109,7 @@ struct CatbirdGatewayConfigurationTests {
       "Catbird/Features/Notifications/Services/NotificationManager.swift":
         "notificationServiceDIDString: String = CatbirdGatewayConfiguration.current.serviceDID",
       "Catbird/AppIntents/Support/IntentClientProvider.swift":
-        "gatewayURL: CatbirdGatewayConfiguration.current.origin",
+        "petrelGateway(origin: CatbirdGatewayConfiguration.current.origin)",
     ]
 
     for (path, fragment) in expectedFragments {

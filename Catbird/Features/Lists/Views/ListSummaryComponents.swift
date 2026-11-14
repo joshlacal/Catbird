@@ -247,7 +247,7 @@ private func previewList(
   else { return nil }
   return AppBskyGraphDefs.ListView(
     uri: uri,
-    cid: CID.fromDAGCBOR(Data(name.utf8)),
+    cid: CIDString(CID.fromDAGCBOR(Data(name.utf8))),
     creator: AppBskyActorDefs.ProfileView(did: did, handle: handle),
     name: name,
     purpose: purpose,

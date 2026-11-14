@@ -46,7 +46,7 @@ final class NotificationParityTests: XCTestCase {
 
     return AppBskyNotificationListNotifications.Notification(
       uri: uri,
-      cid: cid,
+      cid: CIDString(cid),
       author: author,
       reason: reason,
       reasonSubject: reasonSubject,

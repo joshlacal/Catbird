@@ -179,7 +179,7 @@ struct BlueskyConversationDisplayTests {
     let listCid = try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")
     let listBasic = AppBskyGraphDefs.ListViewBasic(
       uri: listUri,
-      cid: listCid,
+      cid: CIDString(listCid),
       name: "Trolls List",
       purpose: .appbskygraphdefsmodlist,
       avatar: nil,

@@ -20,12 +20,16 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   @Environment(AppState.self) private var appState: AppState?
   @State private var status: LabyrinthBackupStatus?
+  @State private var isPendingDeviceApproval = false
   @State private var fetchedDeviceMetadataByID: [String: DeviceRowModel] = [:]
   @State private var isLoading = false
   @State private var generatedRecoveryCode: String?
   @State private var restoreCodeInput = ""
   @State private var activeOtcOffer: OtcPairingOffer?
+  @State private var initiatedOtcSession: OtcInitiatedSession?
   @State private var joinOtcCodeInput = ""
+  @State private var respondOtcSessionIdInput = ""
+  @State private var respondOtcCodeInput = ""
   @State private var lastOtcCompletion: OtcPairingCompletion?
   @State private var importConversationId = ""
   @State private var importedCount: UInt32?
@@ -37,6 +41,17 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   var body: some View {
     Form {
+      if isPendingDeviceApproval {
+        Section {
+          Label(
+            "This device is pending approval. Approve it from an already-authorized device in Devices, or complete 6-digit OTC pairing below.",
+            systemImage: "lock.trianglebadge.exclamationmark.fill"
+          )
+          .foregroundStyle(.orange)
+          .font(.footnote)
+        }
+        .accessibilityIdentifier("labyrinth-device-pending-approval-banner")
+      }
       backupStatusSection
       recoveryWarningsSection
       recoveryCodeSection
@@ -229,6 +244,14 @@ struct LabyrinthSettingsAndRestoreView: View {
       }
       .disabled(coordinator == nil || isLoading)
       .accessibilityIdentifier("labyrinth-register-passkey-prf")
+
+      Button {
+        self.restoreFromPasskeyPrf()
+      } label: {
+        Label("Restore Backup with Passkey PRF", systemImage: "key.icloud.fill")
+      }
+      .disabled(coordinator == nil || isLoading)
+      .accessibilityIdentifier("labyrinth-restore-passkey-prf")
     }
   }
 
@@ -261,12 +284,62 @@ struct LabyrinthSettingsAndRestoreView: View {
         .accessibilityIdentifier("labyrinth-join-otc-input")
 
       Button {
+        self.startLiveOtcSession()
+      } label: {
+        Label("Start Multi-Device OTC Session", systemImage: "antenna.radiowaves.left.and.right")
+      }
+      .disabled(coordinator == nil || isLoading || joinOtcCodeInput.filter(\.isNumber).count != 6)
+      .accessibilityIdentifier("labyrinth-start-live-otc-session")
+
+      if let initiatedOtcSession {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Session ID (enter on authorized device):")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(initiatedOtcSession.sessionIdHex)
+            .font(.caption2.monospaced())
+            .textSelection(.enabled)
+            .accessibilityIdentifier("labyrinth-otc-session-id")
+        }
+      }
+
+      Button {
         self.completeOtcJoin()
       } label: {
         Label("Pair Device with 6-Digit Code", systemImage: "link.badge.plus")
       }
       .disabled(coordinator == nil || isLoading || joinOtcCodeInput.filter(\.isNumber).count != 6)
       .accessibilityIdentifier("labyrinth-complete-otc")
+
+      Divider()
+
+      TextField("Responder Session ID (hex)", text: $respondOtcSessionIdInput)
+        .font(.caption.monospaced())
+        .autocorrectionDisabled()
+        #if os(iOS)
+        .textInputAutocapitalization(.never)
+        #endif
+        .accessibilityIdentifier("labyrinth-respond-otc-session-input")
+
+      TextField("Responder 6-digit code", text: $respondOtcCodeInput)
+        .font(.body.monospaced())
+        #if os(iOS)
+        .keyboardType(.numberPad)
+        #endif
+        .accessibilityIdentifier("labyrinth-respond-otc-code-input")
+
+      Button {
+        self.respondToLiveOtcSession()
+      } label: {
+        Label("Approve Pairing Session (Authorized Device)", systemImage: "checkmark.shield.fill")
+      }
+      .disabled(
+        coordinator == nil
+          || isLoading
+          || respondOtcSessionIdInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          || respondOtcCodeInput.filter(\.isNumber).count != 6
+      )
+      .accessibilityIdentifier("labyrinth-respond-otc-button")
 
       if let lastOtcCompletion {
         Text("Paired with hybrid CPace + ML-KEM-768 (Epoch \(lastOtcCompletion.newEpochSeq)).")
@@ -436,9 +509,20 @@ struct LabyrinthSettingsAndRestoreView: View {
   // MARK: - Actions
 
   private func refreshDeviceMetadata() async {
-    guard let appState, appState.client != nil else { return }
-    let actorDeviceId = resolvedCurrentDeviceId ?? appState.resolvedMLSDeviceID()
-    guard !actorDeviceId.isEmpty else { return }
+    let actorDeviceId = resolvedCurrentDeviceId ?? appState?.resolvedMLSDeviceID() ?? ""
+    if let coordinator, let coordDevices = try? await coordinator.listDevices(), !coordDevices.isEmpty {
+      var mapped: [String: DeviceRowModel] = [:]
+      for dev in coordDevices {
+        let row = DeviceRowModel(dev, currentDeviceId: actorDeviceId)
+        let key = row.deviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !key.isEmpty {
+          mapped[key] = row
+        }
+      }
+      self.fetchedDeviceMetadataByID = mapped
+      return
+    }
+    guard let appState, appState.client != nil, !actorDeviceId.isEmpty else { return }
     do {
       guard let mlsClient = await appState.getMLSAPIClient() else { return }
       if let output = try await mlsClient.getOwnDevices(actorDeviceId: actorDeviceId) {
@@ -458,6 +542,7 @@ struct LabyrinthSettingsAndRestoreView: View {
     defer { self.isLoading = false }
     do {
       self.status = try await coordinator.labyrinthStatus()
+      self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
       self.errorMessage = nil
     } catch {
       self.logger.error("Failed to fetch Labyrinth status: \(error.localizedDescription)")
@@ -538,6 +623,36 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
+  private func restoreFromPasskeyPrf() {
+    guard let coordinator else { return }
+    self.isLoading = true
+    Task { @MainActor in
+      defer { self.isLoading = false }
+      do {
+        guard #available(iOS 18.0, macOS 15.0, *) else {
+          throw LabyrinthPasskeyRegistrationError.unsupportedPlatform
+        }
+        guard let anchor = labyrinthPasskeyPresentationAnchor() else {
+          throw LabyrinthPasskeyRegistrationError.missingPresentationAnchor
+        }
+        let asserter = LabyrinthPasskeyAsserter(anchor: anchor)
+        let passkey = try await asserter.authenticate(accountDid: coordinator.accountDid)
+        let restored = try await coordinator.restoreWithPasskeyPrf(
+          credentialId: passkey.credentialID,
+          prfOutput32: passkey.prfOutput
+        )
+        self.status = restored
+        self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
+        self.statusBanner = "Restored Labyrinth backup using Passkey PRF."
+        self.warningBanner = nil
+        self.errorMessage = nil
+        await self.refreshDeviceMetadata()
+      } catch {
+        self.errorMessage = error.localizedDescription
+      }
+    }
+  }
+
   private func startOtcOffer() {
     guard let coordinator else { return }
     self.isLoading = true
@@ -547,6 +662,46 @@ struct LabyrinthSettingsAndRestoreView: View {
         self.activeOtcOffer = try await coordinator.initiateOtcPairing()
         self.joinOtcCodeInput = self.activeOtcOffer?.sixDigitCode ?? ""
         self.errorMessage = nil
+      } catch {
+        self.errorMessage = error.localizedDescription
+      }
+    }
+  }
+
+  private func startLiveOtcSession() {
+    guard let coordinator else { return }
+    let digits = self.joinOtcCodeInput.filter(\.isNumber)
+    guard digits.count == 6 else { return }
+    self.isLoading = true
+    Task { @MainActor in
+      defer { self.isLoading = false }
+      do {
+        let session = try await coordinator.startOtcPairing(sixDigitCode: digits)
+        self.initiatedOtcSession = session
+        self.statusBanner = "Started OTC pairing session. Approve it on an authorized device."
+        self.errorMessage = nil
+      } catch {
+        self.errorMessage = error.localizedDescription
+      }
+    }
+  }
+
+  private func respondToLiveOtcSession() {
+    guard let coordinator else { return }
+    let sessionId = self.respondOtcSessionIdInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    let digits = self.respondOtcCodeInput.filter(\.isNumber)
+    guard !sessionId.isEmpty, digits.count == 6 else { return }
+    self.isLoading = true
+    Task { @MainActor in
+      defer { self.isLoading = false }
+      do {
+        try await coordinator.respondOtcPairing(sessionIdHex: sessionId, sixDigitCode: digits)
+        self.respondOtcSessionIdInput = ""
+        self.respondOtcCodeInput = ""
+        self.status = try await coordinator.labyrinthStatus()
+        self.statusBanner = "Approved OTC pairing session and sealed epoch keys."
+        self.errorMessage = nil
+        await self.refreshDeviceMetadata()
       } catch {
         self.errorMessage = error.localizedDescription
       }
@@ -563,7 +718,9 @@ struct LabyrinthSettingsAndRestoreView: View {
       do {
         let completion = try await coordinator.completeOtcPairing(sixDigitCode: digits)
         self.lastOtcCompletion = completion
+        self.initiatedOtcSession = nil
         self.status = try await coordinator.labyrinthStatus()
+        self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
         self.statusBanner = "Device paired at Labyrinth epoch \(completion.newEpochSeq)."
         self.errorMessage = nil
         await self.refreshDeviceMetadata()
@@ -588,7 +745,12 @@ struct LabyrinthSettingsAndRestoreView: View {
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
-        self.status = try await coordinator.revokeLabyrinthDevice(targetDeviceId: targetDeviceId)
+        do {
+          _ = try await coordinator.revokeDevice(targetDeviceId: targetDeviceId)
+          self.status = try await coordinator.labyrinthStatus()
+        } catch {
+          self.status = try await coordinator.revokeLabyrinthDevice(targetDeviceId: targetDeviceId)
+        }
         self.fetchedDeviceMetadataByID.removeValue(
           forKey: targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         )
@@ -614,11 +776,16 @@ struct LabyrinthSettingsAndRestoreView: View {
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
-        let existing = try await coordinator.listMessages(conversationId: convoId, limit: 200)
-        self.importedCount = try await coordinator.importConversationHistory(
-          conversationId: convoId,
-          messages: existing
-        )
+        let reindexed = try await coordinator.verifyAndReindexHistory(conversationId: convoId)
+        if reindexed > 0 {
+          self.importedCount = reindexed
+        } else {
+          let existing = try await coordinator.listMessages(conversationId: convoId, limit: 200)
+          self.importedCount = try await coordinator.importConversationHistory(
+            conversationId: convoId,
+            messages: existing
+          )
+        }
         self.statusBanner = "Verified \(self.importedCount ?? 0) messages in \(convoId)."
         self.errorMessage = nil
       } catch {
@@ -729,6 +896,95 @@ private final class LabyrinthPasskeyRegistrar: NSObject,
       self.finish(.failure(LabyrinthPasskeyRegistrationError.prfUnsupported))
       return
     }
+    let output = first.withUnsafeBytes { Data($0) }
+    guard output.count == 32, !credential.credentialID.isEmpty else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.invalidCredential))
+      return
+    }
+    self.finish(
+      .success(Result(credentialID: credential.credentialID, prfOutput: output))
+    )
+  }
+
+  func authorizationController(
+    controller: ASAuthorizationController,
+    didCompleteWithError error: Error
+  ) {
+    self.finish(.failure(error))
+  }
+
+  private func finish(_ result: Swift.Result<Result, Error>) {
+    guard let continuation else { return }
+    self.continuation = nil
+    self.controller = nil
+    continuation.resume(with: result)
+  }
+}
+
+@available(iOS 18.0, macOS 15.0, *)
+@MainActor
+private final class LabyrinthPasskeyAsserter: NSObject,
+  ASAuthorizationControllerDelegate,
+  ASAuthorizationControllerPresentationContextProviding
+{
+  struct Result {
+    let credentialID: Data
+    let prfOutput: Data
+  }
+
+  private let anchor: ASPresentationAnchor
+  private var continuation: CheckedContinuation<Result, Error>?
+  private var controller: ASAuthorizationController?
+
+  init(anchor: ASPresentationAnchor) {
+    self.anchor = anchor
+    super.init()
+  }
+
+  func authenticate(accountDid: String) async throws -> Result {
+    let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
+      relyingPartyIdentifier: "catbird.blue"
+    )
+    let challengeKey = SymmetricKey(size: .bits256)
+    let challenge = challengeKey.withUnsafeBytes { Data($0) }
+    let request = provider.createCredentialAssertionRequest(challenge: challenge)
+    let salt = Data(
+      SHA256.hash(
+        data: Data("catbird.labyrinth.passkey-recovery.v1:\(accountDid)".utf8)
+      )
+    )
+    request.prf = .inputValues(.init(saltInput1: salt))
+
+    return try await withCheckedThrowingContinuation { continuation in
+      self.continuation = continuation
+      let controller = ASAuthorizationController(authorizationRequests: [request])
+      self.controller = controller
+      controller.delegate = self
+      controller.presentationContextProvider = self
+      controller.performRequests()
+    }
+  }
+
+  func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+    self.anchor
+  }
+
+  func authorizationController(
+    controller: ASAuthorizationController,
+    didCompleteWithAuthorization authorization: ASAuthorization
+  ) {
+    guard
+      let credential =
+        authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion
+    else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.invalidCredential))
+      return
+    }
+    guard let prf = credential.prf else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.prfUnsupported))
+      return
+    }
+    let first = prf.first
     let output = first.withUnsafeBytes { Data($0) }
     guard output.count == 32, !credential.credentialID.isEmpty else {
       self.finish(.failure(LabyrinthPasskeyRegistrationError.invalidCredential))

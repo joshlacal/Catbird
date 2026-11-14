@@ -631,7 +631,7 @@ struct PrivacySecuritySettingsView: View {
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(updatedProfile),
-            swapRecord: record.cid
+            swapRecord: record.cid.map { .value($0) }
         )
         let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
         guard code == 200 else { throw visibilityError("Profile update failed (\(code)).") }

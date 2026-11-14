@@ -196,7 +196,7 @@ struct FeedRefreshCompletionTests {
           tags: nil, createdAt: timestamp)
         let post = AppBskyFeedDefs.PostView(
           uri: try ATProtocolURI(uriString: "at://did:plc:refreshfixtureauthor/app.bsky.feed.post/\(prefix)\(index)"),
-          cid: CID.fromDAGCBOR(Data("\(prefix)-\(index)".utf8)), author: author,
+          cid: CIDString(CID.fromDAGCBOR(Data("\(prefix)-\(index)".utf8))), author: author,
           record: .knownType(record), embed: nil, bookmarkCount: nil,
           replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
           indexedAt: timestamp, viewer: nil, labels: nil, threadgate: nil, debug: nil)

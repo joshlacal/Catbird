@@ -1186,7 +1186,7 @@ struct ContentWarningCellResizeTests {
     let author = try F.profile(did: "did:plc:shared")
     let postView = AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: sharedPostID),
-      cid: CID.fromDAGCBOR(Data("cid-shared".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("cid-shared".utf8))),
       author: author,
       record: .knownType(postRecord),
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0))

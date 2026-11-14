@@ -27,6 +27,8 @@ struct NewConversationView: View {
   @State private var errorTitle = "Couldn’t Start Conversation"
   @State private var errorMessage: String?
   @State private var isCheckingExisting = false
+  @State private var pendingGroupCreation: PendingGroupCreationStatus?
+  @State private var isMutatingPendingGroup = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NewConversation")
 
@@ -84,6 +86,16 @@ struct NewConversationView: View {
         } else {
           VStack(spacing: 0) {
             segmentedPicker
+            if let pendingGroupCreation, mode == .catbirdGroup {
+              MLSPendingGroupCreationBanner(
+                status: pendingGroupCreation,
+                isBusy: isMutatingPendingGroup || isCreating,
+                onRetry: { Task { await retryPendingMLSGroup(pendingGroupCreation) } },
+                onCancel: { Task { await cancelPendingMLSGroup(pendingGroupCreation) } }
+              )
+              .padding(.horizontal, 16)
+              .padding(.vertical, 8)
+            }
             mainContent
           }
         }
@@ -522,9 +534,9 @@ struct NewConversationView: View {
     defer { isCreating = false }
     step = .creating
 
+    let conversationID = UUID().uuidString.lowercased()
     do {
       creationProgress = "Setting up secure group..."
-      let conversationID = UUID().uuidString.lowercased()
       let created = try await mlsCoordinator.createGroup(
         conversationId: conversationID,
         sequencerDid: appState.defaultMLSSequencerDID,
@@ -533,6 +545,7 @@ struct NewConversationView: View {
         description: nil
       )
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+      pendingGroupCreation = nil
 
       if !noteSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         let notes = MLSGroupInvitationNotes(
@@ -555,11 +568,49 @@ struct NewConversationView: View {
     } catch {
       guard !Task.isCancelled, !(error is CancellationError), AppStateManager.shared.lifecycle.userDID == accountDID else { return }
       logger.error("Failed to create MLS conversation: \(error.localizedDescription)")
+      if let pending = try? await mlsCoordinator.pendingGroupCreationStatus(conversationId: conversationID) {
+        pendingGroupCreation = pending
+      }
       errorMessage = error.localizedDescription
       showingError = true
       step = selectedDIDs.count == 1 ? .selectContacts : .configureGroup
     }
 
     isCreating = false
+  }
+
+  @MainActor
+  private func retryPendingMLSGroup(_ pending: PendingGroupCreationStatus) async {
+    guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else { return }
+    isMutatingPendingGroup = true
+    defer { isMutatingPendingGroup = false }
+    do {
+      if let created = try await mlsCoordinator.retryPendingGroupCreation(conversationId: pending.conversationId) {
+        pendingGroupCreation = nil
+        await appState.reloadMLSConversations()
+        logger.info("Recovered pending MLS group creation \(created.conversationId)")
+        dismiss()
+      } else {
+        pendingGroupCreation = try? await mlsCoordinator.pendingGroupCreationStatus(conversationId: pending.conversationId)
+      }
+    } catch {
+      pendingGroupCreation = try? await mlsCoordinator.pendingGroupCreationStatus(conversationId: pending.conversationId)
+      errorMessage = error.localizedDescription
+      showingError = true
+    }
+  }
+
+  @MainActor
+  private func cancelPendingMLSGroup(_ pending: PendingGroupCreationStatus) async {
+    guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else { return }
+    isMutatingPendingGroup = true
+    defer { isMutatingPendingGroup = false }
+    do {
+      _ = try await mlsCoordinator.cancelPendingGroupCreation(conversationId: pending.conversationId)
+      pendingGroupCreation = nil
+    } catch {
+      errorMessage = error.localizedDescription
+      showingError = true
+    }
   }
 }

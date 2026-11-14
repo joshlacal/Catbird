@@ -1256,23 +1256,23 @@ struct CircleNotificationTests {
         let familyURI = E2EConstants.familyPostURI
         let aliceOnlyURI = E2EConstants.aliceOnlyPostURI
         let item1 = BlueCatbirdCircleDefs.FeedItem(
-          post: AppBskyFeedDefs.FeedViewPost(
+          post: .init(AppBskyFeedDefs.FeedViewPost(
             post: CircleTestFixtures.makePostView(uri: familyURI, text: "Family Post"),
             reply: nil,
             reason: nil,
             feedContext: nil,
             reqId: nil
-          ),
+          )),
           circle: CircleTestFixtures.family
         )
         let item2 = BlueCatbirdCircleDefs.FeedItem(
-          post: AppBskyFeedDefs.FeedViewPost(
+          post: .init(AppBskyFeedDefs.FeedViewPost(
             post: CircleTestFixtures.makePostView(uri: aliceOnlyURI, text: "Alice Only Post"),
             reply: nil,
             reason: nil,
             feedContext: nil,
             reqId: nil
-          ),
+          )),
           circle: CircleTestFixtures.work
         )
         if accountDID == E2EConstants.aliceDIDString {
@@ -1359,7 +1359,7 @@ struct CircleNotificationTests {
     )
     #expect(!feedModel1.isInvalidated)
     try await feedModel1.load()
-    #expect(feedModel1.items.contains { $0.post.post.uri == E2EConstants.familyPostURI })
+    #expect(feedModel1.items.contains { $0.post.feedViewPost!.post.uri == E2EConstants.familyPostURI })
 
     // Switch to Bob via public AppStateManager.switchAccount entry point
     await appStateManager.switchAccount(to: bobDID)
@@ -1402,8 +1402,8 @@ struct CircleNotificationTests {
     )
     #expect(!bobFeedModel.isInvalidated)
     try await bobFeedModel.load()
-    #expect(bobFeedModel.items.contains { $0.post.post.uri == E2EConstants.familyPostURI })
-    #expect(!bobFeedModel.items.contains { $0.post.post.uri == E2EConstants.aliceOnlyPostURI })
+    #expect(bobFeedModel.items.contains { $0.post.feedViewPost!.post.uri == E2EConstants.familyPostURI })
+    #expect(!bobFeedModel.items.contains { $0.post.feedViewPost!.post.uri == E2EConstants.aliceOnlyPostURI })
 
     // Switch back to Alice via public AppStateManager.switchAccount entry point
     await appStateManager.switchAccount(to: aliceDID)
@@ -1435,8 +1435,8 @@ struct CircleNotificationTests {
     #expect(feedModel2 !== feedModel1)
     #expect(!feedModel2.isInvalidated)
     try await feedModel2.load()
-    #expect(feedModel2.items.contains { $0.post.post.uri == E2EConstants.familyPostURI })
-    #expect(feedModel2.items.contains { $0.post.post.uri == E2EConstants.aliceOnlyPostURI })
+    #expect(feedModel2.items.contains { $0.post.feedViewPost!.post.uri == E2EConstants.familyPostURI })
+    #expect(feedModel2.items.contains { $0.post.feedViewPost!.post.uri == E2EConstants.aliceOnlyPostURI })
 
     // Old model1 and feedModel1 remain permanently inert
     #expect(model1.isInvalidated)

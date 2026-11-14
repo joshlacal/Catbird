@@ -223,7 +223,7 @@ final class SceneRuntimeHostingTests: XCTestCase {
       convoId: "offline-\(context.sceneID.uuidString)",
       postRef: ComAtprotoRepoStrongRef(
         uri: try ATProtocolURI(uriString: "at://did:plc:sceneruntimefixturetesta/app.bsky.feed.post/scene1"),
-        cid: CID.fromDAGCBOR(Data("scene-runtime-fixture".utf8))
+        cid: CIDString(CID.fromDAGCBOR(Data("scene-runtime-fixture".utf8)))
       ),
       previewEmbed: ChatSharedPostPreview(authorDisplayName: "Offline", authorHandle: "offline.test", text: "Unsent share")
     )

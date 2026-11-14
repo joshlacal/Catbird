@@ -297,7 +297,7 @@ private extension NotificationListVisibilityPolicyTests {
     let subject = try reasonSubject.map { try ATProtocolURI(uriString: $0) }
     return AppBskyNotificationListNotifications.Notification(
       uri: try ATProtocolURI(uriString: "at://did:plc:author1/app.bsky.feed.post/\(token)"),
-      cid: try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"),
+      cid: CIDString(try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")),
       author: author,
       reason: reason,
       reasonSubject: subject,
@@ -322,7 +322,7 @@ private extension NotificationListVisibilityPolicyTests {
   func makePost(token: String) throws -> AppBskyFeedDefs.PostView {
     AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:author1/app.bsky.feed.post/\(token)"),
-      cid: try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"),
+      cid: CIDString(try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")),
       author: AppBskyActorDefs.ProfileViewBasic(
         did: try DID(didString: "did:plc:author1"),
         handle: try Handle(handleString: "author1.bsky.social")

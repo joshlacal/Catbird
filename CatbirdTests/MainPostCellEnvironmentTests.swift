@@ -210,7 +210,7 @@ struct MainPostCellEnvironmentTests {
     )
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:mainpostauthor/app.bsky.feed.post/images-\(imageCount)"),
-      cid: CID.fromDAGCBOR(Data("main-post-images-\(imageCount)".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("main-post-images-\(imageCount)".utf8))),
       author: try makeAuthor(),
       record: .knownType(record),
       embed: .appBskyEmbedImagesView(.init(images: images)),

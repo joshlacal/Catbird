@@ -52,7 +52,7 @@ struct NotificationPaginationModerationTests {
       did: try DID(didString: did), handle: try Handle(handleString: "\(name).test"), displayName: name, labels: labels)
     let uri = "at://\(did)/app.bsky.feed.post/mention"
     return Notification(
-      uri: try ATProtocolURI(uriString: uri), cid: CID.fromDAGCBOR(Data(uri.utf8)), author: author, reason: "mention",
+      uri: try ATProtocolURI(uriString: uri), cid: CIDString(CID.fromDAGCBOR(Data(uri.utf8))), author: author, reason: "mention",
       record: .object([:]), isRead: false,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 1_700_000_000 - offset)))
   }

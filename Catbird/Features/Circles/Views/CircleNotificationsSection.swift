@@ -123,7 +123,9 @@ struct CircleNotificationsSection: View {
       return "Authentication required to view Circle activity."
     case .notAuthorized:
       return "Not authorized to view Circle activity."
-    case .networkError, .clientNotInitialized, .invalidResponse, .missingLikeUri, .spaceWriteRejected, .invalidParameter:
+    case .networkError, .clientNotInitialized, .invalidResponse, .missingLikeUri, .spaceWriteRejected, .invalidParameter,
+      .keyVersionConflict, .encryptionUnavailable, .ineligibleMember, .ownerMismatch, .keysTemporarilyUnavailable,
+      .keyStoreUnavailable:
       return "Unable to load Circle activity. Please check your connection and try again."
     }
   }

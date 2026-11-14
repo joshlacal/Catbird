@@ -338,7 +338,7 @@ final class ListManager {
           rkey: try RecordKey(keyString: uri.recordKey ?? ""),
           validate: true,
           record: ATProtocolValueContainer.knownType(updatedRecord),
-          swapRecord: recordData.cid
+          swapRecord: recordData.cid.map { .value($0) }
         )
       )
       

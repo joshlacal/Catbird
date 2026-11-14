@@ -193,13 +193,13 @@ actor IntentClientProvider {
       client = try await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
-        authMode: .gateway,
-        gatewayURL: CatbirdGatewayConfiguration.current.origin,
+        authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: CatbirdGatewayConfiguration.current.origin)),
         userAgent: "Catbird/1.0",
         bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
         bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
         accessGroup: accessGroup
       )
+      await client.networkService.setRequestIDHeader(name: "X-Catbird-Request-Id")
     } catch {
       logger.error(
         "❌ [Intents] Failed to create ATProtoClient: \(error.localizedDescription)")

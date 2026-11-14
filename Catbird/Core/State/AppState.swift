@@ -954,6 +954,8 @@ final class AppState {
         _circleNotificationsModel = nil
         _circleNotificationService = nil
         _circleService = nil
+        circleEncryptionCache.reset()
+        circleOpenerCache.reset()
         circleCapabilityProbeID = nil
         circleCapability = .unknown
 
@@ -1120,6 +1122,8 @@ final class AppState {
         _circleNotificationsModel = nil
         _circleNotificationService = nil
         _circleService = nil
+        circleEncryptionCache.reset()
+        circleOpenerCache.reset()
         circleCapabilityProbeID = nil
         circleCapability = .unknown
         #if DEBUG
@@ -1323,12 +1327,94 @@ final class AppState {
             if let _circleService {
                 return _circleService
             }
-            let service = CircleService(transport: GatewayCircleTransport(client: client))
+            let service = CircleService(
+                transport: GatewayCircleTransport(client: client),
+                encryption: { [weak self] in await self?.circleEncryptionContext() }
+            )
             _circleService = service
             return service
         }
         set {
             _circleService = newValue
+        }
+    }
+
+    /// I5: one context (so one `CircleKeyManager` and one `CircleKeyStore`)
+    /// per live coordinator, held weakly and matched by identity.
+    @ObservationIgnored private let circleEncryptionCache = CircleCoordinatorCache<CircleEncryptionContext>()
+
+    /// This account's encrypted-Circle machinery (one `CircleKeyManager`, so its
+    /// queue serializes every key operation), created once the MLS client is
+    /// up. Nil until then: posting to an encrypted Circle fails closed with
+    /// `CircleError.encryptionUnavailable`. Reset with `_circleService`.
+    @MainActor
+    func circleEncryptionContext() -> CircleEncryptionContext? {
+        guard let coordinator = mlsCoordinator, !coordinator.isHandleClosed,
+              let accountDID = try? DID(didString: userDID)
+        else { return nil }
+        if let cached = circleEncryptionCache.cached(for: coordinator) {
+            return cached
+        }
+        let crypto = coordinator.circleCrypto()
+        let manager = CircleKeyManager(
+            crypto: crypto,
+            // I5: the account's one store, shared with every manager made for
+            // this DID (including one a closed coordinator still holds).
+            store: CircleKeyStoreRegistry.shared.store(accountDID: userDID) { SystemCircleKeychain() },
+            transport: GatewayCircleTransport(client: client),
+            ownerDID: accountDID,
+            ownerStateSync: CoordinatorCircleOwnerStateSync(coordinator: coordinator)
+        )
+        let context = CircleEncryptionContext(
+            keyManager: manager,
+            crypto: crypto,
+            accountDID: accountDID,
+            mailboxEnrolled: { [weak coordinator] in
+                // I9: a failed or impossible check throws (→ `.checkFailed`,
+                // Create stops); only a successful read can say "not enrolled".
+                guard let coordinator else { throw CircleError.clientNotInitialized }
+                let status = try await coordinator.labyrinthStatus()
+                return !status.mailboxSpaceUri.isEmpty
+            }
+        )
+        return circleEncryptionCache.value(for: coordinator) { context }
+    }
+
+    @ObservationIgnored private let circleOpenerCache = CircleCoordinatorCache<CirclePostOpener>()
+
+    /// This account's encrypted-Circle post opener, shared by Circle feeds and
+    /// threads so its concurrency bound (2 opens) and memo are per account.
+    /// Nil until the MLS client is up (encrypted posts then show as
+    /// unreadable). Reset with `_circleService`.
+    @MainActor
+    func circlePostOpener() -> CirclePostOpener? {
+#if DEBUG
+        if let e2eCircleOpener { return e2eCircleOpener }
+#endif
+        guard let context = circleEncryptionContext(), let coordinator = mlsCoordinator else { return nil }
+        let client = self.client
+        let accountDID = userDID
+        return circleOpenerCache.value(for: coordinator) {
+            CirclePostOpener(
+                crypto: context.crypto,
+                keys: context.keyManager,
+                epochs: RepoAuthorEpochResolver.live(client: client),
+                accountDID: accountDID
+            )
+        }
+    }
+
+    /// Resolves a DID's handle (the Circle owner on a "waiting for access" row).
+    var circleOwnerHandleResolver: @Sendable (DID) async -> String? {
+        let client = self.client
+        return { did in
+            guard let actor = try? ATIdentifier(string: did.didString()),
+                  let (code, profile) = try? await client.app.bsky.actor.getProfile(
+                    input: AppBskyActorGetProfile.Parameters(actor: actor)
+                  ),
+                  code == 200, let profile
+            else { return nil }
+            return profile.handle.description
         }
     }
 
@@ -1371,13 +1457,22 @@ final class AppState {
 
 #if DEBUG
     @ObservationIgnored var e2eCircleTransport: E2ECircleTransport?
+    /// `--e2e-encrypted-circles`: the fixture's opener over fake crypto.
+    @ObservationIgnored var e2eCircleOpener: CirclePostOpener?
 
     @MainActor
     func installE2ECircleFixture(transport: E2ECircleTransport) {
         self.circleCapability = ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds") ? .unsupported : .supported
         self.circleSupportsImages = self.circleCapability == .supported && !ProcessInfo.processInfo.arguments.contains("--circles-images-unavailable")
         self.e2eCircleTransport = transport
-        let service = CircleService(transport: transport)
+        let service: CircleService
+        if E2EEncryptedCircleFixture.isEnabled, let accountDID = try? DID(didString: userDID) {
+            let machinery = E2EEncryptedCircleFixture.make(accountDID: accountDID, transport: transport)
+            service = machinery.service
+            self.e2eCircleOpener = machinery.opener
+        } else {
+            service = CircleService(transport: transport)
+        }
         self.circleService = service
         self.circleNotificationsModel = CircleNotificationsModel(
             service: CircleNotificationService(service: service),
@@ -1657,12 +1752,13 @@ final class AppState {
                     atProtoClient: activeClient,
                     homeDsEndpoint: environment.endpointURL,
                     homeDsDid: bareHomeDsDid,
+                    ownPdsEndpoint: clientBaseURL,
                     actorDeviceId: deviceId
                 )
 
                 let coordinator: MLSClientCoordinator
                 do {
-                    coordinator = try MLSClientCoordinator(
+                    coordinator = try await MLSClientCoordinator.open(
                         config: config,
                         keystore: keystore,
                         transport: transport
@@ -1675,7 +1771,7 @@ final class AppState {
                         storageRoot: storageRoot,
                         accountDid: targetUserDID
                     )
-                    coordinator = try MLSClientCoordinator(
+                    coordinator = try await MLSClientCoordinator.open(
                         config: config,
                         keystore: keystore,
                         transport: transport
@@ -1684,6 +1780,7 @@ final class AppState {
                 if let sharedDefaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) {
                     sharedDefaults.set(deviceId, forKey: "mlsDeviceId_\(coordinator.accountDidHash)")
                     sharedDefaults.set(homeDsEndpointString, forKey: "mlsHomeDsEndpoint_\(coordinator.accountDidHash)")
+                    sharedDefaults.set(pdsEndpoint, forKey: "mlsPdsEndpoint_\(coordinator.accountDidHash)")
                 }
                 coordinator.onChangeCallback = { [weak self] _ in
                     Task { @MainActor [weak self] in
@@ -1740,6 +1837,9 @@ final class AppState {
         mlsCoordinator = nil
         mlsBlockCoordinatorStorage = nil
         mlsSyncIncompleteConversationIDs = []
+        // I5: the key manager and opener belong to the coordinator being closed.
+        circleEncryptionCache.reset()
+        circleOpenerCache.reset()
         await coordinator?.close()
     }
 
@@ -1950,11 +2050,12 @@ final class AppState {
             }
             sharedDefaults?.removeObject(forKey: "mlsDeviceId_\(didHash)")
             sharedDefaults?.removeObject(forKey: "mlsHomeDsEndpoint_\(didHash)")
+            sharedDefaults?.removeObject(forKey: "mlsPdsEndpoint_\(didHash)")
             sharedDefaults?.removeObject(forKey: "blue.catbird.mls.deviceNames.\(didHash)")
         }
     }
 
-    /// Wipe local SQLCipher DB + Keychain items on sign-out (`I8`).
+    /// Wipe local SQLCipher DB + Keychain items on sign-out (`I8`), retiring only this device first (`D-5`).
     @MainActor
     func wipeMLSOnSignOut() async {
         let accountDid = userDID
@@ -1967,7 +2068,17 @@ final class AppState {
         mlsConversationsDidChange += 1
         mlsSyncIncompleteConversationIDs = []
         mlsUnreadCount = 0
+        try? await coordinator?.retireCurrentDevice()
         try? await coordinator?.signOutAndWipe()
+        circleEncryptionCache.reset()
+        circleOpenerCache.reset()
+        // Encrypted Circle keys and the pending re-wrap list live in the
+        // Keychain, not the Rust DB; wipe them with it (I8).
+        do {
+            try CircleKeyStore.wipe(accountDID: accountDid, keychain: SystemCircleKeychain())
+        } catch {
+            logger.error("Circles: key wipe on sign-out failed: \(error.localizedDescription)")
+        }
         Self.wipeLocalMLSArtifacts(for: accountDid)
         await MLSImageCache.shared.purge(for: accountDid)
     }
@@ -1998,6 +2109,10 @@ final class AppState {
                     try await coordinator.acknowledgeEntriesUpTo(
                         conversationId: row.conversationId,
                         upToSeq: targetSeq
+                    )
+                    _ = try? await coordinator.advanceReadState(
+                        conversationId: row.conversationId,
+                        candidateSeq: UInt64(targetSeq)
                     )
                 } catch {
                     allSucceeded = false
@@ -2726,6 +2841,8 @@ final class AppState {
         circleCapabilityProbeID = nil
         circleCapability = .unknown
         _circleService = nil
+        circleEncryptionCache.reset()
+        circleOpenerCache.reset()
         _circleNotificationService = nil
         _circleNotificationsModel = nil
         client = newClient

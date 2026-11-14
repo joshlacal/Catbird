@@ -150,7 +150,7 @@ struct FeedSnapshotUpdateTests {
       createdAt: nil, verification: nil, status: nil, debug: nil)
     let post = AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:fixture/app.bsky.feed.post/one"),
-      cid: CID.fromDAGCBOR(Data("cid-test".utf8)), author: author,
+      cid: CIDString(CID.fromDAGCBOR(Data("cid-test".utf8))), author: author,
       record: .knownType(record), embed: nil, bookmarkCount: nil,
       replyCount: 0, repostCount: 0, likeCount: likeCount, quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)),

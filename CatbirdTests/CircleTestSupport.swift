@@ -3,10 +3,39 @@
 //  CatbirdTests
 //
 
+import CatbirdMLSCore
 import Foundation
 import Petrel
 import PetrelCatbird
 @testable import Catbird
+
+/// What a scripted `openCircleKey` returns: the key for the record's own
+/// `keyVersion` (if openable) with the record's `circleId`/`keyVersion` as the
+/// "authenticated" identity, as the FFI returns it from the wrap's AAD.
+/// `identity` overrides that identity per version (a record whose AAD
+/// authenticates something other than its fields).
+enum ScriptedKeyOpen {
+  static func open(
+    recordJSON: String, openable: [UInt64: Data], identity: [UInt64: (circleID: String, keyVersion: UInt64)] = [:]
+  ) throws -> OpenedCircleKey? {
+    guard
+      let object = try JSONSerialization.jsonObject(with: Data(recordJSON.utf8)) as? [String: Any],
+      let version = object["keyVersion"] as? Int,
+      let key = openable[UInt64(version)]
+    else { return nil }
+    let authenticated = identity[UInt64(version)]
+      ?? (circleID: object["circleId"] as? String ?? "", keyVersion: UInt64(version))
+    return OpenedCircleKey(circleKey: key, circleID: authenticated.circleID, keyVersion: authenticated.keyVersion)
+  }
+}
+
+extension CircleRawRecordCache {
+  /// Test fixtures build typed envelopes; their "served" bytes are this
+  /// encoding, registered so the opener finds them.
+  static func registerFixture(_ record: BlueCatbirdCirclePost, uri: ATProtocolURI, cid: CID) {
+    if let raw = try? JSONEncoder().encode(record) { shared.register(raw: raw, uri: uri, cid: cid) }
+  }
+}
 
 // MARK: - Test Transport Double
 
@@ -60,6 +89,8 @@ actor MockCircleTransport: CircleTransport {
 
   func setOnMedia(_ action: (@Sendable () async -> Void)?) { onMedia = action }
 
+  func setMediaData(_ data: Data) { mediaData = data }
+
   func capabilities() async throws -> CircleCapability {
     CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
   }
@@ -102,7 +133,7 @@ actor MockCircleTransport: CircleTransport {
     )
     let post = AppBskyFeedDefs.PostView(
       uri: uri,
-      cid: CID.fromDAGCBOR(Data("cid-thread".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("cid-thread".utf8))),
       author: author,
       record: .knownType(
         AppBskyFeedPost(
@@ -161,11 +192,11 @@ actor MockCircleTransport: CircleTransport {
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
-    try! ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/123")
+    try! ATProtocolURI(uriString: "\(destination.uri.uriString())/\(destination.owner.didString())/app.bsky.feed.post/123")
   }
 
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
-    try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.like/123")
+    try! ATProtocolURI(uriString: "\(circle.uri.uriString())/\(circle.owner.didString())/app.bsky.feed.like/123")
   }
 
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {}
@@ -200,8 +231,8 @@ func makeFeedItem(circle: CircleSummary, rkey: String, text: String) -> BlueCatb
     debug: nil
   )
   let postView = AppBskyFeedDefs.PostView(
-    uri: try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.post/\(rkey)"),
-    cid: CID.fromDAGCBOR(Data("cid-\(rkey)".utf8)),
+    uri: try! ATProtocolURI(uriString: "\(circle.uri.uriString())/\(circle.owner.didString())/app.bsky.feed.post/\(rkey)"),
+    cid: CIDString(CID.fromDAGCBOR(Data("cid-\(rkey)".utf8))),
     author: author,
     record: .knownType(
       AppBskyFeedPost(
@@ -235,7 +266,7 @@ func makeFeedItem(circle: CircleSummary, rkey: String, text: String) -> BlueCatb
     feedContext: nil,
     reqId: nil
   )
-  return BlueCatbirdCircleDefs.FeedItem(post: feedViewPost, circle: circle)
+  return BlueCatbirdCircleDefs.FeedItem(post: .init(feedViewPost), circle: circle)
 }
 
 // MARK: - Test Synchronization Barrier
@@ -273,5 +304,26 @@ actor CircleAsyncGate {
       continuation.resume()
     }
     releaseContinuations.removeAll()
+  }
+}
+
+// MARK: - getKeys responses for doubles
+
+extension CircleKeysResponse {
+  /// A response over typed entries. Each record's raw JSON is `raw[version]`
+  /// when given, else Petrel's encoding (fine for crypto doubles that do not
+  /// inspect exact bytes; `keyRecordPassedToFFIIsRawServerJSON` covers those).
+  static func testing(
+    _ entries: [BlueCatbirdCircleGetKeys.KeyEntry], latest: Int, raw: [Int: String] = [:], skipped: Int = 0
+  ) -> CircleKeysResponse {
+    CircleKeysResponse(
+      entries: entries.map { entry in
+        let json = raw[entry.keyVersion]
+          ?? String(decoding: (try? JSONEncoder().encode(entry.record)) ?? Data(), as: UTF8.self)
+        return Entry(typed: entry, recordJSON: json)
+      },
+      latestKeyVersion: latest,
+      skipped: skipped
+    )
   }
 }

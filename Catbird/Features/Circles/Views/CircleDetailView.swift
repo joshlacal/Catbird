@@ -66,7 +66,9 @@ struct CircleDetailView: View {
           service: appState.circleService,
           space: circle.uri,
           accountDID: appState.userDID ?? "",
-          activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
+          activeDIDProvider: { AppStateManager.shared.lifecycle.userDID },
+          openerProvider: { [weak appState] in appState?.circlePostOpener() },
+          ownerHandleResolver: appState.circleOwnerHandleResolver
         )
         self.model = newModel
         do {
@@ -97,12 +99,16 @@ struct CircleDetailView: View {
           emptyStateView
             .padding(.top, 40)
         } else {
-          ForEach(Array(model.items.enumerated()), id: \.element.post.post.uri) { index, item in
-            PostView.circleRow(
+          ForEach(Array(model.items.enumerated()), id: \.element.post.postURI) { index, item in
+            let opened = item.post.postURI.flatMap { model.opened[$0] }
+            CircleFeedItemRow(
               item: item,
+              opened: opened,
+              ownerHandle: model.ownerHandle(for: item.circle),
               path: $path,
               appState: appState
             )
+            .id(CircleFeedItemRow.identity(item: item, opened: opened))
             .onAppear {
               if index >= model.items.count - 3 {
                 Task {

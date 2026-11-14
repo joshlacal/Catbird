@@ -2044,6 +2044,16 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         return
       }
 
+      // Every registerKey call issues a fresh pushKey and retires the previous one at the
+      // gateway. The Notification Service Extension needs the current key (shared keychain
+      // access group) to open sealed version 2 wakes, so replace it now, before the delivery
+      // service learns it; when chat pushes are being turned off, remove it instead.
+      persistPushWakeKey(
+        desired ? regOutput.pushKey : nil,
+        appId: regOutput.appId,
+        accountDID: account
+      )
+
       guard let mlsClient = await appState.getMLSAPIClient(),
             let coordinator = await appState.getOrOpenMLSCoordinator(),
             appState.userDID == account else { return }
@@ -2064,6 +2074,23 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       notificationLogger.warning("Push gateway registration deferred: \(error.localizedDescription)")
     }
     #endif
+  }
+
+  /// Stores (or, for nil, removes) the account's sealed-wake `pushKey` and its
+  /// `kid -> account DID` index entry. Sign-out removes both through
+  /// `KeychainPlatformKeyStore.deleteAccountKeys`.
+  private func persistPushWakeKey(_ pushKey: String?, appId: String, accountDID: String) {
+    let keystore = KeychainPlatformKeyStore()
+    do {
+      if let pushKey {
+        try keystore.storePushWakeKey(pushKey: pushKey, appId: appId, accountDid: accountDID)
+      } else {
+        try keystore.deletePushWakeKey(accountDid: accountDID)
+      }
+    } catch {
+      notificationLogger.error(
+        "Failed to update the sealed push wake key: \(error.localizedDescription)")
+    }
   }
 
   private func createNavigationDestination(from uriString: String, type: String) throws -> NavigationDestination {
@@ -2544,13 +2571,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       client = try await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
-        authMode: .gateway,
-        gatewayURL: CatbirdGatewayConfiguration.current.origin,
+        authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: CatbirdGatewayConfiguration.current.origin)),
         userAgent: "Catbird/1.0",
         bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
         bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
         accessGroup: accessGroup
       )
+      await client.networkService.setRequestIDHeader(name: "X-Catbird-Request-Id")
     } catch {
       notificationLogger.error(
         "❌ [FG] Failed to create ATProtoClient: \(error.localizedDescription)")

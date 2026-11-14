@@ -171,6 +171,7 @@ struct CircleServiceTests {
 
   @Test("An enabled incompatible service is rejected")
   func incompatibleProtocolIsRejected() async {
+    #expect(CircleConfiguration.protocolRevision == "d4def6e9f521896ed8222f576d54923d00b5fbeb")
     let service = CircleService(transport: RecordingCircleTransport(capabilities:
       CircleCapability(enabled: true, protocolRevision: "old-profile", supportsImages: true)))
     await #expect(throws: CircleError.protocolRevisionMismatch) { try await service.capabilities() }
@@ -196,7 +197,7 @@ struct CircleServiceTests {
     #expect(page.items.isEmpty)
     await #expect(throws: CircleError.accessRemoved) {
       try await service.getPostThread(uri: CircleTestFixtures.makeFeedItem(
-        circle: CircleTestFixtures.family, rkey: "late", text: "Retired").post.post.uri,
+        circle: CircleTestFixtures.family, rkey: "late", text: "Retired").post.feedViewPost!.post.uri,
         space: CircleTestFixtures.familyURI)
     }
     #expect(await transport.threadCallCount == 0)
@@ -234,7 +235,7 @@ struct CircleServiceTests {
     let feed = try await service.getFeed(space: CircleTestFixtures.familyURI)
     #expect(feed.items.count == 1)
     #expect(await transport.feedCallCount == 1)
-    _ = try await service.getPostThread(uri: feed.items[0].post.post.uri, space: CircleTestFixtures.familyURI)
+    _ = try await service.getPostThread(uri: feed.items[0].post.feedViewPost!.post.uri, space: CircleTestFixtures.familyURI)
     #expect(await transport.threadCallCount == 1)
   }
 
@@ -337,7 +338,7 @@ struct CircleServiceTests {
   func circleServiceDeleteLikeForwardsToTransport() async throws {
     let transport = RecordingCircleTransport()
     let service = CircleService(transport: transport)
-    let likeURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.like/testlike456")
+    let likeURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/\(CircleTestFixtures.alice.didString())/app.bsky.feed.like/testlike456")
     try await service.deleteLike(uri: likeURI, circle: CircleTestFixtures.family)
     #expect(await transport.publicEndpointCallCount == 0)
   }
@@ -453,8 +454,8 @@ struct CircleServiceTests {
     #expect(!appState.circlesEnabled)
   }
 
-  @Test("Only documented Spaces unsupported status and code pairs are definitive")
-  func unsupportedErrorClassification() {
+  @Test("Protocol error classification uses current Spaces names")
+  func protocolErrorClassification() {
     let cases: [(Int, String, Bool)] = [
       (501, "MethodNotImplemented", true),
       (404, "permissioned_endpoint_unavailable", true),
@@ -473,6 +474,18 @@ struct CircleServiceTests {
     }
     #expect(!GatewayCircleTransport.isUnsupportedSpacesError(URLError(.timedOut)))
     #expect(!GatewayCircleTransport.isUnsupportedSpacesError(CircleError.upstreamUnavailable))
+    let refusals: [any Error] = [
+      ComAtprotoMemberspacePutMembers.Error.notAuthorized,
+      ComAtprotoSpaceAuthorizeSpaceSync.Error.accountNotAuthorized,
+      ComAtprotoSpaceAuthorizeSpaceSync.Error.spaceNotFound,
+      ATProtoXRPCError(error: "SpaceNotFound", message: "refused", statusCode: 400)
+    ]
+    for error in refusals {
+      #expect(circleError(from: error) == .notAuthorized)
+    }
+    #expect(circleError(from:
+      ATProtoXRPCError(error: "UpstreamFailure", message: "transient", statusCode: 502))
+      == .upstreamUnavailable)
   }
 
 }
@@ -528,7 +541,7 @@ enum CircleTestFixtures {
     )
     return AppBskyFeedDefs.PostView(
       uri: uri,
-      cid: CID.fromDAGCBOR(Data("cid-test".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("cid-test".utf8))),
       author: author,
       record: .knownType(
         AppBskyFeedPost(
@@ -558,7 +571,7 @@ enum CircleTestFixtures {
   }
 
   static func makeFeedItem(circle: CircleSummary, rkey: String = "post1", text: String = "Hello") -> BlueCatbirdCircleDefs.FeedItem {
-    let postURI = try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.post/\(rkey)")
+    let postURI = try! ATProtocolURI(uriString: "\(circle.uri.uriString())/\(circle.owner.didString())/app.bsky.feed.post/\(rkey)")
     let postView = makePostView(uri: postURI, authorDID: circle.owner, text: text)
     let feedViewPost = AppBskyFeedDefs.FeedViewPost(
       post: postView,
@@ -567,7 +580,7 @@ enum CircleTestFixtures {
       feedContext: nil,
       reqId: nil
     )
-    return BlueCatbirdCircleDefs.FeedItem(post: feedViewPost, circle: circle)
+    return BlueCatbirdCircleDefs.FeedItem(post: .init(feedViewPost), circle: circle)
   }
 
   /// A reply notification whose subject is the post `id` in `circle`.
@@ -589,7 +602,7 @@ enum CircleTestFixtures {
         status: nil,
         debug: nil
       ),
-      subject: try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.post/\(id)"),
+      subject: try! ATProtocolURI(uriString: "\(circle.uri.uriString())/\(circle.owner.didString())/app.bsky.feed.post/\(id)"),
       indexedAt: ATProtocolDate(date: Date()),
       circle: circle
     )

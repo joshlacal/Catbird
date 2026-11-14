@@ -24,7 +24,7 @@ enum PublicPostTestFixtures {
     )
     return AppBskyFeedDefs.PostView(
       uri: uri,
-      cid: CID.fromDAGCBOR(Data("cid-test".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("cid-test".utf8))),
       author: author,
       record: record ?? .knownType(
         AppBskyFeedPost(

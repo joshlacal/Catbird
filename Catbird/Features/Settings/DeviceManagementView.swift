@@ -57,6 +57,14 @@ struct DeviceManagementView: View {
                         DeviceRow(
                             device: device,
                             isCurrentDevice: device.isCurrentDevice(currentDeviceId: viewModel.currentDeviceId),
+                            onApprove: device.activityState == .pendingApproval
+                                && !device.isCurrentDevice(currentDeviceId: viewModel.currentDeviceId)
+                                ? {
+                                    Task {
+                                        await viewModel.approveDevice(device)
+                                    }
+                                }
+                                : nil,
                             onDelete: {
                                 guard device.canRevoke(currentDeviceId: viewModel.currentDeviceId) else { return }
                                 viewModel.deviceToDelete = device
@@ -297,6 +305,50 @@ struct DeviceRowModel: Identifiable, Equatable, Sendable {
         }
     }
 
+    init(
+        _ registered: RegisteredDeviceInfo,
+        keyPackageCount: Int = 0,
+        currentDeviceId: String? = nil,
+        now: Date = Date()
+    ) {
+        let isCurrent = registered.isCurrentDevice || Self.matchesDeviceID(registered.deviceId, currentDeviceId)
+        let parsedLastActive = Self.parseISO8601(registered.lastActiveAt)
+        let parsedCreated = Self.parseISO8601(registered.createdAt) ?? now
+        let effectiveLastSeen = parsedLastActive ?? parsedCreated
+        let parsedDormantAt = Self.parseISO8601(registered.dormantAt)
+
+        let resolvedState: MLSDeviceActivityState
+        switch registered.status {
+        case "revoked":
+            resolvedState = .revoked
+        case "pending_approval":
+            resolvedState = .pendingApproval
+        case "dormant":
+            resolvedState = isCurrent ? .active : .dormant
+        default:
+            if isCurrent {
+                resolvedState = .active
+            } else if parsedDormantAt != nil
+                || now.timeIntervalSince(effectiveLastSeen) >= MLSDeviceActivityState.dormancyThresholdSeconds
+            {
+                resolvedState = .dormant
+            } else {
+                resolvedState = .active
+            }
+        }
+
+        self.init(
+            deviceId: registered.deviceId,
+            deviceName: registered.deviceName,
+            deviceUUID: nil,
+            lastSeenAt: effectiveLastSeen,
+            keyPackageCount: keyPackageCount,
+            activityState: resolvedState,
+            currentDeviceId: isCurrent ? registered.deviceId : currentDeviceId,
+            now: now
+        )
+    }
+
     static func matchesDeviceID(_ lhs: String?, _ rhs: String?) -> Bool {
         guard let lhs = lhs?.trimmingCharacters(in: .whitespacesAndNewlines),
               let rhs = rhs?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -320,6 +372,7 @@ struct DeviceRowModel: Identifiable, Equatable, Sendable {
 struct DeviceRow: View {
     let device: DeviceRowModel
     let isCurrentDevice: Bool
+    var onApprove: (() -> Void)? = nil
     let onDelete: () -> Void
 
     var body: some View {
@@ -362,7 +415,15 @@ struct DeviceRow: View {
 
                 Spacer()
 
-                VStack(alignment: .trailing, spacing: 4) {
+                VStack(alignment: .trailing, spacing: 6) {
+                    if let onApprove {
+                        Button("Approve") {
+                            onApprove()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("device-approve-\(device.deviceId)")
+                    }
                     Label {
                         Text("\(device.keyPackageCount)")
                             .font(.caption)
@@ -382,6 +443,14 @@ struct DeviceRow: View {
         }
         .padding(.vertical, 4)
         .swipeActions(edge: .trailing) {
+            if let onApprove {
+                Button {
+                    onApprove()
+                } label: {
+                    Label("Approve", systemImage: "checkmark.shield")
+                }
+                .tint(.green)
+            }
             if !isCurrentDevice && device.activityState != .revoked {
                 Button(role: .destructive) {
                     onDelete()
@@ -391,6 +460,13 @@ struct DeviceRow: View {
             }
         }
         .contextMenu {
+            if let onApprove {
+                Button {
+                    onApprove()
+                } label: {
+                    Label("Approve Device", systemImage: "checkmark.shield")
+                }
+            }
             if !isCurrentDevice && device.activityState != .revoked {
                 Button(role: .destructive) {
                     onDelete()
@@ -482,13 +558,43 @@ final class DeviceManagementViewModel {
             logger.info("Loading devices...")
             let actorDeviceId = currentDeviceId ?? appState.resolvedMLSDeviceID()
             currentDeviceId = actorDeviceId
-            guard let mlsClient = await appState.getMLSAPIClient() else {
-                devices = []
-                isLoading = false
-                return
+
+            var keyPackagesByDeviceID: [String: Int] = [:]
+            var fallbackOwnDevices: [BlueCatbirdChatDefs.OwnDeviceView] = []
+            if let mlsClient = await appState.getMLSAPIClient(),
+               let output = try? await mlsClient.getOwnDevices(actorDeviceId: actorDeviceId)
+            {
+                fallbackOwnDevices = output.items
+                for item in output.items {
+                    keyPackagesByDeviceID[item.device.deviceId.lowercased()] = item.device.availablePackageCount
+                }
             }
-            let output = try await mlsClient.getOwnDevices(actorDeviceId: actorDeviceId)
-            let loaded = output?.items.map { DeviceRowModel($0, currentDeviceId: actorDeviceId) } ?? []
+
+            let loaded: [DeviceRowModel]
+            if let coordinator = await appState.getOrOpenMLSCoordinator(),
+               let registered = try? await coordinator.listDevices(),
+               !registered.isEmpty
+            {
+                loaded = registered.map { reg in
+                    let pkgCount = keyPackagesByDeviceID[reg.deviceId.lowercased()] ?? 0
+                    return DeviceRowModel(
+                        reg,
+                        keyPackageCount: pkgCount,
+                        currentDeviceId: actorDeviceId
+                    )
+                }
+            } else if !fallbackOwnDevices.isEmpty {
+                loaded = fallbackOwnDevices.map { DeviceRowModel($0, currentDeviceId: actorDeviceId) }
+            } else {
+                guard let mlsClient = await appState.getMLSAPIClient() else {
+                    devices = []
+                    isLoading = false
+                    return
+                }
+                let output = try await mlsClient.getOwnDevices(actorDeviceId: actorDeviceId)
+                loaded = output?.items.map { DeviceRowModel($0, currentDeviceId: actorDeviceId) } ?? []
+            }
+
             devices = loaded.sorted { lhs, rhs in
                 let lhsCurrent = lhs.isCurrentDevice(currentDeviceId: actorDeviceId)
                 let rhsCurrent = rhs.isCurrentDevice(currentDeviceId: actorDeviceId)
@@ -502,6 +608,26 @@ final class DeviceManagementViewModel {
         }
 
         isLoading = false
+    }
+
+    @MainActor
+    func approveDevice(_ device: DeviceRowModel) async {
+        guard let appState else { return }
+        do {
+            guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
+                throw NSError(
+                    domain: "DeviceManagement",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: Self.coordinatorUnavailableMessage]
+                )
+            }
+            try await coordinator.approveDevice(targetDeviceId: device.deviceId)
+            deleteError = nil
+            await loadDevices()
+        } catch {
+            logger.error("Failed to approve device \(device.deviceId): \(error.localizedDescription)")
+            deleteError = error
+        }
     }
 
     static let selfRevokeBlockedMessage =
@@ -541,15 +667,7 @@ final class DeviceManagementViewModel {
                         userInfo: [NSLocalizedDescriptionKey: Self.coordinatorUnavailableMessage]
                     )
                 }
-                _ = try await coordinator.revokeLabyrinthDevice(targetDeviceId: device.deviceId)
-                if let repo = try? ATIdentifier(string: appState.userDID),
-                   let collection = try? NSID(nsidString: "blue.catbird.chat.device"),
-                   let rkey = try? RecordKey(keyString: device.deviceId)
-                {
-                    _ = try? await appState.client.com.atproto.repo.deleteRecord(
-                        input: .init(repo: repo, collection: collection, rkey: rkey)
-                    )
-                }
+                _ = try await coordinator.revokeDevice(targetDeviceId: device.deviceId)
             }
             devices.removeAll { DeviceRowModel.matchesDeviceID($0.deviceId, device.deviceId) }
             deleteError = nil

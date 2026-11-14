@@ -3,7 +3,11 @@ import CatbirdMLSCore
 import Foundation
 import LocalAuthentication
 import OSLog
+#if DEBUG
+@_spi(Fixtures) import Petrel
+#else
 import Petrel
+#endif
 import SwiftUI
 
 /// Represents the current state of authentication
@@ -857,8 +861,8 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       let authMode = await client.currentAuthMode
       // The mode read crosses the SDK actor. Recheck before refreshing through a
       // client whose selected account may have changed while this task suspended.
-      guard authMode != .gateway,
-            self.autoLogoutDeferralDepth == 0,
+      if case .gateway = authMode { return false }
+      guard self.autoLogoutDeferralDepth == 0,
             self.authenticationContinuityEpoch == sourceEpoch,
             self.client === client,
             self.state.userDID == knownDID else { return false }
@@ -1165,29 +1169,31 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
 #if DEBUG
         let newClient = await Task.detached(priority: .userInitiated) {
-          try? await ATProtoClient(
+          let created = try? await ATProtoClient(
             oauthConfig: oauthCfg,
             namespace: "blue.catbird",
-            authMode: .gateway,
-            gatewayURL: AuthenticationManager.gatewayURL,
+            authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: AuthenticationManager.gatewayURL)),
             userAgent: "Catbird/1.0",
             bskyAppViewDID: appViewDID,
             bskyChatDID: chatDID,
             accessGroup: accessGroup
           )
+          await created?.networkService.setRequestIDHeader(name: "X-Catbird-Request-Id")
+          return created
         }.value
 #else
       let newClient = await Task.detached(priority: .userInitiated) {
-        try? await ATProtoClient(
+        let created = try? await ATProtoClient(
           oauthConfig: oauthCfg,
           namespace: "blue.catbird",
-          authMode: .gateway,
-          gatewayURL: AuthenticationManager.gatewayURL,
+          authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: AuthenticationManager.gatewayURL)),
           userAgent: "Catbird/1.0",
           bskyAppViewDID: appViewDID,
           bskyChatDID: chatDID,
           accessGroup: accessGroup
         )
+        await created?.networkService.setRequestIDHeader(name: "X-Catbird-Request-Id")
+        return created
       }.value
 #endif
       // Update state on main actor
@@ -1476,8 +1482,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       replaceClient(try? await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
-        authMode: .gateway,
-        gatewayURL: AuthenticationManager.gatewayURL,
+        authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: AuthenticationManager.gatewayURL)),
         userAgent: "Catbird/1.0",
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID,
@@ -1488,8 +1493,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         replaceClient(try? await ATProtoClient(
           oauthConfig: oauthConfig,
           namespace: "blue.catbird",
-          authMode: .gateway,
-          gatewayURL: AuthenticationManager.gatewayURL,
+          authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: AuthenticationManager.gatewayURL)),
           userAgent: "Catbird/1.0",
           bskyAppViewDID: customAppViewDID,
           bskyChatDID: customChatDID,
@@ -1497,6 +1501,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         ))
 
         #endif
+      await client?.networkService.setRequestIDHeader(name: "X-Catbird-Request-Id")
       // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
@@ -2844,8 +2849,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     replaceClient(try? await ATProtoClient(
       oauthConfig: oauthConfig,
       namespace: "blue.catbird",
-      authMode: .gateway,
-      gatewayURL: AuthenticationManager.gatewayURL,
+      authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: AuthenticationManager.gatewayURL)),
       userAgent: "Catbird/1.0",
       bskyAppViewDID: customAppViewDID,
       bskyChatDID: customChatDID,
@@ -2855,14 +2859,14 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       replaceClient(try? await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
-        authMode: .gateway,
-        gatewayURL: AuthenticationManager.gatewayURL,
+        authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: AuthenticationManager.gatewayURL)),
         userAgent: "Catbird/1.0",
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID,
         accessGroup: accessGroup
       ))
       #endif
+    await client?.networkService.setRequestIDHeader(name: "X-Catbird-Request-Id")
       
     // P107: client init already validated session/credentials; redundant applicationDidBecomeActive removed
     await client?.setAuthProgressDelegate(self)

@@ -159,7 +159,7 @@ struct CachedFeedStoreMigrationTests {
       uri: try ATProtocolURI(
         uriString: "at://did:plc:author/app.bsky.feed.post/legacy"
       ),
-      cid: CID.fromDAGCBOR(Data("legacy-cid".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("legacy-cid".utf8))),
       author: author,
       record: .knownType(record),
       embed: nil,

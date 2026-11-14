@@ -80,7 +80,7 @@ struct FeedInteractionPolicyTests {
 
     let view = AppBskyFeedDefs.GeneratorView(
       uri: try! ATProtocolURI(uriString: Self.thirdPartyURI),
-      cid: try! CID.parse("bafyreie5737gdxlw5i64vzichcalba3z2v5n6icifvx5xytvske7mr3hpm"),
+      cid: CIDString(try! CID.parse("bafyreie5737gdxlw5i64vzichcalba3z2v5n6icifvx5xytvske7mr3hpm")),
       did: try! DID(didString: "did:web:feeds.example.com"),
       creator: AppBskyActorDefs.ProfileView(
         did: try! DID(didString: "did:plc:creator123"),

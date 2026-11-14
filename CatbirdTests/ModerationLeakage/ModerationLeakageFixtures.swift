@@ -69,7 +69,7 @@ enum LeakageFixtures {
       labels: nil, tags: nil, createdAt: ATProtocolDate(date: Date()))
     return AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:web:\(name).test/app.bsky.feed.post/fake"),
-      cid: CID.fromDAGCBOR(Data("post-\(name)".utf8)), author: try author(name, labels: authorLabels),
+      cid: CIDString(CID.fromDAGCBOR(Data("post-\(name)".utf8))), author: try author(name, labels: authorLabels),
       record: .knownType(record), embed: embed(media, name: name), indexedAt: ATProtocolDate(date: Date()),
       viewer: viewer, labels: labels)
   }
@@ -89,7 +89,7 @@ enum LeakageFixtures {
     case .video:
       return .appBskyEmbedVideoView(
         AppBskyEmbedVideo.View(
-          cid: CID.fromDAGCBOR(Data("video-\(name)".utf8)), playlist: URI(uriString: "https://cdn.test/\(name).m3u8"),
+          cid: CIDString(CID.fromDAGCBOR(Data("video-\(name)".utf8))), playlist: URI(uriString: "https://cdn.test/\(name).m3u8"),
           thumbnail: URI(uriString: videoThumbnailURL(name))))
     }
   }

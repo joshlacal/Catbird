@@ -99,6 +99,7 @@ struct PostComposerSubmitValidationState: Equatable {
         case pendingAudio
         case circleImagesUnavailable
         case circleUnsupportedMedia
+        case circleEncryptionKeysUnavailable
     }
 
     let canSubmit: Bool
@@ -127,6 +128,8 @@ struct PostComposerSubmitValidationState: Equatable {
             return "GIFs, video, and audio are unavailable in Circles. Remove the attachment to continue."
         case .circleImagesUnavailable:
             return "Images are unavailable for this Circle. Remove the attachments to post text."
+        case .circleEncryptionKeysUnavailable:
+            return CircleAudienceRowState.keysUnavailable.message
         case .missingAltText:
             return "Add alt text to every media attachment before posting."
         case .replyLoading:
@@ -144,7 +147,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio, .circleImagesUnavailable, .circleUnsupportedMedia:
+        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio, .circleImagesUnavailable, .circleUnsupportedMedia, .circleEncryptionKeysUnavailable:
             return true
         case .emptyContent, .posting, nil:
             return false

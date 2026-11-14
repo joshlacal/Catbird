@@ -27,7 +27,7 @@ public enum ActivityPrivacyOption: String, CaseIterable, Identifiable {
 
 private struct ActivityPrivacySettingsRecord {
   var allowSubscriptions: String
-  var cid: CID?
+  var cid: CIDString?
 }
 
 struct ActivityPrivacySettingsView: View {
@@ -178,7 +178,7 @@ struct ActivityPrivacySettingsView: View {
             collection: try NSID(nsidString: "app.bsky.notification.declaration"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(AppBskyNotificationDeclaration(allowSubscriptions: value.allowSubscriptions)),
-            swapRecord: value.cid
+            swapRecord: value.cid.map { .value($0) }
           ))
           guard code == 200, let output else { throw ActivityPrivacySettingsError.response(code) }
           return ActivityPrivacySettingsRecord(allowSubscriptions: value.allowSubscriptions, cid: output.cid)

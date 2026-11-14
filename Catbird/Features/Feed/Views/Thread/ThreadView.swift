@@ -150,6 +150,8 @@ private struct SwiftUIThreadView: View {
     @State private var mainItemIsBlocked = false
     @State private var blockedAnchorItem: AppBskyUnspeccedDefs.ThreadItemBlocked?
     @State private var mainItemIsNotFound = false
+    /// The anchor is an encrypted Circle post that cannot be shown.
+    @State private var anchorPlaceholder: CircleThreadPlaceholder?
     @State private var rows: [ThreadRow] = []
     @State private var threadItemsByID: [String: AppBskyUnspeccedGetPostThreadV2.ThreadItem] = [:]
     @State private var hasOtherReplies = false
@@ -197,6 +199,13 @@ private struct SwiftUIThreadView: View {
                     Label("Post Blocked", systemImage: "hand.raised")
                 } description: {
                     Text("This post is from a blocked account.")
+                }
+            } else if let anchorPlaceholder {
+                let copy = CircleEncryptedStatusRow.copy(for: anchorPlaceholder.state, ownerHandle: anchorPlaceholder.ownerHandle)
+                ContentUnavailableView {
+                    Label(copy.title, systemImage: CircleEncryptedStatusRow.iconName(for: anchorPlaceholder.state))
+                } description: {
+                    Text(copy.detail)
                 }
             } else {
                 ContentUnavailableView {
@@ -442,6 +451,7 @@ private struct SwiftUIThreadView: View {
             blockedAnchorItem = nil
             mainItemIsNotFound = false
         }
+        anchorPlaceholder = CircleThreadOpening.placeholder(in: anchorItem.value)
         // Extract parent posts (depth < 0), sorted from most negative (oldest) to -1 (closest to anchor)
         let parentItems = thread
             .filter { $0.depth < 0 }

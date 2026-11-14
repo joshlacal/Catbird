@@ -194,15 +194,10 @@ struct MacOSChatSidebar: View {
 
   private func leaveMLSConversation(_ conversation: MLSConversationModel) {
     let convoID = conversation.conversationID
-    let userDID = appState.userDID
     Task {
       guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else { return }
       do {
-        try? await mlsCoordinator.removeGroupMember(
-          actorRole: .admin,
-          conversationId: convoID,
-          targetDid: userDID
-        )
+        _ = try await mlsCoordinator.leaveConversation(conversationId: convoID)
         await MainActor.run {
           var updatedState = coordinator.mlsState
           updatedState.conversations.removeAll { $0.conversationID == convoID }
@@ -215,6 +210,8 @@ struct MacOSChatSidebar: View {
           NotificationCenter.default.post(name: Notification.Name("MLSConversationLeft"), object: convoID)
         }
         appState.updateMLSUnreadCount()
+      } catch {
+        // Keep conversation visible locally if server/SDK leave fails.
       }
     }
   }

@@ -16,6 +16,7 @@ import SwiftUI
 /// A locally-originated outgoing message that has no server row yet.
 struct PendingMLSSend: Identifiable, Equatable, Sendable {
   let id: String
+  let clientMessageID: String
   let text: String
   let embed: MLSEmbedData?
   let createdAt: Date
@@ -24,8 +25,14 @@ struct PendingMLSSend: Identifiable, Equatable, Sendable {
 
   static let idPrefix = "pending:"
 
-  init(text: String, embed: MLSEmbedData?, state: MessageSendState = .sending) {
+  init(
+    text: String,
+    embed: MLSEmbedData?,
+    clientMessageID: String = UUID().uuidString.lowercased(),
+    state: MessageSendState = .sending
+  ) {
     self.id = Self.idPrefix + UUID().uuidString
+    self.clientMessageID = clientMessageID
     self.text = text
     self.embed = embed
     self.createdAt = Date()
@@ -199,8 +206,12 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   @discardableResult
-  func beginPendingSend(text: String, embed: MLSEmbedData?) -> String {
-    let pending = PendingMLSSend(text: text, embed: embed)
+  func beginPendingSend(
+    text: String,
+    embed: MLSEmbedData?,
+    clientMessageID: String = UUID().uuidString.lowercased()
+  ) -> String {
+    let pending = PendingMLSSend(text: text, embed: embed, clientMessageID: clientMessageID)
     pendingSends.append(pending)
     scrollToBottomTrigger += 1
     return pending.id
@@ -431,6 +442,14 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
       if maxSeq > 0 {
         try? await coordinator.acknowledgeEntriesUpTo(conversationId: conversationId, upToSeq: maxSeq)
+        if let advanced = try? await coordinator.advanceReadState(
+          conversationId: conversationId,
+          candidateSeq: UInt64(maxSeq)
+        ) {
+          remoteReadCutoff = (epoch: 0, sequenceNumber: Int64(clamping: advanced.readThroughSeq))
+        }
+      } else if let readState = try? await coordinator.getReadState(conversationId: conversationId) {
+        remoteReadCutoff = (epoch: 0, sequenceNumber: Int64(clamping: readState.readThroughSeq))
       }
       await enrichMissingProfilesIfNeeded(observationID: observationID)
     } catch {
@@ -678,14 +697,31 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     await submitMessage(text: trimmed, embed: embed)
   }
 
-  func retryFailedSend(pendingID: String) async {
-    guard let pending = takeFailedPendingSend(id: pendingID) else { return }
-    await submitMessage(text: pending.text, embed: pending.embed)
+  func sendVoiceMessage(_ audioEmbed: MLSAudioEmbed) async {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
+    await submitMessage(text: "", embed: .audio(audioEmbed))
   }
 
-  private func submitMessage(text trimmedText: String, embed: MLSEmbedData?) async {
+  func retryFailedSend(pendingID: String) async {
+    guard let pending = takeFailedPendingSend(id: pendingID) else { return }
+    await submitMessage(
+      text: pending.text,
+      embed: pending.embed,
+      clientMessageID: pending.clientMessageID
+    )
+  }
+
+  private func submitMessage(
+    text trimmedText: String,
+    embed: MLSEmbedData?,
+    clientMessageID: String = UUID().uuidString.lowercased()
+  ) async {
     if isSendBlockedByRecovery {
-      let pendingID = beginPendingSend(text: trimmedText, embed: embed)
+      let pendingID = beginPendingSend(
+        text: trimmedText,
+        embed: embed,
+        clientMessageID: clientMessageID
+      )
       failPendingSend(
         id: pendingID,
         reason: "Sending is paused while this conversation's secure session is restored."
@@ -693,7 +729,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       return
     }
 
-    let pendingID = beginPendingSend(text: trimmedText, embed: embed)
+    let pendingID = beginPendingSend(
+      text: trimmedText,
+      embed: embed,
+      clientMessageID: clientMessageID
+    )
     guard let coordinator = activeCoordinator else {
       failPendingSend(id: pendingID, reason: "MLS service not available")
       error = NSError(
@@ -717,6 +757,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
       let sentRow = try await coordinator.sendMessage(
         conversationId: conversationId,
+        messageId: clientMessageID,
         text: wireText
       )
       loadedRowsByID[sentRow.messageId] = sentRow

@@ -186,7 +186,7 @@ final class StreamingCARParser {
             throw StreamingCARError.missingRoots
         }
         
-        let roots = try rootsArray.compactMap { rootData -> CIDString? in
+        let roots = try rootsArray.compactMap { rootData -> String? in
             // Parse CID from header data
             if let cidData = rootData as? Data {
                 return try parseCIDFromData(cidData)
@@ -586,8 +586,6 @@ private class CircularLogBuffer {
 
 // MARK: - Placeholder Functions (to be implemented)
 
-typealias CIDString = String
-
 private func parseVarint(data: Data) throws -> Int {
     // Proper varint parsing according to CAR spec
     // Varints use the lower 7 bits of each byte for data, MSB indicates continuation
@@ -724,7 +722,7 @@ private func convertCBORToSwiftValue(_ cbor: CBOR) throws -> Any {
     }
 }
 
-private func parseCIDFromData(_ data: Data) throws -> CIDString {
+private func parseCIDFromData(_ data: Data) throws -> String {
     // Parse CID from binary data using Petrel's CID implementation
     do {
         let cid = try CID(bytes: data)

@@ -14,7 +14,7 @@ struct ModerationMediaAndLinkTests {
 
   private func videoPost(labels: [ComAtprotoLabelDefs.Label]? = nil, selfLabels: [String] = []) throws -> AppBskyFeedDefs.PostView {
     let video = AppBskyEmbedVideo.View(
-      cid: CID.fromDAGCBOR(Data("video".utf8)), playlist: URI(uriString: "https://video.example.test/p.m3u8"))
+      cid: CIDString(CID.fromDAGCBOR(Data("video".utf8))), playlist: URI(uriString: "https://video.example.test/p.m3u8"))
     return try F.post(labels: labels, selfLabels: selfLabels, embed: .appBskyEmbedVideoView(video))
   }
 
@@ -46,7 +46,7 @@ struct ModerationMediaAndLinkTests {
 
     let warnedAuthor = try F.profile(labels: [try F.accountLabel("!warn")])
     let video = AppBskyEmbedVideo.View(
-      cid: CID.fromDAGCBOR(Data("video".utf8)), playlist: URI(uriString: "https://video.example.test/p.m3u8"))
+      cid: CIDString(CID.fromDAGCBOR(Data("video".utf8))), playlist: URI(uriString: "https://video.example.test/p.m3u8"))
     let byWarnedAuthor = try #require(
       VideoFeedItem(post: try F.post(author: warnedAuthor, embed: .appBskyEmbedVideoView(video))))
     let moderation = byWarnedAuthor.moderation(policy: F.policy())

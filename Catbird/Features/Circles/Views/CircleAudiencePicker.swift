@@ -2,14 +2,40 @@ import SwiftUI
 import Petrel
 import PetrelCatbird
 
+/// Whether a Circle row in the audience picker can be chosen (spec §9).
+enum CircleAudienceRowState: Equatable {
+  case selectable
+  /// An encrypted Circle without service support or a locally held key.
+  case keysUnavailable
+
+  /// The disabled row's one-line title: the Circle's name and the reason.
+  func disabledTitle(circleName: String) -> String {
+    guard let message else { return circleName }
+    return "\(circleName) — \(message)"
+  }
+
+  var message: String? {
+    switch self {
+    case .selectable: return nil
+    case .keysUnavailable: return "Encryption keys not available yet"
+    }
+  }
+}
+
 /// Audience selector for the post composer.
 /// Displays "Public" first, followed by active Circles only.
 /// Expired, removed, unsupported, or pending Circles are excluded from selection.
+/// An encrypted Circle without a key is listed disabled, with a Refresh.
 struct CircleAudiencePicker: View {
   @Binding var selectedDestination: CircleDestination
   var circles: [CircleSummary] = []
   var isReplyLocked: Bool = false
   var isSubmitting: Bool = false
+  var rowState: (CircleSummary) -> CircleAudienceRowState = { _ in .selectable }
+  /// Evaluates the listed encrypted Circles (and the current destination's).
+  var evaluate: ([CircleSummary]) async -> Void = { _ in }
+  /// One key refresh for a disabled encrypted Circle, then re-evaluation.
+  var refresh: (CircleSummary) async -> Void = { _ in }
 
   @Environment(AppState.self) private var appState
   @State private var loadedCircles: [CircleSummary] = []
@@ -34,10 +60,28 @@ struct CircleAudiencePicker: View {
         if !activeCircles.isEmpty {
           Divider()
           ForEach(activeCircles, id: \.uri) { circle in
-            Button {
-              selectedDestination = .circle(circle)
-            } label: {
-              Label(circle.name, systemImage: "person.2.fill")
+            let state = rowState(circle)
+            if state == .selectable {
+              Button {
+                selectedDestination = .circle(circle)
+              } label: {
+                Label(circle.name, systemImage: circle.isEncrypted ? "lock.fill" : "person.2.fill")
+              }
+            } else {
+              Section {
+                // I10: iOS 27 menus drop a label's secondary text, so the
+                // reason rides in the row's single title.
+                Button {} label: {
+                  Label(state.disabledTitle(circleName: circle.name), systemImage: "lock.fill")
+                }
+                .disabled(true)
+                .accessibilityLabel(state.disabledTitle(circleName: circle.name))
+                Button {
+                  Task { await refresh(circle) }
+                } label: {
+                  Label("Refresh", systemImage: "arrow.clockwise")
+                }
+              }
             }
           }
         }
@@ -87,6 +131,11 @@ struct CircleAudiencePicker: View {
           // Failure to list circles leaves empty list, public stays selected
         }
       }
+      var toEvaluate = activeCircles
+      if case .circle(let current) = selectedDestination, !toEvaluate.contains(where: { $0.uri == current.uri }) {
+        toEvaluate.append(current)
+      }
+      await evaluate(toEvaluate)
     }
   }
 

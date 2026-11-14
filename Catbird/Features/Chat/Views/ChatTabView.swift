@@ -1106,11 +1106,7 @@ struct ChatTabView: View {
     Task {
       guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else { return }
       do {
-        try await mlsCoordinator.removeGroupMember(
-          actorRole: .admin,
-          conversationId: convoID,
-          targetDid: expectedUserDID
-        )
+        _ = try await mlsCoordinator.leaveConversation(conversationId: convoID)
         await MainActor.run {
           guard appState.userDID == expectedUserDID else { return }
           var updatedState = coordinator.mlsState

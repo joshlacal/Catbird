@@ -90,6 +90,20 @@ public final class StarterPackService: Sendable {
         starterPackCid: CID,
         createdAt: ATProtocolDate = ATProtocolDate(date: Date())
     ) throws -> [ComAtprotoRepoApplyWrites.Create] {
+        try buildFollowWrites(
+            subjectDIDs: subjectDIDs,
+            starterPackUri: starterPackUri,
+            starterPackCid: CIDString(starterPackCid),
+            createdAt: createdAt
+        )
+    }
+
+    public func buildFollowWrites(
+        subjectDIDs: [DID],
+        starterPackUri: ATProtocolURI,
+        starterPackCid: CIDString,
+        createdAt: ATProtocolDate = ATProtocolDate(date: Date())
+    ) throws -> [ComAtprotoRepoApplyWrites.Create] {
         let collection = try NSID(nsidString: AppBskyGraphFollow.typeIdentifier)
         let viaRef = ComAtprotoRepoStrongRef(uri: starterPackUri, cid: starterPackCid)
         

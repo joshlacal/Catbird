@@ -91,7 +91,7 @@ struct ChatSharedPostHydrationTests {
   private func sharedPostRecord(likeCount: Int = 4) throws -> AppBskyEmbedRecord.ViewRecordUnion {
     .appBskyEmbedRecordViewRecord(AppBskyEmbedRecord.ViewRecord(
       uri: try ATProtocolURI(uriString: postURI),
-      cid: CID.fromBlob(Data("shared-post".utf8)),
+      cid: CIDString(CID.fromBlob(Data("shared-post".utf8))),
       author: AppBskyActorDefs.ProfileViewBasic(
         did: try DID(didString: "did:plc:author1234567890123456"),
         handle: try Handle(handleString: "author.bsky.social"),

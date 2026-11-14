@@ -16,20 +16,20 @@ struct GatewaySessionRejectionTests {
   private let did = "did:plc:syntheticgatewayrejection"
   private let replacementSession = "synthetic-replacement-session"
 
-  @Test("Anonymous and inactive-account legacy logout events preserve the active session")
+  @Test("Anonymous, inactive-account, and unproved legacy logout events preserve the active gateway session")
   @MainActor
   func unrelatedLegacyLogoutPreservesActiveSession() async throws {
     try await withFixture { fixture in
-      for eventDID: String? in [nil, "", "did:plc:otheraccount"] {
-        await fixture.manager.handleAutoLogoutFromPetrel(did: eventDID, reason: "401_no_auth_provider_or_url")
+      for eventDID: String? in [nil, "", "did:plc:otheraccount", self.did] {
+        await fixture.manager.handleAutoLogoutFromPetrel(did: eventDID, reason: "invalid_grant")
         #expect(fixture.manager.state.userDID == self.did)
         #expect(fixture.manager.client === fixture.client)
         #expect(!fixture.manager.isAuthInvalid)
         #expect(fixture.manager.expiredAccountInfo == nil)
       }
 
-      // Ignored events must not arm the debounce flag and swallow a real expiration.
-      await fixture.manager.handleAutoLogoutFromPetrel(did: self.did, reason: "invalid_grant")
+      // Ignored legacy events must not arm the debounce flag and swallow a real proved expiration.
+      await fixture.manager.handleGatewaySessionRejection(fixture.proof)
       #expect(fixture.manager.state.userDID == nil)
       #expect(fixture.manager.client == nil)
       #expect(fixture.manager.isAuthInvalid)
@@ -58,8 +58,13 @@ struct GatewaySessionRejectionTests {
         redirectUri: "https://client.example/oauth/callback", scope: "atproto"
       ),
       namespace: namespace,
-      authMode: .gateway,
-      gatewayURL: URL(string: "https://gateway.example")!
+      authMode: .gateway(
+        try GatewayConfiguration(
+          gatewayURL: URL(string: "https://gateway.example")!,
+          callbackURL: URL(string: "https://client.example/oauth/callback")!,
+          permissionCallbackURL: URL(string: "https://client.example/oauth/permission-callback")!
+        )
+      )
     )
     var overrides = AuthenticationDependencyOverrides()
     overrides.handleOAuthCallback = { _, _ in

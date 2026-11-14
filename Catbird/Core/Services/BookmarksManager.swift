@@ -35,6 +35,10 @@ actor BookmarksManager {
     /// - Returns: The bookmark URI if successful
     /// - Throws: BookmarkError on failure
     func createBookmark(postUri: ATProtocolURI, postCid: CID, client: ATProtoClient) async throws -> ATProtocolURI {
+        try await createBookmark(postUri: postUri, postCid: CIDString(postCid), client: client)
+    }
+
+    func createBookmark(postUri: ATProtocolURI, postCid: CIDString, client: ATProtoClient) async throws -> ATProtocolURI {
         let input = AppBskyBookmarkCreateBookmark.Input(uri: postUri, cid: postCid)
         
         let responseCode = try await client.app.bsky.bookmark.createBookmark(input: input)

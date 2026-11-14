@@ -1060,7 +1060,7 @@ struct CachedFeedViewPostIdentityTests {
 
     let post = AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:author/app.bsky.feed.post/\(rkey)"),
-      cid: CID.fromDAGCBOR(Data("post-\(rkey)".utf8)),
+      cid: CIDString(CID.fromDAGCBOR(Data("post-\(rkey)".utf8))),
       author: try makeProfile(did: "did:plc:author"),
       record: .knownType(record),
       embed: nil,

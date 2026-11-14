@@ -654,14 +654,17 @@ final class PostContextMenuViewModel {
 }
 
 extension PostContextMenuViewModel {
-    public static func forCircleItem(
+    /// Plaintext items, or an encrypted item's decrypted post from `opened`.
+    static func forCircleItem(
         _ item: BlueCatbirdCircleDefs.FeedItem,
+        opened: CircleOpenedItem? = nil,
         appState: AppState,
         allowsThreadSummary: Bool = false
-    ) -> PostContextMenuViewModel {
-        PostContextMenuViewModel(
+    ) -> PostContextMenuViewModel? {
+        guard let feedViewPost = item.post.feedViewPost ?? opened?.feedViewPost else { return nil }
+        return PostContextMenuViewModel(
             appState: appState,
-            post: item.post.post,
+            post: feedViewPost.post,
             allowsThreadSummary: allowsThreadSummary,
             visibilityContext: .circle(item.circle)
         )

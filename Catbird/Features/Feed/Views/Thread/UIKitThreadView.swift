@@ -880,6 +880,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         configuration.image = UIImage(systemName: "lock")
         configuration.text = "Post Unavailable"
         configuration.secondaryText = "The author has limited this post to signed-in users."
+      } else if let anchorValue, let placeholder = CircleThreadOpening.placeholder(in: anchorValue) {
+        let copy = CircleEncryptedStatusRow.copy(for: placeholder.state, ownerHandle: placeholder.ownerHandle)
+        configuration.image = UIImage(systemName: CircleEncryptedStatusRow.iconName(for: placeholder.state))
+        configuration.text = copy.title
+        configuration.secondaryText = copy.detail
       } else {
         configuration.image = UIImage(systemName: "trash")
         configuration.text = "Post Not Found"
@@ -1980,6 +1985,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         parents.append(ParentPost(id: uri, threadItem: item, grandparentAuthor: grandparentAuthor))
         grandparentAuthor = nil
         
+      case .unexpected where CircleThreadOpening.placeholder(in: item.value) != nil:
+        // An encrypted Circle placeholder keeps its post's URI as a stable id.
+        parents.append(ParentPost(id: item.uri.uriString(), threadItem: item, grandparentAuthor: grandparentAuthor))
+        grandparentAuthor = nil
+
       case .unexpected:
         let unexpectedID = "unexpected-\(item.depth)-\(UUID().uuidString.prefix(8))"
         controllerLogger.debug("collectParentPostsV2: Found unexpected post type at depth \(item.depth): \(unexpectedID)")

@@ -467,7 +467,7 @@ struct ThreadReplyLayoutTests {
   /// A post as a feed hands it to the thread, replying to `parent` when given.
   private func tappedPost(_ name: String, parent: String?) throws -> AppBskyFeedDefs.PostView {
     let reply = parent.map { parentName in
-      let ref = ComAtprotoRepoStrongRef(uri: Self.uri(parentName), cid: CID.fromDAGCBOR(Data("\(parentName)-cid".utf8)))
+      let ref = ComAtprotoRepoStrongRef(uri: Self.uri(parentName), cid: CIDString(CID.fromDAGCBOR(Data("\(parentName)-cid".utf8))))
       return AppBskyFeedPost.ReplyRef(root: ref, parent: ref)
     }
     let record = AppBskyFeedPost(

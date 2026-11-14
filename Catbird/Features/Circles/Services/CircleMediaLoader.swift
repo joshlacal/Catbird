@@ -3,6 +3,7 @@
 //  Catbird
 //
 
+import CatbirdMLSCore
 import Foundation
 import Petrel
 import PetrelCatbird
@@ -22,12 +23,21 @@ import CoreGraphics
 /// URLs are never exposed. Decoded `PlatformImage` instances are kept in memory
 /// only, keyed by `accountDID|space|authorDID|cid|targetBucket`, and purged on account
 /// logout/switch or Space unavailability.
+///
+/// Encrypted Circles: `getMedia` serves ciphertext. `image(decryptWith:)`
+/// verifies the ciphertext digest, decrypts with `BlobCrypto`, and decodes;
+/// only the decoded image enters the (memory) cache, never the plaintext bytes
+/// and never a disk cache. Media keys of opened posts are registered here
+/// (`registerKeys`, memory only, purged with the images) so `CircleMediaView`
+/// can find them.
 actor CircleMediaLoader {
   static let shared = CircleMediaLoader()
 
   private var service: CircleService?
   private var caches: [String: NSCache<NSString, PlatformImage>] = [:]
   private var cacheKeys: [String: Set<String>] = [:]
+  /// accountKey → `space|authorDID|cid` → key ref.
+  private var mediaKeys: [String: [String: CircleMediaKeyRef]] = [:]
   private var generation: UInt64 = 0
 
   private let totalCostLimit: Int = 50 * 1024 * 1024 // 50MB per account
@@ -60,7 +70,8 @@ actor CircleMediaLoader {
     authorDID: DID,
     cid: CID,
     targetBucket: Int,
-    service: CircleService? = nil
+    service: CircleService? = nil,
+    decryptWith keyRef: CircleMediaKeyRef? = nil
   ) async throws -> PlatformImage {
     let accountKey = accountDID ?? "default"
     let cacheKey = "\(space.description)|\(authorDID.description)|\(cid.description)|\(targetBucket)"
@@ -75,10 +86,11 @@ actor CircleMediaLoader {
     }
 
     let requestGeneration = generation
-    let data = try await activeService.media(space: space, authorDID: authorDID, cid: cid)
+    let fetched = try await activeService.media(space: space, authorDID: authorDID, cid: cid)
     guard !Task.isCancelled, generation == requestGeneration else {
       throw CancellationError()
     }
+    let data = try keyRef.map { try Self.decrypt(fetched, with: $0) } ?? fetched
     guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
       throw CircleMediaError.invalidImage
     }
@@ -121,9 +133,42 @@ actor CircleMediaLoader {
     return platformImage
   }
 
+  /// Verifies the ciphertext's SHA-256 against the key ref, then decrypts it.
+  /// Any failure is `decryptionFailed`; ciphertext is never decoded as an image.
+  static func decrypt(_ ciphertext: Data, with keyRef: CircleMediaKeyRef) throws -> Data {
+    do {
+      return try BlobCrypto.decrypt(
+        ciphertext: ciphertext, key: keyRef.key, iv: keyRef.iv, expectedSHA256: keyRef.sha256
+      )
+    } catch {
+      throw CircleMediaError.decryptionFailed
+    }
+  }
+
+  // MARK: Media keys (encrypted Circles)
+
+  private static func keyID(space: SpaceRef, authorDID: DID, cid: CID) -> String {
+    "\(space.description)|\(authorDID.description)|\(cid.string)"
+  }
+
+  /// Records the keys of an opened post's media (memory only).
+  func registerKeys(_ refs: [CircleMediaKeyRef], accountDID: String, space: SpaceRef, authorDID: DID) {
+    var keys = mediaKeys[accountDID, default: [:]]
+    for ref in refs {
+      keys[Self.keyID(space: space, authorDID: authorDID, cid: ref.cid)] = ref
+    }
+    mediaKeys[accountDID] = keys
+  }
+
+  /// The registered key for one blob, if its post was opened by this account.
+  func registeredKey(accountDID: String, space: SpaceRef, authorDID: DID, cid: CID) -> CircleMediaKeyRef? {
+    mediaKeys[accountDID]?[Self.keyID(space: space, authorDID: authorDID, cid: cid)]
+  }
+
   /// Purges every cached image for an account (called on logout, switch, removal).
   func purge(accountDID: String) {
     generation &+= 1
+    mediaKeys.removeValue(forKey: accountDID)
     caches[accountDID]?.removeAllObjects()
     caches.removeValue(forKey: accountDID)
     cacheKeys.removeValue(forKey: accountDID)
@@ -133,6 +178,7 @@ actor CircleMediaLoader {
   func purge(accountDID: String, space: SpaceRef) {
     generation &+= 1
     let prefix = "\(space.description)|"
+    mediaKeys[accountDID] = mediaKeys[accountDID]?.filter { !$0.key.hasPrefix(prefix) }
     if let accountCache = caches[accountDID], var keys = cacheKeys[accountDID] {
       for key in keys where key.hasPrefix(prefix) {
         accountCache.removeObject(forKey: key as NSString)
@@ -146,6 +192,9 @@ actor CircleMediaLoader {
   func purge(space: SpaceRef) {
     generation &+= 1
     let prefix = "\(space.description)|"
+    for (account, keys) in mediaKeys {
+      mediaKeys[account] = keys.filter { !$0.key.hasPrefix(prefix) }
+    }
     for (accountDID, accountCache) in caches {
       if var keys = cacheKeys[accountDID] {
         for key in keys where key.hasPrefix(prefix) {
@@ -165,12 +214,14 @@ actor CircleMediaLoader {
     }
     caches.removeAll()
     cacheKeys.removeAll()
+    mediaKeys.removeAll()
   }
 }
 
 public enum CircleMediaError: Error, LocalizedError, Equatable {
   case invalidImage
   case serviceUnavailable
+  case decryptionFailed
 
   public var errorDescription: String? {
     switch self {
@@ -178,6 +229,8 @@ public enum CircleMediaError: Error, LocalizedError, Equatable {
       return "The Circle media could not be decoded as an image."
     case .serviceUnavailable:
       return "The Circle media service is unavailable."
+    case .decryptionFailed:
+      return "The Circle media could not be decrypted."
     }
   }
 }

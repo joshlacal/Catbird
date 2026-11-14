@@ -27,7 +27,7 @@ final class NativeRowPostModels {
   private var isCancelled = false
 
   var uri: String { postState.currentPostBox.value.uri.uriString() }
-  var cid: CID { postState.currentPostBox.value.cid }
+  var cid: CIDString { postState.currentPostBox.value.cid }
 
   /// - Parameters:
   ///   - post: The feed payload the row was configured with. The view models and their

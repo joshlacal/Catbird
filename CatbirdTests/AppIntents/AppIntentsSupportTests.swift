@@ -141,7 +141,7 @@ struct CreatePostIntentTests {
   private func makeQuoteRef() throws -> ComAtprotoRepoStrongRef {
     ComAtprotoRepoStrongRef(
       uri: try ATProtocolURI(uriString: "at://did:plc:abc/app.bsky.feed.post/3l5quoted"),
-      cid: try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")
+      cid: CIDString(try CID.parse("bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"))
     )
   }
 

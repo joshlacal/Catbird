@@ -120,7 +120,8 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    let resolvedRecipientDID = resolveChatRecipientDID(from: userInfo)
+    let wake = MLSPushExtensionProcessor.decodePushWakePayload(from: userInfo)
+    let resolvedRecipientDID = resolveChatRecipientDID(from: userInfo, wake: wake)
     if Self.isAddressedToSignedOutAccount(recipientDID: resolvedRecipientDID, defaults: appGroupDefaults) {
       contentHandler(Self.neutralizedForSignedOutAccount(mutable))
       return
@@ -139,7 +140,7 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    guard let wake = MLSPushExtensionProcessor.decodePushWakePayload(from: userInfo) else {
+    guard let wake else {
       contentHandler(mutable)
       return
     }
@@ -170,6 +171,9 @@ class NotificationService: UNNotificationServiceExtension {
     let homeDsURL = appGroupDefaults?
       .string(forKey: "mlsHomeDsEndpoint_\(wake.recipientAccountHash)")
       .flatMap(URL.init(string:)) ?? URL(string: "https://chat.catbird.blue")
+    let ownPdsURL = appGroupDefaults?
+      .string(forKey: "mlsPdsEndpoint_\(wake.recipientAccountHash)")
+      .flatMap(URL.init(string:))
     let actorDeviceId = appGroupDefaults?
       .string(forKey: "mlsDeviceId_\(wake.recipientAccountHash)")
 
@@ -179,6 +183,7 @@ class NotificationService: UNNotificationServiceExtension {
       keystore: KeychainPlatformKeyStore(),
       transport: PetrelPlatformTransport(
         homeDsEndpoint: homeDsURL,
+        ownPdsEndpoint: ownPdsURL,
         actorDeviceId: actorDeviceId
       ),
       wake: wake,
@@ -233,7 +238,10 @@ class NotificationService: UNNotificationServiceExtension {
     contentHandler(content)
   }
 
-  private func resolveChatRecipientDID(from userInfo: [AnyHashable: Any]) -> String? {
+  private func resolveChatRecipientDID(
+    from userInfo: [AnyHashable: Any],
+    wake: PushWakePayload?
+  ) -> String? {
     if let did = userInfo["recipientDid"] as? String, !did.isEmpty {
       return did
     }
@@ -243,10 +251,10 @@ class NotificationService: UNNotificationServiceExtension {
     if let hash = userInfo["recipient_account"] as? String {
       return resolvePublishedAccountDID(fromHash: hash)
     }
-    if let catbird = userInfo["catbird"] as? [String: Any],
-       let hash = catbird["recipientAccountHash"] as? String
-    {
-      return resolvePublishedAccountDID(fromHash: hash)
+    // The gateway wake: version 1 carries the account hash in clear, version 2 seals it,
+    // so both go through the decoder rather than reading the raw `catbird` object.
+    if let wake {
+      return resolvePublishedAccountDID(fromHash: wake.recipientAccountHash)
     }
     return nil
   }
@@ -305,6 +313,7 @@ class NotificationService: UNNotificationServiceExtension {
     recipientAccountDID: String? = nil
   ) -> Bool {
     guard preview.receiptVerified else { return false }
+    if preview.isOwnSiblingSender { return true }
     let senderRoot = canonicalRootDID(preview.senderDid)
     guard !senderRoot.isEmpty else { return false }
     if let recipientAccountDID, isSameAccount(senderRoot, as: recipientAccountDID) {

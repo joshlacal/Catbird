@@ -163,7 +163,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
           createdAt: nil, verification: nil, status: nil, debug: nil)
         let post = AppBskyFeedDefs.PostView(
           uri: try ATProtocolURI(uriString: "at://did:plc:fixtureauthor/app.bsky.feed.post/p\(number)"),
-          cid: CID.fromDAGCBOR(Data("cid-test".utf8)), author: author,
+          cid: CIDString(CID.fromDAGCBOR(Data("cid-test".utf8))), author: author,
           record: .knownType(record), embed: nil, bookmarkCount: nil,
           replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
           indexedAt: ATProtocolDate(date: epoch), viewer: nil, labels: nil,

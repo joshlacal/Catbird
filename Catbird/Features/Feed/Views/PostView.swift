@@ -1521,17 +1521,23 @@ indirect enum PostViewError {
 
 
 extension PostView {
-  /// Minimal production Circle row factory from a generated `BlueCatbirdCircleDefs.FeedItem`.
-  public static func circleRow(
+  /// Production Circle row factory from a generated `BlueCatbirdCircleDefs.FeedItem`.
+  /// Plaintext items render directly; an encrypted item renders its decrypted
+  /// post from `opened` (`CircleFeedModel.opened`). Nil only while an encrypted
+  /// item is unopened, pending a key or unverifiable: the caller renders that
+  /// state (`CircleEncryptedStatusRow`).
+  static func circleRow(
     item: BlueCatbirdCircleDefs.FeedItem,
+    opened: CircleOpenedItem? = nil,
     path: Binding<NavigationPath>,
     appState: AppState,
     isParentPost: Bool = false,
     isSelectable: Bool = true,
     avatarScale: PostAvatarScale = .regular
-  ) -> PostView {
-    PostView(
-      post: item.post.post,
+  ) -> PostView? {
+    guard let feedViewPost = item.post.feedViewPost ?? opened?.feedViewPost else { return nil }
+    return PostView(
+      post: feedViewPost.post,
       grandparentAuthor: nil,
       isParentPost: isParentPost,
       isSelectable: isSelectable,

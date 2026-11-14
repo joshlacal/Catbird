@@ -66,7 +66,7 @@ struct FeedPreferenceConsumerTests {
       handle: try Handle(handleString: "author.test"), displayName: "Fixture", pronouns: nil, avatar: nil,
       associated: nil, viewer: nil, labels: nil, createdAt: nil, verification: nil, status: nil, debug: nil)
     let post = AppBskyFeedDefs.PostView(uri: try ATProtocolURI(uriString: "at://did:plc:fixture/app.bsky.feed.post/one"),
-      cid: CID.fromDAGCBOR(Data("cid-fixture".utf8)), author: author, record: .knownType(record), embed: nil,
+      cid: CIDString(CID.fromDAGCBOR(Data("cid-fixture".utf8))), author: author, record: .knownType(record), embed: nil,
       bookmarkCount: nil, replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)), viewer: nil, labels: nil, threadgate: nil, debug: nil)
     return .init(post: post, reply: nil, reason: nil, feedContext: nil, reqId: nil)

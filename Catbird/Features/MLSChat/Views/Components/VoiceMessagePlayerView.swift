@@ -166,9 +166,28 @@ struct VoiceMessagePlayerView: View {
       return
     }
 
-    // Step 3: Play decrypted audio container via AVAudioPlayer
+    // Step 3: Decode Opus-in-OGG (`audio/ogg; codecs=opus`) to RIFF/WAVE when needed (`FC-09`), then play via AVAudioPlayer
     do {
-      let player = try AVAudioPlayer(data: decrypted)
+      let lowerMime = audioData.contentType.lowercased()
+      let isOggOpus = lowerMime.contains("opus")
+        || lowerMime.contains("ogg")
+        || decrypted.starts(with: Data("OggS".utf8))
+      let playableData: Data
+      if isOggOpus {
+        playableData = try await MLSClientCoordinator.decodeOpusToWav(opusData: decrypted)
+      } else {
+        playableData = decrypted
+      }
+
+      let player: AVAudioPlayer
+      if let initialized = try? AVAudioPlayer(data: playableData) {
+        player = initialized
+      } else if !isOggOpus {
+        let wavFallback = try await MLSClientCoordinator.decodeOpusToWav(opusData: decrypted)
+        player = try AVAudioPlayer(data: wavFallback)
+      } else {
+        player = try AVAudioPlayer(data: playableData)
+      }
       player.prepareToPlay()
       voicePlayerLogger.info("[play] player ready: duration=\(player.duration)s")
 

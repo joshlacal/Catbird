@@ -239,7 +239,7 @@ final class StarterPackOnboardingManager {
         logger.info("Finalizing starter pack onboarding for pack: \(context.uri) (flow: \(context.flowID.uuidString))")
         
         guard let starterPackURI = try? ATProtocolURI(uriString: context.uri),
-              let starterPackCID = try? CID.parse(context.cid) else {
+              let starterPackCID = try? CIDString(cidString: context.cid) else {
             logger.error("Invalid starter pack URI or CID in pending context")
             throw NSError(
                 domain: "StarterPackOnboarding",
@@ -349,7 +349,7 @@ final class StarterPackOnboardingManager {
                     collection: try NSID(nsidString: "app.bsky.actor.profile"),
                     rkey: try RecordKey(keyString: "self"),
                     record: ATProtocolValueContainer.knownType(updated),
-                    swapRecord: existingRecord.cid
+                    swapRecord: existingRecord.cid.map { .value($0) }
                 )
                 let (putCode, _) = try await client.com.atproto.repo.putRecord(input: putRecordInput)
                 guard putCode >= 200 && putCode < 300 else {

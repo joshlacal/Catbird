@@ -28,14 +28,21 @@ extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
   }
 }
 
+extension BlueCatbirdCircleDefs.CircleSummary {
+  /// True iff the space-ref's type segment is the encrypted Circle space type.
+  var isEncrypted: Bool {
+    uri.spaceType == CircleConfiguration.encryptedSpaceType
+  }
+}
+
 /// Identity of the standalone Circle AppView.
 ///
 /// `clientID` and `serviceDID` are NOT interchangeable. `clientID` is the
 /// AppView's OAuth client identifier — the HTTPS URL of its client-metadata
 /// document — and is the value named in the memberspace policy's `allowedApps`. `serviceDID`
-/// is only the `atproto-proxy` target and `registerNotify` subscriber.
+/// is only the `atproto-proxy` target, not an OAuth client identifier.
 enum CircleConfiguration {
-  static let protocolRevision = "5d88b414a98de1ada22c94c78fa0667a7028163c"
+  static let protocolRevision = "d4def6e9f521896ed8222f576d54923d00b5fbeb"
 
   /// Service identifier the gateway proxies Circle reads to.
   static let serviceDID = "did:web:circles.catbird.blue#atproto_circles"
@@ -51,6 +58,25 @@ enum CircleConfiguration {
 
   /// Space type for every Catbird Circle.
   static let spaceType = "blue.catbird.circle"
+
+  /// Space type for end-to-end encrypted Circles. OAuth scopes are granted per
+  /// space type, so every scope list naming `spaceType` must also name this.
+  static let encryptedSpaceType = "blue.catbird.circle.encrypted"
+
+  /// Collection holding wrapped Circle content keys (encrypted Circles).
+  static let keyCollection = "blue.catbird.circle.key"
+
+  /// Collection holding encrypted Circle posts.
+  static let postCollection = "blue.catbird.circle.post"
+
+  /// Most key versions a member is re-wrapped to when joining.
+  static let maxRewrapVersions = 24
+
+  /// Oldest key version (by age) that is still re-wrapped to a new member.
+  static let maxRewrapAge: TimeInterval = 365 * 24 * 3600
+
+  /// Grace window during which a post sealed under a just-rotated key is accepted.
+  static let staleKeyGrace: TimeInterval = 600
 
   /// Collection holding a Circle's metadata record.
   static let metadataCollection = "blue.catbird.circle.metadata"
@@ -143,6 +169,7 @@ struct CircleCapability: Sendable, Equatable {
   let enabled: Bool
   let protocolRevision: String
   let supportsImages: Bool
+  var supportsEncryptedPosts: Bool = false
 
   var isCompatible: Bool {
     enabled && protocolRevision == CircleConfiguration.protocolRevision
@@ -175,6 +202,9 @@ struct CirclePostDraft: Sendable {
   let labels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion?
   let embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
   let createdAt: ATProtocolDate
+  /// Encrypted Circles only: media already encrypted and uploaded as
+  /// ciphertext. Its keys travel only inside the sealed payload.
+  let encryptedMedia: [CircleEncryptedMedia]
 
   init(
     text: String,
@@ -183,7 +213,8 @@ struct CirclePostDraft: Sendable {
     langs: [LanguageCodeContainer] = [],
     labels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion? = nil,
     embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion? = nil,
-    createdAt: ATProtocolDate = ATProtocolDate(date: Date())
+    createdAt: ATProtocolDate = ATProtocolDate(date: Date()),
+    encryptedMedia: [CircleEncryptedMedia] = []
   ) {
     self.text = text
     self.facets = facets
@@ -192,6 +223,7 @@ struct CirclePostDraft: Sendable {
     self.labels = labels
     self.embed = embed
     self.createdAt = createdAt
+    self.encryptedMedia = encryptedMedia
   }
 }
 
@@ -279,6 +311,24 @@ public enum CircleError: Error, LocalizedError, Equatable {
   case spaceWriteRejected(String)
   case notAuthorized
   case invalidParameter(String)
+  /// Another writer's Circle key record occupies the version this device just
+  /// wrote; the local key was not adopted (refresh and retry).
+  case keyVersionConflict
+  /// An encrypted Circle's key is missing, older than the server's latest, or
+  /// the post could not be sealed. The post is not written (fail closed).
+  case encryptionUnavailable
+  /// A member a dry-run wrap excluded (D16); `reason` is the user-facing copy.
+  /// Retryable: the exclusion can be transient.
+  case ineligibleMember(reason: String)
+  /// The Circle summary's `owner` is not the authority of its Space URI (the
+  /// real owner). Nothing from that summary drives key trust.
+  case ownerMismatch
+  /// The Circle's keys could not be checked right now (offline, directory or
+  /// session unavailable). Retryable; nothing was posted (I3).
+  case keysTemporarilyUnavailable
+  /// This device's Circle key store could not be read (for example the
+  /// Keychain before first unlock). Retryable; nothing was posted (I3).
+  case keyStoreUnavailable
 
   public static func == (lhs: CircleError, rhs: CircleError) -> Bool {
     switch (lhs, rhs) {
@@ -295,6 +345,12 @@ public enum CircleError: Error, LocalizedError, Equatable {
     case (.spaceWriteRejected(let l), .spaceWriteRejected(let r)): return l == r
     case (.notAuthorized, .notAuthorized): return true
     case (.invalidParameter(let l), .invalidParameter(let r)): return l == r
+    case (.keyVersionConflict, .keyVersionConflict): return true
+    case (.encryptionUnavailable, .encryptionUnavailable): return true
+    case (.ineligibleMember(let l), .ineligibleMember(let r)): return l == r
+    case (.ownerMismatch, .ownerMismatch): return true
+    case (.keysTemporarilyUnavailable, .keysTemporarilyUnavailable): return true
+    case (.keyStoreUnavailable, .keyStoreUnavailable): return true
     default: return false
     }
   }
@@ -327,8 +383,61 @@ public enum CircleError: Error, LocalizedError, Equatable {
       return "You are not authorized to perform this operation."
     case .invalidParameter(let message):
       return message
+    case .keyVersionConflict:
+      return "This Circle's key changed on another device. Try again."
+    case .encryptionUnavailable:
+      return "Can't post to this Circle right now. Your draft was kept."
+    case .ineligibleMember(let reason):
+      return reason
+    case .ownerMismatch:
+      return "This Circle's data looks inconsistent. Try again later."
+    case .keysTemporarilyUnavailable:
+      return "Waiting to reach this Circle's keys. Your draft was kept; try again in a moment."
+    case .keyStoreUnavailable:
+      return "This Circle's keys are unavailable on this device right now. Your draft was kept."
     }
   }
+}
+
+/// Keys an encrypted-post report discloses to moderators (spec §8): the
+/// post key and, per attachment, the media key and IV.
+struct CircleReportDisclosure: Equatable, Sendable {
+  struct Media: Equatable, Sendable {
+    let cid: String
+    let key: Data
+    let iv: Data
+  }
+
+  /// Lexicon bound on `disclosedMedia`.
+  static let maxMedia = 32
+
+  let postKey: Data
+  let media: [Media]
+}
+
+/// The outcome of a Circle publish. `repostedAfterKeyRefresh` is set when the
+/// post was re-sealed under a newer key and the stale copy removed (§4.4).
+///
+/// `keyCheckFailed`: the post was written, but the post-publish key check
+/// (§4.4 backstop) could not run, so a stale-key repost may be needed. The
+/// composer says so instead of reporting a silent success.
+struct CirclePublishResult: Equatable, Sendable {
+  let uri: ATProtocolURI
+  let repostedAfterKeyRefresh: Bool
+  var keyCheckFailed: Bool = false
+}
+
+enum CircleReportCopy {
+  /// Spec §8 consent, shown before an encrypted post is reported.
+  static let disclosureConsent = "Reporting shares this post's decryption key with Catbird moderators."
+  /// The post was never opened on this device, so there is no key to share.
+  static let notOpened = "Open this post before reporting it."
+}
+
+enum CirclePostCopy {
+  /// §4.4: one non-blocking line after a repost under a newer key.
+  static let repostedAfterKeyRefresh = "Reposted after key refresh"
+  static let keyCheckFailed = "Posted, but the Circle's key check didn't finish. If members can't read it, post again."
 }
 
 /// The narrow network seam used by `CircleService`. Production uses
@@ -361,6 +470,93 @@ protocol CircleTransport: Sendable {
   func addMember(space: SpaceRef, did: DID) async throws
   func removeMember(space: SpaceRef, did: DID) async throws
   func listMembers(space: SpaceRef) async throws -> [CircleMember]
+
+  // MARK: Encrypted Circles (spec §4.2, §6)
+  /// Creates a `blue.catbird.circle.encrypted` Space and its metadata, with no members.
+  func createEncryptedSpace(skey: String, circleId: String, name: String) async throws -> CircleSummary
+  /// Key records newer than `sinceVersion`, delivered by the AppView (D12),
+  /// each with its record's exact server JSON for the FFI.
+  func getKeys(space: SpaceRef, sinceVersion: Int?) async throws -> CircleKeysResponse
+  /// Creates or replaces the owner's `blue.catbird.circle.key` record at `rkey`.
+  func putKeyRecord(space: SpaceRef, rkey: String, recordJSON: String) async throws -> ATProtocolURI
+  /// Creates the author's sealed `blue.catbird.circle.post` record at the
+  /// canonical `postURI` bound into the post's AAD: its rkey, and its author,
+  /// which must be the repo being written (else `encryptionUnavailable`). The
+  /// record's `attachments` are the Space attachment manifest for the
+  /// encrypted blobs.
+  func publishEncryptedPost(destination: CircleSummary, postURI: ATProtocolURI, recordJSON: String) async throws -> ATProtocolURI
+  /// Deletes the author's own `blue.catbird.circle.post` record at `uri`
+  /// (spec §4.4: the stale copy after a repost under a newer key).
+  func deleteEncryptedPost(uri: ATProtocolURI, circle: CircleSummary) async throws
+  /// Reports a post; for an encrypted post `disclosure` carries the post key
+  /// and media keys the reporter consented to share (spec §8).
+  func report(
+    post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?,
+    disclosure: CircleReportDisclosure?
+  ) async throws -> UUID
+  /// Creates a `blue.catbird.circle.encrypted` Space whose metadata carries the
+  /// owner's history policy and, for a migration (D17), `migratedFrom`.
+  func createEncryptedSpace(
+    skey: String, circleId: String, name: String, historyForNewMembers: Bool, migratedFrom: SpaceRef?
+  ) async throws -> CircleSummary
+  /// The owner's `blue.catbird.circle.metadata` record (rkey `self`) in
+  /// `space`, or nil when the Space has none.
+  func getMetadata(space: SpaceRef) async throws -> BlueCatbirdCircleMetadata?
+  /// Creates or replaces the owner's metadata record in `space`.
+  func putMetadata(space: SpaceRef, metadata: BlueCatbirdCircleMetadata) async throws
+}
+
+/// Transports that predate encrypted Circles (test doubles, the E2E harness)
+/// refuse the encrypted surface loudly instead of silently succeeding.
+extension CircleTransport {
+  func createEncryptedSpace(skey: String, circleId: String, name: String) async throws -> CircleSummary {
+    throw CircleError.invalidParameter("Encrypted Circles are not supported by this transport.")
+  }
+
+  func getKeys(space: SpaceRef, sinceVersion: Int?) async throws -> CircleKeysResponse {
+    throw CircleError.invalidParameter("Encrypted Circles are not supported by this transport.")
+  }
+
+  func putKeyRecord(space: SpaceRef, rkey: String, recordJSON: String) async throws -> ATProtocolURI {
+    throw CircleError.invalidParameter("Encrypted Circles are not supported by this transport.")
+  }
+
+  func publishEncryptedPost(destination: CircleSummary, postURI: ATProtocolURI, recordJSON: String) async throws -> ATProtocolURI {
+    throw CircleError.encryptionUnavailable
+  }
+
+  func deleteEncryptedPost(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    throw CircleError.encryptionUnavailable
+  }
+
+  /// A plain report goes through the original entry point; a disclosure is
+  /// never silently dropped by a transport that cannot carry it.
+  func report(
+    post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?,
+    disclosure: CircleReportDisclosure?
+  ) async throws -> UUID {
+    guard disclosure == nil else { throw CircleError.encryptionUnavailable }
+    return try await report(post: post, circle: circle, reason: reason, details: details)
+  }
+
+  /// The default policy with no migration is the plain encrypted create; any
+  /// other request is refused rather than silently dropping its metadata.
+  func createEncryptedSpace(
+    skey: String, circleId: String, name: String, historyForNewMembers: Bool, migratedFrom: SpaceRef?
+  ) async throws -> CircleSummary {
+    guard historyForNewMembers, migratedFrom == nil else {
+      throw CircleError.invalidParameter("Encrypted Circles are not supported by this transport.")
+    }
+    return try await createEncryptedSpace(skey: skey, circleId: circleId, name: name)
+  }
+
+  func getMetadata(space: SpaceRef) async throws -> BlueCatbirdCircleMetadata? {
+    throw CircleError.invalidParameter("Circle metadata is not supported by this transport.")
+  }
+
+  func putMetadata(space: SpaceRef, metadata: BlueCatbirdCircleMetadata) async throws {
+    throw CircleError.invalidParameter("Circle metadata is not supported by this transport.")
+  }
 }
 
 /// Maps a generated `BlueCatbirdCircle*` error (or gateway/network error) to a
@@ -377,7 +573,8 @@ func circleError(from error: any Error) -> CircleError {
     case "AccessRemoved": return .accessRemoved
     case "UnsupportedPDS": return .unsupportedPDS
     case "ProtocolRevisionMismatch": return .protocolRevisionMismatch
-    case "UpstreamUnavailable": return .upstreamUnavailable
+    case "UpstreamUnavailable", "UpstreamFailure": return .upstreamUnavailable
+    case "NotAuthorized", "AccountNotAuthorized", "SpaceNotFound": return .notAuthorized
     default: break
     }
   }
@@ -388,7 +585,8 @@ func circleError(from error: any Error) -> CircleError {
     case "AccessRemoved": return .accessRemoved
     case "UnsupportedPDS": return .unsupportedPDS
     case "ProtocolRevisionMismatch": return .protocolRevisionMismatch
-    case "UpstreamUnavailable": return .upstreamUnavailable
+    case "UpstreamUnavailable", "UpstreamFailure": return .upstreamUnavailable
+    case "NotAuthorized", "AccountNotAuthorized", "SpaceNotFound": return .notAuthorized
     default: break
     }
   }
@@ -413,4 +611,48 @@ public extension Notification.Name {
   /// Posted when a Circle post or reply is published.
   /// `userInfo` contains `accountDID` (String) and `spaceURI` (String).
   static let circlePostPublished = Notification.Name("CirclePostPublished")
+}
+
+/// A `blue.catbird.circle.getKeys` response: typed entries for Swift's own use,
+/// and each entry's `record` as the exact JSON the AppView served, which is
+/// what `CircleCrypto.openCircleKey` receives (never a Petrel re-encoding).
+struct CircleKeysResponse: Sendable {
+  struct Entry: Sendable {
+    let typed: BlueCatbirdCircleGetKeys.KeyEntry
+    let recordJSON: String
+
+    var keyVersion: Int { typed.keyVersion }
+    var cid: CIDString { typed.cid }
+    var record: BlueCatbirdCircleKey { typed.record }
+  }
+
+  let entries: [Entry]
+  let latestKeyVersion: Int
+  /// Rows the AppView left out of this page (malformed or over its size cap):
+  /// the page is incomplete and the missing versions are retried later.
+  let skipped: Int
+
+  init(entries: [Entry], latestKeyVersion: Int, skipped: Int = 0) {
+    self.entries = entries
+    self.latestKeyVersion = latestKeyVersion
+    self.skipped = skipped
+  }
+
+  /// Decodes a getKeys response body. Throws `invalidResponse` when the body
+  /// does not decode or its raw `keys[i].record` slices do not line up with
+  /// the typed entries.
+  init(responseBody data: Data) throws {
+    guard
+      let output = try? JSONDecoder().decode(BlueCatbirdCircleGetKeys.Output.self, from: data),
+      let keys = RawJSON.member("keys", in: data),
+      let rawEntries = RawJSON.elements(in: keys),
+      rawEntries.count == output.keys.count
+    else { throw CircleError.invalidResponse }
+    var entries: [Entry] = []
+    for (typed, raw) in zip(output.keys, rawEntries) {
+      guard let record = RawJSON.memberString("record", in: raw) else { throw CircleError.invalidResponse }
+      entries.append(Entry(typed: typed, recordJSON: record))
+    }
+    self.init(entries: entries, latestKeyVersion: output.latestKeyVersion, skipped: output.skipped ?? 0)
+  }
 }

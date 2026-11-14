@@ -163,15 +163,18 @@ struct AccountDeletionCoordinator {
     // unconditionally (even when mlsCoordinator == nil).
     await purgeFilesystemData(forDID: did)
     await MLSImageCache.shared.purge(for: did)
+    try? CircleKeyStore.wipe(accountDID: did, keychain: SystemCircleKeychain())
     AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
 
     // 4 & 5. Keychain & State: Sign out and remove account from Petrel/Keychain and AppState.
     do {
       try await AppStateManager.shared.authentication.removeAccount(did: did)
+      try? CircleKeyStore.wipe(accountDID: did, keychain: SystemCircleKeychain())
       AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
       await MLSImageCache.shared.purge(for: did)
       logger.info("✅ Finished Catbird data erasure for account: \(did)")
     } catch {
+      try? CircleKeyStore.wipe(accountDID: did, keychain: SystemCircleKeychain())
       AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
       await MLSImageCache.shared.purge(for: did)
       logger.error("Failed to remove account from AuthManager: \(error.localizedDescription)")
@@ -180,6 +183,18 @@ struct AccountDeletionCoordinator {
   }
 
   private static func eraseServerSideLabyrinthDataIfAuthenticated(forDID did: String) async {
+    if let appState = AppStateManager.shared.lifecycle.appState,
+       appState.userDID == did,
+       let coordinator = appState.mlsCoordinator
+    {
+      do {
+        try await coordinator.deleteAccountData()
+        logger.info("🗑️ Erased server-side & local MLS/Labyrinth account data via MLSClientCoordinator")
+        return
+      } catch {
+        logger.warning("🗑️ Coordinator deleteAccountData failed, falling back to XRPC: \(error.localizedDescription)")
+      }
+    }
     guard let client = AppStateManager.shared.authentication.client,
           (await client.getCurrentAccount())?.did == did else {
       return

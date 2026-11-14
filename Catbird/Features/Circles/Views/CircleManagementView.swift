@@ -21,6 +21,10 @@ struct CircleManagementView: View {
   @State private var showingDeleteConfirmation = false
   @State private var showingRemoveConfirmation = false
   @State private var isAuthorizingActivation = false
+  @State private var showingRotateConfirmation = false
+  @State private var showingUpgradeSheet = false
+  @State private var showingHistoryOffAddConfirmation = false
+  @State private var ineligibleAddMessages: [String] = []
 
   var body: some View {
     NavigationStack {
@@ -28,8 +32,9 @@ struct CircleManagementView: View {
         circleInfoSection
 
         if let vm = viewModel, vm.canManageMembers {
+          encryptionSection(vm: vm)
           membersSection(vm: vm)
-          disclosuresSection
+          disclosuresSection(vm: vm)
           deleteSection
         }
 
@@ -58,15 +63,43 @@ struct CircleManagementView: View {
           )
           self.viewModel = vm
           await vm.loadMembers()
+          await vm.loadEncryptionState()
+          vm.reconcileOnAppear()
           await hydrateMemberProfiles()
         }
       }
-      .sheet(isPresented: $showingAddMemberSheet, onDismiss: commitPendingMembers) {
+      .sheet(isPresented: $showingAddMemberSheet, onDismiss: confirmPendingMembers) {
         CircleMemberPickerView(
           selection: $membersToAdd,
           excludedDIDs: Set((viewModel?.members ?? []).map { $0.didString() }),
-          disclosure: CircleManagementCopy.addMemberDisclosure
+          disclosure: addMemberDisclosure(vm: viewModel)
         )
+      }
+      .sheet(isPresented: $showingUpgradeSheet) {
+        if let vm = viewModel {
+          upgradeSheet(vm: vm)
+        }
+      }
+      .confirmationDialog(
+        "Add Members",
+        isPresented: $showingHistoryOffAddConfirmation
+      ) {
+        Button("Add Members") {
+          commitPendingMembers()
+        }
+        Button("Cancel", role: .cancel) {
+          membersToAdd = []
+        }
+      } message: {
+        Text(CircleManagementCopy.historyOffAddConfirmation)
+      }
+      .alert(CircleManagementCopy.rotateKeyNow, isPresented: $showingRotateConfirmation) {
+        Button(CircleManagementCopy.rotateKeyNow) {
+          Task { await viewModel?.rotateKeyNow() }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(CircleManagementCopy.rotateKeyConfirmation)
       }
       .confirmationDialog(
         "Remove Member",
@@ -166,6 +199,12 @@ struct CircleManagementView: View {
                 .truncationMode(.middle)
             }
             Spacer()
+            if let badge = vm.pendingBadge(for: did) {
+              Text(badge)
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .accessibilityLabel(badge)
+            }
             if let permissions = vm.memberPermissions.first(where: { $0.did == did }),
                !permissions.read || !permissions.write {
               Text(permissions.read ? "Read only" : (permissions.write ? "Write only" : "No access"))
@@ -195,15 +234,131 @@ struct CircleManagementView: View {
       .disabled(vm.members.count >= 150)
       .accessibilityLabel("Add Members")
       .accessibilityHint("Search for people to add to this Circle")
+
+      ForEach(ineligibleAddMessages, id: \.self) { message in
+        Label(message, systemImage: "lock.slash")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      if vm.circle.isEncrypted && !vm.pendingRewraps.isEmpty {
+        Button(CircleManagementCopy.retryNow) {
+          Task { await vm.retryPendingNow() }
+        }
+        .disabled(vm.state == .submitting)
+        .accessibilityLabel(CircleManagementCopy.retryNow)
+      }
     }
   }
 
+  /// Encrypted: the history toggle and manual rotation. Plaintext: the D17
+  /// upgrade row (or its resume row after an interrupted upgrade).
   @ViewBuilder
-  private var disclosuresSection: some View {
+  private func encryptionSection(vm: CircleManagementViewModel) -> some View {
+    if vm.circle.isEncrypted {
+      Section {
+        Toggle(isOn: Binding(
+          get: { vm.historyForNewMembers },
+          set: { newValue in
+            Task { await vm.setHistoryForNewMembers(newValue) }
+          }
+        )) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text(CircleManagementCopy.historyToggleLabel)
+            Text(addMemberDisclosure(vm: vm))
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
+        }
+        .disabled(vm.isWritingHistorySetting)
+        .accessibilityLabel(CircleManagementCopy.historyToggleLabel)
+
+        Button(CircleManagementCopy.rotateKeyNow) {
+          showingRotateConfirmation = true
+        }
+        .disabled(!vm.canRotateKeyNow)
+        .accessibilityLabel(CircleManagementCopy.rotateKeyNow)
+      }
+    } else if vm.encryptionAvailability != nil && !vm.encryptionAvailable {
+      Section {
+        Text(CircleManagementCopy.encryptionUnavailableHint)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    } else if vm.hasIncompleteUpgrade {
+      Section {
+        Button(CircleManagementCopy.upgradeIncomplete) {
+          runUpgrade(vm: vm)
+        }
+        .disabled(vm.state == .submitting || isAuthorizingActivation)
+        .accessibilityLabel(CircleManagementCopy.upgradeIncomplete)
+      }
+    } else {
+      Section {
+        Button {
+          Task {
+            await vm.prepareUpgrade()
+            showingUpgradeSheet = true
+          }
+        } label: {
+          Label(CircleManagementCopy.upgradeToEncrypted, systemImage: "lock")
+        }
+        .disabled(vm.state == .submitting || isAuthorizingActivation || !vm.encryptionAvailable)
+        .accessibilityLabel(CircleManagementCopy.upgradeToEncrypted)
+      }
+    }
+  }
+
+  /// Lists the members a dry-run wrap could not carry over before the owner
+  /// confirms the upgrade.
+  private func upgradeSheet(vm: CircleManagementViewModel) -> some View {
+    NavigationStack {
+      List {
+        if let blocked = vm.upgradeBlockedReason {
+          Label(blocked, systemImage: "exclamationmark.triangle.fill")
+            .font(.subheadline)
+            .foregroundStyle(.orange)
+        }
+        ForEach(vm.upgradeIneligible, id: \.did) { entry in
+          Label(vm.ineligibleMessage(for: entry.did), systemImage: "lock.slash")
+            .font(.subheadline)
+        }
+      }
+      .navigationTitle(CircleManagementCopy.upgradeToEncrypted)
+      #if os(iOS)
+      .navigationBarTitleDisplayMode(.inline)
+      #endif
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") {
+            showingUpgradeSheet = false
+          }
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button(CircleManagementCopy.upgradeToEncrypted) {
+            showingUpgradeSheet = false
+            runUpgrade(vm: vm)
+          }
+          .fontWeight(.semibold)
+          .disabled(!vm.canConfirmUpgrade)
+        }
+      }
+    }
+  }
+
+  private func addMemberDisclosure(vm: CircleManagementViewModel?) -> String {
+    guard let vm, vm.circle.isEncrypted, !vm.historyForNewMembers else {
+      return CircleManagementCopy.addMemberDisclosure
+    }
+    return CircleManagementCopy.historyOffAddConfirmation
+  }
+
+  @ViewBuilder
+  private func disclosuresSection(vm: CircleManagementViewModel) -> some View {
     Section("Privacy & Data Disclosures") {
       VStack(alignment: .leading, spacing: 8) {
         Label {
-          Text(CircleManagementCopy.addMemberDisclosure)
+          Text(addMemberDisclosure(vm: vm))
             .font(.caption)
             .foregroundStyle(.secondary)
         } icon: {
@@ -262,6 +417,17 @@ struct CircleManagementView: View {
           .foregroundStyle(.red)
           .font(.subheadline)
       }
+    case .upgradeIncomplete(let message):
+      Section {
+        Button {
+          runUpgrade(vm: vm)
+        } label: {
+          Label(message, systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .font(.subheadline)
+        }
+        .disabled(isAuthorizingActivation)
+      }
     case .activationFailed(let message):
       Section {
         VStack(alignment: .leading, spacing: 8) {
@@ -306,23 +472,98 @@ struct CircleManagementView: View {
 
   // MARK: - Add Members
 
+  /// With history hidden on an encrypted Circle, asks first ("They will only
+  /// see new posts."); otherwise commits straight away.
+  private func confirmPendingMembers() {
+    guard let vm = viewModel, !membersToAdd.isEmpty else { return }
+    if vm.circle.isEncrypted && !vm.historyForNewMembers {
+      showingHistoryOffAddConfirmation = true
+    } else {
+      commitPendingMembers()
+    }
+  }
+
   /// Adds everyone picked in the member sheet once it is dismissed. Failures
-  /// surface through `viewModel.state` in `operationStateSection`.
+  /// surface through `viewModel.state` in `operationStateSection`. On an
+  /// encrypted Circle, members who cannot be wrapped are listed and skipped.
   private func commitPendingMembers() {
     guard let vm = viewModel, !membersToAdd.isEmpty else { return }
+    for profile in membersToAdd {
+      vm.knownHandles[profile.did.didString()] = "\(profile.handle)"
+    }
     let dids = membersToAdd.map(\.did)
     membersToAdd = []
+    ineligibleAddMessages = []
     Task {
+      var skipped: [String] = []
       for did in dids {
         do {
           try await vm.addMember(did: did)
+        } catch CircleError.ineligibleMember(let reason) {
+          skipped.append(reason)
+          continue
         } catch {
           // State already carries the failure; remaining adds would repeat it.
           break
         }
       }
+      ineligibleAddMessages = skipped
       await vm.loadMembers()
       await hydrateMemberProfiles()
+    }
+  }
+
+  // MARK: - Upgrade
+
+  /// Runs (or resumes) the D17 upgrade after the encrypted-Space scope and
+  /// AppView consent are in place. Failures surface through `viewModel.state`.
+  private func runUpgrade(vm: CircleManagementViewModel) {
+    guard !isAuthorizingActivation else { return }
+    isAuthorizingActivation = true
+    Task {
+      defer { isAuthorizingActivation = false }
+      var started = false
+      do {
+        let currentDID = appState.userDID
+        guard currentDID == vm.userDID,
+              appStateManager.lifecycle.userDID == currentDID,
+              let did = try? DID(didString: currentDID) else {
+          throw GatewayPermissionError.stateChanged
+        }
+        try await appStateManager.authentication.ensureGatewayPermission(.circleEncryptedSpaces) { authURL in
+          if #available(iOS 17.4, macOS 14.4, *) {
+            return try await webAuthenticationSession.authenticate(
+              using: authURL,
+              callback: .https(host: "catbird.blue", path: "/oauth/permission-callback"),
+              preferredBrowserSession: .shared,
+              additionalHeaderFields: [:]
+            )
+          } else {
+            return try await webAuthenticationSession.authenticate(
+              using: authURL,
+              callbackURLScheme: "catbird",
+              preferredBrowserSession: .shared
+            )
+          }
+        }
+        try await CircleAppViewAuthCoordinator.shared.ensureAuthorization(
+          did: did, using: webAuthenticationSession
+        )
+        guard appStateManager.lifecycle.userDID == currentDID else {
+          throw GatewayPermissionError.stateChanged
+        }
+        started = true
+        try await vm.upgradeToEncrypted()
+        await hydrateMemberProfiles()
+      } catch is CancellationError, GatewayPermissionError.cancelled {
+        // The owner dismissed a consent sheet; nothing was created.
+      } catch {
+        // Once started, the view model's state already reports the failure
+        // (.failed / .upgradeIncomplete); consent failures are reported here.
+        if !started {
+          vm.state = .failed(message: error.localizedDescription)
+        }
+      }
     }
   }
 
@@ -349,6 +590,7 @@ struct CircleManagementView: View {
         guard (200..<300).contains(code), let profiles = response?.profiles else { continue }
         for profile in profiles {
           memberProfiles[profile.did.didString()] = profile
+          vm.knownHandles[profile.did.didString()] = "\(profile.handle)"
         }
       } catch {
         // Leave this chunk's rows as raw DIDs; the next appearance retries.

@@ -299,7 +299,7 @@ struct CircleMediaLoaderTests {
 
     let viewRecord = AppBskyEmbedRecord.ViewRecord(
       uri: try ATProtocolURI(uriString: "at://\(circle.owner)/app.bsky.feed.post/quoted123"),
-      cid: try CID.parse(imageCID),
+      cid: CIDString(try CID.parse(imageCID)),
       author: AppBskyActorDefs.ProfileViewBasic(
         did: circle.owner,
         handle: try Handle(handleString: "owner.bsky.social"),

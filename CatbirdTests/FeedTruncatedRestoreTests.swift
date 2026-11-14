@@ -77,7 +77,7 @@ struct FeedTruncatedRestoreTests {
         tags: nil, createdAt: timestamp)
       let post = AppBskyFeedDefs.PostView(
         uri: try ATProtocolURI(uriString: "at://did:plc:truncatedrestoreauthor/app.bsky.feed.post/r\(index)"),
-        cid: CID.fromDAGCBOR(Data("restored-\(index)".utf8)), author: author,
+        cid: CIDString(CID.fromDAGCBOR(Data("restored-\(index)".utf8))), author: author,
         record: .knownType(record), embed: nil, bookmarkCount: nil,
         replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
         indexedAt: timestamp, viewer: nil, labels: nil, threadgate: nil, debug: nil)

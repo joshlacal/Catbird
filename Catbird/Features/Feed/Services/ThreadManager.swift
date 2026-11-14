@@ -140,7 +140,6 @@ final class ThreadManager {
 
   // MARK: - Thread Loading
 
-
   /// Load a thread by its URI
   func loadThread(
     uri: ATProtocolURI,
@@ -161,7 +160,18 @@ final class ThreadManager {
       do {
         let threadPage = try await service.getPostThread(uri: uri, space: circle.uri)
         guard requestGeneration == circleGeneration, !Task.isCancelled else { return }
-        let threadItems = Self.flattenThreadViewPost(threadPage.thread)
+        var threadItems = Self.flattenThreadViewPost(threadPage.thread)
+        if circle.isEncrypted {
+          let resolveHandle = appState.circleOwnerHandleResolver
+          let owner = circle.owner
+          threadItems = await CircleThreadOpening.open(
+            threadItems,
+            circle: circle,
+            opener: await appState.circlePostOpener(),
+            ownerHandle: { await resolveHandle(owner) }
+          )
+          guard requestGeneration == circleGeneration, !Task.isCancelled else { return }
+        }
         let output = AppBskyUnspeccedGetPostThreadV2.Output(thread: threadItems, hasOtherReplies: false)
         self.threadData = output
         self.blockedAnchor = nil
