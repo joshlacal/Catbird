@@ -48,7 +48,10 @@ public struct RecentSearchesSection: View {
         VStack(spacing: 0) {
           searchRow(entry)
           if entry.id != visibleEntries.last?.id {
-            Divider().padding(.leading, 52)
+            Rectangle()
+              .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
+              .frame(height: 0.5)
+              .padding(.leading, 52)
           }
         }
         .modifier(SearchSuggestionRowModifier())

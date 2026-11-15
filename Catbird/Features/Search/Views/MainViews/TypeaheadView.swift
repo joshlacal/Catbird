@@ -15,6 +15,7 @@ struct TypeaheadView: View {
     @Binding var path: NavigationPath
     @Binding var searchText: String
     @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     private let baseUnit: CGFloat = 3
     
     private let logger = Logger(subsystem: "blue.catbird", category: "TypeaheadView")
@@ -29,9 +30,12 @@ struct TypeaheadView: View {
                             .redacted(reason: .placeholder)
                             .mainContentFrame()
                             .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
             } else if searchText.isEmpty {
                 emptyStateView
             } else {
@@ -45,6 +49,7 @@ struct TypeaheadView: View {
         SearchHistoryEmptyHint()
             .mainContentFrame()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
     }
     
     private var suggestionsList: some View {
@@ -82,19 +87,22 @@ struct TypeaheadView: View {
 
                             if profile != items.last {
                                 Rectangle()
-                                    .fill(Color.separator)
+                                    .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
                                     .frame(height: 0.5)
                                     .platformIgnoresSafeArea(.container, edges: .horizontal)
                             }
                         }
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
+                        .listRowBackground(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
                     }
                 }
             }
 
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .padding(0)
     }
     

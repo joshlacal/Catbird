@@ -935,6 +935,7 @@ final class AppStateManager {
     // Stop showing the signed-out account's posts in widgets and Spotlight
     if let loggingOutDID {
       LabelerDefinitionsDiskCache.remove(accountDID: loggingOutDID)
+      TrendingTopicsDiskCache.remove(accountDID: loggingOutDID)
       FeedWidgetDataProvider.shared.clearWidgetData(for: loggingOutDID)
       await SpotlightEntityDonator.shared.removeAll()
     }
@@ -957,6 +958,7 @@ final class AppStateManager {
     accessOrder.removeAll { $0 == did }
     await MLSImageCache.shared.purge(for: did)
     LabelerDefinitionsDiskCache.remove(accountDID: did)
+    TrendingTopicsDiskCache.remove(accountDID: did)
     FeedWidgetDataProvider.shared.clearWidgetData(for: did)
     ThreadManager.clearPrefillCache()
     await SpotlightEntityDonator.shared.removeAll()
@@ -1549,6 +1551,8 @@ final class AppStateManager {
     }
 
     await MLSImageCache.shared.purge(for: userDID)
+    // Before the throwing reset below: a removal that fails there must still drop cached trends.
+    TrendingTopicsDiskCache.remove(accountDID: userDID)
 
     authenticatedStates.removeValue(forKey: userDID)
     accessOrder.removeAll { $0 == userDID }

@@ -11,38 +11,48 @@ import OSLog
 import TipKit
 import Observation
 
-/// Whether the search page hides its own content behind `.searchSuggestions`.
+/// Whether the search page hides its own content behind `.searchSuggestions`, and
+/// whether the native suggestions container is transparent.
 ///
-/// In an iPhone-style iOS layout the suggestions list replaces the page, and
-/// `.scrollContentBackground(.hidden)` makes its container transparent, so
-/// `DiscoveryView`, `TypeaheadView` or `ResultsView` would show through below the
-/// last suggestion row; the page is hidden while the field is focused or an
-/// uncommitted query is being typed. On macOS the suggestions drop down from the
-/// toolbar field, and in a full-size iPad layout they are not assumed to cover the
-/// page, so the page stays visible behind them.
+/// On iOS the search field sits in the navigation bar drawer, and the native
+/// suggestions are a full-page UIKit list on every size class: an iPhone in either
+/// orientation and a full-size iPad alike. Its container is made transparent so the
+/// themed (Dim, Black) background shows below the last suggestion row, which would
+/// also let `DiscoveryView`, `TypeaheadView` or `ResultsView` show through, so the
+/// page is hidden while the suggestions are up.
+///
+/// iOS shows the suggestions exactly while the search field is focused: they come up
+/// with focus (the suggestion content is never empty: typeahead, recent searches or
+/// the empty-history hint) and stay up when the iPad keyboard's hide key leaves the
+/// field focused. Once the field loses focus they are gone, even in a search that
+/// stays presented with typed text, as after the keyboard is dragged away by
+/// scrolling the suggestions; the page must then show, or the screen would be blank.
+/// So the field's focus, not the query or search state, decides. On macOS the
+/// suggestions drop down from the toolbar field, so the page stays visible behind
+/// them and they keep their default background. The container is transparent only
+/// where the page is hidden behind it.
 enum SearchSuggestionsOverlayGate {
-  static func hidesPageContent(
-    suggestionsFillPage: Bool,
-    isSearchFieldFocused: Bool,
-    searchState: SearchState,
-    isCommittedSearch: Bool
-  ) -> Bool {
-    guard suggestionsFillPage else { return false }
-    return isSearchFieldFocused || (searchState == .searching && !isCommittedSearch)
-  }
-
-  /// Suggestions replace the page in an iOS layout that is compact in either
-  /// direction: an iPhone in any orientation (a large iPhone in landscape is
-  /// regular width but compact height) or an iPad window narrowed to compact width.
-  static func suggestionsFillPage(
-    horizontalSizeClass: UserInterfaceSizeClass?,
-    verticalSizeClass: UserInterfaceSizeClass?
-  ) -> Bool {
+  /// True on iOS, where the native suggestions cover the whole page on every size
+  /// class. False on macOS, where they drop down from the toolbar field; Mac Catalyst
+  /// is treated the same way, keeping the suggestions' default background.
+  static var suggestionsFillPage: Bool {
     #if os(iOS) && !targetEnvironment(macCatalyst)
-    return horizontalSizeClass == .compact || verticalSizeClass == .compact
+    return true
     #else
     return false
     #endif
+  }
+
+  /// True while the native suggestions cover the page: where they fill it, they are
+  /// up exactly while the search field is focused.
+  static func hidesPageContent(suggestionsFillPage: Bool, isSearchFieldFocused: Bool) -> Bool {
+    suggestionsFillPage && isSearchFieldFocused
+  }
+
+  /// The native suggestions container's background: hidden (transparent) only where
+  /// the suggestions fill the page and so hide it, never over a visible page.
+  static func suggestionsBackground(suggestionsFillPage: Bool) -> Visibility {
+    suggestionsFillPage ? .hidden : .automatic
   }
 }
 
@@ -54,8 +64,6 @@ struct RefinedSearchView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var displayScale
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var viewModel: RefinedSearchViewModel
     @Binding var selectedTab: Int
     @Binding var lastTappedTab: Int?
@@ -206,17 +214,12 @@ struct RefinedSearchView: View {
         return ContentType.allCases
     }
     
-    /// True while the native `.searchSuggestions` list owns the viewport; see
-    /// `SearchSuggestionsOverlayGate`.
-    private var isShowingSearchSuggestionsOverlay: Bool {
+    /// True while the page is hidden behind the native `.searchSuggestions` list,
+    /// which happens only on iOS; see `SearchSuggestionsOverlayGate`.
+    private var hidesPageBehindSearchSuggestions: Bool {
         SearchSuggestionsOverlayGate.hidesPageContent(
-            suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage(
-                horizontalSizeClass: horizontalSizeClass,
-                verticalSizeClass: verticalSizeClass
-            ),
-            isSearchFieldFocused: isSearchFieldFocused,
-            searchState: viewModel.searchState,
-            isCommittedSearch: viewModel.isCommittedSearch
+            suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage,
+            isSearchFieldFocused: isSearchFieldFocused
         )
     }
 
@@ -224,24 +227,32 @@ struct RefinedSearchView: View {
     private var mainContentContainer: some View {
         @Bindable var bindableViewModel = viewModel
         ZStack {
-            // Full-width background layer
-            Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme)
+            // Full-width semantic background layer (respects Dim and Black themes)
+            Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
                 .ignoresSafeArea()
-            
+
             // Edge-to-edge content; individual rows constrain via .mainContentFrame()
             VStack(spacing: 0) {
-                if shouldShowFilterBar {
+                if shouldShowFilterBar && viewModel.filterState.activeFilterCount > 0 {
                     SearchFilterBar(
-                        activeFilterCount: viewModel.filterState.activeFilterCount,
-                        onFiltersTap: { isShowingFiltersSheet = true }
+                        filterState: viewModel.filterState,
+                        onFiltersTap: { isShowingFiltersSheet = true },
+                        onResetFilters: {
+                            if let client = appState.atProtoClient {
+                                viewModel.applyFilterState(
+                                    SearchFilterState(sort: viewModel.filterState.sort),
+                                    client: client
+                                )
+                            }
+                        }
                     )
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 mainContentArea
             }
-            .opacity(isShowingSearchSuggestionsOverlay ? 0 : 1)
-            .allowsHitTesting(!isShowingSearchSuggestionsOverlay)
-            .accessibilityHidden(isShowingSearchSuggestionsOverlay)
+            .opacity(hidesPageBehindSearchSuggestions ? 0 : 1)
+            .allowsHitTesting(!hidesPageBehindSearchSuggestions)
+            .accessibilityHidden(hidesPageBehindSearchSuggestions)
         }
         .navigationTitle("Search")
         #if os(iOS)
@@ -339,6 +350,14 @@ struct RefinedSearchView: View {
         .searchSuggestions {
             searchSuggestionsContent
         }
+        // Targets the native suggestions list (the page's own lists set their own
+        // background): on iOS it is transparent so the ZStack's themed background
+        // shows below the last row; see SearchSuggestionsOverlayGate.
+        .scrollContentBackground(
+            SearchSuggestionsOverlayGate.suggestionsBackground(
+                suggestionsFillPage: SearchSuggestionsOverlayGate.suggestionsFillPage
+            )
+        )
         // Configure the native suggestions list, not just the discovery scroll view.
         // Short history must still accept a vertical pan to dismiss the keyboard.
         .scrollDismissesKeyboard(.interactively)
@@ -348,6 +367,25 @@ struct RefinedSearchView: View {
         }
         #if !targetEnvironment(macCatalyst)
         .toolbar {
+            if shouldShowFilterBar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        isShowingFiltersSheet = true
+                    } label: {
+                        Image(
+                            systemName: viewModel.filterState.activeFilterCount > 0
+                                ? "line.3.horizontal.decrease.circle.fill"
+                                : "line.3.horizontal.decrease.circle"
+                        )
+                    }
+                    .accessibilityIdentifier("searchToolbarFiltersButton")
+                    .accessibilityLabel(
+                        viewModel.filterState.activeFilterCount > 0
+                            ? "Filters, \(viewModel.filterState.activeFilterCount) active"
+                            : "Filters"
+                    )
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 searchMenuButton
             }
@@ -396,9 +434,17 @@ struct RefinedSearchView: View {
                     .onAppear { logger.debug("Showing discoveryView") }
                 
             case .searching:
-                 typeaheadView
-                    .transition(.opacity)
-                    .onAppear { logger.debug("Showing typeaheadView") }
+                // The suggestions repeat this typeahead while they cover the page, so it
+                // is left out then: the page's accessibilityHidden does not reach the
+                // rows of its List, which would stay in the accessibility tree beside
+                // the suggestions' own rows.
+                if hidesPageBehindSearchSuggestions {
+                    Color.clear
+                } else {
+                    typeaheadView
+                        .transition(.opacity)
+                        .onAppear { logger.debug("Showing typeaheadView") }
+                }
                 
             case .results:
                 resultsView
@@ -471,6 +517,23 @@ struct RefinedSearchView: View {
                 Divider()
             }
 
+            if shouldShowFilterBar {
+                Button {
+                    isShowingFiltersSheet = true
+                } label: {
+                    Label(
+                        viewModel.filterState.activeFilterCount > 0
+                            ? "Filters (\(viewModel.filterState.activeFilterCount))"
+                            : "Filters",
+                        systemImage: viewModel.filterState.activeFilterCount > 0
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle"
+                    )
+                }
+
+                Divider()
+            }
+
             // SRCH-015: Save Search option
             if viewModel.isCommittedSearch && !viewModel.searchQuery.isEmpty {
                 Button {
@@ -495,8 +558,9 @@ struct RefinedSearchView: View {
     
     // MARK: - Search Suggestions
     
-    /// Native search suggestions replace the page while the field is focused. Three
-    /// distinct states: typing (query + typeahead), history, and no history yet.
+    /// Native search suggestions shown while the field is focused: on iOS they replace
+    /// the page, on macOS they drop down from the toolbar field. Three distinct
+    /// states: typing (query + typeahead), history, and no history yet.
     @ViewBuilder
     private var searchSuggestionsContent: some View {
         if !trimmedSearchText.isEmpty {

@@ -60,6 +60,8 @@ final class TrendingTopicMediaStore {
   private(set) var canReusePrefetchedFeed = true
   private(set) var isActive = true
   @ObservationIgnored private var prefetchedLinksUsed: Set<String> = []
+  /// Trend and trending-video lists per account, shared by Search and the timeline interstitial.
+  @ObservationIgnored let lists: TrendingTopicListCache
 
   func labelDefinitions(for labelers: String) -> ContentLabelDefinitionLookup.Definitions? {
     labelDefinitions?.labelers == labelers ? labelDefinitions?.definitions : nil
@@ -75,7 +77,8 @@ final class TrendingTopicMediaStore {
     return prefetchedLinksUsed.insert(link).inserted
   }
 
-  init() {
+  init(lists: TrendingTopicListCache? = nil) {
+    self.lists = lists ?? TrendingTopicListCache()
     graphObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name("UserGraphChanged"),
       object: nil, queue: .main) { [weak self] _ in
         // Graph notifications may originate off the main actor. Delivery is on the main queue.
@@ -95,7 +98,7 @@ final class TrendingTopicMediaStore {
     backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
       object: nil, queue: .main) { [weak self] _ in
         // Refresh viewer metadata and invalidate cached previews when entering background so external blocks/mutes are honored on next foreground.
-        MainActor.assumeIsolated { self?.invalidateForGraphChange() }
+        MainActor.assumeIsolated { self?.invalidateForSuspension() }
       }
     memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
       object: nil, queue: .main) { [weak self] _ in
@@ -128,7 +131,21 @@ final class TrendingTopicMediaStore {
     if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
   }
 
+  /// A mute, block or other graph change: drops previews and lists, including every stored trend
+  /// list, since all of them predate it.
   func invalidateForGraphChange() {
+    discardCachedContent()
+    lists.invalidateIncludingDisk()
+  }
+
+  /// Leaving the foreground, or suspending or retiring the account: drops previews and lists, and
+  /// refreshes stored trends on their next use. They stay on disk to paint the next launch.
+  func invalidateForSuspension() {
+    discardCachedContent()
+    lists.invalidate()
+  }
+
+  private func discardCachedContent() {
     cancelRequests()
     cancelPrefetches()
     canReusePrefetchedFeed = false
@@ -142,6 +159,8 @@ final class TrendingTopicMediaStore {
     labelDefinitions = nil
     cancelRequests()
     cancelPrefetches()
+    // Trend actors and videos carry the labels of the labeler set they were fetched with.
+    lists.invalidateIncludingDisk()
     removeAllEntries()
     revision += 1
   }
@@ -387,8 +406,8 @@ enum TrendingTopicImageRequests {
     participants: [TrendingTopicPreview.Participant]? = nil,
     displayScale: CGFloat
   ) -> [ImageRequest] {
-    preview.media.prefix(3).map { request($0.url, size: cardSize, displayScale: displayScale) }
-      + (participants ?? preview.participants).prefix(3).map { avatarRequest($0.avatar, size: avatarSize, displayScale: displayScale) }
+    preview.media.prefix(3).map { request($0.url, size: cardSize, displayScale: displayScale, priority: .normal) }
+      + (participants ?? preview.participants).prefix(3).map { avatarRequest($0.avatar, size: avatarSize, displayScale: displayScale, priority: .normal) }
   }
 }
 

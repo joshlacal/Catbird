@@ -201,6 +201,7 @@ struct AccountDeletionCoordinator {
 
   private static func purgeFilesystemData(forDID did: String) async {
     LabelerDefinitionsDiskCache.remove(accountDID: did)
+    TrendingTopicsDiskCache.remove(accountDID: did)
     FeedWidgetDataProvider.shared.clearWidgetData(for: did)
     await SpotlightEntityDonator.shared.removeAll()
     ThreadManager.clearPrefillCache()

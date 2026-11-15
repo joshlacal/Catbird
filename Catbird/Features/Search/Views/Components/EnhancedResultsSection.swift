@@ -9,6 +9,8 @@ struct EnhancedResultsSection<Content: View>: View {
     let showDivider: Bool
     let alignment: HorizontalAlignment
     @ViewBuilder let content: () -> Content
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     
     init(
         title: String,
@@ -47,17 +49,19 @@ struct EnhancedResultsSection<Content: View>: View {
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
-            .background(Color.systemBackground)
+            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
             
             if showDivider {
-                Divider()
+                Rectangle()
+                    .fill(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme))
+                    .frame(height: 0.5)
             }
             
             content()
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
         }
-        .background(Color.systemBackground)
+        .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
         .padding(.horizontal)

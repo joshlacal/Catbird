@@ -95,6 +95,15 @@ extension Color {
         }
     }
     
+    /// Row background for a grouped list (a `Form`) drawn over `dynamicGroupedBackground`: the
+    /// system's grouped row color in light mode, and a raised card above the Dim or Black background.
+    static func dynamicGroupedRowBackground(_ themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
+        guard themeManager.effectiveColorScheme(for: currentScheme) == .dark else {
+            return Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground)
+        }
+        return elevatedBackground(themeManager, elevation: .low, currentScheme: currentScheme)
+    }
+    
     // MARK: - Elevated Backgrounds (with hierarchy)
     
     /// Elevated background with proper hierarchy for depth
