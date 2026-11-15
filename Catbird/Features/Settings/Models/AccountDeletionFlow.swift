@@ -74,6 +74,21 @@ struct AccountDeletionFlow {
     return true
   }
 
+  /// Verifies a resolved hosting PDS origin for direct non-OAuth deletion XRPC calls:
+  /// strictly HTTPS, valid non-empty host, and zero embedded credentials, query, or fragment.
+  static func isSafeDirectPDSEndpoint(_ url: URL) -> Bool {
+    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+          components.scheme?.lowercased() == "https",
+          let host = components.host, !host.isEmpty,
+          components.user == nil, components.password == nil,
+          components.query == nil,
+          components.fragment == nil
+    else {
+      return false
+    }
+    return true
+  }
+
   /// Late discovery cannot attach a destination to a changed or cancelled account context.
   mutating func resolveDestination(
     _ result: AccountManagementPageResolver.Destination?,
@@ -122,25 +137,354 @@ struct AccountDeletionFlow {
   }
 }
 
+enum PDSDirectDeletionError: Error, LocalizedError, Equatable, Sendable {
+  case invalidPDSEndpoint
+  case missingPassword
+  case missingConfirmationToken
+  case authFactorTokenRequired(message: String)
+  case invalidCredentials(statusCode: Int, errorCode: String?, message: String?)
+  case expiredToken(message: String?)
+  case invalidToken(message: String?)
+  case pdsRejected(statusCode: Int, errorCode: String?, message: String?)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidPDSEndpoint:
+      return "Your hosting provider endpoint is invalid or insecure."
+    case .missingPassword:
+      return "Enter your account password to continue."
+    case .missingConfirmationToken:
+      return "Enter the confirmation code sent to your email."
+    case .authFactorTokenRequired:
+      return "Two-factor sign-in is enabled on your account. Check your email for a 2FA code, enter it above, and try again."
+    case .invalidCredentials(_, _, let message):
+      if let message, !message.isEmpty {
+        return "Incorrect password or credentials (\(message)). If your hosting provider uses passwordless OAuth only, use the provider website option below."
+      }
+      return "Incorrect account password. Verify your password or use the provider website option below if your provider uses passwordless sign-in."
+    case .expiredToken:
+      return "That confirmation code has expired. Request a new email confirmation code and try again."
+    case .invalidToken:
+      return "That confirmation code is invalid. Check the code from your email and try again."
+    case .pdsRejected(let statusCode, _, let message):
+      if let message, !message.isEmpty {
+        return "Your hosting provider declined the deletion request (HTTP \(statusCode): \(message))."
+      }
+      return "Your hosting provider declined the deletion request (HTTP \(statusCode))."
+    }
+  }
+}
+
+/// Ephemeral, non-persisting direct PDS XRPC client for App Store Guideline 5.1.1(v) account deletion.
+///
+/// Upstream AT Protocol PDS implementations (`com.atproto.server.requestAccountDelete` &
+/// `com.atproto.server.deleteAccount`) reject OAuth tokens (`403 Forbidden: OAuth credentials are not supported`).
+/// This client exchanges `(identifier, password)` directly with the user's resolved HTTPS PDS via
+/// `com.atproto.server.createSession` over an ephemeral `URLSession` (`urlCache = nil`,
+/// `httpCookieStorage = nil`, `urlCredentialStorage = nil`), holding the returned `accessJwt`
+/// strictly in local call-frame memory and discarding `refreshJwt` immediately.
+struct PDSDirectDeletionClient: Sendable {
+  private let sessionOverride: URLSession?
+  private let timeoutSeconds: TimeInterval
+
+  init(session: URLSession? = nil, timeoutSeconds: TimeInterval = 20.0) {
+    self.sessionOverride = session
+    self.timeoutSeconds = timeoutSeconds
+  }
+
+  private func withSession<T>(_ body: (URLSession) async throws -> T) async throws -> T {
+    if let sessionOverride {
+      return try await body(sessionOverride)
+    }
+    let config = URLSessionConfiguration.ephemeral
+    config.httpCookieStorage = nil
+    config.httpShouldSetCookies = false
+    config.urlCredentialStorage = nil
+    config.urlCache = nil
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    let ephemeral = URLSession(configuration: config)
+    defer { ephemeral.finishTasksAndInvalidate() }
+    return try await body(ephemeral)
+  }
+
+  func createEphemeralSession(
+    pdsURL: URL,
+    identifier: String,
+    password: String,
+    authFactorToken: String? = nil
+  ) async throws -> String {
+    guard AccountDeletionFlow.isSafeDirectPDSEndpoint(pdsURL) else {
+      throw PDSDirectDeletionError.invalidPDSEndpoint
+    }
+    guard !password.isEmpty else {
+      throw PDSDirectDeletionError.missingPassword
+    }
+
+    let endpoint = pdsURL.appendingPathComponent("xrpc/com.atproto.server.createSession")
+    var payload: [String: String] = [
+      "identifier": identifier,
+      "password": password,
+    ]
+    if let factor = authFactorToken?.trimmingCharacters(in: .whitespacesAndNewlines), !factor.isEmpty {
+      payload["authFactorToken"] = factor
+    }
+
+    var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeoutSeconds)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+    return try await withSession { session in
+      let (data, response) = try await session.data(for: request)
+      guard let http = response as? HTTPURLResponse else {
+        throw PDSDirectDeletionError.pdsRejected(statusCode: 0, errorCode: nil, message: nil)
+      }
+      if (200..<300).contains(http.statusCode) {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accessJwt = json["accessJwt"] as? String,
+              !accessJwt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+          throw PDSDirectDeletionError.pdsRejected(
+            statusCode: http.statusCode,
+            errorCode: "MalformedCreateSessionResponse",
+            message: "PDS did not return an access token"
+          )
+        }
+        return accessJwt
+      }
+
+      let (errCode, errMsg) = Self.parseXrpcError(from: data)
+      if errCode == "AuthFactorTokenRequired" {
+        throw PDSDirectDeletionError.authFactorTokenRequired(message: errMsg ?? "Email 2FA code required")
+      }
+      if http.statusCode == 400 || http.statusCode == 401 {
+        throw PDSDirectDeletionError.invalidCredentials(
+          statusCode: http.statusCode,
+          errorCode: errCode,
+          message: errMsg
+        )
+      }
+      throw PDSDirectDeletionError.pdsRejected(
+        statusCode: http.statusCode,
+        errorCode: errCode,
+        message: errMsg
+      )
+    }
+  }
+
+  func requestAccountDelete(pdsURL: URL, accessJwt: String) async throws {
+    guard AccountDeletionFlow.isSafeDirectPDSEndpoint(pdsURL) else {
+      throw PDSDirectDeletionError.invalidPDSEndpoint
+    }
+    let endpoint = pdsURL.appendingPathComponent("xrpc/com.atproto.server.requestAccountDelete")
+    var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeoutSeconds)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(accessJwt)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+    try await withSession { session in
+      let (data, response) = try await session.data(for: request)
+      guard let http = response as? HTTPURLResponse else {
+        throw PDSDirectDeletionError.pdsRejected(statusCode: 0, errorCode: nil, message: nil)
+      }
+      guard (200..<300).contains(http.statusCode) else {
+        let (errCode, errMsg) = Self.parseXrpcError(from: data)
+        throw PDSDirectDeletionError.pdsRejected(
+          statusCode: http.statusCode,
+          errorCode: errCode,
+          message: errMsg
+        )
+      }
+    }
+  }
+
+  func deleteAccount(
+    pdsURL: URL,
+    did: String,
+    password: String,
+    token: String,
+    accessJwt: String
+  ) async throws {
+    guard AccountDeletionFlow.isSafeDirectPDSEndpoint(pdsURL) else {
+      throw PDSDirectDeletionError.invalidPDSEndpoint
+    }
+    let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedToken.isEmpty else {
+      throw PDSDirectDeletionError.missingConfirmationToken
+    }
+    guard !password.isEmpty else {
+      throw PDSDirectDeletionError.missingPassword
+    }
+
+    let endpoint = pdsURL.appendingPathComponent("xrpc/com.atproto.server.deleteAccount")
+    let payload: [String: String] = [
+      "did": did,
+      "password": password,
+      "token": trimmedToken,
+    ]
+    var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeoutSeconds)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(accessJwt)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+    try await withSession { session in
+      let (data, response) = try await session.data(for: request)
+      guard let http = response as? HTTPURLResponse else {
+        throw PDSDirectDeletionError.pdsRejected(statusCode: 0, errorCode: nil, message: nil)
+      }
+      guard (200..<300).contains(http.statusCode) else {
+        let (errCode, errMsg) = Self.parseXrpcError(from: data)
+        if errCode == "ExpiredToken" {
+          throw PDSDirectDeletionError.expiredToken(message: errMsg)
+        }
+        if errCode == "InvalidToken" {
+          throw PDSDirectDeletionError.invalidToken(message: errMsg)
+        }
+        if http.statusCode == 401 || errCode == "AuthenticationRequired" {
+          throw PDSDirectDeletionError.invalidCredentials(
+            statusCode: http.statusCode,
+            errorCode: errCode,
+            message: errMsg
+          )
+        }
+        throw PDSDirectDeletionError.pdsRejected(
+          statusCode: http.statusCode,
+          errorCode: errCode,
+          message: errMsg
+        )
+      }
+    }
+  }
+
+  private static func parseXrpcError(from data: Data) -> (String?, String?) {
+    guard !data.isEmpty,
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+      return (nil, nil)
+    }
+    return (json["error"] as? String, json["message"] as? String)
+  }
+}
+
 /// Coordinates the deletion and erasure of Catbird-held account data to satisfy
 /// App Store Review Guideline 5.1.1(v).
 @MainActor
 struct AccountDeletionCoordinator {
   private static let logger = Logger(subsystem: "blue.catbird", category: "AccountDeletionCoordinator")
 
+  /// Exchanges `(did, password)` for an in-memory-only PDS Bearer JWT and calls
+  /// `com.atproto.server.requestAccountDelete` directly against `pdsURL`.
+  static func requestHostedAccountDeletionCode(
+    forDID did: String,
+    password: String,
+    authFactorToken: String? = nil,
+    pdsURL: URL,
+    directClient: PDSDirectDeletionClient = PDSDirectDeletionClient()
+  ) async throws {
+    let accessJwt = try await directClient.createEphemeralSession(
+      pdsURL: pdsURL,
+      identifier: did,
+      password: password,
+      authFactorToken: authFactorToken
+    )
+    try await directClient.requestAccountDelete(pdsURL: pdsURL, accessJwt: accessJwt)
+  }
+
+  /// Executes permanent hosted PDS account deletion in fail-safe order (`A3 + A4`):
+  /// 1. Pre-validates `(did, password)` via ephemeral `com.atproto.server.createSession` BEFORE
+  ///    running any irreversible Labyrinth/MLS server backup erasure (preventing a mistyped password
+  ///    from wiping encrypted backups while `deleteAccount` fails).
+  /// 2. Runs fail-closed `eraseServerSideLabyrinthDataIfAuthenticated` while OAuth/Spaces credentials
+  ///    are still live (skipping remote calls if the account never opted into MLS or Circles).
+  /// 3. Calls `com.atproto.server.deleteAccount` directly on `pdsURL` using the in-memory Bearer JWT.
+  /// 4. Wipes local Catbird SwiftData, caches, Keychain items, and OAuth session.
+  static func performHostedAccountDeletion(
+    forDID did: String,
+    password: String,
+    confirmationToken: String,
+    authFactorToken: String? = nil,
+    pdsURL: URL,
+    storageRoot: URL? = nil,
+    keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
+    circleKeychain: any CircleKeychain = SystemCircleKeychain(),
+    modelContext: ModelContext? = nil,
+    appStateOverride: AppState? = nil,
+    clientOverride: ATProtoClient? = nil,
+    coordinatorOverride: MLSClientCoordinator? = nil,
+    remoteMLSErasure: (@MainActor @Sendable (String) async throws -> Void)? = nil,
+    localErasureOverride: (@MainActor @Sendable (String) async throws -> Void)? = nil,
+    directClient: PDSDirectDeletionClient = PDSDirectDeletionClient()
+  ) async throws {
+    let trimmedToken = confirmationToken.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedToken.isEmpty else {
+      throw PDSDirectDeletionError.missingConfirmationToken
+    }
+    guard !password.isEmpty else {
+      throw PDSDirectDeletionError.missingPassword
+    }
+
+    // Step 1 (A4): Pre-validate PDS password BEFORE erasing server-side Labyrinth/MLS backups!
+    let accessJwt = try await directClient.createEphemeralSession(
+      pdsURL: pdsURL,
+      identifier: did,
+      password: password,
+      authFactorToken: authFactorToken
+    )
+
+    // Step 2 (D-3): Fail-closed encrypted server data erasure while OAuth/Spaces session is live.
+    try await eraseServerSideLabyrinthDataIfAuthenticated(
+      forDID: did,
+      storageRoot: storageRoot,
+      keystore: keystore,
+      circleKeychain: circleKeychain,
+      appStateOverride: appStateOverride,
+      clientOverride: clientOverride,
+      coordinatorOverride: coordinatorOverride,
+      remoteMLSErasure: remoteMLSErasure
+    )
+
+    // Step 3 (A3): Direct PDS permanent deletion using the pre-validated in-memory Bearer JWT.
+    try await directClient.deleteAccount(
+      pdsURL: pdsURL,
+      did: did,
+      password: password,
+      token: trimmedToken,
+      accessJwt: accessJwt
+    )
+
+    // Step 4: Local Catbird state & session cleanup.
+    if let localErasureOverride {
+      try await localErasureOverride(did)
+    } else {
+      try await eraseCatbirdData(
+        forDID: did,
+        storageRoot: storageRoot,
+        keystore: keystore,
+        circleKeychain: circleKeychain,
+        modelContext: modelContext,
+        skipRemoteMLSErasure: true
+      )
+    }
+  }
+
   /// Erases all account data held by Catbird:
   /// 1. Remote: Server-side Labyrinth/MLS erasure (`blue.catbird.labyrinth.deleteAccountData`) while
-  ///    authenticated, plus Nest gateway session/push revocation via `POST /auth/logout` using
-  ///    tokens resolved *before* `removeAccount` wipes credentials.
+  ///    authenticated (when opted into MLS/Circles and `skipRemoteMLSErasure == false`), plus Nest
+  ///    gateway session/push revocation via `POST /auth/logout` using tokens resolved *before*
+  ///    `removeAccount` wipes credentials.
   /// 2. Local SwiftData: `modelContext.delete` for `AppSettingsModel`, `Preferences`, `DraftPost` matching DID.
   /// 3. Filesystem & MLS Caches: purge draft/widget/spotlight caches + `MLSImageCache` + unconditional
-  ///    local MLS SQLCipher DB (`<did_hash>.db*`) and Keychain key wipe (`KeychainPlatformKeyStore`).
+  ///    local MLS SQLCipher DB (`<did_hash>.db*` + legacy `mls-state*`/`MLS*`) and Keychain key wipe.
   /// 4. Keychain & State: sign out and remove account from Petrel/Keychain and AppState.
   static func eraseCatbirdData(
     forDID did: String,
     token: String? = nil,
     storageRoot: URL? = nil,
     keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
+    circleKeychain: any CircleKeychain = SystemCircleKeychain(),
     modelContext: ModelContext? = nil,
     skipRemoteMLSErasure: Bool = false,
     coordinatorOverride: MLSClientCoordinator? = nil,
@@ -160,6 +504,7 @@ struct AccountDeletionCoordinator {
         forDID: did,
         storageRoot: storageRoot,
         keystore: keystore,
+        circleKeychain: circleKeychain,
         coordinatorOverride: coordinatorOverride,
         remoteMLSErasure: remoteMLSErasure
       )
@@ -177,18 +522,18 @@ struct AccountDeletionCoordinator {
     // unconditionally (even when mlsCoordinator == nil).
     await purgeFilesystemData(forDID: did)
     await MLSImageCache.shared.purge(for: did)
-    try? CircleKeyStore.wipe(accountDID: did, keychain: SystemCircleKeychain())
+    try? CircleKeyStore.wipe(accountDID: did, keychain: circleKeychain)
     AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
 
     // 4 & 5. Keychain & State: Sign out and remove account from Petrel/Keychain and AppState.
     do {
       try await AppStateManager.shared.authentication.removeAccount(did: did)
-      try? CircleKeyStore.wipe(accountDID: did, keychain: SystemCircleKeychain())
+      try? CircleKeyStore.wipe(accountDID: did, keychain: circleKeychain)
       AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
       await MLSImageCache.shared.purge(for: did)
       logger.info("✅ Finished Catbird data erasure for account: \(did)")
     } catch {
-      try? CircleKeyStore.wipe(accountDID: did, keychain: SystemCircleKeychain())
+      try? CircleKeyStore.wipe(accountDID: did, keychain: circleKeychain)
       AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
       await MLSImageCache.shared.purge(for: did)
       logger.error("Failed to remove account from AuthManager: \(error.localizedDescription)")
@@ -200,6 +545,8 @@ struct AccountDeletionCoordinator {
     forDID did: String,
     storageRoot: URL? = nil,
     keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
+    circleKeychain: any CircleKeychain = SystemCircleKeychain(),
+    experimentalSettings: ExperimentalSettings = .shared,
     appStateOverride: AppState? = nil,
     clientOverride: ATProtoClient? = nil,
     coordinatorOverride: MLSClientCoordinator? = nil,
@@ -222,8 +569,21 @@ struct AccountDeletionCoordinator {
       appStateOverride
     } else if let currentAppState = AppStateManager.shared.lifecycle.appState, currentAppState.userDID == did {
       currentAppState
+    } else if let cachedState = AppStateManager.shared.getState(for: did) {
+      cachedState
     } else {
       nil
+    }
+
+    // A3/A4: When the account never opted into MLS Chat and holds no local MLS DB or Circle keys,
+    // skip remote `deleteAccountData` so non-MLS/non-Circles accounts are never blocked by `mls-ds`.
+    let hasActiveCoordinator = resolvedAppState?.mlsCoordinator != nil
+    let isMLSOptedIn = experimentalSettings.isMLSChatEnabled(for: did)
+    let hasLocalDB = hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
+    let hasCircleKeys = CircleKeyStore.hasStoredKeys(accountDID: did, keychain: circleKeychain)
+    if !hasActiveCoordinator && !isMLSOptedIn && !hasLocalDB && !hasCircleKeys {
+      logger.info("🗑️ Account never opted into MLS or Circles; skipping remote deleteAccountData")
+      return
     }
 
     let resolvedClient = clientOverride ?? resolvedAppState?.atProtoClient ?? AppStateManager.shared.authentication.client
@@ -240,9 +600,7 @@ struct AccountDeletionCoordinator {
     }
 
     var openedTransientCoordinator = false
-    if coordinator == nil,
-       hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
-    {
+    if coordinator == nil, hasLocalDB {
       coordinator = try await openTransientCoordinatorForErasure(
         forDID: did,
         client: client,
@@ -289,7 +647,7 @@ struct AccountDeletionCoordinator {
     }
   }
 
-  private static func hasLocalMLSArtifacts(forDID did: String, storageRoot: URL?) -> Bool {
+  nonisolated static func hasLocalMLSArtifacts(forDID did: String, storageRoot: URL?) -> Bool {
     guard let root = try? (storageRoot ?? MLSAppGroupStorage.defaultStorageRoot()),
           let dbURL = try? MLSAppGroupStorage.databaseURL(storageRoot: root, accountDid: did)
     else {
@@ -300,10 +658,10 @@ struct AccountDeletionCoordinator {
         return true
       }
     }
-    return false
+    return AppState.hasLegacyMLSDatabaseFiles(storageRoot: root, accountDid: did)
   }
 
-  private static func openTransientCoordinatorForErasure(
+  static func openTransientCoordinatorForErasure(
     forDID did: String,
     client: ATProtoClient,
     appState: AppState?,
@@ -319,7 +677,9 @@ struct AccountDeletionCoordinator {
     }
     let clientBaseURL = await client.networkService.baseURL
     let pdsEndpoint = clientBaseURL.absoluteString
-    let deviceId = appState?.resolvedMLSDeviceID() ?? UUID().uuidString.lowercased()
+    let deviceId = appState?.resolvedMLSDeviceID()
+      ?? AppState.existingMLSDeviceID(for: did)
+      ?? UUID().uuidString.lowercased()
     let config = CatbirdMlsClientConfig(
       storageRoot: resolvedRoot.path,
       accountDid: did,

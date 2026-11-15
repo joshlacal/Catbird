@@ -323,14 +323,25 @@ class NotificationService: UNNotificationServiceExtension {
     return normalizedHash.count == 64 && sha256Hex(senderRoot) == normalizedHash
   }
 
-  private static func suppressedForOwnSiblingDevice(
+  /// Apple's managed `com.apple.developer.usernotifications.filtering` entitlement is NOT
+  /// provisioned in `NotificationServiceExtension.entitlements`. Primary own-device push
+  /// suppression is enforced server-side by excluding `sender_device_id` during push fanout;
+  /// without the managed filtering entitlement, NSE cannot silently drop an APNs alert via an
+  /// empty `UNNotificationContent()` (which iOS would otherwise render as a blank banner).
+  static let hasManagedNotificationFilteringEntitlement = false
+
+  private static func quietedForOwnSiblingDevice(
     wake: PushWakePayload,
-    preview: NotificationPreview
-  ) -> UNMutableNotificationContent {
+    preview: NotificationPreview,
+    hasFilteringEntitlement: Bool
+  ) -> UNNotificationContent {
+    if hasFilteringEntitlement {
+      return UNNotificationContent()
+    }
     let content = UNMutableNotificationContent()
-    content.title = ""
+    content.title = preview.groupTitle ?? "Catbird"
     content.subtitle = ""
-    content.body = ""
+    content.body = "Synced message from your other device"
     content.sound = nil
     content.badge = nil
     content.interruptionLevel = .passive
@@ -344,6 +355,7 @@ class NotificationService: UNNotificationServiceExtension {
     #endif
     content.userInfo = [
       "suppressedForOwnSiblingDevice": true,
+      "silentDropRequiresManagedFilteringEntitlement": true,
       "convo_id": preview.conversationId,
       "message_id": preview.messageId,
       "recipient_account": wake.recipientAccountHash,
@@ -355,7 +367,8 @@ class NotificationService: UNNotificationServiceExtension {
     base: UNMutableNotificationContent,
     preview: NotificationPreview,
     wake: PushWakePayload,
-    recipientAccountDID: String? = nil
+    recipientAccountDID: String? = nil,
+    hasFilteringEntitlement: Bool = NotificationService.hasManagedNotificationFilteringEntitlement
   ) -> UNNotificationContent {
     guard preview.receiptVerified else {
       Self.applyFallback(to: base, wake: wake)
@@ -369,7 +382,11 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     if Self.isOwnSiblingSender(preview: preview, wake: wake, recipientAccountDID: recipientAccountDID) {
-      return Self.suppressedForOwnSiblingDevice(wake: wake, preview: preview)
+      return Self.quietedForOwnSiblingDevice(
+        wake: wake,
+        preview: preview,
+        hasFilteringEntitlement: hasFilteringEntitlement
+      )
     }
 
     let senderName = preview.senderDisplayName ?? "Catbird"

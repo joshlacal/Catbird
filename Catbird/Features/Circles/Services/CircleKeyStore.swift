@@ -240,6 +240,20 @@ actor CircleKeyStore {
 
   // MARK: Wipe
 
+  /// Returns `true` when at least one Circle key record is stored for `accountDID`.
+  nonisolated static func hasStoredKeys(
+    accountDID: String,
+    keychain: any CircleKeychain = SystemCircleKeychain()
+  ) -> Bool {
+    let trimmed = accountDID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    let lowerPrefix = trimmed.lowercased() + "|"
+    guard let accounts = try? keychain.accounts(service: keychainService) else {
+      return false
+    }
+    return accounts.contains { $0.lowercased().hasPrefix(lowerPrefix) }
+  }
+
   /// Deletes every Circle key item belonging to `accountDID` (sign-out, I8).
   /// A DID never contains `|`, so the account prefix is unambiguous.
   static func wipe(accountDID: String, keychain: any CircleKeychain) throws {

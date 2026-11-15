@@ -95,11 +95,13 @@ struct AccountManagementPageResolver: Sendable {
 
   /// Appends a target login_hint query parameter scoping the provider UI to the deleted account.
   static func appendLoginHint(_ hint: String, to url: URL) -> URL {
+    let unreserved = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
     guard !hint.isEmpty,
+          let encodedHint = hint.addingPercentEncoding(withAllowedCharacters: unreserved),
           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
-    var queryItems = components.queryItems ?? []
-    queryItems.append(URLQueryItem(name: "login_hint", value: hint))
-    components.queryItems = queryItems
+    var items = components.percentEncodedQueryItems ?? []
+    items.append(URLQueryItem(name: "login_hint", value: encodedHint))
+    components.percentEncodedQueryItems = items
     return components.url ?? url
   }
 

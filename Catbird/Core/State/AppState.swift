@@ -858,6 +858,41 @@ final class AppState {
         return CatbirdFeatures.mlsChat && ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
     }
 
+    /// Refreshes runtime public-beta flags from `nest` `/oauth/client-config` (`R-1`).
+    /// Fails closed to `false` on network error or `404` (`CatbirdFeatures.refreshFromGatewayConfig`).
+    @MainActor
+    func refreshRuntimeFeatureFlagsFromGateway() async {
+        #if DEBUG
+        let processInfo = ProcessInfo.processInfo
+        if processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || processInfo.arguments.contains("--e2e-mode")
+            || processInfo.arguments.contains("--enable-circles")
+            || processInfo.arguments.contains("--e2e-encrypted-circles")
+            || processInfo.arguments.contains("--messages-navigation-ui-fixture")
+            || processInfo.arguments.contains("--settings-ui-fixture")
+            || processInfo.arguments.contains("--mls-detail-ui-fixture")
+            || CatbirdGatewayConfiguration.current.isRuntimeFixture
+        {
+            return
+        }
+        #endif
+        _ = await CatbirdFeatures.refreshFromGatewayConfig(
+            origin: CatbirdGatewayConfiguration.current.origin
+        )
+        if !CatbirdFeatures.circlesSpaces {
+            circleCapability = .unknown
+            circleSupportsImages = false
+            circleEncryptionCache.reset()
+            circleOpenerCache.reset()
+        }
+        if !isMLSRuntimeAllowed {
+            await prepareMLSStorageReset()
+            mlsConversations = []
+            mlsConversationsDidChange += 1
+            updateMLSUnreadCount()
+        }
+    }
+
     /// MLS starts only while this account admits work, so suspension cancels and drains it.
     @MainActor
     private func startMLSIfEnabled() {
@@ -1057,7 +1092,9 @@ final class AppState {
         updateChatUnreadCount()
 
         accountServiceWork.start { [self] in
+            await refreshRuntimeFeatureFlagsFromGateway()
             await probeCircleCapabilities()
+            startMLSIfEnabled()
         }
 
         // Setup other components as needed (skip for FaultOrdering)
@@ -1131,7 +1168,9 @@ final class AppState {
         #endif
 
         accountServiceWork.start { [self] in
+            await refreshRuntimeFeatureFlagsFromGateway()
             await probeCircleCapabilities()
+            startMLSIfEnabled()
         }
         ageAccess.startPreflight()
         // Clear old prefetched data and any shadowed interactions
@@ -1349,6 +1388,7 @@ final class AppState {
     /// `CircleError.encryptionUnavailable`. Reset with `_circleService`.
     @MainActor
     func circleEncryptionContext() -> CircleEncryptionContext? {
+        guard CatbirdFeatures.circlesSpaces else { return nil }
         guard let coordinator = mlsCoordinator, !coordinator.isHandleClosed,
               let accountDID = try? DID(didString: userDID)
         else { return nil }
@@ -1388,6 +1428,7 @@ final class AppState {
     /// unreadable). Reset with `_circleService`.
     @MainActor
     func circlePostOpener() -> CirclePostOpener? {
+        guard CatbirdFeatures.circlesSpaces else { return nil }
 #if DEBUG
         if let e2eCircleOpener { return e2eCircleOpener }
 #endif
@@ -1631,6 +1672,37 @@ final class AppState {
         return created
     }
 
+    /// Reads an already-persisted installation `deviceId` UUIDv4 for `accountDid` without minting a new one.
+    nonisolated static func existingMLSDeviceID(
+        for accountDid: String,
+        in defaultsOverride: UserDefaults? = nil
+    ) -> String? {
+        let defaults = defaultsOverride
+            ?? UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+            ?? .standard
+        let trimmed = accountDid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let canonical = ((try? MLSAppGroupStorage.canonicalizeAccountDid(trimmed)) ?? trimmed)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        var candidateKeys = [
+            mlsDeviceIDDefaultsKey(for: canonical),
+            mlsDeviceIDDefaultsKey(for: trimmed),
+        ]
+        if let didHash = try? MLSAppGroupStorage.accountDidHash(for: trimmed) {
+            candidateKeys.append("mlsDeviceId_\(didHash)")
+        }
+        for key in candidateKeys {
+            if let raw = defaults.string(forKey: key), !raw.isEmpty {
+                let normalized = raw.hasPrefix("dev-") ? String(raw.dropFirst(4)) : raw
+                if UUID(uuidString: normalized) != nil {
+                    return normalized.lowercased()
+                }
+            }
+        }
+        return nil
+    }
+
     /// Human-readable platform display name for the current device (capped at 128 characters).
     nonisolated static func localMLSDeviceDisplayName(shortDeviceId: String? = nil) -> String {
         let baseName: String = {
@@ -1870,8 +1942,100 @@ final class AppState {
         await reloadMLSProjectionFromDisk()
     }
 
-    /// Removes only `<did_hash>.db*` SQLite artifacts for `accountDid` while keeping Keychain
-    /// recovery and identity keys intact (used when upgrading across an unsupported local DB schema).
+    private nonisolated static func isAllowedDatabaseSidecarTail(_ rawTail: String) -> Bool {
+        var tail = rawTail
+        let allowedSuffixes = [
+            "-wal", "-shm", "-journal",
+            ".sqlite3", ".sqlite", ".db",
+            ".wal", ".shm", ".journal", ".lock", ".meta", ".json",
+        ]
+        while !tail.isEmpty {
+            guard let matched = allowedSuffixes.first(where: { tail.hasPrefix($0) }) else {
+                return false
+            }
+            tail.removeFirst(matched.count)
+        }
+        return true
+    }
+
+    /// Prefix- and delimiter-safe matcher identifying legacy pre-clean-slate MLS SQLite / sidecar files
+    /// (`mls-state-*`, `MLS-*`, `epoch-checkpoints-*`, `mls_welcome_gate-*`, `mls-coordination-*`)
+    /// belonging strictly to `accountDid` / `didHash`, never matching sibling accounts with shared prefixes.
+    nonisolated static func isLegacyMLSDatabaseFileName(
+        _ fileName: String,
+        accountDid: String,
+        didHash: String? = nil
+    ) -> Bool {
+        let rawTrimmed = accountDid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTrimmed.isEmpty else { return false }
+        let canonicalDid = ((try? MLSAppGroupStorage.canonicalizeAccountDid(rawTrimmed)) ?? rawTrimmed).lowercased()
+        let underscoreDid = canonicalDid
+            .replacingOccurrences(of: ":", with: "_")
+            .replacingOccurrences(of: "/", with: "_")
+        let hyphenDid = canonicalDid
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        let resolvedHash = (didHash ?? (try? MLSAppGroupStorage.accountDidHash(for: rawTrimmed)))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        var tokens = [canonicalDid, underscoreDid, hyphenDid]
+        if let resolvedHash, resolvedHash.count == 64 {
+            tokens.append(resolvedHash)
+        }
+
+        let lowerName = fileName.lowercased()
+        let legacyPrefixes = [
+            "mls-state-", "mls-state_",
+            "mls-", "mls_",
+            "epoch-checkpoints-", "epoch-checkpoints_",
+            "mls_welcome_gate-", "mls_welcome_gate_",
+            "mls-coordination-", "mls-coordination_",
+        ]
+
+        for prefix in legacyPrefixes where lowerName.hasPrefix(prefix) {
+            let remainder = String(lowerName.dropFirst(prefix.count))
+            for token in tokens where remainder.hasPrefix(token) {
+                let tail = String(remainder.dropFirst(token.count))
+                if isAllowedDatabaseSidecarTail(tail) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private nonisolated static func legacyMLSCandidateDirectories(storageRoot: URL) -> [URL] {
+        [
+            storageRoot,
+            MLSAppGroupStorage.mlsDirectoryURL(storageRoot: storageRoot),
+            storageRoot.appendingPathComponent("MLS", isDirectory: true),
+            storageRoot.appendingPathComponent("mls-state", isDirectory: true),
+        ]
+    }
+
+    /// Returns `true` when legacy pre-clean-slate MLS database files exist on disk for `accountDid`.
+    nonisolated static func hasLegacyMLSDatabaseFiles(
+        storageRoot: URL,
+        accountDid: String
+    ) -> Bool {
+        let fm = FileManager.default
+        let didHash = try? MLSAppGroupStorage.accountDidHash(for: accountDid)
+        for dir in legacyMLSCandidateDirectories(storageRoot: storageRoot) {
+            guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+                continue
+            }
+            if entries.contains(where: {
+                isLegacyMLSDatabaseFileName($0.lastPathComponent, accountDid: accountDid, didHash: didHash)
+            }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Removes `<did_hash>.db*` and legacy `mls-state-*` / `MLS-*` SQLite artifacts (including `-wal`, `-shm`,
+    /// and `-journal` sidecars) for `accountDid` while keeping Keychain recovery and identity keys intact.
     nonisolated static func wipeUnsupportedLocalMLSDatabaseFiles(
         storageRoot: URL,
         accountDid: String
@@ -1882,14 +2046,98 @@ final class AppState {
                 try? fm.removeItem(atPath: dbURL.path + suffix)
             }
         }
-        guard let didHash = try? MLSAppGroupStorage.accountDidHash(for: accountDid) else { return }
-        let mlsDir = MLSAppGroupStorage.mlsDirectoryURL(storageRoot: storageRoot)
-        let prefix = "\(didHash).db"
-        if let entries = try? fm.contentsOfDirectory(at: mlsDir, includingPropertiesForKeys: nil) {
-            for entry in entries where entry.lastPathComponent == prefix || entry.lastPathComponent.hasPrefix(prefix + "-") || entry.lastPathComponent.hasPrefix(prefix + ".") {
+        let didHash = try? MLSAppGroupStorage.accountDidHash(for: accountDid)
+        if let didHash {
+            let mlsDir = MLSAppGroupStorage.mlsDirectoryURL(storageRoot: storageRoot)
+            let prefix = "\(didHash).db"
+            if let entries = try? fm.contentsOfDirectory(at: mlsDir, includingPropertiesForKeys: nil) {
+                for entry in entries where entry.lastPathComponent == prefix
+                    || entry.lastPathComponent.hasPrefix(prefix + "-")
+                    || entry.lastPathComponent.hasPrefix(prefix + ".")
+                {
+                    try? fm.removeItem(at: entry)
+                }
+            }
+        }
+
+        for dir in legacyMLSCandidateDirectories(storageRoot: storageRoot) {
+            guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+                continue
+            }
+            for entry in entries where isLegacyMLSDatabaseFileName(
+                entry.lastPathComponent,
+                accountDid: accountDid,
+                didHash: didHash
+            ) {
                 try? fm.removeItem(at: entry)
             }
         }
+    }
+
+    /// Token-boundary-safe matcher identifying legacy pre-clean-slate Keychain `kSecAttrAccount` names
+    /// (`mls-db-key-*`, `MLS-*`, `mls-state-*`, `encryption-key-*`, `signing-key-*`) for `accountDid`.
+    nonisolated static func isLegacyMLSKeychainAccountForDID(
+        _ account: String,
+        accountDid: String,
+        didHash: String,
+        previousDeviceId: String? = nil
+    ) -> Bool {
+        let rawTrimmed = accountDid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTrimmed.isEmpty else { return false }
+        let canonicalDid = ((try? MLSAppGroupStorage.canonicalizeAccountDid(rawTrimmed)) ?? rawTrimmed).lowercased()
+        let underscoreDid = canonicalDid
+            .replacingOccurrences(of: ":", with: "_")
+            .replacingOccurrences(of: "/", with: "_")
+        let hyphenDid = canonicalDid
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        let normalizedHash = didHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedPrevDevice = previousDeviceId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        let lower = account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lower.isEmpty else { return false }
+
+        if normalizedHash.count == 64 && lower.contains(normalizedHash) {
+            return true
+        }
+
+        let exactTokens: Set<String> = [canonicalDid, underscoreDid, hyphenDid]
+        if exactTokens.contains(lower) {
+            return true
+        }
+
+        let knownPrefixes = [
+            "mls-state-", "mls-state_",
+            "mls-db-key-", "mls-db-key_",
+            "mls-key-", "mls-key_",
+            "mls-", "mls_",
+            "db-key-", "db-key_",
+            "dbkey:", "dbkey-",
+            "encryption-key-", "encryption-key:",
+            "signing-key-", "signing-key:",
+            "sigkey:mls-signer:", "sigkey:",
+        ]
+        var candidate = lower
+        if let matchedPrefix = knownPrefixes.first(where: { candidate.hasPrefix($0) }) {
+            candidate.removeFirst(matchedPrefix.count)
+        }
+
+        var knownSuffixes = [
+            "-db-key", "_db_key",
+            "-key", "_key", ".key", ":key",
+            ".sqlite3", ".sqlite", ".db",
+        ]
+        if let dev = normalizedPrevDevice, !dev.isEmpty {
+            knownSuffixes.insert(":\(dev)", at: 0)
+            knownSuffixes.insert("-\(dev)", at: 1)
+        }
+        while let matchedSuffix = knownSuffixes.first(where: { candidate.hasSuffix($0) }) {
+            candidate.removeLast(matchedSuffix.count)
+        }
+
+        return exactTokens.contains(candidate)
     }
 
     /// Pure prefix-safe filter identifying Keychain item `kSecAttrAccount` keys belonging strictly
@@ -1946,7 +2194,8 @@ final class AppState {
     private nonisolated static func wipeAccountScopedSystemKeychainResiduals(
         accountDid: String,
         didHash: String,
-        previousDeviceId: String?
+        previousDeviceId: String?,
+        backend: any KeychainBackend = SystemKeychainBackend()
     ) {
         let mlsService = "blue.catbird.mls.clean-slate"
         let circlesService = "blue.catbird.circles.keys"
@@ -1966,12 +2215,27 @@ final class AppState {
                 query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue as Any
                 query[kSecAttrSynchronizable as String] = kCFBooleanFalse as Any
             }
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            let (status, result) = backend.copyMatching(query)
             guard status == errSecSuccess, let items = result as? [[String: Any]] else {
                 return []
             }
             return items.compactMap { $0[kSecAttrAccount as String] as? String }
+        }
+
+        func deleteAccountItem(service: String, account: String, accessGroup: String?, dataProtection: Bool) {
+            var deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+            ]
+            if let accessGroup, !accessGroup.isEmpty {
+                deleteQuery[kSecAttrAccessGroup as String] = accessGroup
+            }
+            if dataProtection {
+                deleteQuery[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue as Any
+                deleteQuery[kSecAttrSynchronizable as String] = kCFBooleanFalse as Any
+            }
+            _ = backend.delete(deleteQuery)
         }
 
         let mlsAccounts = listAccounts(service: mlsService, accessGroup: accessGroup, dataProtection: false)
@@ -1985,39 +2249,93 @@ final class AppState {
         )
 
         for sigAccount in sigKeysToDelete {
-            var deleteQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: mlsService,
-                kSecAttrAccount as String: sigAccount,
-            ]
-            if let accessGroup, !accessGroup.isEmpty {
-                deleteQuery[kSecAttrAccessGroup as String] = accessGroup
-            }
-            _ = SecItemDelete(deleteQuery as CFDictionary)
+            deleteAccountItem(service: mlsService, account: sigAccount, accessGroup: accessGroup, dataProtection: false)
         }
 
         for circleAccount in circleKeysToDelete {
-            let deleteQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: circlesService,
-                kSecAttrAccount as String: circleAccount,
-                kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
-                kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            ]
-            _ = SecItemDelete(deleteQuery as CFDictionary)
+            deleteAccountItem(service: circlesService, account: circleAccount, accessGroup: nil, dataProtection: true)
+        }
+
+        // Sweep legacy pre-clean-slate shared MLS Keychain services (`blue.catbird.mls`, `MLS`, etc.)
+        let candidateGroups: [String?] = accessGroup == nil ? [nil] : [accessGroup, nil]
+        let sharedLegacyServices = [
+            "blue.catbird.mls",
+            "blue.catbird.mls.encryption",
+            "blue.catbird.mls.keychain",
+            "MLS",
+        ]
+        for legacyService in sharedLegacyServices {
+            for group in candidateGroups {
+                for dataProtection in [false, true] {
+                    let accounts = listAccounts(service: legacyService, accessGroup: group, dataProtection: dataProtection)
+                    for account in accounts where isLegacyMLSKeychainAccountForDID(
+                        account,
+                        accountDid: accountDid,
+                        didHash: didHash,
+                        previousDeviceId: previousDeviceId
+                    ) {
+                        deleteAccountItem(
+                            service: legacyService,
+                            account: account,
+                            accessGroup: group,
+                            dataProtection: dataProtection
+                        )
+                    }
+                }
+            }
+        }
+
+        // Sweep legacy per-account MLS Keychain service namespaces (`MLS-<did>`, `mls-state-<did>`, etc.)
+        let canonicalLower = accountDid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let underscoreDid = canonicalLower
+            .replacingOccurrences(of: ":", with: "_")
+            .replacingOccurrences(of: "/", with: "_")
+        let hyphenDid = canonicalLower
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        let dedicatedLegacyServices = Set([
+            "MLS-\(accountDid)",
+            "MLS-\(canonicalLower)",
+            "MLS-\(underscoreDid)",
+            "MLS-\(hyphenDid)",
+            "MLS-\(didHash)",
+            "mls-state-\(accountDid)",
+            "mls-state-\(canonicalLower)",
+            "mls-state-\(underscoreDid)",
+            "mls-state-\(hyphenDid)",
+            "mls-state-\(didHash)",
+        ])
+        for dedicatedService in dedicatedLegacyServices {
+            for group in candidateGroups {
+                for dataProtection in [false, true] {
+                    var deleteServiceQuery: [String: Any] = [
+                        kSecClass as String: kSecClassGenericPassword,
+                        kSecAttrService as String: dedicatedService,
+                    ]
+                    if let group, !group.isEmpty {
+                        deleteServiceQuery[kSecAttrAccessGroup as String] = group
+                    }
+                    if dataProtection {
+                        deleteServiceQuery[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue as Any
+                        deleteServiceQuery[kSecAttrSynchronizable as String] = kCFBooleanFalse as Any
+                    }
+                    _ = backend.delete(deleteServiceQuery)
+                }
+            }
         }
     }
 
-    /// Unconditionally wipes all local MLS SQLite artifacts, Keychain keys (`I8`), E2EE Circle
-    /// cached keys, and per-installation `deviceId` metadata for `accountDid`, even when
-    /// `mlsCoordinator` was never opened in this launch. Clearing `blue.catbird.mls.deviceId.<did>`
-    /// guarantees a subsequent sign-in on the same hardware mints a fresh `deviceId` UUIDv4 matching
-    /// its freshly generated Keychain signing keypair.
+    /// Unconditionally wipes all local MLS SQLite artifacts (including legacy `mls-state-*` / `MLS-*`
+    /// databases and sidecars), Keychain keys (`I8` + legacy `blue.catbird.mls` / `MLS-*`), E2EE Circle
+    /// cached keys, and per-installation `deviceId` metadata for `accountDid`, even when `mlsCoordinator`
+    /// was never opened in this launch. Clearing `blue.catbird.mls.deviceId.<did>` guarantees a subsequent
+    /// sign-in on the same hardware mints a fresh `deviceId` UUIDv4 matching its freshly generated signing keypair.
     nonisolated static func wipeLocalMLSArtifacts(
         for accountDid: String,
         storageRoot: URL? = nil,
         keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
-        sharedDefaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+        sharedDefaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier),
+        legacyKeychainBackend: (any KeychainBackend)? = nil
     ) {
         let trimmedDid = accountDid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedDid.isEmpty else { return }
@@ -2026,6 +2344,10 @@ final class AppState {
         }
 
         let canonicalDid = (try? MLSAppGroupStorage.canonicalizeAccountDid(trimmedDid)) ?? trimmedDid
+        let lowerDid = canonicalDid.lowercased()
+        let underscoreDid = lowerDid
+            .replacingOccurrences(of: ":", with: "_")
+            .replacingOccurrences(of: "/", with: "_")
         let rawDeviceKey = mlsDeviceIDDefaultsKey(for: trimmedDid)
         let canonicalDeviceKey = mlsDeviceIDDefaultsKey(for: canonicalDid)
         let previousDeviceId = sharedDefaults?.string(forKey: canonicalDeviceKey)
@@ -2041,35 +2363,482 @@ final class AppState {
         if let didHash = try? MLSAppGroupStorage.accountDidHash(for: trimmedDid) {
             let resolvedPrevDevice = previousDeviceId ?? sharedDefaults?.string(forKey: "mlsDeviceId_\(didHash)")
             try? keystore.deleteAccountKeys(accountDidHash: didHash)
-            if keystore is KeychainPlatformKeyStore {
+            if let residualBackend = legacyKeychainBackend ?? (keystore is KeychainPlatformKeyStore ? SystemKeychainBackend() : nil) {
                 wipeAccountScopedSystemKeychainResiduals(
                     accountDid: canonicalDid,
                     didHash: didHash,
-                    previousDeviceId: resolvedPrevDevice
+                    previousDeviceId: resolvedPrevDevice,
+                    backend: residualBackend
                 )
             }
             sharedDefaults?.removeObject(forKey: "mlsDeviceId_\(didHash)")
             sharedDefaults?.removeObject(forKey: "mlsHomeDsEndpoint_\(didHash)")
             sharedDefaults?.removeObject(forKey: "mlsPdsEndpoint_\(didHash)")
             sharedDefaults?.removeObject(forKey: "blue.catbird.mls.deviceNames.\(didHash)")
+
+            if let keys = sharedDefaults?.dictionaryRepresentation().keys {
+                let ownerPrefix = "blue.catbird.mls.database-owner.\(didHash)"
+                for key in keys where key == ownerPrefix
+                    || key.hasPrefix(ownerPrefix + ".")
+                    || key == "MLS-\(canonicalDid)"
+                    || key == "MLS-\(underscoreDid)"
+                    || key == "mls-state-\(canonicalDid)"
+                    || key == "mls-state-\(underscoreDid)"
+                {
+                    sharedDefaults?.removeObject(forKey: key)
+                }
+            }
         }
     }
 
-    /// Wipe local SQLCipher DB + Keychain items on sign-out (`I8`), retiring only this device first (`D-5`).
+    // MARK: - Bounded Sign-Out & Secondary Account Device Retirement (`A6`)
+
+    /// Privacy-preserving retry marker queued when `retireCurrentDevice()` times out or fails while offline.
+    /// Stores only `accountDidHash` (SHA-256 hex) rather than raw DIDs to prevent post-sign-out DID leakage.
+    struct PendingMLSDeviceRetirementRecord: Codable, Equatable, Sendable {
+        let accountDidHash: String
+        let deviceId: String?
+        let recordedAtEpochSeconds: Int64
+        let reason: String
+    }
+
+    nonisolated static let pendingDeviceRetirementsDefaultsKey = "blue.catbird.mls.pendingDeviceRetirements"
+
+    nonisolated static func pendingMLSDeviceRetirements(
+        in defaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+    ) -> [PendingMLSDeviceRetirementRecord] {
+        guard let data = defaults?.data(forKey: pendingDeviceRetirementsDefaultsKey),
+              let decoded = try? JSONDecoder().decode([PendingMLSDeviceRetirementRecord].self, from: data)
+        else {
+            return []
+        }
+        return decoded
+    }
+
+    nonisolated static func recordPendingMLSDeviceRetirement(
+        accountDid: String,
+        deviceId: String?,
+        reason: String,
+        in defaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+    ) {
+        guard let defaults,
+              let didHash = try? MLSAppGroupStorage.accountDidHash(for: accountDid)
+        else { return }
+        var records = pendingMLSDeviceRetirements(in: defaults)
+        records.removeAll { $0.accountDidHash == didHash && $0.deviceId == deviceId }
+        records.append(
+            PendingMLSDeviceRetirementRecord(
+                accountDidHash: didHash,
+                deviceId: deviceId,
+                recordedAtEpochSeconds: Int64(Date().timeIntervalSince1970),
+                reason: String(reason.prefix(160))
+            )
+        )
+        if records.count > 32 {
+            records = Array(records.suffix(32))
+        }
+        if let encoded = try? JSONEncoder().encode(records) {
+            defaults.set(encoded, forKey: pendingDeviceRetirementsDefaultsKey)
+        }
+    }
+
+    private actor OneShotRetirementGate<Value: Sendable> {
+        private var continuation: CheckedContinuation<Value, Never>?
+        private var resolvedValue: Value?
+
+        func install(_ continuation: CheckedContinuation<Value, Never>) {
+            if let resolvedValue {
+                continuation.resume(returning: resolvedValue)
+            } else {
+                self.continuation = continuation
+            }
+        }
+
+        func resolve(_ value: Value) {
+            guard resolvedValue == nil else { return }
+            resolvedValue = value
+            if let continuation {
+                self.continuation = nil
+                continuation.resume(returning: value)
+            }
+        }
+    }
+
+    private nonisolated static func runBoundedAsync<Value: Sendable>(
+        timeoutSeconds: TimeInterval,
+        operation: @escaping @Sendable () async throws -> Value
+    ) async -> Result<Value, Error>? {
+        let gate = OneShotRetirementGate<Result<Value, Error>?>()
+        let clampedNanoseconds = UInt64(max(0.01, timeoutSeconds) * 1_000_000_000)
+
+        let workTask = Task {
+            do {
+                let value = try await operation()
+                await gate.resolve(.success(value))
+            } catch {
+                await gate.resolve(.failure(error))
+            }
+        }
+        let timerTask = Task {
+            try? await Task.sleep(nanoseconds: clampedNanoseconds)
+            guard !Task.isCancelled else { return }
+            await gate.resolve(nil)
+        }
+
+        let outcome = await withCheckedContinuation { (continuation: CheckedContinuation<Result<Value, Error>?, Never>) in
+            Task { await gate.install(continuation) }
+        }
+        workTask.cancel()
+        timerTask.cancel()
+        return outcome
+    }
+
+    /// Runs `retireCurrentDevice` under a hard wall-clock timeout (default `3.0s`) so sign-out or account
+    /// removal never blocks when offline. On timeout or failure, logs a warning and persists a hashed
+    /// `PendingMLSDeviceRetirementRecord` retry marker before local wipe proceeds.
+    @discardableResult
+    nonisolated static func retireDeviceBounded(
+        timeoutSeconds: TimeInterval = 3.0,
+        accountDid: String,
+        deviceId: String?,
+        sharedDefaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier),
+        operation: @escaping @Sendable () async throws -> Void
+    ) async -> Bool {
+        let log = Logger(subsystem: "blue.catbird", category: "MLSRetirement")
+        guard let result = await runBoundedAsync(timeoutSeconds: timeoutSeconds, operation: operation) else {
+            log.warning("MLS device retirement timed out after \(timeoutSeconds, privacy: .public)s; queued retry marker and continuing local wipe")
+            recordPendingMLSDeviceRetirement(
+                accountDid: accountDid,
+                deviceId: deviceId,
+                reason: "timeout",
+                in: sharedDefaults
+            )
+            return false
+        }
+
+        switch result {
+        case .success:
+            return true
+        case .failure(let error):
+            log.warning("MLS device retirement failed (\(error.localizedDescription, privacy: .public)); queued retry marker and continuing local wipe")
+            recordPendingMLSDeviceRetirement(
+                accountDid: accountDid,
+                deviceId: deviceId,
+                reason: "error:\(error.localizedDescription)",
+                in: sharedDefaults
+            )
+            return false
+        }
+    }
+
+    private nonisolated static func makeSecondaryAccountGatewayTransport(
+        bearerToken: String,
+        gatewayOrigin: URL,
+        homeDsEndpoint: URL,
+        homeDsDid: String,
+        deviceId: String
+    ) -> PetrelPlatformTransport {
+        let strippedHomeDid = homeDsDid.split(separator: "#").first.map(String.init) ?? homeDsDid
+        return PetrelPlatformTransport(
+            atProtoClient: nil,
+            homeDsEndpoint: homeDsEndpoint,
+            homeDsDid: strippedHomeDid,
+            ownPdsEndpoint: gatewayOrigin,
+            actorDeviceId: deviceId,
+            httpOverride: { request in
+                guard let url = URL(string: request.url),
+                      url.scheme?.lowercased() == "https",
+                      let host = url.host?.lowercased(),
+                      (host == gatewayOrigin.host?.lowercased() || host == homeDsEndpoint.host?.lowercased())
+                else {
+                    throw CatbirdMLS.MlsError.InvalidInput(message: "Disallowed secondary retirement URL")
+                }
+                let nsid = url.path.hasPrefix("/xrpc/") ? String(url.path.dropFirst("/xrpc/".count)) : ""
+                guard nsid.hasPrefix("blue.catbird.") || nsid.hasPrefix("com.atproto.repo.") else {
+                    throw CatbirdMLS.MlsError.InvalidInput(message: "Disallowed secondary retirement NSID")
+                }
+
+                let config = URLSessionConfiguration.ephemeral
+                config.timeoutIntervalForRequest = 2.5
+                config.timeoutIntervalForResource = 2.5
+                config.urlCache = nil
+                config.httpCookieStorage = nil
+                config.urlCredentialStorage = nil
+                let session = URLSession(configuration: config)
+                defer { session.finishTasksAndInvalidate() }
+
+                func performSync(_ req: URLRequest) throws -> (Data, HTTPURLResponse) {
+                    final class SyncBox: @unchecked Sendable {
+                        var result: Result<(Data, HTTPURLResponse), Error>?
+                    }
+                    let box = SyncBox()
+                    let sema = DispatchSemaphore(value: 0)
+                    let task = session.dataTask(with: req) { data, response, error in
+                        defer { sema.signal() }
+                        if let error {
+                            box.result = .failure(error)
+                            return
+                        }
+                        guard let http = response as? HTTPURLResponse else {
+                            box.result = .failure(URLError(.badServerResponse))
+                            return
+                        }
+                        box.result = .success((data ?? Data(), http))
+                    }
+                    task.resume()
+                    if sema.wait(timeout: .now() + 2.7) == .timedOut {
+                        task.cancel()
+                        throw URLError(.timedOut)
+                    }
+                    return try (box.result ?? .failure(URLError(.unknown))).get()
+                }
+
+                var urlRequest = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2.5)
+                urlRequest.httpMethod = request.method
+                urlRequest.httpBody = request.body
+                var hasAuth = false
+                for header in request.headers {
+                    if header.name.caseInsensitiveCompare("Authorization") == .orderedSame {
+                        hasAuth = true
+                    }
+                    urlRequest.setValue(header.value, forHTTPHeaderField: header.name)
+                }
+
+                if !hasAuth {
+                    if url.host?.caseInsensitiveCompare(gatewayOrigin.host ?? "") == .orderedSame {
+                        urlRequest.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+                    } else if url.host?.caseInsensitiveCompare(homeDsEndpoint.host ?? "") == .orderedSame,
+                              nsid.hasPrefix("blue.catbird.chat.")
+                    {
+                        var components = URLComponents(
+                            url: gatewayOrigin.appendingPathComponent("xrpc/com.atproto.server.getServiceAuth"),
+                            resolvingAgainstBaseURL: false
+                        )
+                        components?.queryItems = [
+                            URLQueryItem(name: "aud", value: strippedHomeDid),
+                            URLQueryItem(name: "lxm", value: nsid),
+                        ]
+                        guard let authURL = components?.url else {
+                            throw CatbirdMLS.MlsError.Internal(message: "Invalid secondary getServiceAuth URL")
+                        }
+                        var authReq = URLRequest(url: authURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2.5)
+                        authReq.httpMethod = "GET"
+                        authReq.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+                        authReq.setValue("application/json", forHTTPHeaderField: "Accept")
+                        let (authData, authHTTP) = try performSync(authReq)
+                        guard (200..<300).contains(authHTTP.statusCode),
+                              let json = try? JSONSerialization.jsonObject(with: authData) as? [String: Any],
+                              let serviceJwt = json["token"] as? String,
+                              !serviceJwt.isEmpty
+                        else {
+                            throw CatbirdMLS.MlsError.Internal(
+                                message: "Secondary getServiceAuth(\(nsid)) failed closed with HTTP \(authHTTP.statusCode)"
+                            )
+                        }
+                        urlRequest.setValue("Bearer \(serviceJwt)", forHTTPHeaderField: "Authorization")
+                    }
+                }
+
+                let (data, http) = try performSync(urlRequest)
+                var headers: [PlatformHttpHeader] = []
+                for (rawName, rawValue) in http.allHeaderFields {
+                    headers.append(PlatformHttpHeader(name: String(describing: rawName), value: String(describing: rawValue)))
+                }
+                return PlatformHttpResponse(status: UInt16(clamping: http.statusCode), headers: headers, body: data)
+            }
+        )
+    }
+
+    @MainActor
+    private static func retireSecondaryAccountDeviceIfPossible(
+        did: String,
+        storageRoot: URL? = nil,
+        keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
+        sharedDefaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier),
+        transportOverride: (@Sendable (PlatformHttpRequest) throws -> PlatformHttpResponse)? = nil
+    ) async {
+        guard AccountDeletionCoordinator.hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot) else {
+            return
+        }
+        let existingDeviceId = existingMLSDeviceID(for: did, in: sharedDefaults)
+        guard let resolvedRoot = try? (storageRoot ?? MLSAppGroupStorage.defaultStorageRoot()) else {
+            return
+        }
+
+        let gatewayOrigin = CatbirdGatewayConfiguration.current.origin
+        let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+        let environment: MLSEnvironment = if let mlsServiceDID {
+            .custom(serviceDID: mlsServiceDID)
+        } else {
+            .production
+        }
+        let deviceId = existingDeviceId ?? UUID().uuidString.lowercased()
+
+        let transport: PetrelPlatformTransport
+        if let transportOverride {
+            transport = PetrelPlatformTransport(
+                atProtoClient: nil,
+                homeDsEndpoint: environment.endpointURL,
+                homeDsDid: environment.bareServiceDID,
+                ownPdsEndpoint: gatewayOrigin,
+                actorDeviceId: deviceId,
+                allowLoopbackForTesting: true,
+                httpOverride: transportOverride
+            )
+        } else {
+            let tokens = await AccountDeletionCoordinator.resolveAuthTokensForRevocation(forDID: did, explicitToken: nil)
+            guard let bearerToken = tokens.first else {
+                recordPendingMLSDeviceRetirement(
+                    accountDid: did,
+                    deviceId: existingDeviceId,
+                    reason: "missing_secondary_session_token",
+                    in: sharedDefaults
+                )
+                return
+            }
+            transport = makeSecondaryAccountGatewayTransport(
+                bearerToken: bearerToken,
+                gatewayOrigin: gatewayOrigin,
+                homeDsEndpoint: environment.endpointURL,
+                homeDsDid: environment.bareServiceDID,
+                deviceId: deviceId
+            )
+        }
+
+        let config = CatbirdMlsClientConfig(
+            storageRoot: resolvedRoot.path,
+            accountDid: did,
+            deviceId: deviceId,
+            homeDsDid: environment.bareServiceDID,
+            homeDsEndpoint: environment.endpointURL.absoluteString,
+            pdsEndpoint: gatewayOrigin.absoluteString
+        )
+
+        guard let openResult = await runBoundedAsync(
+            timeoutSeconds: 2.0,
+            operation: {
+                try await MLSClientCoordinator.open(
+                    config: config,
+                    keystore: keystore,
+                    transport: transport
+                )
+            }
+        ),
+        case .success(let transientCoordinator) = openResult
+        else {
+            recordPendingMLSDeviceRetirement(
+                accountDid: did,
+                deviceId: existingDeviceId,
+                reason: "secondary_coordinator_open_failed",
+                in: sharedDefaults
+            )
+            return
+        }
+
+        _ = await retireDeviceBounded(
+            timeoutSeconds: 3.0,
+            accountDid: did,
+            deviceId: deviceId,
+            sharedDefaults: sharedDefaults,
+            operation: { try await transientCoordinator.retireCurrentDevice() }
+        )
+        _ = await runBoundedAsync(timeoutSeconds: 2.0) {
+            try await transientCoordinator.signOutAndWipe()
+        }
+    }
+
+    /// Retires any enrolled local MLS device for an unloaded secondary account (`authenticatedStates[did] == nil`)
+    /// under a bounded timeout and wipes all local MLS + Circle + legacy artifacts (`A6`).
+    @MainActor
+    static func retireAndWipeSecondaryAccountIfPossible(
+        did: String,
+        storageRoot: URL? = nil,
+        keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
+        sharedDefaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier),
+        legacyKeychainBackend: (any KeychainBackend)? = nil,
+        transportOverride: (@Sendable (PlatformHttpRequest) throws -> PlatformHttpResponse)? = nil
+    ) async {
+        await retireSecondaryAccountDeviceIfPossible(
+            did: did,
+            storageRoot: storageRoot,
+            keystore: keystore,
+            sharedDefaults: sharedDefaults,
+            transportOverride: transportOverride
+        )
+        try? CircleKeyStore.wipe(accountDID: did, keychain: SystemCircleKeychain())
+        wipeLocalMLSArtifacts(
+            for: did,
+            storageRoot: storageRoot,
+            keystore: keystore,
+            sharedDefaults: sharedDefaults,
+            legacyKeychainBackend: legacyKeychainBackend
+        )
+    }
+
+    /// Wipe local SQLCipher DB + Keychain items on sign-out (`I8`), retiring only this device first (`D-5`, `A6`).
     @MainActor
     func wipeMLSOnSignOut() async {
         let accountDid = userDID
+        let existingDeviceId = Self.existingMLSDeviceID(for: accountDid)
         mlsCoordinatorInitTask?.cancel()
         mlsCoordinatorInitTask = nil
-        let coordinator = mlsCoordinator
+        var coordinator = mlsCoordinator
         mlsCoordinator = nil
         mlsBlockCoordinatorStorage = nil
         mlsConversations = []
         mlsConversationsDidChange += 1
         mlsSyncIncompleteConversationIDs = []
         mlsUnreadCount = 0
-        try? await coordinator?.retireCurrentDevice()
-        try? await coordinator?.signOutAndWipe()
+
+        let activeClientDid = (await client.getActiveAccountInfo()).did
+        if activeClientDid == accountDid {
+            if coordinator == nil,
+               AccountDeletionCoordinator.hasLocalMLSArtifacts(forDID: accountDid, storageRoot: nil)
+            {
+                let clientRef = self.client
+                if let openResult = await Self.runBoundedAsync(
+                    timeoutSeconds: 2.0,
+                    operation: { [weak self] in
+                        try await AccountDeletionCoordinator.openTransientCoordinatorForErasure(
+                            forDID: accountDid,
+                            client: clientRef,
+                            appState: self,
+                            storageRoot: nil,
+                            keystore: KeychainPlatformKeyStore()
+                        )
+                    }
+                ),
+                case .success(let opened) = openResult {
+                    coordinator = opened
+                } else if existingDeviceId != nil {
+                    Self.recordPendingMLSDeviceRetirement(
+                        accountDid: accountDid,
+                        deviceId: existingDeviceId,
+                        reason: "transient_coordinator_open_failed"
+                    )
+                }
+            }
+
+            if let coordinator {
+                _ = await Self.retireDeviceBounded(
+                    timeoutSeconds: 3.0,
+                    accountDid: accountDid,
+                    deviceId: existingDeviceId,
+                    operation: { try await coordinator.retireCurrentDevice() }
+                )
+                _ = await Self.runBoundedAsync(timeoutSeconds: 2.0) {
+                    try await coordinator.signOutAndWipe()
+                }
+            }
+        } else {
+            if let coordinator {
+                _ = await Self.runBoundedAsync(timeoutSeconds: 1.5) {
+                    await coordinator.close()
+                }
+            }
+            await Self.retireSecondaryAccountDeviceIfPossible(did: accountDid)
+        }
+
         circleEncryptionCache.reset()
         circleOpenerCache.reset()
         // Encrypted Circle keys and the pending re-wrap list live in the
@@ -2821,12 +3590,16 @@ final class AppState {
 
         if did == userDID {
             await wipeMLSOnSignOut()
-        } else {
+        }
+
+        // Secondary accounts are retired + wiped inside AppStateManager.removeAccount(_:)
+        // BEFORE AuthManager deletes their stored session token.
+        try await AppStateManager.shared.authentication.removeAccount(did: did)
+
+        if did != userDID {
             Self.wipeLocalMLSArtifacts(for: did)
             await MLSImageCache.shared.purge(for: did)
         }
-
-        try await AppStateManager.shared.authentication.removeAccount(did: did)
 
         if isAuthenticated {
             await refreshAfterAccountSwitch()

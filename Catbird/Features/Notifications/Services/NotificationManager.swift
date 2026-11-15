@@ -3532,6 +3532,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
+    if circleNotificationsModel == nil {
+      guard CatbirdFeatures.circlesSpaces else {
+        notificationLogger.debug("Skipping circle_activity push: circlesSpaces runtime flag is disabled")
+        return
+      }
+    }
+
     notificationLogger.info("Processing generic circle_activity push")
 
     let targetDID = circleNotificationsModel?.accountDID ?? appState?.userDID ?? ""

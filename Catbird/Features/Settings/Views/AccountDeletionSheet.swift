@@ -19,6 +19,7 @@ struct AccountDeletionSheet: View {
   @State private var flow: AccountDeletionFlow
   @State private var inAppBrowserURL: IdentifiableURL?
   @State private var confirmingDataErasure = false
+  @State private var confirmingLocalOnlyErasure = false
   @State private var isErasingData = false
   @State private var erasureError: String?
 
@@ -26,8 +27,10 @@ struct AccountDeletionSheet: View {
   @State private var isRequestingDeletionCode = false
   @State private var hasRequestedDeletionCode = false
   @State private var showManualCodeEntry = false
-  @State private var deletionConfirmationToken = ""
   @State private var deletionPassword = ""
+  @State private var requiresAuthFactorToken = false
+  @State private var deletionAuthFactorToken = ""
+  @State private var deletionConfirmationToken = ""
   @State private var confirmingPermanentDeletion = false
   @State private var isDeletingHostedAccount = false
   @State private var permanentDeletionNotice: String?
@@ -65,8 +68,20 @@ struct AccountDeletionSheet: View {
 
         if flow.target.purpose == .deletionOptions {
           Section {
-            Text("Permanently delete your hosted Bluesky / AT Protocol account and all Catbird data directly in the app. Your hosting provider will email a one-time confirmation code.")
+            Text("Permanently delete your hosted Bluesky / AT Protocol account and all Catbird data directly in the app. Enter your account password first so your hosting provider can email a one-time confirmation code.")
               .foregroundStyle(.secondary)
+
+            SecureField("Account password", text: $deletionPassword)
+              .accessibilityIdentifier("AccountDeletion.Password")
+
+            if requiresAuthFactorToken {
+              TextField("2FA sign-in code (from email)", text: $deletionAuthFactorToken)
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("AccountDeletion.AuthFactorToken")
+            }
 
             Button(action: requestDeletionCode) {
               HStack {
@@ -79,7 +94,7 @@ struct AccountDeletionSheet: View {
                 }
               }
             }
-            .disabled(!isCurrentAccount || isRequestingDeletionCode || isDeletingHostedAccount)
+            .disabled(!canRequestDeletionCode)
             .accessibilityIdentifier("AccountDeletion.RequestDeleteCode")
 
             if !hasRequestedDeletionCode {
@@ -105,9 +120,6 @@ struct AccountDeletionSheet: View {
                 .autocorrectionDisabled()
                 .accessibilityIdentifier("AccountDeletion.ConfirmationToken")
 
-              SecureField("Account password", text: $deletionPassword)
-                .accessibilityIdentifier("AccountDeletion.Password")
-
               Button(role: .destructive) {
                 confirmingPermanentDeletion = true
               } label: {
@@ -132,7 +144,7 @@ struct AccountDeletionSheet: View {
           } header: {
             Text("Delete Account Permanently")
           } footer: {
-            Text("Deleting your hosted account permanently removes your profile, posts, social graph, and all Catbird encrypted chat data, and cannot be undone.")
+            Text("Your password is verified directly with your hosting provider in memory and is never saved. Deleting your hosted account permanently removes your profile, posts, social graph, and all Catbird encrypted chat data.")
           }
         }
 
@@ -178,7 +190,7 @@ struct AccountDeletionSheet: View {
             confirmingDataErasure = true
           } label: {
             HStack {
-              Text("Erase Catbird Data & Sign Out")
+              Text("Erase Catbird Cloud & Local Data")
               Spacer()
               if isErasingData {
                 ProgressView()
@@ -192,11 +204,24 @@ struct AccountDeletionSheet: View {
             Text(erasureError)
               .appFont(AppTextRole.footnote)
               .foregroundStyle(.red)
+              .accessibilityIdentifier("AccountDeletion.ErasureError")
+
+            Button(role: .destructive) {
+              confirmingLocalOnlyErasure = true
+            } label: {
+              HStack {
+                Text("Sign Out & Erase Local Device Data Only")
+                Spacer()
+                Image(systemName: "iphone.slash")
+              }
+            }
+            .disabled(isErasingData || !isCurrentAccount)
+            .accessibilityIdentifier("AccountDeletion.EraseLocalOnly")
           }
         } header: {
           Text("Catbird Data")
         } footer: {
-          Text("Erase all data held by Catbird for this account, including gateway sessions, push notification registrations, draft posts, and local settings on this device.")
+          Text("Erase all data held by Catbird for this account across Catbird servers and this device, including encrypted chat state, gateway sessions, push notification registrations, draft posts, and local settings.")
         }
 
         if let privacyURL = LegalConfig.privacyPolicyURL {
@@ -214,6 +239,8 @@ struct AccountDeletionSheet: View {
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Done", role: .cancel) {
+            deletionPassword = ""
+            deletionAuthFactorToken = ""
             flow.cancel()
             dismiss()
           }
@@ -225,13 +252,21 @@ struct AccountDeletionSheet: View {
         SafariView(url: item.url)
       }
       #endif
-      .confirmationDialog("Erase Catbird Data & Sign Out?", isPresented: $confirmingDataErasure, titleVisibility: .visible) {
-        Button("Erase Catbird Data & Sign Out", role: .destructive) {
-          eraseAccountData()
+      .confirmationDialog("Erase Catbird Cloud & Local Data?", isPresented: $confirmingDataErasure, titleVisibility: .visible) {
+        Button("Erase Catbird Cloud & Local Data", role: .destructive) {
+          eraseAccountData(skipRemoteMLSErasure: false)
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This will revoke your gateway session, unregister push notifications, remove all drafts and local settings for this account on this device, and sign you out.")
+        Text("This erases your Catbird encrypted chat cloud data, revokes your gateway session, unregisters push notifications, removes all drafts and local settings on this device, and signs you out.")
+      }
+      .confirmationDialog("Erase Local Device Data Only?", isPresented: $confirmingLocalOnlyErasure, titleVisibility: .visible) {
+        Button("Sign Out & Erase Local Device Data Only", role: .destructive) {
+          eraseAccountData(skipRemoteMLSErasure: true)
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Catbird's encrypted chat servers could not be reached. Continuing will immediately sign out and erase all local keys, databases, drafts, and settings on this device, while server-side ciphertext or backups may remain until deleted later.")
       }
       .confirmationDialog("Permanently Delete Hosted Account?", isPresented: $confirmingPermanentDeletion, titleVisibility: .visible) {
         Button("Permanently Delete Account", role: .destructive) {
@@ -251,6 +286,8 @@ struct AccountDeletionSheet: View {
         flow.accountDidChange(to: appState.userDID, revision: revision)
       }
       .onDisappear {
+        deletionPassword = ""
+        deletionAuthFactorToken = ""
         flow.cancel()
       }
     }
@@ -292,6 +329,13 @@ struct AccountDeletionSheet: View {
       return "Open your hosting provider’s website and look for account settings to manage your handle, email, or sign-in options."
     }
     return "Manage your handle, email, and sign-in options on your hosting provider’s website."
+  }
+
+  private var canRequestDeletionCode: Bool {
+    isCurrentAccount
+      && !isRequestingDeletionCode
+      && !isDeletingHostedAccount
+      && !deletionPassword.isEmpty
   }
 
   private var canSubmitPermanentDeletion: Bool {
@@ -366,7 +410,9 @@ struct AccountDeletionSheet: View {
   }
 
   private func requestDeletionCode() {
-    guard isCurrentAccount, !isRequestingDeletionCode, let client = appState.atProtoClient else { return }
+    guard canRequestDeletionCode, let client = appState.atProtoClient else { return }
+    let password = deletionPassword
+    let factor = deletionAuthFactorToken
     isRequestingDeletionCode = true
     permanentDeletionError = nil
     permanentDeletionNotice = nil
@@ -375,24 +421,35 @@ struct AccountDeletionSheet: View {
     Task { @MainActor in
       defer { isRequestingDeletionCode = false }
       do {
-        let statusCode = try await originatingAppState.performSettingsAccountOperation {
+        try await originatingAppState.performSettingsAccountOperation {
           try Task.checkCancellation()
           guard (await client.getCurrentAccount())?.did == target.did,
                 SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
             throw CancellationError()
           }
-          return try await client.com.atproto.server.requestAccountDelete()
-        }
-        guard (200...299).contains(statusCode) else {
-          permanentDeletionError = "Your hosting provider declined the deletion code request (HTTP \(statusCode)). Use the provider website fallback below if your provider uses passwordless sign-in."
-          return
+          let pdsURL = try await client.resolveDIDToPDSURL(did: target.did)
+          try Task.checkCancellation()
+          guard SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
+            throw CancellationError()
+          }
+          try await AccountDeletionCoordinator.requestHostedAccountDeletionCode(
+            forDID: target.did,
+            password: password,
+            authFactorToken: factor,
+            pdsURL: pdsURL
+          )
         }
         hasRequestedDeletionCode = true
-        permanentDeletionNotice = "Check your email for the deletion confirmation code, then enter it with your account password below."
+        permanentDeletionNotice = "Check your email for the deletion confirmation code, then enter it below to confirm permanent account deletion."
       } catch is CancellationError {
         return
+      } catch let err as PDSDirectDeletionError {
+        if case .authFactorTokenRequired = err {
+          requiresAuthFactorToken = true
+        }
+        permanentDeletionError = err.localizedDescription
       } catch {
-        permanentDeletionError = error.localizedDescription
+        permanentDeletionError = Self.describePermanentDeletionError(error)
       }
     }
   }
@@ -401,6 +458,7 @@ struct AccountDeletionSheet: View {
     guard canSubmitPermanentDeletion, let client = appState.atProtoClient else { return }
     let trimmedToken = deletionConfirmationToken.trimmingCharacters(in: .whitespacesAndNewlines)
     let password = deletionPassword
+    let factor = deletionAuthFactorToken
     let target = flow.target
     let originatingAppState = appState
     isDeletingHostedAccount = true
@@ -408,42 +466,39 @@ struct AccountDeletionSheet: View {
 
     Task { @MainActor in
       do {
-        let did = try DID(didString: target.did)
-        let statusCode = try await originatingAppState.performSettingsAccountOperation {
+        try await originatingAppState.performSettingsAccountOperation {
           try Task.checkCancellation()
           guard (await client.getCurrentAccount())?.did == target.did,
                 SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
             throw CancellationError()
           }
-          // D-3 / 5.1.1(v) fail-closed remote MLS & Labyrinth erasure MUST succeed while
-          // OAuth/DPoP/Spaces credentials are still live, before deleting the PDS account.
-          try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
+          let pdsURL = try await client.resolveDIDToPDSURL(did: target.did)
+          try Task.checkCancellation()
+          guard SettingsAccountBoundary.isCurrent(target.did, revision: target.accountRevision) else {
+            throw CancellationError()
+          }
+          try await AccountDeletionCoordinator.performHostedAccountDeletion(
             forDID: target.did,
+            password: password,
+            confirmationToken: trimmedToken,
+            authFactorToken: factor,
+            pdsURL: pdsURL,
+            modelContext: modelContext,
             appStateOverride: originatingAppState,
             clientOverride: client
           )
-          return try await client.com.atproto.server.deleteAccount(
-            input: ComAtprotoServerDeleteAccount.Input(
-              did: did,
-              password: password,
-              token: trimmedToken
-            )
-          )
-        }
-        guard (200...299).contains(statusCode) else {
-          permanentDeletionError = "Your hosting provider rejected the account deletion request (HTTP \(statusCode)). Verify your confirmation code and password, or use the provider website fallback below."
-          isDeletingHostedAccount = false
-          return
         }
         deletionPassword = ""
+        deletionAuthFactorToken = ""
         deletionConfirmationToken = ""
-        try await AccountDeletionCoordinator.eraseCatbirdData(
-          forDID: target.did,
-          modelContext: modelContext,
-          skipRemoteMLSErasure: true
-        )
         dismiss()
       } catch is CancellationError {
+        isDeletingHostedAccount = false
+      } catch let err as PDSDirectDeletionError {
+        if case .authFactorTokenRequired = err {
+          requiresAuthFactorToken = true
+        }
+        permanentDeletionError = err.localizedDescription
         isDeletingHostedAccount = false
       } catch {
         permanentDeletionError = Self.describePermanentDeletionError(error)
@@ -453,6 +508,9 @@ struct AccountDeletionSheet: View {
   }
 
   static func describePermanentDeletionError(_ error: Error) -> String {
+    if let directError = error as? PDSDirectDeletionError {
+      return directError.localizedDescription
+    }
     let raw = String(describing: error)
     if raw.contains("ExpiredToken") {
       return "That confirmation code has expired. Request a new email confirmation code and try again."
@@ -463,13 +521,18 @@ struct AccountDeletionSheet: View {
     return error.localizedDescription
   }
 
-  private func eraseAccountData() {
+  private func eraseAccountData(skipRemoteMLSErasure: Bool) {
     guard isCurrentAccount, !isErasingData else { return }
     isErasingData = true
+    erasureError = nil
     let did = flow.target.did
     Task { @MainActor in
       do {
-        try await AccountDeletionCoordinator.eraseCatbirdData(forDID: did, modelContext: modelContext)
+        try await AccountDeletionCoordinator.eraseCatbirdData(
+          forDID: did,
+          modelContext: modelContext,
+          skipRemoteMLSErasure: skipRemoteMLSErasure
+        )
         dismiss()
       } catch {
         erasureError = error.localizedDescription

@@ -463,4 +463,215 @@ struct AccountDeletionCoordinatorTests {
     let preservedDraftDesc = FetchDescriptor<DraftPost>(predicate: #Predicate { $0.accountDID == preservedDID })
     #expect(try context.fetch(preservedDraftDesc).count == 1)
   }
+
+  private final class DirectPDSMockURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var handler: ((URLRequest, Data) throws -> (Int, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    private static func readBody(_ request: URLRequest) -> Data {
+      if let body = request.httpBody { return body }
+      guard let stream = request.httpBodyStream else { return Data() }
+      stream.open()
+      defer { stream.close() }
+      var out = Data()
+      var buffer = [UInt8](repeating: 0, count: 4096)
+      while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count <= 0 { break }
+        out.append(buffer, count: count)
+      }
+      return out
+    }
+
+    override func startLoading() {
+      guard let handler = Self.handler else {
+        client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+        return
+      }
+      do {
+        let body = Self.readBody(request)
+        let (status, responseData) = try handler(request, body)
+        let response = HTTPURLResponse(
+          url: request.url ?? URL(string: "https://pds.example")!,
+          statusCode: status,
+          httpVersion: "HTTP/1.1",
+          headerFields: [
+            "Content-Type": "application/json",
+            "Set-Cookie": "pds_session=should_not_persist",
+          ]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: responseData)
+        client?.urlProtocolDidFinishLoading(self)
+      } catch {
+        client?.urlProtocol(self, didFailWithError: error)
+      }
+    }
+
+    override func stopLoading() {}
+  }
+
+  @Test("A3 + A4: Direct PDS deletion uses in-memory createSession Bearer JWT and pre-validates password BEFORE wiping Labyrinth backups")
+  @MainActor
+  func directPDSDeletionPreValidatesPasswordBeforeBackupWipe() async throws {
+    let targetDID = "did:plc:a3a4hosteddelete01"
+    let pdsURL = URL(string: "https://morel.us-east.host.bsky.network")!
+
+    let config = URLSessionConfiguration.ephemeral
+    config.httpCookieStorage = nil
+    config.urlCache = nil
+    config.urlCredentialStorage = nil
+    config.protocolClasses = [DirectPDSMockURLProtocol.self]
+    let mockSession = URLSession(configuration: config)
+    defer { mockSession.finishTasksAndInvalidate() }
+    let directClient = PDSDirectDeletionClient(session: mockSession)
+
+    var events: [String] = []
+    DirectPDSMockURLProtocol.handler = { request, body in
+      let path = request.url?.path ?? ""
+      switch path {
+      case "/xrpc/com.atproto.server.createSession":
+        events.append("createSession")
+        let json = (try? JSONSerialization.jsonObject(with: body) as? [String: String]) ?? [:]
+        guard json["identifier"] == targetDID, json["password"] == "correct-horse-battery" else {
+          return (
+            401,
+            Data(#"{"error":"AuthenticationRequired","message":"Invalid identifier or password"}"#.utf8)
+          )
+        }
+        return (
+          200,
+          Data(#"{"did":"\#(targetDID)","handle":"alice.bsky.social","accessJwt":"ephemeral-pds-jwt-123","refreshJwt":"discarded-refresh-jwt"}"#.utf8)
+        )
+      case "/xrpc/com.atproto.server.requestAccountDelete":
+        events.append("requestAccountDelete")
+        guard request.value(forHTTPHeaderField: "Authorization") == "Bearer ephemeral-pds-jwt-123" else {
+          return (
+            403,
+            Data(#"{"error":"Forbidden","message":"OAuth credentials are not supported for this endpoint"}"#.utf8)
+          )
+        }
+        return (200, Data())
+      case "/xrpc/com.atproto.server.deleteAccount":
+        events.append("deleteAccount")
+        let json = (try? JSONSerialization.jsonObject(with: body) as? [String: String]) ?? [:]
+        guard request.value(forHTTPHeaderField: "Authorization") == "Bearer ephemeral-pds-jwt-123",
+              json["did"] == targetDID,
+              json["password"] == "correct-horse-battery",
+              json["token"] == "EMAIL-CODE-999"
+        else {
+          return (400, Data(#"{"error":"InvalidToken","message":"Bad confirmation code"}"#.utf8))
+        }
+        return (200, Data())
+      default:
+        return (404, Data())
+      }
+    }
+
+    // 1. A3: requestHostedAccountDeletionCode obtains ephemeral Bearer JWT via createSession (bypassing OAuth 403)
+    try await AccountDeletionCoordinator.requestHostedAccountDeletionCode(
+      forDID: targetDID,
+      password: "correct-horse-battery",
+      pdsURL: pdsURL,
+      directClient: directClient
+    )
+    #expect(events == ["createSession", "requestAccountDelete"])
+    #expect(mockSession.configuration.httpCookieStorage == nil)
+    #expect(mockSession.configuration.urlCache == nil)
+
+    // 2. A4 Regression: Mistyped password MUST fail at createSession BEFORE remoteMLSErasure runs!
+    events.removeAll()
+    var remoteEraseCount = 0
+    var localEraseCount = 0
+    await #expect(throws: PDSDirectDeletionError.self) {
+      try await AccountDeletionCoordinator.performHostedAccountDeletion(
+        forDID: targetDID,
+        password: "wrong-password-typo",
+        confirmationToken: "EMAIL-CODE-999",
+        pdsURL: pdsURL,
+        remoteMLSErasure: { _ in
+          remoteEraseCount += 1
+          events.append("remoteMLSErasure")
+        },
+        localErasureOverride: { _ in
+          localEraseCount += 1
+          events.append("localErasure")
+        },
+        directClient: directClient
+      )
+    }
+    #expect(remoteEraseCount == 0, "A4: Encrypted Labyrinth/MLS server backups MUST NOT be wiped when password validation fails")
+    #expect(localEraseCount == 0)
+    #expect(events == ["createSession"])
+
+    // 3. Valid password + token executes in exact fail-safe order:
+    //    createSession -> remoteMLSErasure -> deleteAccount -> localErasure
+    events.removeAll()
+    try await AccountDeletionCoordinator.performHostedAccountDeletion(
+      forDID: targetDID,
+      password: "correct-horse-battery",
+      confirmationToken: "EMAIL-CODE-999",
+      pdsURL: pdsURL,
+      remoteMLSErasure: { _ in
+        remoteEraseCount += 1
+        events.append("remoteMLSErasure")
+      },
+      localErasureOverride: { _ in
+        localEraseCount += 1
+        events.append("localErasure")
+      },
+      directClient: directClient
+    )
+    #expect(remoteEraseCount == 1)
+    #expect(localEraseCount == 1)
+    #expect(events == ["createSession", "remoteMLSErasure", "deleteAccount", "localErasure"])
+  }
+
+  @Test("A3: Non-MLS/non-Circles account skips remote deleteAccountData and local-only escape hatch succeeds when server is unreachable")
+  @MainActor
+  func nonMLSAccountSkipsRemoteDeleteAndLocalOnlyEscapeHatchWorksOffline() async throws {
+    let nonMLSDID = "did:plc:nonmlsregularuser01"
+    let fm = FileManager.default
+    let emptyRoot = fm.temporaryDirectory.appendingPathComponent("catbird-nonmls-\(UUID().uuidString)", isDirectory: true)
+    try fm.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: emptyRoot) }
+
+    // 1. Account with no MLS opt-in, no local MLS DB, and no Circle keys skips remote deleteAccountData cleanly
+    ExperimentalSettings.shared.disableMLSChat(for: nonMLSDID)
+    try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
+      forDID: nonMLSDID,
+      storageRoot: emptyRoot
+    )
+
+    // 2. When server is unreachable, fail-closed primary erasure throws, while explicit local-only escape hatch (`skipRemoteMLSErasure: true`) succeeds
+    let schema = Schema([AppSettingsModel.self, Preferences.self, DraftPost.self])
+    let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
+    let context = ModelContext(container)
+    context.insert(AppSettingsModel(accountDID: nonMLSDID))
+    try context.save()
+
+    await #expect(throws: URLError.self) {
+      try await AccountDeletionCoordinator.eraseCatbirdData(
+        forDID: nonMLSDID,
+        storageRoot: emptyRoot,
+        modelContext: context,
+        skipRemoteMLSErasure: false,
+        remoteMLSErasure: { _ in throw URLError(.cannotConnectToHost) }
+      )
+    }
+
+    try await AccountDeletionCoordinator.eraseCatbirdData(
+      forDID: nonMLSDID,
+      storageRoot: emptyRoot,
+      modelContext: context,
+      skipRemoteMLSErasure: true,
+      remoteMLSErasure: { _ in throw URLError(.cannotConnectToHost) }
+    )
+    let remaining = try context.fetch(
+      FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == "app_settings_\(nonMLSDID)" })
+    )
+    #expect(remaining.isEmpty)
+  }
 }

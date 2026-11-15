@@ -648,17 +648,31 @@ struct MLSResurrectionWave0Tests {
       isOwnSiblingSender: true
     )
 
-    let suppressed = NotificationService.buildCommunicationNotification(
+    // 1a. Without Apple's managed filtering entitlement (default), NSE emits a quiet passive
+    //     non-blank sync notice (no sound, no badge) instead of rendering an empty iOS banner.
+    #expect(!NotificationService.hasManagedNotificationFilteringEntitlement)
+    let quieted = NotificationService.buildCommunicationNotification(
       base: UNMutableNotificationContent(),
       preview: siblingPreview,
       wake: wake
     )
-    #expect(suppressed.title.isEmpty)
-    #expect(suppressed.body.isEmpty)
-    #expect(suppressed.sound == nil)
-    #expect(suppressed.badge == nil)
-    #expect(suppressed.interruptionLevel == .passive)
-    #expect(suppressed.userInfo["suppressedForOwnSiblingDevice"] as? Bool == true)
+    #expect(quieted.title == "Design Sync")
+    #expect(quieted.body == "Synced message from your other device")
+    #expect(quieted.sound == nil)
+    #expect(quieted.badge == nil)
+    #expect(quieted.interruptionLevel == .passive)
+    #expect(quieted.userInfo["suppressedForOwnSiblingDevice"] as? Bool == true)
+    #expect(quieted.userInfo["silentDropRequiresManagedFilteringEntitlement"] as? Bool == true)
+
+    // 1b. When the managed filtering entitlement IS present, NSE returns an empty UNNotificationContent().
+    let filteredDrop = NotificationService.buildCommunicationNotification(
+      base: UNMutableNotificationContent(),
+      preview: siblingPreview,
+      wake: wake,
+      hasFilteringEntitlement: true
+    )
+    #expect(filteredDrop.title.isEmpty)
+    #expect(filteredDrop.body.isEmpty)
 
     // 2. Unverified push claiming senderDid == Alice MUST NOT be silently suppressed; it falls back generically
     let spoofedUnverified = NotificationPreview(
@@ -1099,5 +1113,320 @@ struct MLSResurrectionWave0Tests {
     }
     #expect(!keystore.hasDbKey(accountDidHash: didHash))
     await coordinator.close()
+  }
+
+  // MARK: - A2 & A6 Remediation Tests (`#159`)
+
+  private final class GatewayConfigMockURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var responder: ((URLRequest) throws -> (Int, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+      guard let responder = Self.responder else {
+        client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+        return
+      }
+      do {
+        let (status, data) = try responder(request)
+        let response = HTTPURLResponse(
+          url: request.url ?? URL(string: "https://api.catbird.blue/oauth/client-config")!,
+          statusCode: status,
+          httpVersion: "HTTP/1.1",
+          headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+      } catch {
+        client?.urlProtocol(self, didFailWithError: error)
+      }
+    }
+
+    override func stopLoading() {}
+  }
+
+  @Test("A2: CatbirdFeatures defaults false in non-DEBUG and refreshFromGatewayConfig fails closed on 404/network error")
+  func catbirdFeaturesDefaultFalseInNonDebugAndFailClosedGatewayConfigRefresh() async throws {
+    let suiteName = "blue.catbird.tests.a2.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    #expect(CatbirdFeatures.nonDebugDefaultPublicBetaEnabled == false)
+    #expect(
+      CatbirdFeatures.mlsPublicBetaEnabled(
+        in: defaults,
+        defaultValue: CatbirdFeatures.nonDebugDefaultPublicBetaEnabled
+      ) == false
+    )
+    #expect(
+      CatbirdFeatures.circlesPublicBetaEnabled(
+        in: defaults,
+        defaultValue: CatbirdFeatures.nonDebugDefaultPublicBetaEnabled
+      ) == false
+    )
+
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [GatewayConfigMockURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.finishTasksAndInvalidate() }
+    let origin = URL(string: "https://api.catbird.blue")!
+
+    // 1. HTTP 200 enables both flags explicitly
+    GatewayConfigMockURLProtocol.responder = { req in
+      #expect(req.url?.path == "/oauth/client-config")
+      return (200, Data(#"{"mlsChatEnabled":true,"circlesSpacesEnabled":true}"#.utf8))
+    }
+    let enabled = await CatbirdFeatures.refreshFromGatewayConfig(
+      origin: origin,
+      session: session,
+      defaults: defaults,
+      timeoutSeconds: 2.0
+    )
+    #expect(enabled == .init(mlsChatEnabled: true, circlesSpacesEnabled: true))
+    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false) == true)
+    #expect(CatbirdFeatures.circlesPublicBetaEnabled(in: defaults, defaultValue: false) == true)
+
+    // 2. HTTP 404 fails closed to false (even when previously cached true!)
+    GatewayConfigMockURLProtocol.responder = { _ in
+      (404, Data(#"{"error":"NotFound"}"#.utf8))
+    }
+    let missing = await CatbirdFeatures.refreshFromGatewayConfig(
+      origin: origin,
+      session: session,
+      defaults: defaults,
+      timeoutSeconds: 2.0
+    )
+    #expect(missing == .failClosedDisabled)
+    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false) == false)
+    #expect(CatbirdFeatures.circlesPublicBetaEnabled(in: defaults, defaultValue: false) == false)
+
+    // 3. Network error also fails closed to false
+    CatbirdFeatures.setMLSPublicBetaEnabled(true, in: defaults)
+    CatbirdFeatures.setCirclesPublicBetaEnabled(true, in: defaults)
+    GatewayConfigMockURLProtocol.responder = { _ in
+      throw URLError(.cannotConnectToHost)
+    }
+    let offline = await CatbirdFeatures.refreshFromGatewayConfig(
+      origin: origin,
+      session: session,
+      defaults: defaults,
+      timeoutSeconds: 2.0
+    )
+    #expect(offline == .failClosedDisabled)
+    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false) == false)
+    #expect(CatbirdFeatures.circlesPublicBetaEnabled(in: defaults, defaultValue: false) == false)
+  }
+
+  @Test("A6: retireDeviceBounded enforces hard wall-clock timeout without hanging and records hashed retry marker")
+  func retireDeviceBoundedEnforcesHardTimeoutWithoutHangingAndQueuesHashedRetryMarker() async throws {
+    let suiteName = "blue.catbird.tests.a6.retire.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let aliceDID = "did:plc:aliceretiretimeout01"
+    let aliceHash = try MLSAppGroupStorage.accountDidHash(for: aliceDID)
+    let deviceID = "11111111-2222-4333-8444-555555555555"
+
+    actor UncooperativeHangGate {
+      private var continuation: CheckedContinuation<Void, Never>?
+      func block(_ cont: CheckedContinuation<Void, Never>) { continuation = cont }
+      func release() { continuation?.resume(); continuation = nil }
+    }
+    let hangGate = UncooperativeHangGate()
+
+    let clock = ContinuousClock()
+    let start = clock.now
+    let didSucceed = await AppState.retireDeviceBounded(
+      timeoutSeconds: 0.12,
+      accountDid: aliceDID,
+      deviceId: deviceID,
+      sharedDefaults: defaults,
+      operation: {
+        // Simulate an uncooperative hung FFI/socket call that ignores Task cancellation
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+          Task { await hangGate.block(cont) }
+        }
+      }
+    )
+    let elapsed = clock.now - start
+    await hangGate.release()
+
+    #expect(!didSucceed)
+    #expect(elapsed < .milliseconds(900), "retireDeviceBounded must return promptly at timeout without blocking sign-out")
+
+    let pending = AppState.pendingMLSDeviceRetirements(in: defaults)
+    #expect(pending.count == 1)
+    #expect(pending.first?.accountDidHash == aliceHash)
+    #expect(pending.first?.deviceId == deviceID)
+    #expect(pending.first?.reason == "timeout")
+
+    let rawData = try #require(defaults.data(forKey: AppState.pendingDeviceRetirementsDefaultsKey))
+    let rawJSON = String(decoding: rawData, as: UTF8.self)
+    #expect(!rawJSON.contains(aliceDID), "Retry marker must store only SHA-256 accountDidHash, never plaintext DID")
+  }
+
+  private final class MockLegacyKeychainBackend: KeychainBackend, @unchecked Sendable {
+    struct Entry: Hashable {
+      let service: String
+      let account: String
+      let accessGroup: String?
+      let dataProtection: Bool
+    }
+
+    private let lock = NSLock()
+    private var entries: Set<Entry>
+
+    init(entries: [Entry]) {
+      self.entries = Set(entries)
+    }
+
+    func contains(service: String, account: String) -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return entries.contains { $0.service == service && $0.account == account }
+    }
+
+    func add(_ attributes: [String: Any]) -> OSStatus {
+      guard let service = attributes[kSecAttrService as String] as? String,
+            let account = attributes[kSecAttrAccount as String] as? String
+      else { return errSecParam }
+      let group = attributes[kSecAttrAccessGroup as String] as? String
+      let dp = (attributes[kSecUseDataProtectionKeychain as String] as? Bool) ?? false
+      lock.lock()
+      defer { lock.unlock() }
+      entries.insert(Entry(service: service, account: account, accessGroup: group, dataProtection: dp))
+      return errSecSuccess
+    }
+
+    func copyMatching(_ query: [String: Any]) -> (OSStatus, AnyObject?) {
+      let service = query[kSecAttrService as String] as? String
+      let group = query[kSecAttrAccessGroup as String] as? String
+      let dp = (query[kSecUseDataProtectionKeychain as String] as? Bool) ?? false
+      lock.lock()
+      let matched = entries.filter { entry in
+        (service == nil || entry.service == service)
+          && entry.accessGroup == group
+          && entry.dataProtection == dp
+      }
+      lock.unlock()
+      guard !matched.isEmpty else { return (errSecItemNotFound, nil) }
+      let rows: [[String: Any]] = matched.map { [kSecAttrAccount as String: $0.account] }
+      return (errSecSuccess, rows as AnyObject)
+    }
+
+    func update(_ query: [String: Any], _ attributesToUpdate: [String: Any]) -> OSStatus {
+      errSecSuccess
+    }
+
+    func delete(_ query: [String: Any]) -> OSStatus {
+      let service = query[kSecAttrService as String] as? String
+      let account = query[kSecAttrAccount as String] as? String
+      let group = query[kSecAttrAccessGroup as String] as? String
+      let dp = (query[kSecUseDataProtectionKeychain as String] as? Bool) ?? false
+      lock.lock()
+      let before = entries.count
+      entries = entries.filter { entry in
+        let matchesService = service == nil || entry.service == service
+        let matchesAccount = account == nil || entry.account == account
+        let matchesGroup = entry.accessGroup == group
+        let matchesDP = entry.dataProtection == dp
+        return !(matchesService && matchesAccount && matchesGroup && matchesDP)
+      }
+      let removed = before != entries.count
+      lock.unlock()
+      return removed ? errSecSuccess : errSecItemNotFound
+    }
+  }
+
+  @Test("A6: wipeLocalMLSArtifacts sweeps legacy mls-state-* / MLS-* SQLite sidecars and Keychain items without touching sibling accounts")
+  func wipeLocalMLSArtifactsSweepsLegacySQLiteAndLegacyKeychainPreservingSiblingAccounts() throws {
+    let fm = FileManager.default
+    let tempRoot = fm.temporaryDirectory.appendingPathComponent("catbird-a6-legacy-\(UUID().uuidString)", isDirectory: true)
+    let mlsSubdir = MLSAppGroupStorage.mlsDirectoryURL(storageRoot: tempRoot)
+    try fm.createDirectory(at: mlsSubdir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tempRoot) }
+
+    let suiteName = "blue.catbird.tests.a6.legacy.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let aliceDID = "did:plc:alice"
+    let aliceBobSiblingDID = "did:plc:alice_bob"
+    let aliceExtraSiblingDID = "did:plc:aliceextra"
+    let aliceHash = try MLSAppGroupStorage.accountDidHash(for: aliceDID)
+    let siblingHash = try MLSAppGroupStorage.accountDidHash(for: aliceBobSiblingDID)
+
+    let aliceLegacyFiles = [
+      tempRoot.appendingPathComponent("mls-state-did_plc_alice.sqlite"),
+      tempRoot.appendingPathComponent("mls-state-did_plc_alice.sqlite-wal"),
+      tempRoot.appendingPathComponent("mls-state-did_plc_alice.sqlite-shm"),
+      tempRoot.appendingPathComponent("MLS-did:plc:alice.db"),
+      tempRoot.appendingPathComponent("MLS-did:plc:alice.db-journal"),
+      mlsSubdir.appendingPathComponent("epoch-checkpoints-did_plc_alice.db"),
+    ]
+    let siblingFiles = [
+      tempRoot.appendingPathComponent("mls-state-did_plc_alice_bob.sqlite"),
+      tempRoot.appendingPathComponent("mls-state-did_plc_alice_bob.sqlite-wal"),
+      tempRoot.appendingPathComponent("MLS-did:plc:aliceextra.db"),
+    ]
+
+    for url in aliceLegacyFiles + siblingFiles {
+      try Data("sqlite-fixture".utf8).write(to: url)
+    }
+
+    #expect(AppState.hasLegacyMLSDatabaseFiles(storageRoot: tempRoot, accountDid: aliceDID))
+    #expect(AppState.hasLegacyMLSDatabaseFiles(storageRoot: tempRoot, accountDid: aliceBobSiblingDID))
+
+    defaults.set("owner-main-app", forKey: "blue.catbird.mls.database-owner.\(aliceHash).pid")
+    defaults.set("owner-sibling", forKey: "blue.catbird.mls.database-owner.\(siblingHash).pid")
+
+    let mockKeychain = MockLegacyKeychainBackend(entries: [
+      .init(service: "blue.catbird.mls", account: "mls-db-key-did_plc_alice", accessGroup: nil, dataProtection: false),
+      .init(service: "blue.catbird.mls", account: "mls-db-key-did_plc_alice_bob", accessGroup: nil, dataProtection: false),
+      .init(service: "MLS-did:plc:alice", account: "signing-key", accessGroup: nil, dataProtection: false),
+      .init(service: "MLS-did:plc:aliceextra", account: "signing-key", accessGroup: nil, dataProtection: false),
+      .init(service: "mls-state-did_plc_alice", account: "ratchet", accessGroup: nil, dataProtection: true),
+      .init(service: "blue.catbird.mls.clean-slate", account: "sigkey:mls-signer:\(aliceHash)", accessGroup: nil, dataProtection: false),
+      .init(service: "blue.catbird.mls.clean-slate", account: "sigkey:mls-signer:\(siblingHash)", accessGroup: nil, dataProtection: false),
+      .init(service: "blue.catbird.circles.keys", account: "\(aliceDID)|at://\(aliceDID)/blue.catbird.circle/friends", accessGroup: nil, dataProtection: true),
+      .init(service: "blue.catbird.circles.keys", account: "\(aliceExtraSiblingDID)|at://\(aliceExtraSiblingDID)/blue.catbird.circle/friends", accessGroup: nil, dataProtection: true),
+    ])
+
+    let keystore = Wave0RecordingKeyStore()
+    _ = try keystore.loadOrCreateDbKey(accountDidHash: aliceHash)
+    _ = try keystore.loadOrCreateDbKey(accountDidHash: siblingHash)
+
+    AppState.wipeLocalMLSArtifacts(
+      for: aliceDID,
+      storageRoot: tempRoot,
+      keystore: keystore,
+      sharedDefaults: defaults,
+      legacyKeychainBackend: mockKeychain
+    )
+
+    for url in aliceLegacyFiles {
+      #expect(!fm.fileExists(atPath: url.path), "Expected legacy Alice file \(url.lastPathComponent) to be wiped")
+    }
+    for url in siblingFiles {
+      #expect(fm.fileExists(atPath: url.path), "Expected sibling file \(url.lastPathComponent) to remain intact")
+    }
+    #expect(!AppState.hasLegacyMLSDatabaseFiles(storageRoot: tempRoot, accountDid: aliceDID))
+    #expect(AppState.hasLegacyMLSDatabaseFiles(storageRoot: tempRoot, accountDid: aliceBobSiblingDID))
+
+    #expect(!mockKeychain.contains(service: "blue.catbird.mls", account: "mls-db-key-did_plc_alice"))
+    #expect(!mockKeychain.contains(service: "MLS-did:plc:alice", account: "signing-key"))
+    #expect(!mockKeychain.contains(service: "mls-state-did_plc_alice", account: "ratchet"))
+    #expect(!mockKeychain.contains(service: "blue.catbird.mls.clean-slate", account: "sigkey:mls-signer:\(aliceHash)"))
+    #expect(!mockKeychain.contains(service: "blue.catbird.circles.keys", account: "\(aliceDID)|at://\(aliceDID)/blue.catbird.circle/friends"))
+
+    #expect(mockKeychain.contains(service: "blue.catbird.mls", account: "mls-db-key-did_plc_alice_bob"))
+    #expect(mockKeychain.contains(service: "MLS-did:plc:aliceextra", account: "signing-key"))
+    #expect(mockKeychain.contains(service: "blue.catbird.mls.clean-slate", account: "sigkey:mls-signer:\(siblingHash)"))
+    #expect(mockKeychain.contains(service: "blue.catbird.circles.keys", account: "\(aliceExtraSiblingDID)|at://\(aliceExtraSiblingDID)/blue.catbird.circle/friends"))
+
+    #expect(defaults.string(forKey: "blue.catbird.mls.database-owner.\(aliceHash).pid") == nil)
+    #expect(defaults.string(forKey: "blue.catbird.mls.database-owner.\(siblingHash).pid") == "owner-sibling")
   }
 }

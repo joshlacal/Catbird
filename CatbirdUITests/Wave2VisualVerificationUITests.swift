@@ -105,5 +105,20 @@ final class Wave2VisualVerificationUITests: XCTestCase {
     labyrinthLink.tap()
     RunLoop.current.run(until: Date().addingTimeInterval(1.0))
     try saveScreenshot(settingsApp, name: "wave2_05_labyrinth_settings_restore")
+    settingsApp.terminate()
+
+    // 5. Account Security -> Delete Account (`AccountDeletionSheet`: 5.1.1(v) direct PDS + cloud/local erasure)
+    let deleteApp = XCUIApplication()
+    deleteApp.launchArguments = ["--settings-ui-fixture", "--settings-screen=accountSecurity"]
+    deleteApp.launch()
+    let deleteButton = deleteApp.buttons["Delete Account"]
+    XCTAssertTrue(deleteButton.waitForExistence(timeout: 10), "Expected Delete Account button in Account Security")
+    deleteButton.tap()
+    XCTAssertTrue(
+      deleteApp.navigationBars["Delete Account"].waitForExistence(timeout: 8),
+      "Expected AccountDeletionSheet navigation bar"
+    )
+    RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+    try saveScreenshot(deleteApp, name: "wave2_06_account_deletion_sheet")
   }
 }

@@ -1540,7 +1540,7 @@ final class AppStateManager {
       await appState.wipeMLSOnSignOut()
       appState.cleanup()
     } else {
-      AppState.wipeLocalMLSArtifacts(for: userDID)
+      await AppState.retireAndWipeSecondaryAccountIfPossible(did: userDID)
     }
 
     await MLSImageCache.shared.purge(for: userDID)
