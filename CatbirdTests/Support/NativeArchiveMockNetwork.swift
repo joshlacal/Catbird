@@ -206,6 +206,9 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
     if host == Self.dsHost, url.path == "/.well-known/did.json" {
       return reply(200, didDocument(Self.dsDid))
     }
+    if host == "plc.directory", url.path.hasPrefix("/did:plc:") {
+      return reply(200, didDocument(String(url.path.dropFirst())))
+    }
     guard url.path.hasPrefix("/xrpc/") else {
       return xrpcError(404, "NotFound", url.path)
     }
@@ -275,8 +278,8 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
           "size": body.count,
         ],
       ])
-    case "com.atproto.repo.putRecord", "com.atproto.repo.getRecord", "com.atproto.repo.listRecords",
-         "com.atproto.repo.deleteRecord":
+    case "com.atproto.repo.createRecord", "com.atproto.repo.putRecord", "com.atproto.repo.getRecord",
+         "com.atproto.repo.listRecords", "com.atproto.repo.deleteRecord":
       let json = method == "POST" ? try object(body) : nil
       let collection = (json?["collection"] as? String) ?? params["collection"]
       if collection == Self.mailboxKeysCollection {
@@ -350,6 +353,15 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
     let rkey = (body?["rkey"] as? String) ?? params["rkey"]
     let uri = { (rkey: String) in "at://\(repo)/\(Self.mailboxKeysCollection)/\(rkey)" }
     switch nsid {
+    case "com.atproto.repo.createRecord":
+      guard account == repo else { return xrpcError(403, "NotAuthorized") }
+      guard let rkey, let body, let value = body["record"] else { throw Fault(message: "mailbox record missing") }
+      if mailboxKeys[repo]?[rkey] != nil {
+        return xrpcError(400, "DuplicateRecord")
+      }
+      let cid = try dagCborCID(value)
+      mailboxKeys[repo, default: [:]][rkey] = StoredRecord(value: value, cid: cid)
+      return reply(200, ["uri": uri(rkey), "cid": cid.string])
     case "com.atproto.repo.putRecord":
       guard account == repo else { return xrpcError(403, "NotAuthorized") }
       guard let rkey, let body, let value = body["record"] else { throw Fault(message: "mailbox record missing") }
@@ -386,6 +398,16 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
   /// Non-mailbox repo records (`blue.catbird.chat.device`, `.declaration`), as the mock DS stores them.
   private func repoRecord(nsid: String, params: [String: String], body: JSON?) throws -> Reply {
     switch nsid {
+    case "com.atproto.repo.createRecord":
+      guard let body, let repo = body["repo"] as? String, let collection = body["collection"] as? String,
+            let rkey = body["rkey"] as? String, let value = body["record"] as? JSON
+      else { throw Fault(message: "createRecord body malformed") }
+      if pdsRecords["\(repo)|\(collection)|\(rkey)"] != nil {
+        return xrpcError(400, "DuplicateRecord")
+      }
+      let cid = try dagCborCID(value)
+      pdsRecords["\(repo)|\(collection)|\(rkey)"] = (value, cid)
+      return reply(200, ["uri": "at://\(repo)/\(collection)/\(rkey)", "cid": cid.string])
     case "com.atproto.repo.putRecord":
       guard let body, let repo = body["repo"] as? String, let collection = body["collection"] as? String,
             let rkey = body["rkey"] as? String, let value = body["record"] as? JSON
@@ -829,7 +851,12 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
     ]
     let mstBytes = try DAGCBOR.encodeValue(mstNode)
     let mstCid = CID.fromDAGCBOR(mstBytes)
-    let rev = "3lb2zzzzzzzzz"
+    let revValue = (UInt64(1) << 62) | next()
+    let tidAlphabet = Array("234567abcdefghijklmnopqrstuvwxyz")
+    let rev = String((0..<13).map { idx -> Character in
+      let shift = 60 - (idx * 5)
+      return tidAlphabet[Int((revValue >> UInt64(shift)) & 31)]
+    })
     let unsignedCommit: [String: Any] = [
       "did": did,
       "version": Int64(3),

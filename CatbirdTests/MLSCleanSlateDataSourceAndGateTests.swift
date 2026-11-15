@@ -157,7 +157,9 @@ struct MLSCleanSlateDataSourceAndGateTests {
 
     let beforeWakeups = coordinator.darwinWakeupCount
     MLSPushExtensionProcessor.postNseDidCommitDarwinNotification()
-    try await Task.sleep(for: .milliseconds(100))
+    for _ in 0..<80 where coordinator.darwinWakeupCount < beforeWakeups + 1 {
+      try await Task.sleep(for: .milliseconds(25))
+    }
     #expect(coordinator.darwinWakeupCount >= beforeWakeups + 1)
 
     let checkpoint = try await coordinator.prepareForBackground()
