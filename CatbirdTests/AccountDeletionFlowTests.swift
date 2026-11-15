@@ -674,4 +674,219 @@ struct AccountDeletionCoordinatorTests {
     )
     #expect(remaining.isEmpty)
   }
+
+  private final class LivePDSLoopbackBridgeURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var targetLoopbackBaseURL: URL?
+
+    override class func canInit(with request: URLRequest) -> Bool {
+      request.url?.host == "live-pds.catbird.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    private static func readBody(_ request: URLRequest) -> Data? {
+      if let body = request.httpBody { return body }
+      guard let stream = request.httpBodyStream else { return nil }
+      stream.open()
+      defer { stream.close() }
+      var out = Data()
+      var buffer = [UInt8](repeating: 0, count: 4096)
+      while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count <= 0 { break }
+        out.append(buffer, count: count)
+      }
+      return out
+    }
+
+    override func startLoading() {
+      guard let base = Self.targetLoopbackBaseURL,
+            let incomingURL = request.url,
+            var targetComponents = URLComponents(url: base, resolvingAgainstBaseURL: false)
+      else {
+        client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+        return
+      }
+      targetComponents.path = incomingURL.path
+      targetComponents.percentEncodedQuery = incomingURL.query
+      guard let targetURL = targetComponents.url else {
+        client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+        return
+      }
+
+      var forwarded = URLRequest(url: targetURL)
+      forwarded.httpMethod = request.httpMethod
+      forwarded.allHTTPHeaderFields = request.allHTTPHeaderFields
+      forwarded.httpBody = Self.readBody(request)
+
+      let rawSession = URLSession(configuration: .ephemeral)
+      let task = rawSession.dataTask(with: forwarded) { [weak self] data, response, error in
+        defer { rawSession.finishTasksAndInvalidate() }
+        guard let self else { return }
+        if let error {
+          self.client?.urlProtocol(self, didFailWithError: error)
+          return
+        }
+        if let http = response as? HTTPURLResponse,
+           let rewritten = HTTPURLResponse(
+             url: incomingURL,
+             statusCode: http.statusCode,
+             httpVersion: "HTTP/1.1",
+             headerFields: http.allHeaderFields as? [String: String]
+           ) {
+          self.client?.urlProtocol(self, didReceive: rewritten, cacheStoragePolicy: .notAllowed)
+        } else if let response {
+          self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        }
+        if let data {
+          self.client?.urlProtocol(self, didLoad: data)
+        }
+        self.client?.urlProtocolDidFinishLoading(self)
+      }
+      task.resume()
+    }
+
+    override func stopLoading() {}
+  }
+
+  private struct SeededLivePDSAccount: Decodable {
+    let pdsUrl: String
+    let did: String
+    let handle: String
+    let email: String
+    let password: String
+    let oauthAccessToken: String
+  }
+
+  private struct DPoPProofEnvelope: Decodable {
+    let dpopProof: String
+  }
+
+  private struct DeletionTokenEnvelope: Decodable {
+    let token: String
+  }
+
+  @Test(
+    "A3 + A4 Live Reference PDS: OAuth DPoP fails 403 while PDSDirectDeletionClient createSession -> requestAccountDelete -> deleteAccount succeeds 200",
+    .enabled(if: ProcessInfo.processInfo.environment["CATBIRD_LIVE_PDS_CONTROL_URL"] != nil)
+  )
+  @MainActor
+  func liveReferencePDSDirectDeletionWireProof() async throws {
+    let controlURLString = try #require(ProcessInfo.processInfo.environment["CATBIRD_LIVE_PDS_CONTROL_URL"])
+    let controlBaseURL = try #require(URL(string: controlURLString))
+    let rawHTTP = URLSession(configuration: .ephemeral)
+    defer { rawHTTP.finishTasksAndInvalidate() }
+
+    // 1. Seed a real account + stored DPoP-bound OAuth access token on live @atproto/pds
+    var seedReq = URLRequest(url: controlBaseURL.appendingPathComponent("seed"))
+    seedReq.httpMethod = "POST"
+    let (seedData, seedResp) = try await rawHTTP.data(for: seedReq)
+    #expect((seedResp as? HTTPURLResponse)?.statusCode == 200)
+    let seeded = try JSONDecoder().decode(SeededLivePDSAccount.self, from: seedData)
+    let livePDSBaseURL = try #require(URL(string: seeded.pdsUrl))
+
+    // 2. Prove live @atproto/pds rejects OAuth DPoP credentials on requestAccountDelete with HTTP 403 Forbidden
+    let requestDeleteURL = livePDSBaseURL.appendingPathComponent("xrpc/com.atproto.server.requestAccountDelete")
+    func fetchDPoPProof(nonce: String?) async throws -> String {
+      var comps = try #require(URLComponents(url: controlBaseURL.appendingPathComponent("dpop-proof"), resolvingAgainstBaseURL: false))
+      var items = [
+        URLQueryItem(name: "did", value: seeded.did),
+        URLQueryItem(name: "htm", value: "POST"),
+        URLQueryItem(name: "htu", value: requestDeleteURL.absoluteString),
+      ]
+      if let nonce {
+        items.append(URLQueryItem(name: "nonce", value: nonce))
+      }
+      comps.queryItems = items
+      let (proofData, proofResp) = try await rawHTTP.data(from: try #require(comps.url))
+      #expect((proofResp as? HTTPURLResponse)?.statusCode == 200)
+      return try JSONDecoder().decode(DPoPProofEnvelope.self, from: proofData).dpopProof
+    }
+
+    var oauthReq = URLRequest(url: requestDeleteURL)
+    oauthReq.httpMethod = "POST"
+    oauthReq.setValue("DPoP \(seeded.oauthAccessToken)", forHTTPHeaderField: "Authorization")
+    oauthReq.setValue(try await fetchDPoPProof(nonce: nil), forHTTPHeaderField: "DPoP")
+    var (oauthData, oauthResp) = try await rawHTTP.data(for: oauthReq)
+    var oauthHTTP = try #require(oauthResp as? HTTPURLResponse)
+    if (oauthHTTP.statusCode == 401 || oauthHTTP.statusCode == 400),
+       let dpopNonce = oauthHTTP.value(forHTTPHeaderField: "DPoP-Nonce") {
+      oauthReq.setValue(try await fetchDPoPProof(nonce: dpopNonce), forHTTPHeaderField: "DPoP")
+      (oauthData, oauthResp) = try await rawHTTP.data(for: oauthReq)
+      oauthHTTP = try #require(oauthResp as? HTTPURLResponse)
+    }
+    let oauthJSON = (try? JSONSerialization.jsonObject(with: oauthData) as? [String: String]) ?? [:]
+    #expect(oauthHTTP.statusCode == 403)
+    #expect(oauthJSON["error"] == "Forbidden")
+    #expect(oauthJSON["message"] == "OAuth credentials are not supported for this endpoint")
+
+    // 3. Prove AccountDeletionCoordinator + PDSDirectDeletionClient succeeds 200 against the live @atproto/pds instance
+    LivePDSLoopbackBridgeURLProtocol.targetLoopbackBaseURL = livePDSBaseURL
+    defer { LivePDSLoopbackBridgeURLProtocol.targetLoopbackBaseURL = nil }
+
+    let bridgedConfig = URLSessionConfiguration.ephemeral
+    bridgedConfig.httpCookieStorage = nil
+    bridgedConfig.urlCache = nil
+    bridgedConfig.urlCredentialStorage = nil
+    bridgedConfig.protocolClasses = [LivePDSLoopbackBridgeURLProtocol.self]
+    let bridgedSession = URLSession(configuration: bridgedConfig)
+    defer { bridgedSession.finishTasksAndInvalidate() }
+
+    let directClient = PDSDirectDeletionClient(session: bridgedSession)
+    let httpsAliasPDSURL = URL(string: "https://live-pds.catbird.test")!
+
+    try await AccountDeletionCoordinator.requestHostedAccountDeletionCode(
+      forDID: seeded.did,
+      password: seeded.password,
+      pdsURL: httpsAliasPDSURL,
+      directClient: directClient
+    )
+
+    var tokenComps = try #require(URLComponents(url: controlBaseURL.appendingPathComponent("latest-token"), resolvingAgainstBaseURL: false))
+    tokenComps.queryItems = [URLQueryItem(name: "did", value: seeded.did)]
+    let (tokenData, tokenResp) = try await rawHTTP.data(from: try #require(tokenComps.url))
+    #expect((tokenResp as? HTTPURLResponse)?.statusCode == 200)
+    let emailConfirmationToken = try JSONDecoder().decode(DeletionTokenEnvelope.self, from: tokenData).token
+    #expect(!emailConfirmationToken.isEmpty)
+
+    // 4. Prove A4 against live @atproto/pds: mistyped password fails 401 at createSession BEFORE Labyrinth remote backup wipe runs
+    var remoteEraseCount = 0
+    var localEraseCount = 0
+    await #expect(throws: PDSDirectDeletionError.self) {
+      try await AccountDeletionCoordinator.performHostedAccountDeletion(
+        forDID: seeded.did,
+        password: "mistyped-password-should-not-wipe-backups",
+        confirmationToken: emailConfirmationToken,
+        pdsURL: httpsAliasPDSURL,
+        remoteMLSErasure: { _ in remoteEraseCount += 1 },
+        localErasureOverride: { _ in localEraseCount += 1 },
+        directClient: directClient
+      )
+    }
+    #expect(remoteEraseCount == 0)
+    #expect(localEraseCount == 0)
+
+    // 5. Prove full hosted deletion succeeds 200 on live @atproto/pds and removes the account from PDS
+    try await AccountDeletionCoordinator.performHostedAccountDeletion(
+      forDID: seeded.did,
+      password: seeded.password,
+      confirmationToken: emailConfirmationToken,
+      pdsURL: httpsAliasPDSURL,
+      remoteMLSErasure: { _ in remoteEraseCount += 1 },
+      localErasureOverride: { _ in localEraseCount += 1 },
+      directClient: directClient
+    )
+    #expect(remoteEraseCount == 1)
+    #expect(localEraseCount == 1)
+
+    var postDeleteLogin = URLRequest(url: livePDSBaseURL.appendingPathComponent("xrpc/com.atproto.server.createSession"))
+    postDeleteLogin.httpMethod = "POST"
+    postDeleteLogin.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    postDeleteLogin.httpBody = try JSONSerialization.data(withJSONObject: [
+      "identifier": seeded.did,
+      "password": seeded.password,
+    ])
+    let (_, postDeleteResp) = try await rawHTTP.data(for: postDeleteLogin)
+    #expect((postDeleteResp as? HTTPURLResponse)?.statusCode == 401)
+  }
 }
