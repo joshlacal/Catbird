@@ -515,6 +515,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
   }
 
+  static func storeMLSChatNotificationPreference(_ enabled: Bool, accountDID: String, defaults: UserDefaults) {
+    defaults.set(enabled, forKey: "mlsChatNotificationsEnabled_\(accountDID)")
+  }
+
   /// Save MLS chat notification preference for the current account
   private func saveMLSChatNotificationPreference() {
     guard let defaults = notificationDefaults, let did = currentAccountDID else {

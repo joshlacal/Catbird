@@ -647,6 +647,18 @@ struct AccountDeletionCoordinator {
     }
   }
 
+  static func requiresRemoteMLSErasure(
+    forDID did: String,
+    hasActiveCoordinator: Bool,
+    storageRoot: URL?,
+    circleKeychain: any CircleKeychain,
+    settings: ExperimentalSettings
+  ) -> Bool {
+    hasActiveCoordinator || settings.isMLSChatEnabled(for: did)
+      || hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
+      || CircleKeyStore.hasStoredKeys(accountDID: did, keychain: circleKeychain)
+  }
+
   nonisolated static func hasLocalMLSArtifacts(forDID did: String, storageRoot: URL?) -> Bool {
     guard let root = try? (storageRoot ?? MLSAppGroupStorage.defaultStorageRoot()),
           let dbURL = try? MLSAppGroupStorage.databaseURL(storageRoot: root, accountDid: did)

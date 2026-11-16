@@ -30,6 +30,16 @@ final class ExperimentalSettings {
 
     private init() {}
 
+    init(appGroupDefaults: UserDefaults, standardDefaults: UserDefaults) {}
+
+    // Scaffolding with the current behaviour, replaced by the default-on preferences.
+    func isMLSUserDisabled(for accountDID: String) -> Bool { !isMLSChatEnabled(for: accountDID) }
+    func hasSeenMLSIntro(for accountDID: String) -> Bool { hasAcknowledgedMLSWarning(for: accountDID) }
+    func isMLSRuntimeAllowed(for accountDID: String) -> Bool { isMLSChatEnabled(for: accountDID) }
+    func shouldPresentMLSIntro(for accountDID: String) -> Bool { false }
+    func recordMLSEnrollment(for accountDID: String, at date: Date = Date()) {}
+    func migrateLegacyMLSOptInIfNeeded() {}
+
     // MARK: - Draft Sync (AppView-stored drafts)
 
     /// Whether composer drafts are synced to the Bluesky AppView (app.bsky.draft.*).
