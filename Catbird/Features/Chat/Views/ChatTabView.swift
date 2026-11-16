@@ -110,7 +110,7 @@ struct ChatTabView: View {
 
   /// Per-account MLS chat enabled state
   private var mlsChatEnabledForCurrentAccount: Bool {
-    ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    appState.isMLSRuntimeAllowed
   }
 
   /// Retained for backwards compatibility.
@@ -148,6 +148,7 @@ struct ChatTabView: View {
     .toolbar(selectedConvoId != nil && !shouldUseSplitView ? .hidden : .visible, for: .tabBar)
     #endif
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+    .background(MLSIntroSheetHost())
     .onAppear(perform: handleOnAppear)
     .onDisappear(perform: handleOnDisappear)
     .onChange(of: scenePhase) { oldPhase, newPhase in

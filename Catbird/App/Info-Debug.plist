@@ -4,12 +4,8 @@
 <dict>
 	<key>CatbirdFeatures</key>
 	<dict>
-		<key>CirclesSpaces</key>
-		<string>$(CATBIRD_FEATURE_CIRCLES_SPACES)</string>
 		<key>Live</key>
 		<string>$(CATBIRD_FEATURE_LIVE)</string>
-		<key>MLSChat</key>
-		<string>$(CATBIRD_FEATURE_MLS_CHAT)</string>
 		<key>RepositoryTools</key>
 		<string>$(CATBIRD_FEATURE_REPOSITORY_TOOLS)</string>
 	</dict>

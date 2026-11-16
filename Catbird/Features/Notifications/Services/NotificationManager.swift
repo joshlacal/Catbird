@@ -505,6 +505,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let mlsKey = "\(mlsChatNotificationsDefaultsKeyPrefix)_\(did)"
     if defaults.object(forKey: mlsKey) != nil {
       let enabled = defaults.bool(forKey: mlsKey)
+      // Earlier builds wrote only the DID key, which the extension cannot read.
+      Self.storeMLSChatNotificationPreference(enabled, accountDID: did, defaults: defaults)
       notificationLogger.info(
         "Loaded MLS chat notification preference for \(did): \(enabled ? "enabled" : "disabled")")
       mlsChatNotificationsEnabled = enabled
@@ -515,8 +517,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
   }
 
+  /// Stores the encrypted chat notification preference under the DID key the app reads and the
+  /// DID-hash key the Notification Service Extension reads.
   static func storeMLSChatNotificationPreference(_ enabled: Bool, accountDID: String, defaults: UserDefaults) {
     defaults.set(enabled, forKey: "mlsChatNotificationsEnabled_\(accountDID)")
+    if let hash = try? MLSAppGroupStorage.accountDidHash(for: accountDID) {
+      defaults.set(enabled, forKey: MLSAccountPreferenceKeys.chatNotificationsEnabled(accountHash: hash))
+    }
   }
 
   /// Save MLS chat notification preference for the current account
@@ -525,8 +532,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
-    let key = "\(mlsChatNotificationsDefaultsKeyPrefix)_\(did)"
-    defaults.set(mlsChatNotificationsEnabled, forKey: key)
+    Self.storeMLSChatNotificationPreference(mlsChatNotificationsEnabled, accountDID: did, defaults: defaults)
     notificationLogger.info(
       "MLS chat notification preference updated for \(did): \(self.mlsChatNotificationsEnabled ? "enabled" : "disabled")"
     )
@@ -2003,8 +2009,21 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Register device token via D2 Push Gateway (`nest` `blue.catbird.push.registerKey` + home `mls-ds` `blue.catbird.chat.registerPushGateway`).
   private func registerMLSDeviceToken(_ token: Data) async {
-    guard CatbirdFeatures.mlsChat else { return }
     await updateSignedRequestPushRegistration()
+  }
+
+  /// Brings the push gateway binding in line with the current preferences, for example after
+  /// the user turns encrypted chat on.
+  @MainActor
+  func syncMLSPushGatewayRegistration() async {
+    await updateSignedRequestPushRegistration()
+  }
+
+  /// Disables the push gateway binding when the user turns encrypted chat off. Runs while the
+  /// account is still active so the request can be signed.
+  @MainActor
+  func unregisterMLSPushGatewayForUserOptOut(accountDID: String) async {
+    await updateSignedRequestPushRegistration(enabled: false, expectedAccount: accountDID)
   }
 
   /// Disable device push binding on home `mls-ds` (`D2`).
@@ -2016,7 +2035,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// only the opaque `pushKey` + `gatewayUrl` on the user's home `mls-ds` (`blue.catbird.chat.registerPushGateway`, `D2`).
   @MainActor
   private func updateSignedRequestPushRegistration(enabled override: Bool? = nil, expectedAccount: String? = nil) async {
-    guard CatbirdFeatures.mlsChat else { return }
     #if os(iOS)
     guard let appState, appState.isMLSRuntimeAllowed, let client, let token = deviceToken else { return }
     let account = appState.userDID
@@ -3534,13 +3552,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   ) async {
     guard let kind = userInfo["kind"] as? String, kind == "circle_activity" else {
       return
-    }
-
-    if circleNotificationsModel == nil {
-      guard CatbirdFeatures.circlesSpaces else {
-        notificationLogger.debug("Skipping circle_activity push: circlesSpaces runtime flag is disabled")
-        return
-      }
     }
 
     notificationLogger.info("Processing generic circle_activity push")

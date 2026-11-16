@@ -87,52 +87,50 @@ struct ChatSettingsView: View {
     SettingsFocusedForm(initialFocus: requestedFocus, isReady: isFocusReady) {
       SettingsScopeSection()
       privacySection
-      if CatbirdFeatures.mlsChat {
-        Section {
-          HStack {
-            VStack(alignment: .leading, spacing: 4) {
-              Text("MLS Chat")
-                .font(.body)
-              Text("Enable end-to-end encrypted messaging")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
-            Spacer()
-            if isLoadingOptInStatus || isTogglingOptIn {
-              ProgressView()
-                .scaleEffect(0.8)
-            } else {
-              Toggle("", isOn: Binding(
-                get: { isOptedIn },
-                set: { newValue in
-                  // Only process if we've loaded initial state and value actually changed
-                  guard hasLoadedInitialState, newValue != isOptedIn else { return }
-                  toggleOptInStatus(newValue)
-                }
-              ))
-                .labelsHidden()
-            }
+      Section {
+        HStack {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Encrypted Chat")
+              .font(.body)
+            Text("Enable end-to-end encrypted messaging")
+              .font(.caption)
+              .foregroundColor(.secondary)
           }
-          
-          // Show MLS privacy settings link when opted in
-          #if os(iOS)
-          if isOptedIn && !isLoadingOptInStatus {
-            NavigationLink {
-              MLSChatSettingsView()
-            } label: {
-              HStack {
-                Image(systemName: "lock.shield")
-                  .foregroundColor(.blue)
-                Text("MLS Privacy Settings")
+          Spacer()
+          if isLoadingOptInStatus || isTogglingOptIn {
+            ProgressView()
+              .scaleEffect(0.8)
+          } else {
+            Toggle("", isOn: Binding(
+              get: { isOptedIn },
+              set: { newValue in
+                // Only process if we've loaded initial state and value actually changed
+                guard hasLoadedInitialState, newValue != isOptedIn else { return }
+                toggleOptInStatus(newValue)
               }
+            ))
+              .labelsHidden()
+          }
+        }
+        
+        // Show MLS privacy settings link when opted in
+        #if os(iOS)
+        if isOptedIn && !isLoadingOptInStatus {
+          NavigationLink {
+            MLSChatSettingsView()
+          } label: {
+            HStack {
+              Image(systemName: "lock.shield")
+                .foregroundColor(.blue)
+              Text("MLS Privacy Settings")
             }
           }
-          #endif
-        } header: {
-          Text("Privacy")
-        } footer: {
-          Text("When enabled, you can use end-to-end encrypted MLS chat. Only opted-in users will be visible in chat typeahead.")
         }
+        #endif
+      } header: {
+        Text("Privacy")
+      } footer: {
+        Text("Encrypted chat is on by default. Turning it off removes this device from encrypted conversations; your Bluesky messages are not affected.")
       }
 
         Section {
@@ -248,7 +246,7 @@ struct ChatSettingsView: View {
       .onAppear {
         // Refresh opt-in status when returning from MLSChatSettingsView (user may have opted out)
         if hasLoadedInitialState {
-          let currentStatus = ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+          let currentStatus = appState.isMLSRuntimeAllowed
           if currentStatus != isOptedIn {
             isOptedIn = currentStatus
           }
@@ -260,7 +258,7 @@ struct ChatSettingsView: View {
   /// Reads the per-account MLS opt-in flag stored locally.
   private func loadOptInStatus() {
     isLoadingOptInStatus = true
-    isOptedIn = ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    isOptedIn = appState.isMLSRuntimeAllowed
     isLoadingOptInStatus = false
     hasLoadedInitialState = true
   }
@@ -411,27 +409,19 @@ struct ChatSettingsView: View {
       do {
         if optIn {
           logger.info("Initializing MLS via unified SDK (Spaces eligibility + PQ device enrollment)...")
-          ExperimentalSettings.shared.enableMLSChat(for: userDID)
-          do {
-            try await appState.initializeMLS()
-            if let eligibility = appState.spacesEligibility, !eligibility.eligible {
-              throw NSError(
-                domain: "ChatSettings",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: eligibility.userMessage]
-              )
-            }
-          } catch {
-            ExperimentalSettings.shared.disableMLSChat(for: userDID)
-            await appState.prepareMLSStorageReset()
-            await appState.loadMLSConversations()
-            throw error
+          // Turning it on is the user's choice and stays on: a failure or an ineligible account
+          // is reported, never stored as an opt-out.
+          try await appState.optInToMLSChat()
+          if let eligibility = appState.spacesEligibility, !eligibility.eligible {
+            throw NSError(
+              domain: "ChatSettings",
+              code: 1,
+              userInfo: [NSLocalizedDescriptionKey: eligibility.userMessage]
+            )
           }
           logger.info("Successfully enabled MLS chat for account: \(userDID.prefix(20))...")
         } else {
-          ExperimentalSettings.shared.disableMLSChat(for: userDID)
-          await appState.prepareMLSStorageReset()
-          await appState.loadMLSConversations()
+          await appState.optOutOfMLSChat()
           logger.info("Disabled MLS chat for account: \(userDID.prefix(20))...")
         }
         await MainActor.run {

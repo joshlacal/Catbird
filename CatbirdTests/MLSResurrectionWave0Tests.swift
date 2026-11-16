@@ -88,29 +88,6 @@ struct MLSResurrectionWave0Tests {
     )
   }
 
-  @Test("Runtime capability flag mls_public_beta_enabled gates MLS rollout cleanly (R-1)")
-  func mlsPublicBetaCapabilityFlag() throws {
-    let suiteName = "CatbirdFeaturesWave0-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suiteName))
-    defer { defaults.removePersistentDomain(forName: suiteName) }
-
-    // Unset: falls back to build-channel default (false on App Store release, true on DEBUG/TestFlight)
-    #expect(!CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false))
-    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: true))
-
-    // Server capability override ON enables MLS even when release default is false
-    CatbirdFeatures.setMLSPublicBetaEnabled(true, in: defaults)
-    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false))
-
-    // Server capability override OFF disables MLS even when DEBUG/TestFlight default is true
-    CatbirdFeatures.setMLSPublicBetaEnabled(false, in: defaults)
-    #expect(!CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: true))
-
-    // Clearing override restores build-channel default
-    CatbirdFeatures.setMLSPublicBetaEnabled(nil, in: defaults)
-    #expect(!CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false))
-  }
-
   @Test("LocalStateFormatUnsupported wipe removes SQLite DB/WAL/SHM/journal while preserving Keychain recovery keys (P0-6)")
   func wipeUnsupportedLocalMLSDatabasePreservesKeychain() throws {
     let tempRoot = try makeTempStorageRoot()
@@ -1116,108 +1093,6 @@ struct MLSResurrectionWave0Tests {
   }
 
   // MARK: - A2 & A6 Remediation Tests (`#159`)
-
-  private final class GatewayConfigMockURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var responder: ((URLRequest) throws -> (Int, Data))?
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-      guard let responder = Self.responder else {
-        client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-        return
-      }
-      do {
-        let (status, data) = try responder(request)
-        let response = HTTPURLResponse(
-          url: request.url ?? URL(string: "https://api.catbird.blue/oauth/client-config")!,
-          statusCode: status,
-          httpVersion: "HTTP/1.1",
-          headerFields: ["Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-      } catch {
-        client?.urlProtocol(self, didFailWithError: error)
-      }
-    }
-
-    override func stopLoading() {}
-  }
-
-  @Test("A2: CatbirdFeatures defaults false in non-DEBUG and refreshFromGatewayConfig fails closed on 404/network error")
-  func catbirdFeaturesDefaultFalseInNonDebugAndFailClosedGatewayConfigRefresh() async throws {
-    let suiteName = "blue.catbird.tests.a2.\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suiteName))
-    defer { defaults.removePersistentDomain(forName: suiteName) }
-
-    #expect(CatbirdFeatures.nonDebugDefaultPublicBetaEnabled == false)
-    #expect(
-      CatbirdFeatures.mlsPublicBetaEnabled(
-        in: defaults,
-        defaultValue: CatbirdFeatures.nonDebugDefaultPublicBetaEnabled
-      ) == false
-    )
-    #expect(
-      CatbirdFeatures.circlesPublicBetaEnabled(
-        in: defaults,
-        defaultValue: CatbirdFeatures.nonDebugDefaultPublicBetaEnabled
-      ) == false
-    )
-
-    let config = URLSessionConfiguration.ephemeral
-    config.protocolClasses = [GatewayConfigMockURLProtocol.self]
-    let session = URLSession(configuration: config)
-    defer { session.finishTasksAndInvalidate() }
-    let origin = URL(string: "https://api.catbird.blue")!
-
-    // 1. HTTP 200 enables both flags explicitly
-    GatewayConfigMockURLProtocol.responder = { req in
-      #expect(req.url?.path == "/oauth/client-config")
-      return (200, Data(#"{"mlsChatEnabled":true,"circlesSpacesEnabled":true}"#.utf8))
-    }
-    let enabled = await CatbirdFeatures.refreshFromGatewayConfig(
-      origin: origin,
-      session: session,
-      defaults: defaults,
-      timeoutSeconds: 2.0
-    )
-    #expect(enabled == .init(mlsChatEnabled: true, circlesSpacesEnabled: true))
-    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false) == true)
-    #expect(CatbirdFeatures.circlesPublicBetaEnabled(in: defaults, defaultValue: false) == true)
-
-    // 2. HTTP 404 fails closed to false (even when previously cached true!)
-    GatewayConfigMockURLProtocol.responder = { _ in
-      (404, Data(#"{"error":"NotFound"}"#.utf8))
-    }
-    let missing = await CatbirdFeatures.refreshFromGatewayConfig(
-      origin: origin,
-      session: session,
-      defaults: defaults,
-      timeoutSeconds: 2.0
-    )
-    #expect(missing == .failClosedDisabled)
-    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false) == false)
-    #expect(CatbirdFeatures.circlesPublicBetaEnabled(in: defaults, defaultValue: false) == false)
-
-    // 3. Network error also fails closed to false
-    CatbirdFeatures.setMLSPublicBetaEnabled(true, in: defaults)
-    CatbirdFeatures.setCirclesPublicBetaEnabled(true, in: defaults)
-    GatewayConfigMockURLProtocol.responder = { _ in
-      throw URLError(.cannotConnectToHost)
-    }
-    let offline = await CatbirdFeatures.refreshFromGatewayConfig(
-      origin: origin,
-      session: session,
-      defaults: defaults,
-      timeoutSeconds: 2.0
-    )
-    #expect(offline == .failClosedDisabled)
-    #expect(CatbirdFeatures.mlsPublicBetaEnabled(in: defaults, defaultValue: false) == false)
-    #expect(CatbirdFeatures.circlesPublicBetaEnabled(in: defaults, defaultValue: false) == false)
-  }
 
   @Test("A6: retireDeviceBounded enforces hard wall-clock timeout without hanging and records hashed retry marker")
   func retireDeviceBoundedEnforcesHardTimeoutWithoutHangingAndQueuesHashedRetryMarker() async throws {

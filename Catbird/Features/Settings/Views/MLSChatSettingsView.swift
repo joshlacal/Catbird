@@ -272,7 +272,7 @@ struct MLSChatSettingsView: View {
   private func optOutOfMLS() async {
     isOptingOut = true
     defer { isOptingOut = false }
-    ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
+    await appState.optOutOfMLSChat()
     logger.info("Disabled MLS chat for current account")
     dismiss()
   }

@@ -34,14 +34,9 @@ class NotificationService: UNNotificationServiceExtension {
     super.init()
   }
 
-  private static func isGatedOff(pushType: String?, kind: String?) -> Bool {
-    if let pushType, pushType.hasPrefix("mls_"), !CatbirdFeatures.mlsChat {
-      return true
-    }
-    if kind == "circle_activity", !CatbirdFeatures.circlesSpaces {
-      return true
-    }
-    return false
+  /// Whether the user turned encrypted chat off for the account the wake is addressed to.
+  static func isMLSDisabledByUser(accountHash: String, defaults: UserDefaults?) -> Bool {
+    defaults?.bool(forKey: MLSAccountPreferenceKeys.userDisabled(accountHash: accountHash)) ?? false
   }
 
   static func isAddressedToSignedOutAccount(recipientDID: String?, defaults: UserDefaults?) -> Bool {
@@ -115,11 +110,6 @@ class NotificationService: UNNotificationServiceExtension {
     let rawType = userInfo["type"] as? String
     let rawKind = userInfo["kind"] as? String
 
-    if Self.isGatedOff(pushType: rawType, kind: rawKind) {
-      contentHandler(Self.neutralized(mutable))
-      return
-    }
-
     let wake = MLSPushExtensionProcessor.decodePushWakePayload(from: userInfo)
     let resolvedRecipientDID = resolveChatRecipientDID(from: userInfo, wake: wake)
     if Self.isAddressedToSignedOutAccount(recipientDID: resolvedRecipientDID, defaults: appGroupDefaults) {
@@ -153,6 +143,11 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
+    if Self.isMLSDisabledByUser(accountHash: wake.recipientAccountHash, defaults: appGroupDefaults) {
+      contentHandler(Self.neutralized(mutable))
+      return
+    }
+
     guard let appGroupRoot = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: Self.appGroupSuite
     ) else {
@@ -161,7 +156,9 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    if let enabled = appGroupDefaults?.object(forKey: "mlsChatNotificationsEnabled_\(wake.recipientAccountHash)") as? Bool,
+    if let enabled = appGroupDefaults?.object(
+      forKey: MLSAccountPreferenceKeys.chatNotificationsEnabled(accountHash: wake.recipientAccountHash)
+    ) as? Bool,
        !enabled
     {
       contentHandler(mutable)

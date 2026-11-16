@@ -181,7 +181,7 @@
 		212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Core/Settings/CatbirdFeatures.swift,
+				Core/Settings/MLSAccountPreferenceKeys.swift,
 			);
 			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
 		};
@@ -189,6 +189,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Core/Settings/CatbirdFeatures.swift,
+				Core/Settings/MLSAccountPreferenceKeys.swift,
 			);
 			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
 		};
@@ -1213,9 +1214,7 @@
 		212E94272D60132A00D3E1DD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CATBIRD_FEATURE_CIRCLES_SPACES = YES;
 				CATBIRD_FEATURE_LIVE = YES;
-				CATBIRD_FEATURE_MLS_CHAT = YES;
 				CATBIRD_FEATURE_REPOSITORY_TOOLS = YES;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -1287,9 +1286,7 @@
 		212E94282D60132A00D3E1DD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CATBIRD_FEATURE_CIRCLES_SPACES = YES;
 				CATBIRD_FEATURE_LIVE = NO;
-				CATBIRD_FEATURE_MLS_CHAT = YES;
 				CATBIRD_FEATURE_REPOSITORY_TOOLS = NO;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;

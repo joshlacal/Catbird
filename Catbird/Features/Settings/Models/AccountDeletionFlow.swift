@@ -575,14 +575,19 @@ struct AccountDeletionCoordinator {
       nil
     }
 
-    // A3/A4: When the account never opted into MLS Chat and holds no local MLS DB or Circle keys,
-    // skip remote `deleteAccountData` so non-MLS/non-Circles accounts are never blocked by `mls-ds`.
+    // Encrypted chat is on by default, so the preference says nothing about use. Only an account
+    // this device enrolled, or one with local MLS state or Circle keys, needs remote erasure, so
+    // accounts that never used encrypted chat or Circles are never blocked by `mls-ds`.
     let hasActiveCoordinator = resolvedAppState?.mlsCoordinator != nil
-    let isMLSOptedIn = experimentalSettings.isMLSChatEnabled(for: did)
     let hasLocalDB = hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
-    let hasCircleKeys = CircleKeyStore.hasStoredKeys(accountDID: did, keychain: circleKeychain)
-    if !hasActiveCoordinator && !isMLSOptedIn && !hasLocalDB && !hasCircleKeys {
-      logger.info("🗑️ Account never opted into MLS or Circles; skipping remote deleteAccountData")
+    guard requiresRemoteMLSErasure(
+      forDID: did,
+      hasActiveCoordinator: hasActiveCoordinator,
+      storageRoot: storageRoot,
+      circleKeychain: circleKeychain,
+      settings: experimentalSettings
+    ) else {
+      logger.info("🗑️ Account never used encrypted chat or Circles on this device; skipping remote deleteAccountData")
       return
     }
 
@@ -647,6 +652,8 @@ struct AccountDeletionCoordinator {
     }
   }
 
+  /// Whether account deletion must erase server-side encrypted chat data: the account has an
+  /// open MLS client, enrolled this device, holds a local MLS database, or holds Circle keys.
   static func requiresRemoteMLSErasure(
     forDID did: String,
     hasActiveCoordinator: Bool,
@@ -654,7 +661,7 @@ struct AccountDeletionCoordinator {
     circleKeychain: any CircleKeychain,
     settings: ExperimentalSettings
   ) -> Bool {
-    hasActiveCoordinator || settings.isMLSChatEnabled(for: did)
+    hasActiveCoordinator || settings.hasRecordedMLSEnrollment(for: did)
       || hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
       || CircleKeyStore.hasStoredKeys(accountDID: did, keychain: circleKeychain)
   }

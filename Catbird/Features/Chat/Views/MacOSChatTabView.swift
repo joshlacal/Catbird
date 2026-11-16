@@ -48,12 +48,7 @@ struct MacOSChatContentView: View {
 
   /// Per-account MLS chat enabled state
   private var mlsChatEnabledForCurrentAccount: Bool {
-    #if DEBUG
-    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
-      return true
-    }
-    #endif
-    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    appState.isMLSRuntimeAllowed
   }
 
   var body: some View {
@@ -73,6 +68,7 @@ struct MacOSChatContentView: View {
       )
     }
     .navigationSubtitle(selectedConversationSubtitle)
+    .background(MLSIntroSheetHost())
     .onAppear(perform: handleOnAppear)
     .onDisappear(perform: handleOnDisappear)
     .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in

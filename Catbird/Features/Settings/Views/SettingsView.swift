@@ -58,25 +58,20 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    // Diagnostics only covers encrypted chat, so Release builds without these features show no section.
-                    if CatbirdFeatures.repositoryTools || CatbirdFeatures.mlsChat {
                     Section("Encrypted Chat & Data") {
                         if CatbirdFeatures.repositoryTools {
                             NavigationLink(destination: DataBackupSettingsView()) {
                                 SettingsNavigationRow(title: "Data & Backup", systemImage: "externaldrive.fill", family: .advanced)
                             }
                         }
-                        if CatbirdFeatures.mlsChat, #available(iOS 18.0, macOS 13.0, *) {
+                        if #available(iOS 18.0, macOS 13.0, *) {
                             NavigationLink(destination: DeviceManagementView()) {
                                 SettingsNavigationRow(title: "Devices", systemImage: "ipad.landscape.and.iphone", family: .account)
                             }
                         }
-                        if CatbirdFeatures.mlsChat {
-                            NavigationLink(destination: DiagnosticsSettingsView()) {
-                                SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope", family: .advanced)
-                            }
+                        NavigationLink(destination: DiagnosticsSettingsView()) {
+                            SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope", family: .advanced)
                         }
-                    }
                     }
                 } else {
                     Section("Search Results") {

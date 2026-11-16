@@ -638,8 +638,8 @@ struct AccountDeletionCoordinatorTests {
     try fm.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
     defer { try? fm.removeItem(at: emptyRoot) }
 
-    // 1. Account with no MLS opt-in, no local MLS DB, and no Circle keys skips remote deleteAccountData cleanly
-    ExperimentalSettings.shared.disableMLSChat(for: nonMLSDID)
+    // 1. An account that never enrolled, with no local MLS DB and no Circle keys, skips remote
+    //    deleteAccountData cleanly even though encrypted chat is on by default
     try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
       forDID: nonMLSDID,
       storageRoot: emptyRoot

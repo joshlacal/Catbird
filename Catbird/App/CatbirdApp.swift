@@ -708,7 +708,7 @@ struct CatbirdApp: App {
       }
 
       // Check if this is an MLS key package inventory notification
-      if CatbirdFeatures.mlsChat, let type = userInfo["type"] as? String,
+      if let type = userInfo["type"] as? String,
          type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
         guard application.applicationState == .active else {
           completionHandler(.noData)
@@ -724,8 +724,7 @@ struct CatbirdApp: App {
           await activeState.loadMLSConversations()
           completionHandler(.newData)
         }
-      } else if CatbirdFeatures.mlsChat,
-                let convoId = userInfo["convoId"] as? String ?? userInfo["conversationId"] as? String {
+      } else if let convoId = userInfo["convoId"] as? String ?? userInfo["conversationId"] as? String {
         logger.info("Processing MLS chat notification for conversation: \(convoId)")
         guard application.applicationState == .active else {
           logger.info(

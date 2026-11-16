@@ -8,16 +8,16 @@ import UserNotifications
 /// defaults. Chat fixtures omit senderDid, so no profile lookup or keychain access occurs.
 @Suite("NSE current delivery characterization")
 struct NotificationServiceDeliveryCharacterizationTests {
-  /// Encrypted chat pushes are gated off only in builds without MLS chat; with it on, they are
-  /// decrypted, which needs the extension's MLS storage, so this runs only where the gate is off.
-  @Test("Default initialization still neutralizes gated-off features", .enabled(if: !CatbirdFeatures.mlsChat))
-  func defaultInitializationKeepsUnsupportedFiltering() async {
-    let service = NotificationService()
-    let output = await PushServiceFixture.deliver(
-      PushServiceFixture.request(type: "mls_message"), through: service)
-    #expect(output.title == "Catbird")
-    #expect(output.body == "New activity")
-    #expect(output.sound == nil)
+  /// No build or server switch filters encrypted chat pushes: a push without a wake payload
+  /// reaches the user unchanged.
+  @Test("Encrypted chat pushes are not filtered by a feature switch")
+  func encryptedChatPushIsNotFeatureFiltered() async {
+    let fixture = PushServiceFixture()
+    defer { fixture.cleanup() }
+    let output = await fixture.deliver(PushServiceFixture.request(type: "mls_message"))
+    #expect(output.title == "Alice")
+    #expect(output.body == "private message")
+    #expect(output.threadIdentifier != "catbird-unsupported")
     #expect(output.userInfo["type"] as? String == "mls_message")
   }
 

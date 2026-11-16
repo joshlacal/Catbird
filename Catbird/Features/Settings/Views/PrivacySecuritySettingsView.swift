@@ -170,7 +170,6 @@ struct PrivacySecuritySettingsView: View {
                 .settingsControl(.init(rawValue: "privacy.attribution"))
             } footer: { Text("When you like or repost a post you found through someone’s repost, Catbird credits that repost so its author is notified.") }
             #if os(iOS)
-            if CatbirdFeatures.mlsChat {
             Section {
                 NavigationLink {
                     MLSChatSettingsView()
@@ -205,7 +204,6 @@ struct PrivacySecuritySettingsView: View {
                 Text("Encrypted Chat")
             } footer: {
                 Text("Forward secrecy rotates encryption keys automatically. Messages older than the retention period become unreadable, even if keys are later compromised. Messages are always end-to-end encrypted in transit.")
-            }
             }
             #endif
         }

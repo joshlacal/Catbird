@@ -10,12 +10,7 @@ struct MLSOptInGateView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSOptInGate")
 
   private var isEnabled: Bool {
-    #if DEBUG
-    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
-      return true
-    }
-    #endif
-    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    appState.isMLSRuntimeAllowed
   }
 
   var body: some View {
@@ -54,7 +49,6 @@ struct MLSOptInGateView: View {
             get: { isEnabled },
             set: { newValue in
               if newValue {
-                ExperimentalSettings.shared.enableMLSChat(for: appState.userDID)
                 Task { await optIn() }
               }
             }
@@ -75,17 +69,13 @@ struct MLSOptInGateView: View {
   private func optIn() async {
     isOptingIn = true
     defer { isOptingIn = false }
+    // Turning this on is the user's choice; a failure or an ineligible account leaves the
+    // preference on and the Spaces gate above explains what is missing.
     do {
-      try await appState.initializeMLS()
-      if let eligibility = appState.spacesEligibility, !eligibility.eligible {
-        ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
-        return
-      }
-      ExperimentalSettings.shared.enableMLSChat(for: appState.userDID)
+      try await appState.optInToMLSChat()
       logger.info("Successfully enabled MLS via MLSClientCoordinator")
     } catch {
       logger.error("Failed to enable MLS: \(error.localizedDescription)")
-      ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
     }
   }
 }

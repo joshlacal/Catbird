@@ -15,7 +15,7 @@ struct NotificationSettingsView: View {
   /// Encrypted chat alerts are an iOS control, so other platforms show neither the toggle nor its copy.
   private var showsEncryptedChatAlerts: Bool {
     #if os(iOS)
-    CatbirdFeatures.mlsChat
+    true
     #else
     false
     #endif

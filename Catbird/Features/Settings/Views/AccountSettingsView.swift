@@ -140,9 +140,7 @@ struct AccountSettingsView: View {
         Group {
             SettingsFocusedForm(initialFocus: initialFocus, isReady: hasLoadedOnce || !isLoading) {
                 SettingsScopeSection()
-                if CatbirdFeatures.circlesSpaces {
-                    circlesSection
-                }
+                circlesSection
                 if isLoading && !hasLoadedOnce {
                     Section {
                         ProgressView("Loading account details…")
@@ -267,7 +265,7 @@ struct AccountSettingsView: View {
         }
     }
     
-    // MARK: - Circles Preview
+    // MARK: - Circles
 
     private var circlesSection: some View {
         Section {
@@ -294,7 +292,7 @@ struct AccountSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text("Circles Preview")
+            Text("Circles")
         } footer: {
             Text("Circles requires a personal data server that supports Spaces. Enable Circles requests permission for this account, then checks availability. Granting permission alone does not guarantee support.")
         }

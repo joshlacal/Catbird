@@ -235,7 +235,7 @@ struct MessageRequestsButton: View {
     let generation = UUID()
     countGeneration = generation
     let userDID = appState.userDID
-    guard ExperimentalSettings.shared.isMLSChatEnabled(for: userDID),
+    guard appState.isMLSRuntimeAllowed,
           let coordinator = await appState.getOrOpenMLSCoordinator(),
           !coordinator.isClosedForSession else {
       pendingCatbirdCount = 0

@@ -28,7 +28,7 @@ struct AccountSecuritySettingsView: View {
                 .disabled(signingOut)
                 .settingsControl(.init(rawValue: "account.delete"))
             }
-            if CatbirdFeatures.mlsChat, #available(iOS 18.0, macOS 13.0, *) {
+            if #available(iOS 18.0, macOS 13.0, *) {
                 Section {
                     let localDeviceId = appState.resolvedMLSDeviceID()
                     HStack(spacing: 8) {

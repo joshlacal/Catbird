@@ -44,20 +44,12 @@ struct NewConversationView: View {
     case creating
   }
 
-  /// Catbird Groups are offered only in builds that ship MLS chat.
   private var availableModes: [ConversationMode] {
-    CatbirdFeatures.mlsChat
-      ? ConversationMode.allCases
-      : ConversationMode.allCases.filter { $0 != .catbirdGroup }
+    ConversationMode.allCases
   }
 
   private var mlsEnabled: Bool {
-    #if DEBUG
-    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
-      return true
-    }
-    #endif
-    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    appState.isMLSRuntimeAllowed
   }
 
   private var navigationTitle: String {

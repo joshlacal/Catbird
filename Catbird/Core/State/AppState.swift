@@ -847,50 +847,47 @@ final class AppState {
         startMLSIfEnabled()
     }
 
-    /// Whether MLS / Spaces runtime work is permitted for this account (`ctl #2`: zero DB/PDS/DS activity when disabled).
+    /// Whether MLS / Spaces runtime work is permitted for this account: encrypted chat is on
+    /// unless the user turned it off, and nothing runs (no database, enrollment or network)
+    /// until the account has acknowledged the one-time introduction.
     @MainActor
     var isMLSRuntimeAllowed: Bool {
+        #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--e2e-mode")
             || CatbirdGatewayConfiguration.current.isRuntimeFixture
         {
             return true
         }
-        return CatbirdFeatures.mlsChat && ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
+        #endif
+        return ExperimentalSettings.shared.isMLSRuntimeAllowed(for: userDID)
     }
 
-    /// Refreshes runtime public-beta flags from `nest` `/oauth/client-config` (`R-1`).
-    /// Fails closed to `false` on network error or `404` (`CatbirdFeatures.refreshFromGatewayConfig`).
+    /// The user continued past the encrypted chat introduction or turned encrypted chat on.
+    /// A failure leaves the preference on; it never records an opt-out.
     @MainActor
-    func refreshRuntimeFeatureFlagsFromGateway() async {
-        #if DEBUG
-        let processInfo = ProcessInfo.processInfo
-        if processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || processInfo.arguments.contains("--e2e-mode")
-            || processInfo.arguments.contains("--enable-circles")
-            || processInfo.arguments.contains("--e2e-encrypted-circles")
-            || processInfo.arguments.contains("--messages-navigation-ui-fixture")
-            || processInfo.arguments.contains("--settings-ui-fixture")
-            || processInfo.arguments.contains("--mls-detail-ui-fixture")
-            || CatbirdGatewayConfiguration.current.isRuntimeFixture
-        {
-            return
-        }
-        #endif
-        _ = await CatbirdFeatures.refreshFromGatewayConfig(
-            origin: CatbirdGatewayConfiguration.current.origin
-        )
-        if !CatbirdFeatures.circlesSpaces {
-            circleCapability = .unknown
-            circleSupportsImages = false
-            circleEncryptionCache.reset()
-            circleOpenerCache.reset()
-        }
-        if !isMLSRuntimeAllowed {
-            await prepareMLSStorageReset()
-            mlsConversations = []
-            mlsConversationsDidChange += 1
-            updateMLSUnreadCount()
-        }
+    func optInToMLSChat() async throws {
+        ExperimentalSettings.shared.enableMLSChat(for: userDID)
+        try await initializeMLS()
+        await notificationManager.syncMLSPushGatewayRegistration()
+    }
+
+    /// The user turned encrypted chat off (or chose "Not now" on the introduction).
+    @MainActor
+    func optOutOfMLSChat() async {
+        let accountDID = userDID
+        await MLSUserOptOutSequence(
+            unregisterPushGateway: { [weak self] in
+                await self?.notificationManager.unregisterMLSPushGatewayForUserOptOut(accountDID: accountDID)
+            },
+            persistUserDisabled: {
+                ExperimentalSettings.shared.disableMLSChat(for: accountDID)
+            },
+            resetLocalMLSState: { [weak self] in
+                guard let self, self.userDID == accountDID else { return }
+                await self.prepareMLSStorageReset()
+                await self.loadMLSConversations()
+            }
+        ).run()
     }
 
     /// MLS starts only while this account admits work, so suspension cancels and drains it.
@@ -1092,7 +1089,6 @@ final class AppState {
         updateChatUnreadCount()
 
         accountServiceWork.start { [self] in
-            await refreshRuntimeFeatureFlagsFromGateway()
             await probeCircleCapabilities()
             startMLSIfEnabled()
         }
@@ -1168,7 +1164,6 @@ final class AppState {
         #endif
 
         accountServiceWork.start { [self] in
-            await refreshRuntimeFeatureFlagsFromGateway()
             await probeCircleCapabilities()
             startMLSIfEnabled()
         }
@@ -1354,7 +1349,7 @@ final class AppState {
         didSet { if circleCapability != .supported { circleSupportsImages = false } }
     }
     private(set) var circleSupportsImages = false
-    var circlesEnabled: Bool { CatbirdFeatures.circlesSpaces && circleCapability == .supported }
+    var circlesEnabled: Bool { circleCapability == .supported }
     @ObservationIgnored private var circleCapabilityProbeID: UUID?
     @ObservationIgnored private var circleCapabilityPDSURL: URL?
 
@@ -1388,7 +1383,6 @@ final class AppState {
     /// `CircleError.encryptionUnavailable`. Reset with `_circleService`.
     @MainActor
     func circleEncryptionContext() -> CircleEncryptionContext? {
-        guard CatbirdFeatures.circlesSpaces else { return nil }
         guard let coordinator = mlsCoordinator, !coordinator.isHandleClosed,
               let accountDID = try? DID(didString: userDID)
         else { return nil }
@@ -1428,7 +1422,6 @@ final class AppState {
     /// unreadable). Reset with `_circleService`.
     @MainActor
     func circlePostOpener() -> CirclePostOpener? {
-        guard CatbirdFeatures.circlesSpaces else { return nil }
 #if DEBUG
         if let e2eCircleOpener { return e2eCircleOpener }
 #endif
@@ -1527,10 +1520,6 @@ final class AppState {
     /// Unknown errors hide entry points without classifying the PDS as unsupported.
     @MainActor
     func probeCircleCapabilities() async {
-        guard CatbirdFeatures.circlesSpaces else {
-            circleCapability = .unknown
-            return
-        }
         guard AppStateManager.shared.lifecycle.appState === self else { return }
         let probeID = UUID()
         circleCapabilityProbeID = probeID
@@ -3321,6 +3310,7 @@ final class AppState {
         if status.eligible {
             do {
                 _ = try await coordinator.enrollDevice(grantedScopes: grantedScopes)
+                ExperimentalSettings.shared.recordMLSEnrollment(for: userDID)
                 logger.info("MLS: Device enrolled with post-quantum credentials (I16)")
             } catch {
                 logger.warning("MLS: Device enrollment deferred (possibly offline): \(error.localizedDescription)")
@@ -3336,11 +3326,8 @@ final class AppState {
     /// Explicitly invoked from the user-facing Spaces gate button after an opt-in attempt.
     @MainActor
     func reauthorizeSpacesForMLS() async {
-        guard CatbirdFeatures.mlsChat else { return }
-        let wasEnabled = ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
-        if !wasEnabled {
-            ExperimentalSettings.shared.enableMLSChat(for: userDID)
-        }
+        // Re-authorizing is an explicit request to use encrypted chat.
+        ExperimentalSettings.shared.enableMLSChat(for: userDID)
         let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
         defaults.set(
             MLSAppGroupStorage.requiredSpacesScopes,
@@ -3352,14 +3339,11 @@ final class AppState {
                 spacesEligibility = status
             }
             if spacesEligibility?.eligible == true {
-                _ = try? await coordinator.enrollDevice(grantedScopes: scopes)
+                if (try? await coordinator.enrollDevice(grantedScopes: scopes)) != nil {
+                    ExperimentalSettings.shared.recordMLSEnrollment(for: userDID)
+                }
                 await reloadMLSConversations()
-            } else if !wasEnabled {
-                ExperimentalSettings.shared.disableMLSChat(for: userDID)
-                await prepareMLSStorageReset()
             }
-        } else if !wasEnabled {
-            ExperimentalSettings.shared.disableMLSChat(for: userDID)
         }
     }
 
