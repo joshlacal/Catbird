@@ -7,10 +7,12 @@ import SwiftUI
 /// sidebar (functional items + feeds) and a detail pane routed by SidebarItem selection.
 struct MacOSMainView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.openWindow) private var openWindow
 
   @State private var selectedItem: SidebarItem? = .feed(.timeline)
   @State private var navigationPaths: [SidebarItem: NavigationPath] = [:]
+  @State private var newConversationRecipient: NewConversationRecipient?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSMainView")
 
@@ -20,6 +22,17 @@ struct MacOSMainView: View {
       .onKeyPress(.escape) { handleEscape() }
       .background { keyboardShortcutButtons }
       .modifier(MacOSDeepLinkHandlers(selectedItem: $selectedItem, appState: appState))
+      .onChange(of: sceneContext.navigationManager.pendingNewConversationRecipient) { _, recipient in
+        guard let recipient else { return }
+        sceneContext.navigationManager.pendingNewConversationRecipient = nil
+        newConversationRecipient = recipient
+      }
+      .sheet(item: $newConversationRecipient) { recipient in
+        PlatformAgeProtectedContent(operation: .directMessaging) {
+          NewConversationView(preselectedRecipient: recipient)
+        }
+        .frame(minWidth: 450, minHeight: 500)
+      }
   }
 
   private var mainSplitView: some View {
@@ -123,7 +136,6 @@ private struct MacOSDeepLinkHandlers: ViewModifier {
       .onChange(of: sceneContext.navigationManager.targetConversationId) { _, newValue in
         if newValue != nil {
           selectedItem = .chat
-          sceneContext.navigationManager.targetConversationId = nil
         }
       }
       .onChange(of: sceneContext.navigationManager.targetMLSConversationId) { _, newValue in

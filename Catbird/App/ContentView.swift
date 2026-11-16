@@ -232,6 +232,7 @@ struct MainContentView: View {
   @State private var pendingSelectedDraft: DraftPostViewModel?
   @State private var showingSettings = false
   @State private var showingNewMessageSheet = false
+  @State private var newConversationRecipient: NewConversationRecipient?
   @State private var hasInitializedFeed = false
   @State private var showingOnboarding = false
   @State private var showingVerifyEmailCode: String?
@@ -644,14 +645,20 @@ struct MainContentView: View {
         }
       }
       #endif
-      .sheet(isPresented: $showingNewMessageSheet) {
+      .sheet(isPresented: $showingNewMessageSheet, onDismiss: { newConversationRecipient = nil }) {
         PlatformAgeProtectedContent(operation: .directMessaging) {
-          NewConversationView()
+          NewConversationView(preselectedRecipient: newConversationRecipient)
         }
         .applyAppStateEnvironment(appState)
         .environment(sceneContext)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+      }
+      .onChange(of: sceneContext.navigationManager.pendingNewConversationRecipient) { _, recipient in
+        guard let recipient else { return }
+        sceneContext.navigationManager.pendingNewConversationRecipient = nil
+        newConversationRecipient = recipient
+        showingNewMessageSheet = true
       }
       .sheet(isPresented: welcomePresentation) {
         WelcomeOnboardingView()

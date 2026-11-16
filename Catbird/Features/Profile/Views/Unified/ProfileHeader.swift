@@ -808,15 +808,9 @@ struct ProfileHeader: View {
               profile.viewer?.blocking == nil,
               profile.viewer?.blockedBy != true,
               profile.viewer?.blockingByList == nil else { return false }
-        switch profile.associated?.chat?.allowIncoming {
-        case "none":
-            return false
-        case "following":
-            // The recipient must follow the viewer. Missing viewer metadata remains unknown.
-            return profile.viewer == nil || profile.viewer?.followedBy != nil
-        default:
-            return true
-        }
+        // Bluesky DM preferences govern only the Bluesky option. They must not
+        // hide an existing encrypted chat or the encrypted-chat choice.
+        return true
     }
 
     private func cancelChatOpening() {
@@ -827,7 +821,7 @@ struct ProfileHeader: View {
         chatOpenError = nil
     }
 
-    private func openBlueskyChat() {
+    private func openChat() {
         guard canOfferChat, !isOpeningChat else { return }
         let sourceAppState = appState
         let chatManager = appState.chatManager
@@ -855,8 +849,13 @@ struct ProfileHeader: View {
                   profile.did.didString() == targetDID, canOfferChat,
                   sceneContext === context, !context.isInvalidated,
                   context.accountDID == viewerDID else { return }
-            let result = await chatManager.openProfileConversation(
+            // Read both kinds of existing conversation; nothing is created here.
+            let recipient = NewConversationRecipient(profile: profile)
+            let blueskyConvo = await chatManager.existingProfileConversation(
                 with: targetDID, expectedViewerDID: viewerDID
+            )
+            let encrypted = await ExistingConversationFinder.encryptedDirect(
+                with: targetDID, appState: sourceAppState
             )
             guard !Task.isCancelled, chatOperationID == operationID,
                   AppStateManager.shared.lifecycle.appState === sourceAppState,
@@ -866,17 +865,20 @@ struct ProfileHeader: View {
                   profile.did.didString() == targetDID, canOfferChat,
                   sceneContext === context, !context.isInvalidated,
                   context.accountDID == viewerDID else { return }
-            guard let convoID = result.convoId, result.canChat == true else {
-                chatOpenError = result.canChat == false
-                    ? "This account isn’t accepting messages from you."
-                    : "Couldn’t open this conversation. Try again."
-                return
-            }
+            let destination = ChatEntryRouter.destination(
+                for: recipient,
+                bluesky: ExistingConversationFinder.blueskyDirect(blueskyConvo),
+                encrypted: encrypted
+            )
             // The operation is complete before tab selection makes this profile disappear.
             chatOpeningTask = nil
             chatOperationID = nil
             isOpeningChat = false
             let navigation = context.navigationManager
+            if case .newConversation(let recipient) = destination {
+                navigation.pendingNewConversationRecipient = recipient
+                return
+            }
             navigation.updateCurrentTab(AppNavigationManager.chatTabIndex)
             navigation.tabSelection?(AppNavigationManager.chatTabIndex)
             // Tab selection can synchronously retire the source account or scene.
@@ -887,11 +889,23 @@ struct ProfileHeader: View {
                   appState.userDID == viewerDID, canOfferChat,
                   !context.isInvalidated, context.accountDID == viewerDID,
                   sceneContext === context else { return }
-            #if os(iOS)
-            navigation.navigate(to: .conversation(convoID), in: AppNavigationManager.chatTabIndex)
-            #elseif os(macOS)
-            navigation.targetConversationId = convoID
-            #endif
+            switch destination {
+            case .bluesky(let convoID):
+                #if os(iOS)
+                navigation.navigate(to: .conversation(convoID), in: AppNavigationManager.chatTabIndex)
+                #elseif os(macOS)
+                navigation.targetConversationId = convoID
+                #endif
+            case .encrypted(let conversationID):
+                ExistingConversationFinder.revealIfHidden(conversationID, accountDID: viewerDID)
+                #if os(iOS)
+                navigation.navigate(to: .mlsConversation(conversationID), in: AppNavigationManager.chatTabIndex)
+                #elseif os(macOS)
+                navigation.targetMLSConversationId = conversationID
+                #endif
+            case .newConversation:
+                break
+            }
         }
     }
 
@@ -1021,7 +1035,7 @@ struct ProfileHeader: View {
     /// Circular chat button that sits to the left of Follow. It, the bell and the
     /// Follow / Following / Edit Profile pills all render 36pt tall.
     private var messageButton: some View {
-        Button(action: openBlueskyChat) {
+        Button(action: openChat) {
             Group {
                 if isOpeningChat {
                     ProgressView()
@@ -1042,7 +1056,7 @@ struct ProfileHeader: View {
         }
         .buttonStyle(.plain)
         .disabled(isOpeningChat)
-        .accessibilityLabel(isOpeningChat ? "Opening chat with @\(profile.handle)" : "Message @\(profile.handle) on Bluesky")
+        .accessibilityLabel(isOpeningChat ? "Opening chat with @\(profile.handle)" : "Message @\(profile.handle)")
         .accessibilityHint("Opens a conversation without sending a message")
     }
 

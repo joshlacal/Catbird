@@ -220,6 +220,13 @@ struct ConversationManagementView: View {
     Section {
       VStack(spacing: 20) {
         ConversationHeroView(conversation: convo, currentUserDID: appState.userDID)
+        Text(convo.isGroupConversation
+          ? "A group conversation on Bluesky."
+          : ChatConversationKind.bluesky.infoDetail)
+          .appFont(AppTextRole.footnote)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .accessibilityIdentifier("chatInfo.kind")
         quickActionsRow
       }
       .frame(maxWidth: .infinity)

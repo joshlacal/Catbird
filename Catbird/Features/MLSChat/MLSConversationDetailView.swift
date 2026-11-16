@@ -124,6 +124,7 @@ struct MLSOrdinaryConversationDetailView: View {
           dataSource: dataSource,
           navigationPath: chatNavigationPath,
           title: groupTitle ?? "Encrypted Chat",
+          kind: .encrypted,
           composerConfig: makeComposerConfig(for: dataSource),
           onEditMessage: { message in
             guard message.canEdit else { return }
@@ -575,6 +576,19 @@ struct MLSOrdinaryConversationDetailView: View {
   private var groupInfoSheet: some View {
     NavigationStack {
       Form {
+        Section {
+          Label {
+            VStack(alignment: .leading, spacing: 2) {
+              Text(ChatConversationKind.encrypted.infoTitle)
+              Text(ChatConversationKind.encrypted.infoDetail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+          } icon: {
+            Image(systemName: "lock.fill").foregroundStyle(.green)
+          }
+          .accessibilityIdentifier("chatInfo.kind")
+        }
         Section("Encrypted Group Metadata") {
           TextField("Title", text: Binding(
             get: { groupTitle ?? "" },

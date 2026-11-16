@@ -7,11 +7,30 @@ struct ChatProfileRowView: View {
     let profile: ProfileDisplayable
     var isStartingConversation: Bool = false
     var showMessageIcon: Bool = true
+    var requiresBlueskyMessageability: Bool = true
     var onSelect: (() -> Void)?
 
     @Environment(AppState.self) private var appState
     @State private var isMessageable: Bool?
     @State private var isCheckingAvailability: Bool = false
+
+    private var isSelfOrBlocked: Bool {
+        if profile.did.didString() == appState.userDID { return true }
+        if let profileView = profile as? AppBskyActorDefs.ProfileView {
+            return profileView.viewer?.blocking != nil || profileView.viewer?.blockedBy == true
+        }
+        if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
+            return profileViewBasic.viewer?.blocking != nil || profileViewBasic.viewer?.blockedBy == true
+        }
+        if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
+            return chatProfile.viewer?.blocking != nil || chatProfile.viewer?.blockedBy == true
+        }
+        return true
+    }
+
+    private var canSelect: Bool {
+        !isSelfOrBlocked && (!requiresBlueskyMessageability || isMessageable != false)
+    }
 
     var body: some View {
         Button {
@@ -48,7 +67,7 @@ struct ChatProfileRowView: View {
                             .foregroundColor(.secondary)
                             .lineLimit(1)
 
-                        if isMessageable == false {
+                        if requiresBlueskyMessageability && isMessageable == false {
                             Text("· Can’t be messaged")
                                 .appFont(AppTextRole.caption)
                                 .foregroundColor(.secondary)
@@ -66,22 +85,22 @@ struct ChatProfileRowView: View {
                     ProgressView()
                         .scaleEffect(0.8)
                         .padding(.trailing, 4)
-                } else if showMessageIcon && (isMessageable ?? true) {
+                } else if showMessageIcon && canSelect {
                     Image(systemName: "message")
                         .foregroundColor(.accentColor)
-                } else if isMessageable == false {
+                } else if !canSelect {
                     Image(systemName: "person.crop.circle.badge.xmark")
                         .foregroundColor(.secondary)
                         .appFont(AppTextRole.caption)
                 }
             }
             .contentShape(Rectangle())
-            .opacity((isMessageable ?? true) ? 1.0 : 0.6)
+            .opacity(canSelect ? 1.0 : 0.6)
         }
         .buttonStyle(.plain)
-        .disabled(isStartingConversation || isMessageable == false)
+        .disabled(isStartingConversation || !canSelect)
         .task {
-            await checkMessageability()
+            if requiresBlueskyMessageability { await checkMessageability() }
         }
     }
 

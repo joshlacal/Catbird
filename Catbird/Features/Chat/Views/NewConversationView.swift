@@ -3,13 +3,29 @@ import OSLog
 import Petrel
 import SwiftUI
 
-/// Unified new conversation view with segmented picker for Bluesky DM and Catbird Group modes.
+/// New conversation screen. "Message" picks a person, then the user picks the kind of
+/// conversation: an encrypted chat (when the person can use it) or a Bluesky DM. The two kinds
+/// are separate conversations; nothing is chosen or converted automatically.
 struct NewConversationView: View {
   @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
 
+  /// A person picked before the screen opened, for example from a profile.
+  let preselectedRecipient: NewConversationRecipient?
+
+  init(preselectedRecipient: NewConversationRecipient? = nil) {
+    self.preselectedRecipient = preselectedRecipient
+  }
+
   // MARK: - State
+
+  @State private var kindModel: NewConversationKindModel?
+  @State private var didApplyPreselection = false
+  @State private var showingIntroduction = false
+  @State private var showingChatSettingsPointer = false
+  @State private var showingChatSettings = false
+  @State private var groupCapabilities: [String: MLSChatCapabilityStatus] = [:]
 
   @State private var introductionText = ""
   @State private var invitationNotes: MLSGroupInvitationNotes?
@@ -35,7 +51,7 @@ struct NewConversationView: View {
   enum ConversationMode: String, CaseIterable {
     case bluesky = "Message"
     case blueskyGroup = "Bluesky Group"
-    case catbirdGroup = "Catbird Group"
+    case catbirdGroup = "Encrypted Group"
   }
 
   enum Step {
@@ -54,11 +70,11 @@ struct NewConversationView: View {
 
   private var navigationTitle: String {
     switch (mode, step) {
-    case (.bluesky, _): return "New Message"
+    case (.bluesky, _): return kindModel == nil ? "New Message" : "Start a Conversation"
     case (.blueskyGroup, .selectContacts): return "Add Participants"
     case (.blueskyGroup, .configureGroup): return "Group Details"
     case (.blueskyGroup, .creating): return "Creating Group"
-    case (.catbirdGroup, .selectContacts): return mlsEnabled ? "Add Participants" : "Catbird Groups"
+    case (.catbirdGroup, .selectContacts): return mlsEnabled ? "Add Participants" : "Encrypted Groups"
     case (.catbirdGroup, .configureGroup): return "Group Details"
     case (.catbirdGroup, .creating): return "Creating Group"
     }
@@ -74,7 +90,9 @@ struct NewConversationView: View {
     NavigationStack {
       ZStack {
         if let invitationNotes {
-          MLSGroupInvitationNotesView(batch: invitationNotes) { dismiss() }
+          MLSGroupInvitationNotesView(batch: invitationNotes) {
+            openEncryptedConversation(invitationNotes.conversationID)
+          }
         } else {
           VStack(spacing: 0) {
             segmentedPicker
@@ -96,10 +114,31 @@ struct NewConversationView: View {
           creationOverlay
         }
       }
+      .sheet(isPresented: $showingIntroduction) {
+        MLSIntroSheet(
+          onContinue: { respondToIntroduction(accept: true) },
+          onNotNow: { respondToIntroduction(accept: false) }
+        )
+        .presentationDetents([.large])
+      }
+      .sheet(isPresented: $showingChatSettings) {
+        ChatSettingsView()
+          .applyAppStateEnvironment(appState)
+      }
+      .alert("Encrypted Chat Is Off", isPresented: $showingChatSettingsPointer) {
+        Button("Open Chat Settings") { showingChatSettings = true }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Turn on encrypted chat in Settings > Chat to start an encrypted chat.")
+      }
+      .task {
+        guard !didApplyPreselection else { return }
+        didApplyPreselection = true
+        if let preselectedRecipient { await pick(preselectedRecipient) }
+      }
       .sheet(item: $directDraft) { draft in
         MLSDirectComposeView(draft: draft) { conversationID in
-          sceneContext.navigationManager.targetMLSConversationId = conversationID
-          dismiss()
+          openEncryptedConversation(conversationID)
         }
       }
       .navigationTitle(invitationNotes == nil ? navigationTitle : "Invitation Notes")
@@ -135,6 +174,8 @@ struct NewConversationView: View {
       .onDisappear { creationTask?.cancel() }
       .onChange(of: mode) { _, _ in
         creationTask?.cancel()
+        kindModel = nil
+        groupCapabilities = [:]
         step = .selectContacts
         selectedDIDs.removeAll()
         selectionOrder.removeAll()
@@ -146,6 +187,8 @@ struct NewConversationView: View {
         invitationNotes = nil
         introductionText = ""
         directDraft = nil
+        kindModel = nil
+        groupCapabilities = [:]
         creationTask?.cancel()
         step = .selectContacts
         selectedDIDs.removeAll()
@@ -176,14 +219,25 @@ struct NewConversationView: View {
   private var mainContent: some View {
     switch (mode, step) {
     case (.bluesky, _):
-      ContactSearchList(
-        selectionMode: .single,
-        showMLSStatus: false,
-        selectedDIDs: .constant([]),
-        selectionOrder: .constant([]),
-        selectedProfiles: .constant([:]),
-        onSingleSelect: startBlueskyConversation
-      )
+      if let kindModel {
+        ConversationKindChooserView(
+          model: kindModel,
+          onChoose: { kind in
+            creationTask = Task { await kindModel.choose(kind, handlers: kindHandlers) }
+          },
+          onChangePerson: { self.kindModel = nil }
+        )
+      } else {
+        ContactSearchList(
+          selectionMode: .single,
+          showMLSStatus: false,
+          requiresBlueskyMessageability: false,
+          selectedDIDs: .constant([]),
+          selectionOrder: .constant([]),
+          selectedProfiles: .constant([:]),
+          onSingleSelect: { profile in await pick(NewConversationRecipient(profile: profile)) }
+        )
+      }
 
     case (.blueskyGroup, .selectContacts):
       ContactSearchList(
@@ -229,7 +283,8 @@ struct NewConversationView: View {
           showMLSStatus: true,
           selectedDIDs: $selectedDIDs,
           selectionOrder: $selectionOrder,
-          selectedProfiles: $selectedProfiles
+          selectedProfiles: $selectedProfiles,
+          onMLSCapabilityChange: { did, status in groupCapabilities[did] = status }
         )
         .safeAreaInset(edge: .bottom) {
           selectionActionBar
@@ -259,11 +314,45 @@ struct NewConversationView: View {
 
   // MARK: - Selection Action Bar
 
+  /// Every picked member of an encrypted group must be able to use encrypted chat.
+  private var encryptedGroupEvaluation: EncryptedGroupMembership.Evaluation {
+    EncryptedGroupMembership.evaluate(selected: selectionOrder, capabilities: groupCapabilities)
+  }
+
+  private var canContinueSelection: Bool {
+    !selectedDIDs.isEmpty && (mode != .catbirdGroup || encryptedGroupEvaluation.canContinue)
+  }
+
+  private func memberNames(_ dids: [String]) -> String {
+    dids.map { did in selectedProfiles[did].map { "@\($0.handle)" } ?? did }.joined(separator: ", ")
+  }
+
+  @ViewBuilder
+  private var encryptedGroupMembershipNotice: some View {
+    let evaluation = encryptedGroupEvaluation
+    if mode == .catbirdGroup, !evaluation.notCapable.isEmpty {
+      Label(
+        "Encrypted chat isn’t available yet for \(memberNames(evaluation.notCapable)).",
+        systemImage: "lock.slash"
+      )
+      .designCaption()
+      .foregroundColor(.secondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .accessibilityIdentifier("newConversation.groupNotCapable")
+    } else if mode == .catbirdGroup, !evaluation.unchecked.isEmpty {
+      Label("Checking encrypted chat for \(memberNames(evaluation.unchecked))…", systemImage: "clock")
+        .designCaption()
+        .foregroundColor(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
   @ViewBuilder
   private var selectionActionBar: some View {
     let isBlueskyGroup = mode == .blueskyGroup
 
     VStack(spacing: DesignTokens.Spacing.sm) {
+      encryptedGroupMembershipNotice
       HStack {
         if !selectedDIDs.isEmpty {
           Label("\(selectedDIDs.count) selected", systemImage: "person.3")
@@ -278,8 +367,8 @@ struct NewConversationView: View {
       }
 
       Button {
-        if !isBlueskyGroup && selectedDIDs.count == 1 {
-          creationTask = Task { await handleDirectMLSMessage() }
+        if !isBlueskyGroup && selectedDIDs.count == 1, let did = selectedDIDs.first {
+          creationTask = Task { await handleDirectMLSMessage(participantDid: did) }
         } else {
           withAnimation(.spring(response: 0.25)) {
             step = .configureGroup
@@ -296,7 +385,7 @@ struct NewConversationView: View {
         }
       }
       .buttonStyle(.borderedProminent)
-      .disabled(selectedDIDs.isEmpty || isCheckingExisting)
+      .disabled(!canContinueSelection || isCheckingExisting)
     }
     .padding(.horizontal)
     .padding(.vertical, DesignTokens.Spacing.base)
@@ -325,15 +414,15 @@ struct NewConversationView: View {
       .fontWeight(.semibold)
     case (.catbirdGroup, .selectContacts) where mlsEnabled:
       Button("Next") {
-        if selectedDIDs.count == 1 {
-          creationTask = Task { await handleDirectMLSMessage() }
+        if selectedDIDs.count == 1, let did = selectedDIDs.first {
+          creationTask = Task { await handleDirectMLSMessage(participantDid: did) }
         } else {
           withAnimation(.spring(response: 0.25)) {
             step = .configureGroup
           }
         }
       }
-      .disabled(selectedDIDs.isEmpty || isCheckingExisting)
+      .disabled(!canContinueSelection || isCheckingExisting)
       .fontWeight(.semibold)
     case (.catbirdGroup, .configureGroup):
       Button("Create") {
@@ -417,12 +506,7 @@ struct NewConversationView: View {
     ) {
       logger.info("Successfully created Bluesky group conversation")
       isCreating = false
-      dismiss()
-      #if os(iOS)
-      sceneContext.navigationManager.navigate(to: .conversation(convoId), in: 4)
-      #else
-      sceneContext.navigationManager.targetConversationId = convoId
-      #endif
+      openBlueskyConversation(convoId)
     } else {
       logger.error("Failed to create Bluesky group conversation")
       // Show the specific reason here; the sheet hides the Messages tab's alert
@@ -437,18 +521,116 @@ struct NewConversationView: View {
 
   // MARK: - Bluesky DM Creation
 
+  // MARK: - Conversation Kind
+
   @MainActor
-  private func startBlueskyConversation(_ profile: any ProfileDisplayable) async {
-    logger.debug("Starting Bluesky conversation with: \(profile.handle.description)")
+  private func selectChatTab() {
+    #if os(iOS)
+    let navigation = sceneContext.navigationManager
+    navigation.updateCurrentTab(AppNavigationManager.chatTabIndex)
+    navigation.tabSelection?(AppNavigationManager.chatTabIndex)
+    #endif
+  }
+
+  @MainActor
+  private func openBlueskyConversation(_ conversationID: String) {
+    dismiss()
+    selectChatTab()
+    #if os(iOS)
+    sceneContext.navigationManager.navigate(
+      to: .conversation(conversationID), in: AppNavigationManager.chatTabIndex)
+    #else
+    sceneContext.navigationManager.targetConversationId = conversationID
+    #endif
+  }
+
+  @MainActor
+  private func openEncryptedConversation(_ conversationID: String) {
+    dismiss()
+    selectChatTab()
+    sceneContext.navigationManager.targetMLSConversationId = conversationID
+  }
+
+  @MainActor
+  private func pick(_ recipient: NewConversationRecipient) async {
+    let model = NewConversationKindModel(
+      recipient: recipient,
+      checkCapability: { did, force in
+        await MLSChatCapabilityResolver.shared.capability(for: did, forceRefresh: force)
+      },
+      selfReadiness: { [appState] in
+        EncryptedChatSelfReadiness.evaluate(
+          runtimeAllowed: appState.isMLSRuntimeAllowed,
+          userTurnedOff: ExperimentalSettings.shared.isMLSUserDisabled(for: appState.userDID),
+          eligibilityProblem: appState.spacesEligibility.flatMap { $0.eligible ? nil : $0.userMessage }
+        )
+      }
+    )
+    kindModel = model
+    await model.load()
+  }
+
+  private var kindHandlers: NewConversationKindHandlers {
+    NewConversationKindHandlers(
+      startEncrypted: { recipient in
+        selectedProfiles[recipient.did] = recipient.participant
+        await handleDirectMLSMessage(participantDid: recipient.did)
+      },
+      startBluesky: { recipient in await startBlueskyConversation(did: recipient.did) },
+      presentIntroduction: { showingIntroduction = true },
+      presentChatSettingsPointer: { showingChatSettingsPointer = true },
+      presentAccountNotEligible: { message in
+        errorTitle = "Encrypted Chat Unavailable"
+        errorMessage = message
+        showingError = true
+      }
+    )
+  }
+
+  /// The introduction from the encrypted chat option. Continue turns encrypted chat on; the
+  /// user then picks the kind again. Not now records the opt-out. Neither starts a chat.
+  private func respondToIntroduction(accept: Bool) {
+    showingIntroduction = false
+    let accountDID = appState.userDID
+    Task { @MainActor in
+      guard appState.userDID == accountDID else { return }
+      if accept {
+        do {
+          try await appState.optInToMLSChat()
+        } catch {
+          logger.error("Encrypted chat setup from the new conversation screen failed")
+        }
+      } else {
+        await appState.optOutOfMLSChat()
+      }
+    }
+  }
+
+  @MainActor
+  private func startBlueskyConversation(did: String) async {
+    logger.debug("Starting Bluesky conversation")
+    let accountDID = appState.userDID
+    if let existing = await appState.chatManager.existingProfileConversation(
+      with: did, expectedViewerDID: accountDID) {
+      guard !Task.isCancelled, appState.userDID == accountDID else { return }
+      openBlueskyConversation(existing.id)
+      return
+    }
+    let canMessage = await appState.chatManager.canMessage(members: [accountDID, did])
+    guard !Task.isCancelled, appState.userDID == accountDID else { return }
+    guard canMessage == true else {
+      errorTitle = "Bluesky DM Unavailable"
+      errorMessage = canMessage == false
+        ? "This person isn’t accepting new Bluesky DMs."
+        : "Couldn’t check whether this person accepts Bluesky DMs. Try again."
+      showingError = true
+      return
+    }
     if let convoId = await appState.chatManager.startConversationWith(
-      userDID: profile.did.didString()
+      userDID: did
     ) {
-      dismiss()
-      #if os(iOS)
-      sceneContext.navigationManager.navigate(to: .conversation(convoId), in: 4)
-      #else
-      sceneContext.navigationManager.targetConversationId = convoId
-      #endif
+      guard !Task.isCancelled, appState.userDID == accountDID else { return }
+      openBlueskyConversation(convoId)
     } else {
       // Show the specific reason here; the sheet hides the Messages tab's alert
       errorTitle = "Couldn’t Start Conversation"
@@ -462,39 +644,26 @@ struct NewConversationView: View {
   // MARK: - MLS Direct Message (1:1)
 
   @MainActor
-  private func handleDirectMLSMessage() async {
+  private func handleDirectMLSMessage(participantDid: String) async {
     let accountDID = appState.userDID
-    guard selectedDIDs.count == 1,
-          let participantDid = selectedDIDs.first else { return }
     errorTitle = "Couldn’t Start Conversation"
 
     isCheckingExisting = true
     defer { isCheckingExisting = false }
 
-    guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
+    guard await appState.getOrOpenMLSCoordinator() != nil else {
       guard !Task.isCancelled else { return }
-      errorMessage = appState.spacesEligibility?.userMessage ?? "MLS service not available"
+      errorMessage = appState.spacesEligibility.flatMap { $0.eligible ? nil : $0.userMessage }
+        ?? "Encrypted chat isn’t ready on this device yet. Try again in a moment."
       showingError = true
       return
     }
 
-    if let rows = try? await mlsCoordinator.listConversations(limit: 100) {
-      let targetLower = participantDid.lowercased()
-      for row in rows {
-        let msgs = (try? await mlsCoordinator.listMessages(conversationId: row.conversationId, limit: 20)) ?? []
-        let peerSenders = Set(msgs.map { $0.senderDid.lowercased() }.filter { $0 != accountDID.lowercased() })
-        if peerSenders == [targetLower] {
-          guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-          let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-          let hiddenKey = "mls.deletedForMe.\(accountDID.lowercased())"
-          var hiddenIDs = Set(defaults.stringArray(forKey: hiddenKey) ?? [])
-          hiddenIDs.remove(row.conversationId)
-          defaults.set(Array(hiddenIDs).sorted(), forKey: hiddenKey)
-          dismiss()
-          sceneContext.navigationManager.targetMLSConversationId = row.conversationId
-          return
-        }
-      }
+    if let existing = await ExistingConversationFinder.encryptedDirect(with: participantDid, appState: appState) {
+      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+      ExistingConversationFinder.revealIfHidden(existing.id, accountDID: accountDID)
+      openEncryptedConversation(existing.id)
+      return
     }
 
     guard !Task.isCancelled, appState.userDID == accountDID else { return }
@@ -516,7 +685,14 @@ struct NewConversationView: View {
     guard !membersSnapshot.isEmpty,
           let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
       guard !Task.isCancelled else { return }
-      errorMessage = appState.spacesEligibility?.userMessage ?? "MLS service not available"
+      errorMessage = appState.spacesEligibility.flatMap { $0.eligible ? nil : $0.userMessage }
+        ?? "Encrypted chat isn’t ready on this device yet. Try again in a moment."
+      showingError = true
+      return
+    }
+    guard EncryptedGroupMembership.evaluate(selected: membersSnapshot, capabilities: groupCapabilities).canContinue
+    else {
+      errorMessage = "Everyone in an encrypted group must be able to use encrypted chat."
       showingError = true
       return
     }
@@ -556,14 +732,14 @@ struct NewConversationView: View {
 
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
       logger.info("Successfully created MLS conversation \(created.conversationId)")
-      dismiss()
+      openEncryptedConversation(created.conversationId)
     } catch {
       guard !Task.isCancelled, !(error is CancellationError), AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-      logger.error("Failed to create MLS conversation: \(error.localizedDescription)")
+      logger.error("Failed to create MLS conversation")
       if let pending = try? await mlsCoordinator.pendingGroupCreationStatus(conversationId: conversationID) {
         pendingGroupCreation = pending
       }
-      errorMessage = error.localizedDescription
+      errorMessage = ChatFailureMessage.text(for: error, context: .createEncryptedGroup)
       showingError = true
       step = selectedDIDs.count == 1 ? .selectContacts : .configureGroup
     }
@@ -587,7 +763,7 @@ struct NewConversationView: View {
       }
     } catch {
       pendingGroupCreation = try? await mlsCoordinator.pendingGroupCreationStatus(conversationId: pending.conversationId)
-      errorMessage = error.localizedDescription
+      errorMessage = ChatFailureMessage.text(for: error, context: .retryEncryptedGroup)
       showingError = true
     }
   }
@@ -601,7 +777,7 @@ struct NewConversationView: View {
       _ = try await mlsCoordinator.cancelPendingGroupCreation(conversationId: pending.conversationId)
       pendingGroupCreation = nil
     } catch {
-      errorMessage = error.localizedDescription
+      errorMessage = ChatFailureMessage.text(for: error, context: .cancelEncryptedGroup)
       showingError = true
     }
   }

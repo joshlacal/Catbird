@@ -80,10 +80,9 @@ struct MacOSChatContentView: View {
       handleAccountContextChanged()
     }
     .onChange(of: sceneContext.navigationManager.targetConversationId) { _, newValue in
-      if let convoId = newValue, convoId != selectedConvoId {
-        selectedConvoId = convoId
-        sceneContext.navigationManager.targetConversationId = nil
-      }
+      guard let convoId = newValue else { return }
+      if convoId != selectedConvoId { selectedConvoId = convoId }
+      sceneContext.navigationManager.targetConversationId = nil
     }
     .onChange(of: sceneContext.navigationManager.targetMLSConversationId) { _, newValue in
       guard let requestedID = newValue else { return }
@@ -146,6 +145,11 @@ struct MacOSChatContentView: View {
     }
     appState.chatManager.startConversationsPolling()
     coordinator.blueskyConversations = appState.chatManager.acceptedConversations
+
+    if let convoId = sceneContext.navigationManager.targetConversationId {
+      selectedConvoId = convoId
+      sceneContext.navigationManager.targetConversationId = nil
+    }
 
     // MLS
     coordinator.mlsEnabled = mlsChatEnabledForCurrentAccount

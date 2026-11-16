@@ -284,6 +284,14 @@ enum MLSGroupInvitationNotesStore {
 
 // MARK: - Direct Compose & Group Invitation Views
 
+enum MLSDirectComposeSendGate {
+  static func canSend(text: String, capability: MLSChatCapability?, isSubmitting: Bool) -> Bool {
+    !isSubmitting
+      && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && capability?.isCapable == true
+  }
+}
+
 struct MLSDirectComposeView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
@@ -294,6 +302,10 @@ struct MLSDirectComposeView: View {
   @State private var messageText: String
   @State private var isSubmitting = false
   @State private var errorMessage: String?
+  /// The recipient's encrypted chat answer. This screen is also reached from Siri, shortcuts
+  /// and links, so it says plainly when the person cannot be messaged this way yet.
+  @State private var recipientCapability: MLSChatCapability?
+  @State private var capabilityCheckID = UUID()
 
   init(draft: MLSDirectComposeDraft, onCreated: @escaping (String) -> Void) {
     self.draft = draft
@@ -311,6 +323,23 @@ struct MLSDirectComposeView: View {
         Section("Opening Encrypted Message") {
           TextEditor(text: $messageText)
             .frame(minHeight: 110)
+        }
+        if let capability = recipientCapability, let notice = ChatFailureMessage.text(for: capability) {
+          Section {
+            Text(notice)
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+            if case .unknown = capability {
+              Button("Try again") {
+                Task { await checkRecipient(forceRefresh: true) }
+              }
+              .disabled(isSubmitting)
+            } else {
+              Text("You can send them a Bluesky DM from New Message.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+          }
         }
         if let errorMessage {
           Section {
@@ -330,23 +359,44 @@ struct MLSDirectComposeView: View {
           Button("Send") {
             Task { await sendInitialMessage() }
           }
-          .disabled(isSubmitting || messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          .disabled(!MLSDirectComposeSendGate.canSend(
+            text: messageText, capability: recipientCapability, isSubmitting: isSubmitting))
         }
       }
+      .task { await checkRecipient(forceRefresh: false) }
     }
   }
 
   @MainActor
+  private func checkRecipient(forceRefresh: Bool) async {
+    let checkID = UUID()
+    capabilityCheckID = checkID
+    recipientCapability = nil
+    let result = await MLSChatCapabilityResolver.shared.capability(
+      for: draft.recipientDID, forceRefresh: forceRefresh)
+    guard !Task.isCancelled, capabilityCheckID == checkID, draft.accountDID == appState.userDID else { return }
+    recipientCapability = result
+  }
+
+  @MainActor
   private func sendInitialMessage() async {
+    guard MLSDirectComposeSendGate.canSend(
+      text: messageText, capability: recipientCapability, isSubmitting: isSubmitting),
+      draft.accountDID == appState.userDID else { return }
     let trimmed = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+    isSubmitting = true
+    defer { isSubmitting = false }
     do {
       try MLSDirectComposeDraftStore.validateText(trimmed)
+      await checkRecipient(forceRefresh: true)
+      guard !Task.isCancelled, draft.accountDID == appState.userDID else { return }
+      guard recipientCapability?.isCapable == true else { return }
       guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
-        errorMessage = "Encrypted chat is unavailable right now."
+        errorMessage = "Encrypted chat isn’t ready on this device yet. Try again in a moment."
         return
       }
-      isSubmitting = true
-      defer { isSubmitting = false }
+      guard !Task.isCancelled, draft.accountDID == appState.userDID,
+            recipientCapability?.isCapable == true else { return }
       let conversationID = UUID().uuidString.lowercased()
       let sequencerDID = appState.defaultMLSSequencerDID
       let created = try await coordinator.createGroup(
@@ -364,7 +414,7 @@ struct MLSDirectComposeView: View {
       onCreated(created.conversationId)
       dismiss()
     } catch {
-      errorMessage = error.localizedDescription
+      errorMessage = ChatFailureMessage.text(for: error, context: .startEncryptedChat)
     }
   }
 }

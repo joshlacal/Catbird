@@ -55,6 +55,10 @@ import SwiftUI
     // Target MLS conversation for deep-link navigation (Chat tab specific)
     var targetMLSConversationId: String?
 
+    // A person to start a new conversation with; the root view presents the new
+    // conversation screen with them picked and clears this.
+    var pendingNewConversationRecipient: NewConversationRecipient?
+
     // Post staged for share-to-chat; consumed once by ConversationView
     // when the matching conversation opens.
     var pendingChatShare: PendingChatShare?

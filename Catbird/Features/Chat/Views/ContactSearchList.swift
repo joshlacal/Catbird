@@ -17,6 +17,7 @@ struct ContactSearchList: View {
 
   let selectionMode: SelectionMode
   let showMLSStatus: Bool
+  var requiresBlueskyMessageability = true
 
   /// Multi-select: bound set of selected DIDs
   @Binding var selectedDIDs: Set<String>
@@ -27,6 +28,8 @@ struct ContactSearchList: View {
   /// Single-select: called when a contact is tapped; the row shows progress
   /// until it returns
   var onSingleSelect: (@MainActor (any ProfileDisplayable) async -> Void)?
+  /// Multi-select with encryption status: called with each person's encrypted chat answer.
+  var onMLSCapabilityChange: (@MainActor (String, MLSChatCapabilityStatus) -> Void)?
 
   @Environment(AppState.self) private var appState
   @State private var searchText = ""
@@ -38,11 +41,7 @@ struct ContactSearchList: View {
   @State private var searchError: String?
   @State private var searchTask: Task<Void, Never>?
   @State private var searchGeneration = UUID()
-  enum ContactMLSAvailability: Sendable, Equatable {
-    case available
-    case unavailable
-    case unknown
-  }
+  typealias ContactMLSAvailability = MLSChatCapabilityStatus
 
   /// DID of the contact whose conversation is being started, if any
   @State private var startingDID: String?
@@ -191,6 +190,7 @@ struct ContactSearchList: View {
           ChatProfileRowView(
             profile: profile,
             isStartingConversation: startingDID == profile.did.didString(),
+            requiresBlueskyMessageability: requiresBlueskyMessageability,
             onSelect: { startConversation(with: profile) }
           )
           .disabled(startingDID != nil)
@@ -230,6 +230,7 @@ struct ContactSearchList: View {
             ChatProfileRowView(
               profile: profile,
               isStartingConversation: startingDID == profile.did.didString(),
+              requiresBlueskyMessageability: requiresBlueskyMessageability,
               onSelect: { startConversation(with: profile) }
             )
             .disabled(startingDID != nil)
@@ -280,7 +281,7 @@ struct ContactSearchList: View {
               .designCaption()
               .foregroundColor(.secondary)
               .lineLimit(1)
-            Text(isChecking ? "Checking chat availability…" : "Couldn't check availability")
+            Text(isChecking ? "Checking encrypted chat…" : "Couldn’t check encrypted chat")
               .designCaption()
               .foregroundColor(.secondary)
           }
@@ -296,15 +297,15 @@ struct ContactSearchList: View {
       }
       .buttonStyle(.plain)
       .disabled(isChecking)
-      .accessibilityHint(isChecking ? "" : "Checks whether this person can receive Catbird chats")
+      .accessibilityHint(isChecking ? "" : "Checks whether this person can use encrypted chat")
     } else {
-      let isAvailable = showMLSStatus ? availability == .available : blueskyAvailable
+      let isAvailable = showMLSStatus ? availability == .capable : blueskyAvailable
       ParticipantRow(
         participant: participant,
         isSelected: selectedDIDs.contains(participant.id),
         isMLSAvailable: isAvailable,
         showsEncryptionBadge: showMLSStatus,
-        unavailableLabel: showMLSStatus ? "Not registered" : "Can’t be added"
+        unavailableLabel: showMLSStatus ? "Encrypted chat not available yet" : "Can’t be added"
       ) {
         if isAvailable { toggleParticipant(participant) }
       }
@@ -578,7 +579,7 @@ struct ContactSearchList: View {
   // MARK: - MLS Opt-In Check
 
   @MainActor
-  private func checkMLSOptInBatch(dids: [String]) async {
+  private func checkMLSOptInBatch(dids: [String], forceRefresh: Bool = false) async {
     let didObjects = dids.compactMap { try? DID(didString: $0) }
     guard !didObjects.isEmpty else { return }
     let accountDID = appState.userDID
@@ -600,22 +601,17 @@ struct ContactSearchList: View {
         }
       }
     }
-    let client = appState.atProtoClient
     let didStrings = didObjects.map { $0.didString() }
-    let resolved = await Task.detached(priority: .userInitiated) {
-      let transport = PetrelPlatformTransport(atProtoClient: client)
-      var statuses: [String: ContactMLSAvailability] = [:]
-      for didString in didStrings {
-        guard !Task.isCancelled else { break }
-        do {
-          let keys = try transport.getAuthorizedDeviceKeys(did: didString, chatDpopToken: nil)
-          statuses[didString] = keys.isEmpty ? .unavailable : .available
-        } catch {
-          statuses[didString] = .unknown
-        }
+    let answers = await MLSChatCapabilityResolver.shared.capabilities(
+      for: didStrings, forceRefresh: forceRefresh)
+    var resolved: [String: ContactMLSAvailability] = [:]
+    for (did, capability) in answers {
+      switch capability {
+      case .capable: resolved[did] = .capable
+      case .incapable: resolved[did] = .incapable
+      case .unknown: resolved[did] = .unknown
       }
-      return statuses
-    }.value
+    }
 
     guard !Task.isCancelled, appState.userDID == accountDID else { return }
 
@@ -623,13 +619,15 @@ struct ContactSearchList: View {
       let key = did.didString()
       // A superseded search/retry must not overwrite a newer result for this person.
       guard availabilityRequests[key] == requestID else { continue }
-      participantAvailability[key] = resolved[key] ?? .unknown
+      let status = resolved[key] ?? .unknown
+      participantAvailability[key] = status
+      onMLSCapabilityChange?(key, status)
       availabilityRequests.removeValue(forKey: key)
     }
   }
 
   @MainActor
   private func checkMLSOptIn(for did: String) async {
-    await checkMLSOptInBatch(dids: [did])
+    await checkMLSOptInBatch(dids: [did], forceRefresh: true)
   }
 }

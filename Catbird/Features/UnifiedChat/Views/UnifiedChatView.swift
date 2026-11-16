@@ -10,6 +10,8 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
   @Bindable var dataSource: DataSource
   @Binding var navigationPath: NavigationPath
   var title: String = "Chat"
+  /// The conversation kind; an encrypted chat shows a lock beside its title.
+  var kind: ChatConversationKind = .bluesky
   #if os(iOS)
   var composerConfig: InlineComposerConfig? = nil
   #endif
@@ -29,6 +31,24 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
       #endif
+      .toolbar {
+        if kind.showsLock {
+          ToolbarItem(placement: .principal) {
+            HStack(spacing: 4) {
+              Image(systemName: "lock.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+              Text(title)
+                .font(.headline)
+                .lineLimit(1)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(title), encrypted chat")
+            .accessibilityIdentifier("chat.header.encrypted")
+          }
+        }
+      }
       .overlay(alignment: .top) {
         if let unsendStatus {
           Label(unsendStatus, systemImage: unsendStatus.hasPrefix("Message unsent") ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")

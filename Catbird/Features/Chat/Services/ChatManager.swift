@@ -1504,6 +1504,27 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 
+  /// The existing Bluesky DM with `userDID`, if there is one. Never creates a conversation.
+  @MainActor
+  func existingProfileConversation(
+    with userDID: String,
+    expectedViewerDID: String
+  ) async -> ChatBskyConvoDefs.ConvoView? {
+    guard !Task.isCancelled, pollingAccountDID == expectedViewerDID, userDID != expectedViewerDID,
+      let client, let ticket = pollingBarrier.begin(accountDID: expectedViewerDID)
+    else { return nil }
+    defer { pollingBarrier.finish(ticket) }
+    let authenticatedDID = await client.getCurrentAccount()?.did
+    guard isCurrentPollingOperation(ticket, client: client),
+      authenticatedDID == expectedViewerDID
+    else { return nil }
+    let availability = await checkConversationAvailability(
+      members: [expectedViewerDID, userDID], ticket: ticket, client: client
+    )
+    guard isCurrentPollingOperation(ticket, client: client) else { return nil }
+    return availability.existingConvo
+  }
+
   /// Fresh profile-action availability check using the caller's captured source-account lease.
   @MainActor
   private func checkConversationAvailability(

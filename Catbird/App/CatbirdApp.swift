@@ -35,6 +35,14 @@ private var isEncryptedRequestUIFixture: Bool {
   #endif
 }
 
+private var isConversationKindUIFixture: Bool {
+  #if DEBUG
+  ConversationKindUIFixture.isRequested
+  #else
+  false
+  #endif
+}
+
 private var isMessageRequestsUIFixture: Bool {
   #if DEBUG
   ProcessInfo.processInfo.arguments.contains("--message-requests-ui-fixture")
@@ -101,7 +109,7 @@ private var isMessagesNavigationUIFixture: Bool {
 
 /// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
 private var isPresentationUIFixture: Bool {
-  isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isOnboardingIntelUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
+  isConversationKindUIFixture || isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isOnboardingIntelUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
 }
 
 private var isOnboardingIntelUIFixture: Bool {
@@ -1102,7 +1110,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       ) { scene in
         Group {
           #if DEBUG
-          if isEncryptedRequestUIFixture {
+          if ConversationKindUIFixture.isRequested {
+            ConversationKindUIFixture()
+          } else if isEncryptedRequestUIFixture {
             MLSEncryptedRequestUIFixture()
           } else if isMessageRequestsUIFixture {
             MessageRequestsUIFixture()
