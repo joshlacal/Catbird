@@ -37,6 +37,8 @@ struct LabyrinthSettingsAndRestoreView: View {
   @State private var warningBanner: String?
   @State private var errorMessage: String?
   @State private var revocationReceipt: AppState.PendingMLSDeviceRevocationReceipt?
+  @State private var recoveryCodeReceipt: AppState.PendingMLSRecoveryCodeReceipt?
+  @State private var confirmedRevokedDeviceSecured = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "LabyrinthUI")
 
@@ -100,29 +102,50 @@ struct LabyrinthSettingsAndRestoreView: View {
     #endif
     .task {
       self.revocationReceipt = appState?.pendingMLSDeviceRevocationReceipt
+        ?? coordinator.flatMap {
+          try? AppState.loadPendingMLSDeviceRevocationReceipt(forDID: $0.accountDid)
+        }
+      self.recoveryCodeReceipt = appState?.pendingMLSRecoveryCodeReceipt
+        ?? coordinator.flatMap {
+          try? AppState.loadPendingMLSRecoveryCodeReceipt(forDID: $0.accountDid)
+        }
       self.generatedRecoveryCode = self.revocationReceipt?.replacementRecoveryCode
+        ?? self.recoveryCodeReceipt?.recoveryCode
       await self.refreshStatus()
     }
     .onChange(of: appState?.pendingMLSDeviceRevocationReceipt) { _, receipt in
       self.revocationReceipt = receipt
-      if let receipt {
-        self.generatedRecoveryCode = receipt.replacementRecoveryCode
-      }
+      self.generatedRecoveryCode = receipt?.replacementRecoveryCode
+        ?? self.recoveryCodeReceipt?.recoveryCode
+    }
+    .onChange(of: appState?.pendingMLSRecoveryCodeReceipt) { _, receipt in
+      self.recoveryCodeReceipt = receipt
+      guard self.revocationReceipt == nil else { return }
+      self.generatedRecoveryCode = receipt?.recoveryCode
     }
     .sheet(item: $revocationReceipt) { receipt in
       DeviceRevocationReceiptSheet(receipt: receipt) {
+        guard let coordinator else { return false }
+        var acknowledgedStatus: LabyrinthBackupStatus?
         if let appState {
-          guard appState.acknowledgePendingMLSDeviceRevocationReceipt() else {
+          guard await appState.acknowledgePendingMLSDeviceRevocationReceipt(
+            nativeAcknowledger: {
+              acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+            }
+          ) else {
             return false
           }
-        } else if let accountDid = coordinator?.accountDid {
+        } else {
           do {
-            try AppState.clearPendingMLSDeviceRevocationReceipt(forDID: accountDid)
+            acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+            try AppState.clearPendingMLSDeviceRevocationReceipt(forDID: coordinator.accountDid)
           } catch {
             return false
           }
         }
+        self.status = acknowledgedStatus
         self.revocationReceipt = nil
+        self.generatedRecoveryCode = self.recoveryCodeReceipt?.recoveryCode
         return true
       }
     }
@@ -147,12 +170,24 @@ struct LabyrinthSettingsAndRestoreView: View {
             .monospacedDigit()
         }
         LabeledContent("Recovery Code Saved") {
-          Text(status.hasRecoveryCode ? "Yes" : "Optional (Not Set)")
-            .foregroundStyle(status.hasRecoveryCode ? .green : .secondary)
+          Text(
+            hasUnacknowledgedRecoveryAttention
+              ? "Not Ready (Replacement Required)"
+              : (status.hasRecoveryCode ? "Yes" : "Optional (Not Set)")
+          )
+          .foregroundStyle(
+            hasUnacknowledgedRecoveryAttention ? .red : (status.hasRecoveryCode ? .green : .secondary)
+          )
         }
         LabeledContent("Passkey PRF Linked") {
-          Text(status.hasPasskeyPrf ? "Yes" : "Not Configured")
-            .foregroundStyle(status.hasPasskeyPrf ? .green : .secondary)
+          Text(
+            hasUnacknowledgedRecoveryAttention
+              ? "Not Ready (Replacement Required)"
+              : (status.hasPasskeyPrf ? "Yes" : "Not Configured")
+          )
+          .foregroundStyle(
+            hasUnacknowledgedRecoveryAttention ? .red : (status.hasPasskeyPrf ? .green : .secondary)
+          )
         }
       } else if coordinator == nil {
         Text("Enable MLS Encrypted Chat on an ATProto Spaces account to manage Labyrinth backups.")
@@ -166,8 +201,33 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   @ViewBuilder
   private var recoveryWarningsSection: some View {
-    if let status, status.recoveryMethodStale || !status.rotationExclusions.isEmpty {
+    if let status,
+       hasUnacknowledgedRecoveryAttention || status.recoveryMethodStale || !status.rotationExclusions.isEmpty
+    {
       Section {
+        if hasUnacknowledgedRecoveryAttention
+          && !hasPersistedDeviceRevocationReceipt
+          && !hasPersistedRecoveryCodeReceipt
+        {
+          Label(
+            "Encrypted-backup recovery was rotated, but the one-time replacement details are no longer available on this device. Generate a new recovery code below. Recovery remains not ready until you save and explicitly acknowledge the new code.",
+            systemImage: "key.slash.fill"
+          )
+          .foregroundStyle(.red)
+          .font(.footnote)
+          .accessibilityIdentifier("labyrinth-unavailable-recovery-material-warning")
+        }
+
+        if hasUnacknowledgedRecoveryAttention && hasPersistedRecoveryCodeReceipt {
+          Label(
+            "A replacement recovery code is stored securely on this device. Save it and confirm below before recovery can become ready.",
+            systemImage: "key.fill"
+          )
+          .foregroundStyle(.orange)
+          .font(.footnote)
+          .accessibilityIdentifier("labyrinth-pending-recovery-code-warning")
+        }
+
         if status.recoveryMethodStale {
           Label(
             "This keychain or passkey recovery method is older than 180 days. It still works, but recreate it before the next recovery rotation.",
@@ -211,7 +271,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       } header: {
         Text("Recovery Attention Required")
       } footer: {
-        Text("Generate a new recovery code or register the affected passkey again below.")
+        Text("Generate and save a new recovery code below, then register a new passkey recovery method if needed.")
       }
     }
   }
@@ -223,7 +283,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       } label: {
         Label("Generate 40-Character Recovery Code", systemImage: "key.fill")
       }
-      .disabled(coordinator == nil || isLoading)
+      .disabled(
+        coordinator == nil || isLoading
+          || hasPersistedDeviceRevocationReceipt || hasPersistedRecoveryCodeReceipt
+      )
       .accessibilityIdentifier("labyrinth-generate-recovery-code")
 
       if let generatedRecoveryCode {
@@ -237,6 +300,28 @@ struct LabyrinthSettingsAndRestoreView: View {
             .accessibilityIdentifier("labyrinth-generated-recovery-code")
         }
         .padding(.vertical, 4)
+
+        if recoveryCodeReceipt?.requiresDeviceSafetyConfirmation == true {
+          Toggle(
+            "I removed or secured every device I no longer control",
+            isOn: $confirmedRevokedDeviceSecured
+          )
+          .accessibilityIdentifier("labyrinth-confirm-revoked-device-secured")
+        }
+
+        if hasPersistedRecoveryCodeReceipt {
+          Button {
+            self.acknowledgeGeneratedRecoveryCode()
+          } label: {
+            Label("I Saved This Recovery Code", systemImage: "checkmark.shield.fill")
+          }
+          .disabled(
+            coordinator == nil || isLoading
+              || (recoveryCodeReceipt?.requiresDeviceSafetyConfirmation == true
+                && !confirmedRevokedDeviceSecured)
+          )
+          .accessibilityIdentifier("labyrinth-acknowledge-generated-recovery-code")
+        }
       }
 
       TextField("Enter 40-character recovery code", text: $restoreCodeInput)
@@ -261,8 +346,18 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
-  private var hasUnacknowledgedDeviceRevocation: Bool {
+  private var hasPersistedDeviceRevocationReceipt: Bool {
     revocationReceipt != nil || appState?.pendingMLSDeviceRevocationReceipt != nil
+  }
+
+  private var hasPersistedRecoveryCodeReceipt: Bool {
+    recoveryCodeReceipt != nil || appState?.pendingMLSRecoveryCodeReceipt != nil
+  }
+
+  private var hasUnacknowledgedRecoveryAttention: Bool {
+    hasPersistedDeviceRevocationReceipt
+      || hasPersistedRecoveryCodeReceipt
+      || status?.recoveryNeedsAttention == true
   }
 
   private var passkeyPrfSection: some View {
@@ -272,7 +367,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       } label: {
         Label("Register Passkey PRF Recovery Key", systemImage: "person.badge.key.fill")
       }
-      .disabled(coordinator == nil || isLoading || hasUnacknowledgedDeviceRevocation)
+      .disabled(coordinator == nil || isLoading || hasUnacknowledgedRecoveryAttention)
       .accessibilityIdentifier("labyrinth-register-passkey-prf")
 
       Button {
@@ -583,19 +678,94 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private func generateRecoveryCode() {
     guard let coordinator else { return }
+    guard !hasPersistedDeviceRevocationReceipt && !hasPersistedRecoveryCodeReceipt else {
+      self.errorMessage = "Save and acknowledge the pending recovery report before generating another recovery code."
+      return
+    }
+    let requiresDeviceSafetyConfirmation = hasUnacknowledgedRecoveryAttention
     self.isLoading = true
+    self.statusBanner = nil
+    self.errorMessage = nil
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
+        // Native durably marks recovery as needing attention before returning this one-shot code.
         let code = try await coordinator.setupRecoveryCode()
         self.generatedRecoveryCode = code
-        self.status = try await coordinator.labyrinthStatus()
-        self.statusBanner = "40-character recovery code sealed into your personal Space."
-        self.warningBanner = nil
-        self.errorMessage = nil
+
+        let receipt: AppState.PendingMLSRecoveryCodeReceipt
+        if let appState {
+          receipt = try appState.retainGeneratedMLSRecoveryCode(
+            code,
+            requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation
+          )
+        } else {
+          let didHash = try MLSAppGroupStorage.accountDidHash(for: coordinator.accountDid)
+          let pendingReceipt = AppState.PendingMLSRecoveryCodeReceipt(
+            recoveryCode: code,
+            accountDidHash: didHash,
+            requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation
+          )
+          try AppState.storePendingMLSRecoveryCodeReceipt(pendingReceipt)
+          receipt = pendingReceipt
+        }
+        self.recoveryCodeReceipt = receipt
+
+        let refreshed = try await coordinator.labyrinthStatus()
+        self.status = refreshed
+        self.warningBanner =
+          "Save the new recovery code, then explicitly confirm it below. Recovery remains not ready until confirmation."
+        if !refreshed.recoveryNeedsAttention {
+          self.errorMessage =
+            "The recovery code is stored, but recovery safety status could not be confirmed. Keep the code and retry acknowledgement."
+        }
       } catch {
+        self.status = (try? await coordinator.labyrinthStatus()) ?? self.status
+        self.warningBanner =
+          "Recovery remains not ready. If secure code storage failed, retry generation; the previous recovery code may no longer work."
         self.errorMessage = error.localizedDescription
       }
+    }
+  }
+
+  private func acknowledgeGeneratedRecoveryCode() {
+    guard let coordinator, hasPersistedRecoveryCodeReceipt else { return }
+    self.isLoading = true
+    self.statusBanner = nil
+    self.errorMessage = nil
+    Task { @MainActor in
+      defer { self.isLoading = false }
+      var acknowledgedStatus: LabyrinthBackupStatus?
+
+      if let appState {
+        let acknowledged = await appState.acknowledgePendingMLSRecoveryCodeReceipt(
+          nativeAcknowledger: {
+            acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+          }
+        )
+        self.status = acknowledgedStatus ?? self.status
+        guard acknowledged else {
+          self.errorMessage =
+            "Couldn’t finish acknowledgement. The recovery code remains stored on this device; retry after resolving the error."
+          return
+        }
+      } else {
+        do {
+          acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+          try AppState.clearPendingMLSRecoveryCodeReceipt(forDID: coordinator.accountDid)
+          self.status = acknowledgedStatus
+        } catch {
+          self.status = acknowledgedStatus ?? self.status
+          self.errorMessage = error.localizedDescription
+          return
+        }
+      }
+
+      self.recoveryCodeReceipt = nil
+      self.confirmedRevokedDeviceSecured = false
+      self.generatedRecoveryCode = self.revocationReceipt?.replacementRecoveryCode
+      self.warningBanner = nil
+      self.statusBanner = "Recovery code saved and recovery attention cleared."
     }
   }
 
@@ -628,9 +798,9 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private func enrollPasskeyPrf() {
     guard let coordinator else { return }
-    guard !hasUnacknowledgedDeviceRevocation else {
+    guard !hasUnacknowledgedRecoveryAttention else {
       self.errorMessage =
-        "Save the replacement recovery report and confirm the lost device was removed from its Apple or Google account before registering another passkey."
+        "Save and acknowledge the pending recovery report before registering another passkey."
       return
     }
     self.isLoading = true
@@ -780,9 +950,9 @@ struct LabyrinthSettingsAndRestoreView: View {
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
-        // The unified revoke report is the only API that returns replacement recovery material.
-        // Never fall back to revokeLabyrinthDevice here: it can rotate the backup while discarding
-        // the replacement code, leaving the user unable to recover after a lost-device response.
+        // Unified revocation covers the directory, affected groups, encrypted backup, and PDS record,
+        // and returns the one-time replacement recovery material. A Labyrinth-only fallback could
+        // leave the lost device active elsewhere, so this path remains fail-closed.
         let report = try await coordinator.revokeDevice(targetDeviceId: targetDeviceId)
         self.generatedRecoveryCode = report.rekeyedRecoveryCode
         if let appState {

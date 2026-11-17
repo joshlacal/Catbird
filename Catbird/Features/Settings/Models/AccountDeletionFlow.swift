@@ -321,7 +321,8 @@ struct AccountDeletionCoordinator {
     modelContext: ModelContext? = nil,
     skipRemoteMLSErasure: Bool = false,
     coordinatorOverride: MLSClientCoordinator? = nil,
-    remoteMLSErasure: (@MainActor @Sendable (String) async throws -> Void)? = nil
+    remoteMLSErasure: (@MainActor @Sendable (String) async throws -> Void)? = nil,
+    accountRemovalOverride: (@MainActor @Sendable (String) async throws -> Void)? = nil
   ) async throws {
     guard !did.isEmpty else { return }
     logger.info("🗑️ Starting Catbird data erasure for account: \(did)")
@@ -358,11 +359,16 @@ struct AccountDeletionCoordinator {
     try? CircleKeyStore.wipe(accountDID: did, keychain: circleKeychain)
     AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
     try? AppState.clearPendingMLSDeviceRevocationReceipt(forDID: did)
+    try? AppState.clearPendingMLSRecoveryCodeReceipt(forDID: did)
     AppState.clearPendingMLSDeviceRetirements(forDID: did)
 
     // 4 & 5. Keychain & State: Sign out and remove account from Petrel/Keychain and AppState.
     do {
-      try await AppStateManager.shared.authentication.removeAccount(did: did)
+      if let accountRemovalOverride {
+        try await accountRemovalOverride(did)
+      } else {
+        try await AppStateManager.shared.authentication.removeAccount(did: did)
+      }
       try? CircleKeyStore.wipe(accountDID: did, keychain: circleKeychain)
       AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
       await MLSImageCache.shared.purge(for: did)

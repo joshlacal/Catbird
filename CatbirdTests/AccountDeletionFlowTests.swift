@@ -14,8 +14,9 @@ struct AccountDeletionCoordinatorTests {
     let container = try ModelContainer(for: schema, configurations: [config])
     let context = ModelContext(container)
 
-    let targetDID = "did:plc:target-delete"
-    let preservedDID = "did:plc:keep-intact"
+    let testRunID = UUID().uuidString.lowercased()
+    let targetDID = "did:plc:target-delete-\(testRunID)"
+    let preservedDID = "did:plc:keep-intact-\(testRunID)"
 
     // Seed models
     let targetSettings = AppSettingsModel(accountDID: targetDID)
@@ -54,8 +55,12 @@ struct AccountDeletionCoordinatorTests {
     context.insert(preservedDraft)
     try context.save()
 
-    // Execute erasure
-    try await AccountDeletionCoordinator.eraseCatbirdData(forDID: targetDID, token: "test-token", modelContext: context)
+    // Execute the scoped erasure without touching the process-wide account store.
+    try await AccountDeletionCoordinator.eraseCatbirdData(
+      forDID: targetDID,
+      modelContext: context,
+      accountRemovalOverride: { _ in }
+    )
 
     // Verify target rows deleted
     let targetSettingsDesc = FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == "app_settings_\(targetDID)" })
@@ -274,7 +279,7 @@ struct AccountDeletionCoordinatorTests {
   @Test("A3: Non-MLS/non-Circles account skips remote deleteAccountData and local-only escape hatch succeeds when server is unreachable")
   @MainActor
   func nonMLSAccountSkipsRemoteDeleteAndLocalOnlyEscapeHatchWorksOffline() async throws {
-    let nonMLSDID = "did:plc:nonmlsregularuser01"
+    let nonMLSDID = "did:plc:nonmls-\(UUID().uuidString.lowercased())"
     let fm = FileManager.default
     let emptyRoot = fm.temporaryDirectory.appendingPathComponent("catbird-nonmls-\(UUID().uuidString)", isDirectory: true)
     try fm.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
@@ -300,7 +305,8 @@ struct AccountDeletionCoordinatorTests {
         storageRoot: emptyRoot,
         modelContext: context,
         skipRemoteMLSErasure: false,
-        remoteMLSErasure: { _ in throw URLError(.cannotConnectToHost) }
+        remoteMLSErasure: { _ in throw URLError(.cannotConnectToHost) },
+        accountRemovalOverride: { _ in }
       )
     }
 
@@ -309,7 +315,8 @@ struct AccountDeletionCoordinatorTests {
       storageRoot: emptyRoot,
       modelContext: context,
       skipRemoteMLSErasure: true,
-      remoteMLSErasure: { _ in throw URLError(.cannotConnectToHost) }
+      remoteMLSErasure: { _ in throw URLError(.cannotConnectToHost) },
+      accountRemovalOverride: { _ in }
     )
     let remaining = try context.fetch(
       FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == "app_settings_\(nonMLSDID)" })

@@ -11,6 +11,18 @@ struct DeviceManagementView: View {
 
     var body: some View {
         List {
+            if viewModel.recoveryNeedsAttention && viewModel.revocationReceipt == nil {
+                Section {
+                    Label(
+                        appState.pendingMLSRecoveryCodeReceipt == nil
+                            ? "Encrypted-backup recovery rotated, but the one-time replacement details are no longer available on this device. Open Labyrinth Backup & Recovery and generate a new recovery code. Recovery remains not ready until you save and confirm it."
+                            : "A replacement recovery code is stored securely on this device. Open Labyrinth Backup & Recovery to save and confirm it before recovery can become ready.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("device-management-unavailable-recovery-material-warning")
+                }
+            }
             if viewModel.isLoading {
                 Section {
                     HStack {
@@ -98,6 +110,13 @@ struct DeviceManagementView: View {
         }
         .onChange(of: appState.pendingMLSDeviceRevocationReceipt) { _, receipt in
             viewModel.revocationReceipt = receipt
+            if receipt != nil {
+                viewModel.recoveryNeedsAttention = true
+            }
+        }
+        .onChange(of: appState.pendingMLSRecoveryCodeReceipt) { _, receipt in
+            viewModel.recoveryNeedsAttention =
+                receipt != nil || viewModel.revocationReceipt != nil
         }
         .alert("Revoke Device", isPresented: $viewModel.showDeleteConfirmation, presenting: viewModel.deviceToDelete) { device in
             Button("Cancel", role: .cancel) {}
@@ -130,10 +149,19 @@ struct DeviceManagementView: View {
         }
         .sheet(item: $viewModel.revocationReceipt) { receipt in
             DeviceRevocationReceiptSheet(receipt: receipt) {
-                guard appState.acknowledgePendingMLSDeviceRevocationReceipt() else {
+                guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
+                    return false
+                }
+                guard await appState.acknowledgePendingMLSDeviceRevocationReceipt(
+                    nativeAcknowledger: {
+                        _ = try await coordinator.acknowledgeRecoveryAttention()
+                    }
+                ) else {
                     return false
                 }
                 viewModel.revocationReceipt = nil
+                viewModel.recoveryNeedsAttention =
+                    appState.pendingMLSRecoveryCodeReceipt != nil
                 return true
             }
         }
@@ -142,11 +170,12 @@ struct DeviceManagementView: View {
 
 struct DeviceRevocationReceiptSheet: View {
     let receipt: AppState.PendingMLSDeviceRevocationReceipt
-    let acknowledge: @MainActor () -> Bool
+    let acknowledge: @MainActor () async -> Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var confirmedLostDeviceRemoved = false
     @State private var acknowledgementError = false
+    @State private var isAcknowledging = false
 
     var body: some View {
         NavigationStack {
@@ -176,7 +205,7 @@ struct DeviceRevocationReceiptSheet: View {
                         LabeledContent("New Backup Epoch", value: "\(epoch)")
                     }
                     LabeledContent("Device Record Removed", value: receipt.pdsRecordDeleted ? "Yes" : "No")
-                    LabeledContent("Passkeys Re-keyed", value: "\(receipt.rekeyedPasskeyCount)")
+                    LabeledContent("Passkey Recovery Bundles Re-keyed", value: "\(receipt.rekeyedPasskeyCount)")
                 } header: {
                     Text("Revocation Report")
                 }
@@ -194,24 +223,24 @@ struct DeviceRevocationReceiptSheet: View {
                     }
                 }
 
-                if receipt.rekeyedPasskeyCount > 0 {
+                if receipt.dsRevoked {
                     Section {
                         Toggle(
-                            "I removed the lost device from my Apple or Google account",
+                            "I removed or secured the revoked device in my Apple or Google account",
                             isOn: $confirmedLostDeviceRemoved
                         )
                         .accessibilityIdentifier("device-revocation-confirm-account-device-removed")
                     } header: {
                         Text("Before Registering Another Passkey")
                     } footer: {
-                        Text("Do not register a replacement passkey until the lost phone is removed from the platform account that could still hold its passkey.")
+                        Text("Catbird invalidated the revoked device’s remote recovery bundles. Before registering a replacement passkey, remove or secure the device in its Apple or Google account so a synced passkey cannot return to an unsafe device.")
                     }
                 }
 
                 if acknowledgementError {
                     Section {
                         Label(
-                            "Catbird couldn’t clear the securely stored report. Try again so it is not dismissed before your acknowledgement is saved.",
+                            "Catbird couldn’t save your acknowledgement. The securely stored report remains available; try again.",
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .foregroundStyle(.red)
@@ -220,13 +249,21 @@ struct DeviceRevocationReceiptSheet: View {
 
                 Section {
                     Button(receipt.replacementRecoveryCode == nil ? "Acknowledge Report" : "I Saved This Code") {
-                        if acknowledge() {
-                            dismiss()
-                        } else {
-                            acknowledgementError = true
+                        guard !isAcknowledging else { return }
+                        isAcknowledging = true
+                        Task { @MainActor in
+                            defer { isAcknowledging = false }
+                            if await acknowledge() {
+                                dismiss()
+                            } else {
+                                acknowledgementError = true
+                            }
                         }
                     }
-                    .disabled(receipt.rekeyedPasskeyCount > 0 && !confirmedLostDeviceRemoved)
+                    .disabled(
+                        isAcknowledging
+                            || (receipt.dsRevoked && !confirmedLostDeviceRemoved)
+                    )
                     .accessibilityIdentifier("device-revocation-acknowledge-report")
                 }
             }
@@ -628,6 +665,7 @@ final class DeviceManagementViewModel {
     var showClearAllConfirmation = false
     var deviceToDelete: DeviceRowModel?
     var revocationReceipt: AppState.PendingMLSDeviceRevocationReceipt?
+    var recoveryNeedsAttention = false
     var currentDeviceId: String?
     var customRevokerForTesting:
         (@MainActor (_ targetDeviceId: String) async throws -> AppState.PendingMLSDeviceRevocationReceipt?)?
@@ -639,6 +677,8 @@ final class DeviceManagementViewModel {
         self.appState = appState
         self.currentDeviceId = appState.resolvedMLSDeviceID()
         self.revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
+        self.recoveryNeedsAttention =
+            revocationReceipt != nil || appState.pendingMLSRecoveryCodeReceipt != nil
     }
 
     @MainActor
@@ -672,6 +712,15 @@ final class DeviceManagementViewModel {
             logger.info("Loading devices...")
             let actorDeviceId = currentDeviceId ?? appState.resolvedMLSDeviceID()
             currentDeviceId = actorDeviceId
+            let coordinator = await appState.getOrOpenMLSCoordinator()
+            if let coordinator,
+               let backupStatus = try? await coordinator.labyrinthStatus()
+            {
+                recoveryNeedsAttention =
+                    backupStatus.recoveryNeedsAttention
+                    || appState.pendingMLSDeviceRevocationReceipt != nil
+                    || appState.pendingMLSRecoveryCodeReceipt != nil
+            }
 
             var keyPackagesByDeviceID: [String: Int] = [:]
             var fallbackOwnDevices: [BlueCatbirdChatDefs.OwnDeviceView] = []
@@ -685,7 +734,7 @@ final class DeviceManagementViewModel {
             }
 
             let loaded: [DeviceRowModel]
-            if let coordinator = await appState.getOrOpenMLSCoordinator(),
+            if let coordinator,
                let registered = try? await coordinator.listDevices(),
                !registered.isEmpty
             {
@@ -793,6 +842,9 @@ final class DeviceManagementViewModel {
                     revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
                     receiptPersistenceError = error
                 }
+            }
+            if revocationReceipt?.labyrinthRotated == true {
+                recoveryNeedsAttention = true
             }
             guard revocationReceipt?.dsRevoked != false else {
                 throw NSError(

@@ -1,13 +1,17 @@
 import CatbirdMLS
 import CatbirdMLSCore
 import Foundation
-import Petrel
+@testable import Petrel
 import PetrelCatbird
 import Security
 import SwiftData
 import Testing
 import UserNotifications
 @testable import Catbird
+#if os(iOS)
+import SwiftUI
+import UIKit
+#endif
 
 private final class Wave0RecordingKeyStore: PlatformKeyStore, @unchecked Sendable {
   private let lock = NSLock()
@@ -229,7 +233,8 @@ struct MLSResurrectionWave0Tests {
       token: nil,
       storageRoot: tempRoot,
       keystore: keystore,
-      modelContext: context
+      modelContext: context,
+      accountRemovalOverride: { _ in }
     )
 
     for suffix in ["", "-wal", "-shm", "-journal"] {
@@ -1079,6 +1084,7 @@ struct MLSResurrectionWave0Tests {
     #expect(vm.revocationReceipt == expectedReceipt)
     #expect(vm.revocationReceipt?.replacementRecoveryCode == "ABCD-EFGH-IJKL-MNOP")
     #expect(vm.revocationReceipt?.rekeyedPasskeyCount == 1)
+    #expect(vm.recoveryNeedsAttention)
   }
 
   @Test("D-3 / 5.1.1(v): eraseCatbirdData fails closed when remote deleteAccountData fails, preserving SQLite DB and Keychain keys until retry succeeds")
@@ -1161,7 +1167,8 @@ struct MLSResurrectionWave0Tests {
         storageRoot: tempRoot,
         keystore: keystore,
         modelContext: context,
-        coordinatorOverride: coordinator
+        coordinatorOverride: coordinator,
+        accountRemovalOverride: { _ in }
       )
     }
     #expect(
@@ -1184,7 +1191,8 @@ struct MLSResurrectionWave0Tests {
       storageRoot: tempRoot,
       keystore: keystore,
       modelContext: context,
-      coordinatorOverride: coordinator
+      coordinatorOverride: coordinator,
+      accountRemovalOverride: { _ in }
     )
 
     for suffix in ["", "-wal", "-shm", "-journal"] {
@@ -1290,6 +1298,562 @@ struct MLSResurrectionWave0Tests {
     #expect(try AppState.loadPendingMLSDeviceRevocationReceipt(forDID: did, backend: backend) == nil)
   }
 
+  @Test("Recovery acknowledgement commits native attention before clearing the only durable code")
+  @MainActor
+  func deviceRevocationAcknowledgementOrderIsFailClosed() async throws {
+    struct NativeFailure: Error {}
+    var events: [String] = []
+
+    do {
+      try await AppState.completeMLSDeviceRevocationAcknowledgement(
+        nativeAcknowledger: {
+          events.append("native")
+          throw NativeFailure()
+        },
+        receiptClearer: {
+          events.append("clear-keychain")
+        }
+      )
+      Issue.record("Expected native acknowledgement failure")
+    } catch is NativeFailure {
+      #expect(events == ["native"])
+    } catch {
+      Issue.record("Unexpected acknowledgement error: \(error)")
+    }
+
+    events.removeAll()
+    try await AppState.completeMLSDeviceRevocationAcknowledgement(
+      nativeAcknowledger: {
+        events.append("native")
+      },
+      receiptClearer: {
+        events.append("clear-keychain")
+      }
+    )
+    #expect(events == ["native", "clear-keychain"])
+  }
+
+  @Test("Generated recovery code survives relaunch and acknowledgement crash windows")
+  @MainActor
+  func generatedRecoveryCodeReceiptIsCrashDurableAndFailClosed() async throws {
+    struct SimulatedKeychainClearCrash: Error {}
+
+    let did = "did:plc:generatedrecovery01"
+    let didHash = try MLSAppGroupStorage.accountDidHash(for: did)
+    let backend = RevocationReceiptKeychainBackend()
+    let receipt = AppState.PendingMLSRecoveryCodeReceipt(
+      recoveryCode: "GENERATED-RECOVERY-CODE-ONLY",
+      accountDidHash: didHash,
+      requiresDeviceSafetyConfirmation: true,
+      recordedAtEpochSeconds: 1_760_000_100
+    )
+
+    try AppState.storePendingMLSRecoveryCodeReceipt(receipt, backend: backend)
+    #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: did, backend: backend) == receipt)
+    #expect(backend.lastAccessibility == (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String))
+    #expect(backend.lastSynchronizable == false)
+
+    let raw = try #require(
+      backend.storedData(
+        service: AppState.recoveryCodeReceiptKeychainService,
+        account: didHash
+      )
+    )
+    let rawJSON = String(decoding: raw, as: UTF8.self)
+    #expect(!rawJSON.contains(did))
+    #expect(!rawJSON.localizedCaseInsensitiveContains("accessToken"))
+    #expect(!rawJSON.localizedCaseInsensitiveContains("bearer"))
+
+    var events: [String] = []
+    do {
+      try await AppState.completeMLSDeviceRevocationAcknowledgement(
+        nativeAcknowledger: {
+          events.append("native")
+        },
+        receiptClearer: {
+          events.append("clear-keychain")
+          throw SimulatedKeychainClearCrash()
+        }
+      )
+      Issue.record("Expected simulated crash while clearing the local receipt")
+    } catch is SimulatedKeychainClearCrash {
+      #expect(events == ["native", "clear-keychain"])
+    } catch {
+      Issue.record("Unexpected acknowledgement error: \(error)")
+    }
+
+    #expect(
+      try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: did, backend: backend) == receipt,
+      "A native-success/local-clear failure must leave the one-shot code reloadable for idempotent re-acknowledgement"
+    )
+
+    events.removeAll()
+    try await AppState.completeMLSDeviceRevocationAcknowledgement(
+      nativeAcknowledger: {
+        events.append("native")
+      },
+      receiptClearer: {
+        events.append("clear-keychain")
+        try AppState.clearPendingMLSRecoveryCodeReceipt(forDID: did, backend: backend)
+      }
+    )
+    #expect(events == ["native", "clear-keychain"])
+    #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: did, backend: backend) == nil)
+  }
+
+  #if os(iOS)
+  @Test("Hosted deletion renders the separate non-atomic backup-erasure warning before any request")
+  @MainActor
+  func hostedDeletionIrreversibleBoundaryHasSimulatorSurfaceProof() async throws {
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
+    try #require(ProcessInfo.processInfo.arguments.contains("--settings-ui-fixture"))
+    let manager = AppStateManager.shared
+    let startupIsIsolated =
+      manager.authentication.client == nil
+      && manager.authentication.state.userDID == nil
+      && !manager.authentication.state.isAuthenticating
+      && manager.lifecycle.appState == nil
+      && manager.lifecycle.userDID == nil
+    try #require(startupIsIsolated, "Settings fixture must not restore authentication or an app lifecycle")
+    try #require(SecuritySurfaceRefusalURLProtocol.install())
+    defer { SecuritySurfaceRefusalURLProtocol.uninstall() }
+    #if DEBUG
+    let previousNetworkProtocols = NetworkService.getNetworkTestProtocolClasses()
+    try #require(previousNetworkProtocols == nil)
+    NetworkService.setNetworkTestProtocolClasses([SecuritySurfaceRefusalURLProtocol.self])
+    defer { NetworkService.setNetworkTestProtocolClasses(previousNetworkProtocols) }
+    #endif
+    let priorLifecycle = manager.lifecycle
+    let client = await ATProtoClient(baseURL: URL(string: "https://127.0.0.1")!)
+    let did = "did:plc:deletionsurfaceproof"
+    let appState = AppState(userDID: did, client: client)
+    manager.setLifecycleForTesting(.authenticated(appState))
+
+    var host: SecuritySurfaceHost?
+    defer {
+      host?.close()
+      manager.setLifecycleForTesting(priorLifecycle)
+      appState.cleanup()
+    }
+
+    let schema = Schema([AppSettingsModel.self, Preferences.self, DraftPost.self])
+    let container = try ModelContainer(
+      for: schema,
+      configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
+    )
+    let target = AccountDeletionTarget(
+      did: did,
+      handle: "surface-proof.test",
+      accountRevision: manager.settingsAccountContextRevision
+    )
+    let rendered = AccountDeletionSheet(target: target)
+      .environment(appState)
+      .modelContainer(container)
+    let surface = try makeSecuritySurfaceHost(rendered)
+    host = surface
+    await settleSecuritySurface(surface)
+    try captureSecuritySurface(
+      surface,
+      name: "hosted-deletion-initial",
+      detail: "Initial production account-deletion sheet before local fixture input or any destructive confirmation."
+    )
+
+    let password = try #require(
+      securityTextField(
+        identifier: "AccountDeletion.Password",
+        placeholder: "Account password",
+        in: surface
+      )
+    )
+    password.text = "local-fixture-password"
+    password.sendActions(for: .editingChanged)
+    await settleSecuritySurface(surface)
+
+    let manualCode = try #require(
+      await revealSecurityElement(identifier: "AccountDeletion.ToggleCodeEntry", in: surface)
+    )
+    #expect(manualCode.object.accessibilityActivate())
+    await settleSecuritySurface(surface)
+
+    _ = try #require(
+      await revealSecurityElement(identifier: "AccountDeletion.ConfirmationToken", in: surface)
+    )
+    let confirmationCode = try #require(
+      securityTextField(
+        identifier: "AccountDeletion.ConfirmationToken",
+        placeholder: "Email confirmation code",
+        in: surface
+      )
+    )
+    confirmationCode.text = "local-fixture-code"
+    confirmationCode.sendActions(for: .editingChanged)
+
+    _ = try #require(
+      await revealSecurityElement(identifier: "AccountDeletion.ConfirmDelete", in: surface)
+    )
+    let deleteButton = try #require(
+      await waitForSecurityElement(
+        identifier: "AccountDeletion.ConfirmDelete",
+        enabled: true,
+        in: surface
+      )
+    )
+    #expect(deleteButton.object.accessibilityActivate())
+
+    let warningVisible = await waitForSecuritySurface(in: surface) {
+      let warningText = securityLabels(in: surface).joined(separator: " ")
+      return warningText.localizedCaseInsensitiveContains("cannot validate the email code")
+        && warningText.localizedCaseInsensitiveContains("erase encrypted cloud backups first")
+    }
+    #expect(warningVisible)
+    let warningPresentationSettled = await waitForSecuritySurface(in: surface) {
+      guard let presented = surface.controller.presentedViewController else { return false }
+      return presented.viewIfLoaded?.window != nil
+        && !presented.isBeingPresented
+        && presented.transitionCoordinator == nil
+    }
+    #expect(warningPresentationSettled)
+    #expect(
+      securityLabels(in: surface).contains {
+        $0.localizedCaseInsensitiveContains("I Understand the Risk")
+      }
+    )
+    #expect(SecuritySurfaceRefusalURLProtocol.attemptedWrites == 0)
+    try captureSecuritySurface(
+      surface,
+      name: "hosted-deletion-non-atomic-warning",
+      detail: "Dedicated warning is visible before the irreversible action; the fixture activated no confirmation action and observed zero HTTP writes."
+    )
+  }
+
+  @Test("Recovery attention renders the durable code and becomes ready only after the real acknowledgement path")
+  @MainActor
+  func recoveryAttentionToSavedAcknowledgementHasSimulatorSurfaceProof() async throws {
+    let restoreAccessibility = AppAccessibility.enable()
+    defer { restoreAccessibility() }
+    try #require(ProcessInfo.processInfo.arguments.contains("--settings-ui-fixture"))
+    let startupManager = AppStateManager.shared
+    let startupIsIsolated =
+      startupManager.authentication.client == nil
+      && startupManager.authentication.state.userDID == nil
+      && !startupManager.authentication.state.isAuthenticating
+      && startupManager.lifecycle.appState == nil
+      && startupManager.lifecycle.userDID == nil
+    try #require(startupIsIsolated, "Settings fixture must not restore authentication or an app lifecycle")
+    try #require(SecuritySurfaceRefusalURLProtocol.install())
+    defer { SecuritySurfaceRefusalURLProtocol.uninstall() }
+    #if DEBUG
+    let previousNetworkProtocols = NetworkService.getNetworkTestProtocolClasses()
+    try #require(previousNetworkProtocols == nil)
+    NetworkService.setNetworkTestProtocolClasses([SecuritySurfaceRefusalURLProtocol.self])
+    defer { NetworkService.setNetworkTestProtocolClasses(previousNetworkProtocols) }
+    #endif
+
+    let network = NativeArchiveMockNetwork.shared
+    network.reset()
+    defer { network.reset() }
+    let tempRoot = try makeTempStorageRoot()
+    defer { archiveTempDir(tempRoot) }
+    let accountDid = "did:plc:recoverysurfaceproofaaaa"
+    let deviceId = UUID().uuidString.lowercased()
+    try? AppState.clearPendingMLSRecoveryCodeReceipt(forDID: accountDid)
+    defer { try? AppState.clearPendingMLSRecoveryCodeReceipt(forDID: accountDid) }
+
+    let transport = PetrelPlatformTransport(
+      homeDsEndpoint: URL(string: NativeArchiveMockNetwork.dsEndpoint),
+      homeDsDid: NativeArchiveMockNetwork.dsDid,
+      ownPdsEndpoint: URL(string: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)),
+      actorDeviceId: deviceId,
+      httpOverride: { request in network.handle(request) }
+    )
+    let coordinator = try await MLSClientCoordinator.open(
+      config: CatbirdMlsClientConfig(
+        storageRoot: tempRoot.path,
+        accountDid: accountDid,
+        deviceId: deviceId,
+        homeDsDid: NativeArchiveMockNetwork.dsDid,
+        homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+        pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: accountDid)
+      ),
+      keystore: Wave0RecordingKeyStore(),
+      transport: transport
+    )
+
+    do {
+      _ = try await coordinator.enrollDevice(
+        grantedScopes: MLSAppGroupStorage.requiredSpacesScopes
+      )
+      let recoveryCode = try await coordinator.setupRecoveryCode()
+      let statusAfterMint = try await coordinator.labyrinthStatus()
+      #expect(statusAfterMint.recoveryNeedsAttention)
+
+      let client = await ATProtoClient(baseURL: URL(string: "https://127.0.0.1")!)
+      let appState = AppState(userDID: accountDid, client: client)
+      defer { appState.cleanup() }
+      _ = try appState.retainGeneratedMLSRecoveryCode(
+        recoveryCode,
+        requiresDeviceSafetyConfirmation: false
+      )
+
+      var host: SecuritySurfaceHost?
+      defer { host?.close() }
+      let rendered = NavigationStack {
+        LabyrinthSettingsAndRestoreView(coordinator: coordinator)
+      }
+      .environment(appState)
+      let surface = try makeSecuritySurfaceHost(rendered)
+      host = surface
+
+      let attentionVisible = await waitForSecuritySurface(in: surface) {
+        securityLabels(in: surface).contains {
+          $0.localizedCaseInsensitiveContains("Not Ready")
+        }
+      }
+      #expect(attentionVisible)
+      try captureSecuritySurface(
+        surface,
+        name: "recovery-attention-not-ready",
+        detail: "The actual coordinator reports recovery attention and both recovery readiness rows render Not Ready."
+      )
+
+      _ = try #require(
+        await revealSecurityElement(
+          identifier: "labyrinth-acknowledge-generated-recovery-code",
+          in: surface
+        )
+      )
+      #expect(
+        securityLabels(in: surface).contains {
+          $0.localizedCaseInsensitiveContains("Save this 40-character recovery code")
+        }
+      )
+      try captureSecuritySurface(
+        surface,
+        name: "recovery-code-saved-acknowledgement-ready",
+        detail: "The synthetic one-shot code is rendered by the production recovery view and the explicit save acknowledgement is enabled."
+      )
+      let acknowledge = try #require(
+        await waitForSecurityElement(
+          identifier: "labyrinth-acknowledge-generated-recovery-code",
+          enabled: true,
+          in: surface
+        )
+      )
+      #expect(acknowledge.object.accessibilityActivate())
+
+      var becameReady = false
+      for _ in 0..<120 {
+        await settleSecuritySurface(surface, passes: 1)
+        let nativeStatus = try? await coordinator.labyrinthStatus()
+        if appState.pendingMLSRecoveryCodeReceipt == nil,
+           nativeStatus?.recoveryNeedsAttention == false
+        {
+          becameReady = true
+          break
+        }
+      }
+      #expect(becameReady)
+      securityScrollView(in: surface)?.setContentOffset(.zero, animated: false)
+      await settleSecuritySurface(surface)
+      #expect(
+        !securityLabels(in: surface).contains {
+          $0.localizedCaseInsensitiveContains("Not Ready")
+        }
+      )
+      #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: accountDid) == nil)
+      #expect(SecuritySurfaceRefusalURLProtocol.attemptedWrites == 0)
+      try captureSecuritySurface(
+        surface,
+        name: "recovery-ready-after-native-ack",
+        detail: "The production button completed native acknowledgement before Keychain clearing; native attention is false and the durable receipt is absent."
+      )
+    } catch {
+      await coordinator.close()
+      throw error
+    }
+    await coordinator.close()
+  }
+
+  @MainActor
+  private func makeSecuritySurfaceHost<Content: View>(
+    _ content: Content
+  ) throws -> SecuritySurfaceHost {
+    let scene = try #require(
+      UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+    )
+    return SecuritySurfaceHost(scene: scene, content: AnyView(content))
+  }
+
+  @MainActor
+  private func settleSecuritySurface(
+    _ host: SecuritySurfaceHost,
+    passes: Int = 12
+  ) async {
+    for _ in 0..<passes {
+      host.window.setNeedsLayout()
+      host.window.layoutIfNeeded()
+      host.controller.view.layoutIfNeeded()
+      try? await Task.sleep(for: .milliseconds(25))
+    }
+  }
+
+  @MainActor
+  private func securityDescendants(of view: UIView) -> [UIView] {
+    [view] + view.subviews.flatMap { securityDescendants(of: $0) }
+  }
+
+  @MainActor
+  private func securityTextField(
+    identifier: String,
+    placeholder: String,
+    in host: SecuritySurfaceHost
+  ) -> UITextField? {
+    let fields = securityDescendants(of: host.window).compactMap { $0 as? UITextField }
+    return fields.first { $0.accessibilityIdentifier == identifier }
+      ?? fields.first { $0.placeholder == placeholder }
+  }
+
+  @MainActor
+  private func securityElements(in host: SecuritySurfaceHost) -> [AppAccessibility.Element] {
+    AppAccessibility.elements(in: host.controller.view)
+  }
+
+  @MainActor
+  private func securityLabels(in host: SecuritySurfaceHost) -> [String] {
+    let accessibilityLabels = securityElements(in: host).compactMap(\.label)
+    let nativeLabels = securityDescendants(of: host.window).compactMap(\.accessibilityLabel)
+    return Array(Set(accessibilityLabels + nativeLabels)).sorted()
+  }
+
+  @MainActor
+  private func waitForSecuritySurface(
+    in host: SecuritySurfaceHost,
+    predicate: @MainActor () -> Bool
+  ) async -> Bool {
+    for _ in 0..<120 {
+      await settleSecuritySurface(host, passes: 1)
+      if predicate() { return true }
+    }
+    return false
+  }
+
+  @MainActor
+  private func waitForSecurityElement(
+    identifier: String,
+    enabled: Bool? = nil,
+    in host: SecuritySurfaceHost
+  ) async -> AppAccessibility.Element? {
+    for _ in 0..<120 {
+      await settleSecuritySurface(host, passes: 1)
+      if let element = securityElements(in: host).first(where: { $0.identifier == identifier }) {
+        let isEnabled = !element.traits.contains(.notEnabled)
+        if enabled.map({ $0 == isEnabled }) ?? true {
+          return element
+        }
+      }
+    }
+    return nil
+  }
+
+  @MainActor
+  private func securityScrollView(in host: SecuritySurfaceHost) -> UIScrollView? {
+    securityDescendants(of: host.controller.view)
+      .compactMap { $0 as? UIScrollView }
+      .filter { $0.contentSize.height > $0.bounds.height + 1 }
+      .max { $0.contentSize.height < $1.contentSize.height }
+  }
+
+  @MainActor
+  private func revealSecurityElement(
+    identifier: String,
+    in host: SecuritySurfaceHost
+  ) async -> AppAccessibility.Element? {
+    if let visible = securityElements(in: host).first(where: {
+      $0.identifier == identifier && host.window.bounds.intersects($0.frame)
+    }) {
+      return visible
+    }
+    guard let scrollView = securityScrollView(in: host) else { return nil }
+    let maxOffset = max(
+      0,
+      scrollView.contentSize.height - scrollView.bounds.height
+        + scrollView.adjustedContentInset.bottom
+    )
+    var offset: CGFloat = 0
+    while offset <= maxOffset + 1 {
+      scrollView.setContentOffset(
+        CGPoint(x: scrollView.contentOffset.x, y: min(offset, maxOffset)),
+        animated: false
+      )
+      await settleSecuritySurface(host, passes: 2)
+      if let visible = securityElements(in: host).first(where: {
+        $0.identifier == identifier && host.window.bounds.intersects($0.frame)
+      }) {
+        return visible
+      }
+      offset += 120
+    }
+    return nil
+  }
+
+  @MainActor
+  private func captureSecuritySurface(
+    _ host: SecuritySurfaceHost,
+    name: String,
+    detail: String
+  ) throws {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    var drewHierarchy = false
+    let image = UIGraphicsImageRenderer(bounds: host.window.bounds, format: format).image { _ in
+      drewHierarchy = host.window.drawHierarchy(
+        in: host.window.bounds,
+        afterScreenUpdates: true
+      )
+    }
+    #expect(drewHierarchy)
+    let png = try #require(image.pngData())
+    Attachment.record(Array(png), named: "security-surface-\(name).png")
+
+    let elements = securityElements(in: host)
+      .prefix(80)
+      .map {
+        "id=\($0.identifier ?? ""); label=\($0.label ?? ""); traits=\($0.traits.rawValue); frame=\($0.frame)"
+      }
+      .joined(separator: "\n")
+    let receipt = """
+    \(detail)
+    window=\(host.window.bounds)
+    refusalRequests=\(SecuritySurfaceRefusalURLProtocol.requestCount)
+    refusalWrites=\(SecuritySurfaceRefusalURLProtocol.attemptedWrites)
+    accessibility:
+    \(elements)
+    """
+    Attachment.record(
+      Array(receipt.utf8),
+      named: "security-surface-\(name)-receipt.txt"
+    )
+
+    if let directory = ProcessInfo.processInfo.environment["CATBIRD_SECURITY_SURFACE_DIR"] {
+      let output = URL(fileURLWithPath: directory, isDirectory: true)
+      try FileManager.default.createDirectory(
+        at: output,
+        withIntermediateDirectories: true
+      )
+      try png.write(
+        to: output.appendingPathComponent("security-surface-\(name).png"),
+        options: .atomic
+      )
+      try receipt.write(
+        to: output.appendingPathComponent("security-surface-\(name)-receipt.txt"),
+        atomically: true,
+        encoding: .utf8
+      )
+    }
+  }
+  #endif
+
   @Test("Retirement failures persist a fixed reason instead of server or credential-bearing error text")
   func retirementMarkerDoesNotPersistErrorDescription() async throws {
     let suiteName = "blue.catbird.tests.a6.reason.\(UUID().uuidString)"
@@ -1371,7 +1935,8 @@ struct MLSResurrectionWave0Tests {
         lastActiveAt: nil,
         dormantAt: nil,
         labyrinthDeviceKeyHex: nil,
-        isCurrentDevice: false
+        isCurrentDevice: false,
+        unrecognized: false
       ),
       RegisteredDeviceInfo(
         deviceId: currentDevice,
@@ -1384,7 +1949,8 @@ struct MLSResurrectionWave0Tests {
         lastActiveAt: nil,
         dormantAt: nil,
         labyrinthDeviceKeyHex: nil,
-        isCurrentDevice: true
+        isCurrentDevice: true,
+        unrecognized: false
       ),
     ]
 
@@ -1604,3 +2170,76 @@ struct MLSResurrectionWave0Tests {
     #expect(defaults.string(forKey: "blue.catbird.mls.database-owner.\(siblingHash).pid") == "owner-sibling")
   }
 }
+
+#if os(iOS)
+@MainActor
+private final class SecuritySurfaceHost {
+  let window: UIWindow
+  let controller: UIHostingController<AnyView>
+  private let previousKeyWindow: UIWindow?
+
+  init(scene: UIWindowScene, content: AnyView) {
+    previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+    window = UIWindow(windowScene: scene)
+    window.frame = scene.screen.bounds
+    controller = UIHostingController(rootView: content)
+    window.rootViewController = controller
+    window.backgroundColor = .systemBackground
+    window.makeKeyAndVisible()
+  }
+
+  func close() {
+    window.endEditing(true)
+    window.isHidden = true
+    window.rootViewController = nil
+    previousKeyWindow?.makeKey()
+  }
+}
+
+private final class SecuritySurfaceRefusalURLProtocol: URLProtocol, @unchecked Sendable {
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var requests = 0
+  nonisolated(unsafe) private static var writes = 0
+
+  static func install() -> Bool {
+    lock.withLock {
+      requests = 0
+      writes = 0
+    }
+    return URLProtocol.registerClass(Self.self)
+  }
+
+  static func uninstall() {
+    URLProtocol.unregisterClass(Self.self)
+  }
+
+  static var requestCount: Int {
+    lock.withLock { requests }
+  }
+
+  static var attemptedWrites: Int {
+    lock.withLock { writes }
+  }
+
+  override class func canInit(with request: URLRequest) -> Bool {
+    ["http", "https"].contains(request.url?.scheme?.lowercased() ?? "")
+  }
+
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+    request
+  }
+
+  override func startLoading() {
+    let method = (request.httpMethod ?? "GET").uppercased()
+    Self.lock.withLock {
+      Self.requests += 1
+      if !["GET", "HEAD"].contains(method) {
+        Self.writes += 1
+      }
+    }
+    client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
+  }
+
+  override func stopLoading() {}
+}
+#endif

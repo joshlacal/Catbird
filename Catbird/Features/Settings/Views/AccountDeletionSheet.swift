@@ -269,15 +269,14 @@ struct AccountDeletionSheet: View {
       } message: {
         Text("Catbird's encrypted chat servers could not be reached. Continuing will immediately sign out and erase all local keys, databases, drafts, and settings on this device, while server-side ciphertext or backups may remain until deleted later.")
       }
-      .confirmationDialog(
+      .alert(
         "Allow Encrypted Backup Erasure Before Account Deletion?",
-        isPresented: $confirmingRemoteBackupErasure,
-        titleVisibility: .visible
+        isPresented: $confirmingRemoteBackupErasure
       ) {
+        Button("Cancel", role: .cancel) {}
         Button("I Understand the Risk", role: .destructive) {
           confirmingPermanentDeletion = true
         }
-        Button("Cancel", role: .cancel) {}
       } message: {
         Text(
           "Your hosting provider cannot validate the email code without deleting the account. Catbird must erase encrypted cloud backups first while you are still signed in, and that operation also retires this device’s encrypted-chat store. If the provider then rejects or expires the code, your account will remain but that encrypted history cannot be restored from Catbird’s backups. You can retry account deletion with a new code."

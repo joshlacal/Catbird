@@ -1,7 +1,7 @@
 import CatbirdMLSCore
 import CryptoKit
 import Foundation
-import Petrel
+@testable import Petrel
 import Testing
 import UserNotifications
 @testable import Catbird
@@ -172,7 +172,12 @@ struct MLSDefaultOnConsentTests {
     let did = Self.freshDID("dormant")
     defer { ExperimentalSettings.shared.resetMLSSettings(for: did) }
 
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let loopbackURL = try #require(URL(string: "https://127.0.0.1"))
+    let previousProtocols = NetworkService.getNetworkTestProtocolClasses()
+    try #require(previousProtocols == nil, "The dormant-account fixture requires exclusive use of Petrel's network hook")
+    NetworkService.setNetworkTestProtocolClasses([MLSDefaultOnConsentRefusalURLProtocol.self])
+    let client = await ATProtoClient(baseURL: loopbackURL)
+    NetworkService.setNetworkTestProtocolClasses(previousProtocols)
     let appState = AppState(userDID: did, client: client)
     defer { appState.cleanup() }
 
@@ -224,6 +229,18 @@ struct MLSDefaultOnConsentTests {
     #expect(features["MLSChat"] == nil)
     #expect(features["CirclesSpaces"] == nil)
   }
+}
+
+private final class MLSDefaultOnConsentRefusalURLProtocol: URLProtocol, @unchecked Sendable {
+  override static func canInit(with request: URLRequest) -> Bool { true }
+
+  override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
+  }
+
+  override func stopLoading() {}
 }
 
 @Suite("Encrypted chat preferences reach the notification extension")

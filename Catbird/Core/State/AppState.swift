@@ -259,6 +259,31 @@ final class AppState {
         }
     }
 
+    /// A newly minted recovery code that still needs an explicit "saved" acknowledgement. The app
+    /// treats recovery as not ready until its device-only Keychain receipt is acknowledged.
+    struct PendingMLSRecoveryCodeReceipt: Codable, Equatable, Identifiable, Sendable {
+        let accountDidHash: String
+        let recoveryCode: String
+        let requiresDeviceSafetyConfirmation: Bool
+        let recordedAtEpochSeconds: Int64
+
+        var id: String {
+            "\(accountDidHash):\(recordedAtEpochSeconds)"
+        }
+
+        init(
+            recoveryCode: String,
+            accountDidHash: String,
+            requiresDeviceSafetyConfirmation: Bool = false,
+            recordedAtEpochSeconds: Int64 = Int64(Date().timeIntervalSince1970)
+        ) {
+            self.accountDidHash = accountDidHash
+            self.recoveryCode = recoveryCode
+            self.requiresDeviceSafetyConfirmation = requiresDeviceSafetyConfirmation
+            self.recordedAtEpochSeconds = recordedAtEpochSeconds
+        }
+    }
+
     /// What a successful label-definitions load covered: the subscribed labelers and the client.
     /// It mirrors the identity `ContentLabelDefinitionLookup` caches by, so an unchanged key needs no load.
     private struct ModerationDefinitionsKey: Equatable {
@@ -513,6 +538,10 @@ final class AppState {
     /// Loaded from this-device-only Keychain storage on each account launch.
     private(set) var pendingMLSDeviceRevocationReceipt: PendingMLSDeviceRevocationReceipt?
 
+    /// A generated recovery code awaiting explicit confirmation that it was saved.
+    /// Loaded from this-device-only Keychain storage on each account launch.
+    private(set) var pendingMLSRecoveryCodeReceipt: PendingMLSRecoveryCodeReceipt?
+
     /// Default home sequencer DID for creating new groups (`D1`)
     var defaultMLSSequencerDID: String {
         CatbirdGatewayConfiguration.current.mlsServiceDID ?? "did:web:chat.catbird.blue#atproto_mls"
@@ -656,6 +685,8 @@ final class AppState {
         self.ageAccess = PlatformAgeAccess(checker: regulatoryChecker)
         self.pendingMLSDeviceRevocationReceipt =
             try? Self.loadPendingMLSDeviceRevocationReceipt(forDID: userDID)
+        self.pendingMLSRecoveryCodeReceipt =
+            try? Self.loadPendingMLSRecoveryCodeReceipt(forDID: userDID)
         logger.info("AppState initializing for account: \(userDID)")
         appSettings.configure(accountDID: userDID)
 
@@ -2486,6 +2517,17 @@ final class AppState {
         }
     }
 
+    private struct MLSRecoveryCodeReceiptStoreError: LocalizedError {
+        let operation: String
+        let status: OSStatus
+
+        var errorDescription: String? {
+            let detail = SecCopyErrorMessageString(status, nil).map { $0 as String }
+                ?? "OSStatus \(status)"
+            return "Couldn’t \(operation) the recovery-code receipt securely: \(detail)"
+        }
+    }
+
     nonisolated static let deviceRevocationReceiptKeychainService =
         "blue.catbird.mls.device-revocation-receipt.v1"
 
@@ -2495,6 +2537,24 @@ final class AppState {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: deviceRevocationReceiptKeychainService,
+            kSecAttrAccount as String: accountDidHash,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+        ]
+        #if os(macOS)
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return query
+    }
+
+    nonisolated static let recoveryCodeReceiptKeychainService =
+        "blue.catbird.mls.recovery-code-receipt.v1"
+
+    private nonisolated static func recoveryCodeReceiptKeychainQuery(
+        accountDidHash: String
+    ) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: recoveryCodeReceiptKeychainService,
             kSecAttrAccount as String: accountDidHash,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
         ]
@@ -2559,6 +2619,58 @@ final class AppState {
         }
     }
 
+    nonisolated static func loadPendingMLSRecoveryCodeReceipt(
+        forDID accountDid: String,
+        backend: any KeychainBackend = SystemKeychainBackend()
+    ) throws -> PendingMLSRecoveryCodeReceipt? {
+        let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
+        var query = recoveryCodeReceiptKeychainQuery(accountDidHash: didHash)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let (status, item) = backend.copyMatching(query)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = item as? Data else {
+            throw MLSRecoveryCodeReceiptStoreError(operation: "read", status: status)
+        }
+        return try JSONDecoder().decode(PendingMLSRecoveryCodeReceipt.self, from: data)
+    }
+
+    nonisolated static func storePendingMLSRecoveryCodeReceipt(
+        _ receipt: PendingMLSRecoveryCodeReceipt,
+        backend: any KeychainBackend = SystemKeychainBackend()
+    ) throws {
+        let data = try JSONEncoder().encode(receipt)
+        let query = recoveryCodeReceiptKeychainQuery(accountDidHash: receipt.accountDidHash)
+        let updateStatus = backend.update(query, [kSecValueData as String: data])
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw MLSRecoveryCodeReceiptStoreError(operation: "save", status: updateStatus)
+        }
+
+        var attributes = query
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = backend.add(attributes)
+        guard addStatus == errSecSuccess else {
+            throw MLSRecoveryCodeReceiptStoreError(operation: "save", status: addStatus)
+        }
+    }
+
+    nonisolated static func clearPendingMLSRecoveryCodeReceipt(
+        forDID accountDid: String,
+        backend: any KeychainBackend = SystemKeychainBackend()
+    ) throws {
+        let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
+        let status = backend.delete(recoveryCodeReceiptKeychainQuery(accountDidHash: didHash))
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw MLSRecoveryCodeReceiptStoreError(operation: "remove", status: status)
+        }
+    }
+
     /// Captures the full report before any caller dismisses or refreshes the destructive flow.
     /// If Keychain persistence fails, the observed in-memory receipt remains visible and the error
     /// is rethrown so automatic retirement reconciliation keeps its retry marker.
@@ -2582,16 +2694,80 @@ final class AppState {
         }
     }
 
-    /// Clears the durable report only after the user explicitly says it was saved.
+    /// Persists the one-shot code before the UI claims recovery is ready. Native attention remains
+    /// set until explicit acknowledgement, so a crash before this write can safely retry generation.
     @MainActor
     @discardableResult
-    func acknowledgePendingMLSDeviceRevocationReceipt() -> Bool {
+    func retainGeneratedMLSRecoveryCode(
+        _ recoveryCode: String,
+        requiresDeviceSafetyConfirmation: Bool
+    ) throws -> PendingMLSRecoveryCodeReceipt {
+        let didHash = try MLSAppGroupStorage.accountDidHash(for: userDID)
+        let receipt = PendingMLSRecoveryCodeReceipt(
+            recoveryCode: recoveryCode,
+            accountDidHash: didHash,
+            requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation
+        )
         do {
-            try Self.clearPendingMLSDeviceRevocationReceipt(forDID: userDID)
+            try Self.storePendingMLSRecoveryCodeReceipt(receipt)
+            pendingMLSRecoveryCodeReceipt = receipt
+            return receipt
+        } catch {
+            logger.error("Couldn’t persist the generated recovery code in Keychain: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    /// Native acknowledgement must commit before the Keychain receipt is cleared. If clearing the
+    /// receipt then fails, the code remains visible and retrying the idempotent native acknowledgement
+    /// is safe; reversing this order could lose the only durable copy of the replacement code.
+    @MainActor
+    static func completeMLSDeviceRevocationAcknowledgement(
+        nativeAcknowledger: @MainActor () async throws -> Void,
+        receiptClearer: @MainActor () throws -> Void
+    ) async throws {
+        try await nativeAcknowledger()
+        try receiptClearer()
+    }
+
+    /// Clears the durable report only after the user explicitly says it was saved and the native
+    /// recovery-attention marker is durably acknowledged.
+    @MainActor
+    @discardableResult
+    func acknowledgePendingMLSDeviceRevocationReceipt(
+        nativeAcknowledger: @MainActor () async throws -> Void
+    ) async -> Bool {
+        do {
+            try await Self.completeMLSDeviceRevocationAcknowledgement(
+                nativeAcknowledger: nativeAcknowledger,
+                receiptClearer: {
+                    try Self.clearPendingMLSDeviceRevocationReceipt(forDID: self.userDID)
+                }
+            )
             pendingMLSDeviceRevocationReceipt = nil
             return true
         } catch {
-            logger.error("Couldn’t clear the acknowledged device revocation report: \(error.localizedDescription)")
+            logger.error("Couldn’t acknowledge the device revocation recovery report: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @MainActor
+    @discardableResult
+    func acknowledgePendingMLSRecoveryCodeReceipt(
+        nativeAcknowledger: @MainActor () async throws -> Void
+    ) async -> Bool {
+        do {
+            try await Self.completeMLSDeviceRevocationAcknowledgement(
+                nativeAcknowledger: nativeAcknowledger,
+                receiptClearer: {
+                    try Self.clearPendingMLSRecoveryCodeReceipt(forDID: self.userDID)
+                }
+            )
+            pendingMLSRecoveryCodeReceipt = nil
+            return true
+        } catch {
+            logger.error("Couldn’t acknowledge the generated recovery code: \(error.localizedDescription)")
             return false
         }
     }
