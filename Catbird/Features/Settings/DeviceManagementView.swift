@@ -14,7 +14,7 @@ struct DeviceManagementView: View {
             if viewModel.recoveryNeedsAttention && viewModel.revocationReceipt == nil {
                 Section {
                     Label(
-                        appState.pendingMLSRecoveryCodeReceipt == nil
+                        !viewModel.hasCurrentRecoveryCode
                             ? "Encrypted-backup recovery rotated, but the one-time replacement details are no longer available on this device. Open Labyrinth Backup & Recovery and generate a new recovery code. Recovery remains not ready until you save and confirm it."
                             : "A replacement recovery code is stored securely on this device. Open Labyrinth Backup & Recovery to save and confirm it before recovery can become ready.",
                         systemImage: "exclamationmark.triangle.fill"
@@ -108,15 +108,16 @@ struct DeviceManagementView: View {
             await viewModel.initialize(appState: appState)
             await viewModel.loadDevices()
         }
-        .onChange(of: appState.pendingMLSDeviceRevocationReceipt) { _, receipt in
-            viewModel.revocationReceipt = receipt
-            if receipt != nil {
-                viewModel.recoveryNeedsAttention = true
-            }
+        .onChange(of: appState.pendingMLSDeviceRevocationReceipt) { _, _ in
+            Task { await viewModel.refreshRecoveryMaterial() }
         }
-        .onChange(of: appState.pendingMLSRecoveryCodeReceipt) { _, receipt in
-            viewModel.recoveryNeedsAttention =
-                receipt != nil || viewModel.revocationReceipt != nil
+        .onChange(of: appState.pendingMLSRecoveryCodeReceipt) { _, _ in
+            Task { await viewModel.refreshRecoveryMaterial() }
+        }
+        .onChange(of: appState.mlsCoordinator?.changeRevision) { _, _ in
+            if case .labyrinthStatusChanged = appState.mlsCoordinator?.lastChangeEvent {
+                Task { await viewModel.refreshRecoveryMaterial() }
+            }
         }
         .alert("Revoke Device", isPresented: $viewModel.showDeleteConfirmation, presenting: viewModel.deviceToDelete) { device in
             Button("Cancel", role: .cancel) {}
@@ -149,19 +150,19 @@ struct DeviceManagementView: View {
         }
         .sheet(item: $viewModel.revocationReceipt) { receipt in
             DeviceRevocationReceiptSheet(receipt: receipt) {
-                guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
+                guard let generation = receipt.recoveryGeneration, generation > 0,
+                      let coordinator = await appState.getOrOpenMLSCoordinator() else {
                     return false
                 }
                 guard await appState.acknowledgePendingMLSDeviceRevocationReceipt(
-                    nativeAcknowledger: {
-                        _ = try await coordinator.acknowledgeRecoveryAttention()
+                    expected: receipt, nativeAcknowledger: {
+                        _ = try await coordinator.acknowledgeRecoveryGeneration(expectedGeneration: generation)
                     }
                 ) else {
                     return false
                 }
                 viewModel.revocationReceipt = nil
-                viewModel.recoveryNeedsAttention =
-                    appState.pendingMLSRecoveryCodeReceipt != nil
+                await viewModel.refreshRecoveryMaterial()
                 return true
             }
         }
@@ -666,7 +667,9 @@ final class DeviceManagementViewModel {
     var deviceToDelete: DeviceRowModel?
     var revocationReceipt: AppState.PendingMLSDeviceRevocationReceipt?
     var recoveryNeedsAttention = false
+    var hasCurrentRecoveryCode = false
     var currentDeviceId: String?
+    private var latestRecoveryGeneration: UInt64 = 0
     var customRevokerForTesting:
         (@MainActor (_ targetDeviceId: String) async throws -> AppState.PendingMLSDeviceRevocationReceipt?)?
 
@@ -674,11 +677,34 @@ final class DeviceManagementViewModel {
 
     @MainActor
     func initialize(appState: AppState) async {
+        if self.appState?.userDID != appState.userDID {
+            latestRecoveryGeneration = 0
+            revocationReceipt = nil
+            hasCurrentRecoveryCode = false
+        }
         self.appState = appState
         self.currentDeviceId = appState.resolvedMLSDeviceID()
-        self.revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
-        self.recoveryNeedsAttention =
-            revocationReceipt != nil || appState.pendingMLSRecoveryCodeReceipt != nil
+    }
+
+    @MainActor
+    func refreshRecoveryMaterial() async {
+        guard let appState, let coordinator = await appState.getOrOpenMLSCoordinator(),
+              let status = try? await coordinator.labyrinthStatus() else {
+            recoveryNeedsAttention = true
+            hasCurrentRecoveryCode = false
+            revocationReceipt = nil
+            return
+        }
+        applyRecoveryStatus(status, appState: appState)
+    }
+
+    @MainActor
+    private func applyRecoveryStatus(_ status: LabyrinthBackupStatus, appState: AppState) {
+        guard self.appState === appState, status.recoveryGeneration >= latestRecoveryGeneration else { return }
+        latestRecoveryGeneration = status.recoveryGeneration
+        hasCurrentRecoveryCode = appState.pendingMLSRecoveryCodeReceipt?.isCurrent(for: status) == true
+        revocationReceipt = appState.pendingMLSDeviceRevocationReceipt.flatMap { $0.isCurrent(for: status) ? $0 : nil }
+        recoveryNeedsAttention = status.recoveryNeedsAttention || hasCurrentRecoveryCode || revocationReceipt != nil
     }
 
     @MainActor
@@ -716,10 +742,7 @@ final class DeviceManagementViewModel {
             if let coordinator,
                let backupStatus = try? await coordinator.labyrinthStatus()
             {
-                recoveryNeedsAttention =
-                    backupStatus.recoveryNeedsAttention
-                    || appState.pendingMLSDeviceRevocationReceipt != nil
-                    || appState.pendingMLSRecoveryCodeReceipt != nil
+                applyRecoveryStatus(backupStatus, appState: appState)
             }
 
             var keyPackagesByDeviceID: [String: Int] = [:]
@@ -835,12 +858,15 @@ final class DeviceManagementViewModel {
                 }
                 let report = try await coordinator.revokeDevice(targetDeviceId: device.deviceId)
                 do {
-                    revocationReceipt = try appState.retainDeviceRevocationReport(report)
+                    _ = try appState.retainDeviceRevocationReport(report)
                 } catch {
                     // The report remains visible in memory; surface the storage failure as well so
                     // the user does not mistake it for a durable save.
-                    revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
                     receiptPersistenceError = error
+                }
+                await refreshRecoveryMaterial()
+                guard report.dsRevoked else {
+                    throw NSError(domain: "DeviceManagement", code: 4, userInfo: [NSLocalizedDescriptionKey: Self.incompleteRevocationMessage])
                 }
             }
             if revocationReceipt?.labyrinthRotated == true {

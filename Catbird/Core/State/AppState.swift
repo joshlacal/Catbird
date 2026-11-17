@@ -235,10 +235,16 @@ final class AppState {
         let pdsRecordDeleted: Bool
         let replacementRecoveryCode: String?
         let rekeyedPasskeyCount: Int
+        let recoveryGeneration: UInt64?
         let recordedAtEpochSeconds: Int64
 
         var id: String {
             "\(accountDidHash):\(targetDeviceId):\(recordedAtEpochSeconds)"
+        }
+
+        func isCurrent(for status: LabyrinthBackupStatus) -> Bool {
+            status.recoveryGeneration > 0 && recoveryGeneration == status.recoveryGeneration
+                && (replacementRecoveryCode != nil || !status.recoveryNeedsAttention)
         }
 
         init(
@@ -255,6 +261,7 @@ final class AppState {
             self.pdsRecordDeleted = report.pdsRecordDeleted
             self.replacementRecoveryCode = report.rekeyedRecoveryCode
             self.rekeyedPasskeyCount = report.rekeyedPasskeyIds.count
+            self.recoveryGeneration = report.recoveryGeneration
             self.recordedAtEpochSeconds = recordedAtEpochSeconds
         }
     }
@@ -265,21 +272,28 @@ final class AppState {
         let accountDidHash: String
         let recoveryCode: String
         let requiresDeviceSafetyConfirmation: Bool
+        let recoveryGeneration: UInt64?
         let recordedAtEpochSeconds: Int64
 
         var id: String {
             "\(accountDidHash):\(recordedAtEpochSeconds)"
         }
 
+        func isCurrent(for status: LabyrinthBackupStatus) -> Bool {
+            status.recoveryGeneration > 0 && recoveryGeneration == status.recoveryGeneration
+        }
+
         init(
             recoveryCode: String,
             accountDidHash: String,
             requiresDeviceSafetyConfirmation: Bool = false,
+            recoveryGeneration: UInt64? = nil,
             recordedAtEpochSeconds: Int64 = Int64(Date().timeIntervalSince1970)
         ) {
             self.accountDidHash = accountDidHash
             self.recoveryCode = recoveryCode
             self.requiresDeviceSafetyConfirmation = requiresDeviceSafetyConfirmation
+            self.recoveryGeneration = recoveryGeneration
             self.recordedAtEpochSeconds = recordedAtEpochSeconds
         }
     }
@@ -544,7 +558,7 @@ final class AppState {
 
     /// Default home sequencer DID for creating new groups (`D1`)
     var defaultMLSSequencerDID: String {
-        CatbirdGatewayConfiguration.current.mlsServiceDID ?? "did:web:chat.catbird.blue#atproto_mls"
+        CatbirdGatewayConfiguration.current.mlsServiceDID(for: userDID) ?? "did:web:chat.catbird.blue#atproto_mls"
     }
 
     /// Backing storage for the MLS block coordinator (lazy).
@@ -1683,7 +1697,7 @@ final class AppState {
             return existing
         }
 
-        let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+        let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID(for: userDID)
         logger.info("MLS: Creating new API client for configured environment (lazy initialization)")
         // Create MLS client off main actor to avoid blocking UI
         let mlsClient = await Task.detached(priority: .userInitiated) {
@@ -1766,6 +1780,23 @@ final class AppState {
             }
         }
         return nil
+    }
+
+    /// Successful signed erasure revokes this installation's previous UUID on the PDS.
+    /// If a hosted provider subsequently rejects the email code, a new enrollment must use a new UUID.
+    nonisolated static func clearErasedMLSDeviceID(
+        for accountDid: String, expected: String, in defaultsOverride: UserDefaults? = nil
+    ) {
+        let defaults = defaultsOverride ?? UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+        guard let canonical = try? MLSAppGroupStorage.canonicalizeAccountDid(accountDid),
+              let hash = try? MLSAppGroupStorage.accountDidHash(for: canonical) else { return }
+        for key in [mlsDeviceIDDefaultsKey(for: canonical), mlsDeviceIDDefaultsKey(for: accountDid), "mlsDeviceId_\(hash)"] {
+            guard let raw = defaults.string(forKey: key) else { continue }
+            let identifier = raw.hasPrefix("dev-") ? String(raw.dropFirst(4)) : raw
+            if identifier.caseInsensitiveCompare(expected) == .orderedSame {
+                defaults.removeObject(forKey: key)
+            }
+        }
     }
 
     /// Human-readable platform display name for the current device (capped at 128 characters).
@@ -1865,7 +1896,7 @@ final class AppState {
 
             do {
                 let storageRoot = try MLSAppGroupStorage.defaultStorageRoot()
-                let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+                let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID(for: targetUserDID)
                 let environment: MLSEnvironment = if let mlsServiceDID {
                     .custom(serviceDID: mlsServiceDID)
                 } else {
@@ -2429,6 +2460,8 @@ final class AppState {
             let resolvedPrevDevice = previousDeviceId ?? sharedDefaults?.string(forKey: "mlsDeviceId_\(didHash)")
             try? keystore.deleteAccountKeys(accountDidHash: didHash)
             if let residualBackend = legacyKeychainBackend ?? (keystore is KeychainPlatformKeyStore ? SystemKeychainBackend() : nil) {
+                try? clearPendingMLSRecoveryCodeReceipt(forDID: canonicalDid, backend: residualBackend)
+                try? clearPendingMLSDeviceRevocationReceipt(forDID: canonicalDid, backend: residualBackend)
                 wipeAccountScopedSystemKeychainResiduals(
                     accountDid: canonicalDid,
                     didHash: didHash,
@@ -2684,6 +2717,11 @@ final class AppState {
             report: report,
             accountDidHash: didHash
         )
+        if let prior = pendingMLSDeviceRevocationReceipt, let priorGeneration = prior.recoveryGeneration,
+           priorGeneration > (receipt.recoveryGeneration ?? 0)
+            || (priorGeneration == receipt.recoveryGeneration && prior.replacementRecoveryCode != nil && receipt.replacementRecoveryCode == nil) {
+            return prior
+        }
         pendingMLSDeviceRevocationReceipt = receipt
         do {
             try Self.storePendingMLSDeviceRevocationReceipt(receipt)
@@ -2699,15 +2737,20 @@ final class AppState {
     @MainActor
     @discardableResult
     func retainGeneratedMLSRecoveryCode(
-        _ recoveryCode: String,
+        _ material: GeneratedRecoveryCode,
         requiresDeviceSafetyConfirmation: Bool
     ) throws -> PendingMLSRecoveryCodeReceipt {
         let didHash = try MLSAppGroupStorage.accountDidHash(for: userDID)
         let receipt = PendingMLSRecoveryCodeReceipt(
-            recoveryCode: recoveryCode,
+            recoveryCode: material.code,
             accountDidHash: didHash,
-            requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation
+            requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation,
+            recoveryGeneration: material.recoveryGeneration
         )
+        if let prior = pendingMLSRecoveryCodeReceipt, let priorGeneration = prior.recoveryGeneration,
+           priorGeneration > material.recoveryGeneration {
+            return prior
+        }
         do {
             try Self.storePendingMLSRecoveryCodeReceipt(receipt)
             pendingMLSRecoveryCodeReceipt = receipt
@@ -2735,12 +2778,14 @@ final class AppState {
     @MainActor
     @discardableResult
     func acknowledgePendingMLSDeviceRevocationReceipt(
+        expected: PendingMLSDeviceRevocationReceipt,
         nativeAcknowledger: @MainActor () async throws -> Void
     ) async -> Bool {
         do {
             try await Self.completeMLSDeviceRevocationAcknowledgement(
                 nativeAcknowledger: nativeAcknowledger,
                 receiptClearer: {
+                    guard self.pendingMLSDeviceRevocationReceipt == expected else { throw CancellationError() }
                     try Self.clearPendingMLSDeviceRevocationReceipt(forDID: self.userDID)
                 }
             )
@@ -2755,12 +2800,14 @@ final class AppState {
     @MainActor
     @discardableResult
     func acknowledgePendingMLSRecoveryCodeReceipt(
+        expected: PendingMLSRecoveryCodeReceipt,
         nativeAcknowledger: @MainActor () async throws -> Void
     ) async -> Bool {
         do {
             try await Self.completeMLSDeviceRevocationAcknowledgement(
                 nativeAcknowledger: nativeAcknowledger,
                 receiptClearer: {
+                    guard self.pendingMLSRecoveryCodeReceipt == expected else { throw CancellationError() }
                     try Self.clearPendingMLSRecoveryCodeReceipt(forDID: self.userDID)
                 }
             )
@@ -3088,7 +3135,7 @@ final class AppState {
         }
 
         let gatewayOrigin = CatbirdGatewayConfiguration.current.origin
-        let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+        let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID(for: did)
         let environment: MLSEnvironment = if let mlsServiceDID {
             .custom(serviceDID: mlsServiceDID)
         } else {
@@ -3201,6 +3248,8 @@ final class AppState {
     @MainActor
     func wipeMLSOnSignOut() async {
         let accountDid = userDID
+        pendingMLSDeviceRevocationReceipt = nil
+        pendingMLSRecoveryCodeReceipt = nil
         let existingDeviceId = Self.existingMLSDeviceID(for: accountDid)
         mlsCoordinatorInitTask?.cancel()
         mlsCoordinatorInitTask = nil

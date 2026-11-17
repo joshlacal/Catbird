@@ -201,6 +201,12 @@ struct PDSDirectDeletionClient: Sendable {
   }
 }
 
+struct AccountErasureRecoveryRequired: LocalizedError {
+  var errorDescription: String? {
+    "Catbird could not confirm erasure of your encrypted chat history. Sign in to this account on a device authorized for encrypted chat, or open Encrypted Chat to enroll and approve this device, then retry. Your hosted account remains active."
+  }
+}
+
 /// Coordinates the deletion and erasure of Catbird-held account data to satisfy
 /// App Store Review Guideline 5.1.1(v).
 @MainActor
@@ -270,7 +276,6 @@ struct AccountDeletionCoordinator {
           forDID: did,
           storageRoot: storageRoot,
           keystore: keystore,
-          circleKeychain: circleKeychain,
           appStateOverride: appStateOverride,
           clientOverride: clientOverride,
           coordinatorOverride: coordinatorOverride,
@@ -305,7 +310,7 @@ struct AccountDeletionCoordinator {
 
   /// Erases all account data held by Catbird:
   /// 1. Remote: Server-side Labyrinth/MLS erasure (`blue.catbird.labyrinth.deleteAccountData`) while
-  ///    authenticated (when opted into MLS/Circles and `skipRemoteMLSErasure == false`), plus Nest
+  ///    authenticated (unless explicitly performing a local-only wipe), plus Nest
   ///    gateway session/push revocation via `POST /auth/logout` using tokens resolved *before*
   ///    `removeAccount` wipes credentials.
   /// 2. Local SwiftData: `modelContext.delete` for `AppSettingsModel`, `Preferences`, `DraftPost` matching DID.
@@ -338,7 +343,6 @@ struct AccountDeletionCoordinator {
         forDID: did,
         storageRoot: storageRoot,
         keystore: keystore,
-        circleKeychain: circleKeychain,
         coordinatorOverride: coordinatorOverride,
         remoteMLSErasure: remoteMLSErasure
       )
@@ -386,8 +390,6 @@ struct AccountDeletionCoordinator {
     forDID did: String,
     storageRoot: URL? = nil,
     keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
-    circleKeychain: any CircleKeychain = SystemCircleKeychain(),
-    experimentalSettings: ExperimentalSettings = .shared,
     appStateOverride: AppState? = nil,
     clientOverride: ATProtoClient? = nil,
     coordinatorOverride: MLSClientCoordinator? = nil,
@@ -399,10 +401,7 @@ struct AccountDeletionCoordinator {
     }
 
     if let coordinatorOverride {
-      if coordinatorOverride.isHandleClosed {
-        try await coordinatorOverride.resumeFromBackground()
-      }
-      try await coordinatorOverride.deleteAccountData()
+      try await eraseWithApprovedDevice(coordinatorOverride)
       return
     }
 
@@ -416,41 +415,21 @@ struct AccountDeletionCoordinator {
       nil
     }
 
-    // Encrypted chat is on by default, so the preference says nothing about use. Only an account
-    // this device enrolled, or one with local MLS state or Circle keys, needs remote erasure, so
-    // accounts that never used encrypted chat or Circles are never blocked by `mls-ds`.
-    let hasActiveCoordinator = resolvedAppState?.mlsCoordinator != nil
-    let hasLocalDB = hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
-    guard requiresRemoteMLSErasure(
-      forDID: did,
-      hasActiveCoordinator: hasActiveCoordinator,
-      storageRoot: storageRoot,
-      circleKeychain: circleKeychain,
-      settings: experimentalSettings
-    ) else {
-      logger.info("🗑️ Account never used encrypted chat or Circles on this device; skipping remote deleteAccountData")
-      return
-    }
-
     let resolvedClient = clientOverride ?? resolvedAppState?.atProtoClient ?? AppStateManager.shared.authentication.client
     guard let client = resolvedClient,
           (await client.getCurrentAccount())?.did == did
     else {
-      // Unauthenticated / offline local cleanup: no active authenticated session for `did`.
-      return
+      throw AccountErasureRecoveryRequired()
     }
 
-    // A prior deletion attempt may have erased Labyrinth successfully and then failed on the PDS
-    // email code. `deleteAccountData()` closes that coordinator for the session; reopening it would
-    // create fresh local state. Retry the idempotent XRPC directly instead (200/404 are success).
-    let coordinatorClosedByPriorAttempt = resolvedAppState?.mlsCoordinator?.isClosedForSession == true
-    var coordinator = coordinatorClosedByPriorAttempt ? nil : resolvedAppState?.mlsCoordinator
-    if coordinator == nil, !coordinatorClosedByPriorAttempt, let appState = resolvedAppState {
+    var coordinator = resolvedAppState?.mlsCoordinator
+    if coordinator?.isClosedForSession == true { coordinator = nil }
+    if coordinator == nil, let appState = resolvedAppState {
       coordinator = await appState.getOrOpenMLSCoordinator()
     }
 
     var openedTransientCoordinator = false
-    if coordinator == nil, !coordinatorClosedByPriorAttempt, hasLocalDB {
+    if coordinator == nil, hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot) {
       coordinator = try await openTransientCoordinatorForErasure(
         forDID: did,
         client: client,
@@ -467,48 +446,31 @@ struct AccountDeletionCoordinator {
           Task { await coordinator.close() }
         }
       }
-      if coordinator.isHandleClosed {
-        try await coordinator.resumeFromBackground()
-      }
-      try await coordinator.deleteAccountData()
+      let erasingDeviceID = AppState.existingMLSDeviceID(for: did)
+      try await eraseWithApprovedDevice(coordinator)
       await coordinator.close()
+      if let erasingDeviceID {
+        AppState.clearErasedMLSDeviceID(for: did, expected: erasingDeviceID)
+      }
       logger.info("🗑️ Erased server-side & local MLS/Labyrinth account data via MLSClientCoordinator")
       return
     }
 
-    do {
-      let (code, _) = try await client.blue.catbird.labyrinth.deleteAccountData(
-        input: BlueCatbirdLabyrinthDeleteAccountData.Input()
-      )
-      guard (200...299).contains(code) || code == 404 || code == 501 else {
-        throw ATProtoXRPCError(
-          error: "AccountDeletionFailed",
-          message: "Server-side encrypted account data erasure returned HTTP \(code)",
-          statusCode: code
-        )
-      }
-      logger.info("🗑️ Server-side account data erasure returned HTTP \(code)")
-    } catch {
-      if GatewayCircleTransport.isUnsupportedSpacesError(error) {
-        logger.info("🗑️ Hosting PDS does not support Spaces/Labyrinth; skipping server-side Labyrinth erasure")
-        return
-      }
-      throw error
-    }
+    throw AccountErasureRecoveryRequired()
   }
 
-  /// Whether account deletion must erase server-side encrypted chat data: the account has an
-  /// open MLS client, enrolled this device, holds a local MLS database, or holds Circle keys.
-  static func requiresRemoteMLSErasure(
-    forDID did: String,
-    hasActiveCoordinator: Bool,
-    storageRoot: URL?,
-    circleKeychain: any CircleKeychain,
-    settings: ExperimentalSettings
-  ) -> Bool {
-    hasActiveCoordinator || settings.hasRecordedMLSEnrollment(for: did)
-      || hasLocalMLSArtifacts(forDID: did, storageRoot: storageRoot)
-      || CircleKeyStore.hasStoredKeys(accountDID: did, keychain: circleKeychain)
+  private static func eraseWithApprovedDevice(_ coordinator: MLSClientCoordinator) async throws {
+    if coordinator.isHandleClosed {
+      try await coordinator.resumeFromBackground()
+    }
+    guard try await !coordinator.isDevicePendingApproval() else {
+      throw AccountErasureRecoveryRequired()
+    }
+    do {
+      try await coordinator.deleteAccountData()
+    } catch CatbirdMLS.MlsError.InvalidState(let message) where message.localizedCaseInsensitiveContains("enroll") {
+      throw AccountErasureRecoveryRequired()
+    }
   }
 
   nonisolated static func hasLocalMLSArtifacts(forDID did: String, storageRoot: URL?) -> Bool {
@@ -533,7 +495,7 @@ struct AccountDeletionCoordinator {
     keystore: any PlatformKeyStore
   ) async throws -> MLSClientCoordinator {
     let resolvedRoot = try storageRoot ?? MLSAppGroupStorage.defaultStorageRoot()
-    let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+    let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID(for: did)
     let environment: MLSEnvironment = if let mlsServiceDID {
       .custom(serviceDID: mlsServiceDID)
     } else {

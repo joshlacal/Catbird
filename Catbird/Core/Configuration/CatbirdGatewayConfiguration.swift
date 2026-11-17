@@ -1,5 +1,9 @@
 import Foundation
+#if DEBUG
+@_spi(Fixtures) import Petrel
+#else
 import Petrel
+#endif
 
 enum CatbirdGatewayConfigurationError: Error, Equatable {
   case e2eModeRequired
@@ -101,6 +105,21 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
       "did:web:\(origin.host ?? ""):mls#atproto_mls"
     #endif
     }
+  }
+
+  func mlsServiceDID(for accountDID: String) -> String? {
+    #if DEBUG && canImport(Network) && canImport(Security)
+    if let fixture = DebugFixtureTransport.current,
+       let account = fixture.accounts.first(where: { $0.did == accountDID }),
+       let gateway = fixture.origin.host, gateway.hasPrefix("gateway-") {
+      let service = account.label == "alice" ? "ds1" : "ds2"
+      let host = "\(service)-\(gateway.dropFirst("gateway-".count))"
+      if let endpoint = URL(string: "https://\(host)"), fixture.permits(endpoint) {
+        return "did:web:\(host)#atproto_mls"
+      }
+    }
+    #endif
+    return mlsServiceDID
   }
 
   static func resolve(arguments: [String]) throws -> Self {

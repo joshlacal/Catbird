@@ -3,6 +3,7 @@ import CatbirdMLSCore
 import CryptoKit
 import OSLog
 import PetrelCatbird
+import SwiftCBOR
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -39,6 +40,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   @State private var revocationReceipt: AppState.PendingMLSDeviceRevocationReceipt?
   @State private var recoveryCodeReceipt: AppState.PendingMLSRecoveryCodeReceipt?
   @State private var confirmedRevokedDeviceSecured = false
+  @State private var hasUnversionedReceipt = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "LabyrinthUI")
 
@@ -57,9 +59,9 @@ struct LabyrinthSettingsAndRestoreView: View {
       }
       backupStatusSection
       recoveryWarningsSection
-      recoveryCodeSection
       passkeyPrfSection
       otcPairingSection
+      recoveryCodeSection
       deviceListSection
       historyImportSection
 
@@ -100,44 +102,34 @@ struct LabyrinthSettingsAndRestoreView: View {
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
-    .task {
-      self.revocationReceipt = appState?.pendingMLSDeviceRevocationReceipt
-        ?? coordinator.flatMap {
-          try? AppState.loadPendingMLSDeviceRevocationReceipt(forDID: $0.accountDid)
-        }
-      self.recoveryCodeReceipt = appState?.pendingMLSRecoveryCodeReceipt
-        ?? coordinator.flatMap {
-          try? AppState.loadPendingMLSRecoveryCodeReceipt(forDID: $0.accountDid)
-        }
-      self.generatedRecoveryCode = self.revocationReceipt?.replacementRecoveryCode
-        ?? self.recoveryCodeReceipt?.recoveryCode
-      await self.refreshStatus()
+    .task { await refreshStatus() }
+    .onChange(of: appState?.pendingMLSDeviceRevocationReceipt) { _, _ in
+      Task { await refreshRecoveryMaterial() }
     }
-    .onChange(of: appState?.pendingMLSDeviceRevocationReceipt) { _, receipt in
-      self.revocationReceipt = receipt
-      self.generatedRecoveryCode = receipt?.replacementRecoveryCode
-        ?? self.recoveryCodeReceipt?.recoveryCode
+    .onChange(of: appState?.pendingMLSRecoveryCodeReceipt) { _, _ in
+      Task { await refreshRecoveryMaterial() }
     }
-    .onChange(of: appState?.pendingMLSRecoveryCodeReceipt) { _, receipt in
-      self.recoveryCodeReceipt = receipt
-      guard self.revocationReceipt == nil else { return }
-      self.generatedRecoveryCode = receipt?.recoveryCode
+    .onChange(of: coordinator?.changeRevision) { _, _ in
+      if case .labyrinthStatusChanged = coordinator?.lastChangeEvent {
+        Task { await refreshRecoveryMaterial() }
+      }
     }
     .sheet(item: $revocationReceipt) { receipt in
       DeviceRevocationReceiptSheet(receipt: receipt) {
-        guard let coordinator else { return false }
+        guard let coordinator, let generation = receipt.recoveryGeneration, generation > 0 else { return false }
         var acknowledgedStatus: LabyrinthBackupStatus?
         if let appState {
           guard await appState.acknowledgePendingMLSDeviceRevocationReceipt(
-            nativeAcknowledger: {
-              acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+            expected: receipt, nativeAcknowledger: {
+              acknowledgedStatus = try await coordinator.acknowledgeRecoveryGeneration(expectedGeneration: generation)
             }
           ) else {
             return false
           }
         } else {
           do {
-            acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+            acknowledgedStatus = try await coordinator.acknowledgeRecoveryGeneration(expectedGeneration: generation)
+            guard try AppState.loadPendingMLSDeviceRevocationReceipt(forDID: coordinator.accountDid) == receipt else { return false }
             try AppState.clearPendingMLSDeviceRevocationReceipt(forDID: coordinator.accountDid)
           } catch {
             return false
@@ -145,7 +137,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         self.status = acknowledgedStatus
         self.revocationReceipt = nil
-        self.generatedRecoveryCode = self.recoveryCodeReceipt?.recoveryCode
+        await self.refreshRecoveryMaterial()
         return true
       }
     }
@@ -284,7 +276,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         Label("Generate 40-Character Recovery Code", systemImage: "key.fill")
       }
       .disabled(
-        coordinator == nil || isLoading
+        coordinator == nil || status == nil || isLoading
           || hasPersistedDeviceRevocationReceipt || hasPersistedRecoveryCodeReceipt
       )
       .accessibilityIdentifier("labyrinth-generate-recovery-code")
@@ -347,15 +339,15 @@ struct LabyrinthSettingsAndRestoreView: View {
   }
 
   private var hasPersistedDeviceRevocationReceipt: Bool {
-    revocationReceipt != nil || appState?.pendingMLSDeviceRevocationReceipt != nil
+    revocationReceipt != nil
   }
 
   private var hasPersistedRecoveryCodeReceipt: Bool {
-    recoveryCodeReceipt != nil || appState?.pendingMLSRecoveryCodeReceipt != nil
+    recoveryCodeReceipt != nil
   }
 
   private var hasUnacknowledgedRecoveryAttention: Bool {
-    hasPersistedDeviceRevocationReceipt
+    status == nil || hasUnversionedReceipt || hasPersistedDeviceRevocationReceipt
       || hasPersistedRecoveryCodeReceipt
       || status?.recoveryNeedsAttention == true
   }
@@ -661,12 +653,39 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
+  private func refreshRecoveryMaterial() async {
+    guard let coordinator else { return }
+    do {
+      let latest = try await coordinator.labyrinthStatus()
+      applyRecoveryStatus(latest)
+    } catch {
+      status = nil
+      recoveryCodeReceipt = nil
+      revocationReceipt = nil
+      generatedRecoveryCode = nil
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func applyRecoveryStatus(_ latest: LabyrinthBackupStatus) {
+    guard let coordinator, latest.recoveryGeneration >= (status?.recoveryGeneration ?? 0) else { return }
+    status = latest
+    let reported = appState?.pendingMLSDeviceRevocationReceipt
+      ?? (try? AppState.loadPendingMLSDeviceRevocationReceipt(forDID: coordinator.accountDid))
+    let generated = appState?.pendingMLSRecoveryCodeReceipt
+      ?? (try? AppState.loadPendingMLSRecoveryCodeReceipt(forDID: coordinator.accountDid))
+    hasUnversionedReceipt = latest.recoveryGeneration == 0 && (reported != nil || generated != nil)
+    revocationReceipt = reported.flatMap { $0.isCurrent(for: latest) ? $0 : nil }
+    recoveryCodeReceipt = generated.flatMap { $0.isCurrent(for: latest) ? $0 : nil }
+    generatedRecoveryCode = revocationReceipt?.replacementRecoveryCode ?? recoveryCodeReceipt?.recoveryCode
+  }
+
   private func refreshStatus() async {
     guard let coordinator else { return }
     self.isLoading = true
     defer { self.isLoading = false }
     do {
-      self.status = try await coordinator.labyrinthStatus()
+      self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
       self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
       self.errorMessage = nil
     } catch {
@@ -678,7 +697,7 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private func generateRecoveryCode() {
     guard let coordinator else { return }
-    guard !hasPersistedDeviceRevocationReceipt && !hasPersistedRecoveryCodeReceipt else {
+    guard status != nil, !hasPersistedDeviceRevocationReceipt && !hasPersistedRecoveryCodeReceipt else {
       self.errorMessage = "Save and acknowledge the pending recovery report before generating another recovery code."
       return
     }
@@ -690,29 +709,28 @@ struct LabyrinthSettingsAndRestoreView: View {
       defer { self.isLoading = false }
       do {
         // Native durably marks recovery as needing attention before returning this one-shot code.
-        let code = try await coordinator.setupRecoveryCode()
-        self.generatedRecoveryCode = code
+        let material = try await coordinator.setupRecoveryCodeWithReceipt()
 
         let receipt: AppState.PendingMLSRecoveryCodeReceipt
         if let appState {
           receipt = try appState.retainGeneratedMLSRecoveryCode(
-            code,
+            material,
             requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation
           )
         } else {
           let didHash = try MLSAppGroupStorage.accountDidHash(for: coordinator.accountDid)
           let pendingReceipt = AppState.PendingMLSRecoveryCodeReceipt(
-            recoveryCode: code,
+            recoveryCode: material.code,
             accountDidHash: didHash,
-            requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation
+            requiresDeviceSafetyConfirmation: requiresDeviceSafetyConfirmation,
+            recoveryGeneration: material.recoveryGeneration
           )
           try AppState.storePendingMLSRecoveryCodeReceipt(pendingReceipt)
           receipt = pendingReceipt
         }
-        self.recoveryCodeReceipt = receipt
-
         let refreshed = try await coordinator.labyrinthStatus()
-        self.status = refreshed
+        self.applyRecoveryStatus(refreshed)
+        guard self.recoveryCodeReceipt == receipt else { return }
         self.warningBanner =
           "Save the new recovery code, then explicitly confirm it below. Recovery remains not ready until confirmation."
         if !refreshed.recoveryNeedsAttention {
@@ -720,7 +738,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             "The recovery code is stored, but recovery safety status could not be confirmed. Keep the code and retry acknowledgement."
         }
       } catch {
-        self.status = (try? await coordinator.labyrinthStatus()) ?? self.status
+        await self.refreshRecoveryMaterial()
         self.warningBanner =
           "Recovery remains not ready. If secure code storage failed, retry generation; the previous recovery code may no longer work."
         self.errorMessage = error.localizedDescription
@@ -729,7 +747,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   }
 
   private func acknowledgeGeneratedRecoveryCode() {
-    guard let coordinator, hasPersistedRecoveryCodeReceipt else { return }
+    guard let coordinator, let receipt = recoveryCodeReceipt, let generation = receipt.recoveryGeneration, generation > 0 else { return }
     self.isLoading = true
     self.statusBanner = nil
     self.errorMessage = nil
@@ -739,31 +757,31 @@ struct LabyrinthSettingsAndRestoreView: View {
 
       if let appState {
         let acknowledged = await appState.acknowledgePendingMLSRecoveryCodeReceipt(
-          nativeAcknowledger: {
-            acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+          expected: receipt, nativeAcknowledger: {
+            acknowledgedStatus = try await coordinator.acknowledgeRecoveryGeneration(expectedGeneration: generation)
           }
         )
-        self.status = acknowledgedStatus ?? self.status
         guard acknowledged else {
+          await self.refreshRecoveryMaterial()
           self.errorMessage =
             "Couldn’t finish acknowledgement. The recovery code remains stored on this device; retry after resolving the error."
           return
         }
       } else {
         do {
-          acknowledgedStatus = try await coordinator.acknowledgeRecoveryAttention()
+          acknowledgedStatus = try await coordinator.acknowledgeRecoveryGeneration(expectedGeneration: generation)
+          guard try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: coordinator.accountDid) == receipt else { throw CancellationError() }
           try AppState.clearPendingMLSRecoveryCodeReceipt(forDID: coordinator.accountDid)
           self.status = acknowledgedStatus
         } catch {
-          self.status = acknowledgedStatus ?? self.status
+          await self.refreshRecoveryMaterial()
           self.errorMessage = error.localizedDescription
           return
         }
       }
 
-      self.recoveryCodeReceipt = nil
+      await self.refreshRecoveryMaterial()
       self.confirmedRevokedDeviceSecured = false
-      self.generatedRecoveryCode = self.revocationReceipt?.replacementRecoveryCode
       self.warningBanner = nil
       self.statusBanner = "Recovery code saved and recovery attention cleared."
     }
@@ -778,7 +796,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       defer { self.isLoading = false }
       do {
         let restored = try await coordinator.restoreWithRecoveryCode(trimmed)
-        self.status = restored
+        self.applyRecoveryStatus(restored)
         self.restoreCodeInput = ""
         self.statusBanner = "Restored Labyrinth epoch keys and rotated virtual device."
         if restored.recoveryMethodStale {
@@ -815,10 +833,11 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         let registrar = LabyrinthPasskeyRegistrar(anchor: anchor)
         let passkey = try await registrar.register(accountDid: coordinator.accountDid)
-        self.status = try await coordinator.registerPasskeyPrf(
+        let latest = try await coordinator.registerPasskeyPrf(
           credentialId: passkey.credentialID,
           prfOutput32: passkey.prfOutput
         )
+        self.applyRecoveryStatus(latest)
         self.statusBanner = "Passkey PRF recovery secret registered."
         self.warningBanner = nil
         self.errorMessage = nil
@@ -846,7 +865,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           credentialId: passkey.credentialID,
           prfOutput32: passkey.prfOutput
         )
-        self.status = restored
+        self.applyRecoveryStatus(restored)
         self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
         self.statusBanner = "Restored Labyrinth backup using Passkey PRF."
         self.warningBanner = nil
@@ -903,7 +922,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         try await coordinator.respondOtcPairing(sessionIdHex: sessionId, sixDigitCode: digits)
         self.respondOtcSessionIdInput = ""
         self.respondOtcCodeInput = ""
-        self.status = try await coordinator.labyrinthStatus()
+        self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
         self.statusBanner = "Approved OTC pairing session and sealed epoch keys."
         self.errorMessage = nil
         await self.refreshDeviceMetadata()
@@ -924,7 +943,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         let completion = try await coordinator.completeOtcPairing(sixDigitCode: digits)
         self.lastOtcCompletion = completion
         self.initiatedOtcSession = nil
-        self.status = try await coordinator.labyrinthStatus()
+        self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
         self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
         self.statusBanner = "Device paired at Labyrinth epoch \(completion.newEpochSeq)."
         self.errorMessage = nil
@@ -954,12 +973,11 @@ struct LabyrinthSettingsAndRestoreView: View {
         // and returns the one-time replacement recovery material. A Labyrinth-only fallback could
         // leave the lost device active elsewhere, so this path remains fail-closed.
         let report = try await coordinator.revokeDevice(targetDeviceId: targetDeviceId)
-        self.generatedRecoveryCode = report.rekeyedRecoveryCode
         if let appState {
           do {
-            self.revocationReceipt = try appState.retainDeviceRevocationReport(report)
+            _ = try appState.retainDeviceRevocationReport(report)
           } catch {
-            self.revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
+            await self.refreshRecoveryMaterial()
             throw error
           }
         } else {
@@ -967,7 +985,6 @@ struct LabyrinthSettingsAndRestoreView: View {
             report: report,
             accountDidHash: coordinator.accountDidHash
           )
-          self.revocationReceipt = receipt
           try AppState.storePendingMLSDeviceRevocationReceipt(receipt)
         }
         guard report.dsRevoked else {
@@ -977,7 +994,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             userInfo: [NSLocalizedDescriptionKey: DeviceManagementViewModel.incompleteRevocationMessage]
           )
         }
-        self.status = try await coordinator.labyrinthStatus()
+        self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
         self.fetchedDeviceMetadataByID.removeValue(
           forKey: targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         )
@@ -1022,8 +1039,35 @@ struct LabyrinthSettingsAndRestoreView: View {
   }
 }
 
+enum LabyrinthPasskeyPolicy {
+  static let relyingParty = "passkey.catbird.blue"
+
+  static func newUserHandle() -> Data {
+    SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+  }
+
+  static func isBackupEligible(authenticatorData: Data, registration: Bool) -> Bool {
+    // WebAuthn authenticatorData starts with rpIdHash, flags, then the four-byte sign counter.
+    guard authenticatorData.count >= 37,
+          authenticatorData.prefix(32).elementsEqual(SHA256.hash(data: Data(relyingParty.utf8)))
+    else { return false }
+    let flags = authenticatorData[authenticatorData.startIndex + 32]
+    let required: UInt8 = registration ? 0x49 : 0x09 // UP, BE, and AT on registration
+    return flags & required == required
+  }
+
+  static func isBackupEligible(attestation: Data?) -> Bool {
+    guard let attestation, attestation.count <= 64 * 1024,
+          let decoded = try? CBOR.decode(Array(attestation)), case .map(let map) = decoded,
+          case .byteString(let bytes)? = map[.utf8String("authData")]
+    else { return false }
+    return isBackupEligible(authenticatorData: Data(bytes), registration: true)
+  }
+}
+
 private enum LabyrinthPasskeyRegistrationError: LocalizedError {
   case invalidCredential
+  case backupIneligible
   case missingPresentationAnchor
   case prfUnsupported
   case unsupportedPlatform
@@ -1032,6 +1076,8 @@ private enum LabyrinthPasskeyRegistrationError: LocalizedError {
     switch self {
     case .invalidCredential:
       "The passkey provider returned an invalid credential."
+    case .backupIneligible:
+      "This passkey cannot be verified as backup eligible. Choose a synced passkey or use another recovery method."
     case .missingPresentationAnchor:
       "Catbird cannot present passkey registration right now."
     case .prfUnsupported:
@@ -1077,11 +1123,11 @@ private final class LabyrinthPasskeyRegistrar: NSObject,
 
   func register(accountDid: String) async throws -> Result {
     let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
-      relyingPartyIdentifier: "catbird.blue"
+      relyingPartyIdentifier: LabyrinthPasskeyPolicy.relyingParty
     )
     let challengeKey = SymmetricKey(size: .bits256)
     let challenge = challengeKey.withUnsafeBytes { Data($0) }
-    let userID = Data(SHA256.hash(data: Data(accountDid.utf8)))
+    let userID = LabyrinthPasskeyPolicy.newUserHandle()
     let request = provider.createCredentialRegistrationRequest(
       challenge: challenge,
       name: accountDid,
@@ -1117,6 +1163,10 @@ private final class LabyrinthPasskeyRegistrar: NSObject,
         authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialRegistration
     else {
       self.finish(.failure(LabyrinthPasskeyRegistrationError.invalidCredential))
+      return
+    }
+    guard LabyrinthPasskeyPolicy.isBackupEligible(attestation: credential.rawAttestationObject) else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.backupIneligible))
       return
     }
     guard let prf = credential.prf, prf.isSupported, let first = prf.first else {
@@ -1170,7 +1220,7 @@ private final class LabyrinthPasskeyAsserter: NSObject,
 
   func authenticate(accountDid: String) async throws -> Result {
     let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(
-      relyingPartyIdentifier: "catbird.blue"
+      relyingPartyIdentifier: LabyrinthPasskeyPolicy.relyingParty
     )
     let challengeKey = SymmetricKey(size: .bits256)
     let challenge = challengeKey.withUnsafeBytes { Data($0) }
@@ -1205,6 +1255,10 @@ private final class LabyrinthPasskeyAsserter: NSObject,
         authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion
     else {
       self.finish(.failure(LabyrinthPasskeyRegistrationError.invalidCredential))
+      return
+    }
+    guard LabyrinthPasskeyPolicy.isBackupEligible(authenticatorData: credential.rawAuthenticatorData, registration: false) else {
+      self.finish(.failure(LabyrinthPasskeyRegistrationError.backupIneligible))
       return
     }
     guard let prf = credential.prf else {

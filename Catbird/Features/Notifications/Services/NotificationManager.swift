@@ -2571,7 +2571,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return nil
     }
 
-    let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+    let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID(for: userDid)
     let environment: MLSEnvironment = if let mlsServiceDID {
       .custom(serviceDID: mlsServiceDID)
     } else {

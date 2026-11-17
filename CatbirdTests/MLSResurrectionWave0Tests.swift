@@ -1,5 +1,7 @@
 import CatbirdMLS
 import CatbirdMLSCore
+import CryptoKit
+import SwiftCBOR
 import Foundation
 @testable import Petrel
 import PetrelCatbird
@@ -234,6 +236,7 @@ struct MLSResurrectionWave0Tests {
       storageRoot: tempRoot,
       keystore: keystore,
       modelContext: context,
+      skipRemoteMLSErasure: true,
       accountRemovalOverride: { _ in }
     )
 
@@ -593,6 +596,21 @@ struct MLSResurrectionWave0Tests {
     #expect(invalid.localizedCaseInsensitiveContains("invalid"))
   }
 
+  @Test("Passkey recovery requires an eligible credential from the selected relying party")
+  func passkeyRecoveryRequiresBackupEligibility() throws {
+    #expect(LabyrinthPasskeyPolicy.relyingParty == "passkey.catbird.blue")
+    let rpHash = Array(SHA256.hash(data: Data(LabyrinthPasskeyPolicy.relyingParty.utf8)))
+    func attestation(flags: UInt8) -> Data {
+      Data(CBOR.map([.utf8String("authData"): .byteString(rpHash + [flags, 0, 0, 0, 0])]).encode())
+    }
+    #expect(LabyrinthPasskeyPolicy.isBackupEligible(attestation: attestation(flags: 0x49)))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(attestation: attestation(flags: 0x41)))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(attestation: nil))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(authenticatorData: Data(repeating: 0, count: 37), registration: false))
+    #expect(LabyrinthPasskeyPolicy.newUserHandle().count == 32)
+    #expect(LabyrinthPasskeyPolicy.newUserHandle() != LabyrinthPasskeyPolicy.newUserHandle())
+  }
+
   @Test("Sign-out wipe rotates per-account deviceId and prefix-safely filters MLS sigkey and CircleKeyStore Keychain items")
   func wipeLocalMLSArtifactsRotatesDeviceIdAndFiltersScopedKeychainResiduals() throws {
     let tempRoot = try makeTempStorageRoot()
@@ -620,13 +638,23 @@ struct MLSResurrectionWave0Tests {
     _ = try keystore.loadOrCreateDbKey(accountDidHash: aliceHash)
     let bobKeyBefore = try keystore.loadOrCreateDbKey(accountDidHash: bobHash)
 
+    let receipts = RevocationReceiptKeychainBackend()
+    for hash in [aliceHash, bobHash] {
+      try AppState.storePendingMLSRecoveryCodeReceipt(
+        .init(recoveryCode: "test-code", accountDidHash: hash, recoveryGeneration: 1), backend: receipts
+      )
+    }
+
     AppState.wipeLocalMLSArtifacts(
       for: aliceDID,
       storageRoot: tempRoot,
       keystore: keystore,
-      sharedDefaults: defaults
+      sharedDefaults: defaults,
+      legacyKeychainBackend: receipts
     )
 
+    #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: aliceDID, backend: receipts) == nil)
+    #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: bobDID, backend: receipts) != nil)
     // Subsequent sign-in for Alice mints a brand-new deviceId UUIDv4 while Bob stays untouched
     let postReSignInAliceDeviceID = AppState.resolveOrCreateMLSDeviceID(for: aliceDID, in: defaults)
     #expect(postReSignInAliceDeviceID != firstAliceDeviceID)
@@ -1584,8 +1612,18 @@ struct MLSResurrectionWave0Tests {
       _ = try await coordinator.enrollDevice(
         grantedScopes: MLSAppGroupStorage.requiredSpacesScopes
       )
-      let recoveryCode = try await coordinator.setupRecoveryCode()
+      let earlierCode = try await coordinator.setupRecoveryCodeWithReceipt()
+      let earlierReceipt = AppState.PendingMLSRecoveryCodeReceipt(
+        recoveryCode: earlierCode.code, accountDidHash: coordinator.accountDidHash,
+        recoveryGeneration: earlierCode.recoveryGeneration
+      )
+      let recoveryCode = try await coordinator.setupRecoveryCodeWithReceipt()
+      await #expect(throws: Error.self) {
+        _ = try await coordinator.acknowledgeRecoveryGeneration(expectedGeneration: earlierCode.recoveryGeneration)
+      }
       let statusAfterMint = try await coordinator.labyrinthStatus()
+      #expect(statusAfterMint.recoveryGeneration == recoveryCode.recoveryGeneration)
+      #expect(!earlierReceipt.isCurrent(for: statusAfterMint))
       #expect(statusAfterMint.recoveryNeedsAttention)
 
       let client = await ATProtoClient(baseURL: URL(string: "https://127.0.0.1")!)

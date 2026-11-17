@@ -53,6 +53,9 @@ struct MLSOrdinaryConversationDetailView: View {
   @State private var removeMemberDIDInput = ""
   @State private var moderationDIDInput = ""
   @State private var groupInfoError: String?
+  @State private var historyBackupEnabled: Bool?
+  @State private var isUpdatingHistoryBackup = false
+  @State private var confirmingHistoryBackup = false
 
   // Resurrected inline composer, attachment pickers, edit session, & draft handoff
   @State private var editSession = MLSMessageEditSession()
@@ -207,7 +210,7 @@ struct MLSOrdinaryConversationDetailView: View {
       }
     }
     .sheet(isPresented: $showingGroupInfo) {
-      groupInfoSheet
+      groupInfoSheet.task { await refreshMetadata() }
     }
     .sheet(isPresented: $showingLabyrinthSettings) {
       NavigationStack {
@@ -601,6 +604,32 @@ struct MLSOrdinaryConversationDetailView: View {
           }
         }
 
+        if let historyBackupEnabled {
+          Section {
+            Toggle("Back Up New Messages", isOn: Binding(
+              get: { historyBackupEnabled },
+              set: { enabled in
+                if enabled {
+                  confirmingHistoryBackup = true
+                } else {
+                  Task { await updateHistoryBackup(false) }
+                }
+              }
+            ))
+            .disabled(isUpdatingHistoryBackup)
+            .accessibilityIdentifier("chatInfo.historyBackup")
+            LabeledContent("This device", value: "Supports this setting")
+            ForEach(nonSelfParticipantDIDs, id: \.self) { did in
+              let profile = dataSource?.enrichedProfilesSnapshot[MLSProfileEnricher.canonicalDID(did)]
+              LabeledContent(profile.map { "@\($0.handle)" } ?? did, value: "Support unconfirmed")
+            }
+          } header: {
+            Text("Group History Backup")
+          } footer: {
+            Text("This setting applies to future messages for everyone using a compatible client. Members can still save messages or media. Existing backups and uploaded media remain available.")
+          }
+        }
+
         if let spaceURI {
           Section("ATProto Space") {
             Text(verbatim: spaceURI)
@@ -643,6 +672,12 @@ struct MLSOrdinaryConversationDetailView: View {
               .foregroundStyle(.red)
           }
         }
+      }
+      .confirmationDialog("Resume Backups for This Group?", isPresented: $confirmingHistoryBackup, titleVisibility: .visible) {
+        Button("Resume Group Backups") { Task { await updateHistoryBackup(true) } }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Members will see this change. Compatible clients can back up new messages again.")
       }
       .navigationTitle("Chat Info")
       .navigationBarTitleDisplayMode(.inline)
@@ -802,6 +837,7 @@ struct MLSOrdinaryConversationDetailView: View {
   @MainActor
   private func refreshMetadata() async {
     guard let coordinator = appState.mlsCoordinator else { return }
+    historyBackupEnabled = try? await coordinator.historyBackupEnabled(conversationId: conversationId)
     pendingCreationStatus = try? await coordinator.pendingGroupCreationStatus(conversationId: conversationId)
     if let metadata = try? await coordinator.getGroupMetadata(conversationId: conversationId) {
       groupTitle = metadata.title
@@ -815,6 +851,21 @@ struct MLSOrdinaryConversationDetailView: View {
     }
     if let members = try? await coordinator.listMembers(conversationId: conversationId) {
       memberDIDs = members
+    }
+  }
+
+  @MainActor
+  private func updateHistoryBackup(_ enabled: Bool) async {
+    guard !isUpdatingHistoryBackup, let coordinator = appState.mlsCoordinator else { return }
+    isUpdatingHistoryBackup = true
+    defer { isUpdatingHistoryBackup = false }
+    do {
+      try await coordinator.setHistoryBackupEnabled(conversationId: conversationId, enabled: enabled)
+      historyBackupEnabled = try await coordinator.historyBackupEnabled(conversationId: conversationId)
+      groupInfoError = nil
+      await dataSource?.loadMessages()
+    } catch {
+      groupInfoError = error.localizedDescription
     }
   }
 

@@ -80,6 +80,13 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
   private var repoRevisions: [String: String] = [:]
   private var repoOperations: [String: [SpaceOperation]] = [:]
   private var spentDelegations: Set<String> = []
+  private struct RepositorySnapshot {
+    let root: CID
+    let revision: String
+    let commit: CID
+    let car: Data
+  }
+  private var signedRepositories: [String: RepositorySnapshot] = [:]
   private var pdsRecords: [String: (value: JSON, cid: CID)] = [:]
   private var blobs: [String: Data] = [:]
   // DS world.
@@ -120,6 +127,7 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
     repoOperations = [:]
     spentDelegations = []
     pdsRecords = [:]
+    signedRepositories = [:]
     blobs = [:]
     deviceKeys = [:]
     conversationKeyPackages = [:]
@@ -256,17 +264,31 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
   private func handlePDS(
     account: String, nsid: String, method: String, rawQuery: String, request: URLRequest, body: Data
   ) throws -> Reply {
+    if nsid == "com.atproto.sync.getBlocks" {
+      return xrpcError(501, "NotImplemented")
+    }
     let params = try strictQuery(rawQuery)
     let now = nowSeconds()
     switch nsid {
     case "com.atproto.identity.resolveDid":
       return reply(200, ["didDoc": didDocument(try required(params, "did"))])
-    case "com.atproto.sync.getRecord":
-      return try syncGetRecordCar(
-        did: try required(params, "did"),
-        collection: try required(params, "collection"),
-        rkey: try required(params, "rkey")
-      )
+    case "com.atproto.sync.getRecord", "com.atproto.sync.getRepo", "com.atproto.sync.getLatestCommit":
+      guard method == "GET", try required(params, "did") == account else {
+        return xrpcError(400, "InvalidRequest", "repository mismatch")
+      }
+      if nsid == "com.atproto.sync.getRecord" {
+        let collection = try required(params, "collection")
+        let rkey = try required(params, "rkey")
+        let present = collection == Self.mailboxKeysCollection
+          ? mailboxKeys[account]?[rkey] != nil
+          : pdsRecords["\(account)|\(collection)|\(rkey)"] != nil
+        guard present else { return xrpcError(404, "RecordNotFound") }
+      }
+      let snapshot = try repositorySnapshot(did: account)
+      if nsid == "com.atproto.sync.getLatestCommit" {
+        return reply(200, ["cid": snapshot.commit.string, "rev": snapshot.revision])
+      }
+      return Reply(status: 200, headers: ["Content-Type": "application/vnd.ipld.car"], body: snapshot.car)
     case "com.atproto.repo.uploadBlob":
       let cid = CID.fromBlob(body)
       blobs["\(account)|\(cid.string)"] = body
@@ -824,68 +846,76 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
     reply.headers["Vary"] = "accept-signature"
   }
 
-  /// Build a signed ATProto CARv1 Merkle inclusion proof (`com.atproto.sync.getRecord`) for
-  /// `mailboxKeys` or `blue.catbird.chat.device` (`repo_proof.rs` `build_repo_proof_car_v1`).
-  private func syncGetRecordCar(did: String, collection: String, rkey: String) throws -> Reply {
-    let storedValue: Any?
-    if collection == Self.mailboxKeysCollection {
-      storedValue = mailboxKeys[did]?[rkey]?.value
-    } else {
-      storedValue = pdsRecords["\(did)|\(collection)|\(rkey)"]?.value
+  /// Produce one canonical, signed repository head for the whole current record set. Record reads,
+  /// full exports and head queries share it until a record changes.
+  private func repositorySnapshot(did: String) throws -> RepositorySnapshot {
+    typealias Leaf = (path: Data, cid: CID, depth: Int)
+    var blocks: [CID: Data] = [:]
+    var leaves: [Leaf] = []
+    func add(_ path: String, _ value: Any) throws {
+      let encoded = try DAGCBOR.encodeValue(try dataModel(value))
+      let cid = CID.fromDAGCBOR(encoded)
+      let key = Data(path.utf8)
+      var zeros = 0
+      for byte in SHA256.hash(data: key) {
+        zeros += byte.leadingZeroBitCount
+        if byte != 0 { break }
+      }
+      leaves.append((key, cid, zeros / 2))
+      blocks[cid] = encoded
     }
-    guard let value = storedValue else {
-      return xrpcError(404, "RecordNotFound")
+    for (key, record) in pdsRecords where key.hasPrefix(did + "|") {
+      let path = key.dropFirst(did.count + 1).replacingOccurrences(of: "|", with: "/")
+      try add(path, record.value)
     }
-    let recordCbor = try DAGCBOR.encodeValue(try dataModel(value))
-    let recordCid = CID.fromDAGCBOR(recordCbor)
-    let pathBytes = Data("\(collection)/\(rkey)".utf8)
-    let mstEntry: [String: Any] = [
-      "p": Int64(0),
-      "k": pathBytes,
-      "v": CIDAsLink(cid: recordCid, representation: .link),
-      "t": NSNull(),
-    ]
-    let mstNode: [String: Any] = [
-      "l": NSNull(),
-      "e": [mstEntry],
-    ]
-    let mstBytes = try DAGCBOR.encodeValue(mstNode)
-    let mstCid = CID.fromDAGCBOR(mstBytes)
-    let revValue = (UInt64(1) << 62) | next()
-    let tidAlphabet = Array("234567abcdefghijklmnopqrstuvwxyz")
-    let rev = String((0..<13).map { idx -> Character in
-      let shift = 60 - (idx * 5)
-      return tidAlphabet[Int((revValue >> UInt64(shift)) & 31)]
-    })
-    let unsignedCommit: [String: Any] = [
-      "did": did,
-      "version": Int64(3),
-      "data": CIDAsLink(cid: mstCid, representation: .link),
-      "rev": rev,
-      "prev": NSNull(),
-    ]
-    let unsignedBytes = try DAGCBOR.encodeValue(unsignedCommit)
-    let sig = try P256WireSignature.sign(unsignedBytes, using: signingKey(did))
-    let signedCommit: [String: Any] = [
-      "did": did,
-      "version": Int64(3),
-      "data": CIDAsLink(cid: mstCid, representation: .link),
-      "rev": rev,
-      "prev": NSNull(),
-      "sig": sig,
-    ]
-    let commitBytes = try DAGCBOR.encodeValue(signedCommit)
-    let commitCid = CID.fromDAGCBOR(commitBytes)
-    let headerObj: [String: Any] = [
-      "version": Int64(1),
-      "roots": [CIDAsLink(cid: commitCid, representation: .link)],
-    ]
-    let headerBytes = try DAGCBOR.encodeValue(headerObj)
-    var car = starFrame(headerBytes)
-    for (cid, block) in [(commitCid, commitBytes), (mstCid, mstBytes), (recordCid, recordCbor)] {
+    for (rkey, record) in mailboxKeys[did] ?? [:] {
+      try add("\(Self.mailboxKeysCollection)/\(rkey)", record.value)
+    }
+    leaves.sort { $0.path.lexicographicallyPrecedes($1.path) }
+
+    func tree(_ records: ArraySlice<Leaf>, depth: Int) throws -> CID {
+      var entries: [JSON] = []
+      var left: Any = NSNull()
+      func subtree(_ range: ArraySlice<Leaf>) throws -> Any {
+        guard !range.isEmpty else { return NSNull() }
+        return CIDAsLink(cid: try tree(range, depth: depth - 1), representation: .link)
+      }
+      var start = records.startIndex
+      var prior = Data()
+      for position in records.indices where records[position].depth == depth {
+        let lower = try subtree(records[start..<position])
+        if entries.isEmpty { left = lower } else { entries[entries.count - 1]["t"] = lower }
+        let record = records[position]
+        let prefix = zip(prior, record.path).prefix(while: { $0.0 == $0.1 }).count
+        entries.append(["p": Int64(prefix), "k": Data(record.path.dropFirst(prefix)), "t": NSNull(),
+                        "v": CIDAsLink(cid: record.cid, representation: .link)])
+        prior = record.path
+        start = position + 1
+      }
+      let tail = try subtree(records[start..<records.endIndex])
+      if entries.isEmpty { left = tail } else { entries[entries.count - 1]["t"] = tail }
+      let raw = try DAGCBOR.encodeValue(["l": left, "e": entries] as JSON)
+      let cid = CID.fromDAGCBOR(raw)
+      blocks[cid] = raw
+      return cid
+    }
+    let root = try tree(leaves[...], depth: leaves.map(\.depth).max() ?? 0)
+    if let prior = signedRepositories[did], prior.root == root { return prior }
+    let revision = tid(next())
+    var commit: JSON = ["did": did, "version": Int64(3), "rev": revision, "prev": NSNull(),
+                        "data": CIDAsLink(cid: root, representation: .link)]
+    commit["sig"] = try P256WireSignature.sign(try DAGCBOR.encodeValue(commit), using: signingKey(did))
+    let raw = try DAGCBOR.encodeValue(commit)
+    let cid = CID.fromDAGCBOR(raw)
+    let header: JSON = ["version": Int64(1), "roots": [CIDAsLink(cid: cid, representation: .link)]]
+    var car = starFrame(try DAGCBOR.encodeValue(header))
+    car.append(starFrame(cid.bytes + raw))
+    for (cid, block) in blocks.sorted(by: { $0.key.string < $1.key.string }) {
       car.append(starFrame(cid.bytes + block))
     }
-    return Reply(status: 200, headers: ["Content-Type": "application/vnd.ipld.car"], body: car)
+    let snapshot = RepositorySnapshot(root: root, revision: revision, commit: cid, car: car)
+    signedRepositories[did] = snapshot
+    return snapshot
   }
 
   private func inventoryCommitment(

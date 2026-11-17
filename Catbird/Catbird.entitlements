@@ -6,7 +6,7 @@
 	<string>development</string>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>webcredentials:catbird.blue</string>
+		<string>webcredentials:passkey.catbird.blue</string>
 		<string>applinks:catbird.blue</string>
 	</array>
 	<key>com.apple.developer.declared-age-range</key>

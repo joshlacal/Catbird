@@ -197,32 +197,6 @@ struct MLSDefaultOnConsentTests {
     #expect(appState.isMLSRuntimeAllowed)
   }
 
-  @Test("Account deletion contacts the chat server only for an account this device enrolled")
-  func deletionPredicateUsesEnrollmentFact() throws {
-    let store = IsolatedDefaults()
-    defer { store.cleanup() }
-    let settings = store.settings()
-    let did = Self.freshDID("deletion")
-    let emptyRoot = FileManager.default.temporaryDirectory
-      .appendingPathComponent("catbird-default-on-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: emptyRoot) }
-    let keychain = InMemoryCircleKeychain()
-
-    #expect(settings.isMLSChatEnabled(for: did))
-    #expect(!AccountDeletionCoordinator.requiresRemoteMLSErasure(
-      forDID: did, hasActiveCoordinator: false, storageRoot: emptyRoot,
-      circleKeychain: keychain, settings: settings))
-    #expect(AccountDeletionCoordinator.requiresRemoteMLSErasure(
-      forDID: did, hasActiveCoordinator: true, storageRoot: emptyRoot,
-      circleKeychain: keychain, settings: settings))
-
-    settings.recordMLSEnrollment(for: did)
-    #expect(AccountDeletionCoordinator.requiresRemoteMLSErasure(
-      forDID: did, hasActiveCoordinator: false, storageRoot: emptyRoot,
-      circleKeychain: keychain, settings: settings))
-  }
-
   @Test("The app bundle carries no build switch for encrypted chat or Circles")
   func noBuildSwitchesInInfoPlist() {
     let features = Bundle.main.object(forInfoDictionaryKey: "CatbirdFeatures") as? [String: Any] ?? [:]

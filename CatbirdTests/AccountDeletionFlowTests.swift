@@ -59,6 +59,7 @@ struct AccountDeletionCoordinatorTests {
     try await AccountDeletionCoordinator.eraseCatbirdData(
       forDID: targetDID,
       modelContext: context,
+      skipRemoteMLSErasure: true,
       accountRemovalOverride: { _ in }
     )
 
@@ -226,6 +227,20 @@ struct AccountDeletionCoordinatorTests {
     #expect(localEraseCount == 0)
     #expect(events == ["createSession"])
 
+    events.removeAll()
+    await #expect(throws: AccountErasureRecoveryRequired.self) {
+      try await AccountDeletionCoordinator.performHostedAccountDeletion(
+        forDID: targetDID,
+        password: "correct-horse-battery",
+        confirmationToken: "EMAIL-CODE-999",
+        remoteErasureConsent: .explicitlyConfirmed,
+        pdsURL: pdsURL,
+        localErasureOverride: { _ in events.append("localErasure") },
+        directClient: directClient
+      )
+    }
+    #expect(events == ["createSession"], "The provider account and local receipts must remain usable for recovery")
+
     // 3. AT Protocol has no token-prevalidation endpoint. After the dedicated UI consent,
     //    a bad email code can leave the account intact after encrypted-history erasure. Remaining
     //    local account cleanup must not run, and deletion must remain retryable with a replacement code.
@@ -276,21 +291,21 @@ struct AccountDeletionCoordinatorTests {
     #expect(events == ["createSession", "remoteMLSErasure", "deleteAccount", "localErasure"])
   }
 
-  @Test("A3: Non-MLS/non-Circles account skips remote deleteAccountData and local-only escape hatch succeeds when server is unreachable")
+  @Test("Fresh-device erasure preserves the hosted account when remote authority is unavailable; explicit local-only erasure works offline")
   @MainActor
-  func nonMLSAccountSkipsRemoteDeleteAndLocalOnlyEscapeHatchWorksOffline() async throws {
+  func freshDeviceCannotSkipRemoteErasureAndLocalOnlyEscapeHatchWorksOffline() async throws {
     let nonMLSDID = "did:plc:nonmls-\(UUID().uuidString.lowercased())"
     let fm = FileManager.default
     let emptyRoot = fm.temporaryDirectory.appendingPathComponent("catbird-nonmls-\(UUID().uuidString)", isDirectory: true)
     try fm.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
     defer { try? fm.removeItem(at: emptyRoot) }
 
-    // 1. An account that never enrolled, with no local MLS DB and no Circle keys, skips remote
-    //    deleteAccountData cleanly even though encrypted chat is on by default
-    try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
-      forDID: nonMLSDID,
-      storageRoot: emptyRoot
-    )
+    await #expect(throws: AccountErasureRecoveryRequired.self) {
+      try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
+        forDID: nonMLSDID,
+        storageRoot: emptyRoot
+      )
+    }
 
     // 2. When server is unreachable, fail-closed primary erasure throws, while explicit local-only escape hatch (`skipRemoteMLSErasure: true`) succeeds
     let schema = Schema([AppSettingsModel.self, Preferences.self, DraftPost.self])
