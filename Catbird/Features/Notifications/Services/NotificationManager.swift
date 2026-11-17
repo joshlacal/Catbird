@@ -2020,10 +2020,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Disables the push gateway binding when the user turns encrypted chat off. Runs while the
-  /// account is still active so the request can be signed.
+  /// account is still active so the request can be signed. An enrolled account only records the
+  /// opt-out after the server confirms this update; otherwise callers keep the MLS identity open
+  /// and surface a retry instead of claiming success while encrypted wakes remain registered.
   @MainActor
-  func unregisterMLSPushGatewayForUserOptOut(accountDID: String) async {
-    await updateSignedRequestPushRegistration(enabled: false, expectedAccount: accountDID)
+  func unregisterMLSPushGatewayForUserOptOut(accountDID: String) async throws {
+    guard ExperimentalSettings.shared.hasRecordedMLSEnrollment(for: accountDID) else { return }
+    guard await updateSignedRequestPushRegistration(enabled: false, expectedAccount: accountDID) else {
+      throw NotificationServiceError.serverError(
+        "Couldn’t unregister encrypted chat notifications. Check your connection and try again."
+      )
+    }
   }
 
   /// Disable device push binding on home `mls-ds` (`D2`).
@@ -2034,15 +2041,19 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Registers the native APNs token exclusively with `nest` (`blue.catbird.push.registerKey`) and binds
   /// only the opaque `pushKey` + `gatewayUrl` on the user's home `mls-ds` (`blue.catbird.chat.registerPushGateway`, `D2`).
   @MainActor
-  private func updateSignedRequestPushRegistration(enabled override: Bool? = nil, expectedAccount: String? = nil) async {
+  @discardableResult
+  private func updateSignedRequestPushRegistration(
+    enabled override: Bool? = nil,
+    expectedAccount: String? = nil
+  ) async -> Bool {
     #if os(iOS)
-    guard let appState, appState.isMLSRuntimeAllowed, let client, let token = deviceToken else { return }
+    guard let appState, appState.isMLSRuntimeAllowed, let client, let token = deviceToken else { return false }
     let account = appState.userDID
-    guard expectedAccount == nil || expectedAccount == account else { return }
+    guard expectedAccount == nil || expectedAccount == account else { return false }
     let desired = override ?? (notificationsEnabled && isMasterPushEnabled() && mlsChatNotificationsEnabled)
 
     do {
-      guard try await client.getDid() == account else { return }
+      guard try await client.getDid() == account else { return false }
       let deviceId = appState.resolvedMLSDeviceID()
       let tokenHex = hexString(from: token)
 
@@ -2063,22 +2074,24 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       )
       guard (200..<300).contains(regCode), let regOutput else {
         notificationLogger.warning("Push gateway registerKey returned HTTP \(regCode)")
-        return
+        return false
       }
 
-      // Every registerKey call issues a fresh pushKey and retires the previous one at the
-      // gateway. The Notification Service Extension needs the current key (shared keychain
-      // access group) to open sealed version 2 wakes, so replace it now, before the delivery
-      // service learns it; when chat pushes are being turned off, remove it instead.
-      persistPushWakeKey(
-        desired ? regOutput.pushKey : nil,
-        appId: regOutput.appId,
-        accountDID: account
-      )
+      // Every registerKey call issues a fresh pushKey and retires the previous one. Enabling stores
+      // the key before the delivery service learns it. Disabling keeps local state until mls-ds
+      // confirms the signed disable, then removes the key; a failure remains retryable and never
+      // records a user opt-out.
+      if desired {
+        guard persistPushWakeKey(
+          regOutput.pushKey,
+          appId: regOutput.appId,
+          accountDID: account
+        ) else { return false }
+      }
 
       guard let mlsClient = await appState.getMLSAPIClient(),
             let coordinator = await appState.getOrOpenMLSCoordinator(),
-            appState.userDID == account else { return }
+            appState.userDID == account else { return false }
 
       let signed = try await coordinator.buildSignedPushGatewayRegistration(
         gatewayUrl: regOutput.gatewayUrl.uriString(),
@@ -2090,18 +2103,30 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       _ = try await mlsClient.registerPushGateway(
         rawJsonData: Data(signed.requestJson.utf8)
       )
+      if !desired {
+        guard persistPushWakeKey(
+          nil,
+          appId: regOutput.appId,
+          accountDID: account
+        ) else { return false }
+      }
       notificationLogger.info("Push gateway registration updated (enabled=\(desired))")
+      return true
     } catch {
-      guard appState.userDID == account else { return }
+      guard appState.userDID == account else { return false }
       notificationLogger.warning("Push gateway registration deferred: \(error.localizedDescription)")
+      return false
     }
+    #else
+    return true
     #endif
   }
 
   /// Stores (or, for nil, removes) the account's sealed-wake `pushKey` and its
   /// `kid -> account DID` index entry. Sign-out removes both through
   /// `KeychainPlatformKeyStore.deleteAccountKeys`.
-  private func persistPushWakeKey(_ pushKey: String?, appId: String, accountDID: String) {
+  @discardableResult
+  private func persistPushWakeKey(_ pushKey: String?, appId: String, accountDID: String) -> Bool {
     let keystore = KeychainPlatformKeyStore()
     do {
       if let pushKey {
@@ -2109,9 +2134,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       } else {
         try keystore.deletePushWakeKey(accountDid: accountDID)
       }
+      return true
     } catch {
       notificationLogger.error(
         "Failed to update the sealed push wake key: \(error.localizedDescription)")
+      return false
     }
   }
 

@@ -272,9 +272,15 @@ struct MLSChatSettingsView: View {
   private func optOutOfMLS() async {
     isOptingOut = true
     defer { isOptingOut = false }
-    await appState.optOutOfMLSChat()
-    logger.info("Disabled MLS chat for current account")
-    dismiss()
+    do {
+      try await appState.optOutOfMLSChat()
+      logger.info("Disabled MLS chat for current account")
+      dismiss()
+    } catch {
+      logger.error("Failed to disable MLS chat: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingErrorAlert = true
+    }
   }
 
 }

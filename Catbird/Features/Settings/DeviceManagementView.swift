@@ -96,6 +96,9 @@ struct DeviceManagementView: View {
             await viewModel.initialize(appState: appState)
             await viewModel.loadDevices()
         }
+        .onChange(of: appState.pendingMLSDeviceRevocationReceipt) { _, receipt in
+            viewModel.revocationReceipt = receipt
+        }
         .alert("Revoke Device", isPresented: $viewModel.showDeleteConfirmation, presenting: viewModel.deviceToDelete) { device in
             Button("Cancel", role: .cancel) {}
             Button("Revoke", role: .destructive) {
@@ -116,7 +119,7 @@ struct DeviceManagementView: View {
         } message: {
             Text("Are you sure you want to revoke all other authorized devices? This device will remain active.")
         }
-        .alert("Couldn’t Delete Device", isPresented: Binding(get: { viewModel.deleteError != nil }, set: { if !$0 { viewModel.deleteError = nil } })) {
+        .alert("Couldn’t Revoke Device", isPresented: Binding(get: { viewModel.deleteError != nil }, set: { if !$0 { viewModel.deleteError = nil } })) {
             Button("OK") {
                 viewModel.deleteError = nil
             }
@@ -125,6 +128,114 @@ struct DeviceManagementView: View {
                 Text(error.localizedDescription)
             }
         }
+        .sheet(item: $viewModel.revocationReceipt) { receipt in
+            DeviceRevocationReceiptSheet(receipt: receipt) {
+                guard appState.acknowledgePendingMLSDeviceRevocationReceipt() else {
+                    return false
+                }
+                viewModel.revocationReceipt = nil
+                return true
+            }
+        }
+    }
+}
+
+struct DeviceRevocationReceiptSheet: View {
+    let receipt: AppState.PendingMLSDeviceRevocationReceipt
+    let acknowledge: @MainActor () -> Bool
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmedLostDeviceRemoved = false
+    @State private var acknowledgementError = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Label(
+                        receipt.dsRevoked
+                            ? (receipt.replacementRecoveryCode == nil
+                                ? "The device was revoked. Review this report before leaving the screen."
+                                : "The device was revoked. Save the replacement recovery code before leaving this screen.")
+                            : "The revocation report is incomplete. Review every result and retry from the device list.",
+                        systemImage: receipt.dsRevoked
+                            ? "checkmark.shield.fill"
+                            : "exclamationmark.shield.fill"
+                    )
+                    .foregroundStyle(receipt.dsRevoked ? .green : .orange)
+                    LabeledContent("Revoked Device") {
+                        Text(receipt.targetDeviceId)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    LabeledContent("Directory Revoked", value: receipt.dsRevoked ? "Yes" : "No")
+                    LabeledContent("Groups Updated", value: "\(receipt.groupsUpdated)")
+                    LabeledContent("Backup Rotated", value: receipt.labyrinthRotated ? "Yes" : "No")
+                    if let epoch = receipt.newEpochSeq {
+                        LabeledContent("New Backup Epoch", value: "\(epoch)")
+                    }
+                    LabeledContent("Device Record Removed", value: receipt.pdsRecordDeleted ? "Yes" : "No")
+                    LabeledContent("Passkeys Re-keyed", value: "\(receipt.rekeyedPasskeyCount)")
+                } header: {
+                    Text("Revocation Report")
+                }
+
+                if let code = receipt.replacementRecoveryCode {
+                    Section {
+                        Text(code)
+                            .font(.body.monospaced())
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("device-revocation-replacement-recovery-code")
+                    } header: {
+                        Text("Replacement Recovery Code")
+                    } footer: {
+                        Text("Your previous recovery code no longer works. Store this replacement in your password manager.")
+                    }
+                }
+
+                if receipt.rekeyedPasskeyCount > 0 {
+                    Section {
+                        Toggle(
+                            "I removed the lost device from my Apple or Google account",
+                            isOn: $confirmedLostDeviceRemoved
+                        )
+                        .accessibilityIdentifier("device-revocation-confirm-account-device-removed")
+                    } header: {
+                        Text("Before Registering Another Passkey")
+                    } footer: {
+                        Text("Do not register a replacement passkey until the lost phone is removed from the platform account that could still hold its passkey.")
+                    }
+                }
+
+                if acknowledgementError {
+                    Section {
+                        Label(
+                            "Catbird couldn’t clear the securely stored report. Try again so it is not dismissed before your acknowledgement is saved.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    Button(receipt.replacementRecoveryCode == nil ? "Acknowledge Report" : "I Saved This Code") {
+                        if acknowledge() {
+                            dismiss()
+                        } else {
+                            acknowledgementError = true
+                        }
+                    }
+                    .disabled(receipt.rekeyedPasskeyCount > 0 && !confirmedLostDeviceRemoved)
+                    .accessibilityIdentifier("device-revocation-acknowledge-report")
+                }
+            }
+            .navigationTitle("Device Revocation Report")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+        }
+        .interactiveDismissDisabled()
     }
 }
 
@@ -516,8 +627,10 @@ final class DeviceManagementViewModel {
     var showDeleteConfirmation = false
     var showClearAllConfirmation = false
     var deviceToDelete: DeviceRowModel?
+    var revocationReceipt: AppState.PendingMLSDeviceRevocationReceipt?
     var currentDeviceId: String?
-    var customRevokerForTesting: (@MainActor (_ targetDeviceId: String) async throws -> Void)?
+    var customRevokerForTesting:
+        (@MainActor (_ targetDeviceId: String) async throws -> AppState.PendingMLSDeviceRevocationReceipt?)?
 
     private var appState: AppState?
 
@@ -525,6 +638,7 @@ final class DeviceManagementViewModel {
     func initialize(appState: AppState) async {
         self.appState = appState
         self.currentDeviceId = appState.resolvedMLSDeviceID()
+        self.revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
     }
 
     @MainActor
@@ -634,6 +748,8 @@ final class DeviceManagementViewModel {
         "You cannot revoke the device you are currently using. Sign out in Account & Security to remove this device."
     static let coordinatorUnavailableMessage =
         "Encrypted chat coordinator is unavailable. Open Messages and try revoking this device again."
+    static let incompleteRevocationMessage =
+        "The server returned an incomplete device revocation report. The device remains listed so you can retry."
 
     @MainActor
     func deleteDevice(_ device: DeviceRowModel) async {
@@ -650,8 +766,9 @@ final class DeviceManagementViewModel {
 
         do {
             logger.info("Revoking device: \(device.deviceId)")
+            var receiptPersistenceError: Error?
             if let customRevoker = customRevokerForTesting {
-                try await customRevoker(device.deviceId)
+                revocationReceipt = try await customRevoker(device.deviceId)
             } else {
                 guard let appState else {
                     throw NSError(
@@ -667,10 +784,25 @@ final class DeviceManagementViewModel {
                         userInfo: [NSLocalizedDescriptionKey: Self.coordinatorUnavailableMessage]
                     )
                 }
-                _ = try await coordinator.revokeDevice(targetDeviceId: device.deviceId)
+                let report = try await coordinator.revokeDevice(targetDeviceId: device.deviceId)
+                do {
+                    revocationReceipt = try appState.retainDeviceRevocationReport(report)
+                } catch {
+                    // The report remains visible in memory; surface the storage failure as well so
+                    // the user does not mistake it for a durable save.
+                    revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
+                    receiptPersistenceError = error
+                }
+            }
+            guard revocationReceipt?.dsRevoked != false else {
+                throw NSError(
+                    domain: "DeviceManagement",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: Self.incompleteRevocationMessage]
+                )
             }
             devices.removeAll { DeviceRowModel.matchesDeviceID($0.deviceId, device.deviceId) }
-            deleteError = nil
+            deleteError = receiptPersistenceError
         } catch {
             logger.error("Failed to revoke device: \(error.localizedDescription)")
             deleteError = error

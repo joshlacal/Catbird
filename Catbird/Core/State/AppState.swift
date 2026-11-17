@@ -223,6 +223,42 @@ final class AppState {
         }
     }
 
+    /// Durable, account-scoped result of revoking a lost device. The replacement recovery code is
+    /// stored only in this device's Keychain, never in UserDefaults or logs.
+    struct PendingMLSDeviceRevocationReceipt: Codable, Equatable, Identifiable, Sendable {
+        let accountDidHash: String
+        let targetDeviceId: String
+        let dsRevoked: Bool
+        let groupsUpdated: UInt32
+        let labyrinthRotated: Bool
+        let newEpochSeq: UInt64?
+        let pdsRecordDeleted: Bool
+        let replacementRecoveryCode: String?
+        let rekeyedPasskeyCount: Int
+        let recordedAtEpochSeconds: Int64
+
+        var id: String {
+            "\(accountDidHash):\(targetDeviceId):\(recordedAtEpochSeconds)"
+        }
+
+        init(
+            report: DeviceRevocationReport,
+            accountDidHash: String,
+            recordedAtEpochSeconds: Int64 = Int64(Date().timeIntervalSince1970)
+        ) {
+            self.accountDidHash = accountDidHash
+            self.targetDeviceId = report.targetDeviceId
+            self.dsRevoked = report.dsRevoked
+            self.groupsUpdated = report.groupsUpdated
+            self.labyrinthRotated = report.labyrinthRotated
+            self.newEpochSeq = report.newEpochSeq
+            self.pdsRecordDeleted = report.pdsRecordDeleted
+            self.replacementRecoveryCode = report.rekeyedRecoveryCode
+            self.rekeyedPasskeyCount = report.rekeyedPasskeyIds.count
+            self.recordedAtEpochSeconds = recordedAtEpochSeconds
+        }
+    }
+
     /// What a successful label-definitions load covered: the subscribed labelers and the client.
     /// It mirrors the identity `ContentLabelDefinitionLookup` caches by, so an unchanged key needs no load.
     private struct ModerationDefinitionsKey: Equatable {
@@ -473,6 +509,10 @@ final class AppState {
     /// Account's Spaces eligibility (`I15` Spaces-required gate; Bluesky DMs remain active when unavailable)
     private(set) var spacesEligibility: SpacesEligibilityStatus?
 
+    /// A revocation report that still needs an explicit "saved" acknowledgement.
+    /// Loaded from this-device-only Keychain storage on each account launch.
+    private(set) var pendingMLSDeviceRevocationReceipt: PendingMLSDeviceRevocationReceipt?
+
     /// Default home sequencer DID for creating new groups (`D1`)
     var defaultMLSSequencerDID: String {
         CatbirdGatewayConfiguration.current.mlsServiceDID ?? "did:web:chat.catbird.blue#atproto_mls"
@@ -614,6 +654,8 @@ final class AppState {
         self.client = client
         self.regulatoryChecker = regulatoryChecker
         self.ageAccess = PlatformAgeAccess(checker: regulatoryChecker)
+        self.pendingMLSDeviceRevocationReceipt =
+            try? Self.loadPendingMLSDeviceRevocationReceipt(forDID: userDID)
         logger.info("AppState initializing for account: \(userDID)")
         appSettings.configure(accountDID: userDID)
 
@@ -871,21 +913,24 @@ final class AppState {
         await notificationManager.syncMLSPushGatewayRegistration()
     }
 
-    /// The user turned encrypted chat off (or chose "Not now" on the introduction).
+    /// Turns encrypted chat off only after its server-side push binding is confirmed disabled.
+    /// A failure leaves both the preference and local MLS identity intact so the operation can retry.
     @MainActor
-    func optOutOfMLSChat() async {
+    func optOutOfMLSChat() async throws {
         let accountDID = userDID
-        await MLSUserOptOutSequence(
-            unregisterPushGateway: { [weak self] in
-                await self?.notificationManager.unregisterMLSPushGatewayForUserOptOut(accountDID: accountDID)
+        try await MLSUserOptOutSequence(
+            unregisterPushGateway: { [self] in
+                try await notificationManager.unregisterMLSPushGatewayForUserOptOut(
+                    accountDID: accountDID
+                )
             },
             persistUserDisabled: {
                 ExperimentalSettings.shared.disableMLSChat(for: accountDID)
             },
-            resetLocalMLSState: { [weak self] in
-                guard let self, self.userDID == accountDID else { return }
-                await self.prepareMLSStorageReset()
-                await self.loadMLSConversations()
+            resetLocalMLSState: { [self] in
+                guard userDID == accountDID else { return }
+                await prepareMLSStorageReset()
+                await loadMLSConversations()
             }
         ).run()
     }
@@ -2383,6 +2428,14 @@ final class AppState {
     // MARK: - Bounded Sign-Out & Secondary Account Device Retirement (`A6`)
 
     /// Privacy-preserving retry marker queued when `retireCurrentDevice()` times out or fails while offline.
+    enum PendingMLSDeviceRetirementReason: String, Sendable {
+        case timeout
+        case error
+        case missingSecondarySessionToken = "missing_secondary_session_token"
+        case secondaryCoordinatorOpenFailed = "secondary_coordinator_open_failed"
+        case transientCoordinatorOpenFailed = "transient_coordinator_open_failed"
+    }
+
     /// Stores only `accountDidHash` (SHA-256 hex) rather than raw DIDs to prevent post-sign-out DID leakage.
     struct PendingMLSDeviceRetirementRecord: Codable, Equatable, Sendable {
         let accountDidHash: String
@@ -2396,18 +2449,224 @@ final class AppState {
     nonisolated static func pendingMLSDeviceRetirements(
         in defaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
     ) -> [PendingMLSDeviceRetirementRecord] {
-        guard let data = defaults?.data(forKey: pendingDeviceRetirementsDefaultsKey),
+        guard let defaults,
+              let data = defaults.data(forKey: pendingDeviceRetirementsDefaultsKey),
               let decoded = try? JSONDecoder().decode([PendingMLSDeviceRetirementRecord].self, from: data)
         else {
             return []
         }
-        return decoded
+        guard decoded.contains(where: {
+            PendingMLSDeviceRetirementReason(rawValue: $0.reason) == nil
+        }) else {
+            return decoded
+        }
+        let sanitized = decoded.map { record in
+            guard PendingMLSDeviceRetirementReason(rawValue: record.reason) == nil else {
+                return record
+            }
+            return PendingMLSDeviceRetirementRecord(
+                accountDidHash: record.accountDidHash,
+                deviceId: record.deviceId,
+                recordedAtEpochSeconds: record.recordedAtEpochSeconds,
+                reason: PendingMLSDeviceRetirementReason.error.rawValue
+            )
+        }
+        persistPendingMLSDeviceRetirements(sanitized, in: defaults)
+        return sanitized
+    }
+
+    private struct MLSDeviceRevocationReceiptStoreError: LocalizedError {
+        let operation: String
+        let status: OSStatus
+
+        var errorDescription: String? {
+            let detail = SecCopyErrorMessageString(status, nil).map { $0 as String }
+                ?? "OSStatus \(status)"
+            return "Couldn’t \(operation) the device revocation report securely: \(detail)"
+        }
+    }
+
+    nonisolated static let deviceRevocationReceiptKeychainService =
+        "blue.catbird.mls.device-revocation-receipt.v1"
+
+    private nonisolated static func deviceRevocationReceiptKeychainQuery(
+        accountDidHash: String
+    ) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: deviceRevocationReceiptKeychainService,
+            kSecAttrAccount as String: accountDidHash,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+        ]
+        #if os(macOS)
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return query
+    }
+
+    /// Reads the unacknowledged lost-device report from this-device-only Keychain storage.
+    nonisolated static func loadPendingMLSDeviceRevocationReceipt(
+        forDID accountDid: String,
+        backend: any KeychainBackend = SystemKeychainBackend()
+    ) throws -> PendingMLSDeviceRevocationReceipt? {
+        let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
+        var query = deviceRevocationReceiptKeychainQuery(accountDidHash: didHash)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let (status, item) = backend.copyMatching(query)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = item as? Data else {
+            throw MLSDeviceRevocationReceiptStoreError(operation: "read", status: status)
+        }
+        return try JSONDecoder().decode(PendingMLSDeviceRevocationReceipt.self, from: data)
+    }
+
+    /// Replaces the prior report because each later recovery rotation invalidates its predecessor.
+    /// This stores no account DID, bearer token, cookie, or other reusable credential.
+    nonisolated static func storePendingMLSDeviceRevocationReceipt(
+        _ receipt: PendingMLSDeviceRevocationReceipt,
+        backend: any KeychainBackend = SystemKeychainBackend()
+    ) throws {
+        let data = try JSONEncoder().encode(receipt)
+        let query = deviceRevocationReceiptKeychainQuery(accountDidHash: receipt.accountDidHash)
+        let updateStatus = backend.update(query, [kSecValueData as String: data])
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw MLSDeviceRevocationReceiptStoreError(operation: "save", status: updateStatus)
+        }
+
+        var attributes = query
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = backend.add(attributes)
+        guard addStatus == errSecSuccess else {
+            throw MLSDeviceRevocationReceiptStoreError(operation: "save", status: addStatus)
+        }
+    }
+
+    nonisolated static func clearPendingMLSDeviceRevocationReceipt(
+        forDID accountDid: String,
+        backend: any KeychainBackend = SystemKeychainBackend()
+    ) throws {
+        let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
+        let status = backend.delete(deviceRevocationReceiptKeychainQuery(accountDidHash: didHash))
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw MLSDeviceRevocationReceiptStoreError(operation: "remove", status: status)
+        }
+    }
+
+    /// Captures the full report before any caller dismisses or refreshes the destructive flow.
+    /// If Keychain persistence fails, the observed in-memory receipt remains visible and the error
+    /// is rethrown so automatic retirement reconciliation keeps its retry marker.
+    @MainActor
+    @discardableResult
+    func retainDeviceRevocationReport(
+        _ report: DeviceRevocationReport
+    ) throws -> PendingMLSDeviceRevocationReceipt {
+        let didHash = try MLSAppGroupStorage.accountDidHash(for: userDID)
+        let receipt = PendingMLSDeviceRevocationReceipt(
+            report: report,
+            accountDidHash: didHash
+        )
+        pendingMLSDeviceRevocationReceipt = receipt
+        do {
+            try Self.storePendingMLSDeviceRevocationReceipt(receipt)
+            return receipt
+        } catch {
+            logger.error("Couldn’t persist the device revocation report in Keychain: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    /// Clears the durable report only after the user explicitly says it was saved.
+    @MainActor
+    @discardableResult
+    func acknowledgePendingMLSDeviceRevocationReceipt() -> Bool {
+        do {
+            try Self.clearPendingMLSDeviceRevocationReceipt(forDID: userDID)
+            pendingMLSDeviceRevocationReceipt = nil
+            return true
+        } catch {
+            logger.error("Couldn’t clear the acknowledged device revocation report: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private nonisolated static func persistPendingMLSDeviceRetirements(
+        _ records: [PendingMLSDeviceRetirementRecord],
+        in defaults: UserDefaults
+    ) {
+        guard !records.isEmpty else {
+            defaults.removeObject(forKey: pendingDeviceRetirementsDefaultsKey)
+            return
+        }
+        if let encoded = try? JSONEncoder().encode(records) {
+            defaults.set(encoded, forKey: pendingDeviceRetirementsDefaultsKey)
+        }
+    }
+
+    /// Retries only the signed-in account's old device IDs. Successful remote revocation must
+    /// finish the caller's durable report write before its marker is consumed.
+    @MainActor
+    @discardableResult
+    static func reconcilePendingMLSDeviceRetirements(
+        accountDid: String,
+        currentDeviceId: String,
+        registeredDevices: [RegisteredDeviceInfo],
+        in defaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier),
+        revoke: @MainActor (String) async throws -> Void
+    ) async -> Int {
+        guard let defaults,
+              let didHash = try? MLSAppGroupStorage.accountDidHash(for: accountDid)
+        else { return 0 }
+
+        var records = pendingMLSDeviceRetirements(in: defaults)
+        let candidates = records.filter { $0.accountDidHash == didHash }
+        var consumed = 0
+        for record in candidates {
+            guard let target = record.deviceId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !target.isEmpty,
+                  target.caseInsensitiveCompare(currentDeviceId) != .orderedSame
+            else { continue }
+
+            let registered = registeredDevices.first {
+                $0.deviceId.caseInsensitiveCompare(target) == .orderedSame
+            }
+            if let registered, registered.status.lowercased() != "revoked" {
+                do {
+                    try await revoke(target)
+                } catch {
+                    continue
+                }
+            }
+
+            records.removeAll { $0 == record }
+            persistPendingMLSDeviceRetirements(records, in: defaults)
+            consumed += 1
+        }
+        return consumed
+    }
+
+    nonisolated static func clearPendingMLSDeviceRetirements(
+        forDID accountDid: String,
+        in defaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
+    ) {
+        guard let defaults,
+              let didHash = try? MLSAppGroupStorage.accountDidHash(for: accountDid)
+        else { return }
+        var records = pendingMLSDeviceRetirements(in: defaults)
+        records.removeAll { $0.accountDidHash == didHash }
+        persistPendingMLSDeviceRetirements(records, in: defaults)
     }
 
     nonisolated static func recordPendingMLSDeviceRetirement(
         accountDid: String,
         deviceId: String?,
-        reason: String,
+        reason: PendingMLSDeviceRetirementReason,
         in defaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
     ) {
         guard let defaults,
@@ -2420,15 +2679,13 @@ final class AppState {
                 accountDidHash: didHash,
                 deviceId: deviceId,
                 recordedAtEpochSeconds: Int64(Date().timeIntervalSince1970),
-                reason: String(reason.prefix(160))
+                reason: reason.rawValue
             )
         )
         if records.count > 32 {
             records = Array(records.suffix(32))
         }
-        if let encoded = try? JSONEncoder().encode(records) {
-            defaults.set(encoded, forKey: pendingDeviceRetirementsDefaultsKey)
-        }
+        persistPendingMLSDeviceRetirements(records, in: defaults)
     }
 
     private actor OneShotRetirementGate<Value: Sendable> {
@@ -2499,7 +2756,7 @@ final class AppState {
             recordPendingMLSDeviceRetirement(
                 accountDid: accountDid,
                 deviceId: deviceId,
-                reason: "timeout",
+                reason: .timeout,
                 in: sharedDefaults
             )
             return false
@@ -2508,12 +2765,12 @@ final class AppState {
         switch result {
         case .success:
             return true
-        case .failure(let error):
-            log.warning("MLS device retirement failed (\(error.localizedDescription, privacy: .public)); queued retry marker and continuing local wipe")
+        case .failure:
+            log.warning("MLS device retirement failed; queued retry marker and continuing local wipe")
             recordPendingMLSDeviceRetirement(
                 accountDid: accountDid,
                 deviceId: deviceId,
-                reason: "error:\(error.localizedDescription)",
+                reason: .error,
                 in: sharedDefaults
             )
             return false
@@ -2680,7 +2937,7 @@ final class AppState {
                 recordPendingMLSDeviceRetirement(
                     accountDid: did,
                     deviceId: existingDeviceId,
-                    reason: "missing_secondary_session_token",
+                    reason: .missingSecondarySessionToken,
                     in: sharedDefaults
                 )
                 return
@@ -2718,7 +2975,7 @@ final class AppState {
             recordPendingMLSDeviceRetirement(
                 accountDid: did,
                 deviceId: existingDeviceId,
-                reason: "secondary_coordinator_open_failed",
+                reason: .secondaryCoordinatorOpenFailed,
                 in: sharedDefaults
             )
             return
@@ -2803,7 +3060,7 @@ final class AppState {
                     Self.recordPendingMLSDeviceRetirement(
                         accountDid: accountDid,
                         deviceId: existingDeviceId,
-                        reason: "transient_coordinator_open_failed"
+                        reason: .transientCoordinatorOpenFailed
                     )
                 }
             }
@@ -3290,6 +3547,54 @@ final class AppState {
 
     // MARK: - MLS (Encrypted Messaging)
 
+    /// Reconciles hashed sign-out retry markers only after this replacement device has enrolled.
+    /// An active target's marker is removed only after revocation and secure receipt persistence.
+    @MainActor
+    private func reconcilePendingMLSDeviceRetirements(
+        using coordinator: MLSClientCoordinator
+    ) async {
+        let currentDeviceId = resolvedMLSDeviceID()
+        guard let didHash = try? MLSAppGroupStorage.accountDidHash(for: userDID),
+              Self.pendingMLSDeviceRetirements().contains(where: { record in
+                  guard record.accountDidHash == didHash,
+                        let target = record.deviceId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                        !target.isEmpty
+                  else { return false }
+                  return target.caseInsensitiveCompare(currentDeviceId) != .orderedSame
+              })
+        else { return }
+
+        let registeredDevices: [RegisteredDeviceInfo]
+        do {
+            registeredDevices = try await coordinator.listDevices()
+        } catch {
+            logger.warning("MLS: Pending device retirement inventory deferred: \(error.localizedDescription)")
+            return
+        }
+
+        let consumed = await Self.reconcilePendingMLSDeviceRetirements(
+            accountDid: userDID,
+            currentDeviceId: currentDeviceId,
+            registeredDevices: registeredDevices
+        ) { [self] targetDeviceId in
+            let report = try await coordinator.revokeDevice(targetDeviceId: targetDeviceId)
+            _ = try retainDeviceRevocationReport(report)
+            guard report.dsRevoked else {
+                throw NSError(
+                    domain: "MLSDeviceRetirement",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The server returned an incomplete device revocation report."
+                    ]
+                )
+            }
+        }
+        if consumed > 0 {
+            logger.info("MLS: Reconciled \(consumed) pending device retirement marker(s)")
+        }
+    }
+
     /// Initialize MLS for the current account via the unified Rust `CatbirdMlsClient` SDK (`Spec §4`, `§6.3`, `I15`).
     @MainActor
     func initializeMLS() async throws {
@@ -3312,6 +3617,7 @@ final class AppState {
                 _ = try await coordinator.enrollDevice(grantedScopes: grantedScopes)
                 ExperimentalSettings.shared.recordMLSEnrollment(for: userDID)
                 logger.info("MLS: Device enrolled with post-quantum credentials (I16)")
+                await reconcilePendingMLSDeviceRetirements(using: coordinator)
             } catch {
                 logger.warning("MLS: Device enrollment deferred (possibly offline): \(error.localizedDescription)")
             }
@@ -3341,6 +3647,7 @@ final class AppState {
             if spacesEligibility?.eligible == true {
                 if (try? await coordinator.enrollDevice(grantedScopes: scopes)) != nil {
                     ExperimentalSettings.shared.recordMLSEnrollment(for: userDID)
+                    await reconcilePendingMLSDeviceRetirements(using: coordinator)
                 }
                 await reloadMLSConversations()
             }

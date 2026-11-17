@@ -31,6 +31,7 @@ struct AccountDeletionSheet: View {
   @State private var requiresAuthFactorToken = false
   @State private var deletionAuthFactorToken = ""
   @State private var deletionConfirmationToken = ""
+  @State private var confirmingRemoteBackupErasure = false
   @State private var confirmingPermanentDeletion = false
   @State private var isDeletingHostedAccount = false
   @State private var permanentDeletionNotice: String?
@@ -121,7 +122,7 @@ struct AccountDeletionSheet: View {
                 .accessibilityIdentifier("AccountDeletion.ConfirmationToken")
 
               Button(role: .destructive) {
-                confirmingPermanentDeletion = true
+                confirmingRemoteBackupErasure = true
               } label: {
                 HStack {
                   Text("Permanently Delete Account")
@@ -268,13 +269,27 @@ struct AccountDeletionSheet: View {
       } message: {
         Text("Catbird's encrypted chat servers could not be reached. Continuing will immediately sign out and erase all local keys, databases, drafts, and settings on this device, while server-side ciphertext or backups may remain until deleted later.")
       }
+      .confirmationDialog(
+        "Allow Encrypted Backup Erasure Before Account Deletion?",
+        isPresented: $confirmingRemoteBackupErasure,
+        titleVisibility: .visible
+      ) {
+        Button("I Understand the Risk", role: .destructive) {
+          confirmingPermanentDeletion = true
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          "Your hosting provider cannot validate the email code without deleting the account. Catbird must erase encrypted cloud backups first while you are still signed in, and that operation also retires this device’s encrypted-chat store. If the provider then rejects or expires the code, your account will remain but that encrypted history cannot be restored from Catbird’s backups. You can retry account deletion with a new code."
+        )
+      }
       .confirmationDialog("Permanently Delete Hosted Account?", isPresented: $confirmingPermanentDeletion, titleVisibility: .visible) {
         Button("Permanently Delete Account", role: .destructive) {
           performPermanentAccountDeletion()
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This permanently deletes your hosted AT Protocol account and erases all Catbird data on our servers and this device. This action cannot be undone.")
+        Text("Catbird will first erase the encrypted cloud backups and device chat store you explicitly approved, then ask your hosting provider to permanently delete the account. Other local Catbird account data is removed only after the provider confirms deletion.")
       }
       .task {
         await resolveAccountPage()
@@ -482,6 +497,7 @@ struct AccountDeletionSheet: View {
             password: password,
             confirmationToken: trimmedToken,
             authFactorToken: factor,
+            remoteErasureConsent: .explicitlyConfirmed,
             pdsURL: pdsURL,
             modelContext: modelContext,
             appStateOverride: originatingAppState,

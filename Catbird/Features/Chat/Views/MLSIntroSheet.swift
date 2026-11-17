@@ -131,7 +131,11 @@ struct MLSIntroSheetHost: View {
           logger.error("Encrypted chat setup after the introduction failed: \(error.localizedDescription)")
         }
       } else {
-        await appState.optOutOfMLSChat()
+        do {
+          try await appState.optOutOfMLSChat()
+        } catch {
+          logger.error("Encrypted chat opt-out after the introduction failed: \(error.localizedDescription)")
+        }
       }
     }
   }

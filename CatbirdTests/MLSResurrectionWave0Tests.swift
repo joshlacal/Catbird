@@ -3,6 +3,7 @@ import CatbirdMLSCore
 import Foundation
 import Petrel
 import PetrelCatbird
+import Security
 import SwiftData
 import Testing
 import UserNotifications
@@ -66,6 +67,70 @@ private final class Wave0RecordingKeyStore: PlatformKeyStore, @unchecked Sendabl
     lock.lock()
     defer { lock.unlock() }
     return sigKeypairs.count
+  }
+}
+
+private final class RevocationReceiptKeychainBackend: KeychainBackend, @unchecked Sendable {
+  private struct Key: Hashable {
+    let service: String
+    let account: String
+  }
+
+  private let lock = NSLock()
+  private var entries: [Key: Data] = [:]
+  private(set) var lastAccessibility: String?
+  private(set) var lastSynchronizable: Bool?
+
+  private func key(from attributes: [String: Any]) -> Key? {
+    guard let service = attributes[kSecAttrService as String] as? String,
+          let account = attributes[kSecAttrAccount as String] as? String
+    else { return nil }
+    return Key(service: service, account: account)
+  }
+
+  func add(_ attributes: [String: Any]) -> OSStatus {
+    guard let key = key(from: attributes),
+          let data = attributes[kSecValueData as String] as? Data
+    else { return errSecParam }
+    lock.lock()
+    defer { lock.unlock() }
+    guard entries[key] == nil else { return errSecDuplicateItem }
+    entries[key] = data
+    lastAccessibility = attributes[kSecAttrAccessible as String] as? String
+    lastSynchronizable = attributes[kSecAttrSynchronizable as String] as? Bool
+    return errSecSuccess
+  }
+
+  func copyMatching(_ query: [String: Any]) -> (OSStatus, AnyObject?) {
+    guard let key = key(from: query) else { return (errSecParam, nil) }
+    lock.lock()
+    defer { lock.unlock() }
+    guard let data = entries[key] else { return (errSecItemNotFound, nil) }
+    return (errSecSuccess, data as NSData)
+  }
+
+  func update(_ query: [String: Any], _ attributesToUpdate: [String: Any]) -> OSStatus {
+    guard let key = key(from: query),
+          let data = attributesToUpdate[kSecValueData as String] as? Data
+    else { return errSecParam }
+    lock.lock()
+    defer { lock.unlock() }
+    guard entries[key] != nil else { return errSecItemNotFound }
+    entries[key] = data
+    return errSecSuccess
+  }
+
+  func delete(_ query: [String: Any]) -> OSStatus {
+    guard let key = key(from: query) else { return errSecParam }
+    lock.lock()
+    defer { lock.unlock() }
+    return entries.removeValue(forKey: key) == nil ? errSecItemNotFound : errSecSuccess
+  }
+
+  func storedData(service: String, account: String) -> Data? {
+    lock.lock()
+    defer { lock.unlock() }
+    return entries[Key(service: service, account: account)]
   }
 }
 
@@ -919,7 +984,7 @@ struct MLSResurrectionWave0Tests {
     #expect(resolvedExplicit.activityState == .active)
   }
 
-  @Test("DeviceManagementViewModel deleteDevice fails closed when coordinator revocation fails and removes row only after success")
+  @Test("DeviceManagementViewModel fails closed on revocation error and preserves the replacement recovery report on success")
   @MainActor
   func deviceManagementDeleteDeviceFailsClosedOnRevocationError() async {
     let now = Date(timeIntervalSince1970: 1_750_000_000)
@@ -964,16 +1029,56 @@ struct MLSResurrectionWave0Tests {
     #expect(vm.devices.contains { $0.deviceId == siblingID })
     #expect(vm.deleteError?.localizedDescription.contains("Epoch rotation conflict") == true)
 
-    // 3. Once Labyrinth revocation succeeds, the sibling row is removed and deleteError is cleared.
+    // 3. A returned per-step report is not treated as success unless the directory confirms revoke.
+    let incompleteReceipt = AppState.PendingMLSDeviceRevocationReceipt(
+      report: DeviceRevocationReport(
+        targetDeviceId: siblingID,
+        dsRevoked: false,
+        groupsUpdated: 0,
+        labyrinthRotated: false,
+        newEpochSeq: nil,
+        pdsRecordDeleted: false,
+        rekeyedRecoveryCode: nil,
+        rekeyedPasskeyIds: []
+      ),
+      accountDidHash: String(repeating: "a", count: 64),
+      recordedAtEpochSeconds: 1_749_999_999
+    )
+    vm.customRevokerForTesting = { _ in incompleteReceipt }
+    await vm.deleteDevice(siblingDevice)
+    #expect(vm.devices.contains { $0.deviceId == siblingID })
+    #expect(vm.deleteError?.localizedDescription == DeviceManagementViewModel.incompleteRevocationMessage)
+    #expect(vm.revocationReceipt == incompleteReceipt)
+
+    // 4. Once unified revocation succeeds, the sibling row is removed and its complete replacement
+    //    recovery report remains available for the non-dismissible acknowledgement sheet.
+    let expectedReceipt = AppState.PendingMLSDeviceRevocationReceipt(
+      report: DeviceRevocationReport(
+        targetDeviceId: siblingID,
+        dsRevoked: true,
+        groupsUpdated: 3,
+        labyrinthRotated: true,
+        newEpochSeq: 9,
+        pdsRecordDeleted: true,
+        rekeyedRecoveryCode: "ABCD-EFGH-IJKL-MNOP",
+        rekeyedPasskeyIds: [Data([0x01, 0x02])]
+      ),
+      accountDidHash: String(repeating: "a", count: 64),
+      recordedAtEpochSeconds: 1_750_000_000
+    )
     var revokedTarget: String?
     vm.customRevokerForTesting = { target in
       revokedTarget = target
+      return expectedReceipt
     }
     await vm.deleteDevice(siblingDevice)
     #expect(revokedTarget == siblingID)
     #expect(!vm.devices.contains { $0.deviceId == siblingID })
     #expect(vm.devices.contains { $0.deviceId == currentID })
     #expect(vm.deleteError == nil)
+    #expect(vm.revocationReceipt == expectedReceipt)
+    #expect(vm.revocationReceipt?.replacementRecoveryCode == "ABCD-EFGH-IJKL-MNOP")
+    #expect(vm.revocationReceipt?.rekeyedPasskeyCount == 1)
   }
 
   @Test("D-3 / 5.1.1(v): eraseCatbirdData fails closed when remote deleteAccountData fails, preserving SQLite DB and Keychain keys until retry succeeds")
@@ -1140,6 +1245,200 @@ struct MLSResurrectionWave0Tests {
     let rawData = try #require(defaults.data(forKey: AppState.pendingDeviceRetirementsDefaultsKey))
     let rawJSON = String(decoding: rawData, as: UTF8.self)
     #expect(!rawJSON.contains(aliceDID), "Retry marker must store only SHA-256 accountDidHash, never plaintext DID")
+  }
+
+  @Test("Lost-device reports round-trip only through this-device-only Keychain storage until acknowledgement")
+  func deviceRevocationReceiptUsesDurableDeviceOnlyStorage() throws {
+    let did = "did:plc:revocationreceipt01"
+    let didHash = try MLSAppGroupStorage.accountDidHash(for: did)
+    let backend = RevocationReceiptKeychainBackend()
+    let receipt = AppState.PendingMLSDeviceRevocationReceipt(
+      report: DeviceRevocationReport(
+        targetDeviceId: "aaaaaaaa-2222-4333-8444-bbbbbbbbbbbb",
+        dsRevoked: true,
+        groupsUpdated: 4,
+        labyrinthRotated: true,
+        newEpochSeq: 12,
+        pdsRecordDeleted: true,
+        rekeyedRecoveryCode: "REPLACEMENT-CODE-ONLY",
+        rekeyedPasskeyIds: [Data([0xA1]), Data([0xB2])]
+      ),
+      accountDidHash: didHash,
+      recordedAtEpochSeconds: 1_760_000_000
+    )
+
+    try AppState.storePendingMLSDeviceRevocationReceipt(receipt, backend: backend)
+    let restored = try AppState.loadPendingMLSDeviceRevocationReceipt(forDID: did, backend: backend)
+    #expect(restored == receipt)
+    #expect(restored?.replacementRecoveryCode == "REPLACEMENT-CODE-ONLY")
+    #expect(restored?.rekeyedPasskeyCount == 2)
+    #expect(backend.lastAccessibility == (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String))
+    #expect(backend.lastSynchronizable == false)
+
+    let raw = try #require(
+      backend.storedData(
+        service: AppState.deviceRevocationReceiptKeychainService,
+        account: didHash
+      )
+    )
+    let rawJSON = String(decoding: raw, as: UTF8.self)
+    #expect(!rawJSON.contains(did))
+    #expect(!rawJSON.localizedCaseInsensitiveContains("accessToken"))
+    #expect(!rawJSON.localizedCaseInsensitiveContains("bearer"))
+
+    try AppState.clearPendingMLSDeviceRevocationReceipt(forDID: did, backend: backend)
+    #expect(try AppState.loadPendingMLSDeviceRevocationReceipt(forDID: did, backend: backend) == nil)
+  }
+
+  @Test("Retirement failures persist a fixed reason instead of server or credential-bearing error text")
+  func retirementMarkerDoesNotPersistErrorDescription() async throws {
+    let suiteName = "blue.catbird.tests.a6.reason.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let did = "did:plc:retirementreason01"
+
+    let didSucceed = await AppState.retireDeviceBounded(
+      accountDid: did,
+      deviceId: "aaaaaaaa-1111-4222-8333-444444444444",
+      sharedDefaults: defaults
+    ) {
+      throw NSError(
+        domain: "RetirementFailure",
+        code: 401,
+        userInfo: [NSLocalizedDescriptionKey: "Authorization: Bearer secret-that-must-not-persist"]
+      )
+    }
+
+    #expect(!didSucceed)
+    let marker = try #require(AppState.pendingMLSDeviceRetirements(in: defaults).first)
+    #expect(marker.reason == "error")
+    let raw = String(
+      decoding: try #require(defaults.data(forKey: AppState.pendingDeviceRetirementsDefaultsKey)),
+      as: UTF8.self
+    )
+    #expect(!raw.contains("secret-that-must-not-persist"))
+    #expect(!raw.localizedCaseInsensitiveContains("bearer"))
+
+    let legacySecret = "error: Authorization: Bearer legacy-secret"
+    let legacy = AppState.PendingMLSDeviceRetirementRecord(
+      accountDidHash: try MLSAppGroupStorage.accountDidHash(for: did),
+      deviceId: "aaaaaaaa-1111-4222-8333-444444444444",
+      recordedAtEpochSeconds: 1_700_000_000,
+      reason: legacySecret
+    )
+    defaults.set(
+      try JSONEncoder().encode([legacy]),
+      forKey: AppState.pendingDeviceRetirementsDefaultsKey
+    )
+    #expect(AppState.pendingMLSDeviceRetirements(in: defaults).first?.reason == "error")
+    let sanitizedRaw = String(
+      decoding: try #require(defaults.data(forKey: AppState.pendingDeviceRetirementsDefaultsKey)),
+      as: UTF8.self
+    )
+    #expect(!sanitizedRaw.contains(legacySecret))
+  }
+
+  @Test("Pending retirement retries only the matching old device and consumes its marker after durable report storage")
+  @MainActor
+  func pendingRetirementReconcilesAfterReplacementEnrollment() async throws {
+    let suiteName = "blue.catbird.tests.a6.reconcile.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let aliceDID = "did:plc:retirementreconcilealice"
+    let bobDID = "did:plc:retirementreconcilebob"
+    let oldDevice = "aaaaaaaa-1111-4222-8333-444444444444"
+    let currentDevice = "bbbbbbbb-1111-4222-8333-555555555555"
+    let bobDevice = "cccccccc-1111-4222-8333-666666666666"
+    let aliceHash = try MLSAppGroupStorage.accountDidHash(for: aliceDID)
+    let backend = RevocationReceiptKeychainBackend()
+
+    AppState.recordPendingMLSDeviceRetirement(
+      accountDid: aliceDID, deviceId: oldDevice, reason: .timeout, in: defaults)
+    AppState.recordPendingMLSDeviceRetirement(
+      accountDid: aliceDID, deviceId: currentDevice, reason: .timeout, in: defaults)
+    AppState.recordPendingMLSDeviceRetirement(
+      accountDid: bobDID, deviceId: bobDevice, reason: .timeout, in: defaults)
+
+    let devices = [
+      RegisteredDeviceInfo(
+        deviceId: oldDevice,
+        deviceName: "Lost iPhone",
+        signaturePublicKey: Data([0x01]),
+        keyId: "old",
+        authGeneration: 1,
+        status: "active",
+        createdAt: "2026-11-01T00:00:00.000Z",
+        lastActiveAt: nil,
+        dormantAt: nil,
+        labyrinthDeviceKeyHex: nil,
+        isCurrentDevice: false
+      ),
+      RegisteredDeviceInfo(
+        deviceId: currentDevice,
+        deviceName: "Replacement iPhone",
+        signaturePublicKey: Data([0x02]),
+        keyId: "current",
+        authGeneration: 2,
+        status: "active",
+        createdAt: "2026-11-16T00:00:00.000Z",
+        lastActiveAt: nil,
+        dormantAt: nil,
+        labyrinthDeviceKeyHex: nil,
+        isCurrentDevice: true
+      ),
+    ]
+
+    var attempted: [String] = []
+    let firstConsumed = await AppState.reconcilePendingMLSDeviceRetirements(
+      accountDid: aliceDID,
+      currentDeviceId: currentDevice,
+      registeredDevices: devices,
+      in: defaults
+    ) { target in
+      attempted.append(target)
+      throw NSError(domain: "Offline", code: -1)
+    }
+    #expect(firstConsumed == 0)
+    #expect(attempted == [oldDevice])
+    #expect(AppState.pendingMLSDeviceRetirements(in: defaults).count == 3)
+
+    attempted.removeAll()
+    let secondConsumed = await AppState.reconcilePendingMLSDeviceRetirements(
+      accountDid: aliceDID,
+      currentDeviceId: currentDevice,
+      registeredDevices: devices,
+      in: defaults
+    ) { target in
+      attempted.append(target)
+      let receipt = AppState.PendingMLSDeviceRevocationReceipt(
+        report: DeviceRevocationReport(
+          targetDeviceId: target,
+          dsRevoked: true,
+          groupsUpdated: 2,
+          labyrinthRotated: true,
+          newEpochSeq: 7,
+          pdsRecordDeleted: true,
+          rekeyedRecoveryCode: "AUTO-RECONCILED-CODE",
+          rekeyedPasskeyIds: []
+        ),
+        accountDidHash: aliceHash,
+        recordedAtEpochSeconds: 1_760_000_100
+      )
+      try AppState.storePendingMLSDeviceRevocationReceipt(receipt, backend: backend)
+    }
+
+    #expect(secondConsumed == 1)
+    #expect(attempted == [oldDevice])
+    let remaining = AppState.pendingMLSDeviceRetirements(in: defaults)
+    #expect(remaining.count == 2)
+    #expect(remaining.contains { $0.deviceId == currentDevice })
+    #expect(remaining.contains { $0.deviceId == bobDevice })
+    #expect(!remaining.contains { $0.deviceId == oldDevice })
+    let receipt = try AppState.loadPendingMLSDeviceRevocationReceipt(
+      forDID: aliceDID,
+      backend: backend
+    )
+    #expect(receipt?.replacementRecoveryCode == "AUTO-RECONCILED-CODE")
   }
 
   private final class MockLegacyKeychainBackend: KeychainBackend, @unchecked Sendable {

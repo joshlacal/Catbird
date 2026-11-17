@@ -421,7 +421,7 @@ struct ChatSettingsView: View {
           }
           logger.info("Successfully enabled MLS chat for account: \(userDID.prefix(20))...")
         } else {
-          await appState.optOutOfMLSChat()
+          try await appState.optOutOfMLSChat()
           logger.info("Disabled MLS chat for account: \(userDID.prefix(20))...")
         }
         await MainActor.run {

@@ -601,7 +601,14 @@ struct NewConversationView: View {
           logger.error("Encrypted chat setup from the new conversation screen failed")
         }
       } else {
-        await appState.optOutOfMLSChat()
+        do {
+          try await appState.optOutOfMLSChat()
+        } catch {
+          logger.error("Encrypted chat opt-out from the new conversation screen failed")
+          errorTitle = "Couldn’t Disable Encrypted Chat"
+          errorMessage = error.localizedDescription
+          showingError = true
+        }
       }
     }
   }

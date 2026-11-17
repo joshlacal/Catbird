@@ -36,6 +36,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   @State private var statusBanner: String?
   @State private var warningBanner: String?
   @State private var errorMessage: String?
+  @State private var revocationReceipt: AppState.PendingMLSDeviceRevocationReceipt?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "LabyrinthUI")
 
@@ -98,7 +99,32 @@ struct LabyrinthSettingsAndRestoreView: View {
     .toolbarTitleDisplayMode(.inline)
     #endif
     .task {
+      self.revocationReceipt = appState?.pendingMLSDeviceRevocationReceipt
+      self.generatedRecoveryCode = self.revocationReceipt?.replacementRecoveryCode
       await self.refreshStatus()
+    }
+    .onChange(of: appState?.pendingMLSDeviceRevocationReceipt) { _, receipt in
+      self.revocationReceipt = receipt
+      if let receipt {
+        self.generatedRecoveryCode = receipt.replacementRecoveryCode
+      }
+    }
+    .sheet(item: $revocationReceipt) { receipt in
+      DeviceRevocationReceiptSheet(receipt: receipt) {
+        if let appState {
+          guard appState.acknowledgePendingMLSDeviceRevocationReceipt() else {
+            return false
+          }
+        } else if let accountDid = coordinator?.accountDid {
+          do {
+            try AppState.clearPendingMLSDeviceRevocationReceipt(forDID: accountDid)
+          } catch {
+            return false
+          }
+        }
+        self.revocationReceipt = nil
+        return true
+      }
     }
     .accessibilityIdentifier("labyrinth-settings-and-restore-view")
   }
@@ -235,6 +261,10 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
+  private var hasUnacknowledgedDeviceRevocation: Bool {
+    revocationReceipt != nil || appState?.pendingMLSDeviceRevocationReceipt != nil
+  }
+
   private var passkeyPrfSection: some View {
     Section("Passkey PRF Recovery") {
       Button {
@@ -242,7 +272,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       } label: {
         Label("Register Passkey PRF Recovery Key", systemImage: "person.badge.key.fill")
       }
-      .disabled(coordinator == nil || isLoading)
+      .disabled(coordinator == nil || isLoading || hasUnacknowledgedDeviceRevocation)
       .accessibilityIdentifier("labyrinth-register-passkey-prf")
 
       Button {
@@ -598,6 +628,11 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private func enrollPasskeyPrf() {
     guard let coordinator else { return }
+    guard !hasUnacknowledgedDeviceRevocation else {
+      self.errorMessage =
+        "Save the replacement recovery report and confirm the lost device was removed from its Apple or Google account before registering another passkey."
+      return
+    }
     self.isLoading = true
     Task { @MainActor in
       defer { self.isLoading = false }
@@ -745,12 +780,34 @@ struct LabyrinthSettingsAndRestoreView: View {
     Task { @MainActor in
       defer { self.isLoading = false }
       do {
-        do {
-          _ = try await coordinator.revokeDevice(targetDeviceId: targetDeviceId)
-          self.status = try await coordinator.labyrinthStatus()
-        } catch {
-          self.status = try await coordinator.revokeLabyrinthDevice(targetDeviceId: targetDeviceId)
+        // The unified revoke report is the only API that returns replacement recovery material.
+        // Never fall back to revokeLabyrinthDevice here: it can rotate the backup while discarding
+        // the replacement code, leaving the user unable to recover after a lost-device response.
+        let report = try await coordinator.revokeDevice(targetDeviceId: targetDeviceId)
+        self.generatedRecoveryCode = report.rekeyedRecoveryCode
+        if let appState {
+          do {
+            self.revocationReceipt = try appState.retainDeviceRevocationReport(report)
+          } catch {
+            self.revocationReceipt = appState.pendingMLSDeviceRevocationReceipt
+            throw error
+          }
+        } else {
+          let receipt = AppState.PendingMLSDeviceRevocationReceipt(
+            report: report,
+            accountDidHash: coordinator.accountDidHash
+          )
+          self.revocationReceipt = receipt
+          try AppState.storePendingMLSDeviceRevocationReceipt(receipt)
         }
+        guard report.dsRevoked else {
+          throw NSError(
+            domain: "LabyrinthDeviceRevocation",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: DeviceManagementViewModel.incompleteRevocationMessage]
+          )
+        }
+        self.status = try await coordinator.labyrinthStatus()
         self.fetchedDeviceMetadataByID.removeValue(
           forKey: targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         )

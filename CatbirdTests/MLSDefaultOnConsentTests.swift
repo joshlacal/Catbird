@@ -124,7 +124,7 @@ struct MLSDefaultOnConsentTests {
     settings.enableMLSChat(for: did)
 
     var events: [String] = []
-    await MLSUserOptOutSequence(
+    try await MLSUserOptOutSequence(
       unregisterPushGateway: { events.append("unregister active=\(settings.isMLSRuntimeAllowed(for: did))") },
       persistUserDisabled: {
         settings.disableMLSChat(for: did)
@@ -134,6 +134,37 @@ struct MLSDefaultOnConsentTests {
     ).run()
 
     #expect(events == ["unregister active=true", "persist", "reset active=false"])
+  }
+
+  @Test("A failed push unregister leaves encrypted chat enabled and local MLS state available for retry")
+  func optOutFailureDoesNotClaimSuccess() async throws {
+    let store = IsolatedDefaults()
+    defer { store.cleanup() }
+    let settings = store.settings()
+    let did = Self.freshDID("optoutfailure")
+    settings.enableMLSChat(for: did)
+
+    var events: [String] = []
+    await #expect(throws: NSError.self) {
+      try await MLSUserOptOutSequence(
+        unregisterPushGateway: {
+          events.append("unregister")
+          throw NSError(
+            domain: "MLSDefaultOnConsentTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "offline"]
+          )
+        },
+        persistUserDisabled: {
+          settings.disableMLSChat(for: did)
+          events.append("persist")
+        },
+        resetLocalMLSState: { events.append("reset") }
+      ).run()
+    }
+
+    #expect(settings.isMLSRuntimeAllowed(for: did))
+    #expect(events == ["unregister"])
   }
 
   @Test("A fresh signed-in account opens no MLS storage, enrollment or network before the introduction")
