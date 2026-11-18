@@ -600,11 +600,24 @@ struct MLSResurrectionWave0Tests {
   func passkeyRecoveryRequiresBackupEligibility() throws {
     #expect(LabyrinthPasskeyPolicy.relyingParty == "passkey.catbird.blue")
     let rpHash = Array(SHA256.hash(data: Data(LabyrinthPasskeyPolicy.relyingParty.utf8)))
-    func attestation(flags: UInt8) -> Data {
-      Data(CBOR.map([.utf8String("authData"): .byteString(rpHash + [flags, 0, 0, 0, 0])]).encode())
+    func authenticatorData(flags: UInt8) -> Data {
+      Data(rpHash + [flags, 0, 0, 0, 0])
     }
-    #expect(LabyrinthPasskeyPolicy.isBackupEligible(attestation: attestation(flags: 0x49)))
-    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(attestation: attestation(flags: 0x41)))
+    func attestation(flags: UInt8) -> Data {
+      let key = CBOR.map([.unsignedInt(1): .unsignedInt(2), .unsignedInt(3): .negativeInt(6),
+                          .negativeInt(0): .unsignedInt(1), .negativeInt(1): .byteString([UInt8](repeating: 1, count: 32)),
+                          .negativeInt(2): .byteString([UInt8](repeating: 2, count: 32))]).encode()
+      let attested = Array(authenticatorData(flags: flags)) + [UInt8](repeating: 0, count: 16) + [0, 1, 42] + key
+      return Data(CBOR.map([.utf8String("fmt"): .utf8String("none"), .utf8String("attStmt"): .map([:]),
+                            .utf8String("authData"): .byteString(attested)]).encode())
+    }
+    #expect(LabyrinthPasskeyPolicy.isBackupEligible(attestation: attestation(flags: 0x4d)))
+    #expect(LabyrinthPasskeyPolicy.isBackupEligible(authenticatorData: authenticatorData(flags: 0x0d), registration: false))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(attestation: attestation(flags: 0x49)))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(authenticatorData: authenticatorData(flags: 0x09), registration: false))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(attestation: attestation(flags: 0x45)))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(authenticatorData: authenticatorData(flags: 0x4d), registration: true))
+    #expect(!LabyrinthPasskeyPolicy.isBackupEligible(attestation: Data([0xff])))
     #expect(!LabyrinthPasskeyPolicy.isBackupEligible(attestation: nil))
     #expect(!LabyrinthPasskeyPolicy.isBackupEligible(authenticatorData: Data(repeating: 0, count: 37), registration: false))
     #expect(LabyrinthPasskeyPolicy.newUserHandle().count == 32)

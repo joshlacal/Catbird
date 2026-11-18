@@ -1052,8 +1052,21 @@ enum LabyrinthPasskeyPolicy {
           authenticatorData.prefix(32).elementsEqual(SHA256.hash(data: Data(relyingParty.utf8)))
     else { return false }
     let flags = authenticatorData[authenticatorData.startIndex + 32]
-    let required: UInt8 = registration ? 0x49 : 0x09 // UP, BE, and AT on registration
-    return flags & required == required
+    let required: UInt8 = registration ? 0x4d : 0x0d // UP, UV, BE; AT on registration
+    guard flags & required == required else { return false }
+    if registration {
+      // Attested data includes a 16-byte AAGUID, a big-endian credential ID length,
+      // the ID itself, and a CBOR public key. Reject truncated fixed headers or IDs.
+      let bytes = Array(authenticatorData)
+      guard bytes.count >= 55 else { return false }
+      let credentialLength = Int(bytes[53]) << 8 | Int(bytes[54])
+      let keyStart = 55 + credentialLength
+      guard credentialLength > 0, keyStart < bytes.count,
+            let key = try? CBOR.decode(Array(bytes[keyStart...])), case .map = key else { return false }
+    } else if flags & 0x40 != 0 {
+      return false
+    }
+    return true
   }
 
   static func isBackupEligible(attestation: Data?) -> Bool {
@@ -1138,6 +1151,7 @@ private final class LabyrinthPasskeyRegistrar: NSObject,
         data: Data("catbird.labyrinth.passkey-recovery.v1:\(accountDid)".utf8)
       )
     )
+    request.userVerificationPreference = .required
     request.prf = .inputValues(.init(saltInput1: salt))
 
     return try await withCheckedThrowingContinuation { continuation in
@@ -1230,6 +1244,7 @@ private final class LabyrinthPasskeyAsserter: NSObject,
         data: Data("catbird.labyrinth.passkey-recovery.v1:\(accountDid)".utf8)
       )
     )
+    request.userVerificationPreference = .required
     request.prf = .inputValues(.init(saltInput1: salt))
 
     return try await withCheckedThrowingContinuation { continuation in

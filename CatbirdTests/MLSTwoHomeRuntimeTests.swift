@@ -222,15 +222,16 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
     defer { window.isHidden = true }
     try await Task.sleep(for: .seconds(2))
     if command.phase == "show-policy" {
-      let menu = try XCTUnwrap(AppAccessibility.elements(in: window).first { $0.identifier == "mlsConversation.menu" })
-      XCTAssertTrue(menu.object.accessibilityActivate())
-      try await Task.sleep(for: .milliseconds(700))
-      let entries = scene.windows.flatMap { AppAccessibility.elements(in: $0) }
-      let info = try XCTUnwrap(entries.first { $0.label == "Chat Info & Metadata" })
-      XCTAssertTrue(info.object.accessibilityActivate())
-      try await Task.sleep(for: .seconds(2))
-      let hasPolicy = scene.windows.flatMap { AppAccessibility.elements(in: $0) }.contains { $0.identifier == "chatInfo.historyBackup" }
-      XCTAssertTrue(hasPolicy)
+      // The runner taps the ordinary conversation menu and its sheet using the
+      // system accessibility driver. Save the actual screen only after it sees the switch.
+      let nonce = command.nonce.uuidString.lowercased()
+      try Data().write(to: directory.appending(path: "ui-ready-" + nonce), options: .atomic)
+      let observed = directory.appending(path: "ui-policy-visible-" + nonce)
+      for _ in 0..<200 {
+        if FileManager.default.fileExists(atPath: observed.path) { break }
+        try await Task.sleep(for: .milliseconds(250))
+      }
+      XCTAssertTrue(FileManager.default.fileExists(atPath: observed.path))
     } else if command.phase == "show-recovery" {
       let identifiers = AppAccessibility.elements(in: window).compactMap(\.identifier)
       XCTAssertFalse(identifiers.contains("labyrinth-acknowledge-generated-recovery-code"))
