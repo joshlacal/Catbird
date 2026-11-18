@@ -155,12 +155,25 @@ struct MLSCleanSlateDataSourceAndGateTests {
     #expect(dataSource.messages.count == 1)
     #expect(dataSource.messages.first?.text == "Hello over Spaces PQ MLS!")
 
+    // This source stays mounted. The old row is visible in its in-memory snapshot,
+    // but no longer exists in the authoritative store when the next ordinary wake arrives.
+    let removed = MLSMessageRow(messageId: UUID().uuidString, conversationId: conversationId,
+      groupId: Data(), epoch: 0, seq: 4, senderDid: accountDid, senderDeviceId: deviceId,
+      plaintextJson: "{\"text\":\"Removed from storage\"}", createdAtMs: 1000, isOwn: true)
+    dataSource.ingestRowsForTesting([removed])
+    #expect(dataSource.messages.contains { $0.id == removed.messageId })
     let beforeWakeups = coordinator.darwinWakeupCount
     MLSPushExtensionProcessor.postNseDidCommitDarwinNotification()
     for _ in 0..<80 where coordinator.darwinWakeupCount < beforeWakeups + 1 {
       try await Task.sleep(for: .milliseconds(25))
     }
     #expect(coordinator.darwinWakeupCount >= beforeWakeups + 1)
+
+    for _ in 0..<100 where dataSource.messages.contains(where: { $0.id == removed.messageId }) {
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    #expect(!dataSource.messages.contains { $0.id == removed.messageId })
+    #expect(dataSource.messages.contains { $0.text == "Hello over Spaces PQ MLS!" })
 
     let checkpoint = try await coordinator.prepareForBackground()
     #expect(checkpoint.handleClosed)
@@ -172,6 +185,32 @@ struct MLSCleanSlateDataSourceAndGateTests {
     let persisted = try await coordinator.listMessages(conversationId: conversationId, limit: 10)
     #expect(persisted.count == 1)
     await coordinator.close()
+  }
+
+  @Test("An authoritative transcript window keeps paged history while removing pruned rows at every depth")
+  @MainActor
+  func transcriptWindowRetainsLoadedHistoryAndEvictsRemovedRows() async throws {
+    func row(_ seq: Int) -> MLSMessageRow {
+      .init(messageId: String(seq), conversationId: "room", groupId: Data(), epoch: 0, seq: Int64(seq),
+            senderDid: "did:example:peer", senderDeviceId: "peer", plaintextJson: "message", createdAtMs: Int64(seq), isOwn: false)
+    }
+    var store = Array((1...1200).reversed().map(row))
+    func read(_ cursor: Int64?, _ limit: UInt32) async throws -> [MLSMessageRow] {
+      Array(store.lazy.filter { $0.seq < (cursor ?? Int64.max) }.prefix(Int(limit)))
+    }
+    let initial = try await MLSConversationDataSource.readMessageWindow(minimumCount: 50, through: nil, list: read)
+    #expect(initial.hasMore && initial.rows.last?.seq == 1151)
+    let paged = try await MLSConversationDataSource.readMessageWindow(minimumCount: 750, through: 1151, list: read)
+    #expect(paged.rows.count == 750 && paged.rows.last?.seq == 451)
+    store.removeAll { $0.seq == 1199 || $0.seq == 522 }
+    store.insert(contentsOf: (1201...1250).reversed().map(row), at: 0)
+    let refreshed = try await MLSConversationDataSource.readMessageWindow(minimumCount: 750, through: 451, list: read)
+    let ids = Set(refreshed.rows.map(\.seq))
+    #expect(ids.contains(451) && ids.contains(1250) && !ids.contains(522) && !ids.contains(1199))
+    #expect(refreshed.hasMore)
+    store.removeAll()
+    let empty = try await MLSConversationDataSource.readMessageWindow(minimumCount: 750, through: 451, list: read)
+    #expect(empty.rows.isEmpty && !empty.hasMore)
   }
 
   @Test("Spaces eligibility gate keeps Bluesky DMs available when PDS lacks Spaces or OAuth scopes are missing (I15)")

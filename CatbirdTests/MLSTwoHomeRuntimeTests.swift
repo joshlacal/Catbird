@@ -70,6 +70,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
     let text: String
     let enabled: Bool
     let excludedMessage: String?
+    let actorLabel: String?
   }
 
   @MainActor
@@ -84,9 +85,11 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
       hostPolicy: .init(fixtureDomain: "request-fixture.catbird.blue", additionalHosts: [], serviceLabels: ["ds1", "ds2"])
     )
     let sessions = try JSONDecoder().decode(Sessions.self, from: Data(contentsOf: directory.appending(path: "sessions.json")))
-    let account = try XCTUnwrap(sessions.accounts.first { $0.label == "alice" })
-    let peer = try XCTUnwrap(fixture.accounts.first { $0.label == "bob" })
-    let identity = try XCTUnwrap(fixture.accounts.first { $0.label == "alice" })
+    let label = command.actorLabel ?? "alice"
+    guard ["alice", "bob"].contains(label) else { throw URLError(.unsupportedURL) }
+    let account = try XCTUnwrap(sessions.accounts.first { $0.label == label })
+    let peer = try XCTUnwrap(fixture.accounts.first { $0.label != label })
+    let identity = try XCTUnwrap(fixture.accounts.first { $0.label == label })
     guard identity.did == account.did, fixture.permits(account.pdsEndpoint),
           account.did == "did:web:" + (account.pdsEndpoint.host ?? ""),
           CatbirdGatewayConfiguration.current.mlsServiceDID(for: account.did) == account.deliveryService + "#atproto_mls"
@@ -153,6 +156,40 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         XCTAssertEqual(message.senderID, peer.did)
         result["message"] = message.id
         try await captureConversation(command: command, state: state, in: directory)
+      case "observe-erasure":
+        try await captureConversation(command: command, state: state, in: directory) { window in
+          let rowID = "chat.message." + command.message
+          let baselineFile = directory.appending(path: "mounted-" + command.nonce.uuidString.lowercased() + ".png")
+          func visibleControl() -> Bool {
+            AppAccessibility.elements(in: window).contains {
+              $0.identifier == rowID && $0.label?.contains(command.text) == true
+            }
+          }
+          for _ in 0..<50 where !visibleControl() {
+            try await Task.sleep(for: .milliseconds(200))
+          }
+          guard visibleControl() else { throw NSError(domain: "MLSTwoHome.BaselineNotVisible", code: 1) }
+          let before = try await coordinator.listMessages(conversationId: command.conversation, limit: 100)
+          guard before.contains(where: { $0.messageId == command.message && $0.senderDid == peer.did }) else {
+            throw NSError(domain: "MLSTwoHome.MissingSignedControl", code: 1)
+          }
+          try self.captureWindow(window).write(to: baselineFile, options: .atomic)
+          // The remote participant erases after the harness witnesses this already-mounted control.
+          // Poll normal account sync only. No view reload, navigation or replacement after mounting.
+          let deadline = ContinuousClock.now + .seconds(1200)
+          while ContinuousClock.now < deadline {
+            await state.syncMLS(using: coordinator)
+            let current = try await coordinator.listMessages(conversationId: command.conversation, limit: 100)
+            if !current.contains(where: { $0.messageId == command.message }),
+               !state.mlsSyncIncompleteConversationIDs.contains(command.conversation),
+               !visibleControl() {
+              result["removedFromMountedView"] = command.message
+              return
+            }
+            try await Task.sleep(for: .milliseconds(750))
+          }
+          throw NSError(domain: "MLSTwoHome.MountedControlStillPresent", code: 1)
+        }
       case "show-policy":
         try await captureConversation(command: command, state: state, in: directory)
       case "show-recovery":
@@ -295,15 +332,29 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
   }
 
   @MainActor
-  private func captureConversation(command: Command, state: AppState, in directory: URL) async throws {
+  private func captureConversation(
+    command: Command, state: AppState, in directory: URL,
+    whileMounted: ((UIWindow) async throws -> Void)? = nil
+  ) async throws {
     let view = NavigationStack {
       MLSOrdinaryConversationDetailView(conversationId: command.conversation)
     }.environment(state).environment(SceneNavigationContext(appState: state, sceneID: UUID()))
-    try await capture(view, command: command, in: directory)
+    try await capture(view, command: command, in: directory, whileMounted: whileMounted)
   }
 
   @MainActor
-  private func capture<V: View>(_ view: V, command: Command, in directory: URL) async throws {
+  private func captureWindow(_ window: UIWindow) throws -> Data {
+    window.rootViewController?.view.layoutIfNeeded()
+    let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+      window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+    }
+    return try XCTUnwrap(screenshot.pngData())
+  }
+
+  @MainActor
+  private func capture<V: View>(
+    _ view: V, command: Command, in directory: URL, whileMounted: ((UIWindow) async throws -> Void)? = nil
+  ) async throws {
     let restore = AppAccessibility.enable()
     defer { restore() }
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -328,11 +379,8 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
       let identifiers = AppAccessibility.elements(in: window).compactMap(\.identifier)
       XCTAssertFalse(identifiers.contains("labyrinth-acknowledge-generated-recovery-code"))
     }
-    controller.view.layoutIfNeeded()
-    let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-      window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-    }
-    let data = try XCTUnwrap(screenshot.pngData())
+    try await whileMounted?(window)
+    let data = try captureWindow(window)
     try data.write(to: directory.appending(path: command.phase + "-" + command.nonce.uuidString.lowercased() + ".png"), options: .atomic)
   }
 }

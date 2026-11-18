@@ -116,7 +116,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   private var loadedRowsByID: [String: MLSMessageRow] = [:]
   private var optimisticReactionsByMessageID: [String: [OptimisticReactionMutation]] = [:]
-  private var oldestLoadedSeq: Int = Int.max
+  private static let pageSize = 50
+  private var requestedRowCount = MLSConversationDataSource.pageSize
+  private var refreshRequest: UUID?
+  private var oldestLoadedSeq: Int64?
   private var remoteReadCutoff: (epoch: Int64, sequenceNumber: Int64)?
   private var observationID = UUID()
   private var isObservingCoordinator = false
@@ -323,43 +326,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func loadMoreMessages() async {
-    guard !isLoading, hasMoreMessages, oldestLoadedSeq != Int.max,
-          let coordinator = activeCoordinator
-    else {
-      hasMoreMessages = false
-      return
-    }
+    guard !isLoading, hasMoreMessages, let coordinator = activeCoordinator else { return }
     isLoading = true
     defer { isLoading = false }
-    let currentObservation = observationID
-
-    do {
-      let olderRows = try await coordinator.listMessages(
-        conversationId: conversationId,
-        beforeSeq: Int64(oldestLoadedSeq),
-        limit: 50
-      )
-      guard currentObservation == observationID else { return }
-      guard !olderRows.isEmpty else {
-        hasMoreMessages = false
-        return
-      }
-      for row in olderRows {
-        loadedRowsByID[row.messageId] = row
-        if row.seq > 0, Int(row.seq) < oldestLoadedSeq {
-          oldestLoadedSeq = Int(row.seq)
-        }
-      }
-      let previousCount = confirmedMessages.count
-      confirmedMessages = MLSMessageAdapter.sortedForDisplay(
-        buildAdapters(from: Array(loadedRowsByID.values))
-      )
-      hasMoreMessages = olderRows.count >= 50 && confirmedMessages.count > previousCount
-      await enrichMissingProfilesIfNeeded(observationID: currentObservation)
-    } catch {
-      self.error = error
-      logger.error("Failed to paginate MLS messages: \(error.localizedDescription)")
-    }
+    requestedRowCount = max(loadedRowsByID.count, requestedRowCount) + Self.pageSize
+    await refreshFromCoordinator(coordinator, observationID: observationID)
   }
 
   func refreshRecoveryState() async {
@@ -390,8 +361,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     } onChange: { [weak self, weak coordinator] in
       Task { @MainActor [weak self, weak coordinator] in
         guard let self, let coordinator, self.observationID == observationID else { return }
-        await self.refreshFromCoordinator(coordinator, observationID: observationID)
         self.observeNextCoordinatorChange(coordinator, observationID: observationID)
+        await self.refreshFromCoordinator(coordinator, observationID: observationID)
       }
     }
   }
@@ -401,24 +372,19 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     observationID: UUID
   ) async {
     guard self.observationID == observationID, !coordinator.isHandleClosed else { return }
-    await resolveConsentAndRecovery(using: coordinator)
+    let request = UUID()
+    refreshRequest = request
+    await resolveConsentAndRecovery(using: coordinator, request: request)
+    guard self.observationID == observationID, refreshRequest == request else { return }
     do {
-      let rows = try await coordinator.listMessages(
-        conversationId: conversationId,
-        beforeSeq: nil,
-        limit: 50
-      )
-      guard self.observationID == observationID else { return }
-      var minSeq = oldestLoadedSeq
-      var maxSeq: Int64 = 0
-      for row in rows {
-        loadedRowsByID[row.messageId] = row
-        if row.seq > 0 {
-          minSeq = min(minSeq, Int(row.seq))
-          maxSeq = max(maxSeq, row.seq)
-        }
+      let window = try await Self.readMessageWindow(minimumCount: requestedRowCount, through: oldestLoadedSeq) { cursor, limit in
+        try await coordinator.listMessages(conversationId: self.conversationId, beforeSeq: cursor, limit: limit)
       }
-      oldestLoadedSeq = minSeq
+      // Another notification or pagination request may have read a newer SQLite state.
+      guard self.observationID == observationID, refreshRequest == request else { return }
+      loadedRowsByID = Dictionary(window.rows.map { ($0.messageId, $0) }, uniquingKeysWith: { _, latest in latest })
+      oldestLoadedSeq = window.rows.lazy.map(\.seq).filter { $0 > 0 }.min()
+      let maxSeq = window.rows.lazy.map(\.seq).max() ?? 0
       optimisticReactionsByMessageID.removeAll()
       var adapters = buildAdapters(from: Array(loadedRowsByID.values))
       adapters = MLSMessageAdapter.sortedForDisplay(adapters)
@@ -438,7 +404,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       confirmedMessages = adapters
       prunePendingSendsSupersededByConfirmed()
       hasReceivedInitialMessages = true
-      hasMoreMessages = rows.count >= 50
+      hasMoreMessages = window.hasMore
 
       if maxSeq > 0 {
         try? await coordinator.acknowledgeEntriesUpTo(conversationId: conversationId, upToSeq: maxSeq)
@@ -453,15 +419,41 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       }
       await enrichMissingProfilesIfNeeded(observationID: observationID)
     } catch {
-      guard self.observationID == observationID else { return }
+      guard self.observationID == observationID, refreshRequest == request else { return }
       self.error = error
       logger.error("Failed to load MLS messages from SDK: \(error.localizedDescription)")
     }
   }
 
-  private func resolveConsentAndRecovery(using coordinator: MLSClientCoordinator) async {
+  /// Read through the oldest already displayed sequence, even if newer arrivals pushed it
+  /// onto another page. The resulting window is authoritative for edits, reactions and erasures.
+  static func readMessageWindow(
+    minimumCount: Int, through oldestSequence: Int64?,
+    list: (Int64?, UInt32) async throws -> [MLSMessageRow]
+  ) async throws -> (rows: [MLSMessageRow], hasMore: Bool) {
+    var rows: [MLSMessageRow] = []
+    var before: Int64?
+    while true {
+      // Native caps a single listMessages call at 500 rows.
+      let limit = min(500, max(pageSize, minimumCount - rows.count))
+      let page = try await list(before, UInt32(limit))
+      rows.append(contentsOf: page)
+      guard page.count == limit,
+            let next = page.lazy.map(\.seq).filter({ $0 > 0 }).min(),
+            before.map({ next < $0 }) ?? true else {
+        return (rows, false)
+      }
+      if rows.count >= minimumCount && (oldestSequence.map { next <= $0 } ?? true) {
+        return (rows, true)
+      }
+      before = next
+    }
+  }
+
+  private func resolveConsentAndRecovery(using coordinator: MLSClientCoordinator, request: UUID? = nil) async {
     let conversations = (try? await coordinator.listConversations(limit: 200)) ?? []
     let requests = (try? await coordinator.listRequests()) ?? []
+    guard !coordinator.isHandleClosed, request == nil || refreshRequest == request else { return }
     let matchingRequest = requests.first {
       $0.conversationId == conversationId || $0.requestId == conversationId
     }
