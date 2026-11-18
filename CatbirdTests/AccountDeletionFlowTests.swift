@@ -297,7 +297,7 @@ struct AccountDeletionCoordinatorTests {
   @Test("Hosted deletion waits for peer confirmation and retains its device across a rejected provider code")
   @MainActor
   func hostedDeletionWaitsForPeerProof() async throws {
-    let did = "did:plc:hostedpeerprooftest"
+    let did = "did:plc:hostedpeerprooftestaaaaa"
     let device = UUID().uuidString.lowercased()
     let root = FileManager.default.temporaryDirectory.appending(path: "hosted-peer-proof-\(device)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
