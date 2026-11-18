@@ -119,7 +119,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         }.environment(state)
         try await capture(view, command: command, in: directory)
       case "set-policy":
-        try await coordinator.setHistoryBackupEnabled(conversationId: command.conversation, enabled: command.enabled)
+        try await captureConversation(command: command, state: state, in: directory)
         let enabled = try await coordinator.historyBackupEnabled(conversationId: command.conversation)
         XCTAssertEqual(enabled, command.enabled)
         result["backupEnabled"] = String(enabled)
@@ -128,6 +128,11 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         let enabled = try await coordinator.historyBackupEnabled(conversationId: command.conversation)
         XCTAssertEqual(enabled, command.enabled)
         result["backupEnabled"] = String(enabled)
+      case "approve":
+        let devices = try await coordinator.listDevices()
+        guard devices.contains(where: { $0.deviceId == command.message }) else { throw URLError(.resourceUnavailable) }
+        try await coordinator.approveDevice(targetDeviceId: command.message)
+        result["approvedDevice"] = command.message
       case "prepare-recovery":
         _ = try await coordinator.flushLabyrinthQueue()
         let material = try await coordinator.setupRecoveryCodeWithReceipt()
@@ -221,7 +226,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
     window.makeKeyAndVisible()
     defer { window.isHidden = true }
     try await Task.sleep(for: .seconds(2))
-    if command.phase == "show-policy" {
+    if command.phase == "show-policy" || command.phase == "set-policy" {
       // The runner taps the ordinary conversation menu and its sheet using the
       // system accessibility driver. Save the actual screen only after it sees the switch.
       let nonce = command.nonce.uuidString.lowercased()
