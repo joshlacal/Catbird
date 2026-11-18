@@ -127,6 +127,9 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
           title: "Two-home qualification", description: nil
         )
         result["conversation"] = row.conversationId
+      case "retry-create":
+        let row = try await coordinator.retryPendingGroupCreation(conversationId: command.conversation)
+        result["conversation"] = row.conversationId
       case "send":
         let row = try await coordinator.sendMessage(conversationId: command.conversation, messageId: command.message, text: command.text)
         result["message"] = row.messageId
