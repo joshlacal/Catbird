@@ -429,7 +429,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// onto another page. The resulting window is authoritative for edits, reactions and erasures.
   static func readMessageWindow(
     minimumCount: Int, through oldestSequence: Int64?,
-    list: (Int64?, UInt32) async throws -> [MLSMessageRow]
+    list: @MainActor (Int64?, UInt32) async throws -> [MLSMessageRow]
   ) async throws -> (rows: [MLSMessageRow], hasMore: Bool) {
     var rows: [MLSMessageRow] = []
     var before: Int64?

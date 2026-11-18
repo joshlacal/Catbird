@@ -162,20 +162,19 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
           let rowID = "chat.message." + command.message
           let retainedID = try XCTUnwrap(command.retainedMessage)
           let baselineFile = directory.appending(path: "mounted-" + command.nonce.uuidString.lowercased() + ".png")
-          func visibleRows() -> (control: Bool, retained: Bool) {
+          func visibleRows() -> (control: Bool, hasExpectedText: Bool, retained: Bool) {
             let elements = AppAccessibility.elements(in: window)
-            return (
-              elements.contains { $0.identifier == rowID && $0.label?.contains(command.text) == true },
-              elements.contains { $0.identifier == "chat.message." + retainedID }
-            )
+            let control = elements.first { $0.identifier == rowID }
+            return (control != nil, control?.label?.contains(command.text) == true,
+                    elements.contains { $0.identifier == "chat.message." + retainedID })
           }
           for _ in 0..<50 {
             let visible = visibleRows()
-            if visible.control && visible.retained { break }
+            if visible.hasExpectedText && visible.retained { break }
             try await Task.sleep(for: .milliseconds(200))
           }
           let initial = visibleRows()
-          guard initial.control && initial.retained else { throw NSError(domain: "MLSTwoHome.BaselineNotVisible", code: 1) }
+          guard initial.hasExpectedText && initial.retained else { throw NSError(domain: "MLSTwoHome.BaselineNotVisible", code: 1) }
           let before = try await coordinator.listMessages(conversationId: command.conversation, limit: 100)
           guard before.contains(where: { $0.messageId == command.message && $0.senderDid == peer.did }),
                 before.contains(where: { $0.messageId == retainedID && $0.senderDid == account.did }) else {
@@ -345,7 +344,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
   @MainActor
   private func captureConversation(
     command: Command, state: AppState, in directory: URL,
-    whileMounted: ((UIWindow) async throws -> Void)? = nil
+    whileMounted: (@MainActor (UIWindow) async throws -> Void)? = nil
   ) async throws {
     let view = NavigationStack {
       MLSOrdinaryConversationDetailView(conversationId: command.conversation)
@@ -364,7 +363,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
 
   @MainActor
   private func capture<V: View>(
-    _ view: V, command: Command, in directory: URL, whileMounted: ((UIWindow) async throws -> Void)? = nil
+    _ view: V, command: Command, in directory: URL, whileMounted: (@MainActor (UIWindow) async throws -> Void)? = nil
   ) async throws {
     let restore = AppAccessibility.enable()
     defer { restore() }
