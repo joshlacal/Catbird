@@ -71,6 +71,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
     let enabled: Bool
     let excludedMessage: String?
     let actorLabel: String?
+    let retainedMessage: String?
   }
 
   @MainActor
@@ -159,18 +160,25 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
       case "observe-erasure":
         try await captureConversation(command: command, state: state, in: directory) { window in
           let rowID = "chat.message." + command.message
+          let retainedID = try XCTUnwrap(command.retainedMessage)
           let baselineFile = directory.appending(path: "mounted-" + command.nonce.uuidString.lowercased() + ".png")
-          func visibleControl() -> Bool {
-            AppAccessibility.elements(in: window).contains {
-              $0.identifier == rowID && $0.label?.contains(command.text) == true
-            }
+          func visibleRows() -> (control: Bool, retained: Bool) {
+            let elements = AppAccessibility.elements(in: window)
+            return (
+              elements.contains { $0.identifier == rowID && $0.label?.contains(command.text) == true },
+              elements.contains { $0.identifier == "chat.message." + retainedID }
+            )
           }
-          for _ in 0..<50 where !visibleControl() {
+          for _ in 0..<50 {
+            let visible = visibleRows()
+            if visible.control && visible.retained { break }
             try await Task.sleep(for: .milliseconds(200))
           }
-          guard visibleControl() else { throw NSError(domain: "MLSTwoHome.BaselineNotVisible", code: 1) }
+          let initial = visibleRows()
+          guard initial.control && initial.retained else { throw NSError(domain: "MLSTwoHome.BaselineNotVisible", code: 1) }
           let before = try await coordinator.listMessages(conversationId: command.conversation, limit: 100)
-          guard before.contains(where: { $0.messageId == command.message && $0.senderDid == peer.did }) else {
+          guard before.contains(where: { $0.messageId == command.message && $0.senderDid == peer.did }),
+                before.contains(where: { $0.messageId == retainedID && $0.senderDid == account.did }) else {
             throw NSError(domain: "MLSTwoHome.MissingSignedControl", code: 1)
           }
           try self.captureWindow(window).write(to: baselineFile, options: .atomic)
@@ -180,9 +188,12 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
           while ContinuousClock.now < deadline {
             await state.syncMLS(using: coordinator)
             let current = try await coordinator.listMessages(conversationId: command.conversation, limit: 100)
+            let visible = visibleRows()
             if !current.contains(where: { $0.messageId == command.message }),
+               current.contains(where: { $0.messageId == retainedID && $0.senderDid == account.did }),
                !state.mlsSyncIncompleteConversationIDs.contains(command.conversation),
-               !visibleControl() {
+               window.isKeyWindow, !visible.control, visible.retained {
+              result["retainedInMountedView"] = retainedID
               result["removedFromMountedView"] = command.message
               return
             }
