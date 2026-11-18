@@ -82,7 +82,8 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
     do {
       switch command.phase {
       case "enroll":
-        let enrollment = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
+        let scopes = try await sessionClient.fetchGrantedScopes(for: account.did)
+        let enrollment = try await coordinator.enrollDevice(grantedScopes: scopes.sorted())
         XCTAssertEqual(enrollment.accountDid, account.did)
         result["device"] = enrollment.deviceId
       case "create":
@@ -106,6 +107,17 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         XCTAssertEqual(message.senderID, peer.did)
         result["message"] = message.id
         try await captureConversation(command: command, state: state, in: directory)
+      case "show-policy":
+        try await captureConversation(command: command, state: state, in: directory)
+      case "show-recovery":
+        guard state.pendingMLSRecoveryCodeReceipt == nil,
+              state.pendingMLSDeviceRevocationReceipt?.replacementRecoveryCode == nil else {
+          throw NSError(domain: "MLSTwoHome.PrivateReceipt", code: 1)
+        }
+        let view = NavigationStack {
+          LabyrinthSettingsAndRestoreView(coordinator: coordinator, currentDeviceId: state.resolvedMLSDeviceID())
+        }.environment(state)
+        try await capture(view, command: command, in: directory)
       case "set-policy":
         try await coordinator.setHistoryBackupEnabled(conversationId: command.conversation, enabled: command.enabled)
         let enabled = try await coordinator.historyBackupEnabled(conversationId: command.conversation)
@@ -158,7 +170,8 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
       case "recover":
         let before = try await coordinator.listConversations()
         XCTAssertTrue(before.isEmpty, "Recovery must begin in an empty installation")
-        let enrollment = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
+        let scopes = try await sessionClient.fetchGrantedScopes(for: account.did)
+        let enrollment = try await coordinator.enrollDevice(grantedScopes: scopes.sorted())
         let pending = try await coordinator.isDevicePendingApproval()
         XCTAssertTrue(pending, "The existing account must recognize this as a new device")
         let code = try String(contentsOf: directory.appending(path: "recovery.private"), encoding: .utf8)
@@ -191,21 +204,43 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
 
   @MainActor
   private func captureConversation(command: Command, state: AppState, in directory: URL) async throws {
+    let view = NavigationStack {
+      MLSOrdinaryConversationDetailView(conversationId: command.conversation)
+    }.environment(state).environment(SceneNavigationContext(appState: state, sceneID: UUID()))
+    try await capture(view, command: command, in: directory)
+  }
+
+  @MainActor
+  private func capture<V: View>(_ view: V, command: Command, in directory: URL) async throws {
+    let restore = AppAccessibility.enable()
+    defer { restore() }
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     let window = UIWindow(windowScene: scene)
-    let controller = UIHostingController(rootView: NavigationStack {
-      MLSOrdinaryConversationDetailView(conversationId: command.conversation)
-    }.environment(state).environment(SceneNavigationContext(appState: state, sceneID: UUID())))
+    let controller = UIHostingController(rootView: view)
     window.rootViewController = controller
     window.makeKeyAndVisible()
     defer { window.isHidden = true }
     try await Task.sleep(for: .seconds(2))
+    if command.phase == "show-policy" {
+      let menu = try XCTUnwrap(AppAccessibility.elements(in: window).first { $0.identifier == "mlsConversation.menu" })
+      XCTAssertTrue(menu.object.accessibilityActivate())
+      try await Task.sleep(for: .milliseconds(700))
+      let entries = scene.windows.flatMap { AppAccessibility.elements(in: $0) }
+      let info = try XCTUnwrap(entries.first { $0.label == "Chat Info & Metadata" })
+      XCTAssertTrue(info.object.accessibilityActivate())
+      try await Task.sleep(for: .seconds(2))
+      let hasPolicy = scene.windows.flatMap { AppAccessibility.elements(in: $0) }.contains { $0.identifier == "chatInfo.historyBackup" }
+      XCTAssertTrue(hasPolicy)
+    } else if command.phase == "show-recovery" {
+      let identifiers = AppAccessibility.elements(in: window).compactMap(\.identifier)
+      XCTAssertFalse(identifiers.contains("labyrinth-acknowledge-generated-recovery-code"))
+    }
     controller.view.layoutIfNeeded()
     let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }
     let data = try XCTUnwrap(screenshot.pngData())
-    try data.write(to: directory.appending(path: "conversation-" + command.nonce.uuidString.lowercased() + ".png"), options: .atomic)
+    try data.write(to: directory.appending(path: command.phase + "-" + command.nonce.uuidString.lowercased() + ".png"), options: .atomic)
   }
 }
 #endif
