@@ -172,16 +172,19 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         await accountCoordinator.close()
         XCTAssertTrue(acknowledged)
         result["restoredAccount"] = account.did
-      case "recover":
-        let before = try await coordinator.listConversations()
-        XCTAssertTrue(before.isEmpty, "Recovery must begin in an empty installation")
-        let scopes = try await sessionClient.fetchGrantedScopes(for: account.did)
-        let enrollment = try await coordinator.enrollDevice(grantedScopes: scopes.sorted())
-        let pending = try await coordinator.isDevicePendingApproval()
-        XCTAssertTrue(pending, "The existing account must recognize this as a new device")
-        let code = try String(contentsOf: directory.appending(path: "recovery.private"), encoding: .utf8)
-        let restored = try await coordinator.restoreWithRecoveryCode(code)
-        XCTAssertTrue(restored.backupEnabled)
+      case "recover", "restored-history":
+        if command.phase == "recover" {
+          let before = try await coordinator.listConversations()
+          XCTAssertTrue(before.isEmpty, "Recovery must begin in an empty installation")
+          let scopes = try await sessionClient.fetchGrantedScopes(for: account.did)
+          let enrollment = try await coordinator.enrollDevice(grantedScopes: scopes.sorted())
+          let pending = try await coordinator.isDevicePendingApproval()
+          XCTAssertTrue(pending, "The existing account must recognize this as a new device")
+          let code = try String(contentsOf: directory.appending(path: "recovery.private"), encoding: .utf8)
+          let restored = try await coordinator.restoreWithRecoveryCode(code)
+          XCTAssertTrue(restored.backupEnabled)
+          result["device"] = enrollment.deviceId
+        }
         let imported = try await coordinator.restoreConversationFromOwnerMailbox(conversationId: command.conversation)
         let rows = try await coordinator.listMessages(conversationId: command.conversation)
         XCTAssertTrue(rows.contains { $0.messageId == command.message })
@@ -190,7 +193,12 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         }
         result["restoredMessage"] = command.message
         result["imported"] = String(imported)
-        result["device"] = enrollment.deviceId
+      case "recovery-status":
+        result["device"] = state.resolvedMLSDeviceID()
+        result["pending"] = String(try await coordinator.isDevicePendingApproval())
+        let status = try await coordinator.labyrinthStatus()
+        result["backupEnabled"] = String(status.backupEnabled)
+        result["directoryEpoch"] = String(status.epochSeq)
       case "erase":
         try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
           forDID: account.did, appStateOverride: state, clientOverride: sessionClient
