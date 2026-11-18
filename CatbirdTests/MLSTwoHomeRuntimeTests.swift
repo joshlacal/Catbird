@@ -12,6 +12,13 @@ import XCTest
 /// The runner places synthetic credentials and a fresh command in this simulator's Documents
 /// directory. Every method uses the real transport, Keychain and per-account encrypted store.
 final class MLSTwoHomeRuntimeTests: XCTestCase {
+  private struct LocalAgeRequirement: AgeRegulatoryChecking {
+    func preflight() async -> PlatformAgeSignal {
+      PlatformAgeSignal(requirement: .none, ageBand: nil, significantChangeConsentRequired: false)
+    }
+    @MainActor func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+  }
+
   private struct LocalSession: Decodable {
     let label: String
     let did: String
@@ -61,7 +68,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
     )
     let authenticated = try await sessionClient.loginWithPassword(identifier: account.did, password: account.password)
     guard authenticated.did == account.did, authenticated.pdsURL == account.pdsEndpoint else { throw URLError(.userAuthenticationRequired) }
-    let state = AppState(userDID: account.did, client: sessionClient)
+    let state = AppState(userDID: account.did, client: sessionClient, regulatoryChecker: LocalAgeRequirement())
     defer { state.cleanup() }
     ExperimentalSettings.shared.enableMLSChat(for: account.did)
     let opened = await state.getOrOpenMLSCoordinator()
@@ -120,22 +127,27 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         let receipt = try XCTUnwrap(state.pendingMLSRecoveryCodeReceipt)
         let bob = try XCTUnwrap(sessions.accounts.first { $0.label == "bob" && $0.did == peer.did })
         guard fixture.permits(bob.pdsEndpoint) else { throw URLError(.unsupportedURL) }
+        try await state.suspendForAccountSwitch()
         let signedInPeer = try await sessionClient.loginWithPassword(identifier: peer.did, password: bob.password)
         XCTAssertEqual(signedInPeer.did, peer.did)
-        let otherState = AppState(userDID: peer.did, client: sessionClient)
+        let otherState = AppState(userDID: peer.did, client: sessionClient, regulatoryChecker: LocalAgeRequirement())
         defer { otherState.cleanup() }
         XCTAssertTrue(otherState.pendingMLSRecoveryCodeReceipt == nil)
         XCTAssertTrue(otherState.pendingMLSDeviceRevocationReceipt == nil)
+        try await otherState.suspendForAccountSwitch()
         try await sessionClient.switchToAccount(did: account.did)
         let current = await sessionClient.getCurrentAccount()
         XCTAssertEqual(current?.did, account.did)
-        let returningState = AppState(userDID: account.did, client: sessionClient)
+        let returningState = AppState(userDID: account.did, client: sessionClient, regulatoryChecker: LocalAgeRequirement())
         defer { returningState.cleanup() }
         XCTAssertTrue(returningState.pendingMLSRecoveryCodeReceipt == receipt)
         let generation = try XCTUnwrap(receipt.recoveryGeneration)
+        let returningCoordinator = await returningState.getOrOpenMLSCoordinator()
+        let accountCoordinator = try XCTUnwrap(returningCoordinator)
         let acknowledged = await returningState.acknowledgePendingMLSRecoveryCodeReceipt(expected: receipt) {
-          _ = try await coordinator.acknowledgeRecoveryGeneration(expectedGeneration: generation)
+          _ = try await accountCoordinator.acknowledgeRecoveryGeneration(expectedGeneration: generation)
         }
+        await accountCoordinator.close()
         XCTAssertTrue(acknowledged)
         result["restoredAccount"] = account.did
       case "recover":
