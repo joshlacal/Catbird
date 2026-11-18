@@ -2,6 +2,7 @@
 import CatbirdMLS
 import CatbirdMLSCore
 import Foundation
+import os
 @_spi(Fixtures) import Petrel
 import SwiftUI
 import UIKit
@@ -12,6 +13,40 @@ import XCTest
 /// The runner places synthetic credentials and a fresh command in this simulator's Documents
 /// directory. Every method uses the real transport, Keychain and per-account encrypted store.
 final class MLSTwoHomeRuntimeTests: XCTestCase {
+  /// Records the provider decision without contacting or deleting a provider account.
+  private final class HostedProviderProbe: URLProtocol {
+    static let deletionCallbacks = OSAllocatedUnfairLock(initialState: 0)
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    override func startLoading() {
+      guard let url = request.url, url.host == "provider-probe.invalid" else {
+        client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
+        return
+      }
+      let status: Int
+      let body: String
+      switch url.lastPathComponent {
+      case "com.atproto.server.createSession":
+        status = 200
+        body = #"{"accessJwt":"disposable-provider-session"}"#
+      case "com.atproto.server.deleteAccount":
+        Self.deletionCallbacks.withLock { $0 += 1 }
+        status = 409
+        body = #"{"error":"ProviderDecisionObserved"}"#
+      default:
+        client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
+        return
+      }
+      let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+      client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: Data(body.utf8))
+      client?.urlProtocolDidFinishLoading(self)
+    }
+  }
+
   private struct LocalAgeRequirement: AgeRegulatoryChecking {
     func preflight() async -> PlatformAgeSignal {
       PlatformAgeSignal(requirement: .none, ageBand: nil, significantChangeConsentRequired: false)
@@ -201,6 +236,37 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         let status = try await coordinator.labyrinthStatus()
         result["backupEnabled"] = String(status.backupEnabled)
         result["directoryEpoch"] = String(status.epochSeq)
+      case "hosted-erasure":
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [HostedProviderProbe.self]
+        let provider = URLSession(configuration: config)
+        defer { provider.invalidateAndCancel() }
+        let device = state.resolvedMLSDeviceID()
+        HostedProviderProbe.deletionCallbacks.withLock { $0 = 0 }
+        do {
+          try await AccountDeletionCoordinator.performHostedAccountDeletion(
+            forDID: account.did, password: "synthetic-authentication", confirmationToken: "synthetic-code",
+            remoteErasureConsent: .explicitlyConfirmed, pdsURL: URL(string: "https://provider-probe.invalid")!,
+            appStateOverride: state, clientOverride: sessionClient,
+            localErasureOverride: { _ in XCTFail("The provider probe never deletes an account") },
+            directClient: PDSDirectDeletionClient(session: provider)
+          )
+          XCTFail("Expected a recoverable peer or provider decision")
+        } catch HostedPeerErasureError.pending {
+          result["peerErasure"] = "pending"
+        } catch HostedPeerErasureError.unverified {
+          result["peerErasure"] = "unverified"
+        } catch PDSDirectDeletionError.pdsRejected(409, "ProviderDecisionObserved", _) {
+          result["peerErasure"] = "confirmed"
+        }
+        let count = HostedProviderProbe.deletionCallbacks.withLock { $0 }
+        XCTAssertEqual(count, result["peerErasure"] == "confirmed" ? 1 : 0)
+        XCTAssertFalse(coordinator.isHandleClosed)
+        XCTAssertEqual(state.resolvedMLSDeviceID(), device)
+        let retained = await sessionClient.getCurrentAccount()
+        XCTAssertEqual(retained?.did, account.did)
+        result["device"] = device
+        result["providerCallbacks"] = String(count)
       case "erase":
         try await AccountDeletionCoordinator.eraseServerSideLabyrinthDataIfAuthenticated(
           forDID: account.did, appStateOverride: state, clientOverride: sessionClient
