@@ -320,3 +320,224 @@ struct ChatConversationKindPresentationTests {
       == "Couldn’t check encrypted chat")
   }
 }
+
+@Suite("Conversation kinds: contact encrypted chat availability coordinator")
+@MainActor
+struct ContactMLSAvailabilityCoordinatorTests {
+  private final class Gate {
+    private var continuation: CheckedContinuation<MLSChatCapability, Never>?
+    private(set) var arrived = false
+    var onArrive: (() -> Void)?
+
+    func wait() async -> MLSChatCapability {
+      arrived = true
+      onArrive?()
+      return await withCheckedContinuation { continuation in
+        self.continuation = continuation
+      }
+    }
+
+    func resume(with capability: MLSChatCapability) {
+      continuation?.resume(returning: capability)
+      continuation = nil
+    }
+  }
+
+  private func waitUntil(
+    timeout: Duration = .seconds(2),
+    condition: @MainActor () -> Bool
+  ) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() {
+      if ContinuousClock.now >= deadline {
+        Issue.record("Timed out waiting for condition")
+        return
+      }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+  }
+
+  @Test("A fast contact resolves immediately without waiting for a slow contact in the same batch")
+  func fastPeerResolvesWithoutWaitingForSlowPeer() async throws {
+    let slowGate = Gate()
+    var reported: [(String, MLSChatCapabilityStatus)] = []
+    let coordinator = ContactMLSAvailabilityCoordinator(
+      maxConcurrentLookups: 6,
+      checkCapability: { did, _ in
+        if did == "did:plc:slow" {
+          return await slowGate.wait()
+        }
+        return .incapable(.missingDeclaration)
+      },
+      onStatusChange: { did, status in
+        reported.append((did, status))
+      }
+    )
+
+    coordinator.requestCheck(
+      for: ["did:plc:slow", "did:plc:swan"],
+      accountDID: "did:plc:me"
+    )
+    #expect(coordinator.rowState(for: "did:plc:slow") == .checking)
+    #expect(coordinator.rowState(for: "did:plc:swan") == .checking)
+
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:swan") == .resolved(.incapable)
+    }
+    #expect(coordinator.rowState(for: "did:plc:slow") == .checking)
+    #expect(reported.count == 1)
+    #expect(reported.first?.0 == "did:plc:swan")
+    #expect(reported.first?.1 == .incapable)
+
+    slowGate.resume(with: .capable)
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:slow") == .resolved(.capable)
+    }
+    #expect(reported.count == 2)
+  }
+
+  @Test("Overlapping follow and search checks coalesce into one lookup without dropping the answer")
+  func overlappingFollowAndSearchChecksCoalesce() async throws {
+    let gate = Gate()
+    var lookupCount = 0
+    let coordinator = ContactMLSAvailabilityCoordinator(
+      maxConcurrentLookups: 6,
+      checkCapability: { _, _ in
+        lookupCount += 1
+        return await gate.wait()
+      }
+    )
+
+    coordinator.requestCheck(for: ["did:plc:swan"], accountDID: "did:plc:me")
+    try await waitUntil { gate.arrived }
+
+    // A second check (e.g. search results arriving while follows are still checking)
+    // must not overwrite or discard the in-flight lookup.
+    coordinator.requestCheck(for: ["did:plc:swan"], accountDID: "did:plc:me", prioritize: true)
+    #expect(lookupCount == 1)
+
+    gate.resume(with: .incapable(.missingDeclaration))
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:swan") == .resolved(.incapable)
+    }
+    #expect(lookupCount == 1)
+  }
+
+  @Test("Cancelling a caller search task does not strand a contact in Checking, and cancelAll leaves Retry enabled")
+  func cancellationNeverStrandsContactInCheckingState() async throws {
+    let gate = Gate()
+    var calls: [Bool] = []
+    let coordinator = ContactMLSAvailabilityCoordinator(
+      maxConcurrentLookups: 6,
+      checkCapability: { _, force in
+        calls.append(force)
+        if calls.count == 1 {
+          return await gate.wait()
+        }
+        return .incapable(.missingDeclaration)
+      }
+    )
+
+    // 1. Scheduling from inside a search task that is immediately cancelled keeps the lookup alive.
+    let callerTask = Task { @MainActor in
+      coordinator.requestCheck(for: ["did:plc:swan"], accountDID: "did:plc:me", prioritize: true)
+    }
+    await callerTask.value
+    callerTask.cancel()
+    try await waitUntil { gate.arrived }
+    #expect(coordinator.rowState(for: "did:plc:swan") == .checking)
+
+    // 2. Even if cancelAll() tears down in-flight work (e.g. view disappear), the row is never
+    //    left in an unretryable .checking spinner; it surfaces .resolved(.unknown) and can re-check.
+    coordinator.cancelAll()
+    #expect(coordinator.rowState(for: "did:plc:swan") == .resolved(.unknown))
+    gate.resume(with: .capable)
+
+    coordinator.requestCheck(for: ["did:plc:swan"], accountDID: "did:plc:me", prioritize: true)
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:swan") == .resolved(.incapable)
+    }
+    #expect(calls == [false, false])
+  }
+
+  @Test("Prioritized search results jump ahead of queued follow lookups")
+  func prioritizedSearchJumpsAheadOfQueuedFollows() async throws {
+    let f1Gate = Gate()
+    let f2Gate = Gate()
+    var startOrder: [String] = []
+    let coordinator = ContactMLSAvailabilityCoordinator(
+      maxConcurrentLookups: 2,
+      checkCapability: { did, _ in
+        startOrder.append(did)
+        switch did {
+        case "did:plc:f1": return await f1Gate.wait()
+        case "did:plc:f2": return await f2Gate.wait()
+        default: return .capable
+        }
+      }
+    )
+
+    coordinator.requestCheck(
+      for: ["did:plc:f1", "did:plc:f2", "did:plc:f3", "did:plc:f4"],
+      accountDID: "did:plc:me"
+    )
+    try await waitUntil { f1Gate.arrived && f2Gate.arrived }
+    #expect(startOrder == ["did:plc:f1", "did:plc:f2"])
+
+    coordinator.requestCheck(
+      for: ["did:plc:swan"],
+      accountDID: "did:plc:me",
+      prioritize: true
+    )
+
+    f1Gate.resume(with: .capable)
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:swan") == .resolved(.capable)
+    }
+    #expect(startOrder.prefix(3) == ["did:plc:f1", "did:plc:f2", "did:plc:swan"])
+
+    f2Gate.resume(with: .capable)
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:f4") == .resolved(.capable)
+    }
+  }
+
+  @Test("Retry forces a fresh lookup and Account reset ignores late completions from the old account")
+  func retryAndAccountReset() async throws {
+    let oldAccountGate = Gate()
+    var forceFlags: [Bool] = []
+    var reported: [(String, MLSChatCapabilityStatus)] = []
+    let coordinator = ContactMLSAvailabilityCoordinator(
+      maxConcurrentLookups: 6,
+      checkCapability: { did, force in
+        if did == "did:plc:stale" {
+          return await oldAccountGate.wait()
+        }
+        forceFlags.append(force)
+        return force ? .capable : .unknown(.network)
+      },
+      onStatusChange: { did, status in
+        reported.append((did, status))
+      }
+    )
+
+    coordinator.requestCheck(for: ["did:plc:peer"], accountDID: "did:plc:accountA")
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:peer") == .resolved(.unknown)
+    }
+    coordinator.retry(did: "did:plc:peer", accountDID: "did:plc:accountA")
+    try await waitUntil {
+      coordinator.rowState(for: "did:plc:peer") == .resolved(.capable)
+    }
+    #expect(forceFlags == [false, true])
+
+    reported.removeAll()
+    coordinator.requestCheck(for: ["did:plc:stale"], accountDID: "did:plc:accountA")
+    try await waitUntil { oldAccountGate.arrived }
+    coordinator.reset(accountDID: "did:plc:accountB")
+    oldAccountGate.resume(with: .capable)
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(reported.isEmpty)
+    #expect(coordinator.availability["did:plc:stale"] == nil)
+  }
+}

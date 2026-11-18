@@ -41,13 +41,10 @@ struct ContactSearchList: View {
   @State private var searchError: String?
   @State private var searchTask: Task<Void, Never>?
   @State private var searchGeneration = UUID()
-  typealias ContactMLSAvailability = MLSChatCapabilityStatus
 
   /// DID of the contact whose conversation is being started, if any
   @State private var startingDID: String?
-  @State private var participantAvailability: [String: ContactMLSAvailability] = [:]
-  @State private var checkingAvailability: Set<String> = []
-  @State private var availabilityRequests: [String: UUID] = [:]
+  @State private var availabilityCoordinator = ContactMLSAvailabilityCoordinator()
   @State private var blueskyChatAvailability: [String: Bool] = [:]
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ContactSearchList")
@@ -95,17 +92,19 @@ struct ContactSearchList: View {
     .onChange(of: searchText) { _, newValue in
       handleSearchTextChange(newValue)
     }
-    .onChange(of: appState.userDID) { _, _ in
+    .onChange(of: appState.userDID) { _, newDID in
       searchGeneration = UUID()
       searchTask?.cancel()
       searchResults = []
       mlsSearchResults = []
       followingProfiles = []
-      participantAvailability = [:]
-      checkingAvailability = []
-      availabilityRequests = [:]
+      availabilityCoordinator.reset(accountDID: newDID)
       blueskyChatAvailability = [:]
       Task { await loadFollowing() }
+    }
+    .onDisappear {
+      searchTask?.cancel()
+      availabilityCoordinator.cancelAll()
     }
     .task {
       await loadFollowing()
@@ -262,44 +261,12 @@ struct ContactSearchList: View {
     _ participant: MLSParticipantViewModel,
     blueskyAvailable: Bool
   ) -> some View {
-    let availability = participantAvailability[participant.id]
-    let isChecking = checkingAvailability.contains(participant.id) || availability == nil
-    if showMLSStatus && (isChecking || availability == .unknown) {
-      Button {
-        Task { await checkMLSOptIn(for: participant.id) }
-      } label: {
-        HStack(spacing: DesignTokens.Spacing.base) {
-          AsyncProfileImage(url: participant.avatarURL, size: DesignTokens.Size.avatarMD)
-          VStack(alignment: .leading, spacing: 4) {
-            if let displayName = participant.displayName {
-              Text(displayName)
-                .designCallout()
-                .foregroundColor(.primary)
-                .lineLimit(1)
-            }
-            Text("@\(participant.handle)")
-              .designCaption()
-              .foregroundColor(.secondary)
-              .lineLimit(1)
-            Text(isChecking ? "Checking encrypted chat…" : "Couldn’t check encrypted chat")
-              .designCaption()
-              .foregroundColor(.secondary)
-          }
-          Spacer()
-          if isChecking {
-            ProgressView()
-          } else {
-            Label("Retry", systemImage: "arrow.clockwise")
-              .designCaption()
-          }
-        }
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .disabled(isChecking)
-      .accessibilityHint(isChecking ? "" : "Checks whether this person can use encrypted chat")
+    let rowState = availabilityCoordinator.rowState(for: participant.id)
+    let isChecking = rowState == .checking
+    if showMLSStatus && (isChecking || rowState == .resolved(.unknown)) {
+      checkingOrUnknownParticipantRow(participant, isChecking: isChecking)
     } else {
-      let isAvailable = showMLSStatus ? availability == .capable : blueskyAvailable
+      let isAvailable = showMLSStatus ? rowState == .resolved(.capable) : blueskyAvailable
       ParticipantRow(
         participant: participant,
         isSelected: selectedDIDs.contains(participant.id),
@@ -311,6 +278,51 @@ struct ContactSearchList: View {
       }
       .disabled(!isAvailable)
       .opacity(isAvailable ? 1.0 : 0.6)
+    }
+  }
+
+  @ViewBuilder
+  private func checkingOrUnknownParticipantRow(
+    _ participant: MLSParticipantViewModel,
+    isChecking: Bool
+  ) -> some View {
+    Button {
+      retryMLSAvailabilityCheck(for: participant.id)
+    } label: {
+      HStack(spacing: DesignTokens.Spacing.base) {
+        AsyncProfileImage(url: participant.avatarURL, size: DesignTokens.Size.avatarMD)
+        VStack(alignment: .leading, spacing: 4) {
+          if let displayName = participant.displayName {
+            Text(displayName)
+              .designCallout()
+              .foregroundColor(.primary)
+              .lineLimit(1)
+          }
+          Text("@\(participant.handle)")
+            .designCaption()
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+          Text(isChecking ? "Checking encrypted chat…" : "Couldn’t check encrypted chat")
+            .designCaption()
+            .foregroundColor(.secondary)
+        }
+        Spacer()
+        if isChecking {
+          ProgressView()
+        } else {
+          Label("Retry", systemImage: "arrow.clockwise")
+            .designCaption()
+        }
+      }
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(isChecking)
+    .accessibilityHint(isChecking ? "" : "Checks whether this person can use encrypted chat")
+    .task(id: "\(appState.userDID):\(participant.id)") {
+      if availabilityCoordinator.availability[participant.id] == nil {
+        requestMLSAvailabilityCheck(for: [participant.id], prioritize: true)
+      }
     }
   }
 
@@ -516,7 +528,10 @@ struct ContactSearchList: View {
       }
 
       if showMLSStatus {
-        await checkMLSOptInBatch(dids: actors.map { $0.did.description })
+        requestMLSAvailabilityCheck(
+          for: actors.map { $0.did.description },
+          prioritize: true
+        )
       }
     } catch {
       guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
@@ -568,8 +583,10 @@ struct ContactSearchList: View {
       followingProfiles = response.follows
 
       if showMLSStatus {
-        let dids = followingProfiles.map { $0.did.didString() }
-        await checkMLSOptInBatch(dids: dids)
+        requestMLSAvailabilityCheck(
+          for: followingProfiles.map { $0.did.didString() },
+          prioritize: false
+        )
       }
     } catch {
       logger.error("Error loading following: \(error.localizedDescription)")
@@ -579,55 +596,20 @@ struct ContactSearchList: View {
   // MARK: - MLS Opt-In Check
 
   @MainActor
-  private func checkMLSOptInBatch(dids: [String], forceRefresh: Bool = false) async {
-    let didObjects = dids.compactMap { try? DID(didString: $0) }
-    guard !didObjects.isEmpty else { return }
-    let accountDID = appState.userDID
-    let requestID = UUID()
-    for did in didObjects {
-      let key = did.didString()
-      availabilityRequests[key] = requestID
-      checkingAvailability.insert(key)
-    }
-
-    defer {
-      for did in didObjects {
-        let key = did.didString()
-        if availabilityRequests[key] == requestID {
-          checkingAvailability.remove(key)
-          if Task.isCancelled || appState.userDID != accountDID {
-            availabilityRequests.removeValue(forKey: key)
-          }
-        }
-      }
-    }
-    let didStrings = didObjects.map { $0.didString() }
-    let answers = await MLSChatCapabilityResolver.shared.capabilities(
-      for: didStrings, forceRefresh: forceRefresh)
-    var resolved: [String: ContactMLSAvailability] = [:]
-    for (did, capability) in answers {
-      switch capability {
-      case .capable: resolved[did] = .capable
-      case .incapable: resolved[did] = .incapable
-      case .unknown: resolved[did] = .unknown
-      }
-    }
-
-    guard !Task.isCancelled, appState.userDID == accountDID else { return }
-
-    for did in didObjects {
-      let key = did.didString()
-      // A superseded search/retry must not overwrite a newer result for this person.
-      guard availabilityRequests[key] == requestID else { continue }
-      let status = resolved[key] ?? .unknown
-      participantAvailability[key] = status
-      onMLSCapabilityChange?(key, status)
-      availabilityRequests.removeValue(forKey: key)
-    }
+  private func requestMLSAvailabilityCheck(for dids: [String], prioritize: Bool) {
+    guard showMLSStatus else { return }
+    availabilityCoordinator.onStatusChange = onMLSCapabilityChange
+    availabilityCoordinator.requestCheck(
+      for: dids,
+      accountDID: appState.userDID,
+      prioritize: prioritize
+    )
   }
 
   @MainActor
-  private func checkMLSOptIn(for did: String) async {
-    await checkMLSOptInBatch(dids: [did], forceRefresh: true)
+  private func retryMLSAvailabilityCheck(for did: String) {
+    guard showMLSStatus else { return }
+    availabilityCoordinator.onStatusChange = onMLSCapabilityChange
+    availabilityCoordinator.retry(did: did, accountDID: appState.userDID)
   }
 }
