@@ -185,6 +185,8 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
           XCTAssertTrue(restored.backupEnabled)
           result["device"] = enrollment.deviceId
         }
+        let existing = try await coordinator.listMessages(conversationId: command.conversation)
+        XCTAssertFalse(existing.contains { $0.messageId == command.message })
         let imported = try await coordinator.restoreConversationFromOwnerMailbox(conversationId: command.conversation)
         let rows = try await coordinator.listMessages(conversationId: command.conversation)
         XCTAssertTrue(rows.contains { $0.messageId == command.message })
