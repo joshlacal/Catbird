@@ -15,7 +15,7 @@ import SwiftUI
 import UIKit
 #endif
 
-private final class Wave0RecordingKeyStore: PlatformKeyStore, @unchecked Sendable {
+final class Wave0RecordingKeyStore: PlatformKeyStore, @unchecked Sendable {
   private let lock = NSLock()
   private var dbKeys: [String: Data] = [:]
   private var sigKeypairs: [String: Data] = [:]

@@ -1,10 +1,13 @@
 import Foundation
+import CatbirdMLS
+import CatbirdMLSCore
+import os
 import SwiftData
 import Testing
 @testable import Catbird
 
 
-@Suite("Account deletion Catbird data erasure")
+@Suite("Account deletion Catbird data erasure", .serialized)
 struct AccountDeletionCoordinatorTests {
   @Test("Erase Catbird data removes SwiftData records for the specified account while preserving others")
   @MainActor
@@ -289,6 +292,90 @@ struct AccountDeletionCoordinatorTests {
     #expect(remoteEraseCount == 2)
     #expect(localEraseCount == 1)
     #expect(events == ["createSession", "remoteMLSErasure", "deleteAccount", "localErasure"])
+  }
+
+  @Test("Hosted deletion waits for peer confirmation and retains its device across a rejected provider code")
+  @MainActor
+  func hostedDeletionWaitsForPeerProof() async throws {
+    let did = "did:plc:hostedpeerprooftest"
+    let device = UUID().uuidString.lowercased()
+    let root = FileManager.default.temporaryDirectory.appending(path: "hosted-peer-proof-\(device)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let network = NativeArchiveMockNetwork()
+    let keys = Wave0RecordingKeyStore()
+    let reply = OSAllocatedUnfairLock(initialState: (status: 202, body: "{}"))
+    let transport = PetrelPlatformTransport(
+      homeDsEndpoint: URL(string: NativeArchiveMockNetwork.dsEndpoint),
+      homeDsDid: NativeArchiveMockNetwork.dsDid,
+      ownPdsEndpoint: URL(string: NativeArchiveMockNetwork.pdsEndpoint(for: did)),
+      actorDeviceId: device,
+      httpOverride: { request in
+        guard request.url.hasSuffix("/blue.catbird.labyrinth.deleteAccountData") else { return network.handle(request) }
+        guard request.headers.contains(where: { $0.name.lowercased() == "catbird-require-erasure-completion" && $0.value == "1" })
+        else { throw URLError(.badServerResponse) }
+        let response = reply.withLock { $0 }
+        return PlatformHttpResponse(status: UInt16(response.status), headers: [], body: Data(response.body.utf8))
+      }
+    )
+    let coordinator = try await MLSClientCoordinator.open(
+      config: CatbirdMlsClientConfig(storageRoot: root.path, accountDid: did, deviceId: device,
+        homeDsDid: NativeArchiveMockNetwork.dsDid, homeDsEndpoint: NativeArchiveMockNetwork.dsEndpoint,
+        pdsEndpoint: NativeArchiveMockNetwork.pdsEndpoint(for: did)),
+      keystore: keys, transport: transport
+    )
+    _ = try await coordinator.enrollDevice(grantedScopes: MLSAppGroupStorage.requiredSpacesScopes)
+    let accountDB = try MLSAppGroupStorage.databaseURL(storageRoot: root, accountDid: did)
+    let calls = OSAllocatedUnfairLock(initialState: 0)
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [DirectPDSMockURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer {
+      session.invalidateAndCancel()
+      DirectPDSMockURLProtocol.handler = nil
+    }
+    DirectPDSMockURLProtocol.handler = { request, data in
+      switch request.url?.lastPathComponent {
+      case "com.atproto.server.createSession":
+        return (200, Data(#"{"accessJwt":"synthetic-ephemeral"}"#.utf8))
+      case "com.atproto.server.deleteAccount":
+        calls.withLock { $0 += 1 }
+        let body = try JSONSerialization.jsonObject(with: data) as? [String: String]
+        return body?["token"] == "valid" ? (200, Data()) : (400, Data(#"{"error":"InvalidToken"}"#.utf8))
+      default:
+        throw URLError(.unsupportedURL)
+      }
+    }
+    let provider = PDSDirectDeletionClient(session: session)
+    var localErasureCount = 0
+    func deleteHostedAccount(token: String) async throws {
+      try await AccountDeletionCoordinator.performHostedAccountDeletion(
+        forDID: did, password: "fixture-password", confirmationToken: token,
+        remoteErasureConsent: .explicitlyConfirmed, pdsURL: URL(string: "https://hosted.example.org")!,
+        storageRoot: root, keystore: keys, coordinatorOverride: coordinator,
+        localErasureOverride: { _ in localErasureCount += 1 }, directClient: provider
+      )
+    }
+    for (status, body) in [
+      (202, #"{"erasureCompletion":"confirmed"}"#), (200, "{}"), (200, #"{"erasureCompletion":"unknown"}"#),
+      (409, #"{"error":"PeerErasurePending"}"#), (409, #"{"error":"PeerErasureUnverified"}"#)
+    ] {
+      reply.withLock { $0 = (status, body) }
+      await #expect(throws: HostedPeerErasureError.self) { try await deleteHostedAccount(token: "valid") }
+      #expect(calls.withLock { $0 } == 0)
+      #expect(localErasureCount == 0)
+      #expect(!coordinator.isHandleClosed)
+      #expect(FileManager.default.fileExists(atPath: accountDB.path))
+      #expect(keys.hasDbKey(accountDidHash: coordinator.accountDidHash))
+    }
+    reply.withLock { $0 = (200, #"{"erasureCompletion":"confirmed"}"#) }
+    await #expect(throws: PDSDirectDeletionError.self) { try await deleteHostedAccount(token: "expired") }
+    #expect(calls.withLock { $0 } == 1)
+    #expect(localErasureCount == 0)
+    #expect(!coordinator.isHandleClosed)
+    try await deleteHostedAccount(token: "valid")
+    #expect(calls.withLock { $0 } == 2)
+    #expect(localErasureCount == 1)
+    #expect(coordinator.isHandleClosed)
   }
 
   @Test("Fresh-device erasure preserves the hosted account when remote authority is unavailable; explicit local-only erasure works offline")

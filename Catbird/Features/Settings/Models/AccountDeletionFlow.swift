@@ -207,6 +207,20 @@ struct AccountErasureRecoveryRequired: LocalizedError {
   }
 }
 
+enum HostedPeerErasureError: LocalizedError {
+  case pending
+  case unverified
+
+  var errorDescription: String? {
+    switch self {
+    case .pending:
+      "Other chat services are still processing the request to erase your encrypted history. Keep this device signed in and retry. Your hosted account is still active."
+    case .unverified:
+      "Catbird could not verify that every chat service erased your encrypted history. Your hosted account is still active. Keep this device signed in and retry after the chat services can confirm erasure."
+    }
+  }
+}
+
 /// Coordinates the deletion and erasure of Catbird-held account data to satisfy
 /// App Store Review Guideline 5.1.1(v).
 @MainActor
@@ -236,7 +250,7 @@ struct AccountDeletionCoordinator {
   /// 1. Pre-validates `(did, password)` via ephemeral `com.atproto.server.createSession` BEFORE
   ///    running any irreversible Labyrinth/MLS server backup erasure.
   /// 2. Runs fail-closed `eraseServerSideLabyrinthDataIfAuthenticated` while OAuth/Spaces credentials
-  ///    are still live. The unified erasure also retires its local MLS store. AT Protocol cannot
+  ///    are still live. All participating delivery services must confirm erasure. AT Protocol cannot
   ///    validate `confirmationToken` without consuming it through `deleteAccount`, so a rejected or
   ///    expired token can leave the hosted account without that encrypted history.
   /// 3. Calls `com.atproto.server.deleteAccount` directly on `pdsURL`.
@@ -279,6 +293,7 @@ struct AccountDeletionCoordinator {
           appStateOverride: appStateOverride,
           clientOverride: clientOverride,
           coordinatorOverride: coordinatorOverride,
+          requirePeerErasureConfirmation: true,
           remoteMLSErasure: remoteMLSErasure
         )
       },
@@ -292,6 +307,10 @@ struct AccountDeletionCoordinator {
         )
       },
       eraseRemainingLocalData: {
+        let state = erasureAppState(for: did, override: appStateOverride)
+        if let coordinator = coordinatorOverride ?? state?.mlsCoordinator {
+          await coordinator.close()
+        }
         if let localErasureOverride {
           try await localErasureOverride(did)
         } else {
@@ -393,6 +412,7 @@ struct AccountDeletionCoordinator {
     appStateOverride: AppState? = nil,
     clientOverride: ATProtoClient? = nil,
     coordinatorOverride: MLSClientCoordinator? = nil,
+    requirePeerErasureConfirmation: Bool = false,
     remoteMLSErasure: (@MainActor @Sendable (String) async throws -> Void)? = nil
   ) async throws {
     if let remoteMLSErasure {
@@ -401,19 +421,11 @@ struct AccountDeletionCoordinator {
     }
 
     if let coordinatorOverride {
-      try await eraseWithApprovedDevice(coordinatorOverride)
+      try await eraseWithApprovedDevice(coordinatorOverride, requirePeerErasureConfirmation: requirePeerErasureConfirmation)
       return
     }
 
-    let resolvedAppState: AppState? = if let appStateOverride, appStateOverride.userDID == did {
-      appStateOverride
-    } else if let currentAppState = AppStateManager.shared.lifecycle.appState, currentAppState.userDID == did {
-      currentAppState
-    } else if let cachedState = AppStateManager.shared.getState(for: did) {
-      cachedState
-    } else {
-      nil
-    }
+    let resolvedAppState = erasureAppState(for: did, override: appStateOverride)
 
     let resolvedClient = clientOverride ?? resolvedAppState?.atProtoClient ?? AppStateManager.shared.authentication.client
     guard let client = resolvedClient,
@@ -447,7 +459,8 @@ struct AccountDeletionCoordinator {
         }
       }
       let erasingDeviceID = AppState.existingMLSDeviceID(for: did)
-      try await eraseWithApprovedDevice(coordinator)
+      try await eraseWithApprovedDevice(coordinator, requirePeerErasureConfirmation: requirePeerErasureConfirmation)
+      if requirePeerErasureConfirmation { return }
       await coordinator.close()
       if let erasingDeviceID {
         AppState.clearErasedMLSDeviceID(for: did, expected: erasingDeviceID)
@@ -459,7 +472,16 @@ struct AccountDeletionCoordinator {
     throw AccountErasureRecoveryRequired()
   }
 
-  private static func eraseWithApprovedDevice(_ coordinator: MLSClientCoordinator) async throws {
+  private static func erasureAppState(for did: String, override: AppState?) -> AppState? {
+    if let override, override.userDID == did { return override }
+    if let current = AppStateManager.shared.lifecycle.appState, current.userDID == did { return current }
+    return AppStateManager.shared.getState(for: did)
+  }
+
+  private static func eraseWithApprovedDevice(
+    _ coordinator: MLSClientCoordinator,
+    requirePeerErasureConfirmation: Bool
+  ) async throws {
     if coordinator.isHandleClosed {
       try await coordinator.resumeFromBackground()
     }
@@ -467,7 +489,15 @@ struct AccountDeletionCoordinator {
       throw AccountErasureRecoveryRequired()
     }
     do {
-      try await coordinator.deleteAccountData()
+      if requirePeerErasureConfirmation {
+        try await coordinator.deleteAccountDataForHostedAccount()
+      } else {
+        try await coordinator.deleteAccountData()
+      }
+    } catch CatbirdMLS.MlsError.InvalidState(let message) where message.contains("PeerErasurePending") {
+      throw HostedPeerErasureError.pending
+    } catch CatbirdMLS.MlsError.InvalidState(let message) where message.contains("PeerErasureUnverified") {
+      throw HostedPeerErasureError.unverified
     } catch CatbirdMLS.MlsError.InvalidState(let message) where message.localizedCaseInsensitiveContains("enroll") {
       throw AccountErasureRecoveryRequired()
     }

@@ -171,9 +171,9 @@ enum PDSDirectDeletionError: Error, LocalizedError, Equatable, Sendable {
 /// Proof that the app showed the dedicated remote-backup erasure warning before hosted deletion.
 ///
 /// AT Protocol exposes no non-consuming deletion-code validation endpoint. Catbird must erase its
-/// remote encrypted data while the account session still exists, and the unified erasure operation
-/// also retires the local encrypted-chat store. A rejected code can therefore leave the hosted
-/// account intact after that encrypted history is gone. Keeping this as a required argument prevents
+/// remote encrypted data while the account session still exists. A rejected code can leave the
+/// hosted account intact after the cloud backups are gone. Device credentials and the erasure
+/// journal survive until the provider confirms deletion. Keeping this as a required argument prevents
 /// a caller from silently folding that irreversible tradeoff into a generic account-deletion prompt.
 enum HostedAccountDeletionRemoteErasureConsent: Sendable {
   case explicitlyConfirmed

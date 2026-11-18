@@ -279,7 +279,7 @@ struct AccountDeletionSheet: View {
         }
       } message: {
         Text(
-          "Your hosting provider cannot validate the email code without deleting the account. Catbird must erase encrypted cloud backups first while you are still signed in, and that operation also retires this device’s encrypted-chat store. If the provider then rejects or expires the code, your account will remain but that encrypted history cannot be restored from Catbird’s backups. You can retry account deletion with a new code."
+          "Your hosting provider cannot validate the email code without deleting the account. Catbird must erase encrypted cloud backups first while you are still signed in and wait for every participating chat service to confirm. If the provider then rejects the code, your account remains active and the encrypted cloud backups are gone. Keep this device signed in and retry with a new code."
         )
       }
       .confirmationDialog("Permanently Delete Hosted Account?", isPresented: $confirmingPermanentDeletion, titleVisibility: .visible) {
@@ -288,7 +288,7 @@ struct AccountDeletionSheet: View {
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("Catbird will first erase the encrypted cloud backups and device chat store you explicitly approved, then ask your hosting provider to permanently delete the account. Other local Catbird account data is removed only after the provider confirms deletion.")
+        Text("Catbird will erase your encrypted cloud backups and wait for confirmation from every participating chat service. Catbird will then ask your hosting provider to permanently delete the account. Once the provider confirms deletion, Catbird will erase this device’s chat store and other local account data.")
       }
       .task {
         await resolveAccountPage()
