@@ -162,6 +162,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
           let rowID = "chat.message." + command.message
           let retainedID = try XCTUnwrap(command.retainedMessage)
           let baselineFile = directory.appending(path: "mounted-" + command.nonce.uuidString.lowercased() + ".png")
+          @MainActor
           func visibleRows() -> (control: Bool, hasExpectedText: Bool, retained: Bool) {
             let elements = AppAccessibility.elements(in: window)
             let control = elements.first { $0.identifier == rowID }
