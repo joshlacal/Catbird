@@ -129,7 +129,15 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         result["conversation"] = row.conversationId
       case "retry-create":
         let row = try await coordinator.retryPendingGroupCreation(conversationId: command.conversation)
-        result["conversation"] = row.conversationId
+        if let row {
+          result["conversation"] = row.conversationId
+          result["creation"] = "committed"
+        } else if let status = try await coordinator.pendingGroupCreationStatus(conversationId: command.conversation) {
+          result["creation"] = String(describing: status.state)
+          result["reason"] = status.lastErrorCode
+        } else {
+          result["creation"] = "noPendingCreation"
+        }
       case "send":
         let row = try await coordinator.sendMessage(conversationId: command.conversation, messageId: command.message, text: command.text)
         result["message"] = row.messageId
