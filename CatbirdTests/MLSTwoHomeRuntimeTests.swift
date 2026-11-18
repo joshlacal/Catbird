@@ -159,23 +159,24 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         try await captureConversation(command: command, state: state, in: directory)
       case "observe-erasure":
         try await captureConversation(command: command, state: state, in: directory) { window in
-          let rowID = "chat.message." + command.message
           let retainedID = try XCTUnwrap(command.retainedMessage)
-          let baselineFile = directory.appending(path: "mounted-" + command.nonce.uuidString.lowercased() + ".png")
-          @MainActor
-          func visibleRows() -> (control: Bool, hasExpectedText: Bool, retained: Bool) {
-            let elements = AppAccessibility.elements(in: window)
-            let control = elements.first { $0.identifier == rowID }
-            return (control != nil, control?.label?.contains(command.text) == true,
-                    elements.contains { $0.identifier == "chat.message." + retainedID })
+          let nonce = command.nonce.uuidString.lowercased()
+          let baselineFile = directory.appending(path: "mounted-" + nonce + ".png")
+          func signal(_ name: String) throws {
+            try Data().write(to: directory.appending(path: name + "-" + nonce), options: .atomic)
           }
-          for _ in 0..<50 {
-            let visible = visibleRows()
-            if visible.hasExpectedText && visible.retained { break }
-            try await Task.sleep(for: .milliseconds(200))
+          func observed(_ name: String) -> Bool {
+            FileManager.default.fileExists(atPath: directory.appending(path: name + "-" + nonce).path)
           }
-          let initial = visibleRows()
-          guard initial.hasExpectedText && initial.retained else { throw NSError(domain: "MLSTwoHome.BaselineNotVisible", code: 1) }
+          // SwiftUI collection rows expose their final accessible hierarchy to the system
+          // accessibility client. The witness checks the two real row IDs and their text.
+          try signal("observer-mounted")
+          for _ in 0..<240 where !observed("observer-before") {
+            try await Task.sleep(for: .milliseconds(250))
+          }
+          guard window.isKeyWindow, observed("observer-before") else {
+            throw NSError(domain: "MLSTwoHome.BaselineNotVisible", code: 1)
+          }
           let before = try await coordinator.listMessages(conversationId: command.conversation, limit: 100)
           guard before.contains(where: { $0.messageId == command.message && $0.senderDid == peer.did }),
                 before.contains(where: { $0.messageId == retainedID && $0.senderDid == account.did }) else {
@@ -188,11 +189,15 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
           while ContinuousClock.now < deadline {
             await state.syncMLS(using: coordinator)
             let current = try await coordinator.listMessages(conversationId: command.conversation, limit: 100)
-            let visible = visibleRows()
             if !current.contains(where: { $0.messageId == command.message }),
                current.contains(where: { $0.messageId == retainedID && $0.senderDid == account.did }),
                !state.mlsSyncIncompleteConversationIDs.contains(command.conversation),
-               window.isKeyWindow, !visible.control, visible.retained {
+               window.isKeyWindow {
+              try signal("observer-store-applied")
+              if !observed("observer-after") {
+                try await Task.sleep(for: .milliseconds(250))
+                continue
+              }
               result["retainedInMountedView"] = retainedID
               result["removedFromMountedView"] = command.message
               return
