@@ -22,7 +22,7 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
   private struct LocalSession: Decodable {
     let label: String
     let did: String
-    let password: String
+    let session: String
     let pdsEndpoint: URL
     let deliveryService: String
   }
@@ -58,16 +58,20 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
     else { throw URLError(.unsupportedURL) }
 
     let sessionClient = try await ATProtoClient(
-      baseURL: account.pdsEndpoint,
+      baseURL: fixture.origin,
       oauthConfig: OAuthConfig(
         clientId: fixture.origin.appending(path: "client-metadata.json").absoluteString,
         redirectUri: fixture.origin.appending(path: "callback").absoluteString, scope: "atproto"
       ),
       namespace: "blue.catbird.fixture." + identity.deviceId,
-      authMode: .legacy
+      authMode: .gateway(try CatbirdGatewayConfiguration.petrelGateway(origin: fixture.origin))
     )
-    let authenticated = try await sessionClient.loginWithPassword(identifier: account.did, password: account.password)
-    guard authenticated.did == account.did, authenticated.pdsURL == account.pdsEndpoint else { throw URLError(.userAuthenticationRequired) }
+    try await sessionClient.adoptFixtureGatewaySession(account.session)
+    let current = await sessionClient.getCurrentAccount()
+    let pds = try await sessionClient.resolveDIDToPDSURL(did: account.did)
+    guard current?.did == account.did, current?.pdsURL == fixture.origin, pds == account.pdsEndpoint else {
+      throw URLError(.userAuthenticationRequired)
+    }
     let state = AppState(userDID: account.did, client: sessionClient, regulatoryChecker: LocalAgeRequirement())
     defer { state.cleanup() }
     ExperimentalSettings.shared.enableMLSChat(for: account.did)
@@ -128,8 +132,9 @@ final class MLSTwoHomeRuntimeTests: XCTestCase {
         let bob = try XCTUnwrap(sessions.accounts.first { $0.label == "bob" && $0.did == peer.did })
         guard fixture.permits(bob.pdsEndpoint) else { throw URLError(.unsupportedURL) }
         try await state.suspendForAccountSwitch()
-        let signedInPeer = try await sessionClient.loginWithPassword(identifier: peer.did, password: bob.password)
-        XCTAssertEqual(signedInPeer.did, peer.did)
+        try await sessionClient.adoptFixtureGatewaySession(bob.session)
+        let signedInPeer = await sessionClient.getCurrentAccount()
+        XCTAssertEqual(signedInPeer?.did, peer.did)
         let otherState = AppState(userDID: peer.did, client: sessionClient, regulatoryChecker: LocalAgeRequirement())
         defer { otherState.cleanup() }
         XCTAssertTrue(otherState.pendingMLSRecoveryCodeReceipt == nil)
