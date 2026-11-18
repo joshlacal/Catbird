@@ -381,8 +381,6 @@ struct AccountDeletionCoordinator {
     await MLSImageCache.shared.purge(for: did)
     try? CircleKeyStore.wipe(accountDID: did, keychain: circleKeychain)
     AppState.wipeLocalMLSArtifacts(for: did, storageRoot: storageRoot, keystore: keystore)
-    try? AppState.clearPendingMLSDeviceRevocationReceipt(forDID: did)
-    try? AppState.clearPendingMLSRecoveryCodeReceipt(forDID: did)
     AppState.clearPendingMLSDeviceRetirements(forDID: did)
 
     // 4 & 5. Keychain & State: Sign out and remove account from Petrel/Keychain and AppState.

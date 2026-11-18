@@ -84,6 +84,11 @@ private final class RevocationReceiptKeychainBackend: KeychainBackend, @unchecke
 
   private let lock = NSLock()
   private var entries: [Key: Data] = [:]
+  private var receiptDeletionUnavailable = false
+
+  func setReceiptDeletionUnavailable(_ unavailable: Bool) {
+    lock.withLock { receiptDeletionUnavailable = unavailable }
+  }
   private(set) var lastAccessibility: String?
   private(set) var lastSynchronizable: Bool?
 
@@ -130,6 +135,7 @@ private final class RevocationReceiptKeychainBackend: KeychainBackend, @unchecke
     guard let key = key(from: query) else { return errSecParam }
     lock.lock()
     defer { lock.unlock() }
+    if receiptDeletionUnavailable { return errSecInteractionNotAllowed }
     return entries.removeValue(forKey: key) == nil ? errSecItemNotFound : errSecSuccess
   }
 
@@ -1294,6 +1300,47 @@ struct MLSResurrectionWave0Tests {
     let rawData = try #require(defaults.data(forKey: AppState.pendingDeviceRetirementsDefaultsKey))
     let rawJSON = String(decoding: rawData, as: UTF8.self)
     #expect(!rawJSON.contains(aliceDID), "Retry marker must store only SHA-256 accountDidHash, never plaintext DID")
+  }
+
+  @Test("Account removal suppresses both receipts across restart until Keychain unlocks, without erasing new or sibling receipts")
+  func unavailableKeychainRetainsAccountScopedReceiptPurge() throws {
+    let suite = "CatbirdReceiptPurge-" + UUID().uuidString
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let root = try makeTempStorageRoot()
+    defer { archiveTempDir(root) }
+    let backend = RevocationReceiptKeychainBackend()
+    let alice = "did:plc:lockedreceiptalice"
+    let bob = "did:plc:lockedreceiptbob"
+    let aliceHash = try MLSAppGroupStorage.accountDidHash(for: alice)
+    let bobHash = try MLSAppGroupStorage.accountDidHash(for: bob)
+    let old = AppState.PendingMLSRecoveryCodeReceipt(recoveryCode: "OLD", accountDidHash: aliceHash, recoveryGeneration: 1)
+    let fresh = AppState.PendingMLSRecoveryCodeReceipt(recoveryCode: "FRESH", accountDidHash: aliceHash, recoveryGeneration: 2)
+    let sibling = AppState.PendingMLSRecoveryCodeReceipt(recoveryCode: "SIBLING", accountDidHash: bobHash, recoveryGeneration: 1)
+    try AppState.storePendingMLSRecoveryCodeReceipt(old, backend: backend, purgeDefaults: defaults)
+    try AppState.storePendingMLSRecoveryCodeReceipt(sibling, backend: backend, purgeDefaults: defaults)
+    let report = AppState.PendingMLSDeviceRevocationReceipt(report: DeviceRevocationReport(
+      targetDeviceId: UUID().uuidString, dsRevoked: true, groupsUpdated: 1, labyrinthRotated: true,
+      newEpochSeq: 1, pdsRecordDeleted: true, rekeyedRecoveryCode: "OLD", rekeyedPasskeyIds: []
+    ), accountDidHash: aliceHash)
+    try AppState.storePendingMLSDeviceRevocationReceipt(report, backend: backend, purgeDefaults: defaults)
+    backend.setReceiptDeletionUnavailable(true)
+    AppState.wipeLocalMLSArtifacts(for: alice, storageRoot: root, keystore: Wave0RecordingKeyStore(),
+      sharedDefaults: defaults, legacyKeychainBackend: backend, receiptPurgeDefaults: defaults)
+
+    let reopened = try #require(UserDefaults(suiteName: suite))
+    #expect(reopened.persistentDomain(forName: suite)?.keys.sorted() == ["blue.catbird.mls.receipt-purge.\(aliceHash)"])
+    #expect(throws: Error.self) { try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: alice, backend: backend, purgeDefaults: reopened) }
+    #expect(throws: Error.self) { try AppState.loadPendingMLSDeviceRevocationReceipt(forDID: alice, backend: backend, purgeDefaults: reopened) }
+    #expect(throws: Error.self) { try AppState.storePendingMLSRecoveryCodeReceipt(fresh, backend: backend, purgeDefaults: reopened) }
+    #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: bob, backend: backend, purgeDefaults: reopened) == sibling)
+
+    backend.setReceiptDeletionUnavailable(false)
+    try AppState.storePendingMLSRecoveryCodeReceipt(fresh, backend: backend, purgeDefaults: reopened)
+    #expect(try AppState.loadPendingMLSDeviceRevocationReceipt(forDID: alice, backend: backend, purgeDefaults: reopened) == nil)
+    #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: alice, backend: backend, purgeDefaults: reopened) == fresh)
+    #expect(try AppState.loadPendingMLSRecoveryCodeReceipt(forDID: bob, backend: backend, purgeDefaults: reopened) == sibling)
+    #expect(reopened.persistentDomain(forName: suite)?.isEmpty != false)
   }
 
   @Test("Lost-device reports round-trip only through this-device-only Keychain storage until acknowledgement")

@@ -2431,7 +2431,8 @@ final class AppState {
         storageRoot: URL? = nil,
         keystore: any PlatformKeyStore = KeychainPlatformKeyStore(),
         sharedDefaults: UserDefaults? = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier),
-        legacyKeychainBackend: (any KeychainBackend)? = nil
+        legacyKeychainBackend: (any KeychainBackend)? = nil,
+        receiptPurgeDefaults: UserDefaults = .standard
     ) {
         let trimmedDid = accountDid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedDid.isEmpty else { return }
@@ -2458,10 +2459,12 @@ final class AppState {
 
         if let didHash = try? MLSAppGroupStorage.accountDidHash(for: trimmedDid) {
             let resolvedPrevDevice = previousDeviceId ?? sharedDefaults?.string(forKey: "mlsDeviceId_\(didHash)")
+            purgeMLSReceiptsForAccountRemoval(
+                accountDidHash: didHash, backend: legacyKeychainBackend ?? SystemKeychainBackend(),
+                defaults: receiptPurgeDefaults
+            )
             try? keystore.deleteAccountKeys(accountDidHash: didHash)
             if let residualBackend = legacyKeychainBackend ?? (keystore is KeychainPlatformKeyStore ? SystemKeychainBackend() : nil) {
-                try? clearPendingMLSRecoveryCodeReceipt(forDID: canonicalDid, backend: residualBackend)
-                try? clearPendingMLSDeviceRevocationReceipt(forDID: canonicalDid, backend: residualBackend)
                 wipeAccountScopedSystemKeychainResiduals(
                     accountDid: canonicalDid,
                     didHash: didHash,
@@ -2597,12 +2600,50 @@ final class AppState {
         return query
     }
 
+    private nonisolated static let receiptLifecycleLock = NSLock()
+
+    private nonisolated static func purgeMLSReceiptsForAccountRemoval(
+        accountDidHash: String, backend: any KeychainBackend, defaults: UserDefaults
+    ) {
+        receiptLifecycleLock.lock()
+        defer { receiptLifecycleLock.unlock() }
+        defaults.set(true, forKey: "blue.catbird.mls.receipt-purge.\(accountDidHash)")
+        do {
+            try completePendingMLSReceiptPurge(accountDidHash: accountDidHash, backend: backend, defaults: defaults)
+        } catch {
+            // The flag suppresses reads and retries cleanup on the next read or replacement.
+            Logger(subsystem: "blue.catbird", category: "MLS").notice("Account receipt cleanup deferred until Keychain is available")
+        }
+    }
+
+    /// Caller holds the same lock through its subsequent read or save. A previous sign-out
+    /// can never retry deletion after a new receipt has been successfully persisted.
+    private nonisolated static func completePendingMLSReceiptPurge(
+        accountDidHash: String, backend: any KeychainBackend, defaults: UserDefaults
+    ) throws {
+        let key = "blue.catbird.mls.receipt-purge.\(accountDidHash)"
+        guard defaults.bool(forKey: key) else { return }
+        let codeStatus = backend.delete(recoveryCodeReceiptKeychainQuery(accountDidHash: accountDidHash))
+        let reportStatus = backend.delete(deviceRevocationReceiptKeychainQuery(accountDidHash: accountDidHash))
+        guard codeStatus == errSecSuccess || codeStatus == errSecItemNotFound else {
+            throw MLSRecoveryCodeReceiptStoreError(operation: "remove", status: codeStatus)
+        }
+        guard reportStatus == errSecSuccess || reportStatus == errSecItemNotFound else {
+            throw MLSDeviceRevocationReceiptStoreError(operation: "remove", status: reportStatus)
+        }
+        defaults.removeObject(forKey: key)
+    }
+
     /// Reads the unacknowledged lost-device report from this-device-only Keychain storage.
     nonisolated static func loadPendingMLSDeviceRevocationReceipt(
         forDID accountDid: String,
-        backend: any KeychainBackend = SystemKeychainBackend()
+        backend: any KeychainBackend = SystemKeychainBackend(),
+        purgeDefaults: UserDefaults = .standard
     ) throws -> PendingMLSDeviceRevocationReceipt? {
         let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
+        receiptLifecycleLock.lock()
+        defer { receiptLifecycleLock.unlock() }
+        try completePendingMLSReceiptPurge(accountDidHash: didHash, backend: backend, defaults: purgeDefaults)
         var query = deviceRevocationReceiptKeychainQuery(accountDidHash: didHash)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -2620,8 +2661,12 @@ final class AppState {
     /// This stores no account DID, bearer token, cookie, or other reusable credential.
     nonisolated static func storePendingMLSDeviceRevocationReceipt(
         _ receipt: PendingMLSDeviceRevocationReceipt,
-        backend: any KeychainBackend = SystemKeychainBackend()
+        backend: any KeychainBackend = SystemKeychainBackend(),
+        purgeDefaults: UserDefaults = .standard
     ) throws {
+        receiptLifecycleLock.lock()
+        defer { receiptLifecycleLock.unlock() }
+        try completePendingMLSReceiptPurge(accountDidHash: receipt.accountDidHash, backend: backend, defaults: purgeDefaults)
         let data = try JSONEncoder().encode(receipt)
         let query = deviceRevocationReceiptKeychainQuery(accountDidHash: receipt.accountDidHash)
         let updateStatus = backend.update(query, [kSecValueData as String: data])
@@ -2645,6 +2690,8 @@ final class AppState {
         forDID accountDid: String,
         backend: any KeychainBackend = SystemKeychainBackend()
     ) throws {
+        receiptLifecycleLock.lock()
+        defer { receiptLifecycleLock.unlock() }
         let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
         let status = backend.delete(deviceRevocationReceiptKeychainQuery(accountDidHash: didHash))
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -2654,9 +2701,13 @@ final class AppState {
 
     nonisolated static func loadPendingMLSRecoveryCodeReceipt(
         forDID accountDid: String,
-        backend: any KeychainBackend = SystemKeychainBackend()
+        backend: any KeychainBackend = SystemKeychainBackend(),
+        purgeDefaults: UserDefaults = .standard
     ) throws -> PendingMLSRecoveryCodeReceipt? {
         let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
+        receiptLifecycleLock.lock()
+        defer { receiptLifecycleLock.unlock() }
+        try completePendingMLSReceiptPurge(accountDidHash: didHash, backend: backend, defaults: purgeDefaults)
         var query = recoveryCodeReceiptKeychainQuery(accountDidHash: didHash)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -2672,8 +2723,12 @@ final class AppState {
 
     nonisolated static func storePendingMLSRecoveryCodeReceipt(
         _ receipt: PendingMLSRecoveryCodeReceipt,
-        backend: any KeychainBackend = SystemKeychainBackend()
+        backend: any KeychainBackend = SystemKeychainBackend(),
+        purgeDefaults: UserDefaults = .standard
     ) throws {
+        receiptLifecycleLock.lock()
+        defer { receiptLifecycleLock.unlock() }
+        try completePendingMLSReceiptPurge(accountDidHash: receipt.accountDidHash, backend: backend, defaults: purgeDefaults)
         let data = try JSONEncoder().encode(receipt)
         let query = recoveryCodeReceiptKeychainQuery(accountDidHash: receipt.accountDidHash)
         let updateStatus = backend.update(query, [kSecValueData as String: data])
@@ -2697,6 +2752,8 @@ final class AppState {
         forDID accountDid: String,
         backend: any KeychainBackend = SystemKeychainBackend()
     ) throws {
+        receiptLifecycleLock.lock()
+        defer { receiptLifecycleLock.unlock() }
         let didHash = try MLSAppGroupStorage.accountDidHash(for: accountDid)
         let status = backend.delete(recoveryCodeReceiptKeychainQuery(accountDidHash: didHash))
         guard status == errSecSuccess || status == errSecItemNotFound else {
