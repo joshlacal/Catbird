@@ -578,6 +578,10 @@ final class AppState {
     @ObservationIgnored
     private var mlsCoordinatorInitTask: Task<MLSClientCoordinator?, Never>?
 
+    /// Keeps the gateway's answer about this session's OAuth scopes between chat checks.
+    @ObservationIgnored
+    private let grantedScopeResolver = MLSGrantedScopeResolver()
+
     /// MLS conversations list for encrypted messaging
     @ObservationIgnored var mlsConversations: [MLSConversationViewModel] = []
 
@@ -1839,24 +1843,26 @@ final class AppState {
         return Self.resolveOrCreateMLSDeviceID(for: userDID, in: defaults)
     }
 
-    /// Resolve granted OAuth scopes for Spaces eligibility checks (`I15`).
-    @MainActor
-    /// The OAuth scopes this account's session holds, as the gateway reports them.
+    /// The OAuth scopes this account's session holds, as the gateway reports them, for
+    /// Spaces eligibility checks (`I15`).
     ///
-    /// When the gateway cannot be reached this is its last answer; when it has never
-    /// answered (offline first launch, or a sign-in that does not go through the gateway)
-    /// it is the set chat needs, which is what every launch assumed before the gateway
-    /// was consulted.
+    /// The gateway is asked at most once every few minutes; chat checks in between reuse
+    /// its answer. When the gateway cannot be reached this is its last answer; when it has
+    /// never answered (offline first launch, or a sign-in that does not go through the
+    /// gateway) it is the set chat needs, which is what every launch assumed before the
+    /// gateway was consulted.
+    @MainActor
     func resolveGrantedOAuthScopes() async -> [String] {
         let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-        do {
-            let granted = try await client.fetchGrantedScopes(for: userDID)
-            MLSGrantedScopeCache.store(granted, for: userDID, defaults: defaults)
-            return granted.sorted()
-        } catch {
-            logger.warning("MLS: Could not read granted OAuth scopes from the gateway: \(error.localizedDescription)")
+        let client = self.client
+        let did = userDID
+        if let scopes = await grantedScopeResolver.gatewayScopes(fetch: {
+            try await client.fetchGrantedScopes(for: did)
+        }) {
+            MLSGrantedScopeCache.store(Set(scopes), for: did, defaults: defaults)
+            return scopes
         }
-        return MLSGrantedScopeCache.load(for: userDID, defaults: defaults)
+        return MLSGrantedScopeCache.load(for: did, defaults: defaults)
             ?? MLSAppGroupStorage.requiredSpacesScopes
     }
 
@@ -3955,6 +3961,7 @@ final class AppState {
                 )
                 let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
                 MLSGrantedScopeCache.store(granted, for: userDID, defaults: defaults)
+                grantedScopeResolver.record(granted)
                 scopes = granted.sorted()
                 // The upgrade replaced the session; take the coordinator that follows it.
                 guard let current = await getOrOpenMLSCoordinator() else {
