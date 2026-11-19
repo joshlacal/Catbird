@@ -888,19 +888,21 @@ struct ChatTabView: View {
           canonicalLatestActivity[convoID] = newest.timestamp
         }
 
-        var seenMemberDIDs = Set<String>()
-        var convoMembers: [MLSMemberModel] = []
-        for message in recentMessages where seenMemberDIDs.insert(message.senderID).inserted {
-          convoMembers.append(
-            MLSMemberModel(
-              memberID: "\(convoID):\(message.senderID)",
-              conversationID: convoID,
-              currentUserDID: userDID,
-              did: message.senderID
-            )
+        // The group's own members first, so a conversation the other person has not
+        // written in yet still names them.
+        let groupMembers = (try? await mlsCoordinator.listMembers(conversationId: convoID)) ?? []
+        let memberDIDs = MLSConversationListMembers.memberDIDs(
+          groupMembers: groupMembers,
+          recentSenders: recentMessages.map(\.senderID)
+        )
+        canonicalMembersByConvoID[convoID] = memberDIDs.map { memberDID in
+          MLSMemberModel(
+            memberID: "\(convoID):\(memberDID)",
+            conversationID: convoID,
+            currentUserDID: userDID,
+            did: memberDID
           )
         }
-        canonicalMembersByConvoID[convoID] = convoMembers
 
         for message in recentMessages {
           guard let payload = message.parsedPayload() else { continue }
