@@ -1841,14 +1841,23 @@ final class AppState {
 
     /// Resolve granted OAuth scopes for Spaces eligibility checks (`I15`).
     @MainActor
+    /// The OAuth scopes this account's session holds, as the gateway reports them.
+    ///
+    /// When the gateway cannot be reached this is its last answer; when it has never
+    /// answered (offline first launch, or a sign-in that does not go through the gateway)
+    /// it is the set chat needs, which is what every launch assumed before the gateway
+    /// was consulted.
     func resolveGrantedOAuthScopes() async -> [String] {
         let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-        if let stored = defaults.stringArray(forKey: "blue.catbird.oauth.scopes.\(userDID.lowercased())"),
-           !stored.isEmpty
-        {
-            return stored
+        do {
+            let granted = try await client.fetchGrantedScopes(for: userDID)
+            MLSGrantedScopeCache.store(granted, for: userDID, defaults: defaults)
+            return granted.sorted()
+        } catch {
+            logger.warning("MLS: Could not read granted OAuth scopes from the gateway: \(error.localizedDescription)")
         }
-        return MLSAppGroupStorage.requiredSpacesScopes
+        return MLSGrantedScopeCache.load(for: userDID, defaults: defaults)
+            ?? MLSAppGroupStorage.requiredSpacesScopes
     }
 
     /// Open or reuse the per-account `MLSClientCoordinator` (`Spec §4`, `§6.3`, `I8`, `I15`).
@@ -3910,30 +3919,74 @@ final class AppState {
         logger.info("MLS: Initialized via MLSClientCoordinator")
     }
 
-    /// Re-evaluate Spaces eligibility and trigger OAuth re-authorization if scopes are missing (`I15`).
+    /// Asks the account's server for the encrypted-chat permissions the session lacks, then
+    /// re-checks Spaces eligibility and enrolls this device (`I15`).
     /// Explicitly invoked from the user-facing Spaces gate button after an opt-in attempt.
+    ///
+    /// - Parameter present: Shows the server's consent page and returns its callback URL.
+    /// - Returns: Text to show when the permissions were not granted; `nil` when they were,
+    ///   or when the user closed the consent page.
     @MainActor
-    func reauthorizeSpacesForMLS() async {
+    func reauthorizeSpacesForMLS(
+        present: @escaping @MainActor (URL) async throws -> URL
+    ) async -> String? {
         // Re-authorizing is an explicit request to use encrypted chat.
         ExperimentalSettings.shared.enableMLSChat(for: userDID)
-        let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-        defaults.set(
-            MLSAppGroupStorage.requiredSpacesScopes,
-            forKey: "blue.catbird.oauth.scopes.\(userDID.lowercased())"
-        )
-        if let coordinator = await getOrOpenMLSCoordinator() {
-            let scopes = await resolveGrantedOAuthScopes()
-            if let status = try? await coordinator.checkSpacesEligibility(grantedScopes: scopes) {
-                spacesEligibility = status
-            }
-            if spacesEligibility?.eligible == true {
-                if (try? await coordinator.enrollDevice(grantedScopes: scopes)) != nil {
-                    ExperimentalSettings.shared.recordMLSEnrollment(for: userDID)
-                    await reconcilePendingMLSDeviceRetirements(using: coordinator)
+        guard var coordinator = await getOrOpenMLSCoordinator() else {
+            return "Encrypted chat isn’t available right now. Please try again."
+        }
+        var scopes = await resolveGrantedOAuthScopes()
+        var status = try? await coordinator.checkSpacesEligibility(grantedScopes: scopes)
+        var failure: String?
+
+        let missing: Set<String>
+        if case .missingOAuthScopes(let missingScopes)? = status?.reason {
+            // `atproto` is the sign-in itself, never something an upgrade adds.
+            missing = Set(missingScopes).subtracting(["atproto"])
+        } else {
+            missing = []
+        }
+        if !missing.isEmpty {
+            do {
+                let granted = try await AppStateManager.shared.authentication.requestGatewayScopes(
+                    missing,
+                    label: "encrypted chat",
+                    present: present
+                )
+                let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
+                MLSGrantedScopeCache.store(granted, for: userDID, defaults: defaults)
+                scopes = granted.sorted()
+                // The upgrade replaced the session; take the coordinator that follows it.
+                guard let current = await getOrOpenMLSCoordinator() else {
+                    return "Encrypted chat isn’t available right now. Please try again."
                 }
-                await reloadMLSConversations()
+                coordinator = current
+                status = try? await coordinator.checkSpacesEligibility(grantedScopes: scopes)
+                if status?.eligible != true {
+                    logger.error("MLS: Server granted \(granted.count) scopes but encrypted chat is still not eligible")
+                    failure = "Your server didn’t grant every permission encrypted chat needs."
+                }
+            } catch let error as GatewayPermissionError where error == .cancelled {
+                return nil
+            } catch {
+                logger.error("MLS: Encrypted-chat permission request failed: \(error.localizedDescription)")
+                failure = (error as? LocalizedError)?.errorDescription
+                    ?? "Couldn’t get permission from your server. Please try again."
             }
         }
+
+        if let status {
+            spacesEligibility = status
+        }
+        guard spacesEligibility?.eligible == true else {
+            return failure
+        }
+        if (try? await coordinator.enrollDevice(grantedScopes: scopes)) != nil {
+            ExperimentalSettings.shared.recordMLSEnrollment(for: userDID)
+            await reconcilePendingMLSDeviceRetirements(using: coordinator)
+        }
+        await reloadMLSConversations()
+        return nil
     }
 
     @MainActor

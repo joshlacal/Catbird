@@ -1,3 +1,4 @@
+import AuthenticationServices
 import CatbirdMLSCore
 import SwiftUI
 
@@ -7,10 +8,18 @@ import SwiftUI
 /// Standard Bluesky DMs remain active in Unified Chat even when MLS Spaces chat is unavailable.
 struct MLSSpacesRequiredGateView: View {
   let eligibility: SpacesEligibilityStatus
-  var onReauthorizeScopes: (() -> Void)?
+  /// Requests the missing permissions. Receives the presenter for the server's consent
+  /// page and returns text to show when the permissions were not granted.
+  var onReauthorizeScopes: ((@escaping AuthorizationPresenter) async -> String?)?
   var onRefreshCheck: (() async -> Void)?
 
+  /// Shows a consent page and returns the URL it finished on.
+  typealias AuthorizationPresenter = @MainActor (URL) async throws -> URL
+
+  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
   @State private var isRefreshing = false
+  @State private var isRequestingPermissions = false
+  @State private var permissionFailure: String?
 
   private var headlineText: String {
     switch eligibility.reason {
@@ -95,11 +104,17 @@ struct MLSSpacesRequiredGateView: View {
       HStack(spacing: 12) {
         if case .missingOAuthScopes = eligibility.reason, let onReauthorizeScopes {
           Button {
-            onReauthorizeScopes()
+            self.requestPermissions(onReauthorizeScopes)
           } label: {
-            Label("Grant Spaces Permissions", systemImage: "person.badge.key.fill")
+            if isRequestingPermissions {
+              ProgressView()
+                .controlSize(.small)
+            } else {
+              Label("Grant Spaces Permissions", systemImage: "person.badge.key.fill")
+            }
           }
           .buttonStyle(.borderedProminent)
+          .disabled(isRequestingPermissions)
         }
 
         if let onRefreshCheck {
@@ -118,9 +133,50 @@ struct MLSSpacesRequiredGateView: View {
         }
       }
 
+      if let permissionFailure {
+        Text(permissionFailure)
+          .font(.footnote)
+          .foregroundStyle(.red)
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 24)
+          .accessibilityIdentifier("mls-spaces-permission-failure")
+      }
+
       Spacer(minLength: 16)
     }
     .accessibilityIdentifier("mls-spaces-required-gate")
+  }
+
+  private func requestPermissions(
+    _ action: @escaping (@escaping AuthorizationPresenter) async -> String?
+  ) {
+    isRequestingPermissions = true
+    permissionFailure = nil
+    Task { @MainActor in
+      let failure = await action { authURL in
+        try await self.presentConsent(authURL)
+      }
+      self.permissionFailure = failure
+      self.isRequestingPermissions = false
+    }
+  }
+
+  @MainActor
+  private func presentConsent(_ authURL: URL) async throws -> URL {
+    if #available(iOS 17.4, macOS 14.4, *) {
+      return try await webAuthenticationSession.authenticate(
+        using: authURL,
+        callback: .https(host: "catbird.blue", path: "/oauth/permission-callback"),
+        preferredBrowserSession: .shared,
+        additionalHeaderFields: [:]
+      )
+    } else {
+      return try await webAuthenticationSession.authenticate(
+        using: authURL,
+        callbackURLScheme: "catbird",
+        preferredBrowserSession: .shared
+      )
+    }
   }
 
   private func triggerRefresh(_ action: @escaping () async -> Void) {

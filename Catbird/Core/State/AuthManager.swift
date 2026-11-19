@@ -685,6 +685,10 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   @ObservationIgnored
   private var inFlightPermission: InFlightPermissionRequest?
 
+  /// An in-flight upgrade that asks for several scopes in one consent (encrypted chat).
+  @ObservationIgnored
+  private var inFlightScopeSetUpgrade: Task<Set<String>, Error>?
+
   // Internal test / dependency injection hooks
   @ObservationIgnored
   var fetchGrantedScopesHook: ((_ did: String?) async throws -> Set<String>)?
@@ -2078,6 +2082,11 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       inFlight.task.cancel()
       inFlightPermission = nil
     }
+    if let inFlight = inFlightScopeSetUpgrade {
+      logger.info("Cancelling in-flight gateway scope-set upgrade")
+      inFlight.cancel()
+      inFlightScopeSetUpgrade = nil
+    }
   }
 
   @MainActor
@@ -2230,6 +2239,11 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }
     }
 
+    if inFlightScopeSetUpgrade != nil {
+      logger.warning("Rejecting permission request for \(permission.rawValue): a scope-set upgrade is in progress")
+      throw GatewayPermissionError.alreadyInProgress
+    }
+
     // 5. Create unique request generation ID and structured in-flight task
     let requestID = UUID()
     let upgradeTask = Task { @MainActor [weak self] () -> Void in
@@ -2279,6 +2293,31 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     snapshot: GatewayPermissionContinuitySnapshot,
     present: @MainActor (URL) async throws -> URL
   ) async throws {
+    let grantedScopes = try await performGatewayScopeUpgrade(
+      scopes: [permission.rawValue],
+      label: permission.rawValue,
+      snapshot: snapshot,
+      present: present
+    )
+
+    // Verify actual returned grant contains requested permission
+    guard grantedScopes.contains(permission.rawValue) else {
+      logger.error("Returned scopes missing requested permission \(permission.rawValue): \(grantedScopes)")
+      throw GatewayPermissionError.missingGrantedScope(permission)
+    }
+
+    logger.info("Successfully upgraded gateway permission for \(permission.rawValue)")
+  }
+
+  /// Runs one gateway scope upgrade for `scopes` and returns everything the session now
+  /// holds. The caller decides whether that grant is enough.
+  @MainActor
+  private func performGatewayScopeUpgrade(
+    scopes: Set<String>,
+    label: String,
+    snapshot: GatewayPermissionContinuitySnapshot,
+    present: @MainActor (URL) async throws -> URL
+  ) async throws -> Set<String> {
     let callbackURL = GatewayPermission.permissionCallbackURL
 
     // Check Task cancellation at start
@@ -2290,28 +2329,28 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     let authURL: URL
     do {
       if let hook = startGatewayScopeUpgradeHook {
-        authURL = try await hook(Set([permission.rawValue]), snapshot.did, callbackURL)
+        authURL = try await hook(scopes, snapshot.did, callbackURL)
       } else {
         authURL = try await snapshot.client.startGatewayScopeUpgrade(
-          requesting: Set([permission.rawValue]),
+          requesting: scopes,
           for: snapshot.did,
           callbackURL: callbackURL
         )
       }
     } catch {
       if Task.isCancelled || error is CancellationError {
-        logger.info("Gateway permission upgrade start cancelled for \(permission.rawValue)")
+        logger.info("Gateway permission upgrade start cancelled for \(label)")
         throw GatewayPermissionError.cancelled
       }
       if let authError = error as? AuthError, authError == .cancelled {
-        logger.info("Gateway permission upgrade AuthError.cancelled for \(permission.rawValue)")
+        logger.info("Gateway permission upgrade AuthError.cancelled for \(label)")
         throw GatewayPermissionError.cancelled
       }
       if let gwError = error as? GatewayPermissionError {
         throw gwError
       }
       let message = error.localizedDescription
-      logger.error("Gateway permission upgrade start failed for \(permission.rawValue): \(message)")
+      logger.error("Gateway permission upgrade start failed for \(label): \(message)")
       throw GatewayPermissionError.upgradeFailed(message)
     }
 
@@ -2325,17 +2364,17 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     } catch {
       await snapshot.client.cancelOAuthFlow()
       if Task.isCancelled || error is CancellationError {
-        logger.info("Gateway permission upgrade cancelled by user for \(permission.rawValue)")
+        logger.info("Gateway permission upgrade cancelled by user for \(label)")
         throw GatewayPermissionError.cancelled
       }
       #if canImport(AuthenticationServices)
       if let asError = error as? ASWebAuthenticationSessionError, asError.code == .canceledLogin {
-        logger.info("Gateway permission upgrade ASWebAuthenticationSession cancelled by user for \(permission.rawValue)")
+        logger.info("Gateway permission upgrade ASWebAuthenticationSession cancelled by user for \(label)")
         throw GatewayPermissionError.cancelled
       }
       #endif
       if let authError = error as? AuthError, authError == .cancelled {
-        logger.info("Gateway permission upgrade AuthError.cancelled for \(permission.rawValue)")
+        logger.info("Gateway permission upgrade AuthError.cancelled for \(label)")
         throw GatewayPermissionError.cancelled
       }
       if let gwError = error as? GatewayPermissionError, gwError == .cancelled {
@@ -2364,18 +2403,18 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       advanceAuthSessionRevision()
     } catch {
       if Task.isCancelled || error is CancellationError {
-        logger.info("Gateway permission upgrade complete cancelled for \(permission.rawValue)")
+        logger.info("Gateway permission upgrade complete cancelled for \(label)")
         throw GatewayPermissionError.cancelled
       }
       if let authError = error as? AuthError, authError == .cancelled {
-        logger.info("Gateway permission upgrade complete AuthError.cancelled for \(permission.rawValue)")
+        logger.info("Gateway permission upgrade complete AuthError.cancelled for \(label)")
         throw GatewayPermissionError.cancelled
       }
       if let gwError = error as? GatewayPermissionError {
         throw gwError
       }
       let message = error.localizedDescription
-      logger.error("Gateway permission upgrade completion failed for \(permission.rawValue): \(message)")
+      logger.error("Gateway permission upgrade completion failed for \(label): \(message)")
       if message.localizedCaseInsensitiveContains("callback") {
         throw GatewayPermissionError.invalidCallbackURL
       }
@@ -2385,13 +2424,70 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     // Validate continuity snapshot after completion
     try validatePermissionContinuity(against: snapshot)
 
-    // Verify actual returned grant contains requested permission
-    guard grantedScopes.contains(permission.rawValue) else {
-      logger.error("Returned scopes missing requested permission \(permission.rawValue): \(grantedScopes)")
-      throw GatewayPermissionError.missingGrantedScope(permission)
+    return grantedScopes
+  }
+
+  /// Asks the gateway for `scopes` in a single consent and returns everything the session
+  /// holds afterwards. For features that need several scopes together; a request that
+  /// would overlap another upgrade is refused, and a repeat of the same request shares
+  /// the consent already on screen.
+  ///
+  /// - Throws: `GatewayPermissionError` if unauthenticated, cancelled, denied, state changed,
+  ///   or the upgrade failed. The session is left as it was on failure.
+  @MainActor
+  public func requestGatewayScopes(
+    _ scopes: Set<String>,
+    label: String,
+    present: @escaping @MainActor (URL) async throws -> URL
+  ) async throws -> Set<String> {
+    if Task.isCancelled {
+      throw GatewayPermissionError.cancelled
+    }
+    guard !scopes.isEmpty else {
+      throw GatewayPermissionError.upgradeFailed("No scopes were requested")
+    }
+    let snapshot = try capturePermissionContinuitySnapshot()
+
+    if let existing = inFlightPermission, existing.task.isCancelled {
+      inFlightPermission = nil
+    }
+    guard inFlightPermission == nil else {
+      logger.warning("Rejecting scope-set upgrade for \(label): another permission request is in progress")
+      throw GatewayPermissionError.alreadyInProgress
     }
 
-    logger.info("Successfully upgraded gateway permission for \(permission.rawValue)")
+    let upgradeTask: Task<Set<String>, Error>
+    if let existing = inFlightScopeSetUpgrade, !existing.isCancelled {
+      logger.info("Sharing the in-flight scope-set upgrade for \(label)")
+      upgradeTask = existing
+    } else {
+      upgradeTask = Task { @MainActor [weak self] () -> Set<String> in
+        guard let self else { throw GatewayPermissionError.clientUnavailable }
+        return try await self.performGatewayScopeUpgrade(
+          scopes: scopes,
+          label: label,
+          snapshot: snapshot,
+          present: present
+        )
+      }
+      inFlightScopeSetUpgrade = upgradeTask
+    }
+    defer {
+      if inFlightScopeSetUpgrade == upgradeTask {
+        inFlightScopeSetUpgrade = nil
+      }
+    }
+
+    do {
+      let grantedScopes = try await upgradeTask.value
+      logger.info("Gateway scope-set upgrade finished for \(label)")
+      return grantedScopes
+    } catch {
+      if Task.isCancelled || error is CancellationError || (error as? GatewayPermissionError) == .cancelled {
+        throw GatewayPermissionError.cancelled
+      }
+      throw error
+    }
   }
 
   // MARK: - Account Management

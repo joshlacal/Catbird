@@ -109,8 +109,8 @@ struct MLSOrdinaryConversationDetailView: View {
       if let eligibility = appState.spacesEligibility, !eligibility.eligible {
         MLSSpacesRequiredGateView(
           eligibility: eligibility,
-          onReauthorizeScopes: {
-            Task { await appState.reauthorizeSpacesForMLS() }
+          onReauthorizeScopes: { present in
+            await appState.reauthorizeSpacesForMLS(present: present)
           },
           onRefreshCheck: {
             try? await appState.initializeMLS()
