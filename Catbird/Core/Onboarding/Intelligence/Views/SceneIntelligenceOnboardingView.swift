@@ -7,6 +7,7 @@ public struct SceneIntelligenceOnboardingView: View {
   @Environment(AppState.self) private var appState
 
   let mode: SceneOnboardingViewModel.ExperienceMode
+  let entryPoint: SceneOnboardingViewModel.EntryPoint
   let selectedInterests: [String]
   let injectedService: (any CatbirdIntelligenceServicing)?
   let preconfiguredViewModel: SceneOnboardingViewModel?
@@ -19,6 +20,7 @@ public struct SceneIntelligenceOnboardingView: View {
 
   public init(
     mode: SceneOnboardingViewModel.ExperienceMode = .newAccountOnboarding,
+    entryPoint: SceneOnboardingViewModel.EntryPoint = .explorer,
     selectedInterests: [String] = [],
     service: (any CatbirdIntelligenceServicing)? = nil,
     preconfiguredViewModel: SceneOnboardingViewModel? = nil,
@@ -26,6 +28,7 @@ public struct SceneIntelligenceOnboardingView: View {
     onSkip: (() -> Void)? = nil
   ) {
     self.mode = mode
+    self.entryPoint = entryPoint
     self.selectedInterests = selectedInterests
     self.injectedService = service
     self.preconfiguredViewModel = preconfiguredViewModel
@@ -82,7 +85,7 @@ public struct SceneIntelligenceOnboardingView: View {
         initialInterests: selectedInterests
       )
       self.viewModel = created
-      await created.loadInitialCatalog()
+      await created.startEntry(entryPoint)
     }
   }
 
@@ -270,22 +273,37 @@ public struct SceneIntelligenceOnboardingView: View {
 
         Spacer(minLength: 24)
 
-        Button(action: onComplete) {
-          HStack(spacing: 8) {
-            Text(mode == .tuneExistingFeed ? "Back to Catbird" : "Continue")
-              .font(.headline)
-            Image(systemName: "arrow.right")
-              .font(.headline)
+        VStack(spacing: 12) {
+          Button(action: onComplete) {
+            HStack(spacing: 8) {
+              Text(mode == .tuneExistingFeed ? "Back to Catbird" : "Continue")
+                .font(.headline)
+              Image(systemName: "arrow.right")
+                .font(.headline)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(Color.accentColor, in: Capsule())
           }
-          .foregroundStyle(.white)
-          .frame(maxWidth: .infinity)
-          .frame(height: 54)
-          .background(Color.accentColor, in: Capsule())
+          .buttonStyle(.plain)
+          .accessibilityIdentifier("intel.celebration.continue")
+
+          if mode == .tuneExistingFeed {
+            Button {
+              Task { await vm.resetSession() }
+            } label: {
+              Label("Explore More Scenes", systemImage: "arrow.counterclockwise")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .accessibilityIdentifier("intel.celebration.rerun")
+          }
         }
-        .buttonStyle(.plain)
         .padding(.horizontal, 24)
         .padding(.bottom, 32)
-        .accessibilityIdentifier("intel.celebration.continue")
       }
     }
     .accessibilityIdentifier("intel.beat.celebration")

@@ -2,13 +2,19 @@ import SwiftUI
 
 struct HelpAboutSettingsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(SceneNavigationContext.self) private var sceneContext
     let initialFocus: SettingsControlID?
     @State private var confirmingReplay = false
+    @State private var isShowingWelcomeReplay = false
     init(initialFocus: SettingsControlID? = nil) { self.initialFocus = initialFocus }
     var body: some View {
         SettingsFocusedForm(initialFocus: initialFocus) {
             Section("Help") {
                 SettingsLink(screen: .help, summary: "Catbird support and Bluesky help resources", systemImage: "questionmark.circle", family: .support)
+                Button { isShowingWelcomeReplay = true } label: {
+                    SettingsNavigationRow(title: "Rerun Welcome Onboarding", summary: "Open Avatar, Interests, Scene Intelligence, and Feed Discovery now", systemImage: "sparkles", family: .support)
+                }
+                .accessibilityIdentifier("support.rerunWelcomeOnboarding")
                 Button { confirmingReplay = true } label: {
                     SettingsNavigationRow(title: "Replay Tips", summary: "Reset onboarding for this account and tips on this device", systemImage: "lightbulb", family: .support)
                 }
@@ -23,11 +29,16 @@ struct HelpAboutSettingsView: View {
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
+        .sheet(isPresented: $isShowingWelcomeReplay) {
+            WelcomeOnboardingView(isReplay: true, initialStep: 0)
+                .applyAppStateEnvironment(appState)
+                .environment(sceneContext)
+        }
         .confirmationDialog("Replay Tips?", isPresented: $confirmingReplay, titleVisibility: .visible) {
             Button("Replay Tips") {
                 appState.onboardingManager.resetAllOnboarding(for: appState.userDID)
                 appState.toastManager.show(ToastItem(
-                    message: "Tips will appear again the next time you open Catbird.",
+                    message: "Onboarding and tips will appear again the next time you open Catbird.",
                     icon: "lightbulb.fill"
                 ))
             }

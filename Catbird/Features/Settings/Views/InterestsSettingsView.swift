@@ -10,7 +10,7 @@ struct InterestsSettingsView: View {
     @State private var hasLoadedSuccessfully = false
     @State private var loadError: String?
     @State private var isShowingPicker = false
-    @State private var isShowingSceneExplorer = false
+    @State private var activeSceneEntryPoint: SceneOnboardingViewModel.EntryPoint?
     @State private var errorMessage: String?
     @State private var showingError = false
     @State private var saveTask: Task<Void, Never>?
@@ -102,11 +102,30 @@ struct InterestsSettingsView: View {
                 .padding(.vertical, 4)
 
                 Button {
-                    isShowingSceneExplorer = true
+                    activeSceneEntryPoint = .explorer
                 } label: {
                     Label("Open Scene Explorer", systemImage: "safari.fill")
                 }
                 .accessibilityIdentifier("settings.interests.openSceneExplorer")
+
+                Button {
+                    activeSceneEntryPoint = .quickCalibrate
+                } label: {
+                    Label("Quick Taste Calibration & Pace", systemImage: "slider.horizontal.below.sun.max")
+                }
+                .accessibilityIdentifier("settings.interests.quickCalibrate")
+
+                NavigationLink {
+                    OriginalsOnlyAccountsView()
+                } label: {
+                    let count = appState.feedFilterSettings.mutedRepostAuthorDIDs.count
+                    LabeledContent {
+                        Text("\(count)")
+                            .foregroundStyle(.secondary)
+                    } label: {
+                        Label("Originals-Only Accounts", systemImage: "arrow.2.squarepath")
+                    }
+                }
             }
         }
         .navigationTitle("Your Interests")
@@ -124,22 +143,23 @@ struct InterestsSettingsView: View {
                 }
             )
         }
-        .sheet(isPresented: $isShowingSceneExplorer) {
+        .sheet(item: $activeSceneEntryPoint) { entryPoint in
             NavigationStack {
                 SceneIntelligenceOnboardingView(
                     mode: .tuneExistingFeed,
+                    entryPoint: entryPoint,
                     selectedInterests: interests,
                     onComplete: {
-                        isShowingSceneExplorer = false
+                        activeSceneEntryPoint = nil
                     },
                     onSkip: {
-                        isShowingSceneExplorer = false
+                        activeSceneEntryPoint = nil
                     }
                 )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Close") {
-                            isShowingSceneExplorer = false
+                            activeSceneEntryPoint = nil
                         }
                     }
                 }

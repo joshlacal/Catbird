@@ -461,6 +461,12 @@ final class FeedModel: StateInvalidationSubscriber {
     }
 
     do {
+      // Flush any queued seen/feedback events before fetching a refreshed custom feed
+      // so the feed generator immediately excludes just-seen posts.
+      if forceRefresh, case .feed = fetch {
+        await appState.feedFeedbackManager.flushInteractions()
+        try checkPublication(publication)
+      }
       let (fetchedPosts, newCursor) = try await feedManager.fetchFeed(fetchType: fetch, cursor: nil)
       try checkPublication(publication)
 

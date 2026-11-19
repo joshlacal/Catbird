@@ -504,6 +504,13 @@ struct FeedFilter: Identifiable, Hashable {
     saveSettings()
   }
 
+  func clearMutedRepostAuthors() {
+    guard !accountDID.isEmpty, !mutedRepostAuthorDIDs.isEmpty else { return }
+    mutedRepostAuthorDIDs.removeAll()
+    rebuildMutedRepostProcessor()
+    saveSettings()
+  }
+
   // Update the mute word processor
   func updateMuteWordProcessor(_ processor: MuteWordProcessor) {
     // Remove existing mute word processor if present

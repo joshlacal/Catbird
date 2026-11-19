@@ -28,6 +28,8 @@ struct SettingsDestinationView: View {
         case .threads: ThreadSettingsView(initialFocus: target.control)
         case .discovery: DiscoverySettingsView(initialFocus: target.control)
         case .interests: InterestsSettingsView()
+        case .intelligenceOnboarding: IntelligenceOnboardingHubView(initialFocus: target.control)
+        case .originalsOnlyAccounts: OriginalsOnlyAccountsView()
         case .feedLibrary: FeedLibrarySettingsView()
         case .verification: VerificationSettingsView()
         case .moderation: ModerationSettingsView(initialFocus: target.control)

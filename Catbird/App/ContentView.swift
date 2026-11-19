@@ -85,14 +85,19 @@ private extension ContentView {
   }
 
   /// Runs when an account's main content appears (this view is rebuilt for every account).
-  /// Only accounts created on this device, or joining via a starter pack, get the welcome flow;
-  /// existing accounts signing in here skip it, so it never offers to replace their avatar.
+  /// Only accounts created on this device, joining via a starter pack, or explicitly requesting
+  /// a manual replay get the welcome flow; existing accounts signing in here skip it, so it
+  /// never offers to replace their avatar unexpectedly.
   func evaluateWelcomeOnboarding(for appState: AppState) async {
     let did = appState.userDID
     let onboarding = appState.onboardingManager
-    guard !onboarding.hasCompletedWelcome(for: did) else { return }
+    let pendingReplay = onboarding.consumePendingWelcomeReplay(for: did)
+    guard pendingReplay || !onboarding.hasCompletedWelcome(for: did) else { return }
     let isNewAccount = NewAccountOnboardingMarker.consumeRecentSignup()
-    if isNewAccount || StarterPackOnboardingManager.shared.pendingContext != nil {
+    if pendingReplay {
+      onboarding.isManualWelcomeReplay = true
+      await onboarding.checkForWelcomeOnboarding(client: appState.client, for: did, isFirstLogin: true)
+    } else if isNewAccount || StarterPackOnboardingManager.shared.pendingContext != nil {
       await onboarding.checkForWelcomeOnboarding(client: appState.client, for: did)
     } else {
       onboarding.completeWelcomeOnboarding(for: did)
@@ -661,8 +666,11 @@ struct MainContentView: View {
         showingNewMessageSheet = true
       }
       .sheet(isPresented: welcomePresentation) {
-        WelcomeOnboardingView()
-          .applyAppStateEnvironment(appState)
+        WelcomeOnboardingView(
+          isReplay: appState.onboardingManager.isManualWelcomeReplay,
+          initialStep: appState.onboardingManager.requestedWelcomeStartStep
+        )
+        .applyAppStateEnvironment(appState)
         .environment(sceneContext)
       }
       .sheet(isPresented: Binding(
@@ -855,9 +863,12 @@ struct MainContentView: View {
       }
       .equatable()
       .sheet(isPresented: welcomePresentation) {
-        WelcomeOnboardingView()
-          .applyAppStateEnvironment(appState)
-          .environment(sceneContext)
+        WelcomeOnboardingView(
+          isReplay: appState.onboardingManager.isManualWelcomeReplay,
+          initialStep: appState.onboardingManager.requestedWelcomeStartStep
+        )
+        .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
       }
       .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
         showingOnboarding = newValue

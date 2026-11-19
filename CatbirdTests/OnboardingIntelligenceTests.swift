@@ -719,4 +719,53 @@ struct OnboardingIntelligenceTests {
         .contains("neighboring sub-communities")
     )
   }
+
+  @Test("Intel service DID carries #catbird_intel fragment accepted by Nest proxy validation")
+  func intelServiceDIDHasFragment() {
+    let intelDID = CatbirdGatewayConfiguration.current.intelServiceDID
+    #expect(intelDID == "did:web:intel.catbird.blue#catbird_intel")
+    let parts = intelDID.split(separator: "#")
+    #expect(parts.count == 2)
+    #expect(parts[0].hasPrefix("did:web:"))
+    #expect(parts[1] == "catbird_intel")
+  }
+
+  @Test("Quick rerun entry points auto-seed scenes and resetSession clears back to explorer")
+  @MainActor
+  func quickRerunEntryPointsAndResetSession() async throws {
+    let svc = MockIntelligenceService()
+    let vm = SceneOnboardingViewModel(service: svc, mode: .tuneExistingFeed)
+
+    await vm.startEntry(.quickCalibrate)
+    #expect(vm.currentBeat == .calibration)
+    #expect(!vm.orderedSelectedCommunityIds.isEmpty)
+
+    await vm.resetSession()
+    #expect(vm.currentBeat == .explorer)
+    #expect(vm.orderedSelectedCommunityIds.isEmpty)
+    #expect(vm.calibrationCards.isEmpty)
+    #expect(vm.solvedBundle == nil)
+    #expect(vm.commitReceipt == nil)
+    #expect(!vm.displayedCommunities.isEmpty)
+
+    await vm.startEntry(.lineup)
+    #expect(vm.currentBeat == .lineup)
+    #expect(vm.solvedBundle != nil)
+  }
+
+  @Test("clearMutedRepostAuthors removes all Originals-Only entries for the active account")
+  @MainActor
+  func clearMutedRepostAuthorsResetsState() {
+    let suite = "blue.catbird.intel-originals-clear.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let settings = FeedFilterSettings(accountDID: "did:plc:synthacct1", defaults: defaults)
+    settings.mergeMutedRepostAuthors(["did:plc:loud1", "did:plc:loud2"])
+    #expect(settings.mutedRepostAuthorDIDs.count == 2)
+
+    settings.clearMutedRepostAuthors()
+    #expect(settings.mutedRepostAuthorDIDs.isEmpty)
+    #expect(!settings.isRepostMuted(for: "did:plc:loud1"))
+  }
 }

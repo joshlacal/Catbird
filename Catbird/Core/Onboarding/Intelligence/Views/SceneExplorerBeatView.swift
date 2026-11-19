@@ -23,6 +23,24 @@ struct SceneExplorerBeatView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
         heroHeader
+        if let errorMsg = viewModel.errorBannerMessage {
+          HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(.orange)
+            Text(errorMsg)
+              .font(.caption)
+              .foregroundStyle(.primary)
+              .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Retry") {
+              Task { await viewModel.reloadInitialCatalog() }
+            }
+            .font(.caption.weight(.bold))
+            .accessibilityIdentifier("intel.explorer.retry")
+          }
+          .padding(12)
+          .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
         searchAndSuggestionsSection
         macroCategoryStrip
         sceneSubfilterStrip

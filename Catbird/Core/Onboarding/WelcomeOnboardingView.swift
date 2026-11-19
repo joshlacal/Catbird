@@ -20,6 +20,8 @@ public struct WelcomeOnboardingView: View {
     @State private var starterPackResult: StarterPackFinalizationResult?
     @State private var starterPackContext: StarterPackPendingContext?
     @State private var starterPackError: String?
+    private let isReplay: Bool
+    private let initialStep: Int?
     private let logger = Logger(subsystem: "blue.catbird", category: "WelcomeOnboarding")
     
     /// Bluesky interest ids, ordered by their display names.
@@ -27,7 +29,13 @@ public struct WelcomeOnboardingView: View {
         BlueskyInterests.displayName(for: $0) < BlueskyInterests.displayName(for: $1)
     }
     
-    public init() {}
+    public init(isReplay: Bool = false, initialStep: Int? = nil) {
+        self.isReplay = isReplay
+        self.initialStep = initialStep
+        if let initialStep {
+            _currentStep = State(initialValue: min(max(initialStep, 0), 3))
+        }
+    }
     
     public var body: some View {
         if appState.onboardingManager.isSignupQueued {
@@ -73,7 +81,7 @@ public struct WelcomeOnboardingView: View {
                                 .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
                         case 2:
                             SceneIntelligenceOnboardingView(
-                                mode: .newAccountOnboarding,
+                                mode: isReplay ? .tuneExistingFeed : .newAccountOnboarding,
                                 selectedInterests: Array(selectedInterests),
                                 onComplete: { advanceStep() },
                                 onSkip: { advanceStep() }
@@ -97,6 +105,14 @@ public struct WelcomeOnboardingView: View {
                             }
                         }
                     }
+                    if isReplay {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Close", systemImage: "xmark") {
+                                finishOnboarding()
+                            }
+                            .accessibilityIdentifier("onboarding.replay.close")
+                        }
+                    }
                 }
                 .task {
                     if let client = appState.atProtoClient {
@@ -106,7 +122,7 @@ public struct WelcomeOnboardingView: View {
                     await loadExistingPreferences()
                 }
             }
-            .interactiveDismissDisabled(true)
+            .interactiveDismissDisabled(!isReplay)
         }
     }
     
@@ -378,6 +394,12 @@ public struct WelcomeOnboardingView: View {
     }
     
     private func restoreSavedState() {
+        if let requested = initialStep ?? appState.onboardingManager.requestedWelcomeStartStep {
+            let clamped = min(max(requested, 0), 3)
+            self.currentStep = clamped
+            appState.onboardingManager.requestedWelcomeStartStep = nil
+            return
+        }
         let saved = appState.onboardingManager.savedStep(for: appState.userDID)
         if saved > 0 && saved <= 3 {
             self.currentStep = saved

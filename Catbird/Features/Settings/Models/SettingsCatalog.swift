@@ -9,7 +9,7 @@ public struct SettingsControlID: RawRepresentable, Hashable, Sendable {
 public enum SettingsScreenID: String, CaseIterable, Sendable {
     case home, accountSecurity, accountDetails, automationLabel, privacyInteractions, visibility
     case notifications, activitySubscriptions, activityPrivacy, messages, defaultPostInteractions
-    case feedsDiscovery, feedFiltering, threads, discovery, interests, feedLibrary, verification
+    case feedsDiscovery, feedFiltering, threads, discovery, interests, intelligenceOnboarding, originalsOnlyAccounts, feedLibrary, verification
     case moderation, labelers, mutedAccounts, blockedAccounts
     case mediaLinks, externalMedia, language, appearance, appIcon, accessibility, textReadability
     case helpAbout, help, blueskyHelpCenter, about, licenses, advanced, providers, systemLogs, cache
@@ -32,6 +32,8 @@ public enum SettingsScreenID: String, CaseIterable, Sendable {
         case .threads: "Threads"
         case .discovery: "Discovery"
         case .interests: "Your Interests"
+        case .intelligenceOnboarding: "Catbird Intelligence"
+        case .originalsOnlyAccounts: "Originals-Only Accounts"
         case .feedLibrary: "Feed Library"
         case .verification: "Verification Badges"
         case .moderation: "Moderation"
@@ -149,6 +151,11 @@ enum SettingsCatalog {
         add("Show Trending Topics", .discovery, "feed.trendingTopics", "Feeds & Discovery › Discovery", "Current account", ["trending"])
         add("Show Trending Videos", .discovery, "feed.trendingVideos", "Feeds & Discovery › Discovery", "Current account", ["trending"])
         add("Your Interests", .interests, nil, "Feeds & Discovery › Discovery", "Current account", ["topics"])
+        add("Catbird Intelligence", .intelligenceOnboarding, nil, "Feeds & Discovery", "Current account", ["scene explorer", "onboarding", "rerun", "tune feed", "intelligence", "taste duels", "starting lineup"])
+        add("Explore Scenes & Build Lineup", .intelligenceOnboarding, "intel.sceneExplorer", "Feeds & Discovery › Catbird Intelligence", "Current account", ["scenes", "communities", "onboarding"])
+        add("Recalibrate Taste & Feed Pace", .intelligenceOnboarding, "intel.tasteCalibration", "Feeds & Discovery › Catbird Intelligence", "Current account", ["taste duels", "pace", "repost tamer"])
+        add("Originals-Only Accounts", .originalsOnlyAccounts, "intel.originalsOnly", "Feeds & Discovery › Feed Filtering", "Current account", ["repost tamer", "originals only", "mute reposts"])
+        add("Rerun Welcome Onboarding Now", .intelligenceOnboarding, "intel.rerunWelcome", "Feeds & Discovery › Catbird Intelligence", "Current account", ["replay onboarding", "welcome", "setup"])
         add("Feed Library", .feedLibrary, nil, "Feeds & Discovery", "Current account", ["saved feeds", "pin", "reorder"])
         add("Verification Badges", .verification, nil, "Feeds & Discovery")
         for (title, id, aliases) in [("Autoplay Videos", "autoplayVideos", ["playback"]), ("Open Links In-App", "openLinks", ["browser", "Safari"]), ("Enable Embedded Players", "embeddedPlayers", ["YouTube", "Spotify"])] { add(title, .mediaLinks, "media.\(id)", "Media & Links", "Current account", aliases) }

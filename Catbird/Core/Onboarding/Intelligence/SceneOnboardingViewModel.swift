@@ -12,6 +12,14 @@ public final class SceneOnboardingViewModel {
     case tuneExistingFeed
   }
 
+  public enum EntryPoint: String, CaseIterable, Identifiable, Sendable {
+    case explorer
+    case quickCalibrate
+    case lineup
+
+    public var id: String { rawValue }
+  }
+
   public enum Beat: Int, CaseIterable, Identifiable, Sendable {
     case explorer = 0
     case calibration = 1
@@ -238,6 +246,78 @@ public final class SceneOnboardingViewModel {
   }
 
   // MARK: - Beat 1 Actions: Load, Filter, Search, Pick, Boost, Peek
+
+  public func startEntry(_ entryPoint: EntryPoint) async {
+    await loadInitialCatalog()
+    guard !shouldFallbackToLegacySuggested, !catalogVersion.isEmpty else { return }
+    switch entryPoint {
+    case .explorer:
+      break
+    case .quickCalibrate:
+      seedDefaultScenesForQuickRerun(limit: 4)
+      if canAdvanceFromExplorer {
+        await advanceFromExplorerToCalibration()
+      }
+    case .lineup:
+      seedDefaultScenesForQuickRerun(limit: 4)
+      if canAdvanceFromExplorer {
+        await advanceToStartingLineup()
+      }
+    }
+  }
+
+  private func seedDefaultScenesForQuickRerun(limit: Int) {
+    guard orderedSelectedCommunityIds.isEmpty else { return }
+    let candidates = warmStartCommunities.isEmpty ? featuredCommunities : warmStartCommunities
+    for community in candidates.prefix(limit) {
+      toggleCommunity(community)
+    }
+  }
+
+  public func reloadInitialCatalog() async {
+    catalogVersion = ""
+    errorBannerMessage = nil
+    shouldFallbackToLegacySuggested = false
+    await loadInitialCatalog()
+  }
+
+  public func resetSession() async {
+    searchDebounceTask?.cancel()
+    searchGeneration &+= 1
+    currentBeat = .explorer
+    errorBannerMessage = nil
+    shouldFallbackToLegacySuggested = false
+    searchQuery = ""
+    selectedMacroCategory = .all
+    selectedSceneSlug = nil
+    isSearching = false
+    orderedSelectedCommunityIds = []
+    selectionWeights = [:]
+    activePeek = nil
+    calibrationCards = []
+    activeDuelIndex = 0
+    swipeAnswers = []
+    duelPostsByURI = [:]
+    previewPosts = []
+    previewEstimatedDailyPosts = 0
+    solvedBundle = nil
+    lineupProfilesByDID = [:]
+    hydratedFeeds = []
+    hydratedStarterPacks = []
+    pinnedDIDs = []
+    orderedPinnedDIDs = []
+    excludedDIDs = []
+    orderedExcludedDIDs = []
+    enabledFollowDIDs = []
+    originalsOnlyDIDs = []
+    selectedFeedURIs = []
+    commitReceipt = nil
+    if catalogVersion.isEmpty {
+      await loadInitialCatalog()
+    } else {
+      displayedCommunities = featuredCommunities
+    }
+  }
 
   public func loadInitialCatalog() async {
     guard catalogVersion.isEmpty, !isLoadingCatalog else { return }

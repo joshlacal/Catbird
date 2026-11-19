@@ -20,6 +20,10 @@ final class OnboardingManager {
   
   // Control visibility of welcome sheet
   var showWelcomeSheet: Bool = false
+  /// True when the user explicitly chose to rerun onboarding from Settings or Replay Tips.
+  var isManualWelcomeReplay: Bool = false
+  /// Optional one-shot starting step when launching welcome onboarding manually (0...3).
+  var requestedWelcomeStartStep: Int?
   
   // Signup Queue Gate (G67)
   var isSignupQueued: Bool = false
@@ -33,6 +37,7 @@ final class OnboardingManager {
     static let hasSeenSettingsTip = "onboarding.hasSeenSettingsTip"
     static let onboardingVersion = "onboarding.version"
     static let currentStep = "onboarding.currentStep"
+    static let pendingWelcomeReplay = "onboarding.pendingWelcomeReplay"
   }
   
   /// Set when the user asks to replay tips; the app resets TipKit's datastore before configuring it on next launch.
@@ -134,6 +139,37 @@ final class OnboardingManager {
     let key = scopedKey(UserDefaultsKeys.currentStep, for: did)
     defaults.set(step, forKey: key)
   }
+
+  /// True when the user asked to replay onboarding on the next launch for `did`.
+  func hasPendingWelcomeReplay(for did: String) -> Bool {
+    let key = scopedKey(UserDefaultsKeys.pendingWelcomeReplay, for: did)
+    return defaults.bool(forKey: key)
+  }
+
+  /// Consumes a queued manual onboarding replay for `did`.
+  func consumePendingWelcomeReplay(for did: String) -> Bool {
+    let key = scopedKey(UserDefaultsKeys.pendingWelcomeReplay, for: did)
+    guard defaults.bool(forKey: key) else { return false }
+    defaults.removeObject(forKey: key)
+    return true
+  }
+
+  /// Immediately presents the welcome onboarding flow for an existing account.
+  @MainActor
+  func presentWelcomeOnboardingNow(for did: String? = nil, startingAtStep step: Int = 0) {
+    let targetDID = did ?? accountDID
+    let clampedStep = min(max(step, 0), 3)
+    if let targetDID {
+      self.accountDID = targetDID
+      saveStep(clampedStep, for: targetDID)
+      let replayKey = scopedKey(UserDefaultsKeys.pendingWelcomeReplay, for: targetDID)
+      defaults.removeObject(forKey: replayKey)
+    }
+    requestedWelcomeStartStep = clampedStep
+    isManualWelcomeReplay = true
+    showWelcomeSheet = true
+    logger.info("Presenting manual welcome onboarding replay at step \(clampedStep) for: \(targetDID ?? "global")")
+  }
   
   // MARK: - Onboarding Actions
   
@@ -189,10 +225,13 @@ final class OnboardingManager {
     let targetDID = did ?? accountDID
     hasCompletedWelcome = true
     showWelcomeSheet = false
+    isManualWelcomeReplay = false
+    requestedWelcomeStartStep = nil
     
     if let targetDID {
       setCompletedWelcome(true, for: targetDID)
       saveStep(0, for: targetDID)
+      defaults.removeObject(forKey: scopedKey(UserDefaultsKeys.pendingWelcomeReplay, for: targetDID))
     } else {
       saveOnboardingState()
     }
@@ -221,10 +260,13 @@ final class OnboardingManager {
     hasCompletedWelcome = false
     hasSeenSettingsTip = false
     showWelcomeSheet = false
+    isManualWelcomeReplay = false
+    requestedWelcomeStartStep = nil
     
     if let targetDID {
       setCompletedWelcome(false, for: targetDID)
       saveStep(0, for: targetDID)
+      defaults.set(true, forKey: scopedKey(UserDefaultsKeys.pendingWelcomeReplay, for: targetDID))
     }
     saveOnboardingState(for: targetDID)
     

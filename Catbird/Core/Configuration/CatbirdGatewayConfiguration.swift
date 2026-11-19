@@ -93,6 +93,12 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
     }
   }
 
+  /// Catbird Intelligence AppView service reference (`<did>#<service_id>`).
+  /// Nest validates `atproto-proxy` requires a `#service_id` matching `catbird_intel`.
+  var intelServiceDID: String {
+    "did:web:intel.catbird.blue#catbird_intel"
+  }
+
   /// MLS uses a distinct DID from Nest and must never inherit the Nest service DID.
   var mlsServiceDID: String? {
     switch deployment {

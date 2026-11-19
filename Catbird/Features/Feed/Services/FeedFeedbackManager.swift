@@ -66,8 +66,8 @@ final class FeedFeedbackManager {
     "app.bsky.feed.defs#requestMore"
   ]
 
-  /// Throttle interval for sending interactions (10 seconds)
-  private static let sendThrottleInterval: TimeInterval = 10.0
+  /// Throttle interval for sending interactions (3 seconds)
+  private static let sendThrottleInterval: TimeInterval = 3.0
 
   init(
     accountDID: String,

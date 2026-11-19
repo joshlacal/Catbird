@@ -601,9 +601,9 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
   private func ensureGatewayServiceDIDs() async {
     let alreadyRegistered = await cache.markServiceDIDsRegistered()
     guard !alreadyRegistered else { return }
-    let nestDID = CatbirdGatewayConfiguration.current.serviceDID
-    await client.setServiceDID(nestDID, for: "blue.catbird.intel")
-    await client.setServiceDID(nestDID, for: "blue.catbird.onboarding")
+    let intelDID = CatbirdGatewayConfiguration.current.intelServiceDID
+    await client.setServiceDID(intelDID, for: "blue.catbird.intel")
+    await client.setServiceDID(intelDID, for: "blue.catbird.onboarding")
   }
 
   private func unwrap<T>(code: Int, data: T?) throws -> T {
@@ -619,6 +619,13 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
   private func mapError(_ error: Error) -> Error {
     if let intelError = error as? CatbirdIntelligenceError {
       return intelError
+    }
+    if let xrpcError = error as? ATProtoXRPCError {
+      if xrpcError.statusCode == 503 || xrpcError.statusCode == 502 || xrpcError.statusCode == 404
+        || xrpcError.error == "UpstreamUnavailable" {
+        return CatbirdIntelligenceError.serviceUnavailable
+      }
+      return CatbirdIntelligenceError.invalidResponse(xrpcError.statusCode)
     }
     let desc = String(describing: error)
     if desc.contains("503") || desc.contains("UpstreamUnavailable") || desc.contains("502") {

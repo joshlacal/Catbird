@@ -90,6 +90,23 @@ struct FeedFilterSettingsView: View {
       }
       Section {
         NavigationLink {
+          OriginalsOnlyAccountsView()
+        } label: {
+          let count = appState.feedFilterSettings.mutedRepostAuthorDIDs.count
+          SettingsNavigationRow(
+            title: "Originals-Only Accounts",
+            summary: count == 0
+              ? "No accounts have reposts hidden"
+              : "\(count) \(count == 1 ? "account has" : "accounts have") reposts hidden",
+            systemImage: "arrow.2.squarepath",
+            family: .feeds
+          )
+        }.settingsControl(.init(rawValue: "intel.originalsOnly"))
+      } header: { Text("Per-Author Repost Tamer") } footer: {
+        Text("Keep original posts from prolific reposters while hiding their reposts. Managed here or during Catbird Intelligence onboarding.")
+      }
+      Section {
+        NavigationLink {
           LanguageSettingsView(initialFocus: .init(rawValue: "languages.hideOtherLanguages"))
         } label: {
           SettingsNavigationRow(title: "Reading Languages", summary: languageSummary, systemImage: "character.bubble", family: .language)

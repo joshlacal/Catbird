@@ -306,7 +306,7 @@ struct SettingsView: View {
         case .accountSecurity, .accountDetails, .automationLabel: .account
         case .privacyInteractions, .visibility, .activityPrivacy, .messages, .defaultPostInteractions: .privacy
         case .notifications, .activitySubscriptions: .notifications
-        case .feedsDiscovery, .feedFiltering, .threads, .discovery, .interests, .feedLibrary, .verification: .feeds
+        case .feedsDiscovery, .feedFiltering, .threads, .discovery, .interests, .intelligenceOnboarding, .originalsOnlyAccounts, .feedLibrary, .verification: .feeds
         case .moderation, .labelers, .mutedAccounts, .blockedAccounts: .moderation
         case .mediaLinks, .externalMedia: .media
         case .language: .language

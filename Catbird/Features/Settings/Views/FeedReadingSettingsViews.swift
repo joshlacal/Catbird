@@ -15,6 +15,9 @@ struct FeedsDiscoverySettingsView: View {
         NavigationLink { DiscoverySettingsView() } label: {
           SettingsNavigationRow(title: "Discovery", summary: "Trending topics, videos and interests", systemImage: "sparkle.magnifyingglass", family: .feeds)
         }
+        NavigationLink { IntelligenceOnboardingHubView() } label: {
+          SettingsNavigationRow(title: "Catbird Intelligence & Onboarding", summary: "Scene explorer, taste duels, originals-only, and onboarding replay", systemImage: "sparkles", family: .feeds)
+        }.settingsControl(.init(rawValue: "intel.sceneExplorer"))
         NavigationLink { FeedLibrarySettingsView() } label: {
           SettingsNavigationRow(title: "Feed Library", summary: "Saved and pinned feeds, order and default feed", systemImage: "rectangle.stack", family: .feeds)
         }.settingsControl(.init(rawValue: "feed.feedLibrary"))
