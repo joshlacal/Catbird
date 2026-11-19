@@ -189,7 +189,7 @@ struct RefinedSearchView: View {
         }
         .sheet(isPresented: $isShowingAddFeedSheet) {
             AddFeedSheet()
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(.thinMaterial)
         }

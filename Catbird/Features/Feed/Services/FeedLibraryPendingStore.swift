@@ -109,6 +109,11 @@ final class FeedLibraryPendingStore {
     return changes
   }
 
+  func clear(accountDID: String) {
+    defaults.removeObject(forKey: key(accountDID))
+    defaults.removeObject(forKey: orderKey(accountDID))
+  }
+
   private func key(_ accountDID: String) -> String { "feedLibrary.pendingIntents.\(accountDID)" }
   private func orderKey(_ accountDID: String) -> String { "feedLibrary.pendingPinnedOrder.\(accountDID)" }
   private func write(_ entries: [Entry], accountDID: String) {

@@ -78,4 +78,34 @@ struct FeedDiscoveryOnboardingTests {
     #expect(preferences.pinnedFeeds == originalOrder + [discovered.uriString()])
     #expect(preferences.savedFeeds.isEmpty)
   }
+
+  @Test func resetAllOnboardingQueuesManualReplayAndPresentNowOpensImmediately() {
+    let suite = "blue.catbird.discovery-replay.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let did = "did:plc:replayuser"
+    let manager = OnboardingManager(accountDID: did, userDefaults: defaults)
+    manager.completeWelcomeOnboarding(for: did)
+    #expect(manager.hasCompletedWelcome(for: did))
+    #expect(!manager.hasPendingWelcomeReplay(for: did))
+
+    manager.resetAllOnboarding(for: did)
+    #expect(!manager.hasCompletedWelcome(for: did))
+    #expect(manager.hasPendingWelcomeReplay(for: did))
+
+    let relaunched = OnboardingManager(accountDID: did, userDefaults: defaults)
+    #expect(relaunched.consumePendingWelcomeReplay(for: did))
+    #expect(!relaunched.consumePendingWelcomeReplay(for: did))
+
+    relaunched.presentWelcomeOnboardingNow(for: did, startingAtStep: 2)
+    #expect(relaunched.showWelcomeSheet)
+    #expect(relaunched.isManualWelcomeReplay)
+    #expect(relaunched.requestedWelcomeStartStep == 2)
+
+    relaunched.completeWelcomeOnboarding(for: did)
+    #expect(!relaunched.showWelcomeSheet)
+    #expect(!relaunched.isManualWelcomeReplay)
+    #expect(relaunched.requestedWelcomeStartStep == nil)
+  }
 }

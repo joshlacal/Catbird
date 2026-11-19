@@ -90,53 +90,44 @@ final class SearchAndFeedDiscoveryVisualUITests: XCTestCase {
     customFeeds.tap()
 
     XCTAssertTrue(app.navigationBars["Discover Feeds"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.staticTexts["Popular on Bluesky"].waitForExistence(timeout: 10),
+                  "Storefront renders Popular on Bluesky shelf")
+    XCTAssertTrue(app.staticTexts["For You"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["Quiet Posters"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["Science"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.searchFields["Search feeds"].waitForExistence(timeout: 5))
+    capture("feeds-01-storefront")
+
+    // Rapid-fire quick add from the Storefront row without leaving the storefront.
+    let quietPostersURI = "at://did:plc:searchvisualcreator/app.bsky.feed.generator/feed1"
+    let addFeedButton = app.buttons["feed.library.add.\(quietPostersURI)"].firstMatch
+    XCTAssertTrue(addFeedButton.waitForExistence(timeout: 5), "Storefront row exposes instant Add pill")
+    addFeedButton.tap()
+    XCTAssertTrue(app.buttons["feed.library.manage.\(quietPostersURI)"].firstMatch.waitForExistence(timeout: 5),
+                  "Quick add flips immediately to saved manage pill")
+    capture("feeds-02-storefront-quick-added")
+
+    // Tap a feed row to open its App Store-style Product Page with live posts and metadata strip.
+    let forYouRow = app.buttons["feed.storefront.row.at://did:plc:searchvisualcreator/app.bsky.feed.generator/feed0"].firstMatch
+    XCTAssertTrue(forYouRow.waitForExistence(timeout: 5))
+    forYouRow.tap()
+
+    XCTAssertTrue(app.staticTexts["LIKES"].waitForExistence(timeout: 5), "Product page displays Likes stat")
+    XCTAssertTrue(app.staticTexts["VELOCITY"].waitForExistence(timeout: 5), "Product page displays Velocity stat")
+    XCTAssertTrue(app.staticTexts["CREATOR"].waitForExistence(timeout: 5), "Product page displays Creator stat")
     let firstPost = app.staticTexts["last pic in the van! gg"].firstMatch
-    XCTAssertTrue(firstPost.waitForExistence(timeout: 10), "Preview posts load below the summary")
-    capture("feeds-01-pinned-summary")
-    let tree = XCTAttachment(string: app.debugDescription)
-    tree.name = "feeds-01-accessibility-tree"
-    tree.lifetime = .keepAlways
-    add(tree)
-    let details = app.buttons["feed.discovery.details"].firstMatch
-    XCTAssertTrue(details.exists)
+    XCTAssertTrue(firstPost.waitForExistence(timeout: 10), "Live post preview cards load on Product Page")
     XCTAssertTrue(app.buttons["feed.discovery.open"].firstMatch.exists)
-    XCTAssertTrue(app.buttons.containing(NSPredicate(format: "label CONTAINS 'Pinned'")).firstMatch.exists,
-                  "Pinned status is a separate control")
-    // The feed picker is the navigation title's menu, so the summary sits right under the bar.
-    let titleMenu = app.navigationBars["Discover Feeds"].staticTexts["Discover Feeds"].firstMatch
-    XCTAssertLessThan(firstPost.frame.minY - titleMenu.frame.maxY, 260,
-                      "The compact summary leaves most of the sheet for posts")
+    capture("feeds-03-product-page")
 
-    // Scroll to the end: the last post must clear the bottom search field.
-    let page = app.scrollViews.matching(NSPredicate(format: "identifier BEGINSWITH 'feed.discovery.page.'"))
-      .firstMatch
-    XCTAssertTrue(page.exists)
-    // Previews show at most five posts; this is the fifth fixture post.
-    let lastPost = app.staticTexts["Sunset over the bay tonight was unreal."].firstMatch
-    for _ in 0..<8 where !(lastPost.exists && lastPost.isHittable) { page.swipeUp() }
-    page.swipeUp()
-    capture("feeds-02-scrolled-to-end")
-    let search = app.searchFields["Search feeds"].firstMatch
-    XCTAssertTrue(search.exists)
-    XCTAssertTrue(lastPost.exists, "The last preview post is reachable")
-    XCTAssertLessThanOrEqual(lastPost.frame.maxY, search.frame.minY, "Bottom search must not cover the last post")
-
-    app.buttons["feed.discovery.next"].tap()
-    XCTAssertTrue(app.buttons.containing(NSPredicate(format: "label CONTAINS 'Add Quiet Posters'")).firstMatch
-      .waitForExistence(timeout: 5), "Next feed shows its Add action")
-    capture("feeds-03-next-unsaved-feed")
-
-    app.buttons["feed.discovery.previous"].tap()
-    XCTAssertTrue(firstPost.waitForExistence(timeout: 5))
-    titleMenu.tap()
-    let science = app.buttons["Science"].firstMatch
-    XCTAssertTrue(science.waitForExistence(timeout: 5))
-    capture("feeds-04-selector-menu")
-    science.tap()
-
-    details.tap()
-    XCTAssertTrue(app.navigationBars["Feed details"].waitForExistence(timeout: 5))
+    // Return to storefront and test category chip filtering.
     app.navigationBars.buttons.firstMatch.tap()
+    let scienceChip = app.buttons["feed.storefront.category.science"].firstMatch
+    XCTAssertTrue(scienceChip.waitForExistence(timeout: 5))
+    scienceChip.tap()
+    XCTAssertTrue(app.staticTexts["Science & Nature"].waitForExistence(timeout: 5))
+    capture("feeds-04-category-filter")
+
     app.buttons["feed.discovery.close"].tap()
     XCTAssertTrue(app.navigationBars["Discover Feeds"].waitForNonExistence(timeout: 5))
   }
@@ -167,9 +158,12 @@ final class SearchAndFeedDiscoveryVisualUITests: XCTestCase {
 
   private func tapSearchTab() {
     let identified = app.buttons["tab_search"].firstMatch
-    let button = identified.exists ? identified : app.tabBars.buttons["Search"].firstMatch
+    let button = identified.waitForExistence(timeout: 5) ? identified : app.tabBars.buttons["Search"].firstMatch
     XCTAssertTrue(button.waitForExistence(timeout: 5))
     button.tap()
+    if !app.searchFields.firstMatch.waitForExistence(timeout: 3) {
+      button.tap()
+    }
     XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 5))
   }
 

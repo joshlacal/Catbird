@@ -81,6 +81,7 @@ struct SearchTabReselectionFixture: View {
       let repostNotification = arguments.contains(Self.repostNotificationArgument)
       // Each launch starts on the timeline; Home otherwise restores the previous run's feed.
       UserDefaults.standard.removeObject(forKey: "lastSelectedFeed_\(Self.accountDID)")
+      FeedLibraryPendingStore().clear(accountDID: Self.accountDID)
       preparationStage = "local transport"
       try SearchTabLocalProtocol.prepare(visual: visual, topics: topics,
                                          hashtag: hashtag, moderatedHashtag: moderatedHashtag,
@@ -399,7 +400,10 @@ private enum SearchVisualPayloads {
     let feeds = [
       feed(0, "For You", "A personalized algorithmic feed based on your likes."),
       feed(1, "Quiet Posters", "Posts from people you follow who post less often, so they don’t get lost in the timeline."),
-      feed(2, "Science", "Research, papers and field notes from working scientists.")
+      feed(2, "Science", "Research, papers and field notes from working scientists."),
+      feed(3, "SwiftUI & Dev", "Shipping native iOS apps, Rust crates, and ATProto tools."),
+      feed(4, "Digital Art", "Illustration, comics, watercolor, and indie photography."),
+      feed(5, "Breaking News", "Live dispatches from journalists and reporters worldwide.")
     ]
     let texts = [
       "last pic in the van! gg",
@@ -408,11 +412,33 @@ private enum SearchVisualPayloads {
       "Tiny bug fixes are the best kind of shipping.",
       "Sunset over the bay tonight was unreal."
     ]
-    let posts = texts.enumerated().map { index, text in ["post": post(200 + index, text)] }
+    let now = Date()
+    let iso = ISO8601DateFormatter()
+    let posts: [[String: Any]] = texts.enumerated().map { index, text in
+      var item = post(200 + index, text)
+      let postedAt = iso.string(from: now.addingTimeInterval(-Double((index + 1) * 120)))
+      var record = item["record"] as? [String: Any] ?? [:]
+      record["createdAt"] = postedAt
+      item["record"] = record
+      item["indexedAt"] = postedAt
+      return ["post": item]
+    }
     let actors = [("maxwell", "mfzx.test"), ("Maxwell Frost", "maxwellfrost.test"),
                   ("Max Kennerly", "maxkennerly.test")].enumerated().map { index, item in
       ["did": "did:plc:searchvisualactor\(index)", "handle": item.1, "displayName": item.0]
     }
+    let followLikes: [[String: Any]] = [
+      [
+        "indexedAt": timestamp,
+        "createdAt": timestamp,
+        "actor": [
+          "did": "did:plc:searchvisualfollow0",
+          "handle": "alice.test",
+          "displayName": "Alice",
+          "viewer": ["following": "at://did:plc:searchvisualviewer/app.bsky.graph.follow/f1"]
+        ]
+      ]
+    ]
     let saved: [String: Any] = [
       "$type": "app.bsky.actor.defs#savedFeedsPrefV2",
       "items": [["id": "search-visual-pinned", "type": "feed", "pinned": true,
@@ -421,6 +447,8 @@ private enum SearchVisualPayloads {
     return [
       "app.bsky.actor.searchActorsTypeahead": ["actors": actors],
       "app.bsky.unspecced.getPopularFeedGenerators": ["feeds": feeds],
+      "app.bsky.feed.getSuggestedFeeds": ["feeds": [feeds[2], feeds[3], feeds[4]]],
+      "app.bsky.feed.getLikes": ["uri": "at://did:plc:searchvisualcreator/app.bsky.feed.generator/feed2", "likes": followLikes],
       "app.bsky.feed.getFeed": ["feed": posts],
       "app.bsky.actor.getPreferences": ["preferences": [saved]]
     ]
