@@ -247,6 +247,16 @@ actor MLSProfileEnricher {
         await persistProfilesToDatabase(profilesToPersist, currentUserDID: userDID)
       }
 
+      // Keep a copy of each member's picture where the notification extension can read it,
+      // so it never has to fetch one when a message arrives.
+      let avatars = profiles.map { profile -> (did: String, avatarURL: URL?) in
+        let data = ProfileData(from: profile)
+        return (did: Self.canonicalDID(data.did), avatarURL: data.avatarURL)
+      }
+      Task.detached(priority: .utility) {
+        await ChatAvatarStore.shared.save(avatars)
+      }
+
       logger.info("Successfully cached \(profiles.count) profiles")
 
     } catch {

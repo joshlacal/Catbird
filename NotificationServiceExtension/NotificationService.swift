@@ -198,11 +198,13 @@ class NotificationService: UNNotificationServiceExtension {
 
     Task {
       let cachedSenderName = await Self.cachedSenderName(for: preview)
+      let senderAvatar = Self.savedSenderAvatar(for: preview, container: appGroupRoot)
       if Self.presentsAsIncomingMessage(preview: preview, wake: wake, recipientAccountDID: wakeRecipient) {
         let interaction = INInteraction(
           intent: Self.incomingMessageIntent(
             preview: preview,
-            senderName: Self.senderName(preview: preview, cachedSenderName: cachedSenderName)
+            senderName: Self.senderName(preview: preview, cachedSenderName: cachedSenderName),
+            senderAvatar: senderAvatar
           ),
           response: nil
         )
@@ -215,7 +217,8 @@ class NotificationService: UNNotificationServiceExtension {
           preview: preview,
           wake: wake,
           recipientAccountDID: wakeRecipient,
-          cachedSenderName: cachedSenderName
+          cachedSenderName: cachedSenderName,
+          senderAvatar: senderAvatar
         )
       )
     }
@@ -398,6 +401,16 @@ class NotificationService: UNNotificationServiceExtension {
     return Self.nonEmpty(profile.displayName) ?? Self.nonEmpty(profile.handle).map { "@\($0)" }
   }
 
+  /// The sender's picture as the app saved it earlier, if it did. A file read only: the
+  /// extension never fetches a picture when a message arrives.
+  static func savedSenderAvatar(for preview: NotificationPreview, container: URL) -> Data? {
+    guard !preview.fallbackGeneric else { return nil }
+    let senderDID = canonicalRootDID(preview.senderDid)
+    guard !senderDID.isEmpty else { return nil }
+    let data = try? Data(contentsOf: ChatAvatarFiles.fileURL(forDID: senderDID, container: container))
+    return data?.isEmpty == false ? data : nil
+  }
+
   /// The name shown for a decrypted message: the engine's, else the cached profile's, else the app's.
   static func senderName(preview: NotificationPreview, cachedSenderName: String?) -> String {
     Self.nonEmpty(preview.senderDisplayName) ?? Self.nonEmpty(cachedSenderName) ?? "Catbird"
@@ -423,13 +436,17 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// The intent iOS uses to present the notification as a message from `senderName`. It carries
   /// who and which conversation, never the message text: the text stays in the notification body.
-  static func incomingMessageIntent(preview: NotificationPreview, senderName: String) -> INSendMessageIntent {
+  static func incomingMessageIntent(
+    preview: NotificationPreview,
+    senderName: String,
+    senderAvatar: Data? = nil
+  ) -> INSendMessageIntent {
     let senderId = preview.senderDid.isEmpty ? preview.conversationId : canonicalRootDID(preview.senderDid)
     let sender = INPerson(
       personHandle: INPersonHandle(value: senderId, type: .unknown),
       nameComponents: nil,
       displayName: senderName,
-      image: nil,
+      image: senderAvatar.map(INImage.init(imageData:)),
       contactIdentifier: nil,
       customIdentifier: senderId
     )
@@ -467,6 +484,7 @@ class NotificationService: UNNotificationServiceExtension {
     wake: PushWakePayload,
     recipientAccountDID: String? = nil,
     cachedSenderName: String? = nil,
+    senderAvatar: Data? = nil,
     hasFilteringEntitlement: Bool = NotificationService.hasManagedNotificationFilteringEntitlement
   ) -> UNNotificationContent {
     // The engine returns text only for a message it decrypted and whose sender leaf matches a
@@ -502,7 +520,8 @@ class NotificationService: UNNotificationServiceExtension {
     info["recipient_account"] = wake.recipientAccountHash
     base.userInfo = info
 
-    let intent = Self.incomingMessageIntent(preview: preview, senderName: senderName)
+    let intent = Self.incomingMessageIntent(
+      preview: preview, senderName: senderName, senderAvatar: senderAvatar)
     return (try? base.updating(from: intent)) ?? base
   }
 }

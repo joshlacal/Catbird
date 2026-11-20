@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// App Group keys for per-account encrypted chat state that the app and the Notification
@@ -44,5 +45,35 @@ enum MLSAccountPreferenceKeys {
 
   static func normalized(_ accountHash: String) -> String {
     accountHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  }
+}
+
+/// Where the app keeps small copies of encrypted-chat members' profile pictures for the
+/// Notification Service Extension.
+///
+/// The extension shows who sent a message. Fetching the sender's picture at that moment would
+/// tell the image server that this device just received a message from that person, so the
+/// app saves the pictures ahead of time and the extension only ever reads these files.
+enum ChatAvatarFiles {
+  static let directoryName = "chat-avatars"
+
+  static func directory(in container: URL) -> URL {
+    container.appendingPathComponent(directoryName, isDirectory: true)
+  }
+
+  /// The picture for `did`. Named by a hash of the account DID, device fragment dropped.
+  static func fileURL(forDID did: String, container: URL) -> URL {
+    let trimmed = did.trimmingCharacters(in: .whitespacesAndNewlines)
+    let root = trimmed.split(separator: "#", maxSplits: 1).first.map(String.init) ?? trimmed
+    let name = SHA256.hash(data: Data(root.lowercased().utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+    return directory(in: container).appendingPathComponent("\(name).jpg")
+  }
+
+  /// Records which remote picture a saved file was made from, so an unchanged picture is not
+  /// downloaded again.
+  static func sourceRecordURL(for file: URL) -> URL {
+    file.appendingPathExtension("source")
   }
 }
