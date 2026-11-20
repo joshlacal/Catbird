@@ -48,6 +48,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   @State private var recoveryCodeReceipt: AppState.PendingMLSRecoveryCodeReceipt?
   @State private var confirmedRevokedDeviceSecured = false
   @State private var hasUnversionedReceipt = false
+  @State private var lastFlushOutcome: MLSBackupFlushOutcome?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "LabyrinthUI")
 
@@ -141,6 +142,9 @@ struct LabyrinthSettingsAndRestoreView: View {
     .toolbarTitleDisplayMode(.inline)
     #endif
     .task { await refreshStatus() }
+    .refreshable { await refreshStatus() }
+    .overlay(alignment: .bottom) { workingIndicator }
+    .animation(.default, value: isLoading)
     .onChange(of: appState?.pendingMLSDeviceRevocationReceipt) { _, _ in
       Task { await refreshRecoveryMaterial() }
     }
@@ -182,6 +186,37 @@ struct LabyrinthSettingsAndRestoreView: View {
     .accessibilityIdentifier("labyrinth-settings-and-restore-view")
   }
 
+  /// Backup actions wait on the server, sometimes for most of a minute, and every button
+  /// is disabled meanwhile. Without this a tap looked like it did nothing.
+  @ViewBuilder
+  private var workingIndicator: some View {
+    if isLoading, status != nil {
+      HStack(spacing: 10) {
+        ProgressView()
+        Text("Working… this can take up to a minute.")
+          .font(.footnote)
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 10)
+      .background(.regularMaterial, in: Capsule())
+      .padding(.bottom, 12)
+      .accessibilityElement(children: .combine)
+      .accessibilityIdentifier("labyrinth-working-indicator")
+      .transition(.opacity)
+    }
+  }
+
+  private var lastBackupAttemptLabel: String {
+    guard let outcome = lastFlushOutcome else { return "Not Run Yet" }
+    let time = outcome.date.formatted(date: .omitted, time: .shortened)
+    return outcome.failure == nil ? "Completed \(time)" : "Failed \(time)"
+  }
+
+  private var lastBackupAttemptColor: Color {
+    guard let outcome = lastFlushOutcome else { return .secondary }
+    return outcome.failure == nil ? .green : .red
+  }
+
   private var backupStatusSection: some View {
     Section("Encrypted Spaces Backup") {
       if let status {
@@ -218,6 +253,19 @@ struct LabyrinthSettingsAndRestoreView: View {
           .foregroundStyle(
             hasUnacknowledgedRecoveryAttention ? .red : (status.hasPasskeyPrf ? .green : .secondary)
           )
+        }
+        LabeledContent("Last Backup Attempt") {
+          Text(lastBackupAttemptLabel)
+            .foregroundStyle(lastBackupAttemptColor)
+        }
+        .accessibilityIdentifier("labyrinth-last-backup-attempt")
+        if let failure = lastFlushOutcome?.failure {
+          // The engine's own error text: endpoints and status codes, not secrets.
+          Text(failure)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .accessibilityIdentifier("labyrinth-last-backup-failure")
         }
       } else if coordinator == nil {
         Text("Enable MLS Encrypted Chat on an ATProto Spaces account to manage Labyrinth backups.")
@@ -696,6 +744,7 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private func refreshRecoveryMaterial() async {
     guard let coordinator else { return }
+    lastFlushOutcome = coordinator.lastBackupFlushOutcome
     do {
       let latest = try await coordinator.labyrinthStatus()
       applyRecoveryStatus(latest)
@@ -725,6 +774,7 @@ struct LabyrinthSettingsAndRestoreView: View {
     guard let coordinator else { return }
     self.isLoading = true
     defer { self.isLoading = false }
+    self.lastFlushOutcome = coordinator.lastBackupFlushOutcome
     do {
       self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
       self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
