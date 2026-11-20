@@ -206,6 +206,19 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
+  /// The state that decides which buttons on this screen are enabled. No keys, codes or
+  /// tokens: flags, counters and the engine's own publication error.
+  private func supportDetails(_ status: LabyrinthBackupStatus) -> String {
+    [
+      "action running: \(isLoading)",
+      "attention: \(status.recoveryNeedsAttention), generation set: \(status.recoveryGeneration > 0)",
+      "code receipt: \(recoveryCodeReceipt != nil), revocation receipt: \(revocationReceipt != nil), unversioned: \(hasUnversionedReceipt)",
+      "pending approval: \(isPendingDeviceApproval), devices: \(status.activeDeviceIds.count)",
+      "directory pending: \(status.pendingDirectoryEpoch.map { String($0) } ?? "none"), stalled: \(status.directoryPublicationStalled), retries: \(status.directoryPublicationRetryCount)",
+      "directory error: \(status.directoryPublicationError ?? "none")",
+    ].joined(separator: "\n")
+  }
+
   private var lastBackupAttemptLabel: String {
     guard let outcome = lastFlushOutcome else { return "Not Run Yet" }
     let time = outcome.date.formatted(date: .omitted, time: .shortened)
@@ -266,6 +279,13 @@ struct LabyrinthSettingsAndRestoreView: View {
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-last-backup-failure")
+        }
+        DisclosureGroup("Details for Support") {
+          Text(supportDetails(status))
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .accessibilityIdentifier("labyrinth-support-details")
         }
       } else if coordinator == nil {
         Text("Enable MLS Encrypted Chat on an ATProto Spaces account to manage Labyrinth backups.")
@@ -439,7 +459,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   }
 
   private var passkeyPrfSection: some View {
-    Section("Passkey PRF Recovery") {
+    Section {
       Button {
         self.enrollPasskeyPrf()
       } label: {
@@ -455,6 +475,12 @@ struct LabyrinthSettingsAndRestoreView: View {
       }
       .disabled(coordinator == nil || isLoading)
       .accessibilityIdentifier("labyrinth-restore-passkey-prf")
+    } header: {
+      Text("Passkey PRF Recovery")
+    } footer: {
+      if hasUnacknowledgedRecoveryAttention {
+        Text("A passkey can be registered after you generate a recovery code below and confirm you saved it.")
+      }
     }
   }
 
@@ -770,10 +796,10 @@ struct LabyrinthSettingsAndRestoreView: View {
     generatedRecoveryCode = revocationReceipt?.replacementRecoveryCode ?? recoveryCodeReceipt?.recoveryCode
   }
 
+  /// Reads the status. It does not set `isLoading`: that flag belongs to an action the
+  /// user started, and a refresh finishing must not re-enable buttons under one.
   private func refreshStatus() async {
     guard let coordinator else { return }
-    self.isLoading = true
-    defer { self.isLoading = false }
     self.lastFlushOutcome = coordinator.lastBackupFlushOutcome
     do {
       self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
