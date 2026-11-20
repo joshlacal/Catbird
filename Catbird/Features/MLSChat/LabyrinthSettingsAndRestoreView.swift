@@ -55,6 +55,10 @@ struct LabyrinthSettingsAndRestoreView: View {
     ScrollViewReader { proxy in
       form
         .onChange(of: errorMessage) { _, message in
+          if let message {
+            // The engine's own error text: endpoints and status codes, not secrets.
+            logger.error("Labyrinth settings action failed: \(message, privacy: .public)")
+          }
           reveal(LabyrinthResultAnchor.error, when: message, with: proxy)
         }
         .onChange(of: warningBanner) { _, message in
@@ -182,7 +186,7 @@ struct LabyrinthSettingsAndRestoreView: View {
     Section("Encrypted Spaces Backup") {
       if let status {
         LabeledContent("Status") {
-          Text(status.backupEnabled ? "Active (Post-Quantum)" : "Initializing")
+          Text(status.backupEnabled ? "On" : "Off")
             .foregroundStyle(status.backupEnabled ? .green : .secondary)
         }
         LabeledContent("Mailbox Space") {
@@ -459,7 +463,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       } label: {
         Label("Pair Device with 6-Digit Code", systemImage: "link.badge.plus")
       }
-      .disabled(coordinator == nil || isLoading || joinOtcCodeInput.filter(\.isNumber).count != 6)
+      .disabled(
+        coordinator == nil || isLoading || initiatedOtcSession == nil
+          || joinOtcCodeInput.filter(\.isNumber).count != 6
+      )
       .accessibilityIdentifier("labyrinth-complete-otc")
 
       Divider()
@@ -918,7 +925,6 @@ struct LabyrinthSettingsAndRestoreView: View {
       defer { self.isLoading = false }
       do {
         self.activeOtcOffer = try await coordinator.initiateOtcPairing()
-        self.joinOtcCodeInput = self.activeOtcOffer?.sixDigitCode ?? ""
         self.errorMessage = nil
       } catch {
         self.errorMessage = error.localizedDescription
