@@ -68,6 +68,7 @@ struct AccountSecuritySettingsView: View {
                             coordinator: appState.mlsCoordinator,
                             currentDeviceId: localDeviceId
                         )
+                        .id(appState.mlsCoordinator?.accountDidHash)
                     ) {
                         Label("Labyrinth Backup & Device Pairing", systemImage: "key.icloud.fill")
                     }

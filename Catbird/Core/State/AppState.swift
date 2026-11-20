@@ -1933,6 +1933,7 @@ final class AppState {
                 let keystore = KeychainPlatformKeyStore()
                 let transport = PetrelPlatformTransport(
                     atProtoClient: activeClient,
+                    boundAccountDid: targetUserDID,
                     homeDsEndpoint: environment.endpointURL,
                     homeDsDid: bareHomeDsDid,
                     ownPdsEndpoint: clientBaseURL,

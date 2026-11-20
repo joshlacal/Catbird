@@ -218,6 +218,7 @@ struct MLSOrdinaryConversationDetailView: View {
           coordinator: appState.mlsCoordinator,
           currentDeviceId: appState.resolvedMLSDeviceID()
         )
+        .id(appState.mlsCoordinator?.accountDidHash)
       }
       .environment(appState)
     }

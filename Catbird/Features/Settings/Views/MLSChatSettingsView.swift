@@ -98,6 +98,7 @@ struct MLSChatSettingsView: View {
             coordinator: appState.mlsCoordinator,
             currentDeviceId: appState.resolvedMLSDeviceID()
           )
+          .id(appState.mlsCoordinator?.accountDidHash)
         ) {
           Label {
             VStack(alignment: .leading, spacing: 2) {

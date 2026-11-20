@@ -141,7 +141,9 @@ struct LabyrinthSettingsAndRestoreView: View {
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
-    .task { await refreshStatus() }
+    // Keyed by account: the engine can arrive after this screen is on show (it opens a
+    // few seconds after launch), and an unkeyed task would never load its status.
+    .task(id: coordinator?.accountDidHash) { await refreshStatus() }
     .refreshable { await refreshStatus() }
     .overlay(alignment: .bottom) { workingIndicator }
     .animation(.default, value: isLoading)
@@ -230,8 +232,26 @@ struct LabyrinthSettingsAndRestoreView: View {
     return outcome.failure == nil ? .green : .red
   }
 
+  /// The account this screen is acting on: its handle when it is the signed-in account,
+  /// otherwise its DID. Backup state is per account and easy to mistake after a switch.
+  private func accountLabel(for coordinator: MLSClientCoordinator) -> String {
+    if let appState, appState.userDID == coordinator.accountDid,
+       let handle = appState.currentUserProfile?.handle.description, !handle.isEmpty {
+      return "@" + handle
+    }
+    return coordinator.accountDid
+  }
+
   private var backupStatusSection: some View {
     Section("Encrypted Spaces Backup") {
+      if let coordinator {
+        LabeledContent("Account") {
+          Text(accountLabel(for: coordinator))
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        .accessibilityIdentifier("labyrinth-account")
+      }
       if let status {
         LabeledContent("Status") {
           Text(status.backupEnabled ? "On" : "Off")

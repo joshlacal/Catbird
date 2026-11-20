@@ -544,6 +544,7 @@ struct AccountDeletionCoordinator {
     )
     let transport = PetrelPlatformTransport(
       atProtoClient: client,
+      boundAccountDid: did,
       homeDsEndpoint: environment.endpointURL,
       homeDsDid: environment.bareServiceDID,
       ownPdsEndpoint: clientBaseURL,
