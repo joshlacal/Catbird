@@ -212,13 +212,20 @@ struct LabyrinthSettingsAndRestoreView: View {
   /// tokens: flags, counters and the engine's own publication error.
   private func supportDetails(_ status: LabyrinthBackupStatus) -> String {
     [
-      "action running: \(isLoading)",
+      "action running: \(isLoading), established: \(status.archiveEstablished)",
       "attention: \(status.recoveryNeedsAttention), generation set: \(status.recoveryGeneration > 0)",
       "code receipt: \(recoveryCodeReceipt != nil), revocation receipt: \(revocationReceipt != nil), unversioned: \(hasUnversionedReceipt)",
       "pending approval: \(isPendingDeviceApproval), devices: \(status.activeDeviceIds.count)",
       "directory pending: \(status.pendingDirectoryEpoch.map { String($0) } ?? "none"), stalled: \(status.directoryPublicationStalled), retries: \(status.directoryPublicationRetryCount)",
       "directory error: \(status.directoryPublicationError ?? "none")",
     ].joined(separator: "\n")
+  }
+
+  /// "On" only once the engine has opened or created this account's archive on the server.
+  /// A new account's local default says enabled before anything exists anywhere.
+  nonisolated static func backupStatusLabel(enabled: Bool, established: Bool) -> String {
+    guard enabled else { return "Off" }
+    return established ? "On" : "Setting Up"
   }
 
   private var lastBackupAttemptLabel: String {
@@ -254,8 +261,14 @@ struct LabyrinthSettingsAndRestoreView: View {
       }
       if let status {
         LabeledContent("Status") {
-          Text(status.backupEnabled ? "On" : "Off")
-            .foregroundStyle(status.backupEnabled ? .green : .secondary)
+          Text(Self.backupStatusLabel(enabled: status.backupEnabled, established: status.archiveEstablished))
+            .foregroundStyle(status.backupEnabled && status.archiveEstablished ? .green : .secondary)
+        }
+        .accessibilityIdentifier("labyrinth-backup-status")
+        if status.backupEnabled && !status.archiveEstablished {
+          Text("Nothing is stored on your server yet. Backup starts with your first encrypted message, or when you create a recovery code.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         }
         LabeledContent("Mailbox Space") {
           Text(status.mailboxSpaceUri)
@@ -263,9 +276,11 @@ struct LabyrinthSettingsAndRestoreView: View {
             .lineLimit(1)
             .truncationMode(.middle)
         }
-        LabeledContent("Labyrinth Epoch") {
-          Text(status.epochSeq, format: .number)
-            .monospacedDigit()
+        if status.archiveEstablished {
+          LabeledContent("Labyrinth Epoch") {
+            Text(status.epochSeq, format: .number)
+              .monospacedDigit()
+          }
         }
         LabeledContent("Recovery Code Saved") {
           Text(
