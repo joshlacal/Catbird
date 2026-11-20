@@ -346,7 +346,7 @@ struct SceneNavigationHost<Content: View>: View {
 }
 
 #if os(iOS)
-private struct SceneWindowAnchor: UIViewRepresentable {
+struct SceneWindowAnchor: UIViewRepresentable {
   let owner: SceneWindowState
 
   func makeUIView(context: Context) -> SceneWindowAnchorView {
@@ -358,20 +358,41 @@ private struct SceneWindowAnchor: UIViewRepresentable {
 
   func updateUIView(_ uiView: SceneWindowAnchorView, context: Context) {
     uiView.owner = owner
-    uiView.attachToWindow()
+    uiView.scheduleAttachToWindow()
   }
 }
 
-private final class SceneWindowAnchorView: UIView {
+final class SceneWindowAnchorView: UIView {
   weak var owner: SceneWindowState?
+  private var isAttachUpdateScheduled = false
+  private var didAttachToWindow = false
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
-    attachToWindow()
+    scheduleAttachToWindow()
   }
 
-  func attachToWindow() {
+  /// Defer attachment off SwiftUI's view-update pass so draining queued routes
+  /// never mutates `@State` or `@Observable` state during `updateUIView` or
+  /// `didMoveToWindow`.
+  func scheduleAttachToWindow() {
+    guard !isAttachUpdateScheduled else { return }
+    isAttachUpdateScheduled = true
+    let capturedOwner = owner
+    let wasAttached = didAttachToWindow
+    Task { @MainActor [weak self, weak capturedOwner] in
+      if let self {
+        self.isAttachUpdateScheduled = false
+        self.attachToWindow()
+      } else if wasAttached {
+        capturedOwner?.setPresentationAttached(false)
+      }
+    }
+  }
+
+  private func attachToWindow() {
     guard let window else {
+      didAttachToWindow = false
       owner?.setPresentationAttached(false)
       return
     }
@@ -385,11 +406,12 @@ private final class SceneWindowAnchorView: UIView {
       }
       responder = current.next
     }
+    didAttachToWindow = true
     owner?.attach(to: window, presenter: presenter ?? window.rootViewController)
   }
 }
 #elseif os(macOS)
-private struct SceneWindowAnchor: NSViewRepresentable {
+struct SceneWindowAnchor: NSViewRepresentable {
   let owner: SceneWindowState
 
   func makeNSView(context: Context) -> SceneWindowAnchorView {
@@ -400,23 +422,45 @@ private struct SceneWindowAnchor: NSViewRepresentable {
 
   func updateNSView(_ nsView: SceneWindowAnchorView, context: Context) {
     nsView.owner = owner
-    nsView.attachToWindow()
+    nsView.scheduleAttachToWindow()
   }
 }
 
-private final class SceneWindowAnchorView: NSView {
+final class SceneWindowAnchorView: NSView {
   weak var owner: SceneWindowState?
+  private var isAttachUpdateScheduled = false
+  private var didAttachToWindow = false
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    attachToWindow()
+    scheduleAttachToWindow()
   }
 
-  func attachToWindow() {
+  /// Defer attachment off SwiftUI's view-update pass so draining queued routes
+  /// never mutates `@State` or `@Observable` state during `updateNSView` or
+  /// `viewDidMoveToWindow`.
+  func scheduleAttachToWindow() {
+    guard !isAttachUpdateScheduled else { return }
+    isAttachUpdateScheduled = true
+    let capturedOwner = owner
+    let wasAttached = didAttachToWindow
+    Task { @MainActor [weak self, weak capturedOwner] in
+      if let self {
+        self.isAttachUpdateScheduled = false
+        self.attachToWindow()
+      } else if wasAttached {
+        capturedOwner?.setPresentationAttached(false)
+      }
+    }
+  }
+
+  private func attachToWindow() {
     guard let window else {
+      didAttachToWindow = false
       owner?.setPresentationAttached(false)
       return
     }
+    didAttachToWindow = true
     owner?.attach(to: window)
   }
 }

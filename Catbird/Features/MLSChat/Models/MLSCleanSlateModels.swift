@@ -1044,7 +1044,13 @@ final class MLSVoiceSender {
   private(set) var isUploading = false
   var voiceError: String?
 
-  @ObservationIgnored private var recorder: AVAudioRecorder?
+  @ObservationIgnored private let audioSession: any AudioRecordingSession
+  @ObservationIgnored private let requestPermission: @MainActor () async -> Bool
+  @ObservationIgnored private let makeRecorder: @MainActor (URL, [String: Any]) throws -> any AudioRecordingDevice
+  @ObservationIgnored private var recorder: (any AudioRecordingDevice)?
+  @ObservationIgnored private var recordingSessionOwner: UUID?
+  @ObservationIgnored private var pendingStartID: UUID?
+  @ObservationIgnored private var startRecordingTask: Task<Void, Never>?
   @ObservationIgnored private var durationTimer: Timer?
   @ObservationIgnored private var recordingStartDate: Date?
   @ObservationIgnored private var activeWavURL: URL?
@@ -1054,23 +1060,87 @@ final class MLSVoiceSender {
 
   private static let sampleRate: Double = 48_000
 
+  init(
+    audioSession: any AudioRecordingSession = AudioSessionManager.shared,
+    requestPermission: @escaping @MainActor () async -> Bool = { await MLSVoiceSender.requestMicrophonePermission() },
+    makeRecorder: @escaping @MainActor (URL, [String: Any]) throws -> any AudioRecordingDevice = {
+      try AVAudioRecorder(url: $0, settings: $1)
+    }
+  ) {
+    self.audioSession = audioSession
+    self.requestPermission = requestPermission
+    self.makeRecorder = makeRecorder
+  }
+
+  isolated deinit {
+    startRecordingTask?.cancel()
+    startRecordingTask = nil
+    durationTimer?.invalidate()
+    durationTimer = nil
+    recorder?.stop()
+    recorder = nil
+    if let owner = recordingSessionOwner {
+      recordingSessionOwner = nil
+      audioSession.resetAfterRecording(owner: owner)
+    }
+  }
+
   func startRecording() {
     cancelOrDiscard()
     voiceError = nil
-    Task { @MainActor [weak self] in
-      guard let self else { return }
-      let permitted = await Self.requestMicrophonePermission()
-      guard permitted else {
-        self.voiceError = "Microphone access is required to record voice messages."
+    let startID = UUID()
+    pendingStartID = startID
+    let session = audioSession
+    startRecordingTask = Task { @MainActor [weak self] in
+      let permitted: Bool
+      do {
+        guard let permissionCheck = self?.requestPermission else { return }
+        permitted = await permissionCheck()
+      }
+
+      let owner = UUID()
+      let shouldConfigure: Bool = {
+        guard let self, !Task.isCancelled, self.pendingStartID == startID else { return false }
+        guard permitted else {
+          self.pendingStartID = nil
+          self.startRecordingTask = nil
+          self.voiceError = "Microphone access is required to record voice messages."
+          return false
+        }
+        self.recordingSessionOwner = owner
+        return true
+      }()
+      guard shouldConfigure else { return }
+
+      do {
+        try await session.configureForRecording(owner: owner)
+      } catch {
+        session.resetAfterRecording(owner: owner)
+        if let self {
+          if self.recordingSessionOwner == owner {
+            self.recordingSessionOwner = nil
+          }
+          if self.pendingStartID == startID {
+            self.pendingStartID = nil
+            self.startRecordingTask = nil
+          }
+          if !Task.isCancelled {
+            self.logger.error("Failed to start voice recorder: \(error.localizedDescription)")
+            self.voiceError = error.localizedDescription
+          }
+        }
         return
       }
-      do {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-        try session.setActive(true)
-        #endif
 
+      guard let self,
+            !Task.isCancelled,
+            self.pendingStartID == startID,
+            self.recordingSessionOwner == owner else {
+        session.resetAfterRecording(owner: owner)
+        return
+      }
+
+      do {
         let wavURL = FileManager.default.temporaryDirectory
           .appendingPathComponent("catbird-mls-voice-\(UUID().uuidString.lowercased()).wav")
         let settings: [String: Any] = [
@@ -1082,9 +1152,15 @@ final class MLSVoiceSender {
           AVLinearPCMIsFloatKey: false,
           AVLinearPCMIsNonInterleaved: false,
         ]
-        let newRecorder = try AVAudioRecorder(url: wavURL, settings: settings)
-        newRecorder.prepareToRecord()
-        guard newRecorder.record() else {
+        let newRecorder = try self.makeRecorder(wavURL, settings)
+        guard newRecorder.prepareToRecord(), newRecorder.record() else {
+          newRecorder.stop()
+          self.archiveTempFile(wavURL)
+          self.releaseRecordingSession(owner: owner)
+          if self.pendingStartID == startID {
+            self.pendingStartID = nil
+            self.startRecordingTask = nil
+          }
           self.voiceError = "Couldn't start voice recording."
           return
         }
@@ -1092,11 +1168,19 @@ final class MLSVoiceSender {
         self.activeWavURL = wavURL
         self.recordingStartDate = Date()
         self.recordingDuration = 0
+        self.pendingStartID = nil
+        self.startRecordingTask = nil
         #if os(iOS)
         self.voiceMode = .recording(locked: false)
         #endif
         self.startDurationTimer()
       } catch {
+        self.releaseRecordingSession(owner: owner)
+        if self.pendingStartID == startID {
+          self.pendingStartID = nil
+          self.startRecordingTask = nil
+        }
+        guard !Task.isCancelled else { return }
         self.logger.error("Failed to start voice recorder: \(error.localizedDescription)")
         self.voiceError = error.localizedDescription
       }
@@ -1112,13 +1196,14 @@ final class MLSVoiceSender {
   }
 
   func stopRecordingToPreview() async {
+    startRecordingTask?.cancel()
+    startRecordingTask = nil
+    pendingStartID = nil
     stopDurationTimer()
     let elapsed = recordingStartDate.map { Date().timeIntervalSince($0) } ?? recordingDuration
     recorder?.stop()
     recorder = nil
-    #if os(iOS)
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    #endif
+    releaseRecordingSession()
 
     guard let wavURL = activeWavURL else {
       cancelOrDiscard()
@@ -1147,6 +1232,9 @@ final class MLSVoiceSender {
   }
 
   func cancelOrDiscard() {
+    startRecordingTask?.cancel()
+    startRecordingTask = nil
+    pendingStartID = nil
     stopDurationTimer()
     recorder?.stop()
     recorder = nil
@@ -1156,12 +1244,24 @@ final class MLSVoiceSender {
     voicePreviewURL = nil
     #if os(iOS)
     voiceMode = .compose
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     #endif
+    releaseRecordingSession()
     archiveTempFile(activeWavURL)
     archiveTempFile(activePcmURL)
     activeWavURL = nil
     activePcmURL = nil
+  }
+
+  private func releaseRecordingSession(owner specificOwner: UUID? = nil) {
+    if let specificOwner {
+      if recordingSessionOwner == specificOwner {
+        recordingSessionOwner = nil
+      }
+      audioSession.resetAfterRecording(owner: specificOwner)
+    } else if let activeOwner = recordingSessionOwner {
+      recordingSessionOwner = nil
+      audioSession.resetAfterRecording(owner: activeOwner)
+    }
   }
 
   func sendPreview(

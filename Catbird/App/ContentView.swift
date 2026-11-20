@@ -554,9 +554,7 @@ struct MainContentView: View {
           }
         }
           
-        navigationManager.registerTabSelectionCallback { newTab in
-          selectedTab = newTab
-        }
+        registerTabSelection()
 
         scheduleNuxEvaluation(delay: 500_000_000)
       }
@@ -854,9 +852,7 @@ struct MainContentView: View {
               }
             }
 
-            navigationManager.registerTabSelectionCallback { newTab in
-              selectedTab = newTab
-            }
+            registerTabSelection()
 
             scheduleNuxEvaluation(delay: 500_000_000)
           }
@@ -920,6 +916,31 @@ extension ContentView {
 }
 
 extension MainContentView {
+  static func bindTabSelection(
+    context: SceneNavigationContext,
+    selectedTab: Binding<Int>
+  ) {
+    let manager = context.navigationManager
+    manager.registerTabSelectionCallback { [weak context, weak manager] newTab in
+      guard let context, !context.isInvalidated else { return }
+      guard selectedTab.wrappedValue != newTab else { return }
+      // Defer the @Binding/@State write off the caller's synchronous stack so
+      // route delivery triggered during window attachment, scene updates, or
+      // window-focus notifications never mutates SwiftUI state inside a view update.
+      Task { @MainActor [weak context, weak manager] in
+        guard let context, !context.isInvalidated, let manager else { return }
+        let targetTab = manager.currentTabIndex
+        if selectedTab.wrappedValue != targetTab {
+          selectedTab.wrappedValue = targetTab
+        }
+      }
+    }
+  }
+
+  private func registerTabSelection() {
+    Self.bindTabSelection(context: sceneContext, selectedTab: $selectedTab)
+  }
+
   private var welcomePresentation: Binding<Bool> {
     Binding(
       get: { showingOnboarding && appState.ageAccess.allows(.generalContent) },
