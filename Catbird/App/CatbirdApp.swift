@@ -3173,22 +3173,9 @@ extension CatbirdApp.AppDelegate {
     _ = await appStateManager.switchAccount(to: did)
   }
 
-  private static func hashForAccountMatching(_ did: String) -> String {
-    let digest = SHA256.hash(data: Data(did.utf8))
-    return digest.map { String(format: "%02x", $0) }.joined()
-  }
-
   private static func resolveRecipientDID(fromHash hash: String) -> String? {
     MainActor.assumeIsolated {
-      let appStateManager = AppStateManager.shared
-      if let activeDID = appStateManager.lifecycle.userDID,
-         hashForAccountMatching(activeDID) == hash {
-        return activeDID
-      }
-      for did in appStateManager.authenticatedDIDs where hashForAccountMatching(did) == hash {
-        return did
-      }
-      return nil
+      AppStateManager.shared.signedInAccountDID(matchingPushAccountHash: hash)
     }
   }
 

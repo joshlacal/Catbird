@@ -3406,12 +3406,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - Privacy-Preserving Account Matching
 
-  /// Compute SHA-256 hash of a DID for push notification account matching.
-  private func hashForAccountMatching(_ did: String) -> String {
-    let digest = SHA256.hash(data: Data(did.utf8))
-    return digest.map { String(format: "%02x", $0) }.joined()
-  }
-
   /// Resolve recipient DID from push payload, supporting both hash-based and legacy fields.
   private func resolveRecipientDID(from userInfo: [AnyHashable: Any]) -> String? {
     // Prefer explicit DID (set by NSE after resolving hash, or legacy payload)
@@ -3421,17 +3415,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // Fall back to resolving recipient_account hash against local accounts
     if let hash = userInfo["recipient_account"] as? String {
       return MainActor.assumeIsolated {
-        let appStateManager = AppStateManager.shared
-        if let activeDID = appStateManager.lifecycle.userDID,
-          hashForAccountMatching(activeDID) == hash {
-          return activeDID
-        }
-        for did in appStateManager.authenticatedDIDs {
-          if hashForAccountMatching(did) == hash {
-            return did
-          }
-        }
-        return nil
+        AppStateManager.shared.signedInAccountDID(matchingPushAccountHash: hash)
       }
     }
     return nil

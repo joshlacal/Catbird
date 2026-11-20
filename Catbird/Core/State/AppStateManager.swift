@@ -1580,6 +1580,20 @@ final class AppStateManager {
     return Array(authenticatedStates.keys)
   }
 
+  /// The signed-in account a push's `recipient_account` hash names: the active account, one
+  /// whose state is already in memory, or any other account signed in on this device.
+  ///
+  /// State exists in memory only for accounts opened since launch. A notification for an
+  /// account that has not been opened yet must still resolve, or tapping it does nothing.
+  func signedInAccountDID(matchingPushAccountHash hash: String) -> String? {
+    var candidates: [String] = []
+    if let activeDID = lifecycle.userDID { candidates.append(activeDID) }
+    candidates.append(contentsOf: authenticatedDIDs)
+    candidates.append(contentsOf: authManager.availableAccounts.map(\.did))
+    candidates.append(contentsOf: PushAccountMatching.publishedAccountDIDs())
+    return PushAccountMatching.accountDID(matchingHash: hash, among: candidates)
+  }
+
   // MARK: - MLS Storage Maintenance
 
   func beginStorageMaintenance(for userDID: String) {
