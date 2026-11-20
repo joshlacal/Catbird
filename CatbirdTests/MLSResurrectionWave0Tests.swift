@@ -523,8 +523,8 @@ struct MLSResurrectionWave0Tests {
     dataSource.stopObserving()
   }
 
-  @Test("NotificationService fails closed to generic fallback when preview.receiptVerified is false")
-  func notificationServiceFailsClosedOnUnverifiedReceipt() {
+  @Test("NotificationService shows nothing from a generic fallback preview")
+  func notificationServiceFailsClosedOnGenericFallback() {
     let wake = PushWakePayload(
       kind: "application",
       conversationId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -547,7 +547,7 @@ struct MLSResurrectionWave0Tests {
       epoch: 1,
       seq: 42,
       fromCache: false,
-      fallbackGeneric: false,
+      fallbackGeneric: true,
       darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
       receiptVerified: false,
       isOwnSiblingSender: false
@@ -768,7 +768,7 @@ struct MLSResurrectionWave0Tests {
     #expect(filteredDrop.title.isEmpty)
     #expect(filteredDrop.body.isEmpty)
 
-    // 2. Unverified push claiming senderDid == Alice MUST NOT be silently suppressed; it falls back generically
+    // 2. A generic fallback claiming senderDid == Alice MUST NOT be silently suppressed
     let spoofedUnverified = NotificationPreview(
       messageId: "msg-99",
       conversationId: wake.conversationId,
@@ -779,7 +779,7 @@ struct MLSResurrectionWave0Tests {
       epoch: 2,
       seq: 99,
       fromCache: false,
-      fallbackGeneric: false,
+      fallbackGeneric: true,
       darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
       receiptVerified: false,
       isOwnSiblingSender: false

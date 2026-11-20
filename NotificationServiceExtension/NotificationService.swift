@@ -165,6 +165,15 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
+    // Previews off: say only that a message arrived, and never open the account's chat keys.
+    guard MLSAccountPreferenceKeys.showsChatNotificationPreviews(
+      accountHash: wake.recipientAccountHash,
+      defaults: appGroupDefaults
+    ) else {
+      contentHandler(Self.genericChatNotification(base: mutable, wake: wake))
+      return
+    }
+
     let homeDsURL = appGroupDefaults?
       .string(forKey: "mlsHomeDsEndpoint_\(wake.recipientAccountHash)")
       .flatMap(URL.init(string:)) ?? URL(string: "https://chat.catbird.blue")
@@ -302,14 +311,15 @@ class NotificationService: UNNotificationServiceExtension {
     return !lhs.isEmpty && lhs == rhs
   }
 
-  /// Returns `true` when an authenticated (`receiptVerified`) MLS preview was authored by one of the
-  /// recipient account's own sibling devices (matching either `recipientAccountDID` or `wake.recipientAccountHash`).
+  /// Returns `true` when a decrypted MLS preview was authored by one of the recipient account's
+  /// own sibling devices (matching either `recipientAccountDID` or `wake.recipientAccountHash`).
+  /// A generic fallback names no authenticated sender, so it never counts.
   static func isOwnSiblingSender(
     preview: NotificationPreview,
     wake: PushWakePayload,
     recipientAccountDID: String? = nil
   ) -> Bool {
-    guard preview.receiptVerified else { return false }
+    guard !preview.fallbackGeneric else { return false }
     if preview.isOwnSiblingSender { return true }
     let senderRoot = canonicalRootDID(preview.senderDid)
     guard !senderRoot.isEmpty else { return false }
@@ -360,6 +370,22 @@ class NotificationService: UNNotificationServiceExtension {
     return content
   }
 
+  /// "New encrypted message", with what the app needs to open the conversation and nothing
+  /// from the message itself.
+  static func genericChatNotification(
+    base: UNMutableNotificationContent,
+    wake: PushWakePayload
+  ) -> UNNotificationContent {
+    Self.applyFallback(to: base, wake: wake)
+    var info = base.userInfo
+    info["type"] = wake.kind.contains("request") ? "mls_message_request" : "mls_message"
+    info["protocol_version"] = "2"
+    info["convo_id"] = wake.conversationId
+    info["recipient_account"] = wake.recipientAccountHash
+    base.userInfo = info
+    return base
+  }
+
   static func buildCommunicationNotification(
     base: UNMutableNotificationContent,
     preview: NotificationPreview,
@@ -367,15 +393,12 @@ class NotificationService: UNNotificationServiceExtension {
     recipientAccountDID: String? = nil,
     hasFilteringEntitlement: Bool = NotificationService.hasManagedNotificationFilteringEntitlement
   ) -> UNNotificationContent {
-    guard preview.receiptVerified else {
-      Self.applyFallback(to: base, wake: wake)
-      var info = base.userInfo
-      info["type"] = wake.kind.contains("request") ? "mls_message_request" : "mls_message"
-      info["protocol_version"] = "2"
-      info["convo_id"] = wake.conversationId
-      info["recipient_account"] = wake.recipientAccountHash
-      base.userInfo = info
-      return base
+    // The engine returns text only for a message it decrypted and whose sender leaf matches a
+    // DID-rooted device key. `receiptVerified` is false when that message came from the wake
+    // alone, with no sequencer receipt fetched: it is shown, and the app syncs it for real on
+    // open. Anything the engine could not decrypt arrives as a generic fallback.
+    guard !preview.fallbackGeneric else {
+      return Self.genericChatNotification(base: base, wake: wake)
     }
 
     if Self.isOwnSiblingSender(preview: preview, wake: wake, recipientAccountDID: recipientAccountDID) {

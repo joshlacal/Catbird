@@ -406,6 +406,33 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
   }
 
+  /// Whether encrypted chat notifications show the sender and the message text (per-account).
+  /// The Notification Service Extension reads the stored value before it decrypts anything.
+  var mlsChatNotificationPreviewsEnabled: Bool = true {
+    didSet {
+      guard shouldPersistChatPreference,
+            let defaults = notificationDefaults,
+            let did = currentAccountDID
+      else { return }
+      Self.storeMLSChatNotificationPreviewPreference(
+        mlsChatNotificationPreviewsEnabled, accountDID: did, defaults: defaults)
+    }
+  }
+
+  /// Stores the preview preference under the DID-hash key the app and the extension both read.
+  static func storeMLSChatNotificationPreviewPreference(
+    _ enabled: Bool, accountDID: String, defaults: UserDefaults
+  ) {
+    guard let hash = try? MLSAppGroupStorage.accountDidHash(for: accountDID) else { return }
+    defaults.set(enabled, forKey: MLSAccountPreferenceKeys.chatNotificationPreviewsEnabled(accountHash: hash))
+  }
+
+  /// The stored preview preference for an account. On until the user turns it off.
+  static func loadMLSChatNotificationPreviewPreference(accountDID: String, defaults: UserDefaults) -> Bool {
+    guard let hash = try? MLSAppGroupStorage.accountDidHash(for: accountDID) else { return true }
+    return MLSAccountPreferenceKeys.showsChatNotificationPreviews(accountHash: hash, defaults: defaults)
+  }
+
   /// Save chat notification preference for the current account.
   private func saveChatNotificationPreference() {
     guard let defaults = notificationDefaults, let did = currentAccountDID, let client else {
@@ -515,6 +542,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         "No MLS chat notification preference found for \(did), defaulting to enabled")
       mlsChatNotificationsEnabled = true
     }
+    mlsChatNotificationPreviewsEnabled = Self.loadMLSChatNotificationPreviewPreference(
+      accountDID: did, defaults: defaults)
   }
 
   /// Stores the encrypted chat notification preference under the DID key the app reads and the

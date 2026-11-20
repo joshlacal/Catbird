@@ -31,6 +31,17 @@ enum MLSAccountPreferenceKeys {
     "mlsChatNotificationsEnabled_\(normalized(accountHash))"
   }
 
+  /// Whether notifications for the account's encrypted chats show the sender and the message
+  /// text. When off, the extension shows "New encrypted message" and does not open the chat keys.
+  static func chatNotificationPreviewsEnabled(accountHash: String) -> String {
+    "mlsChatNotificationPreviewsEnabled_\(normalized(accountHash))"
+  }
+
+  /// The stored preview preference. On until the user turns it off.
+  static func showsChatNotificationPreviews(accountHash: String, defaults: UserDefaults?) -> Bool {
+    defaults?.object(forKey: chatNotificationPreviewsEnabled(accountHash: accountHash)) as? Bool ?? true
+  }
+
   static func normalized(_ accountHash: String) -> String {
     accountHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
   }

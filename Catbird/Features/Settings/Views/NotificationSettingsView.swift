@@ -66,12 +66,17 @@ struct NotificationSettingsView: View {
             set: { manager.mlsChatNotificationsEnabled = $0 }
           ))
           .disabled(!manager.isPushRequested)
+          Toggle("Show Encrypted Message Text", isOn: Binding(
+            get: { manager.mlsChatNotificationPreviewsEnabled },
+            set: { manager.mlsChatNotificationPreviewsEnabled = $0 }
+          ))
+          .disabled(!manager.isPushRequested || !manager.mlsChatNotificationsEnabled)
         }
       } header: {
         Text("Messages")
       } footer: {
         Text(showsEncryptedChatAlerts
-          ? "Choose direct message and encrypted chat alerts for this account. Push delivery also needs device permission and a ready connection."
+          ? "Choose direct message and encrypted chat alerts for this account. Push delivery also needs device permission and a ready connection. Encrypted message text is decrypted on this device; when it is off, alerts say only that a message arrived."
           : "Choose direct message alerts for this account. Push delivery also needs device permission and a ready connection.")
       }
       Section("Post Notification Subscriptions") {
