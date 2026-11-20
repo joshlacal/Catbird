@@ -11,6 +11,13 @@ import UIKit
 import AppKit
 #endif
 
+/// Scroll targets for the outcome rows at the top of the Labyrinth settings form.
+enum LabyrinthResultAnchor {
+  static let error = "labyrinth-result-error"
+  static let warning = "labyrinth-result-warning"
+  static let success = "labyrinth-result-success"
+}
+
 /// Labyrinth 1.1 backup, recovery code, WebAuthn Passkey PRF, hybrid PQ `OTC` pairing,
 /// device revocation, and Space history import screen (`Spec §6.7`, `D4`, `I16`).
 @MainActor
@@ -45,6 +52,27 @@ struct LabyrinthSettingsAndRestoreView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "LabyrinthUI")
 
   var body: some View {
+    ScrollViewReader { proxy in
+      form
+        .onChange(of: errorMessage) { _, message in
+          reveal(LabyrinthResultAnchor.error, when: message, with: proxy)
+        }
+        .onChange(of: warningBanner) { _, message in
+          reveal(LabyrinthResultAnchor.warning, when: message, with: proxy)
+        }
+        .onChange(of: statusBanner) { _, message in
+          reveal(LabyrinthResultAnchor.success, when: message, with: proxy)
+        }
+    }
+  }
+
+  /// Scrolls the form to an outcome row that has just appeared or changed.
+  private func reveal(_ anchor: String, when message: String?, with proxy: ScrollViewProxy) {
+    guard message != nil else { return }
+    withAnimation { proxy.scrollTo(anchor, anchor: .top) }
+  }
+
+  private var form: some View {
     Form {
       if isPendingDeviceApproval {
         Section {
@@ -57,14 +85,9 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         .accessibilityIdentifier("labyrinth-device-pending-approval-banner")
       }
-      backupStatusSection
-      recoveryWarningsSection
-      passkeyPrfSection
-      otcPairingSection
-      recoveryCodeSection
-      deviceListSection
-      historyImportSection
 
+      // The outcome of the last action sits at the top, where it can be seen. Below the
+      // seven sections that follow, a failed tap looked like a button that did nothing.
       if let warningBanner {
         Section {
           Label(warningBanner, systemImage: "exclamationmark.triangle.fill")
@@ -74,6 +97,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Recovery warning: \(warningBanner)")
             .accessibilityIdentifier("labyrinth-warning-status")
+            .id(LabyrinthResultAnchor.warning)
       }
 
       if let statusBanner {
@@ -85,6 +109,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Success: \(statusBanner)")
             .accessibilityIdentifier("labyrinth-success-status")
+            .id(LabyrinthResultAnchor.success)
       }
 
       if let errorMessage {
@@ -96,7 +121,16 @@ struct LabyrinthSettingsAndRestoreView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Error: \(errorMessage)")
             .accessibilityIdentifier("labyrinth-error-status")
+            .id(LabyrinthResultAnchor.error)
       }
+
+      backupStatusSection
+      recoveryWarningsSection
+      passkeyPrfSection
+      otcPairingSection
+      recoveryCodeSection
+      deviceListSection
+      historyImportSection
     }
     .navigationTitle("Labyrinth Backup & Recovery")
     #if os(iOS)
