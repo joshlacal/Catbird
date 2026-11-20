@@ -218,24 +218,21 @@ struct CatbirdSendMessageSchemaIntent {
       draft.submitted = true
       try MLSDirectComposeDraftStore.validateText(text)
       MLSDirectComposeDraftStore.save(draft)
-      let conversationID = UUID().uuidString.lowercased()
       let sequencerDID = await MainActor.run {
         AppStateManager.shared.lifecycle.appState?.defaultMLSSequencerDID ?? "did:web:chat.catbird.blue"
       }
-      let created = try await coordinator.createGroup(
-        conversationId: conversationID,
-        sequencerDid: sequencerDID,
-        memberDids: [draft.recipientDID],
-        title: nil,
-        description: nil
-      )
-      let row = try await coordinator.sendMessage(
-        conversationId: created.conversationId,
+      let outcome = try await MLSDirectChatStart.start(
+        coordinator: coordinator,
+        sequencerDID: sequencerDID,
+        recipientDID: draft.recipientDID,
         text: text
       )
-      finalConvoId = created.conversationId
-      sentMessageID = row.messageId
-      sentAt = Date(timeIntervalSince1970: Double(row.createdAtMs) / 1_000.0)
+      if let notice = outcome.delivery.notice {
+        throw IntentError.invalidParameter(notice)
+      }
+      finalConvoId = outcome.conversationID
+      sentMessageID = outcome.messageID ?? UUID().uuidString.lowercased()
+      sentAt = outcome.sentAtMs.map { Date(timeIntervalSince1970: Double($0) / 1_000.0) } ?? Date()
       MLSDirectComposeDraftStore.archive(draft)
     }
 

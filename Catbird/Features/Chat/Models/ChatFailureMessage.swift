@@ -57,6 +57,8 @@ enum ChatFailureMessage {
       return "Encrypted chat isn’t ready on this device yet. Try again in a moment."
     case .PendingDeviceAccess:
       return "This device is waiting to be added to your encrypted chats."
+    case .InvalidState(let message) where message.contains("ConversationNotAccepted"):
+      return "This chat is waiting to be accepted. You can send messages once it is."
     default:
       return nil
     }

@@ -397,21 +397,19 @@ struct MLSDirectComposeView: View {
       }
       guard !Task.isCancelled, draft.accountDID == appState.userDID,
             recipientCapability?.isCapable == true else { return }
-      let conversationID = UUID().uuidString.lowercased()
-      let sequencerDID = appState.defaultMLSSequencerDID
-      let created = try await coordinator.createGroup(
-        conversationId: conversationID,
-        sequencerDid: sequencerDID,
-        memberDids: [draft.recipientDID],
-        title: draft.recipientDisplayName ?? draft.recipientHandle,
-        description: nil
-      )
-      _ = try await coordinator.sendMessage(
-        conversationId: created.conversationId,
+      let outcome = try await MLSDirectChatStart.start(
+        coordinator: coordinator,
+        sequencerDID: appState.defaultMLSSequencerDID,
+        recipientDID: draft.recipientDID,
         text: trimmed
       )
+      if let notice = outcome.delivery.notice {
+        // The text was not delivered; keep it in the sheet and say why.
+        errorMessage = notice
+        return
+      }
       MLSDirectComposeDraftStore.archive(draft)
-      onCreated(created.conversationId)
+      onCreated(outcome.conversationID)
       dismiss()
     } catch {
       errorMessage = ChatFailureMessage.text(for: error, context: .startEncryptedChat)
