@@ -1,5 +1,6 @@
 import CatbirdMLSCore
 import Foundation
+import Intents
 import Testing
 import UserNotifications
 
@@ -120,6 +121,98 @@ struct ChatNotificationPreviewTests {
     #expect(quieted.body == "Synced message from your other device")
     #expect(quieted.sound == nil)
     #expect(quieted.userInfo["suppressedForOwnSiblingDevice"] as? Bool == true)
+  }
+
+  private func decryptedPreview(
+    conversationId: String,
+    senderDisplayName: String? = nil,
+    groupTitle: String? = nil,
+    fallbackGeneric: Bool = false,
+    isOwnSiblingSender: Bool = false
+  ) -> NotificationPreview {
+    NotificationPreview(
+      messageId: "b0b00000-0000-4000-8000-000000000012",
+      conversationId: conversationId,
+      senderDid: "did:plc:previewsender01#device-1",
+      senderDisplayName: senderDisplayName,
+      groupTitle: groupTitle,
+      body: "Running ten minutes late",
+      epoch: 3,
+      seq: 7,
+      fromCache: false,
+      fallbackGeneric: fallbackGeneric,
+      darwinNotificationName: MLSAppGroupStorage.nseDidCommitDarwinNotification,
+      receiptVerified: false,
+      isOwnSiblingSender: isOwnSiblingSender
+    )
+  }
+
+  @Test("A preview with no name of its own is titled with the sender's cached profile name")
+  func cachedProfileNamesTheSender() throws {
+    let hash = try MLSAppGroupStorage.accountDidHash(for: Self.accountDID)
+    let wake = wake(recipientHash: hash)
+    let preview = decryptedPreview(conversationId: wake.conversationId)
+
+    // What production delivers: the engine knows the sender only after decrypting, so the
+    // preview carries a DID and no name.
+    let unnamed = NotificationService.buildCommunicationNotification(
+      base: UNMutableNotificationContent(), preview: preview, wake: wake,
+      recipientAccountDID: Self.accountDID)
+    #expect(unnamed.title == "Catbird")
+
+    let named = NotificationService.buildCommunicationNotification(
+      base: UNMutableNotificationContent(), preview: preview, wake: wake,
+      recipientAccountDID: Self.accountDID, cachedSenderName: "Robin Lark")
+    #expect(named.title == "Robin Lark")
+    #expect(named.body == "Running ten minutes late")
+
+    // The engine's own name wins; blank names count as none.
+    #expect(NotificationService.senderName(
+      preview: decryptedPreview(conversationId: wake.conversationId, senderDisplayName: "Engine Name"),
+      cachedSenderName: "Robin Lark") == "Engine Name")
+    #expect(NotificationService.senderName(
+      preview: decryptedPreview(conversationId: wake.conversationId, senderDisplayName: "  "),
+      cachedSenderName: "Robin Lark") == "Robin Lark")
+    #expect(NotificationService.senderName(preview: preview, cachedSenderName: " ") == "Catbird")
+  }
+
+  @Test("In a named group the group is the title and the sender the second line")
+  func groupNotificationNamesGroupAndSender() throws {
+    let hash = try MLSAppGroupStorage.accountDidHash(for: Self.accountDID)
+    let wake = wake(recipientHash: hash)
+    let preview = decryptedPreview(conversationId: wake.conversationId, groupTitle: "Weekend")
+
+    let shown = NotificationService.buildCommunicationNotification(
+      base: UNMutableNotificationContent(), preview: preview, wake: wake,
+      recipientAccountDID: Self.accountDID, cachedSenderName: "Robin Lark")
+    // Without the Communication Notifications entitlement the content keeps these fields;
+    // with it iOS lays the same two names out itself.
+    #expect([shown.title, shown.subtitle].contains("Weekend"))
+    #expect([shown.title, shown.subtitle].contains("Robin Lark"))
+    #expect(shown.body == "Running ten minutes late")
+  }
+
+  @Test("The message intent names the sender and the conversation and never carries the text")
+  func incomingMessageIntentCarriesNoText() throws {
+    let hash = try MLSAppGroupStorage.accountDidHash(for: Self.accountDID)
+    let wake = wake(recipientHash: hash)
+    let preview = decryptedPreview(conversationId: wake.conversationId, groupTitle: "Weekend")
+
+    let intent = NotificationService.incomingMessageIntent(preview: preview, senderName: "Robin Lark")
+    #expect(intent.content == nil)
+    #expect(intent.sender?.displayName == "Robin Lark")
+    #expect(intent.sender?.customIdentifier == "did:plc:previewsender01")
+    #expect(intent.conversationIdentifier == wake.conversationId)
+    #expect(intent.speakableGroupName?.spokenPhrase == "Weekend")
+
+    #expect(NotificationService.presentsAsIncomingMessage(
+      preview: preview, wake: wake, recipientAccountDID: Self.accountDID))
+    #expect(!NotificationService.presentsAsIncomingMessage(
+      preview: decryptedPreview(conversationId: wake.conversationId, fallbackGeneric: true),
+      wake: wake, recipientAccountDID: Self.accountDID))
+    #expect(!NotificationService.presentsAsIncomingMessage(
+      preview: decryptedPreview(conversationId: wake.conversationId, isOwnSiblingSender: true),
+      wake: wake, recipientAccountDID: Self.accountDID))
   }
 
   @Test("With previews off the alert carries routing only")

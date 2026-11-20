@@ -196,14 +196,29 @@ class NotificationService: UNNotificationServiceExtension {
       postDarwinNotification: true
     )
 
-    contentHandler(
-      Self.buildCommunicationNotification(
-        base: mutable,
-        preview: preview,
-        wake: wake,
-        recipientAccountDID: wakeRecipient
+    Task {
+      let cachedSenderName = await Self.cachedSenderName(for: preview)
+      if Self.presentsAsIncomingMessage(preview: preview, wake: wake, recipientAccountDID: wakeRecipient) {
+        let interaction = INInteraction(
+          intent: Self.incomingMessageIntent(
+            preview: preview,
+            senderName: Self.senderName(preview: preview, cachedSenderName: cachedSenderName)
+          ),
+          response: nil
+        )
+        interaction.direction = .incoming
+        try? await interaction.donate()
+      }
+      contentHandler(
+        Self.buildCommunicationNotification(
+          base: mutable,
+          preview: preview,
+          wake: wake,
+          recipientAccountDID: wakeRecipient,
+          cachedSenderName: cachedSenderName
+        )
       )
-    )
+    }
   }
 
   override func serviceExtensionTimeWillExpire() {
@@ -370,6 +385,66 @@ class NotificationService: UNNotificationServiceExtension {
     return content
   }
 
+  /// The sender's name from the profiles the app has already cached on this device, for a
+  /// decrypted preview that carries none. A push names no sender, so the engine learns who
+  /// wrote the message only by decrypting it and cannot have looked the name up beforehand.
+  /// Local read only: the extension never asks the network who sent an encrypted message.
+  static func cachedSenderName(for preview: NotificationPreview) async -> String? {
+    guard !preview.fallbackGeneric, Self.nonEmpty(preview.senderDisplayName) == nil else { return nil }
+    let senderDID = canonicalRootDID(preview.senderDid)
+    guard !senderDID.isEmpty,
+          let profile = await ProfileCacheDatabase.shared.read(did: senderDID)
+    else { return nil }
+    return Self.nonEmpty(profile.displayName) ?? Self.nonEmpty(profile.handle).map { "@\($0)" }
+  }
+
+  /// The name shown for a decrypted message: the engine's, else the cached profile's, else the app's.
+  static func senderName(preview: NotificationPreview, cachedSenderName: String?) -> String {
+    Self.nonEmpty(preview.senderDisplayName) ?? Self.nonEmpty(cachedSenderName) ?? "Catbird"
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+      return nil
+    }
+    return trimmed
+  }
+
+  /// Whether the preview is shown as a message from another person: decrypted, and not one of
+  /// the account's own devices.
+  static func presentsAsIncomingMessage(
+    preview: NotificationPreview,
+    wake: PushWakePayload,
+    recipientAccountDID: String?
+  ) -> Bool {
+    !preview.fallbackGeneric
+      && !isOwnSiblingSender(preview: preview, wake: wake, recipientAccountDID: recipientAccountDID)
+  }
+
+  /// The intent iOS uses to present the notification as a message from `senderName`. It carries
+  /// who and which conversation, never the message text: the text stays in the notification body.
+  static func incomingMessageIntent(preview: NotificationPreview, senderName: String) -> INSendMessageIntent {
+    let senderId = preview.senderDid.isEmpty ? preview.conversationId : canonicalRootDID(preview.senderDid)
+    let sender = INPerson(
+      personHandle: INPersonHandle(value: senderId, type: .unknown),
+      nameComponents: nil,
+      displayName: senderName,
+      image: nil,
+      contactIdentifier: nil,
+      customIdentifier: senderId
+    )
+    return INSendMessageIntent(
+      recipients: nil,
+      outgoingMessageType: .outgoingMessageText,
+      content: nil,
+      speakableGroupName: preview.groupTitle.map(INSpeakableString.init(spokenPhrase:)),
+      conversationIdentifier: preview.conversationId,
+      serviceName: "Catbird",
+      sender: sender,
+      attachments: nil
+    )
+  }
+
   /// "New encrypted message", with what the app needs to open the conversation and nothing
   /// from the message itself.
   static func genericChatNotification(
@@ -391,6 +466,7 @@ class NotificationService: UNNotificationServiceExtension {
     preview: NotificationPreview,
     wake: PushWakePayload,
     recipientAccountDID: String? = nil,
+    cachedSenderName: String? = nil,
     hasFilteringEntitlement: Bool = NotificationService.hasManagedNotificationFilteringEntitlement
   ) -> UNNotificationContent {
     // The engine returns text only for a message it decrypted and whose sender leaf matches a
@@ -409,8 +485,12 @@ class NotificationService: UNNotificationServiceExtension {
       )
     }
 
-    let senderName = preview.senderDisplayName ?? "Catbird"
+    let senderName = Self.senderName(preview: preview, cachedSenderName: cachedSenderName)
     base.title = preview.groupTitle ?? senderName
+    // In a named group the title is the group, so the sender goes on the second line.
+    if preview.groupTitle != nil, senderName != "Catbird" {
+      base.subtitle = senderName
+    }
     base.body = preview.body
     base.threadIdentifier = "mls-\(preview.conversationId)"
     base.categoryIdentifier = "MLS_MESSAGE"
@@ -422,27 +502,7 @@ class NotificationService: UNNotificationServiceExtension {
     info["recipient_account"] = wake.recipientAccountHash
     base.userInfo = info
 
-    guard !preview.fallbackGeneric else { return base }
-
-    let senderId = preview.senderDid.isEmpty ? preview.conversationId : preview.senderDid
-    let sender = INPerson(
-      personHandle: INPersonHandle(value: senderId, type: .unknown),
-      nameComponents: nil,
-      displayName: senderName,
-      image: nil,
-      contactIdentifier: nil,
-      customIdentifier: senderId
-    )
-    let intent = INSendMessageIntent(
-      recipients: nil,
-      outgoingMessageType: .outgoingMessageText,
-      content: preview.body,
-      speakableGroupName: preview.groupTitle.map(INSpeakableString.init(spokenPhrase:)),
-      conversationIdentifier: preview.conversationId,
-      serviceName: "Catbird",
-      sender: sender,
-      attachments: nil
-    )
+    let intent = Self.incomingMessageIntent(preview: preview, senderName: senderName)
     return (try? base.updating(from: intent)) ?? base
   }
 }
