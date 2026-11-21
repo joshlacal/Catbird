@@ -170,6 +170,13 @@
 			);
 			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
 		};
+		212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Core/Settings/MLSAccountPreferenceKeys.swift,
+			);
+			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
+		};
 		21A1B3C42F80000000C3B2A1 /* Exceptions for "NotificationServiceExtension" folder in "CatbirdTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -177,13 +184,6 @@
 				ProfileCacheDatabase.swift,
 			);
 			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
-		};
-		212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Core/Settings/MLSAccountPreferenceKeys.swift,
-			);
-			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
 		};
 		21A1B3C42F80000000CAFE01 /* Exceptions for "Catbird" folder in "CatbirdTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -249,12 +249,12 @@
 				App/Info.plist,
 				AppIntents/README.md,
 				Core/State/PREFERENCES_BOUNDARY.md,
-				Services/MLS/IMPLEMENTATION_COMPLETE.md,
 				Features/Feed/Views/Components/PostComposer/PostComposer_Architecture.md,
 				Features/Feed/Views/Components/PostComposer/PostComposer_Tasks.md,
 				Features/Feed/Views/Components/PostComposer/PostComposerArchitecture.md,
 				Features/Feed/Views/FeedContent/ScrollPositionFixes.md,
 				"Resources/Preview Content/getTimelineResponse.json",
+				Services/MLS/IMPLEMENTATION_COMPLETE.md,
 				Storage/STORAGE_ARCHITECTURE.md,
 				Storage/Storage_README.md,
 			);
@@ -293,8 +293,8 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				21DDCCF92DD2AD59004947CD /* Exceptions for "Catbird" folder in "Catbird" target */,
-				212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */,
 				21A1B3C42F80000000CAFE01 /* Exceptions for "Catbird" folder in "CatbirdTests" target */,
+				212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */,
 			);
 			path = Catbird;
 			sourceTree = "<group>";
@@ -1050,6 +1050,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_ENHANCED_SECURITY = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
@@ -1141,6 +1142,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_ENHANCED_SECURITY = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
@@ -1214,10 +1216,10 @@
 		212E94272D60132A00D3E1DD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CATBIRD_FEATURE_LIVE = YES;
-				CATBIRD_FEATURE_REPOSITORY_TOOLS = YES;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CATBIRD_FEATURE_LIVE = YES;
+				CATBIRD_FEATURE_REPOSITORY_TOOLS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1249,7 +1251,9 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_ENHANCED_SECURITY = YES;
 				ENABLE_HARDWARE_CHECKED_POINTER_ARITHMETIC_SLICE = NO;
+				ENABLE_POINTER_AUTHENTICATION = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -1286,10 +1290,10 @@
 		212E94282D60132A00D3E1DD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CATBIRD_FEATURE_LIVE = NO;
-				CATBIRD_FEATURE_REPOSITORY_TOOLS = NO;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CATBIRD_FEATURE_LIVE = NO;
+				CATBIRD_FEATURE_REPOSITORY_TOOLS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1321,7 +1325,9 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_ENHANCED_SECURITY = YES;
 				ENABLE_HARDWARE_CHECKED_POINTER_ARITHMETIC_SLICE = NO;
+				ENABLE_POINTER_AUTHENTICATION = NO;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -1356,14 +1362,14 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 225;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "*";
-				"INCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = MLSCleanSlateDataSourceAndGateTests.swift;
 				GENERATE_INFOPLIST_FILE = YES;
+				"INCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = MLSCleanSlateDataSourceAndGateTests.swift;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Catbird.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Catbird";
@@ -1377,14 +1383,14 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 225;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "*";
-				"INCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = MLSCleanSlateDataSourceAndGateTests.swift;
 				GENERATE_INFOPLIST_FILE = YES;
+				"INCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = MLSCleanSlateDataSourceAndGateTests.swift;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Catbird.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Catbird";
