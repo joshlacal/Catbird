@@ -170,6 +170,7 @@ struct ScenePeekSheet: View {
     if let memberSections {
       ScenePeekMembersSection(
         sections: memberSections,
+        isScenePicked: isPicked,
         lineupHeading: lineupHeading(memberSections.lineup.count),
         profilesByDID: profilesByDID,
         isAuthorPinned: isAuthorPinned,

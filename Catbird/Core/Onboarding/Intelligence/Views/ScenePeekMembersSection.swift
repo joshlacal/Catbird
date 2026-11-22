@@ -7,6 +7,9 @@ import SwiftUI
 /// list of the scene's members.
 struct ScenePeekMembersSection: View {
   let sections: SceneOnboardingViewModel.PeekMemberSections
+  /// Whether the viewer has picked this scene. Until they have, its lineup is only what picking
+  /// would follow, so those accounts keep their pin control.
+  let isScenePicked: Bool
   let lineupHeading: String
   let profilesByDID: [String: HydratedRecommendedProfile]
   let isAuthorPinned: (String) -> Bool
@@ -21,7 +24,7 @@ struct ScenePeekMembersSection: View {
           systemImage: "person.crop.circle.badge.checkmark",
           caption: "Picking this scene follows these accounts, in this order.",
           members: sections.lineup,
-          inLineup: true,
+          inLineup: isScenePicked,
           identifier: "intel.peek.lineupMembers"
         )
       }
