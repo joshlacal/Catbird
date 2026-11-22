@@ -30,7 +30,8 @@ struct OnboardingIntelligenceTests {
     id: Int,
     title: String,
     sceneSlug: String = "swift_apple",
-    category: String = "software_ai_tech"
+    category: String = "software_ai_tech",
+    alreadyFollowingCount: Int? = nil
   ) throws -> BlueCatbirdIntelDefs.CommunitySummary {
     let postURI = try ATProtocolURI(uriString: "at://did:plc:synthauthor\(id)/app.bsky.feed.post/3lsynth\(id)")
     let did = try DID(didString: "did:plc:synthauthor\(id)")
@@ -51,13 +52,16 @@ struct OnboardingIntelligenceTests {
       samplePostUris: [postURI],
       sampleAccountDids: [did],
       feedGeneratorUris: [],
-      starterPackUris: []
+      starterPackUris: [],
+      alreadyFollowingCount: alreadyFollowingCount
     )
   }
 
   @MainActor
   private final class MockIntelligenceService: @unchecked Sendable, CatbirdIntelligenceServicing {
     var shouldThrowUnavailable = false
+    /// Answers like a live server that personalizes communities for the viewer.
+    var liveMode = false
     var seedFollows: [String] = ["did:plc:synthseed1"]
     var lastSearchQuery: String?
     var lastMacroCategory: String?
@@ -79,12 +83,17 @@ struct OnboardingIntelligenceTests {
       if shouldThrowUnavailable {
         throw CatbirdIntelligenceError.serviceUnavailable
       }
-      let c1 = try OnboardingIntelligenceTests.makeCommunity(id: 497, title: "iOS & SwiftUI Builders")
+      let c1 = try OnboardingIntelligenceTests.makeCommunity(
+        id: 497,
+        title: "iOS & SwiftUI Builders",
+        alreadyFollowingCount: liveMode ? 2 : nil
+      )
       let c2 = try OnboardingIntelligenceTests.makeCommunity(
         id: 2421,
         title: "Indie Game Makers",
         sceneSlug: "indie_games",
-        category: "games_interactive"
+        category: "games_interactive",
+        alreadyFollowingCount: liveMode ? 0 : nil
       )
       let warm = seedFollowDIDs.isEmpty ? [] : [c1]
       return BlueCatbirdOnboardingGetCatalog.Output(
@@ -105,12 +114,17 @@ struct OnboardingIntelligenceTests {
     ) async throws -> BlueCatbirdIntelListCommunities.Output {
       lastSearchQuery = query
       lastMacroCategory = macroCategory
-      let c1 = try OnboardingIntelligenceTests.makeCommunity(id: 497, title: "iOS & SwiftUI Builders")
+      let c1 = try OnboardingIntelligenceTests.makeCommunity(
+        id: 497,
+        title: "iOS & SwiftUI Builders",
+        alreadyFollowingCount: liveMode ? 2 : nil
+      )
       let c2 = try OnboardingIntelligenceTests.makeCommunity(
         id: 2421,
         title: "Indie Game Makers",
         sceneSlug: "indie_games",
-        category: "games_interactive"
+        category: "games_interactive",
+        alreadyFollowingCount: liveMode ? 0 : nil
       )
       let filtered = [c1, c2].filter { item in
         if let macroCategory, item.macroCategory != macroCategory { return false }
@@ -129,7 +143,11 @@ struct OnboardingIntelligenceTests {
     }
 
     func getCommunity(communityId: Int) async throws -> BlueCatbirdIntelGetCommunity.Output {
-      let comm = try OnboardingIntelligenceTests.makeCommunity(id: communityId, title: "iOS & SwiftUI Builders")
+      let comm = try OnboardingIntelligenceTests.makeCommunity(
+        id: communityId,
+        title: "iOS & SwiftUI Builders",
+        alreadyFollowingCount: liveMode ? 2 : nil
+      )
       let memberDID = try DID(didString: "did:plc:synthmember1")
       let postURI = try ATProtocolURI(uriString: "at://did:plc:synthmember1/app.bsky.feed.post/3lpeek1")
       return BlueCatbirdIntelGetCommunity.Output(
@@ -156,7 +174,9 @@ struct OnboardingIntelligenceTests {
             authorRole: "anchor_creator"
           )
         ],
-        neighborCommunities: []
+        neighborCommunities: [],
+        defaultLineupCount: liveMode ? 6 : nil,
+        boostedLineupCount: liveMode ? 12 : nil
       )
     }
 
@@ -515,23 +535,63 @@ struct OnboardingIntelligenceTests {
     #expect(vm.selectedCount == 23)
     #expect(vm.errorBannerMessage == nil)
 
-    // Pin cap = 30
+    // Pin cap = 200 (the solveBundle pinnedDids limit)
     for idx in 1...SceneOnboardingViewModel.maxPinnedAuthors {
       vm.togglePinAuthor(did: "did:plc:synthpin\(idx)")
     }
-    #expect(vm.pinnedDIDs.count == 30)
-    vm.togglePinAuthor(did: "did:plc:synthpin31")
-    #expect(vm.pinnedDIDs.count == 30)
-    #expect(!vm.isAuthorPinned("did:plc:synthpin31"))
+    #expect(vm.pinnedDIDs.count == 200)
+    vm.togglePinAuthor(did: "did:plc:synthpin201")
+    #expect(vm.pinnedDIDs.count == 200)
+    #expect(!vm.isAuthorPinned("did:plc:synthpin201"))
 
-    // Exclusion cap = 100 (FIFO eviction preserves bounded payload)
-    for idx in 1...105 {
+    // Exclusion cap = 500 (FIFO eviction preserves bounded payload)
+    for idx in 1...505 {
       await vm.excludeAndSwapAccount("did:plc:synthexcl\(idx)")
     }
-    #expect(vm.excludedDIDs.count == 100)
-    #expect(mock.lastSolveInput?.excludedDids?.count == 100)
+    #expect(vm.excludedDIDs.count == 500)
+    #expect(mock.lastSolveInput?.excludedDids?.count == 500)
     #expect(!vm.excludedDIDs.contains("did:plc:synthexcl1"))
-    #expect(vm.excludedDIDs.contains("did:plc:synthexcl105"))
+    #expect(vm.excludedDIDs.contains("did:plc:synthexcl505"))
+  }
+
+  @Test("Solve request leaves out targetSize only when the server personalizes communities")
+  @MainActor
+  func solveSizingFollowsEngine() async throws {
+    let staticMock = MockIntelligenceService()
+    let staticVM = SceneOnboardingViewModel(service: staticMock)
+    await staticVM.startEntry(.lineup)
+    #expect(!staticVM.isLiveEngine)
+    #expect(staticVM.currentBeat == .lineup)
+    #expect(staticMock.lastSolveInput?.targetSize == staticVM.targetBundleSize)
+    #expect(staticMock.lastSolveInput?.targetSize == 25)
+
+    let liveMock = MockIntelligenceService()
+    liveMock.liveMode = true
+    let liveVM = SceneOnboardingViewModel(service: liveMock)
+    await liveVM.startEntry(.lineup)
+    #expect(liveVM.isLiveEngine)
+    #expect(liveVM.currentBeat == .lineup)
+    #expect(liveMock.lastSolveInput != nil)
+    #expect(liveMock.lastSolveInput?.targetSize == nil)
+  }
+
+  @Test("Opening a scene from a live server switches the solve to per-scene sizing")
+  @MainActor
+  func peekDetectsLiveEngine() async throws {
+    let mock = MockIntelligenceService()
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let community = try #require(vm.featuredCommunities.first)
+    #expect(!vm.isLiveEngine)
+
+    mock.liveMode = true
+    await vm.openPeek(for: community)
+    #expect(vm.isLiveEngine)
+
+    vm.toggleCommunity(community)
+    await vm.advanceToStartingLineup()
+    #expect(mock.lastSolveInput != nil)
+    #expect(mock.lastSolveInput?.targetSize == nil)
   }
 
   @Test("Out-of-order listCommunities responses cannot overwrite newer search queries or resets")

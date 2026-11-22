@@ -63,8 +63,8 @@ public final class SceneOnboardingViewModel {
   // MARK: - Dependencies & Mode
 
   public static let maxSelectedCommunities = 24
-  public static let maxPinnedAuthors = 30
-  public static let maxExcludedAuthors = 100
+  public static let maxPinnedAuthors = 200
+  public static let maxExcludedAuthors = 500
   public static let maxSeedFollows = 100
 
   public let mode: ExperienceMode
@@ -103,6 +103,11 @@ public final class SceneOnboardingViewModel {
   /// Weight per community (`1` = picked, `2` = heart-boosted)
   public private(set) var selectionWeights: [Int: Int] = [:]
   public private(set) var knownCommunitiesById: [Int: BlueCatbirdIntelDefs.CommunitySummary] = [:]
+
+  /// True once the server has shown it personalizes communities for this viewer
+  /// (`alreadyFollowingCount` on a community, or lineup counts on a community detail).
+  /// A live server sizes the lineup per scene, so the solve request leaves out `targetSize`.
+  public private(set) var isLiveEngine: Bool = false
 
   /// Peek sheet state
   public var activePeek: PeekSheetState?
@@ -366,7 +371,14 @@ public final class SceneOnboardingViewModel {
 
   private func indexCommunities(_ items: [BlueCatbirdIntelDefs.CommunitySummary]) {
     for item in items {
-      knownCommunitiesById[item.communityId] = item
+      rememberCommunity(item)
+    }
+  }
+
+  private func rememberCommunity(_ item: BlueCatbirdIntelDefs.CommunitySummary) {
+    knownCommunitiesById[item.communityId] = item
+    if item.alreadyFollowingCount != nil {
+      isLiveEngine = true
     }
   }
 
@@ -376,7 +388,7 @@ public final class SceneOnboardingViewModel {
 
   /// Toggles between 0 (unpicked) and 1 (picked). If boosted (2), tapping card body unpicks cleanly.
   public func toggleCommunity(_ community: BlueCatbirdIntelDefs.CommunitySummary) {
-    knownCommunitiesById[community.communityId] = community
+    rememberCommunity(community)
     let cid = community.communityId
     if selectionWeights[cid] != nil {
       selectionWeights.removeValue(forKey: cid)
@@ -396,7 +408,7 @@ public final class SceneOnboardingViewModel {
 
   /// Cycles Heart-Boost: unpicked -> 2x boosted; 1x picked -> 2x boosted; 2x boosted -> 1x picked.
   public func toggleHeartBoost(for community: BlueCatbirdIntelDefs.CommunitySummary) {
-    knownCommunitiesById[community.communityId] = community
+    rememberCommunity(community)
     let cid = community.communityId
     let current = selectionWeights[cid] ?? 0
     if current == 0 {
@@ -490,7 +502,7 @@ public final class SceneOnboardingViewModel {
   }
 
   public func openPeek(for summary: BlueCatbirdIntelDefs.CommunitySummary) async {
-    knownCommunitiesById[summary.communityId] = summary
+    rememberCommunity(summary)
     activePeek = PeekSheetState(
       community: summary,
       members: [],
@@ -502,6 +514,9 @@ public final class SceneOnboardingViewModel {
 
     do {
       let detail = try await service.getCommunity(communityId: summary.communityId)
+      if detail.defaultLineupCount != nil {
+        isLiveEngine = true
+      }
       indexCommunities([detail.community])
       indexCommunities(detail.neighborCommunities)
 
@@ -741,7 +756,9 @@ public final class SceneOnboardingViewModel {
         selections: selections,
         swipes: swipeAnswers.isEmpty ? nil : Array(swipeAnswers.prefix(8)),
         controls: currentBundleControls,
-        targetSize: targetBundleSize,
+        // A live server follows a fixed number of accounts from each scene; the
+        // pace-based total applies only to the static catalog engine.
+        targetSize: isLiveEngine ? nil : targetBundleSize,
         pinnedDids: pinned.isEmpty ? nil : pinned,
         excludedDids: excluded.isEmpty ? nil : excluded,
         seedFollowDids: seeds.isEmpty ? nil : seeds
@@ -817,7 +834,7 @@ public final class SceneOnboardingViewModel {
   }
 
   public func addHarmoniousNeighborAndResolve(_ neighbor: BlueCatbirdIntelDefs.CommunitySummary) async {
-    knownCommunitiesById[neighbor.communityId] = neighbor
+    rememberCommunity(neighbor)
     if selectionWeights[neighbor.communityId] == nil {
       guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
         errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
