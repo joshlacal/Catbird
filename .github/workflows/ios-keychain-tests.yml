@@ -106,12 +106,41 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_tests="$(grep -Ec '^[[:space:]]*func test' CatbirdTests/MLSKeychainManagerTests.swift)"
-          if [[ "$expected_tests" -eq 0 ]]; then
-            echo "No MLSKeychainManagerTests methods were discovered in source" >&2
+          # Count the Swift Testing cases each selected suite declares, so the
+          # xcresult check below fails if a suite silently runs fewer tests.
+          # count_tests FILE [STRUCT] counts @Test lines in FILE, or only in
+          # STRUCT's body when the file holds several suites.
+          count_tests() {
+            if [[ $# -eq 1 ]]; then
+              grep -Ec '^[[:space:]]*@Test([ (]|$)' "$1" || true
+            else
+              awk -v s="struct $2 " '
+                index($0, s) { on = 1; next }
+                on && /^@Suite/ { on = 0 }
+                on && /^[[:space:]]*@Test([ (]|$)/ { n++ }
+                END { print n + 0 }' "$1"
+            fi
+          }
+
+          keychain_suites=(KeychainAccessGroupPrefixCacheTests GatewaySessionRejectionTests)
+          expected_tests=0
+          for suite in "${keychain_suites[@]}"; do
+            n="$(count_tests "CatbirdTests/$suite.swift")"
+            if [[ "$n" -eq 0 ]]; then
+              echo "No @Test cases were discovered in CatbirdTests/$suite.swift" >&2
+              exit 1
+            fi
+            expected_tests=$((expected_tests + n))
+          done
+          echo "Expecting $expected_tests keychain tests across ${keychain_suites[*]}"
+
+          native_suite=CrossLanguageRealFFITests
+          native_expected_tests="$(count_tests CatbirdTests/CrossLanguageFixtureTests.swift "$native_suite")"
+          if [[ "$native_expected_tests" -eq 0 ]]; then
+            echo "No @Test cases were discovered in $native_suite" >&2
             exit 1
           fi
-          echo "Expecting $expected_tests MLS keychain tests"
+          echo "Expecting $native_expected_tests native MLS tests in $native_suite"
 
           xcrun simctl list devices available -j > "$VALIDATION_DIR/simulators.json"
           simulator_id="$(jq -r '[.devices | to_entries[] | select(.key == "com.apple.CoreSimulator.SimRuntime.iOS-27-0") | .value[] | select(.isAvailable and (.name | startswith("iPhone")))] | first | .udid // empty' "$VALIDATION_DIR/simulators.json")"
@@ -137,8 +166,9 @@ jobs:
             -disableAutomaticPackageResolution -skipPackageUpdates \
             -jobs 3 \
             -parallel-testing-enabled NO \
-            -only-testing:CatbirdTests/MLSKeychainManagerTests \
-            -only-testing:CatbirdTests/NativeMLSArtifactTests \
+            -only-testing:CatbirdTests/KeychainAccessGroupPrefixCacheTests \
+            -only-testing:CatbirdTests/GatewaySessionRejectionTests \
+            -only-testing:CatbirdTests/CrossLanguageRealFFITests \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=YES \
@@ -165,34 +195,45 @@ jobs:
           fi
 
           # The xcresult test tree contains every planned test in the target,
-          # including tests excluded by -only-testing. That is why a recursive
-          # nodeType == "Test Case" count can be 139 while this suite has 26.
-          # Select the discovered XCTest/Swift Testing cases by their canonical
-          # nodeIdentifier instead of guessing from source text or counting
-          # excluded plan nodes. Xcode 27 does not populate sourceLocation for
-          # these nodes, while nodeIdentifier remains stable (Class/test()).
-          suite_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")))] | length' "$VALIDATION_DIR/keychain-tests.json")"
-          passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result == "Passed")] | length' "$VALIDATION_DIR/keychain-tests.json")"
-          non_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result != "Passed")] | length' "$VALIDATION_DIR/keychain-tests.json")"
-          planned_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' "$VALIDATION_DIR/keychain-tests.json")"
+          # including tests excluded by -only-testing, so a recursive
+          # nodeType == "Test Case" count covers the whole target. Select the
+          # cases by their canonical nodeIdentifier prefix (Suite/test())
+          # instead. Xcode 27 does not populate sourceLocation for these nodes.
+          report="$VALIDATION_DIR/keychain-tests.json"
+          # count_cases PREFIX_JSON_ARRAY [passed|failed]
+          count_cases() {
+            local filter='.nodeType == "Test Case" and ((.nodeIdentifier? // "") as $id | any($p[]; . as $x | $id | startswith($x)))'
+            case "${2:-}" in
+              passed) filter="$filter and .result == \"Passed\"" ;;
+              failed) filter="$filter and .result != \"Passed\"" ;;
+            esac
+            jq --argjson p "$1" "[.. | objects | select($filter)] | length" "$report"
+          }
+
+          keychain_prefixes="$(printf '%s/\n' "${keychain_suites[@]}" | jq -R . | jq -sc .)"
+          suite_tests="$(count_cases "$keychain_prefixes")"
+          passed_tests="$(count_cases "$keychain_prefixes" passed)"
+          non_passed_tests="$(count_cases "$keychain_prefixes" failed)"
+          planned_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' "$report")"
           echo "Keychain suite result: selectedTestCases=$suite_tests expectedFromSource=$expected_tests plannedTargetTestCases=$planned_tests passed=$passed_tests nonPassed=$non_passed_tests"
 
           if [[ "$suite_tests" -ne "$expected_tests" || "$passed_tests" -ne "$expected_tests" || "$non_passed_tests" -ne 0 ]]; then
             echo "Keychain suite result evidence is incomplete or contains a non-Passed discovered Test Case" >&2
             exit 1
           fi
-          echo "Keychain suite passed: $suite_tests discovered test cases; every Test Case result is exactly Passed"
+          echo "Keychain suites passed: $suite_tests discovered test cases; every Test Case result is exactly Passed"
 
-          # This separate app-host test initializes the actual linked native MLS
-          # library through its generated bindings and checks the UniFFI contract.
-          native_expected_tests="$(grep -Ec '^[[:space:]]*@Test([ (]|$)' CatbirdTests/NativeMLSArtifactTests.swift)"
-          native_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | startswith("NativeMLSArtifactTests/")))] | length' "$VALIDATION_DIR/keychain-tests.json")"
-          native_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | startswith("NativeMLSArtifactTests/")) and .result == "Passed")] | length' "$VALIDATION_DIR/keychain-tests.json")"
-          if [[ "$native_expected_tests" -ne 1 || "$native_tests" -ne "$native_expected_tests" || "$native_passed_tests" -ne "$native_expected_tests" ]]; then
-            echo "Native MLS artifact test evidence is incomplete or non-Passed: expected=$native_expected_tests discovered=$native_tests passed=$native_passed_tests" >&2
+          # These app-host tests load the linked native CatbirdMLS library and
+          # call it through the generated UniFFI bindings, so a broken or
+          # mismatched xcframework fails here.
+          native_prefixes="[\"$native_suite/\"]"
+          native_tests="$(count_cases "$native_prefixes")"
+          native_passed_tests="$(count_cases "$native_prefixes" passed)"
+          if [[ "$native_tests" -ne "$native_expected_tests" || "$native_passed_tests" -ne "$native_expected_tests" ]]; then
+            echo "Native MLS test evidence is incomplete or non-Passed: expected=$native_expected_tests discovered=$native_tests passed=$native_passed_tests" >&2
             exit 1
           fi
-          echo "Native MLS artifact test passed in the signed application host"
+          echo "Native MLS tests passed in the signed application host: $native_passed_tests"
 
       - name: Preserve simulator signing evidence
         if: always()
