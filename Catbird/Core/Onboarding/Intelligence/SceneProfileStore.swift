@@ -22,6 +22,8 @@ public final class SceneProfileStore {
   @ObservationIgnored private let coalescingDelay: Duration
   @ObservationIgnored private var queue: [DID] = []
   @ObservationIgnored private var attempted: Set<String> = []
+  /// Accounts whose lookup came back with no answers at all; they may be asked for again.
+  @ObservationIgnored private var failed: Set<String> = []
   @ObservationIgnored private var scheduledFlush: Task<Void, Never>?
 
   public init(
@@ -50,6 +52,14 @@ public final class SceneProfileStore {
   public func load(_ dids: [DID]) async {
     enqueue(dids)
     await flush()
+    // Some of these may have been sent by an earlier flush that is still in flight; wait for
+    // those too, for at most three seconds, so the caller sees every answer.
+    let keys = Set(dids.map { $0.didString() })
+    var waited = 0
+    while waited < 60, !loadingDIDs.isDisjoint(with: keys) {
+      try? await Task.sleep(for: .milliseconds(50))
+      waited += 1
+    }
   }
 
   /// Sends everything queued, in batches of at most `batchSize`.
@@ -59,7 +69,11 @@ public final class SceneProfileStore {
       queue.removeFirst(batch.count)
       let found = await hydrate(batch)
       profilesByDID.merge(found) { _, fresh in fresh }
-      loadingDIDs.subtract(batch.map { $0.didString() })
+      let batchKeys = batch.map { $0.didString() }
+      loadingDIDs.subtract(batchKeys)
+      // A batch with no answers at all is a failed lookup, not a batch of missing accounts:
+      // let those accounts be asked for again.
+      if found.isEmpty { failed.formUnion(batchKeys) }
     }
   }
 
@@ -87,7 +101,10 @@ public final class SceneProfileStore {
     var added = false
     for did in dids {
       let key = did.didString()
-      guard profilesByDID[key] == nil, attempted.insert(key).inserted else { continue }
+      guard profilesByDID[key] == nil else { continue }
+      let isNew = attempted.insert(key).inserted
+      let isRetry = failed.remove(key) != nil
+      guard isNew || isRetry, !loadingDIDs.contains(key) else { continue }
       queue.append(did)
       loadingDIDs.insert(key)
       added = true

@@ -90,6 +90,8 @@ public final class SceneOnboardingViewModel {
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "SceneOnboardingVM")
   @ObservationIgnored private var searchDebounceTask: Task<Void, Never>?
   @ObservationIgnored private var searchGeneration: UInt64 = 0
+  /// Counts lineup solves, so a slower earlier solve cannot overwrite a newer one.
+  @ObservationIgnored private var solveGeneration: UInt64 = 0
   @ObservationIgnored private var orderedPinnedDIDs: [String] = []
   @ObservationIgnored private var orderedExcludedDIDs: [String] = []
 
@@ -836,9 +838,11 @@ public final class SceneOnboardingViewModel {
   public func solveStartingLineup() async {
     let selections = currentSelectionsPayload
     guard !selections.isEmpty else { return }
+    solveGeneration &+= 1
+    let generation = solveGeneration
     isSolvingBundle = true
     errorBannerMessage = nil
-    defer { isSolvingBundle = false }
+    defer { if generation == solveGeneration { isSolvingBundle = false } }
 
     let pinnedSource = orderedPinnedDIDs.isEmpty ? pinnedDIDs.sorted() : orderedPinnedDIDs
     let excludedSource = orderedExcludedDIDs.isEmpty ? excludedDIDs.sorted() : orderedExcludedDIDs
@@ -859,6 +863,7 @@ public final class SceneOnboardingViewModel {
         seedFollowDids: seeds.isEmpty ? nil : seeds
       )
       let output = try await service.solveBundle(input: input)
+      guard generation == solveGeneration else { return }
       self.solvedBundle = output
       indexCommunities(output.harmoniousNeighbors)
 
@@ -868,6 +873,7 @@ public final class SceneOnboardingViewModel {
       async let feedsTask = service.hydrateFeeds(recommended: output.feeds)
       async let packsTask = service.hydrateStarterPacks(recommended: output.starterPacks)
       let (profiles, feeds, packs) = await (profilesTask, feedsTask, packsTask)
+      guard generation == solveGeneration else { return }
 
       let lineup = Self.assembleLineup(
         follows: output.follows,
@@ -965,11 +971,14 @@ public final class SceneOnboardingViewModel {
     excludedDIDs: Set<String>
   ) -> [BlueCatbirdOnboardingDefs.RecommendedFollow] {
     var usedDIDs = Set(follows.map { $0.did.didString() })
+    var seenDIDs = Set<String>()
     var lineup: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
     lineup.reserveCapacity(follows.count)
 
     for follow in follows {
       let did = follow.did.didString()
+      // An account returned under two scenes is listed, counted and followed once.
+      guard seenDIDs.insert(did).inserted else { continue }
       let profile = profilesByDID[did]
       if profile?.alreadyFollowing == true { continue }
       guard profile?.isBlockedOrMuted == true else {

@@ -126,6 +126,58 @@ extension OnboardingIntelligenceTests {
     #expect(kept == ["did:plc:memberc", "did:plc:membera", "did:plc:memberb"])
   }
 
+  @Test("Profile store asks again for accounts whose lookup failed outright")
+  @MainActor
+  func profileStoreRetriesFailedLookups() async throws {
+    actor Flaky {
+      var calls = 0
+      func answer(_ dids: [DID]) -> [String: HydratedRecommendedProfile] {
+        calls += 1
+        guard calls > 1 else { return [:] }
+        var out: [String: HydratedRecommendedProfile] = [:]
+        for did in dids {
+          let key = did.didString()
+          out[key] = HydratedRecommendedProfile(did: key, handle: "member.example", displayName: "Member", bio: "")
+        }
+        return out
+      }
+    }
+    let flaky = Flaky()
+    let store = SceneProfileStore { dids in await flaky.answer(dids) }
+    let member = try DID(didString: "did:plc:flakymember1")
+    await store.load([member])
+    #expect(store.profilesByDID.isEmpty)
+    await store.load([member])
+    #expect(store.profilesByDID["did:plc:flakymember1"] != nil)
+    #expect(await flaky.calls == 2)
+  }
+
+  @Test("An account swapped out of the lineup is not offered again in the scene sheet")
+  func peekSectionsLeaveOutSwappedAccounts() throws {
+    let members = try Self.sceneMemberDIDs(8).map { did in
+      BlueCatbirdIntelDefs.CommunityMemberRef(
+        did: try DID(didString: did),
+        role: "community_member",
+        recommendedMode: "follow_all",
+        whyPicked: "Posts often",
+        rankScoreBps: 5000,
+        repostShareBps: 1000,
+        mediaShareBps: 2000,
+        estimatedPostsPerWeek: 5
+      )
+    }
+    let swapped = Self.sceneMemberDIDs(8)[1]
+    let sections = SceneOnboardingViewModel.splitPeekMembers(
+      members,
+      lineupCount: 6,
+      profilesByDID: [:],
+      excludedDIDs: [swapped]
+    )
+    #expect(sections.lineup.count == 6)
+    #expect(sections.more.count == 1)
+    #expect(!(sections.lineup + sections.more).contains { $0.did.didString() == swapped })
+  }
+
   // MARK: - Scene Sheet Sections
 
   @Test("Opening a scene looks up its first 25 members in one batch")

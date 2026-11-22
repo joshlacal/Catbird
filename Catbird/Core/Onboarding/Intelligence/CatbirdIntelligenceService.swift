@@ -502,8 +502,9 @@ enum OnboardingHydrationMapper {
   ) -> HydratedRecommendedProfile? {
     let did = profile.did.didString()
     if did == currentUserDID { return nil }
-    if hasBlockedLabels(profile.labels) { return nil }
-    let blockedOrMuted = isViewerBlockedOrMuted(profile.viewer)
+    // A hidden or blocked-label account is returned flagged, not dropped: callers treat a missing
+    // profile as "not looked up yet" and would otherwise offer and follow it.
+    let blockedOrMuted = hasBlockedLabels(profile.labels) || isViewerBlockedOrMuted(profile.viewer)
     let display = (profile.displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     let bio = (profile.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return HydratedRecommendedProfile(
@@ -1003,7 +1004,9 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     var map: [String: HydratedRecommendedProfile] = [:]
     for did in uniqueDIDs {
       let key = did.didString()
-      if let prof = await cache.cachedProfile(for: key), !prof.isBlockedOrMuted {
+      // Blocked and muted accounts stay in the result with their flag set, so every caller can
+      // tell them apart from accounts that were not found and leave them out.
+      if let prof = await cache.cachedProfile(for: key) {
         map[key] = prof
       }
     }

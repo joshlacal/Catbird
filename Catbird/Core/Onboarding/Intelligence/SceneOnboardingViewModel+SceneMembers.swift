@@ -69,7 +69,8 @@ extension SceneOnboardingViewModel {
     return Self.splitPeekMembers(
       peek.members,
       lineupCount: lineupCount,
-      profilesByDID: sceneProfiles.profilesByDID
+      profilesByDID: sceneProfiles.profilesByDID,
+      excludedDIDs: excludedDIDs
     )
   }
 
@@ -81,10 +82,14 @@ extension SceneOnboardingViewModel {
   nonisolated public static func splitPeekMembers(
     _ members: [BlueCatbirdIntelDefs.CommunityMemberRef],
     lineupCount: Int?,
-    profilesByDID: [String: HydratedRecommendedProfile]
+    profilesByDID: [String: HydratedRecommendedProfile],
+    excludedDIDs: Set<String> = []
   ) -> PeekMemberSections {
     let offered = members.filter { member in
-      guard let profile = profilesByDID[member.did.didString()] else { return true }
+      let did = member.did.didString()
+      // An account the viewer swapped out of the lineup is not offered again.
+      if excludedDIDs.contains(did) { return false }
+      guard let profile = profilesByDID[did] else { return true }
       return !profile.alreadyFollowing && !profile.isBlockedOrMuted
     }
     guard let lineupCount else {
