@@ -7,15 +7,15 @@
     },
     "PetrelCatbird": {
       "repository": "joshlacal/PetrelCatbird",
-      "revision": "7bfa54bcdcc56fad4f3e245e6772a8e2ca7cae1d"
+      "revision": "ac51194baf1442b9f4428cfbf4ce35ead7086e57"
     },
     "CatbirdMLSCore": {
       "repository": "joshlacal/CatbirdMLSCore",
-      "revision": "67049e4dc2785657e81c151a3cd0eb2f011f1565"
+      "revision": "0cf2092043e77c0cc8c5905dc66b7b38b9e727da"
     }
   },
   "nativeArtifact": {
-    "url": "https://github.com/joshlacal/CatbirdMLSCore/releases/download/v1.5.22/CatbirdMLSFFI.xcframework.zip",
-    "checksum": "83b331d69726aa4195b4a31e4b4c5fe44a989447f9b24229d3e3724027bb882c"
+    "url": "https://github.com/joshlacal/CatbirdMLSCore/releases/download/v1.5.23/CatbirdMLSFFI.xcframework.zip",
+    "checksum": "5c1c25e136688f46888f8b6383246064c8171efc0ac617a36b7042ee4c17221e"
   }
 }
