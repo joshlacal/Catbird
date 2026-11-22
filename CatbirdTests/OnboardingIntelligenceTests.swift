@@ -26,15 +26,16 @@ struct OnboardingIntelligenceTests {
     )
   }
 
-  private static func makeCommunity(
+  static func makeCommunity(
     id: Int,
     title: String,
     sceneSlug: String = "swift_apple",
     category: String = "software_ai_tech",
-    alreadyFollowingCount: Int? = nil
+    alreadyFollowingCount: Int? = nil,
+    sampleAccountDids: [String]? = nil
   ) throws -> BlueCatbirdIntelDefs.CommunitySummary {
     let postURI = try ATProtocolURI(uriString: "at://did:plc:synthauthor\(id)/app.bsky.feed.post/3lsynth\(id)")
-    let did = try DID(didString: "did:plc:synthauthor\(id)")
+    let sampleDIDs = try (sampleAccountDids ?? ["did:plc:synthauthor\(id)"]).map { try DID(didString: $0) }
     return BlueCatbirdIntelDefs.CommunitySummary(
       communityId: id,
       title: title,
@@ -50,7 +51,7 @@ struct OnboardingIntelligenceTests {
       curatedListTags: ["swiftui", "indiedev"],
       neighborCommunityIds: [2421],
       samplePostUris: [postURI],
-      sampleAccountDids: [did],
+      sampleAccountDids: sampleDIDs,
       feedGeneratorUris: [],
       starterPackUris: [],
       alreadyFollowingCount: alreadyFollowingCount
@@ -58,7 +59,7 @@ struct OnboardingIntelligenceTests {
   }
 
   @MainActor
-  private final class MockIntelligenceService: @unchecked Sendable, CatbirdIntelligenceServicing {
+  final class MockIntelligenceService: @unchecked Sendable, CatbirdIntelligenceServicing {
     var shouldThrowUnavailable = false
     /// Answers like a live server that personalizes communities for the viewer.
     var liveMode = false
@@ -79,6 +80,12 @@ struct OnboardingIntelligenceTests {
     var committedFollows: [String] = []
     var committedOriginalsOnly: Set<String> = []
     var committedPinnedFeeds: [String] = []
+    /// The ordered members getCommunity returns, with their tiers; empty returns one member.
+    var peekMembers: [(did: String, tier: String?)] = []
+    /// The sample accounts getCommunity puts on the community it returns; nil keeps the default.
+    var peekSampleAccountDids: [String]?
+    /// Every hydrateProfiles call, in order, as the DIDs it asked for.
+    var hydrateCalls: [[String]] = []
 
     func fetchSeedFollowDIDs(limit: Int) async -> [String] {
       seedFollows
@@ -156,14 +163,14 @@ struct OnboardingIntelligenceTests {
       let comm = try OnboardingIntelligenceTests.makeCommunity(
         id: communityId,
         title: "iOS & SwiftUI Builders",
-        alreadyFollowingCount: liveMode ? 2 : nil
+        alreadyFollowingCount: liveMode ? 2 : nil,
+        sampleAccountDids: peekSampleAccountDids
       )
       let memberDID = try DID(didString: "did:plc:synthmember1")
       let postURI = try ATProtocolURI(uriString: "at://did:plc:synthmember1/app.bsky.feed.post/3lpeek1")
-      return BlueCatbirdIntelGetCommunity.Output(
-        catalogVersion: "s17_rev6_synth",
-        community: comm,
-        members: [
+      let members: [BlueCatbirdIntelDefs.CommunityMemberRef]
+      if peekMembers.isEmpty {
+        members = [
           BlueCatbirdIntelDefs.CommunityMemberRef(
             did: memberDID,
             role: "anchor_creator",
@@ -175,7 +182,26 @@ struct OnboardingIntelligenceTests {
             estimatedPostsPerWeek: 10,
             samplePostUri: postURI
           )
-        ],
+        ]
+      } else {
+        members = try peekMembers.map { member in
+          BlueCatbirdIntelDefs.CommunityMemberRef(
+            did: try DID(didString: member.did),
+            role: "community_member",
+            recommendedMode: "follow_all",
+            whyPicked: "Posts often in iOS & SwiftUI Builders",
+            rankScoreBps: 5000,
+            repostShareBps: 1000,
+            mediaShareBps: 2000,
+            estimatedPostsPerWeek: 5,
+            tier: member.tier
+          )
+        }
+      }
+      return BlueCatbirdIntelGetCommunity.Output(
+        catalogVersion: "s17_rev6_synth",
+        community: comm,
+        members: members,
         samplePosts: [
           BlueCatbirdIntelDefs.PostSkeletonItem(
             post: postURI,
@@ -347,6 +373,7 @@ struct OnboardingIntelligenceTests {
     }
 
     func hydrateProfiles(dids: [DID]) async -> [String: HydratedRecommendedProfile] {
+      hydrateCalls.append(dids.map { $0.didString() })
       var out: [String: HydratedRecommendedProfile] = [:]
       for did in dids {
         let key = did.didString()
