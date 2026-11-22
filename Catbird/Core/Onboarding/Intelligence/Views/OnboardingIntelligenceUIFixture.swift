@@ -28,6 +28,11 @@ struct OnboardingIntelligenceUIFixture: View {
     return URL(string: raw) ?? URL(string: "http://127.0.0.1:3210")!
   }
 
+  /// Viewer DID a development intel server should sign requests as (`x-debug-viewer-did`).
+  private var debugViewerDIDArg: String? {
+    argumentValue(prefix: "--intel-debug-viewer-did=").flatMap { $0.hasPrefix("did:") ? $0 : nil }
+  }
+
   private var initialBeatArg: String {
     argumentValue(prefix: "--intel-initial-beat=") ?? "explorer"
   }
@@ -140,6 +145,7 @@ struct OnboardingIntelligenceUIFixture: View {
 
       let showcaseService = LoopbackShowcaseIntelligenceService(
         intelOrigin: intelOriginURL,
+        debugViewerDID: debugViewerDIDArg,
         publicAppViewClient: publicAppViewClient,
         appState: state
       )
