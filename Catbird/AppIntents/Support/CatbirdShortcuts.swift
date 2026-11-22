@@ -20,7 +20,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Write a \(.applicationName) post",
         "Create a post in \(.applicationName)",
       ],
-      shortTitle: "Create Post",
+      shortTitle: LocalizedStringResource(
+        "Create Post",
+        comment: "Short tile title for the Create Post App Shortcut."
+      ),
       systemImageName: "square.and.pencil"
     )
     AppShortcut(
@@ -31,7 +34,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Get my \(.applicationName) feed",
         "What's new on \(.applicationName)",
       ],
-      shortTitle: "Timeline",
+      shortTitle: LocalizedStringResource(
+        "Timeline",
+        comment: "Short tile title for the Open Timeline App Shortcut."
+      ),
       systemImageName: "list.bullet.rectangle"
     )
     AppShortcut(
@@ -40,7 +46,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Search \(.applicationName) posts",
         "Search posts on \(.applicationName)",
       ],
-      shortTitle: "Search Posts",
+      shortTitle: LocalizedStringResource(
+        "Search Posts",
+        comment: "Short tile title for the Search Posts App Shortcut."
+      ),
       systemImageName: "magnifyingglass"
     )
     AppShortcut(
@@ -49,7 +58,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Search \(.applicationName) profiles",
         "Find someone on \(.applicationName)",
       ],
-      shortTitle: "Search Profiles",
+      shortTitle: LocalizedStringResource(
+        "Search Profiles",
+        comment: "Short tile title for the Search Profiles App Shortcut."
+      ),
       systemImageName: "person.crop.circle.badge.magnifyingglass"
     )
     AppShortcut(
@@ -58,7 +70,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "How many unread \(.applicationName) notifications",
         "Check my \(.applicationName) notifications",
       ],
-      shortTitle: "Unread Notifications",
+      shortTitle: LocalizedStringResource(
+        "Unread Notifications",
+        comment: "Short tile title for the Unread Notification Count App Shortcut."
+      ),
       systemImageName: "bell.badge"
     )
     AppShortcut(
@@ -68,7 +83,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Send a direct message on \(.applicationName)",
         "DM someone on \(.applicationName)",
       ],
-      shortTitle: "Send Message",
+      shortTitle: LocalizedStringResource(
+        "Send Message",
+        comment: "Short tile title for the Send Direct Message App Shortcut."
+      ),
       systemImageName: "paperplane"
     )
     AppShortcut(
@@ -77,7 +95,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Check my \(.applicationName) messages",
         "How many unread \(.applicationName) messages",
       ],
-      shortTitle: "Unread Messages",
+      shortTitle: LocalizedStringResource(
+        "Unread Messages",
+        comment: "Short tile title for the Unread Message Count App Shortcut."
+      ),
       systemImageName: "bubble.left.and.bubble.right"
     )
     AppShortcut(
@@ -87,7 +108,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Block this person on \(.applicationName)",
         "Block this account on \(.applicationName)",
       ],
-      shortTitle: "Block Profile",
+      shortTitle: LocalizedStringResource(
+        "Block Profile",
+        comment: "Short tile title for the Block Profile App Shortcut."
+      ),
       systemImageName: "hand.raised"
     )
     AppShortcut(
@@ -97,7 +121,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Like this \(.applicationName) post",
         "Like a post on \(.applicationName)",
       ],
-      shortTitle: "Like Post",
+      shortTitle: LocalizedStringResource(
+        "Like Post",
+        comment: "Short tile title for the Like Post App Shortcut."
+      ),
       systemImageName: "heart"
     )
     AppShortcut(
@@ -107,7 +134,10 @@ struct CatbirdShortcuts: AppShortcutsProvider {
         "Repost this \(.applicationName) post",
         "Repost a post on \(.applicationName)",
       ],
-      shortTitle: "Repost",
+      shortTitle: LocalizedStringResource(
+        "Repost",
+        comment: "Short tile title (verb) for the Repost App Shortcut."
+      ),
       systemImageName: "arrow.2.squarepath"
     )
   }

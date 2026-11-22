@@ -8,19 +8,24 @@ import SwiftUI
 public enum MemberCountFormatter {
   private static let lock = NSLock()
   /// Safety invariant: Synchronized access is protected by `lock`.
-  nonisolated(unsafe) private static var cache: [Int: String] = [:]
+  nonisolated(unsafe) private static var cache: [String: String] = [:]
 
-  public static func format(count: Int) -> String {
+  public static func format(count: Int, locale: Locale = .current) -> String {
+    let key = "\(locale.identifier)|\(count)"
     lock.lock()
-    if let cached = cache[count] {
+    if let cached = cache[key] {
       lock.unlock()
       return cached
     }
     lock.unlock()
 
-    let formatted = String(AttributedString(localized: "^[\(count) member](inflect: true)").characters)
+    let formatted = String(
+      localized: "\(count) members",
+      locale: locale,
+      comment: "Number of members on a user list — %1$lld is the member count."
+    )
     lock.lock()
-    cache[count] = formatted
+    cache[key] = formatted
     lock.unlock()
     return formatted
   }
@@ -80,13 +85,13 @@ extension AppBskyGraphDefs.ListPurpose {
   var shortLabel: String {
     switch self {
     case .appbskygraphdefscuratelist:
-      return String(localized: "Curated")
+      return String(localized: "Curated", comment: "Short badge label for a curated people list.")
     case .appbskygraphdefsmodlist:
-      return String(localized: "Moderation")
+      return String(localized: "Moderation", comment: "Short badge label for a moderation list used to mute or block accounts.")
     case .appbskygraphdefsreferencelist:
-      return String(localized: "Reference")
+      return String(localized: "Reference", comment: "Short badge label for a starter-pack reference list.")
     default:
-      return String(localized: "List")
+      return String(localized: "List", comment: "Generic short badge label for a user list.")
     }
   }
 
@@ -94,13 +99,13 @@ extension AppBskyGraphDefs.ListPurpose {
   var listKindLabel: String {
     switch self {
     case .appbskygraphdefscuratelist:
-      return String(localized: "Curated list")
+      return String(localized: "Curated list", comment: "Row subtitle label for a curated people list.")
     case .appbskygraphdefsmodlist:
-      return String(localized: "Moderation list")
+      return String(localized: "Moderation list", comment: "Row subtitle label for a moderation list used to mute or block accounts.")
     case .appbskygraphdefsreferencelist:
-      return String(localized: "Starter pack list")
+      return String(localized: "Starter pack list", comment: "Row subtitle label for a starter pack reference list.")
     default:
-      return String(localized: "List")
+      return String(localized: "List", comment: "Generic row subtitle label for a user list.")
     }
   }
 }
@@ -175,6 +180,7 @@ struct ListSummaryRow: View {
   /// Shows "by @handle" in the subtitle, for lists that aren't the viewer's own.
   var showsCreator: Bool = false
   var showsDisclosureIndicator: Bool = true
+  @Environment(\.locale) private var locale
 
   var body: some View {
     HStack(alignment: .center, spacing: 12) {
@@ -204,7 +210,7 @@ struct ListSummaryRow: View {
       Spacer(minLength: 8)
 
       if showsDisclosureIndicator {
-        Image(systemName: "chevron.right")
+        Image(systemName: "chevron.forward")
           .font(.footnote.weight(.semibold))
           .foregroundStyle(.tertiary)
           .accessibilityHidden(true)
@@ -217,10 +223,14 @@ struct ListSummaryRow: View {
 
   private var subtitle: String {
     let count = list.listItemCount ?? 0
-    let members = MemberCountFormatter.format(count: count)
+    let members = MemberCountFormatter.format(count: count, locale: locale)
     var parts = [list.purpose.listKindLabel, members]
     if showsCreator {
-      parts.append(String(localized: "by @\(list.creator.handle.description)"))
+      parts.append(String(
+        localized: "by @\(list.creator.handle.description)",
+        locale: locale,
+        comment: "List creator attribution in list summary subtitle — %1$@ is the creator's handle (without @)."
+      ))
     }
     return parts.joined(separator: " · ")
   }

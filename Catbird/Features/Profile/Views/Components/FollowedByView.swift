@@ -11,6 +11,7 @@ struct FollowedByView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var currentColorScheme
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.locale) private var locale
     @Binding var path: NavigationPath
     
     private let maxAvatarsToShow = 3
@@ -62,7 +63,7 @@ struct FollowedByView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Shows followers you know")
+            .accessibilityHint(Text("Shows followers you know", comment: "Accessibility hint for the mutual followers summary row on a profile."))
         }
     }
     
@@ -72,17 +73,46 @@ struct FollowedByView: View {
 
         switch total {
         case 1:
-            return "Followed by \(names.first ?? "someone you follow")"
+            if let first = names.first {
+                return String(
+                    localized: "Followed by \(first)",
+                    locale: locale,
+                    comment: "Profile mutual followers summary for 1 person — %1$@ is the follower's display name or @handle."
+                )
+            }
+            return String(
+                localized: "Followed by someone you follow",
+                locale: locale,
+                comment: "Profile mutual followers summary when followed by 1 person you follow whose name is unavailable."
+            )
         case 2 where names.count == 2:
-            return "Followed by \(names[0]) and \(names[1])"
+            return String(
+                localized: "Followed by \(names[0]) and \(names[1])",
+                locale: locale,
+                comment: "Profile mutual followers summary for 2 people — %1$@ is the first follower's name, %2$@ is the second follower's name."
+            )
         default:
             if names.count == 2 {
                 let others = total - 2
-                return "Followed by \(names[0]), \(names[1]) and \(others.formatted()) other\(others == 1 ? "" : "s") you follow"
+                return String(
+                    localized: "Followed by \(names[0]), \(names[1]) and \(others) others you follow",
+                    locale: locale,
+                    comment: "Profile mutual followers summary — %1$@ is the first follower's name, %2$@ is the second follower's name, %3$lld is the count of additional mutual followers."
+                )
             }
             let others = max(0, total - names.count)
-            let first = names.first ?? "someone"
-            return "Followed by \(first) and \(others.formatted()) other\(others == 1 ? "" : "s") you follow"
+            if let first = names.first {
+                return String(
+                    localized: "Followed by \(first) and \(others) others you follow",
+                    locale: locale,
+                    comment: "Profile mutual followers summary — %1$@ is the first follower's name, %2$lld is the count of additional mutual followers."
+                )
+            }
+            return String(
+                localized: "Followed by \(others) people you follow",
+                locale: locale,
+                comment: "Profile mutual followers summary when names are unavailable — %1$lld is the count of mutual followers."
+            )
         }
     }
 

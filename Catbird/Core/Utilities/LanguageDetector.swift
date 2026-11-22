@@ -78,8 +78,7 @@ class LanguageDetector {
     }
     
     /// Get display name for a language code
-    static func displayName(for languageCode: String) -> String {
-        let locale = Locale.current
+    static func displayName(for languageCode: String, in locale: Locale = .current) -> String {
         if let name = locale.localizedString(forLanguageCode: languageCode) {
             return name
         }

@@ -50,7 +50,7 @@ class LinkEditableTextView: UITextView {
         logger.debug("📝 buildMenu: Adding Create Link action for selected text: '\(self.selectedText)'")
         
         let createLinkAction = UIAction(
-            title: "Create Link",
+            title: String(localized: "Create Link", comment: "Edit menu action to turn selected text into a link"),
             image: UIImage(systemName: "link"),
             identifier: UIAction.Identifier("createLink")
         ) { [weak self] _ in
@@ -697,7 +697,9 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
         ])
       }
 
-      // Keep font in sync with current typing attributes
+      // Keep font and text in sync with current attributes
+      placeholderLabel?.text = placeholder
+      textView.accessibilityLabel = placeholder
       if let currentTypingFont = (textView.typingAttributes[.font] as? UIFont) ?? textView.font {
         placeholderLabel?.font = currentTypingFont
       }
@@ -848,6 +850,7 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 16))
                 .frame(width: 30, height: 30)
             }
+            .accessibilityLabel("Add Photos")
             .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
@@ -858,6 +861,7 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 16))
                 .frame(width: 30, height: 30)
             }
+            .accessibilityLabel("Add Video")
             .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
@@ -865,7 +869,7 @@ struct KeyboardToolbarView: View {
 
             if allowTenor {
               Button(action: { onGif?() }) {
-                Text("GIF")
+                Text("GIF", comment: "Button label for attaching an animated GIF")
                   .font(.system(size: 11, weight: .semibold, design: .monospaced))
                   .frame(width: 30, height: 18)
                   .overlay(
@@ -873,6 +877,7 @@ struct KeyboardToolbarView: View {
                         .stroke(Color.accentColor, lineWidth: 1.0)
                   )
               }
+              .accessibilityLabel("Add GIF")
               .padding(4)
               .glassEffect(.regular.interactive())
               .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
@@ -885,6 +890,7 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 16))
                 .frame(width: 30, height: 30)
             }
+            .accessibilityLabel("Record Audio")
             .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
@@ -914,6 +920,7 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 16))
                 .frame(width: 30, height: 30)
             }
+            .accessibilityLabel("Post Settings")
             .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
@@ -923,6 +930,7 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 16))
                 .frame(width: 30, height: 30)
             }
+            .accessibilityLabel("Add Post to Thread")
             .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
@@ -933,6 +941,7 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 16))
                 .frame(width: 30, height: 30)
             }
+            .accessibilityLabel("Insert Link")
             .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
@@ -955,6 +964,7 @@ struct KeyboardToolbarView: View {
               .foregroundStyle(Color.accentColor)
               .frame(width: 30, height: 30)
           }
+          .accessibilityLabel("Add Photos")
 
           Button(action: { onVideo?() }) {
             Image(systemName: "video")
@@ -962,10 +972,11 @@ struct KeyboardToolbarView: View {
               .foregroundStyle(Color.accentColor)
               .frame(width: 30, height: 30)
           }
+          .accessibilityLabel("Add Video")
 
           if allowTenor {
             Button(action: { onGif?() }) {
-              Text("GIF")
+              Text("GIF", comment: "Button label for attaching an animated GIF")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 30, height: 30)
@@ -974,6 +985,7 @@ struct KeyboardToolbarView: View {
                     .stroke(Color.primary.opacity(0.2), lineWidth: 0.5)
                 )
             }
+            .accessibilityLabel("Add GIF")
           }
 
           Button(action: { onAudio?() }) {
@@ -982,6 +994,7 @@ struct KeyboardToolbarView: View {
               .foregroundStyle(Color.accentColor)
               .frame(width: 30, height: 30)
           }
+          .accessibilityLabel("Record Audio")
         }
 
         Spacer()
@@ -1006,6 +1019,7 @@ struct KeyboardToolbarView: View {
               .foregroundStyle(Color.accentColor)
               .frame(width: 30, height: 30)
           }
+          .accessibilityLabel("Post Settings")
 
           Button(action: { onThread?() }) {
             Image(systemName: "plus")
@@ -1013,6 +1027,7 @@ struct KeyboardToolbarView: View {
               .foregroundStyle(Color.accentColor)
               .frame(width: 30, height: 30)
           }
+          .accessibilityLabel("Add Post to Thread")
 
           Button(action: { onLink?() }) {
             Image(systemName: "link")
@@ -1020,6 +1035,7 @@ struct KeyboardToolbarView: View {
               .foregroundStyle(Color.accentColor)
               .frame(width: 30, height: 30)
           }
+          .accessibilityLabel("Insert Link")
         }
       }
       .padding(.horizontal, 12)

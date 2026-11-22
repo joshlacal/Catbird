@@ -1,0 +1,287 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%@" : {
+      "shouldTranslate" : false
+    },
+    "%@: %@" : {
+      "comment" : "Compact lock-screen post row: first placeholder is the author's name, second is the post text.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$@"
+          }
+        }
+      }
+    },
+    "%lld accounts" : {
+      "comment" : "Pluralized count of signed-in Bluesky accounts.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld account"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld accounts"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld posts" : {
+      "comment" : "Post count subtitle in the extra-large Catbird Feed widget header.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld post"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld posts"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld saved feeds" : {
+      "comment" : "Pluralized count of saved Bluesky custom feeds.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld saved feed"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld saved feeds"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Account" : {
+      "comment" : "Widget configuration entity type name for a signed-in Bluesky account.\nWidget configuration parameter for selecting which Bluesky account composes the post.\nWidget configuration parameter for selecting which signed-in Bluesky account to display."
+    },
+    "Balanced layout" : {
+      "comment" : "Subtitle describing the Comfortable widget layout option."
+    },
+    "Breaking: New framework announced at developer conference. This changes everything for mobile development!" : {
+      "comment" : "Sample post text shown in the iOS Widget Gallery preview."
+    },
+    "Catbird Feed" : {
+      "comment" : "Widget gallery display name for the Catbird Feed widget."
+    },
+    "Choose from your pinned feeds" : {
+      "comment" : "Subtitle describing the Pinned Feed widget option."
+    },
+    "Choose from your saved feeds" : {
+      "comment" : "Subtitle describing the Saved Feed widget option."
+    },
+    "Choose how posts are displayed" : {
+      "comment" : "Description for the Layout Style widget configuration parameter."
+    },
+    "Choose what type of content to display" : {
+      "comment" : "Description for the Feed Type widget configuration parameter."
+    },
+    "Choose which pinned or saved feed to display" : {
+      "comment" : "Description for the Feed widget configuration parameter."
+    },
+    "Code Mentor" : {
+      "comment" : "Sample reposter name shown in the iOS Widget Gallery preview."
+    },
+    "Comfortable" : {
+      "comment" : "Widget layout density option with balanced spacing."
+    },
+    "Compact" : {
+      "comment" : "Widget layout density option showing more posts with tighter spacing."
+    },
+    "Compose Widget" : {
+      "comment" : "Title for the Quick Compose widget configuration intent."
+    },
+    "Compose from ${account}" : {},
+    "Configure your Catbird feed widget to show the content you want to see." : {
+      "comment" : "Description for the Catbird Feed widget configuration intent."
+    },
+    "Designer" : {
+      "comment" : "Sample author name shown in the iOS Widget Gallery preview."
+    },
+    "Dev" : {
+      "comment" : "Sample author name shown in the lock-screen widget gallery preview."
+    },
+    "Developer" : {
+      "comment" : "Sample author name shown in the iOS Widget Gallery preview."
+    },
+    "Display like, repost, and reply counts" : {
+      "comment" : "Description for the Show Engagement Stats widget configuration parameter."
+    },
+    "Display when posts were created" : {
+      "comment" : "Description for the Show Timestamps widget configuration parameter."
+    },
+    "Feed" : {
+      "comment" : "Widget configuration parameter for selecting a specific pinned or saved feed."
+    },
+    "Feed Type" : {
+      "comment" : "Widget configuration option label for choosing the feed source type.\nWidget configuration parameter for selecting Timeline, Pinned Feed, or Saved Feed."
+    },
+    "Just released v2.0 of our popular library. Major performance improvements and new API surface." : {
+      "comment" : "Sample post text shown in the iOS Widget Gallery preview."
+    },
+    "Just shipped a major update to my app! Really excited about the new features we've added." : {
+      "comment" : "Sample post text shown in the iOS Widget Gallery preview."
+    },
+    "Just shipped a major update!" : {
+      "comment" : "Sample post text shown in the lock-screen widget gallery preview."
+    },
+    "Larger posts, more spacing" : {
+      "comment" : "Subtitle describing the Spacious widget layout option."
+    },
+    "Latest Posts" : {
+      "comment" : "Header label inside the lock-screen Latest Posts widget.\nWidget gallery display name for the lock-screen Latest Posts widget."
+    },
+    "Layout Style" : {
+      "comment" : "Widget configuration option label for choosing post spacing density.\nWidget configuration parameter for post density."
+    },
+    "More posts, less spacing" : {
+      "comment" : "Subtitle describing the Compact widget layout option."
+    },
+    "New design system components are looking great. Consistency is key to a polished user experience." : {
+      "comment" : "Sample post text shown in the iOS Widget Gallery preview."
+    },
+    "New framework looks promising." : {
+      "comment" : "Sample post text shown in the lock-screen widget gallery preview."
+    },
+    "No Feed Chosen" : {
+      "comment" : "Empty-state title in the Catbird Feed widget when a pinned or saved feed has not been selected."
+    },
+    "No Posts Yet" : {
+      "comment" : "Empty-state title in the Catbird Feed widget when no cached posts are available yet."
+    },
+    "Not Signed In" : {
+      "comment" : "Empty-state title in the Catbird Feed widget when no Bluesky account is signed in."
+    },
+    "Number of posts to display (1-10)" : {
+      "comment" : "Description for the Post Count widget configuration parameter."
+    },
+    "Open Catbird to load posts" : {
+      "comment" : "Empty-state prompt in the lock-screen widget when signed in with no cached posts."
+    },
+    "Open Catbird to load your Following feed." : {
+      "comment" : "Empty-state instructions in the Catbird Feed widget when the Following feed has not been loaded yet."
+    },
+    "Open Catbird to sign in" : {
+      "comment" : "Empty-state prompt in the lock-screen widget when no Bluesky account is signed in.\nPrompt in the Quick Compose widget when no Bluesky account is signed in."
+    },
+    "Open Catbird to sign in." : {
+      "comment" : "Empty-state prompt in the Catbird Feed widget when no Bluesky account is signed in."
+    },
+    "Open Source" : {
+      "comment" : "Sample author name shown in the iOS Widget Gallery preview."
+    },
+    "Open this feed in Catbird to show it here." : {
+      "comment" : "Empty-state instructions in the Catbird Feed widget when a custom feed has not been loaded in the app yet."
+    },
+    "Pinned Feed" : {
+      "comment" : "Fallback header title for a pinned feed in the Catbird Feed widget.\nFallback name for a pinned Bluesky feed in widget configuration.\nWidget feed type option for choosing a pinned custom feed."
+    },
+    "Post Count" : {
+      "comment" : "Widget configuration parameter for the number of posts to display."
+    },
+    "Posts from people you follow" : {
+      "comment" : "Subtitle describing the Timeline widget feed option."
+    },
+    "Pro tip: Always test your widgets on different device sizes. You'd be surprised how different they can look!" : {
+      "comment" : "Sample post text shown in the iOS Widget Gallery preview."
+    },
+    "Quick Compose" : {
+      "comment" : "Widget gallery display name for the Quick Compose widget."
+    },
+    "Quick compose a new post." : {
+      "comment" : "Description for the Quick Compose widget configuration intent."
+    },
+    "Quickly compose a new post on Bluesky." : {
+      "comment" : "Widget gallery description for the Quick Compose widget."
+    },
+    "Reposted by %@" : {
+      "comment" : "Indicates who reposted a post in the feed widget; placeholder is the reposter's display name."
+    },
+    "Saved Feed" : {
+      "comment" : "Fallback header title for a saved feed in the Catbird Feed widget.\nFallback name for a saved Bluesky feed in widget configuration.\nWidget configuration entity type name for a saved or pinned Bluesky custom feed.\nWidget feed type option for choosing a saved custom feed."
+    },
+    "See recent posts from your Following feed or a pinned or saved feed." : {
+      "comment" : "Widget gallery description for the Catbird Feed widget."
+    },
+    "See the latest posts from your Following feed." : {
+      "comment" : "Widget gallery description for the lock-screen Latest Posts widget."
+    },
+    "Show ${feedType}" : {},
+    "Show ${selectedFeed} from ${feedType}" : {},
+    "Show Avatars" : {
+      "comment" : "Widget configuration toggle for displaying author avatars."
+    },
+    "Show Engagement Stats" : {
+      "comment" : "Widget configuration toggle for displaying like, repost, and reply counts."
+    },
+    "Show Timestamps" : {
+      "comment" : "Widget configuration toggle for displaying post creation times."
+    },
+    "Show an avatar beside each post" : {
+      "comment" : "Description for the Show Avatars widget configuration parameter."
+    },
+    "Spacious" : {
+      "comment" : "Widget layout density option showing larger posts with more spacing."
+    },
+    "Tech News" : {
+      "comment" : "Sample author name shown in the iOS Widget Gallery preview."
+    },
+    "Timeline" : {
+      "comment" : "Header title for the Following timeline in the Catbird Feed widget.\nWidget feed type option for the home Following timeline."
+    },
+    "Touch and hold this widget, then choose Edit Widget to pick a feed." : {
+      "comment" : "Empty-state instructions in the Catbird Feed widget explaining how to configure a feed."
+    },
+    "What’s on your mind?" : {
+      "comment" : "Compose prompt in the Quick Compose home-screen widget."
+    },
+    "Which account to compose from" : {
+      "comment" : "Description for the Account parameter of the Quick Compose widget."
+    },
+    "Which account to show" : {
+      "comment" : "Description for the Account widget configuration parameter."
+    },
+    "Which feed type?" : {
+      "comment" : "Disambiguation prompt asking which widget feed type to display."
+    },
+    "Which layout style?" : {
+      "comment" : "Disambiguation prompt asking which widget layout style to use."
+    },
+    "Widget Configuration" : {
+      "comment" : "Title for the Catbird Feed widget configuration intent."
+    }
+  },
+  "version" : "1.0"
+}

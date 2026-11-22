@@ -218,7 +218,9 @@ struct UnifiedProfileView: View {
   private func performUnblock() async {
     guard await performBlockMutation(blocking: false) else {
       appState.toastManager.show(ToastItem(
-        message: "Couldn’t unblock this account. Try again.", icon: "exclamationmark.triangle.fill"))
+        message: String(localized: "Couldn’t unblock this account. Try again.", comment: "Toast shown when unblocking an account fails."),
+        icon: "exclamationmark.triangle.fill"
+      ))
       return
     }
   }
@@ -330,7 +332,10 @@ struct UnifiedProfileView: View {
       } catch {
         logger.error("Failed to verify block state before confirmation: \(error.localizedDescription)")
         appState.toastManager.show(
-          ToastItem(message: "Couldn’t check whether this account is blocked. Try again.", icon: "exclamationmark.triangle.fill")
+          ToastItem(
+            message: String(localized: "Couldn’t check whether this account is blocked. Try again.", comment: "Toast shown when checking an account's block state fails."),
+            icon: "exclamationmark.triangle.fill"
+          )
         )
       }
     }
@@ -554,7 +559,10 @@ struct UnifiedProfileView: View {
         isMuting = !isMuting
         logger.error("Failed to toggle mute: \(error.localizedDescription)")
         appState.toastManager.show(
-          ToastItem(message: "Couldn’t update mute settings. Try again.", icon: "exclamationmark.triangle.fill")
+          ToastItem(
+            message: String(localized: "Couldn’t update mute settings. Try again.", comment: "Toast shown when muting or unmuting an account fails."),
+            icon: "exclamationmark.triangle.fill"
+          )
         )
       }
     }
@@ -599,7 +607,7 @@ struct UnifiedProfileView: View {
           } else if let error = viewModel.error {
               ErrorStateView(
                 error: error,
-                context: "Failed to load profile",
+                context: String(localized: "Failed to load profile", comment: "Error context shown when loading a user profile fails."),
                 retryAction: { Task { await viewModel.loadProfile() } }
               )
           } else {
@@ -795,7 +803,10 @@ struct UnifiedProfileView: View {
               profile.labels ?? [], subjectDID: profile.did.didString(),
               subscribedIssuers: Set(((try? appState.preferencesManager.getLocalPreferences())?.labelers.map { $0.did.didString() } ?? []) + [ReportingService.officialBlueskyDID])
             ),
-            targetDescription: "Account @\(profile.handle.description)",
+            targetDescription: String(
+              localized: "Account @\(profile.handle.description)",
+              comment: "Target description in the account moderation labels sheet — %1$@ is the account handle (without @)."
+            ),
             viewerDID: appState.userDID,
             reportingService: reportingService
           )
@@ -836,7 +847,18 @@ struct UnifiedProfileView: View {
         Button("Cancel", role: .cancel) { clearGermAction() }
         Button("Open Germ DM") { openGerm(handoff) }
       } message: { handoff in
-        Text("Continue to \(handoff.action.url.host() ?? "Germ") to message @\(viewModel.profile?.handle.description ?? ""). No message is sent by Catbird.")
+        let destination = handoff.action.url.host() ?? "Germ"
+        if let handle = viewModel.profile?.handle.description, !handle.isEmpty {
+          Text(
+            "Continue to \(destination) to message @\(handle). No message is sent by Catbird.",
+            comment: "Alert message confirming external Germ DM handoff — %1$@ is the destination domain or 'Germ' brand name, %2$@ is the recipient's handle (without @)."
+          )
+        } else {
+          Text(
+            "Continue to \(destination) to compose a message. No message is sent by Catbird.",
+            comment: "Alert message confirming external Germ DM handoff when recipient handle is unavailable — %1$@ is the destination domain or 'Germ' brand name."
+          )
+        }
       }
       .alert("Could Not Open Germ", isPresented: $germLaunchError) {
         Button("OK", role: .cancel) { }
@@ -858,10 +880,15 @@ struct UnifiedProfileView: View {
       }
       .alert("Mute User", isPresented: $isShowingMuteConfirmation) {
         Button("Cancel", role: .cancel) { }
-        Button("Mute", role: .destructive) { toggleMute() }
+        Button(role: .destructive) { toggleMute() } label: {
+          Text("Mute", comment: "Destructive confirmation button verb to mute a user.")
+        }
       } message: {
         if let profile = loadedProfile {
-          Text("Mute @\(profile.handle)? You won’t see their posts and replies in your feeds.")
+          Text(
+            "Mute @\(profile.handle)? You won’t see their posts and replies in your feeds.",
+            comment: "Confirmation alert message when muting a user — %1$@ is the user's handle (without @)."
+          )
         }
       }
       .confirmationDialog(
@@ -876,7 +903,10 @@ struct UnifiedProfileView: View {
             } catch {
               logger.error("Sign out failed: \(error.localizedDescription)")
               appState.toastManager.show(
-                ToastItem(message: "Couldn’t sign out. Try again.", icon: "exclamationmark.triangle.fill")
+                ToastItem(
+                  message: String(localized: "Couldn’t sign out. Try again.", comment: "Toast shown when signing out fails."),
+                  icon: "exclamationmark.triangle.fill"
+                )
               )
             }
           }
@@ -958,9 +988,12 @@ struct UnifiedProfileView: View {
 
   private var signOutConfirmationTitle: String {
     if let handle = loadedProfile?.handle.description {
-      return "Sign out of @\(handle)?"
+      return String(
+        localized: "Sign out of @\(handle)?",
+        comment: "Confirmation dialog title when signing out of a specific account — %1$@ is the account handle (without @)."
+      )
     }
-    return "Sign out?"
+    return String(localized: "Sign out?", comment: "Confirmation dialog title when signing out.")
   }
   
   @ViewBuilder
@@ -997,8 +1030,11 @@ struct UnifiedProfileView: View {
               }
             }
           } label: {
-            Label(viewModel.isSubscribedToLabeler ? "Unsubscribe from Labeler" : "Subscribe to Labeler",
-                  systemImage: viewModel.isSubscribedToLabeler ? "checkmark.circle.fill" : "checkmark.circle")
+            if viewModel.isSubscribedToLabeler {
+              Label("Unsubscribe from Labeler", systemImage: "checkmark.circle.fill")
+            } else {
+              Label("Subscribe to Labeler", systemImage: "checkmark.circle")
+            }
           }
           
           Divider()
@@ -1043,15 +1079,21 @@ struct UnifiedProfileView: View {
           Button {
             requestMuteToggle()
           } label: {
-            Label(isMuting ? "Unmute User" : "Mute User",
-                  systemImage: isMuting ? "speaker.wave.2" : "speaker.slash")
+            if isMuting {
+              Label("Unmute User", systemImage: "speaker.wave.2")
+            } else {
+              Label("Mute User", systemImage: "speaker.slash")
+            }
           }
           
           Button(role: .destructive) {
             Task { await prepareBlockConfirmation() }
           } label: {
-            Label(isBlocking ? "Unblock User" : "Block User",
-                  systemImage: isBlocking ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark")
+            if isBlocking {
+              Label("Unblock User", systemImage: "person.crop.circle.badge.checkmark")
+            } else {
+              Label("Block User", systemImage: "person.crop.circle.badge.xmark")
+            }
           }
         }
       }

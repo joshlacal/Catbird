@@ -16,46 +16,46 @@ public enum SettingsScreenID: String, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .home: "Settings"
-        case .accountSecurity: "Account & Security"
-        case .accountDetails: "Account Details"
-        case .automationLabel: "Automation Label"
-        case .privacyInteractions: "Privacy & Interactions"
-        case .visibility: "Visibility & Attribution"
-        case .notifications: "Notifications"
-        case .activitySubscriptions: "People I Subscribe To"
-        case .activityPrivacy: "Who Can Subscribe to My Posts"
-        case .messages: "Direct Messages & Group Invitations"
-        case .defaultPostInteractions: "Default Replies & Quotes"
-        case .feedsDiscovery: "Feeds & Discovery"
-        case .feedFiltering: "Feed Filtering"
-        case .threads: "Threads"
-        case .discovery: "Discovery"
-        case .interests: "Your Interests"
-        case .intelligenceOnboarding: "Catbird Intelligence"
-        case .originalsOnlyAccounts: "Originals-Only Accounts"
-        case .feedLibrary: "Feed Library"
-        case .verification: "Verification Badges"
-        case .moderation: "Moderation"
-        case .labelers: "Moderation Services"
-        case .mutedAccounts: "Muted Accounts"
-        case .blockedAccounts: "Blocked Accounts"
-        case .mediaLinks: "Media & Links"
-        case .externalMedia: "External Media Permissions"
-        case .language: "Language"
-        case .appearance: "Appearance"
-        case .appIcon: "App Icon"
-        case .accessibility: "Accessibility"
-        case .textReadability: "Text & Readability"
-        case .helpAbout: "Help & About"
-        case .help: "Get Help"
-        case .blueskyHelpCenter: "Bluesky Help Center"
-        case .about: "About & Support"
-        case .licenses: "Open Source Licenses"
-        case .advanced: "Advanced"
-        case .providers: "Service Providers"
-        case .systemLogs: "System Logs"
-        case .cache: "Image & Web Cache"
+        case .home: String(localized: "Settings", comment: "Navigation title for the root Settings screen.")
+        case .accountSecurity: String(localized: "Account & Security", comment: "Settings category title.")
+        case .accountDetails: String(localized: "Account Details", comment: "Settings screen title.")
+        case .automationLabel: String(localized: "Automation Label", comment: "Settings screen title for bot/automation account label.")
+        case .privacyInteractions: String(localized: "Privacy & Interactions", comment: "Settings category title.")
+        case .visibility: String(localized: "Visibility & Attribution", comment: "Settings screen title.")
+        case .notifications: String(localized: "Notifications", comment: "Settings category title.")
+        case .activitySubscriptions: String(localized: "People I Subscribe To", comment: "Settings screen title for post notification subscriptions.")
+        case .activityPrivacy: String(localized: "Who Can Subscribe to My Posts", comment: "Settings screen title.")
+        case .messages: String(localized: "Direct Messages & Group Invitations", comment: "Settings screen title.")
+        case .defaultPostInteractions: String(localized: "Default Replies & Quotes", comment: "Settings screen title.")
+        case .feedsDiscovery: String(localized: "Feeds & Discovery", comment: "Settings category title.")
+        case .feedFiltering: String(localized: "Feed Filtering", comment: "Settings screen title.")
+        case .threads: String(localized: "Threads", comment: "Settings screen title.")
+        case .discovery: String(localized: "Discovery", comment: "Settings screen title.")
+        case .interests: String(localized: "Your Interests", comment: "Settings screen title.")
+        case .intelligenceOnboarding: String(localized: "Catbird Intelligence", comment: "Settings screen title.")
+        case .originalsOnlyAccounts: String(localized: "Originals-Only Accounts", comment: "Settings screen title.")
+        case .feedLibrary: String(localized: "Feed Library", comment: "Settings screen title.")
+        case .verification: String(localized: "Verification Badges", comment: "Settings screen title.")
+        case .moderation: String(localized: "Moderation", comment: "Settings category title.")
+        case .labelers: String(localized: "Moderation Services", comment: "Settings screen title.")
+        case .mutedAccounts: String(localized: "Muted Accounts", comment: "Settings screen title.")
+        case .blockedAccounts: String(localized: "Blocked Accounts", comment: "Settings screen title.")
+        case .mediaLinks: String(localized: "Media & Links", comment: "Settings category title.")
+        case .externalMedia: String(localized: "External Media Permissions", comment: "Settings screen title.")
+        case .language: String(localized: "Language", comment: "Settings category title.")
+        case .appearance: String(localized: "Appearance", comment: "Settings category title.")
+        case .appIcon: String(localized: "App Icon", comment: "Settings screen title.")
+        case .accessibility: String(localized: "Accessibility", comment: "Settings category title.")
+        case .textReadability: String(localized: "Text & Readability", comment: "Settings screen title.")
+        case .helpAbout: String(localized: "Help & About", comment: "Settings category title.")
+        case .help: String(localized: "Get Help", comment: "Settings screen title.")
+        case .blueskyHelpCenter: String(localized: "Bluesky Help Center", comment: "Settings screen title.")
+        case .about: String(localized: "About & Support", comment: "Settings screen title.")
+        case .licenses: String(localized: "Open Source Licenses", comment: "Settings screen title.")
+        case .advanced: String(localized: "Advanced", comment: "Settings category title.")
+        case .providers: String(localized: "Service Providers", comment: "Settings screen title.")
+        case .systemLogs: String(localized: "System Logs", comment: "Settings screen title.")
+        case .cache: String(localized: "Image & Web Cache", comment: "Settings screen title.")
         }
     }
 }
@@ -80,15 +80,30 @@ struct SettingsSearchEntry: Identifiable {
 
 /// Only retained controls are indexed. Account names, muted words and private list contents are excluded.
 enum SettingsCatalog {
-    static let homeGroups: [(String, [SettingsScreenID])] = [
-        ("Your Account", [.accountSecurity, .privacyInteractions, .notifications]),
-        ("Your Experience", [.feedsDiscovery, .moderation, .mediaLinks, .language, .appearance, .accessibility]),
-        ("Support", [.helpAbout, .advanced])
-    ]
+    static var homeGroups: [(String, [SettingsScreenID])] {
+        [
+            (String(localized: "Your Account", comment: "Settings home section header."), [.accountSecurity, .privacyInteractions, .notifications]),
+            (String(localized: "Your Experience", comment: "Settings home section header."), [.feedsDiscovery, .moderation, .mediaLinks, .language, .appearance, .accessibility]),
+            (String(localized: "Support", comment: "Settings home section header."), [.helpAbout, .advanced])
+        ]
+    }
+
+    private static var hasAppLanguageControl: Bool {
+        #if os(iOS)
+        return true
+        #else
+        return InterfaceLanguagePreferences.availableLanguages().count > 1
+        #endif
+    }
 
     static let entries: [SettingsSearchEntry] = {
+        let currentAccountScope = String(localized: "Current account", comment: "Settings search scope label.")
+        let thisDeviceScope = String(localized: "This device", comment: "Settings search scope label.")
+        let appScope = String(localized: "App", comment: "Settings search scope label.")
+        let newPostsScope = String(localized: "New posts", comment: "Settings search scope label.")
+
         var rows: [SettingsSearchEntry] = []
-        func add(_ title: String, _ screen: SettingsScreenID, _ control: String?, _ breadcrumb: String, _ scope: String = "Current account", _ aliases: [String] = []) {
+        func add(_ title: String, _ screen: SettingsScreenID, _ control: String?, _ breadcrumb: String, _ scope: String = currentAccountScope, _ aliases: [String] = []) {
             rows.append(SettingsSearchEntry(title: title, breadcrumb: breadcrumb, scope: scope, aliases: aliases,
                 target: SettingsTarget(screen: screen, control: control.map { SettingsControlID(rawValue: $0) })))
         }
@@ -96,38 +111,39 @@ enum SettingsCatalog {
             for screen in screens {
                 let scope: String
                 switch screen {
-                case .helpAbout: scope = "App"
-                case .accountSecurity, .advanced: scope = "Account and this device"
-                case .notifications: scope = "Account and device permission"
-                case .language: scope = InterfaceLanguagePreferences.availableLanguages().count > 1 ? "Interface on this device; reading for current account" : "Current account"
-                case .appearance: scope = "Account preferences; app icon on this device"
-                case .accessibility: scope = "Account preferences and system accommodations"
-                default: scope = "Current account"
+                case .helpAbout: scope = appScope
+                case .accountSecurity, .advanced: scope = String(localized: "Account and this device", comment: "Settings search scope label.")
+                case .notifications: scope = String(localized: "Account and device permission", comment: "Settings search scope label.")
+                case .language: scope = hasAppLanguageControl ? String(localized: "App language on this device; reading for current account", comment: "Settings search scope label for Language.") : currentAccountScope
+                case .appearance: scope = String(localized: "Account preferences; app icon on this device", comment: "Settings search scope label.")
+                case .accessibility: scope = String(localized: "Account preferences and system accommodations", comment: "Settings search scope label.")
+                default: scope = currentAccountScope
                 }
                 let aliases: [String]
                 switch screen {
                 case .notifications: aliases = ["push", "badge", "alerts"]
                 case .helpAbout: aliases = ["support", "contact", "about"]
                 case .advanced: aliases = ["servers", "cache"]
+                case .language: aliases = ["app language", "interface language", "UI language", "reading languages"]
                 default: aliases = []
                 }
-                add(screen.title, screen, nil, "Settings", scope, aliases)
+                add(screen.title, screen, nil, SettingsScreenID.home.title, scope, aliases)
             }
         }
-        add("Handle", .accountDetails, "account.handle", "Account & Security › Account Details", "Current account", ["username"])
-        add("Manage Hosted Account", .accountDetails, "account.management", "Account & Security › Account Details", "Provider website", ["email", "sign-in codes", "2FA", "verification", "change handle"])
-        add("Require App Unlock", .accountSecurity, "account.appLock", "Account & Security", "This device", ["app lock", "Face ID", "Touch ID", "biometrics"])
-        add("Automation Label", .automationLabel, nil, "Account & Security › Account Details", "Current account", ["bot"])
-        add("Export Public Account Data", .accountDetails, "account.export", "Account & Security › Account Details", "Current account", ["CAR", "backup"])
-        add("Delete Account", .accountDetails, "account.delete", "Account & Security › Account Details", "Current account", ["account deletion options", "remove account", "close account", "erase"])
-        add("Sign Out", .accountSecurity, "account.signOut", "Account & Security", "Current account", ["log out", "logout", "sign off"])
-        add("Default Replies & Quotes", .defaultPostInteractions, nil, "Privacy & Interactions", "New posts", ["reply permissions", "quote permissions"])
-        add("Direct Messages & Group Invitations", .messages, "privacy.messages", "Privacy & Interactions", "Current account", ["DM", "chat", "invites"])
-        add("Who Can Subscribe to My Posts", .activityPrivacy, "privacy.activitySubscriptions", "Privacy & Interactions", "Current account", ["post notifications", "activity privacy", "subscribers", "who may subscribe"])
-        add("Visible to Signed-Out Visitors", .visibility, "privacy.loggedOutVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["logged out", "public profile"])
-        add("Ask Apps to Exclude My Posts from Recommendations", .visibility, "privacy.algorithmicVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["algorithmic recommendations", "hide posts", "discovery"])
-        add("Credit Repost Discovery", .visibility, "privacy.attribution", "Privacy & Interactions › Visibility & Attribution")
-        add("Enable Adult Content", .moderation, "moderation.adultContent", "Moderation", "Current account", ["NSFW", "adult content"])
+        add(String(localized: "Handle", comment: "Settings search entry for Bluesky handle / username."), .accountDetails, "account.handle", "\(SettingsScreenID.accountSecurity.title) › \(SettingsScreenID.accountDetails.title)", currentAccountScope, ["Handle", "username"])
+        add(String(localized: "Manage Hosted Account", comment: "Settings search entry."), .accountDetails, "account.management", "\(SettingsScreenID.accountSecurity.title) › \(SettingsScreenID.accountDetails.title)", String(localized: "Provider website", comment: "Settings search scope label."), ["Manage Hosted Account", "email", "sign-in codes", "2FA", "verification", "change handle"])
+        add(String(localized: "Require App Unlock", comment: "Settings search entry."), .accountSecurity, "account.appLock", SettingsScreenID.accountSecurity.title, thisDeviceScope, ["Require App Unlock", "app lock", "Face ID", "Touch ID", "biometrics"])
+        add(SettingsScreenID.automationLabel.title, .automationLabel, nil, "\(SettingsScreenID.accountSecurity.title) › \(SettingsScreenID.accountDetails.title)", currentAccountScope, ["Automation Label", "bot"])
+        add(String(localized: "Export Public Account Data", comment: "Settings search entry."), .accountDetails, "account.export", "\(SettingsScreenID.accountSecurity.title) › \(SettingsScreenID.accountDetails.title)", currentAccountScope, ["Export Public Account Data", "CAR", "backup"])
+        add(String(localized: "Delete Account", comment: "Settings search entry."), .accountDetails, "account.delete", "\(SettingsScreenID.accountSecurity.title) › \(SettingsScreenID.accountDetails.title)", currentAccountScope, ["Delete Account", "account deletion options", "remove account", "close account", "erase"])
+        add(String(localized: "Sign Out", comment: "Settings search entry."), .accountSecurity, "account.signOut", SettingsScreenID.accountSecurity.title, currentAccountScope, ["Sign Out", "log out", "logout", "sign off"])
+        add(SettingsScreenID.defaultPostInteractions.title, .defaultPostInteractions, nil, SettingsScreenID.privacyInteractions.title, newPostsScope, ["Default Replies & Quotes", "reply permissions", "quote permissions"])
+        add(SettingsScreenID.messages.title, .messages, "privacy.messages", SettingsScreenID.privacyInteractions.title, currentAccountScope, ["Direct Messages & Group Invitations", "DM", "chat", "invites"])
+        add(SettingsScreenID.activityPrivacy.title, .activityPrivacy, "privacy.activitySubscriptions", SettingsScreenID.privacyInteractions.title, currentAccountScope, ["Who Can Subscribe to My Posts", "post notifications", "activity privacy", "subscribers", "who may subscribe"])
+        add(String(localized: "Visible to Signed-Out Visitors", comment: "Settings search entry."), .visibility, "privacy.loggedOutVisibility", "\(SettingsScreenID.privacyInteractions.title) › \(SettingsScreenID.visibility.title)", currentAccountScope, ["Visible to Signed-Out Visitors", "logged out", "public profile"])
+        add(String(localized: "Ask Apps to Exclude My Posts from Recommendations", comment: "Settings search entry."), .visibility, "privacy.algorithmicVisibility", "\(SettingsScreenID.privacyInteractions.title) › \(SettingsScreenID.visibility.title)", currentAccountScope, ["Ask Apps to Exclude My Posts from Recommendations", "algorithmic recommendations", "hide posts", "discovery"])
+        add(String(localized: "Credit Repost Discovery", comment: "Settings search entry."), .visibility, "privacy.attribution", "\(SettingsScreenID.privacyInteractions.title) › \(SettingsScreenID.visibility.title)", currentAccountScope, ["Credit Repost Discovery"])
+        add(String(localized: "Enable Adult Content", comment: "Settings search entry."), .moderation, "moderation.adultContent", SettingsScreenID.moderation.title, currentAccountScope, ["Enable Adult Content", "NSFW", "adult content"])
         // Builtin content filters use the names and control ids the Moderation screen shows.
         let contentFilterAliases: [String: [String]] = [
             "porn": ["NSFW", "porn", "explicit", "sexual"], "sexual": ["suggestive", "sexual"],
@@ -135,88 +151,152 @@ enum SettingsCatalog {
         for identifier in ContentFilterSettings.builtinIdentifiers {
             guard let definition = ModerationLabelDefinition.builtin(forLabelValue: identifier) else { continue }
             add(ModerationPresentation.name(for: definition), .moderation, ContentFilterSettings.controlID(for: identifier).rawValue,
-                "Moderation", "Current account", contentFilterAliases[identifier] ?? [])
+                SettingsScreenID.moderation.title, currentAccountScope, contentFilterAliases[identifier] ?? [])
         }
-        add("Muted Words & Tags", .moderation, "moderation.mutedWords", "Moderation", "Current account", ["mute", "hashtags", "muted words"])
-        add("Moderation Services", .labelers, "moderation.labelers", "Moderation", "Current account", ["labelers", "labels"])
-        add("Moderation Lists", .moderation, "moderation.lists", "Moderation", "Current account", ["lists", "block list", "mute list"])
-        add("Muted Accounts", .mutedAccounts, nil, "Moderation", "Current account", ["mute people"])
-        add("Blocked Accounts", .blockedAccounts, nil, "Moderation", "Current account", ["block people"])
-        let feedFilterRows: [(String, String, [String])] = [("Hide Replies", "replies", ["replies"]), ("Hide Replies to People You Don’t Follow", "unfollowedReplies", ["unfollowed replies"]), ("Minimum Likes for Replies", "replyLikeThreshold", ["reply like threshold"]), ("Hide Reposts", "reposts", ["reposts"]), ("Hide Quote Posts", "quotes", ["quotes"]), ("Post Types", "contentType", ["content type", "text only", "media only"]), ("Hide Link Posts", "hideLinkPosts", ["links"]), ("Hide Repeated Parent Posts", "duplicates", ["duplicate posts"])]
+        add(String(localized: "Muted Words & Tags", comment: "Settings search entry."), .moderation, "moderation.mutedWords", SettingsScreenID.moderation.title, currentAccountScope, ["Muted Words & Tags", "mute", "hashtags", "muted words"])
+        add(SettingsScreenID.labelers.title, .labelers, "moderation.labelers", SettingsScreenID.moderation.title, currentAccountScope, ["Moderation Services", "labelers", "labels"])
+        add(String(localized: "Moderation Lists", comment: "Settings search entry."), .moderation, "moderation.lists", SettingsScreenID.moderation.title, currentAccountScope, ["Moderation Lists", "lists", "block list", "mute list"])
+        add(SettingsScreenID.mutedAccounts.title, .mutedAccounts, nil, SettingsScreenID.moderation.title, currentAccountScope, ["Muted Accounts", "mute people"])
+        add(SettingsScreenID.blockedAccounts.title, .blockedAccounts, nil, SettingsScreenID.moderation.title, currentAccountScope, ["Blocked Accounts", "block people"])
+        let feedFilterRows: [(String, String, [String])] = [
+            (String(localized: "Hide Replies", comment: "Settings search entry."), "replies", ["Hide Replies", "replies"]),
+            (String(localized: "Hide Replies to People You Don’t Follow", comment: "Settings search entry."), "unfollowedReplies", ["Hide Replies to People You Don’t Follow", "unfollowed replies"]),
+            (String(localized: "Minimum Likes for Replies", comment: "Settings search entry."), "replyLikeThreshold", ["Minimum Likes for Replies", "reply like threshold"]),
+            (String(localized: "Hide Reposts", comment: "Settings search entry."), "reposts", ["Hide Reposts", "reposts"]),
+            (String(localized: "Hide Quote Posts", comment: "Settings search entry."), "quotes", ["Hide Quote Posts", "quotes"]),
+            (String(localized: "Post Types", comment: "Settings search entry."), "contentType", ["Post Types", "content type", "text only", "media only"]),
+            (String(localized: "Hide Link Posts", comment: "Settings search entry."), "hideLinkPosts", ["Hide Link Posts", "links"]),
+            (String(localized: "Hide Repeated Parent Posts", comment: "Settings search entry."), "duplicates", ["Hide Repeated Parent Posts", "duplicate posts"])
+        ]
         for (title, id, aliases) in feedFilterRows {
-            add(title, .feedFiltering, "feed.\(id)", "Feeds & Discovery › Feed Filtering", "Current account", aliases)
+            add(title, .feedFiltering, "feed.\(id)", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.feedFiltering.title)", currentAccountScope, aliases)
         }
-        let threadRows: [(String, String, [String])] = [("Reply Order", "threadSort", ["thread sort"]), ("Threaded Reply Layout", "threadLayout", ["thread layout"]), ("Load Author-Hidden Replies Automatically", "hiddenReplies", ["hidden replies"])]
-        for (title, id, aliases) in threadRows { add(title, .threads, "feed.\(id)", "Feeds & Discovery › Threads", "Current account", aliases) }
-        add("Show Trending Topics", .discovery, "feed.trendingTopics", "Feeds & Discovery › Discovery", "Current account", ["trending"])
-        add("Show Trending Videos", .discovery, "feed.trendingVideos", "Feeds & Discovery › Discovery", "Current account", ["trending"])
-        add("Your Interests", .interests, nil, "Feeds & Discovery › Discovery", "Current account", ["topics"])
-        add("Catbird Intelligence", .intelligenceOnboarding, nil, "Feeds & Discovery", "Current account", ["scene explorer", "onboarding", "rerun", "tune feed", "intelligence", "taste duels", "starting lineup"])
-        add("Explore Scenes & Build Lineup", .intelligenceOnboarding, "intel.sceneExplorer", "Feeds & Discovery › Catbird Intelligence", "Current account", ["scenes", "communities", "onboarding"])
-        add("Recalibrate Taste & Feed Pace", .intelligenceOnboarding, "intel.tasteCalibration", "Feeds & Discovery › Catbird Intelligence", "Current account", ["taste duels", "pace", "repost tamer"])
-        add("Originals-Only Accounts", .originalsOnlyAccounts, "intel.originalsOnly", "Feeds & Discovery › Feed Filtering", "Current account", ["repost tamer", "originals only", "mute reposts"])
-        add("Rerun Welcome Onboarding Now", .intelligenceOnboarding, "intel.rerunWelcome", "Feeds & Discovery › Catbird Intelligence", "Current account", ["replay onboarding", "welcome", "setup"])
-        add("Feed Library", .feedLibrary, nil, "Feeds & Discovery", "Current account", ["saved feeds", "pin", "reorder"])
-        add("Verification Badges", .verification, nil, "Feeds & Discovery")
-        for (title, id, aliases) in [("Autoplay Videos", "autoplayVideos", ["playback"]), ("Open Links In-App", "openLinks", ["browser", "Safari"]), ("Enable Embedded Players", "embeddedPlayers", ["YouTube", "Spotify"])] { add(title, .mediaLinks, "media.\(id)", "Media & Links", "Current account", aliases) }
-        add("External Media Permissions", .externalMedia, "media.providerPermissions", "Media & Links", "Current account", ["YouTube", "Spotify", "consent", "providers"])
-        for (title, id) in [("YouTube", "youtube"), ("YouTube Shorts", "youtubeShorts"), ("Vimeo", "vimeo"), ("Twitch", "twitch"), ("Spotify", "spotify"), ("Apple Music", "appleMusic"), ("SoundCloud", "soundcloud"), ("GIPHY", "giphy"), ("Tenor", "tenor"), ("Klipy", "klipy"), ("Flickr", "flickr"), ("Bandcamp", "bandcamp")] {
-            add(title + " Playback Permission", .externalMedia, "media.provider.\(id)", "Media & Links › External Media Permissions", "Current account", [title, "consent", "allow", "block"])
+        let threadRows: [(String, String, [String])] = [
+            (String(localized: "Reply Order", comment: "Settings search entry."), "threadSort", ["Reply Order", "thread sort"]),
+            (String(localized: "Threaded Reply Layout", comment: "Settings search entry."), "threadLayout", ["Threaded Reply Layout", "thread layout"]),
+            (String(localized: "Load Author-Hidden Replies Automatically", comment: "Settings search entry."), "hiddenReplies", ["Load Author-Hidden Replies Automatically", "hidden replies"])
+        ]
+        for (title, id, aliases) in threadRows { add(title, .threads, "feed.\(id)", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.threads.title)", currentAccountScope, aliases) }
+        add(String(localized: "Show Trending Topics", comment: "Settings search entry."), .discovery, "feed.trendingTopics", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.discovery.title)", currentAccountScope, ["Show Trending Topics", "trending"])
+        add(String(localized: "Show Trending Videos", comment: "Settings search entry."), .discovery, "feed.trendingVideos", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.discovery.title)", currentAccountScope, ["Show Trending Videos", "trending"])
+        add(SettingsScreenID.interests.title, .interests, nil, "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.discovery.title)", currentAccountScope, ["Your Interests", "topics"])
+        add(SettingsScreenID.intelligenceOnboarding.title, .intelligenceOnboarding, nil, SettingsScreenID.feedsDiscovery.title, currentAccountScope, ["Catbird Intelligence", "scene explorer", "onboarding", "rerun", "tune feed", "intelligence", "taste duels", "starting lineup"])
+        add(String(localized: "Explore Scenes & Build Lineup", comment: "Settings search entry."), .intelligenceOnboarding, "intel.sceneExplorer", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.intelligenceOnboarding.title)", currentAccountScope, ["Explore Scenes & Build Lineup", "scenes", "communities", "onboarding"])
+        add(String(localized: "Recalibrate Taste & Feed Pace", comment: "Settings search entry."), .intelligenceOnboarding, "intel.tasteCalibration", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.intelligenceOnboarding.title)", currentAccountScope, ["Recalibrate Taste & Feed Pace", "taste duels", "pace", "repost tamer"])
+        add(SettingsScreenID.originalsOnlyAccounts.title, .originalsOnlyAccounts, "intel.originalsOnly", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.feedFiltering.title)", currentAccountScope, ["Originals-Only Accounts", "repost tamer", "originals only", "mute reposts"])
+        add(String(localized: "Rerun Welcome Onboarding Now", comment: "Settings search entry."), .intelligenceOnboarding, "intel.rerunWelcome", "\(SettingsScreenID.feedsDiscovery.title) › \(SettingsScreenID.intelligenceOnboarding.title)", currentAccountScope, ["Rerun Welcome Onboarding Now", "replay onboarding", "welcome", "setup"])
+        add(SettingsScreenID.feedLibrary.title, .feedLibrary, nil, SettingsScreenID.feedsDiscovery.title, currentAccountScope, ["Feed Library", "saved feeds", "pin", "reorder"])
+        add(SettingsScreenID.verification.title, .verification, nil, SettingsScreenID.feedsDiscovery.title, currentAccountScope, ["Verification Badges"])
+        for (title, id, aliases) in [
+            (String(localized: "Autoplay Videos", comment: "Settings search entry."), "autoplayVideos", ["Autoplay Videos", "playback"]),
+            (String(localized: "Open Links In-App", comment: "Settings search entry."), "openLinks", ["Open Links In-App", "browser", "Safari"]),
+            (String(localized: "Enable Embedded Players", comment: "Settings search entry."), "embeddedPlayers", ["Enable Embedded Players", "YouTube", "Spotify"])
+        ] { add(title, .mediaLinks, "media.\(id)", SettingsScreenID.mediaLinks.title, currentAccountScope, aliases) }
+        add(SettingsScreenID.externalMedia.title, .externalMedia, "media.providerPermissions", SettingsScreenID.mediaLinks.title, currentAccountScope, ["External Media Permissions", "YouTube", "Spotify", "consent", "providers"])
+        for (providerName, id) in [("YouTube", "youtube"), ("YouTube Shorts", "youtubeShorts"), ("Vimeo", "vimeo"), ("Twitch", "twitch"), ("Spotify", "spotify"), ("Apple Music", "appleMusic"), ("SoundCloud", "soundcloud"), ("GIPHY", "giphy"), ("Tenor", "tenor"), ("Klipy", "klipy"), ("Flickr", "flickr"), ("Bandcamp", "bandcamp")] {
+            add(String(localized: "\(providerName) Playback Permission", comment: "Settings search entry for external media provider consent — variable is the provider brand name."), .externalMedia, "media.provider.\(id)", "\(SettingsScreenID.mediaLinks.title) › \(SettingsScreenID.externalMedia.title)", currentAccountScope, [providerName, "\(providerName) Playback Permission", "consent", "allow", "block"])
         }
-        let notificationRows: [(String, String, [String])] = [("Push Alerts on This Device", "push", ["push notifications"]), ("Open System Notification Settings", "systemPermission", ["system permission"]), ("Direct Message Push Alerts", "messages", ["message notifications", "direct messages", "DM"]), ("Mentions", "mention", []), ("Replies", "reply", []), ("Likes", "like", []), ("New Followers", "follow", ["follows"]), ("Reposts", "repost", []), ("Quotes", "quote", []), ("Likes of Your Reposts", "likeViaRepost", ["likes via repost"]), ("Reposts of Your Reposts", "repostViaRepost", ["reposts via repost"]), ("Posts from Your Subscriptions", "subscribedPost", ["subscribed posts"]), ("Starter Pack Signups", "starterpackJoined", ["starter pack joins"]), ("Account Verified", "verified", ["verified activity"]), ("Verification Removed", "unverified", ["unverified activity"])]
+        let notificationRows: [(String, String, [String])] = [
+            (String(localized: "Push Alerts on This Device", comment: "Settings search entry."), "push", ["Push Alerts on This Device", "push notifications"]),
+            (String(localized: "Open System Notification Settings", comment: "Settings search entry."), "systemPermission", ["Open System Notification Settings", "system permission"]),
+            (String(localized: "Direct Message Push Alerts", comment: "Settings search entry."), "messages", ["Direct Message Push Alerts", "message notifications", "direct messages", "DM"]),
+            (String(localized: "Mentions", comment: "Settings search entry."), "mention", ["Mentions"]),
+            (String(localized: "Replies", comment: "Settings search entry."), "reply", ["Replies"]),
+            (String(localized: "Likes", comment: "Settings search entry."), "like", ["Likes"]),
+            (String(localized: "New Followers", comment: "Settings search entry."), "follow", ["New Followers", "follows"]),
+            (String(localized: "Reposts", comment: "Settings search entry."), "repost", ["Reposts"]),
+            (String(localized: "Quotes", comment: "Settings search entry."), "quote", ["Quotes"]),
+            (String(localized: "Likes of Your Reposts", comment: "Settings search entry."), "likeViaRepost", ["Likes of Your Reposts", "likes via repost"]),
+            (String(localized: "Reposts of Your Reposts", comment: "Settings search entry."), "repostViaRepost", ["Reposts of Your Reposts", "reposts via repost"]),
+            (String(localized: "Posts from Your Subscriptions", comment: "Settings search entry."), "subscribedPost", ["Posts from Your Subscriptions", "subscribed posts"]),
+            (String(localized: "Starter Pack Signups", comment: "Settings search entry."), "starterpackJoined", ["Starter Pack Signups", "starter pack joins"]),
+            (String(localized: "Account Verified", comment: "Settings search entry."), "verified", ["Account Verified", "verified activity"]),
+            (String(localized: "Verification Removed", comment: "Settings search entry."), "unverified", ["Verification Removed", "unverified activity"])
+        ]
         for (title, id, aliases) in notificationRows {
-            add(title, .notifications, "notifications.\(id)", "Notifications", id == "systemPermission" ? "This device" : "Current account", ["push", "alerts"] + aliases)
+            add(title, .notifications, "notifications.\(id)", SettingsScreenID.notifications.title, id == "systemPermission" ? thisDeviceScope : currentAccountScope, ["push", "alerts"] + aliases)
         }
-        add("People I Subscribe To", .activitySubscriptions, nil, "Notifications", "Current account", ["post notification subscriptions", "people you subscribe to", "activity alerts"])
-        for (title, id) in [("App Theme", "theme"), ("Dark Mode Style", "darkMode"), ("Accent Color", "accent"), ("Reset Appearance", "reset")] {
-            add(title, .appearance, "appearance.\(id)", "Appearance")
+        add(SettingsScreenID.activitySubscriptions.title, .activitySubscriptions, nil, SettingsScreenID.notifications.title, currentAccountScope, ["People I Subscribe To", "post notification subscriptions", "people you subscribe to", "activity alerts"])
+        for (title, id, englishTitle) in [
+            (String(localized: "App Theme", comment: "Settings search entry."), "theme", "App Theme"),
+            (String(localized: "Dark Mode Style", comment: "Settings search entry."), "darkMode", "Dark Mode Style"),
+            (String(localized: "Accent Color", comment: "Settings search entry."), "accent", "Accent Color"),
+            (String(localized: "Reset Appearance", comment: "Settings search entry."), "reset", "Reset Appearance")
+        ] {
+            add(title, .appearance, "appearance.\(id)", SettingsScreenID.appearance.title, currentAccountScope, [englishTitle])
         }
-        for (title, id) in [("Font Style", "fontStyle"), ("App Text Size", "fontSize"), ("Line Spacing", "lineSpacing"), ("Letter Spacing", "letterSpacing"), ("Use System Text Size", "dynamicType"), ("Maximum Text Size", "maxSize"), ("Show Reading Time Estimates", "readingTime"), ("Highlight Links", "highlightLinks"), ("Link Style", "linkStyle")] {
+        for (title, id, englishTitle) in [
+            (String(localized: "Font Style", comment: "Settings search entry."), "fontStyle", "Font Style"),
+            (String(localized: "App Text Size", comment: "Settings search entry."), "fontSize", "App Text Size"),
+            (String(localized: "Line Spacing", comment: "Settings search entry."), "lineSpacing", "Line Spacing"),
+            (String(localized: "Letter Spacing", comment: "Settings search entry."), "letterSpacing", "Letter Spacing"),
+            (String(localized: "Use System Text Size", comment: "Settings search entry."), "dynamicType", "Use System Text Size"),
+            (String(localized: "Maximum Text Size", comment: "Settings search entry."), "maxSize", "Maximum Text Size"),
+            (String(localized: "Show Reading Time Estimates", comment: "Settings search entry."), "readingTime", "Show Reading Time Estimates"),
+            (String(localized: "Highlight Links", comment: "Settings search entry."), "highlightLinks", "Highlight Links"),
+            (String(localized: "Link Style", comment: "Settings search entry."), "linkStyle", "Link Style")
+        ] {
             let aliases: [String]
             switch id {
-            case "fontStyle": aliases = ["font", "typeface"]
-            case "fontSize": aliases = ["font size", "larger text", "text size"]
-            case "maxSize": aliases = ["font", "larger text", "text size"]
-            case "dynamicType": aliases = ["Dynamic Type", "system text size"]
-            case "readingTime": aliases = ["reading time"]
-            case "lineSpacing": aliases = ["paragraph spacing"]
-            case "letterSpacing": aliases = ["tracking"]
-            default: aliases = []
+            case "fontStyle": aliases = [englishTitle, "font", "typeface"]
+            case "fontSize": aliases = [englishTitle, "font size", "larger text", "text size"]
+            case "maxSize": aliases = [englishTitle, "font", "larger text", "text size"]
+            case "dynamicType": aliases = [englishTitle, "Dynamic Type", "system text size"]
+            case "readingTime": aliases = [englishTitle, "reading time"]
+            case "lineSpacing": aliases = [englishTitle, "paragraph spacing"]
+            case "letterSpacing": aliases = [englishTitle, "tracking"]
+            default: aliases = [englishTitle]
             }
-            add(title, .textReadability, "text.\(id)", "Accessibility › Text & Readability", "Current account", aliases)
+            add(title, .textReadability, "text.\(id)", "\(SettingsScreenID.accessibility.title) › \(SettingsScreenID.textReadability.title)", currentAccountScope, aliases)
         }
-        let accessibilityRows: [(String, String, [String])] = [("Require Alt Text Before Posting", "altText", ["image descriptions", "alt text"]), ("Display Larger Alt Text Badges", "altBadges", ["image description badges", "alt text badges"]), ("Reduce Motion in Catbird", "reduceMotion", ["animation"]), ("Prefer Crossfade Transitions", "crossfade", []), ("Increase Contrast in Catbird", "increaseContrast", []), ("Bold Text in Catbird", "boldText", []), ("Confirm Social Actions", "confirmActions", ["confirm actions"]), ("Disable Haptic Feedback", "haptics", ["haptics", "vibration"])]
+        let accessibilityRows: [(String, String, [String])] = [
+            (String(localized: "Require Alt Text Before Posting", comment: "Settings search entry."), "altText", ["Require Alt Text Before Posting", "image descriptions", "alt text"]),
+            (String(localized: "Display Larger Alt Text Badges", comment: "Settings search entry."), "altBadges", ["Display Larger Alt Text Badges", "image description badges", "alt text badges"]),
+            (String(localized: "Reduce Motion in Catbird", comment: "Settings search entry."), "reduceMotion", ["Reduce Motion in Catbird", "animation"]),
+            (String(localized: "Prefer Crossfade Transitions", comment: "Settings search entry."), "crossfade", ["Prefer Crossfade Transitions"]),
+            (String(localized: "Increase Contrast in Catbird", comment: "Settings search entry."), "increaseContrast", ["Increase Contrast in Catbird"]),
+            (String(localized: "Bold Text in Catbird", comment: "Settings search entry."), "boldText", ["Bold Text in Catbird"]),
+            (String(localized: "Confirm Social Actions", comment: "Settings search entry."), "confirmActions", ["Confirm Social Actions", "confirm actions"]),
+            (String(localized: "Disable Haptic Feedback", comment: "Settings search entry."), "haptics", ["Disable Haptic Feedback", "haptics", "vibration"])
+        ]
         for (title, id, aliases) in accessibilityRows {
-            add(title, .accessibility, "accessibility.\(id)", "Accessibility", "Current account", aliases)
+            add(title, .accessibility, "accessibility.\(id)", SettingsScreenID.accessibility.title, currentAccountScope, aliases)
         }
-        let showsInterfaceLanguage = InterfaceLanguagePreferences.availableLanguages().count > 1
-        for (title, id) in [("Interface Language", "interface"), ("Primary Reading Language", "primary"), ("Preferred Reading Languages", "content"), ("Hide Posts in Other Languages", "hideOtherLanguages"), ("Show Language Indicators", "indicators")] where id != "interface" || showsInterfaceLanguage {
+        let showsAppLanguage = hasAppLanguageControl
+        for (title, id) in [
+            (String(localized: "App Language", comment: "Settings search entry for Catbird's UI language."), "interface"),
+            (String(localized: "Primary Reading Language", comment: "Settings search entry."), "primary"),
+            (String(localized: "Preferred Reading Languages", comment: "Settings search entry."), "content"),
+            (String(localized: "Hide Posts in Other Languages", comment: "Settings search entry."), "hideOtherLanguages"),
+            (String(localized: "Show Language Indicators", comment: "Settings search entry."), "indicators")
+        ] where id != "interface" || showsAppLanguage {
             let aliases: [String]
             switch id {
-            case "primary": aliases = ["primary language"]
-            case "content": aliases = ["content languages", "reading languages"]
-            case "hideOtherLanguages": aliases = ["feed language filter", "filter by language", "hide other languages"]
-            case "indicators": aliases = ["language indicators"]
+            case "interface": aliases = ["App Language", "Interface Language", "UI language", "per-app language", "system language"]
+            case "primary": aliases = ["Primary Reading Language", "primary language"]
+            case "content": aliases = ["Preferred Reading Languages", "content languages", "reading languages"]
+            case "hideOtherLanguages": aliases = ["Hide Posts in Other Languages", "feed language filter", "filter by language", "hide other languages"]
+            case "indicators": aliases = ["Show Language Indicators", "language indicators"]
             default: aliases = []
             }
-            add(title, .language, "languages.\(id)", "Language", id == "interface" ? "This device" : "Current account", aliases)
+            add(title, .language, "languages.\(id)", SettingsScreenID.language.title, id == "interface" ? thisDeviceScope : currentAccountScope, aliases)
         }
-        add("Who Can Reply", .defaultPostInteractions, "privacy.defaultPostInteractions", "Privacy & Interactions › Default Replies & Quotes", "New posts", ["default reply permissions"])
-        add("Allow Quote Posts", .defaultPostInteractions, "privacy.defaultQuotes", "Privacy & Interactions › Default Replies & Quotes", "New posts", ["default quote permissions"])
-        add("AppView Provider", .providers, "advanced.appView", "Advanced › Service Providers", "Current account", ["server", "Blacksky", "content provider"])
-        add("Chat Provider", .providers, "advanced.chatProvider", "Advanced › Service Providers", "Current account", ["server", "messages"])
-        add("App Icon", .appIcon, nil, "Appearance", "This device")
-        add("Text & Readability", .textReadability, nil, "Accessibility", "Current account", ["font", "larger text", "Dynamic Type"])
-        add("Get Help", .help, nil, "Help & About", "App")
-        add("Bluesky Help Center", .help, "support.blueskyHelpCenter", "Help & About › Get Help", "App", ["FAQ", "Bluesky support"])
-        add("About & Support", .about, nil, "Help & About", "App", ["version", "legal", "tip", "privacy policy", "terms", "support", "contact"])
-        add("Open Source Licenses", .licenses, nil, "Help & About", "App")
-        add("Replay Tips", .helpAbout, "support.replayTips", "Help & About", "Current account and this device", ["onboarding"])
-        add("Service Providers", .providers, nil, "Advanced", "Current account", ["server", "AppView", "Blacksky", "chat"])
+        add(String(localized: "Who Can Reply", comment: "Settings search entry."), .defaultPostInteractions, "privacy.defaultPostInteractions", "\(SettingsScreenID.privacyInteractions.title) › \(SettingsScreenID.defaultPostInteractions.title)", newPostsScope, ["Who Can Reply", "default reply permissions"])
+        add(String(localized: "Allow Quote Posts", comment: "Settings search entry."), .defaultPostInteractions, "privacy.defaultQuotes", "\(SettingsScreenID.privacyInteractions.title) › \(SettingsScreenID.defaultPostInteractions.title)", newPostsScope, ["Allow Quote Posts", "default quote permissions"])
+        add(String(localized: "AppView Provider", comment: "Settings search entry."), .providers, "advanced.appView", "\(SettingsScreenID.advanced.title) › \(SettingsScreenID.providers.title)", currentAccountScope, ["AppView Provider", "server", "Blacksky", "content provider"])
+        add(String(localized: "Chat Provider", comment: "Settings search entry."), .providers, "advanced.chatProvider", "\(SettingsScreenID.advanced.title) › \(SettingsScreenID.providers.title)", currentAccountScope, ["Chat Provider", "server", "messages"])
+        add(SettingsScreenID.appIcon.title, .appIcon, nil, SettingsScreenID.appearance.title, thisDeviceScope, ["App Icon"])
+        add(SettingsScreenID.textReadability.title, .textReadability, nil, SettingsScreenID.accessibility.title, currentAccountScope, ["Text & Readability", "font", "larger text", "Dynamic Type"])
+        add(SettingsScreenID.help.title, .help, nil, SettingsScreenID.helpAbout.title, appScope, ["Get Help"])
+        add(SettingsScreenID.blueskyHelpCenter.title, .help, "support.blueskyHelpCenter", "\(SettingsScreenID.helpAbout.title) › \(SettingsScreenID.help.title)", appScope, ["Bluesky Help Center", "FAQ", "Bluesky support"])
+        add(SettingsScreenID.about.title, .about, nil, SettingsScreenID.helpAbout.title, appScope, ["About & Support", "version", "legal", "tip", "privacy policy", "terms", "support", "contact"])
+        add(SettingsScreenID.licenses.title, .licenses, nil, SettingsScreenID.helpAbout.title, appScope, ["Open Source Licenses"])
+        add(String(localized: "Replay Tips", comment: "Settings search entry."), .helpAbout, "support.replayTips", SettingsScreenID.helpAbout.title, String(localized: "Current account and this device", comment: "Settings search scope label."), ["Replay Tips", "onboarding"])
+        add(SettingsScreenID.providers.title, .providers, nil, SettingsScreenID.advanced.title, currentAccountScope, ["Service Providers", "server", "AppView", "Blacksky", "chat"])
         #if DEBUG
-        add("System Logs", .systemLogs, nil, "Advanced", "This device", ["diagnostics"])
+        add(SettingsScreenID.systemLogs.title, .systemLogs, nil, SettingsScreenID.advanced.title, thisDeviceScope, ["System Logs", "diagnostics"])
         #endif
-        add("Clear Image & Web Cache", .cache, "advanced.cache", "Advanced", "This device", ["storage", "Nuke", "WKWebView"])
+        add(String(localized: "Clear Image & Web Cache", comment: "Settings search entry."), .cache, "advanced.cache", SettingsScreenID.advanced.title, thisDeviceScope, ["Clear Image & Web Cache", "storage", "Nuke", "WKWebView"])
         return rows
     }()
 

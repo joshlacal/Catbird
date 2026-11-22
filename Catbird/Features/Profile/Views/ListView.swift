@@ -91,7 +91,10 @@ struct ListView: View {
     private func loadList() async {
         guard let client = appState.atProtoClient else {
             await MainActor.run {
-                error = "Not connected to AT Protocol"
+                error = String(
+                    localized: "Not connected to AT Protocol",
+                    comment: "Error message when attempting to load a list without an active AT Protocol connection."
+                )
                 isLoading = false
             }
             return
@@ -116,7 +119,10 @@ struct ListView: View {
             
             await MainActor.run {
                 guard responseCode >= 200 && responseCode < 300, let response = response else {
-                    error = "Couldn’t load this list. Try again."
+                    error = String(
+                        localized: "Couldn’t load this list. Try again.",
+                        comment: "Error message when loading a user list fails."
+                    )
                     isLoading = false
                     logger.error("Failed to load list: HTTP \(responseCode)")
                     return
@@ -132,7 +138,11 @@ struct ListView: View {
             
         } catch {
             await MainActor.run {
-                self.error = UserFacingError.message(for: error, action: "load this list") ?? "Couldn’t load this list. Try again."
+                self.error = UserFacingError.message(for: error, action: "load this list")
+                    ?? String(
+                        localized: "Couldn’t load this list. Try again.",
+                        comment: "Error message when loading a user list fails."
+                    )
                 isLoading = false
                 logger.error("Error loading list: \(error.localizedDescription)")
             }
@@ -161,7 +171,10 @@ struct ListView: View {
             
             await MainActor.run {
                 guard responseCode >= 200 && responseCode < 300, let response = response else {
-                    error = "Couldn’t load more people. Try again."
+                    error = String(
+                        localized: "Couldn’t load more people. Try again.",
+                        comment: "Error message when loading additional members of a list fails."
+                    )
                     isLoading = false
                     logger.error("Failed to load more items: HTTP \(responseCode)")
                     return
@@ -176,7 +189,11 @@ struct ListView: View {
             
         } catch {
             await MainActor.run {
-                self.error = UserFacingError.message(for: error, action: "load this list") ?? "Couldn’t load this list. Try again."
+                self.error = UserFacingError.message(for: error, action: "load this list")
+                    ?? String(
+                        localized: "Couldn’t load this list. Try again.",
+                        comment: "Error message when loading a user list fails."
+                    )
                 isLoading = false
                 logger.error("Error loading more items: \(error.localizedDescription)")
             }
@@ -221,12 +238,12 @@ struct ListHeaderView: View {
                         .appFont(AppTextRole.title2)
                         .fontWeight(.bold)
                     
-                    Text("By @\(list.creator.handle)")
+                    Text("By @\(list.creator.handle)", comment: "List creator attribution — %1$@ is the creator's handle (without @).")
                         .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                     
                     if let itemCount = list.listItemCount {
-                        Text("^[\(itemCount) person](inflect: true)")
+                        Text("\(itemCount) people", comment: "Number of people in a user list — %1$lld is the person count.")
                             .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
@@ -275,7 +292,7 @@ struct ListItemRow: View {
                 Text(item.subject.displayName ?? item.subject.handle.description)
                     .appFont(AppTextRole.headline)
                 
-                Text("@\(item.subject.handle)")
+                Text(verbatim: "@\(item.subject.handle)")
                     .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
             }

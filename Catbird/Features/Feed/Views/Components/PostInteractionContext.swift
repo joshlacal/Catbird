@@ -16,21 +16,21 @@ struct PostInteractionContext: View {
     var body: some View {
         HStack(spacing: 0) {
             Label {
-                Text("\(post.likeCount ?? 0)")
+                Text(post.likeCount ?? 0, format: .number)
             } icon: {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
                     .foregroundStyle(isLiked ? .red : .secondary)
             }
             
             Label {
-                Text("\(post.repostCount ?? 0)")
+                Text(post.repostCount ?? 0, format: .number)
             } icon: {
                 Image(systemName: "arrow.2.squarepath")
                     .foregroundStyle(isReposted ? .green : .secondary)
             }
             
             Label {
-                Text("\(post.replyCount ?? 0)")
+                Text(post.replyCount ?? 0, format: .number)
             } icon: {
                 Image(systemName: "bubble.right")
                     .foregroundStyle(.secondary)

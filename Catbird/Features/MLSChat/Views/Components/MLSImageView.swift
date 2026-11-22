@@ -379,7 +379,7 @@ struct MLSImageView: View {
         if fetchResult.responseCode == 404 {
           loadState = .expired
         } else {
-          loadState = .error("Could not load image")
+          loadState = .error(String(localized: "Could not load image"))
         }
         return
       }
@@ -402,7 +402,7 @@ struct MLSImageView: View {
         maxPixelSize: thumbnailMaxPixelSize,
         knownData: plaintext
       ) else {
-        loadState = .error("Invalid image data")
+        loadState = .error(String(localized: "Invalid image data", comment: "Error when a decrypted image attachment cannot be decoded"))
         return
       }
 
@@ -431,9 +431,9 @@ struct MLSImageView: View {
       image = thumbnail
       loadState = .loaded
     } catch is BlobCryptoError {
-      loadState = .error("Image could not be verified")
+      loadState = .error(String(localized: "Image could not be verified", comment: "Error when an encrypted image attachment fails cryptographic verification"))
     } catch {
-      loadState = .error("Could not load image")
+      loadState = .error(String(localized: "Could not load image"))
     }
   }
 }

@@ -114,7 +114,7 @@ struct MediaItemView: View {
                         ComposerAttachmentRemoveLabel()
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(isVideo ? "Remove Video" : "Remove Image")
+                    .accessibilityLabel(isVideo ? Text("Remove Video") : Text("Remove Image"))
                 }
                 Spacer()
             }
@@ -133,15 +133,20 @@ struct MediaItemView: View {
                             Image(systemName: item.altText.isEmpty ? "text.badge.plus" : "text.badge.checkmark")
                                 .appFont(AppTextRole.caption)
                             
-                            Text(item.altText.isEmpty ? "Add alt" : "Edit alt")
-                                .appFont(AppTextRole.caption)
+                            if item.altText.isEmpty {
+                                Text("Add alt", comment: "Badge button on attached media to add alt text description")
+                                    .appFont(AppTextRole.caption)
+                            } else {
+                                Text("Edit alt", comment: "Badge button on attached media to edit alt text description")
+                                    .appFont(AppTextRole.caption)
+                            }
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .modifier(MediaAltBadgeBackground())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(item.altText.isEmpty ? "Add description" : "Edit description")
+                    .accessibilityLabel(item.altText.isEmpty ? Text("Add description") : Text("Edit description"))
                 }
                 .padding(6)
             }

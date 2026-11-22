@@ -23,6 +23,7 @@ struct PostComposerViewUIKit: View {
   static let composerAvatarSize = DesignTokens.Size.avatarXL
 
   @Environment(\.dismiss) var dismiss
+  @Environment(\.locale) var locale
   @Environment(\.horizontalSizeClass) private var hSize
   @Environment(\.verticalSizeClass) private var vSize
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -383,13 +384,13 @@ struct PostComposerViewUIKit: View {
     #endif
   }
   
-  private func getNavigationTitle(vm: PostComposerViewModel) -> String {
+  private func getNavigationTitle(vm: PostComposerViewModel) -> LocalizedStringResource {
     if vm.isReply {
-      return "Reply"
+      return LocalizedStringResource("Reply", comment: "Navigation bar title when composing a reply to a post")
     } else if vm.isThreadMode {
-      return "Thread"
+      return LocalizedStringResource("Thread", comment: "Navigation bar title when composing a multi-post thread")
     } else {
-      return "Post"
+      return LocalizedStringResource("Post", comment: "Navigation bar title when composing a new post")
     }
   }
   
@@ -610,13 +611,13 @@ struct PostComposerViewUIKit: View {
 
   private func languageSummary(vm: PostComposerViewModel) -> String {
     if vm.selectedLanguages.isEmpty {
-      let code = Locale.current.language.languageCode?.identifier ?? "en"
-      return Locale.current.localizedString(forLanguageCode: code) ?? code
+      let code = locale.language.languageCode?.identifier ?? "en"
+      return locale.localizedString(forLanguageCode: code) ?? code
     }
 
     return vm.selectedLanguages
-      .map { ComposerChipsStrip.languageDisplayName($0) }
-      .joined(separator: ", ")
+      .map { ComposerChipsStrip.languageDisplayName($0, locale: locale) }
+      .formatted(.list(type: .and, width: .narrow))
   }
 
   private var isPresentingFromPlusMenu: Bool {
@@ -691,7 +692,9 @@ struct PostComposerViewUIKit: View {
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
-        placeholder: vm.isReply ? "Write your reply…" : "What’s on your mind?",
+        placeholder: vm.isReply
+          ? String(localized: "Write your reply…", comment: "Placeholder text when composing a reply")
+          : String(localized: "What’s on your mind?", comment: "Placeholder text in the post composer"),
         onImagePasted: { image in
           pcUIKitLogger.info("PostComposerViewUIKit: Image pasted into editor")
           #if os(iOS)
@@ -835,7 +838,11 @@ private struct ComposerPostToolbarButton: View {
       .opacity(isSubmitting ? 0.7 : 1)
       .buttonStyle(.glassProminent)
       .keyboardShortcut(.return, modifiers: .command)
-      .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+      .accessibilityLabel(
+        vm.isThreadMode
+          ? Text("Post All", comment: "Accessibility label for button that publishes all posts in a thread")
+          : Text("Post", comment: "Accessibility label for button that publishes a post")
+      )
     } else {
       Button(action: action) {
         if isSubmitting {
@@ -851,7 +858,11 @@ private struct ComposerPostToolbarButton: View {
       .buttonStyle(.borderedProminent)
       .buttonBorderShape(.capsule)
       .keyboardShortcut(.return, modifiers: .command)
-      .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+      .accessibilityLabel(
+        vm.isThreadMode
+          ? Text("Post All", comment: "Accessibility label for button that publishes all posts in a thread")
+          : Text("Post", comment: "Accessibility label for button that publishes a post")
+      )
     }
     #else
     Button(action: action) {
@@ -868,7 +879,11 @@ private struct ComposerPostToolbarButton: View {
     .buttonStyle(.borderedProminent)
     .buttonBorderShape(.capsule)
     .keyboardShortcut(.return, modifiers: .command)
-    .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+    .accessibilityLabel(
+      vm.isThreadMode
+        ? Text("Post All", comment: "Accessibility label for button that publishes all posts in a thread")
+        : Text("Post", comment: "Accessibility label for button that publishes a post")
+    )
     #endif
   }
 }

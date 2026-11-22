@@ -40,7 +40,10 @@ struct MacOSMLSOrdinaryConversationView: View {
   @State private var showingEmojiPicker = false
   @State private var emojiPickerMessageID: String?
   @State private var showingGroupInfo = false
-  @State private var groupTitle: String = "Encrypted Chat"
+  @State private var groupTitle: String = String(
+    localized: "Encrypted Chat",
+    comment: "Fallback navigation title for an unnamed encrypted chat"
+  )
   @State private var groupDescription: String = ""
   @State private var spaceURI: String?
   @State private var moderationDIDInput: String = ""
@@ -134,7 +137,7 @@ struct MacOSMLSOrdinaryConversationView: View {
           Text(groupTitle)
             .font(.headline)
             .lineLimit(1)
-          Text("E2EE")
+          Text("E2EE", comment: "Short badge indicating end-to-end encryption")
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(.green)
             .padding(.horizontal, 4)
@@ -175,7 +178,7 @@ struct MacOSMLSOrdinaryConversationView: View {
             let handleLabel = profile.map { "@\($0.handle)" }
             let label = profile?.displayName ?? handleLabel ?? peerDID
             HStack {
-              Text(label)
+              Text(verbatim: label)
                 .lineLimit(1)
               Spacer()
               Button("Report") {
@@ -289,7 +292,10 @@ struct MacOSMLSOrdinaryConversationView: View {
       groupTitle = title
       groupDescription = meta.description ?? ""
     } else if let convo = (try? await coordinator.listConversations(limit: 200))?.first(where: { $0.conversationId == conversationId }) {
-      groupTitle = convo.title ?? "Encrypted Chat"
+      groupTitle = convo.title ?? String(
+        localized: "Encrypted Chat",
+        comment: "Fallback navigation title for an unnamed encrypted chat"
+      )
       spaceURI = convo.spaceUri
     }
   }

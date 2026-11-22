@@ -34,46 +34,54 @@ struct SceneRuntimeFixture: View {
           VStack(spacing: 12) {
             ScrollView {
               VStack(alignment: .leading, spacing: 8) {
-                Text("Offline scene diagnostics").font(.headline)
-                Text("Scene: \(scene.sceneID.uuidString)")
+                Text(verbatim: "Offline scene diagnostics").font(.headline)
+                Text(verbatim: "Scene: \(scene.sceneID.uuidString)")
                   .accessibilityIdentifier("scene-runtime.scene")
-                Text("Session: \(sessionIdentifier)")
+                Text(verbatim: "Session: \(sessionIdentifier)")
                   .accessibilityIdentifier("scene-runtime.session")
-                Text("Context: \(context.activityRegistrationID.uuidString)")
+                Text(verbatim: "Context: \(context.activityRegistrationID.uuidString)")
                   .accessibilityIdentifier("scene-runtime.context")
-                Text("Account: \(context.accountDID)")
+                Text(verbatim: "Account: \(context.accountDID)")
                   .accessibilityIdentifier("scene-runtime.account")
-                Text("Services: \(String(describing: ObjectIdentifier(account)))")
+                Text(verbatim: "Services: \(String(describing: ObjectIdentifier(account)))")
                   .accessibilityIdentifier("scene-runtime.services")
-                Text("Receiving: \(Int(receivingSize.width)) × \(Int(receivingSize.height))")
+                Text(verbatim: "Receiving: \(Int(receivingSize.width)) × \(Int(receivingSize.height))")
                   .accessibilityIdentifier("scene-runtime.bounds")
-                Text("Tab: \(context.navigationManager.currentTabIndex)")
+                Text(verbatim: "Tab: \(context.navigationManager.currentTabIndex)")
                   .accessibilityIdentifier("scene-runtime.tab")
-                Text("Paths: \(pathDescription(context))")
+                Text(verbatim: "Paths: \(pathDescription(context))")
                   .accessibilityIdentifier("scene-runtime.paths")
-                Text("Claim: \(context.composerEditingSession.activeClaim?.token.uuidString ?? "none")")
+                Text(verbatim: "Claim: \(context.composerEditingSession.activeClaim?.token.uuidString ?? "none")")
                   .accessibilityIdentifier("scene-runtime.claim")
-                Text("Draft: \(context.composerEditingSession.currentDraft?.postText ?? "none")")
+                Text(verbatim: "Draft: \(context.composerEditingSession.currentDraft?.postText ?? "none")")
                   .accessibilityIdentifier("scene-runtime.draft")
-                Text("Anchor: \(Self.viewport(in: context).getScrollAnchor()?.postID ?? "none")")
+                Text(verbatim: "Anchor: \(Self.viewport(in: context).getScrollAnchor()?.postID ?? "none")")
                   .accessibilityIdentifier("scene-runtime.anchor")
-                if let issue { Text(issue).foregroundStyle(.red) }
+                if let issue { Text(verbatim: issue).foregroundStyle(.red) }
                 HStack {
-                  Button("Seed this window") {
+                  Button {
                     do { try Self.seed(context) }
                     catch { issue = error.localizedDescription }
+                  } label: {
+                    Text(verbatim: "Seed this window")
                   }
                   .accessibilityIdentifier("scene-runtime.seed")
-                  Button("Other tab") {
+                  Button {
                     let manager = context.navigationManager
                     manager.updateCurrentTab(manager.currentTabIndex == 1 ? 3 : 1)
+                  } label: {
+                    Text(verbatim: "Other tab")
                   }
                   .accessibilityIdentifier("scene-runtime.other-tab")
                 }
                 HStack {
-                  Button("New window") { openWindow(id: "main") }
+                  Button { openWindow(id: "main") } label: {
+                    Text(verbatim: "New window")
+                  }
                     .accessibilityIdentifier("scene-runtime.new-window")
-                  Button("Close this window") { dismissWindow() }
+                  Button { dismissWindow() } label: {
+                    Text(verbatim: "Close this window")
+                  }
                     .accessibilityIdentifier("scene-runtime.close-window")
                 }
               }
@@ -84,19 +92,21 @@ struct SceneRuntimeFixture: View {
             NavigationStack(path: context.navigationManager.pathBinding(
               for: context.navigationManager.currentTabIndex
             )) {
-              Text("Local route root")
-                .navigationTitle("Scene root")
+              Text(verbatim: "Local route root")
+                .navigationTitle(Text(verbatim: "Scene root"))
                 .navigationDestination(for: NavigationDestination.self) { _ in
-                  Text("Local route in \(scene.sceneID.uuidString)")
+                  Text(verbatim: "Local route in \(scene.sceneID.uuidString)")
                     .accessibilityIdentifier("scene-runtime.destination")
-                    .navigationTitle("Scene marker")
+                    .navigationTitle(Text(verbatim: "Scene marker"))
                 }
             }
             .frame(height: 180)
           }
         }
       } else {
-        ProgressView(scene.isDisconnected ? "Window disconnected" : "Preparing offline scene")
+        ProgressView {
+          Text(verbatim: scene.isDisconnected ? "Window disconnected" : "Preparing offline scene")
+        }
       }
     }
     .background {

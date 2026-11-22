@@ -11,13 +11,21 @@ enum CircleAudienceRowState: Equatable {
   /// The disabled row's one-line title: the Circle's name and the reason.
   func disabledTitle(circleName: String) -> String {
     guard let message else { return circleName }
-    return "\(circleName) — \(message)"
+    return String(
+      localized: "\(circleName) — \(message)",
+      comment: "Disabled Circle row in composer audience picker — %1$@ is the Circle name, %2$@ is the unavailability reason."
+    )
   }
 
   var message: String? {
     switch self {
-    case .selectable: return nil
-    case .keysUnavailable: return "Encryption keys not available yet"
+    case .selectable:
+      return nil
+    case .keysUnavailable:
+      return String(
+        localized: "Encryption keys not available yet",
+        comment: "Reason shown when an encrypted Circle cannot be selected in the composer audience picker."
+      )
     }
   }
 }
@@ -139,22 +147,25 @@ struct CircleAudiencePicker: View {
     }
   }
 
-  private var accessibilityLabelText: String {
+  private var accessibilityLabelText: LocalizedStringResource {
     switch selectedDestination {
     case .public:
-      return "Audience: Public"
+      return LocalizedStringResource("Audience: Public", comment: "Accessibility label for post audience picker when Public is selected.")
     case .circle(let circle):
-      return "Audience: Circle \(circle.name)"
+      return LocalizedStringResource(
+        "Audience: Circle \(circle.name)",
+        comment: "Accessibility label for post audience picker when a private Circle is selected — %1$@ is the Circle name."
+      )
     }
   }
 
-  private var accessibilityHintText: String {
+  private var accessibilityHintText: LocalizedStringResource {
     if isReplyLocked {
-      return "Audience is locked to this Circle for replies"
+      return LocalizedStringResource("Audience is locked to this Circle for replies", comment: "Accessibility hint when replying inside a Circle locks the audience.")
     } else if isSubmitting {
-      return "Post is currently submitting"
+      return LocalizedStringResource("Post is currently submitting", comment: "Accessibility hint on audience picker while the post is submitting.")
     } else {
-      return "Double tap to change post audience"
+      return LocalizedStringResource("Double tap to change post audience", comment: "Accessibility hint on post audience picker.")
     }
   }
 }

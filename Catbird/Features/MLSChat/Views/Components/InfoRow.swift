@@ -4,7 +4,7 @@ import SwiftUI
 
     extension MLSOrdinaryConversationDetailView {
         struct InfoRow: View {
-            let label: String
+            let label: LocalizedStringKey
             let value: String
 
             var body: some View {
@@ -13,7 +13,7 @@ import SwiftUI
                         .designFootnote()
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text(value)
+                    Text(verbatim: value)
                         .designFootnote()
                         .foregroundColor(.primary)
                 }

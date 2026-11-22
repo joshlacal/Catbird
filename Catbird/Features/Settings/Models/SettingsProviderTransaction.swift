@@ -26,7 +26,9 @@ struct SettingsProviderServiceDIDs: Equatable, Sendable {
 @MainActor enum SettingsProviderTransaction {
     enum Failure: LocalizedError {
         case operationInProgress
-        var errorDescription: String? { "Another account operation is in progress. Try again after it finishes." }
+        var errorDescription: String? {
+            String(localized: "Another account operation is in progress. Try again after it finishes.", comment: "Error when a concurrent account settings operation is already running.")
+        }
     }
     /// Restores the captured runtime mapping after a failed persistence attempt.
     /// A thrown SDK save may have written the account record before its account-list update failed.

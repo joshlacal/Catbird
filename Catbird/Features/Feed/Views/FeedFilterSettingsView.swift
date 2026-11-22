@@ -31,9 +31,9 @@ struct FeedFilterSettingsView: View {
       SettingsPersistenceStatusSection(settings: appState.appSettings)
       Section {
         if let editor, editor.hasLoaded {
-          visibilityRow("Replies", localID: "Hide Replies", synced: editor.confirmed?.hideReplies ?? false, control: "feed.replies")
-          visibilityRow("Reposts", localID: "Hide Reposts", synced: editor.confirmed?.hideReposts ?? false, control: "feed.reposts")
-          visibilityRow("Quote Posts", localID: "Hide Quote Posts", synced: editor.confirmed?.hideQuotePosts ?? false, control: "feed.quotes")
+          visibilityRow(localID: "Hide Replies", synced: editor.confirmed?.hideReplies ?? false, control: "feed.replies")
+          visibilityRow(localID: "Hide Reposts", synced: editor.confirmed?.hideReposts ?? false, control: "feed.reposts")
+          visibilityRow(localID: "Hide Quote Posts", synced: editor.confirmed?.hideQuotePosts ?? false, control: "feed.quotes")
         } else if editor?.isLoading != false {
           ProgressView("Loading Bluesky preferences…")
         } else {
@@ -96,8 +96,11 @@ struct FeedFilterSettingsView: View {
           SettingsNavigationRow(
             title: "Originals-Only Accounts",
             summary: count == 0
-              ? "No accounts have reposts hidden"
-              : "\(count) \(count == 1 ? "account has" : "accounts have") reposts hidden",
+              ? String(localized: "No accounts have reposts hidden", comment: "Summary when no accounts are configured for Originals-Only repost hiding")
+              : String(
+                localized: "\(count) accounts have reposts hidden",
+                comment: "Summary count of accounts whose reposts are hidden — variable is the number of accounts"
+              ),
             systemImage: "arrow.2.squarepath",
             family: .feeds
           )
@@ -145,10 +148,10 @@ struct FeedFilterSettingsView: View {
       self.editor = editor
       await editor.load()
     }
-    .confirmationDialog("Show \(reconciledTitle)?", isPresented: Binding(
+    .confirmationDialog(reconciledDialogTitle, isPresented: Binding(
       get: { reconciledFilter != nil }, set: { if !$0 { reconciledFilter = nil } }
     ), titleVisibility: .visible) {
-      Button("Show \(reconciledTitle)") {
+      Button(reconciledButtonTitle) {
         guard let id = reconciledFilter else { return }
         reconciledFilter = nil
         changeVisibility(id, hidden: false)
@@ -160,24 +163,48 @@ struct FeedFilterSettingsView: View {
   }
 
   private var repliesAreHidden: Bool { appState.feedFilterSettings.hideReplies || (editor?.confirmed?.hideReplies ?? false) }
-  private var reconciledTitle: String { reconciledFilter?.replacingOccurrences(of: "Hide ", with: "") ?? "Posts" }
+  private var reconciledDialogTitle: String {
+    switch reconciledFilter {
+    case "Hide Replies":
+      return String(localized: "Show Replies?", comment: "Confirmation dialog title when re-enabling replies in feeds")
+    case "Hide Reposts":
+      return String(localized: "Show Reposts?", comment: "Confirmation dialog title when re-enabling reposts in feeds")
+    case "Hide Quote Posts":
+      return String(localized: "Show Quote Posts?", comment: "Confirmation dialog title when re-enabling quote posts in feeds")
+    default:
+      return String(localized: "Show Posts?", comment: "Fallback confirmation dialog title when re-enabling hidden post types")
+    }
+  }
+  private var reconciledButtonTitle: String {
+    switch reconciledFilter {
+    case "Hide Replies":
+      return String(localized: "Show Replies", comment: "Confirmation button to show replies in feeds again")
+    case "Hide Reposts":
+      return String(localized: "Show Reposts", comment: "Confirmation button to show reposts in feeds again")
+    case "Hide Quote Posts":
+      return String(localized: "Show Quote Posts", comment: "Confirmation button to show quote posts in feeds again")
+    default:
+      return String(localized: "Show Posts", comment: "Fallback confirmation button to show hidden posts again")
+    }
+  }
   private var languageSummary: String {
     appState.appSettings.hideNonPreferredLanguages || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language")
-      ? "Filtering to preferred reading languages" : "Showing every language"
+      ? String(localized: "Filtering to preferred reading languages", comment: "Summary when feed language filtering is active")
+      : String(localized: "Showing every language", comment: "Summary when feed language filtering is off")
   }
-  private func visibilityRow(_ title: String, localID: String, synced: Bool, control: String) -> some View {
+  private func visibilityRow(localID: String, synced: Bool, control: String) -> some View {
     let sources = FeedFilterSources(local: appState.feedFilterSettings.isFilterEnabled(name: localID), synced: synced)
     return Toggle(isOn: Binding(get: { sources.isHidden }, set: { hidden in
       if !hidden && sources.local { reconciledFilter = localID }
       else { changeVisibility(localID, hidden: hidden) }
     })) {
       VStack(alignment: .leading, spacing: 4) {
-        Text("Hide \(title)")
+        Text(FeedFilter.localizedName(for: localID))
         Text(sources.description).appFont(AppTextRole.caption).foregroundStyle(.secondary)
       }
     }.settingsControl(.init(rawValue: control))
   }
-  private func localToggle(_ title: String, id: String, control: String) -> some View {
+  private func localToggle(_ title: LocalizedStringKey, id: String, control: String) -> some View {
     Toggle(title, isOn: Binding(
       get: { appState.feedFilterSettings.isFilterEnabled(name: id) },
       set: { appState.feedFilterSettings.setFilter(id: id, enabled: $0) }

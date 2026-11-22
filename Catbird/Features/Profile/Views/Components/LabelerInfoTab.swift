@@ -71,7 +71,7 @@ struct LabelerInfoTab: View {
     @ViewBuilder
     private func descriptionSection(_ description: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("About")
+            Text("About", comment: "Section heading for a moderation labeler's description.")
                 .appFont(AppTextRole.headline)
                 .fontWeight(.semibold)
 
@@ -151,7 +151,10 @@ struct LabelerInfoTab: View {
         } catch {
             guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
             confirmedAccountDID = nil
-            errorMessage = "Couldn’t load your label settings."
+            errorMessage = String(
+                localized: "Couldn’t load your label settings.",
+                comment: "Error message when loading labeler moderation preferences fails."
+            )
         }
     }
 
@@ -195,7 +198,10 @@ struct LabelerInfoTab: View {
             } catch {
                 guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
                 confirmedAccountDID = nil
-                errorMessage = "Couldn’t save that setting. Try again."
+                errorMessage = String(
+                    localized: "Couldn’t save that setting. Try again.",
+                    comment: "Error message when saving a labeler moderation preference fails."
+                )
             }
         }
     }

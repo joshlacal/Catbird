@@ -202,7 +202,11 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       }
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(message.senderDisplayName.map { "View \($0)’s profile" } ?? "View profile")
+    .accessibilityLabel(
+      message.senderDisplayName.map {
+        Text("View \($0)’s profile", comment: "Accessibility label on a chat message avatar. %@ is the sender's name.")
+      } ?? Text("View profile", comment: "Accessibility label on a chat message avatar when sender name is unavailable")
+    )
   }
 
   private var placeholderAvatar: some View {
@@ -210,7 +214,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       .fill(Color.gray.opacity(0.3))
       .frame(width: 32, height: 32)
       .overlay {
-        Text(message.senderDisplayName?.prefix(1).uppercased() ?? "?")
+        Text(verbatim: message.senderDisplayName?.prefix(1).localizedUppercase ?? "?")
           .font(.caption)
           .fontWeight(.medium)
           .foregroundStyle(.secondary)
@@ -218,9 +222,11 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   }
 
   private var bubbleAccessibilityLabel: String {
-    let sender = message.isFromCurrentUser ? "You" : (message.senderDisplayName ?? "")
+    let sender = message.isFromCurrentUser
+      ? String(localized: "You", comment: "Sender label for the current user's own message")
+      : (message.senderDisplayName ?? "")
     let time = message.sentAt.formatted(date: .omitted, time: .shortened)
-    return [sender, message.text, time].filter { !$0.isEmpty }.joined(separator: ", ")
+    return [sender, message.text, time].filter { !$0.isEmpty }.formatted(.list(type: .and, width: .narrow))
   }
 
   private var avatarPlaceholderSpacer: some View {
@@ -370,7 +376,10 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             Image(systemName: "arrow.clockwise")
               .font(.caption2)
             let remaining = max(1, Int(ceil(nextAttemptAt.timeIntervalSinceNow)))
-            Text("\(reason) (retrying in \(remaining)s, attempt \(attempt))")
+            Text(
+              "\(reason) (retrying in \(remaining)s, attempt \(attempt))",
+              comment: "Status below an outgoing message being retried. %1$@ is the reason, %2$lld is seconds remaining, %3$lld is attempt number."
+            )
               .font(.caption)
           }
           .foregroundStyle(.secondary)
@@ -590,7 +599,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     }
 
     private struct DetailRow: View {
-      let label: String
+      let label: LocalizedStringKey
       let value: String
 
       var body: some View {
@@ -598,7 +607,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           Text(label)
             .font(.footnote)
             .foregroundStyle(.secondary)
-          Text(value)
+          Text(verbatim: value)
             .font(.body)
             .textSelection(.enabled)
         }
@@ -714,8 +723,13 @@ private struct SwipeToReplyContainer<Content: View>: View {
   let onReply: (() -> Void)?
   @ViewBuilder let content: () -> Content
 
+  @Environment(\.layoutDirection) private var layoutDirection
   @State private var dragOffset: CGFloat = 0
   @State private var hasTriggeredHaptic = false
+
+  private var swipesNegativeInScreenSpace: Bool {
+    layoutDirection == .rightToLeft ? !isFromCurrentUser : isFromCurrentUser
+  }
 
   var body: some View {
     // Masking the gesture instead of dropping it keeps the bubble's view identity
@@ -727,10 +741,10 @@ private struct SwipeToReplyContainer<Content: View>: View {
           .onChanged { value in
             let translation = value.translation.width
             if abs(value.translation.height) < abs(translation) {
-              let validTranslation = isFromCurrentUser ? min(0, translation) : max(0, translation)
+              let validTranslation = swipesNegativeInScreenSpace ? min(0, translation) : max(0, translation)
               let damped = validTranslation * 0.4
               dragOffset = damped
-              let isArmed = isFromCurrentUser ? damped <= -30 : damped >= 30
+              let isArmed = swipesNegativeInScreenSpace ? damped <= -30 : damped >= 30
               if isArmed && !hasTriggeredHaptic {
                 PlatformHaptics.light()
                 hasTriggeredHaptic = true
@@ -740,7 +754,7 @@ private struct SwipeToReplyContainer<Content: View>: View {
             }
           }
           .onEnded { _ in
-            let isArmed = isFromCurrentUser ? dragOffset <= -30 : dragOffset >= 30
+            let isArmed = swipesNegativeInScreenSpace ? dragOffset <= -30 : dragOffset >= 30
             if isArmed {
               onReply?()
             }

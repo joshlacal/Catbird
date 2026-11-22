@@ -60,14 +60,24 @@ struct SettingsUIFixture: View {
           SettingsFixtureNativeProbe(evidence: evidence)
             .frame(width: 2, height: 2)
           #else
-          Text("Native Settings qualification requires iOS")
+          Text(verbatim: "Native Settings qualification requires iOS")
           #endif
         }
       } else if let failure {
-        ContentUnavailableView("Settings fixture failed", systemImage: "exclamationmark.triangle", description: Text(failure))
-          .accessibilityIdentifier("settings.fixture.failure")
+        ContentUnavailableView {
+          Label {
+            Text(verbatim: "Settings fixture failed")
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
+        } description: {
+          Text(failure)
+        }
+        .accessibilityIdentifier("settings.fixture.failure")
       } else {
-        ProgressView("Preparing Settings")
+        ProgressView {
+          Text(verbatim: "Preparing Settings")
+        }
       }
     }
     .task { await prepare() }
@@ -88,8 +98,14 @@ struct SettingsUIFixture: View {
       if let target = SettingsScreenID(rawValue: screen), target != .about {
         SettingsDestinationView(target: SettingsTarget(screen: target))
       } else {
-        ContentUnavailableView("Unsupported local Settings target", systemImage: "exclamationmark.triangle")
-          .accessibilityIdentifier("settings.fixture.failure")
+        ContentUnavailableView {
+          Label {
+            Text(verbatim: "Unsupported local Settings target")
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
+        }
+        .accessibilityIdentifier("settings.fixture.failure")
       }
     }
   }

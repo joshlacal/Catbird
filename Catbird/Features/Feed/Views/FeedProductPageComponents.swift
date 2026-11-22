@@ -21,7 +21,9 @@ struct FeedProductMetadataStrip: View {
           metadataTile(
             header: "LIKES",
             value: FeedCountFormatter.compact(displayedLikeCount),
-            footer: liked ? "Liked" : "Community",
+            footer: liked
+              ? String(localized: "Liked", comment: "Footer under feed likes count when liked by the user")
+              : String(localized: "Community", comment: "Footer under feed likes count showing community likes"),
             symbol: liked ? "heart.fill" : "heart"
           )
 
@@ -36,13 +38,13 @@ struct FeedProductMetadataStrip: View {
             )
           } else {
             VStack(spacing: 4) {
-              Text("VELOCITY")
+              Text("VELOCITY", comment: "Feed product page stat header for posting pace")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
               ProgressView()
                 .controlSize(.small)
                 .frame(height: 22)
-              Text("Measuring")
+              Text("Measuring", comment: "Placeholder while calculating feed posting pace")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
@@ -55,14 +57,14 @@ struct FeedProductMetadataStrip: View {
 
           NavigationLink(value: NavigationDestination.profile(feed.creator.did.didString())) {
             VStack(spacing: 4) {
-              Text("CREATOR")
+              Text("CREATOR", comment: "Feed product page stat header for the feed creator")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
               Image(systemName: "person.crop.circle.fill")
                 .font(.title3)
                 .foregroundStyle(Color.accentColor)
                 .frame(height: 22)
-              Text("@\(feed.creator.handle.description)")
+              Text(verbatim: "@\(feed.creator.handle.description)")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
@@ -74,7 +76,12 @@ struct FeedProductMetadataStrip: View {
             .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .accessibilityLabel("Creator @\(feed.creator.handle.description), view profile")
+          .accessibilityLabel(
+            Text(
+              "Creator @\(feed.creator.handle.description), view profile",
+              comment: "Accessibility label for feed creator stat tile — variable is the creator's handle"
+            )
+          )
           .accessibilityIdentifier("feed.product.stat.creator")
 
           if let category {
@@ -83,7 +90,7 @@ struct FeedProductMetadataStrip: View {
             metadataTile(
               header: "CATEGORY",
               value: category.shortTitle,
-              footer: "Topic",
+              footer: String(localized: "Topic", comment: "Footer under feed category stat tile"),
               symbol: category.symbolName
             )
           }
@@ -99,7 +106,7 @@ struct FeedProductMetadataStrip: View {
   }
 
   private func metadataTile(
-    header: String,
+    header: LocalizedStringKey,
     value: String,
     footer: String,
     symbol: String
@@ -200,7 +207,7 @@ struct FeedPreviewScreenshotCard: View {
               .font(.caption.weight(.semibold))
               .foregroundStyle(.primary)
               .lineLimit(1)
-            Text("@\(post.post.author.handle.description)")
+            Text(verbatim: "@\(post.post.author.handle.description)")
               .font(.caption2)
               .foregroundStyle(.secondary)
               .lineLimit(1)
@@ -246,9 +253,21 @@ struct FeedPreviewScreenshotCard: View {
         Spacer(minLength: 0)
 
         HStack(spacing: 14) {
-          Label("\(post.post.replyCount ?? 0)", systemImage: "bubble.right")
-          Label("\(post.post.repostCount ?? 0)", systemImage: "arrow.2.squarepath")
-          Label("\(post.post.likeCount ?? 0)", systemImage: "heart")
+          Label {
+            Text(post.post.replyCount ?? 0, format: .number)
+          } icon: {
+            Image(systemName: "bubble.right")
+          }
+          Label {
+            Text(post.post.repostCount ?? 0, format: .number)
+          } icon: {
+            Image(systemName: "arrow.2.squarepath")
+          }
+          Label {
+            Text(post.post.likeCount ?? 0, format: .number)
+          } icon: {
+            Image(systemName: "heart")
+          }
         }
         .font(.caption2.monospacedDigit())
         .foregroundStyle(.secondary)

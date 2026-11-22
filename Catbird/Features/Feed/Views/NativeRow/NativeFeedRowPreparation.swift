@@ -130,7 +130,7 @@ enum NativeFeedRowPreparation {
     /// boundaries, except below a minute: the header shows "now" while the spoken label counts
     /// seconds, so "now" is never reused.
     func isCurrent(createdAt: Date, timeText: String) -> Bool {
-      self.createdAt == createdAt && text == timeText && timeText != "now"
+      self.createdAt == createdAt && text == timeText && Date().timeIntervalSince(createdAt) >= 60 && timeText != "now"
     }
   }
 }

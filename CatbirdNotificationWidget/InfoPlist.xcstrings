@@ -1,0 +1,43 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Notifications widget extension bundle display name shown in the widget gallery. Keep the 'Catbird' brand name untranslated and localize 'Notifications'.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird Notifications"
+          }
+        }
+      }
+    },
+    "CFBundleName" : {
+      "comment" : "Notifications widget extension bundle short name — do not translate.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CatbirdNotificationWidgetExtension"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "NSHumanReadableCopyright" : {
+      "comment" : "Human-readable copyright notice for the notifications widget extension. Keep 'Catbird' brand name untranslated.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copyright © 2025 Catbird. All rights reserved."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

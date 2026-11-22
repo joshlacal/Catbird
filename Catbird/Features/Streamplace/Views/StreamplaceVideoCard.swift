@@ -5,6 +5,7 @@ struct StreamplaceVideoCard: View {
   let thumbnail: CGImage?
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.locale) private var locale
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -33,7 +34,7 @@ struct StreamplaceVideoCard: View {
           Spacer()
           HStack {
             Spacer()
-            Text(video.formattedDuration)
+            Text(video.formattedDuration(locale: locale))
               .appFont(AppTextRole.caption)
               .foregroundStyle(.white)
               .padding(.horizontal, 6)

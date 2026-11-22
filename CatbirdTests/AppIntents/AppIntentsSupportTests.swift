@@ -185,4 +185,121 @@ struct CreatePostIntentTests {
   }
 }
 
+// MARK: - Localization & AppShortcuts Contracts
+
+@Suite("App Intents localization and Shortcuts contracts")
+struct AppIntentsLocalizationTests {
+
+  @Test func shortcutsStayWithinSystemCap() {
+    let shortcuts = CatbirdShortcuts.appShortcuts
+    #expect(!shortcuts.isEmpty)
+    #expect(shortcuts.count <= 10)
+    #expect(shortcuts.count == 10)
+  }
+
+  @Test func intentErrorCasesSurfaceLocalizedStringResources() {
+    let cases: [IntentError] = [
+      .notSignedIn,
+      .accountUnavailable("did:plc:example"),
+      .httpError(503),
+      .emptyResponse,
+      .invalidParameter("A post needs text or at least one image."),
+      .serviceUnavailable("Catbird's shared storage is unavailable."),
+    ]
+
+    for error in cases {
+      let resolved = String(localized: error.localizedStringResource)
+      #expect(!resolved.isEmpty)
+      #expect(error.errorDescription == resolved)
+    }
+  }
+
+  @Test func countableEntitiesProvideNumericFormat() {
+    #expect(!String(localized: AccountEntity.typeDisplayRepresentation.name).isEmpty)
+    #expect(AccountEntity.typeDisplayRepresentation.numericFormat != nil)
+    #expect(!String(localized: BskyConversationEntity.typeDisplayRepresentation.name).isEmpty)
+    #expect(BskyConversationEntity.typeDisplayRepresentation.numericFormat != nil)
+  }
+
+  @Test func emptyMemberConversationUsesLocalizedFallbackTitle() throws {
+    let selfOnlyConvo = ChatBskyConvoDefs.ConvoView(
+      id: "3l5selfonly",
+      rev: "rev1",
+      members: [
+        try BskyConversationEntityTests.member(
+          did: BskyConversationEntityTests.selfDID,
+          handle: "me.bsky.social",
+          displayName: "Me"
+        )
+      ],
+      lastMessage: nil,
+      lastReaction: nil,
+      muted: false,
+      status: nil,
+      unreadCount: 0,
+      kind: nil
+    )
+    let entity = BskyConversationEntity(
+      from: selfOnlyConvo,
+      currentUserDID: BskyConversationEntityTests.selfDID
+    )
+    #expect(!entity.title.isEmpty)
+  }
+
+  #if os(iOS) && canImport(GeoToolbox) && compiler(>=6.4)
+  @Test func messagesSchemaEntitiesProvideNumericFormatsAndFallbacks() {
+    guard #available(iOS 27.0, *) else { return }
+
+    #expect(CatbirdMessagesCustomAttachment.typeDisplayRepresentation.numericFormat != nil)
+    #expect(CatbirdMessagesConversationEntity.typeDisplayRepresentation.numericFormat != nil)
+    #expect(CatbirdMessagesMessageEntity.typeDisplayRepresentation.numericFormat != nil)
+    #expect(CatbirdMessagesPersonEntity.typeDisplayRepresentation.numericFormat != nil)
+
+    let emptyAttachment = CatbirdMessagesCustomAttachment(id: "att-1", sourceName: nil, description: nil)
+    #expect(String(localized: emptyAttachment.displayRepresentation.title) == "Attachment")
+
+    let sender = CatbirdMessagesPersonEntity(
+      id: "did:plc:sender",
+      displayName: "Alex Rivera",
+      handle: "alex.bsky.social"
+    )
+    #expect(sender.displayRepresentation.subtitle.map { String(localized: $0) } == "@alex.bsky.social")
+
+    let convo = CatbirdMessagesConversationEntity(
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      recipients: [sender],
+      displayName: "Alex Rivera",
+      previewText: AttributedString("MLS Chat"),
+      conversationName: nil,
+      isRead: true,
+      attributes: [],
+      dateLastActive: nil
+    )
+    #expect(convo.displayRepresentation.subtitle != nil)
+
+    let emptyBodyMessage = CatbirdMessagesMessageEntity(
+      id: "msg-1",
+      messageType: .text,
+      author: sender,
+      isRead: true,
+      attributes: [],
+      conversation: convo,
+      date: Date(timeIntervalSince1970: 1_700_000_000),
+      subject: nil,
+      body: nil,
+      attachments: [],
+      audioMessage: nil,
+      customAttachments: [],
+      locations: [],
+      links: [],
+      messageEffect: nil,
+      reaction: nil,
+      referencedMessage: nil,
+      notificationIdentifier: nil
+    )
+    #expect(String(localized: emptyBodyMessage.displayRepresentation.title) == "Message")
+  }
+  #endif
+}
+
 

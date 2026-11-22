@@ -48,7 +48,7 @@ struct MoreView: View {
                         Spacer()
                         
                         // Chevron
-                        Image(systemName: "chevron.right")
+                        Image(systemName: "chevron.forward")
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .tertiary, currentScheme: colorScheme))
                     }

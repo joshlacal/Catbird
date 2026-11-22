@@ -36,10 +36,19 @@ struct ModerationUIFixture: View {
     Group {
       switch phase {
       case .preparing:
-        ProgressView("Preparing moderation fixture")
+        ProgressView {
+          Text(verbatim: "Preparing moderation fixture")
+        }
       case .failed(let message):
-        ContentUnavailableView("Moderation fixture failed", systemImage: "exclamationmark.triangle",
-          description: Text(message))
+        ContentUnavailableView {
+          Label {
+            Text(verbatim: "Moderation fixture failed")
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
+        } description: {
+          Text(verbatim: message)
+        }
           .accessibilityIdentifier("moderation.fixture.failure")
       case .ready(let world):
         ready(world)

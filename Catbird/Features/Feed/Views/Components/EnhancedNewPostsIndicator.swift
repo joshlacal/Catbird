@@ -29,11 +29,10 @@ struct EnhancedNewPostsIndicator: View {
   // MARK: - Computed Properties
   
   private var displayText: String {
-    if newPostCount == 1 {
-      return "New post"
-    } else {
-      return "\(newPostCount) new posts"
-    }
+    String(
+      localized: "\(newPostCount) new posts",
+      comment: "Floating banner title showing how many new posts arrived — variable is the number of new posts"
+    )
   }
   
   private var timeAgoText: String {
@@ -91,7 +90,7 @@ struct EnhancedNewPostsIndicator: View {
       .fill(Color.blue)
       .frame(width: 26, height: 26)
       .overlay(
-        Text("+\(authors.count - maxDisplayedAvatars)")
+        Text(verbatim: "+\(authors.count - maxDisplayedAvatars)")
           .font(.caption2)
           .fontWeight(.bold)
           .foregroundColor(.white)
@@ -114,19 +113,25 @@ struct EnhancedNewPostsIndicator: View {
             .foregroundColor(.white)
           
           if shouldShowTimeStamp {
-            Text("• \(timeAgoText)")
+            Text(verbatim: "• \(timeAgoText)")
               .font(.system(size: 13, weight: .medium))
               .foregroundColor(.white.opacity(0.8))
           }
         }
         
         if authors.count == 1, let author = authors.first {
-          Text("by \(author.displayName ?? author.handle.description)")
+          Text(
+            "by \(author.displayName ?? author.handle.description)",
+            comment: "New posts indicator subtitle when posts are from one author — variable is the author's name"
+          )
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(.white.opacity(0.9))
             .lineLimit(1)
         } else if authors.count > 1 {
-          Text("from \(authors.count) people")
+          Text(
+            "from \(authors.count) people",
+            comment: "New posts indicator subtitle when posts are from multiple authors — variable is the number of authors"
+          )
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(.white.opacity(0.9))
         }
@@ -193,7 +198,12 @@ struct EnhancedNewPostsIndicator: View {
       cancelAutoHide()
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("\(displayText) available. Tap to view.")
+    .accessibilityLabel(
+      Text(
+        "\(newPostCount) new posts available. Tap to view.",
+        comment: "Accessibility label for the new posts banner — variable is the number of new posts"
+      )
+    )
     .accessibilityHint("Double tap to scroll to top and view new posts")
   }
   
@@ -476,7 +486,10 @@ struct EnhancedNewPostsIndicator: View {
         Image(systemName: "arrow.up.circle.fill")
           .foregroundColor(.accentColor)
         
-        Text("\(newPostCount) new posts")
+        Text(
+          "\(newPostCount) new posts",
+          comment: "Floating banner title showing how many new posts arrived — variable is the number of new posts"
+        )
           .font(.caption)
           .foregroundColor(.primary)
       }

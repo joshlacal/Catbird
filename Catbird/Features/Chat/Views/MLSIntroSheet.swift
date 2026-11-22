@@ -69,7 +69,7 @@ struct MLSIntroSheet: View {
     .interactiveDismissDisabled()
   }
 
-  private func row(systemImage: String, title: String, detail: String) -> some View {
+  private func row(systemImage: String, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
     HStack(alignment: .top, spacing: 14) {
       Image(systemName: systemImage)
         .font(.title3)

@@ -55,7 +55,7 @@ struct KnownFollowersView: View {
             } else if let error = error {
                 ErrorStateView(
                     error: error,
-                    context: "Failed to load followers you know",
+                    context: String(localized: "Failed to load followers you know", comment: "Error context shown when loading mutual followers fails."),
                     retryAction: { Task { await loadKnownFollowers() } }
                 )
                 .listRowSeparator(.hidden)
@@ -118,7 +118,16 @@ struct KnownFollowersView: View {
                 }
             } else {
                 await MainActor.run {
-                    error = NSError(domain: "KnownFollowersView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Couldn’t load followers you know."])
+                    error = NSError(
+                        domain: "KnownFollowersView",
+                        code: responseCode,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: String(
+                                localized: "Couldn’t load followers you know.",
+                                comment: "Error message when loading mutual followers fails."
+                            )
+                        ]
+                    )
                     isLoading = false
                     hasLoadedOnce = true
                 }

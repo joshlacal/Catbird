@@ -201,8 +201,16 @@ public struct WelcomeOnboardingView: View {
                                 .tint(.white)
                                 .padding(.trailing, 4)
                         }
-                        Text(isSavingInterests ? "Saving…" : (selectedInterests.isEmpty ? "Continue" : "Save & Continue (\(selectedInterests.count))"))
-                            .fontWeight(.semibold)
+                        Group {
+                            if isSavingInterests {
+                                Text("Saving…", comment: "Progress button label while saving selected interests.")
+                            } else if selectedInterests.isEmpty {
+                                Text("Continue", comment: "Button to advance past interests step without selections.")
+                            } else {
+                                Text("Save & Continue (\(selectedInterests.count))", comment: "Button to save selected interests and advance — variable is selected count.")
+                            }
+                        }
+                        .fontWeight(.semibold)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
@@ -301,8 +309,13 @@ public struct WelcomeOnboardingView: View {
                     .foregroundStyle(.accent)
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(context.name ?? "Starter Pack")
-                        .font(.headline)
+                    if let name = context.name {
+                        Text(name)
+                            .font(.headline)
+                    } else {
+                        Text("Starter Pack", comment: "Fallback title for a Bluesky Starter Pack.")
+                            .font(.headline)
+                    }
                     Text(starterPackStatusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -317,8 +330,10 @@ public struct WelcomeOnboardingView: View {
                         .foregroundStyle(.green)
                         .accessibilityHidden(true)
                 } else if effectiveError != nil {
-                    Button("Try Again") {
+                    Button {
                         Task { await finalizeStarterPackIfNeeded() }
+                    } label: {
+                        Text("Try Again", comment: "Retry button when starter pack finalization fails.")
                     }
                     .font(.caption.bold())
                 }
@@ -333,13 +348,21 @@ public struct WelcomeOnboardingView: View {
             
             if let result = effectiveResult {
                 HStack(spacing: 16) {
-                    Label("\(result.followedCount) Followed", systemImage: "person.badge.plus")
+                    Label {
+                        Text("\(result.followedCount) Followed", comment: "Count of accounts followed from a starter pack.")
+                    } icon: {
+                        Image(systemName: "person.badge.plus")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    if result.pinnedFeedsCount > 0 {
+                        Label {
+                            Text("\(result.pinnedFeedsCount) Feeds Pinned", comment: "Count of feeds pinned from a starter pack.")
+                        } icon: {
+                            Image(systemName: "pin.fill")
+                        }
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if result.pinnedFeedsCount > 0 {
-                        Label("\(result.pinnedFeedsCount) Feeds Pinned", systemImage: "pin.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -364,11 +387,18 @@ public struct WelcomeOnboardingView: View {
 
     private var starterPackStatusText: String {
         if let result = effectiveResult {
-            return "Joined • Followed \(result.followedCount), pinned \(result.pinnedFeedsCount) feeds"
+            return String(
+                localized: "Joined • Followed \(result.followedCount), pinned \(result.pinnedFeedsCount) feeds",
+                comment: "Starter pack completion status — %1$lld is accounts followed, %2$lld is feeds pinned."
+            )
         }
-        if isFinalizing { return "Joining starter pack…" }
-        if effectiveError != nil { return "Couldn’t join" }
-        return "Joining starter pack…"
+        if isFinalizing {
+            return String(localized: "Joining starter pack…", comment: "Status message while joining a starter pack in onboarding.")
+        }
+        if effectiveError != nil {
+            return String(localized: "Couldn’t join", comment: "Status message when joining a starter pack fails.")
+        }
+        return String(localized: "Joining starter pack…", comment: "Status message while joining a starter pack in onboarding.")
     }
     
     // MARK: - Navigation & State Helpers
@@ -440,7 +470,10 @@ public struct WelcomeOnboardingView: View {
             } catch {
                 await MainActor.run {
                     isSavingInterests = false
-                    interestsErrorMessage = UserFacingError.message(for: error, action: "save your interests")
+                    interestsErrorMessage = UserFacingError.message(
+                        for: error,
+                        action: String(localized: "save your interests", comment: "Action phrase in error message when saving onboarding interests fails.")
+                    )
                     logger.error("Failed to save interests: \(error)")
                 }
             }
@@ -468,8 +501,10 @@ public struct WelcomeOnboardingView: View {
             self.isFinalizingStarterPack = false
         } catch {
             self.isFinalizingStarterPack = false
-            self.starterPackError = UserFacingError.message(for: error, action: "follow everyone in this starter pack")
-                ?? "Couldn’t follow everyone in this starter pack. Try again."
+            self.starterPackError = UserFacingError.message(
+                for: error,
+                action: String(localized: "follow everyone in this starter pack", comment: "Action phrase in error message when starter pack finalization fails.")
+            ) ?? String(localized: "Couldn’t follow everyone in this starter pack. Try again.", comment: "Fallback error message when starter pack finalization fails.")
             logger.error("Failed starter pack finalization: \(error)")
         }
     }

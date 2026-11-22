@@ -339,7 +339,7 @@ struct AccountSettingsView: View {
                       targetState.userDID == targetDID,
                       appStateManager.lifecycle.appState === targetState else { return }
                 if appState.circleCapability == .unknown {
-                    circleSetupError = "Couldn’t confirm Circles availability. Check your connection and account permissions, then try again."
+                    circleSetupError = String(localized: "Couldn’t confirm Circles availability. Check your connection and account permissions, then try again.", comment: "Error when probing Circles capability fails.")
                 }
             } catch is CancellationError {
                 // Cancelling consent leaves Circles unchanged.
@@ -352,7 +352,7 @@ struct AccountSettingsView: View {
                       appState === targetState, targetState.atProtoClient === targetClient,
                       targetState.userDID == targetDID,
                       appStateManager.lifecycle.appState === targetState else { return }
-                circleSetupError = "Couldn’t enable Circles. Please try again."
+                circleSetupError = String(localized: "Couldn’t enable Circles. Please try again.", comment: "Error when enabling Circles fails.")
                 logger.debug("Circles permission request failed: \(error.localizedDescription)")
             }
         }

@@ -218,9 +218,15 @@ enum TrendingInterstitialText {
 // MARK: - Layout Engine
 
 enum TrendingInterstitialLayoutEngine {
-  static let topicsHeading = "Trending on Bluesky"
-  static let videosHeading = "Trending Videos"
-  static let openVideosTitle = "Open The Vids"
+  static var topicsHeading: String {
+    String(localized: "Trending on Bluesky", comment: "Section heading for trending topics in the feed")
+  }
+  static var videosHeading: String {
+    String(localized: "Trending Videos", comment: "Section heading for trending videos in the feed")
+  }
+  static var openVideosTitle: String {
+    String(localized: "Open The Vids", comment: "Button title to open Bluesky's The Vids video feed")
+  }
 
   static func layout(_ input: TrendingInterstitialLayoutInput) -> TrendingInterstitialLayout {
     guard input.hasContent, input.width > 0 else { return .empty }

@@ -39,7 +39,7 @@ struct PlatformAgeSafetyToolsView: View {
 
         if let target {
           Section("Account") {
-            Text(target.did.didString())
+            Text(verbatim: target.did.didString())
               .font(.footnote.monospaced())
               .textSelection(.enabled)
             if target.post != nil {
@@ -176,15 +176,24 @@ struct PlatformAgeSafetyToolsView: View {
              let post = output?.posts.first(where: { $0.uri == uri && $0.author.did == did }) {
             postReference = ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid)
           } else {
-            statusMessage = "This post is unavailable. You can still report, block, or mute its account."
+            statusMessage = String(
+              localized: "This post is unavailable. You can still report, block, or mute its account.",
+              comment: "Safety tools status when looked-up post cannot be retrieved."
+            )
           }
         }
         target = SafetyTarget(did: did, post: postReference)
       } catch {
         guard isCurrent(account, generation: requestID) else { return }
         errorMessage = target == nil
-          ? "Couldn’t find this account or post. Check the handle or link and try again."
-          : "Couldn’t load this post. You can still report, block, or mute its account."
+          ? String(
+            localized: "Couldn’t find this account or post. Check the handle or link and try again.",
+            comment: "Safety tools error when handle or post link lookup fails."
+          )
+          : String(
+            localized: "Couldn’t load this post. You can still report, block, or mute its account.",
+            comment: "Safety tools error when post lookup fails after resolving account."
+          )
       }
     }
   }
@@ -197,9 +206,13 @@ struct PlatformAgeSafetyToolsView: View {
     } else {
       subject = .comAtprotoAdminDefsRepoRef(ComAtprotoAdminDefs.RepoRef(did: target.did))
     }
+    let didString = target.did.didString()
     report = SafetyReport(
       client: account.client, accountDID: account.accountDID, subject: subject,
-      description: post ? "Post by \(target.did.didString())" : "Account \(target.did.didString())")
+      description: post
+        ? String(localized: "Post by \(didString)", comment: "Safety report subject description for a post — variable is author DID.")
+        : String(localized: "Account \(didString)", comment: "Safety report subject description for an account — variable is account DID.")
+    )
   }
 
   private enum SafetyAction { case block, mute }
@@ -224,12 +237,16 @@ struct PlatformAgeSafetyToolsView: View {
         guard isCurrent(account, generation: requestID) else { return }
         guard success else { throw PreferencesManagerError.invalidData }
         switch action {
-        case .block: blockedDID = target.did.didString(); statusMessage = "Account blocked."
-        case .mute: mutedDID = target.did.didString(); statusMessage = "Account muted."
+        case .block:
+          blockedDID = target.did.didString()
+          statusMessage = String(localized: "Account blocked.", comment: "Confirmation status after blocking an account in safety tools.")
+        case .mute:
+          mutedDID = target.did.didString()
+          statusMessage = String(localized: "Account muted.", comment: "Confirmation status after muting an account in safety tools.")
         }
       } catch {
         guard isCurrent(account, generation: requestID) else { return }
-        errorMessage = "This action could not be completed. Try again."
+        errorMessage = String(localized: "This action could not be completed. Try again.", comment: "Error message when block or mute fails in safety tools.")
       }
     }
   }

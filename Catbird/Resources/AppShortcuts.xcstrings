@@ -1,0 +1,153 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Block someone on ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Block someone on ${applicationName}",
+              "Block this person on ${applicationName}",
+              "Block this account on ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Check my ${applicationName} messages" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Check my ${applicationName} messages",
+              "How many unread ${applicationName} messages"
+            ]
+          }
+        }
+      }
+    },
+    "How many unread ${applicationName} notifications" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "How many unread ${applicationName} notifications",
+              "Check my ${applicationName} notifications"
+            ]
+          }
+        }
+      }
+    },
+    "Like this post in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Like this post in ${applicationName}",
+              "Like this ${applicationName} post",
+              "Like a post on ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Post to ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Post to ${applicationName}",
+              "Write a ${applicationName} post",
+              "Create a post in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Repost this in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Repost this in ${applicationName}",
+              "Repost this ${applicationName} post",
+              "Repost a post on ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Search ${applicationName} posts" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Search ${applicationName} posts",
+              "Search posts on ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Search ${applicationName} profiles" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Search ${applicationName} profiles",
+              "Find someone on ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Send a ${applicationName} message" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Send a ${applicationName} message",
+              "Send a direct message on ${applicationName}",
+              "DM someone on ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Show my ${applicationName} timeline" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Show my ${applicationName} timeline",
+              "Open my ${applicationName} timeline",
+              "Get my ${applicationName} feed",
+              "What's new on ${applicationName}"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

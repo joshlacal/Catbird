@@ -25,8 +25,10 @@ enum FeedsLayoutMode: String, CaseIterable {
 
   var accessibilityLabel: String {
     switch self {
-    case .grid: return "Switch to list view"
-    case .list: return "Switch to grid view"
+    case .grid:
+      return String(localized: "Switch to list view", comment: "Accessibility label for toggle switching feeds launchpad to list layout")
+    case .list:
+      return String(localized: "Switch to grid view", comment: "Accessibility label for toggle switching feeds launchpad to grid layout")
     }
   }
 }
@@ -329,15 +331,10 @@ struct FeedsStartPage: View {
   }
 
   @ViewBuilder
-  private func sectionHeader(_ title: String) -> some View {
+  private func sectionHeader(title: LocalizedStringKey, systemImage: String) -> some View {
     HStack(spacing: DesignTokens.Spacing.sm) {
-      if title == "Pinned" {
-        Image(systemName: "pin.fill")
-          .accessibilityHidden(true)
-      } else if title == "Saved" {
-        Image(systemName: "bookmark.fill")
-          .accessibilityHidden(true)
-      }
+      Image(systemName: systemImage)
+        .accessibilityHidden(true)
       Text(title)
       Spacer()
     }
@@ -512,7 +509,7 @@ struct FeedsStartPage: View {
 
               Spacer()
 
-              Image(systemName: "chevron.right")
+              Image(systemName: "chevron.forward")
                 .appFont(AppTextRole.caption)
                 .foregroundColor(drawerSecondaryTextColor)
             }
@@ -652,7 +649,11 @@ struct FeedsStartPage: View {
     .animation(.spring(duration: 0.4), value: feeds)
     .padding(.bottom, 8)
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("\(category.capitalized) feeds grid")
+    .accessibilityLabel(
+      category == "pinned"
+        ? Text("Pinned feeds grid", comment: "Accessibility label for the pinned feeds grid section")
+        : Text("Saved feeds grid", comment: "Accessibility label for the saved feeds grid section")
+    )
   }
 
   @ViewBuilder
@@ -665,11 +666,11 @@ struct FeedsStartPage: View {
             listRow(
               feedURI: feed,
               category: category,
-              title: "Timeline",
+              title: String(localized: "Timeline", comment: "Display name for the home chronological timeline feed"),
               iconView: AnyView(timelineListIcon())
             )
           } else if let uri = try? ATProtocolURI(uriString: feed) {
-            let title = viewModel?.displayName(for: uri) ?? "Feed"
+            let title = viewModel?.displayName(for: uri) ?? String(localized: "Feed", comment: "Fallback display name for a custom feed")
             let subtitle: String? = {
               if uri.uriString().contains("/app.bsky.graph.list/") {
                 return viewModel?.listDetails[uri]?.description
@@ -692,7 +693,11 @@ struct FeedsStartPage: View {
     .animation(.spring(duration: 0.4), value: feeds)
     .padding(.bottom, 8)
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("\(category.capitalized) feeds list")
+    .accessibilityLabel(
+      category == "pinned"
+        ? Text("Pinned feeds list", comment: "Accessibility label for the pinned feeds list section")
+        : Text("Saved feeds list", comment: "Accessibility label for the saved feeds list section")
+    )
   }
 
   private static let listRowIconSize: CGFloat = 40
@@ -805,7 +810,7 @@ struct FeedsStartPage: View {
           .buttonStyle(PlainButtonStyle())
           .accessibilityLabel("Remove feed")
         } else {
-          Image(systemName: selected ? "checkmark.circle.fill" : "chevron.right")
+          Image(systemName: selected ? "checkmark.circle.fill" : "chevron.forward")
             .appFont(AppTextRole.caption)
             .foregroundStyle(selected ? Color.accentColor : drawerTertiaryTextColor)
             .accessibilityHidden(true)
@@ -992,7 +997,7 @@ struct FeedsStartPage: View {
       isDrawerOpen = false
     } label: {
       FeedsGridFeedLabel(
-        title: "Timeline",
+        title: String(localized: "Timeline", comment: "Display name for the home chronological timeline feed"),
         isSelected: selected,
         iconSize: iconSize,
         itemWidth: itemWidth
@@ -1503,13 +1508,13 @@ struct FeedsStartPage: View {
 
               // Pinned feeds section - continue the hierarchy
               if !filteredPinnedFeeds.isEmpty {
-                  sectionHeader("Pinned")
+                  sectionHeader(title: "Pinned", systemImage: "pin.fill")
                   gridSection(for: filteredPinnedFeeds, category: "pinned")
               }
 
               // Saved feeds section
               if !filteredSavedFeeds.isEmpty {
-                  sectionHeader("Saved")
+                  sectionHeader(title: "Saved", systemImage: "bookmark.fill")
                   gridSection(for: filteredSavedFeeds, category: "saved")
               }
 
@@ -1647,7 +1652,7 @@ struct FeedsAccountIdentity<Avatar: View>: View {
     if let displayName, !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       return displayName
     }
-    return handle.flatMap { $0.isEmpty ? nil : $0 } ?? "Your account"
+    return handle.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "Your account", comment: "Fallback display name for the signed-in user's account")
   }
 
   var body: some View {
@@ -1668,7 +1673,7 @@ struct FeedsAccountIdentity<Avatar: View>: View {
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)
           if let handle, !handle.isEmpty {
-            Text("@\(handle)")
+            Text(verbatim: "@\(handle)")
               .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
               .lineLimit(1)
@@ -1677,7 +1682,7 @@ struct FeedsAccountIdentity<Avatar: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
 
-        Image(systemName: "chevron.right")
+        Image(systemName: "chevron.forward")
           .appFont(AppTextRole.caption)
           .foregroundStyle(.tertiary)
           .accessibilityHidden(true)
@@ -1705,7 +1710,7 @@ struct FeedsDefaultFeedLabel<Icon: View>: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
+      Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.forward")
         .appFont(AppTextRole.subheadline)
         .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
         .accessibilityHidden(true)

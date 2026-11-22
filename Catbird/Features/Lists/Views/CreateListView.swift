@@ -84,7 +84,7 @@ final class CreateListViewModel {
   @discardableResult
   func createList() async -> AppBskyGraphDefs.ListView? {
     guard isValid else {
-      errorMessage = "Enter a name for your list."
+      errorMessage = String(localized: "Enter a name for your list.", comment: "Validation error when creating a list without a name.")
       showingError = true
       return nil
     }
@@ -424,7 +424,10 @@ struct CreateListView: View {
           
           Spacer()
           
-          Text("\(viewModel.name.count)/\(maxNameLength)")
+          Text(
+            "\(viewModel.name.count)/\(maxNameLength)",
+            comment: "Character count indicator for list name — %1$lld is the current character count, %2$lld is the maximum allowed."
+          )
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -450,7 +453,10 @@ struct CreateListView: View {
           Spacer()
           
           VStack {
-            Text("\(viewModel.description.count)/\(maxDescriptionLength)")
+            Text(
+              "\(viewModel.description.count)/\(maxDescriptionLength)",
+              comment: "Character count indicator for list description — %1$lld is the current character count, %2$lld is the maximum allowed."
+            )
               .font(.caption)
               .foregroundStyle(.secondary)
             Spacer()
@@ -465,9 +471,15 @@ struct CreateListView: View {
     VStack(alignment: .leading, spacing: 4) {
       switch viewModel.purpose {
       case .appbskygraphdefscuratelist:
-        listTypeDescription(title: "People List", subtitle: "A list of accounts you find interesting or want to follow as a group")
+        listTypeDescription(
+          title: LocalizedStringResource("People List", comment: "Title for curated people list purpose option."),
+          subtitle: LocalizedStringResource("A list of accounts you find interesting or want to follow as a group", comment: "Description explaining a curated people list.")
+        )
       case .appbskygraphdefsmodlist:
-        listTypeDescription(title: "Moderation List", subtitle: "A list used for blocking or muting multiple accounts at once")
+        listTypeDescription(
+          title: LocalizedStringResource("Moderation List", comment: "Title for moderation list purpose option."),
+          subtitle: LocalizedStringResource("A list used for blocking or muting multiple accounts at once", comment: "Description explaining a moderation list.")
+        )
       default:
         EmptyView()
       }
@@ -475,7 +487,7 @@ struct CreateListView: View {
   }
   
   @ViewBuilder
-  private func listTypeDescription(title: String, subtitle: String) -> some View {
+  private func listTypeDescription(title: LocalizedStringResource, subtitle: LocalizedStringResource) -> some View {
     Text(title)
       .font(.caption)
       .fontWeight(.medium)

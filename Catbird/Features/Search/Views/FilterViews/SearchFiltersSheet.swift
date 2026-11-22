@@ -5,6 +5,7 @@ public struct SearchFiltersSheet: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.locale) private var locale
 
   public let initialState: SearchFilterState
   public let onApply: (SearchFilterState) -> Void
@@ -19,7 +20,7 @@ public struct SearchFiltersSheet: View {
   private var sortedLanguages: [LanguageOption] {
     LanguageOption.supportedLanguages.sorted {
       if $0.isPreferred != $1.isPreferred { return $0.isPreferred }
-      return $0.name < $1.name
+      return $0.localizedName(in: locale).localizedStandardCompare($1.localizedName(in: locale)) == .orderedAscending
     }
   }
 
@@ -176,7 +177,7 @@ public struct SearchFiltersSheet: View {
         Section("Date Range") {
           Picker("Date range", selection: $draft.dateRange) {
             ForEach(SearchDateRange.allCases) { range in
-              Text(range.displayName).tag(range)
+              Text(range.localizedDisplayName).tag(range)
             }
           }
           .onChange(of: draft.dateRange) { _, range in
@@ -199,9 +200,9 @@ public struct SearchFiltersSheet: View {
         // MARK: - Language
         Section("Language") {
           Picker("Language", selection: $draft.language) {
-            Text("Any language").tag(String?.none)
+            Text("Any language", comment: "Search filter option to include posts in any language").tag(String?.none)
             ForEach(sortedLanguages) { language in
-              Text(language.name).tag(String?.some(language.code))
+              Text(language.localizedName(in: locale)).tag(String?.some(language.code))
             }
           }
         }
@@ -211,7 +212,7 @@ public struct SearchFiltersSheet: View {
         Section("Replies") {
           Picker("Replies", selection: $draft.replyMode) {
             ForEach(SearchReplyMode.allCases) { mode in
-              Text(mode.displayName).tag(mode)
+              Text(mode.localizedDisplayName).tag(mode)
             }
           }
         }

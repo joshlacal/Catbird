@@ -47,7 +47,9 @@ struct StandardSiteCard {
   var iconURL: URL? { external.source?.icon.flatMap(Self.webURL) }
   var publicationTitle: String {
     let title = external.source?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    return title.isEmpty ? (publicationURL?.host ?? "Publication") : title
+    return title.isEmpty
+      ? (publicationURL?.host ?? String(localized: "Publication", comment: "Fallback title for an unnamed web publication"))
+      : title
   }
 
   var publisher: String? {

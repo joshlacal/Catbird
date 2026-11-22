@@ -54,13 +54,13 @@ struct RepositoryDiagnosticsView: View {
                             DiagnosticItem(label: "User DID", value: repository.userDID)
                             DiagnosticItem(label: "User Handle", value: repository.userHandle)
                             DiagnosticItem(label: "Parsing Status", value: repository.parsingStatus.displayName)
-                            DiagnosticItem(label: "Confidence", value: String(format: "%.1f%%", repository.parsingConfidenceScore * 100))
-                            DiagnosticItem(label: "Total Records", value: "\(repository.totalRecordCount)")
-                            DiagnosticItem(label: "Successfully Parsed", value: "\(repository.successfullyParsedCount)")
-                            DiagnosticItem(label: "Expected Posts", value: "\(repository.postCount)")
-                            DiagnosticItem(label: "Expected Connections", value: "\(repository.connectionCount)")
-                            DiagnosticItem(label: "Expected Media", value: "\(repository.mediaCount)")
-                            DiagnosticItem(label: "Expected Profiles", value: "\(repository.profileCount)")
+                            DiagnosticItem(label: "Confidence", value: repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(1))))
+                            DiagnosticItem(label: "Total Records", value: repository.totalRecordCount.formatted(.number))
+                            DiagnosticItem(label: "Successfully Parsed", value: repository.successfullyParsedCount.formatted(.number))
+                            DiagnosticItem(label: "Expected Posts", value: repository.postCount.formatted(.number))
+                            DiagnosticItem(label: "Expected Connections", value: repository.connectionCount.formatted(.number))
+                            DiagnosticItem(label: "Expected Media", value: repository.mediaCount.formatted(.number))
+                            DiagnosticItem(label: "Expected Profiles", value: repository.profileCount.formatted(.number))
                         }
                     }
                     
@@ -75,7 +75,7 @@ struct RepositoryDiagnosticsView: View {
                             Text("Diagnostic Logs")
                                 .font(.headline)
                             
-                            Text("Logs captured: \(logs.count) entries")
+                            Text("Logs captured: \(logs.count) entries", comment: "Count of diagnostic log entries captured.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
@@ -83,21 +83,21 @@ struct RepositoryDiagnosticsView: View {
                                 Text("Log source:")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                Text(logSource)
+                                Text(verbatim: logSource)
                                     .font(.caption)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
                             }
                             
                             if repository.parsingLogFileURL != nil {
-                                Text("📁 Parsing logs are stored in file to prevent memory issues. Log analysis results shown above.")
+                                Text(verbatim: "📁 Parsing logs are stored in file to prevent memory issues. Log analysis results shown above.")
                                     .font(.caption)
                                     .foregroundColor(.blue)
                                     .padding()
                                     .background(Color.blue.opacity(0.1))
                                     .cornerRadius(8)
                             } else {
-                                Text("⚠️ Parsing logs stored in memory. For large repositories, use file-based logging to prevent crashes.")
+                                Text(verbatim: "⚠️ Parsing logs stored in memory. For large repositories, use file-based logging to prevent crashes.")
                                     .font(.caption)
                                     .foregroundColor(.orange)
                                     .padding()
@@ -193,7 +193,7 @@ struct RepositoryDiagnosticsView: View {
                 }
                 
                 if let contextError = result.contextError {
-                    Text("Error: \(contextError)")
+                    Text(verbatim: "Error: \(contextError)")
                         .font(.caption)
                         .foregroundColor(.red)
                         .padding(.leading)
@@ -213,7 +213,7 @@ struct RepositoryDiagnosticsView: View {
                     ForEach(Array(result.samplePosts.prefix(3)), id: \.id) { post in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                Text(post.postType)
+                                Text(verbatim: post.postType)
                                     .font(.caption)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
@@ -226,13 +226,13 @@ struct RepositoryDiagnosticsView: View {
                                 
                                 Spacer()
                                 
-                                Text("\(String(format: "%.0f%%", post.parseConfidence * 100))")
+                                Text(post.parseConfidence, format: .percent.precision(.fractionLength(0)))
                                     .font(.caption)
                                     .foregroundColor(post.parseConfidence > 0.8 ? .green : .orange)
                             }
                             
                             // Use model's sanitized text preview
-                            Text(post.textPreview)
+                            Text(verbatim: post.textPreview)
                                 .font(.body)
                                 .lineLimit(3)
                         }
@@ -257,10 +257,10 @@ struct RepositoryDiagnosticsView: View {
                         
                         ForEach(result.connectionTypeBreakdown.sorted(by: { $0.key < $1.key }), id: \.key) { type, count in
                             HStack {
-                                Text(type.capitalized)
+                                Text(verbatim: type.capitalized)
                                     .font(.caption)
                                 Spacer()
-                                Text("\(count)")
+                                Text(count, format: .number)
                                     .font(.caption)
                                     .fontWeight(.medium)
                             }
@@ -276,11 +276,11 @@ struct RepositoryDiagnosticsView: View {
                         
                         ForEach(result.atProtocolTypeBreakdown.sorted(by: { $0.key < $1.key }), id: \.key) { type, count in
                             HStack {
-                                Text(type)
+                                Text(verbatim: type)
                                     .font(.caption)
                                     .lineLimit(1)
                                 Spacer()
-                                Text("\(count)")
+                                Text(count, format: .number)
                                     .font(.caption)
                                     .fontWeight(.medium)
                             }
@@ -582,7 +582,7 @@ struct RepositoryDiagnosticsView: View {
     }
     
     private func addLog(_ message: String) {
-        let timestamp = DateFormatter().string(from: Date())
+        let timestamp = Date().formatted(date: .omitted, time: .standard)
         
         // Aggressively limit individual log message length to prevent text rendering crashes
         let maxMessageLength = 150
@@ -636,7 +636,7 @@ private struct DiagnosticItem: View {
 }
 
 private struct ResultItem: View {
-    let label: String
+    let label: LocalizedStringResource
     let expected: Int
     let actual: Int
     let icon: String
@@ -664,11 +664,11 @@ private struct ResultItem: View {
             
             HStack {
                 VStack(alignment: .leading) {
-                    Text("\(actual)")
+                    Text(actual, format: .number)
                         .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(color)
-                    Text("Found")
+                    Text("Found", comment: "Diagnostic count label for records actually found in storage.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -676,11 +676,11 @@ private struct ResultItem: View {
                 Spacer()
                 
                 VStack(alignment: .trailing) {
-                    Text("\(expected)")
+                    Text(expected, format: .number)
                         .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(.secondary)
-                    Text("Expected")
+                    Text("Expected", comment: "Diagnostic count label for records expected from repository metadata.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

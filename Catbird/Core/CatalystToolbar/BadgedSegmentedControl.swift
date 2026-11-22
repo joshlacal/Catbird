@@ -20,7 +20,10 @@ final class BadgedSegmentedControl: UISegmentedControl {
     let baseTitle = titleForSegment(at: segment) ?? ""
     if let count = badges[segment] {
       if let segmentView = subviews[safe: segment] {
-        segmentView.accessibilityLabel = "\(baseTitle), \(count) unread"
+        segmentView.accessibilityLabel = String(
+          localized: "\(baseTitle), \(count) unread",
+          comment: "Accessibility label for a toolbar tab with unread items — first variable is tab name, second is unread count."
+        )
       }
     } else {
       if let segmentView = subviews[safe: segment] {
@@ -48,7 +51,9 @@ final class BadgedSegmentedControl: UISegmentedControl {
     let path = UIBezierPath(ovalIn: badgeRect)
     UIColor.systemRed.setFill()
     path.fill()
-    let text = count > 99 ? "99+" : "\(count)"
+    let text = count > 99
+      ? String(localized: "\(99)+", comment: "Badge indicator when unread count exceeds 99.")
+      : count.formatted(.number)
     let attrs: [NSAttributedString.Key: Any] = [
       .font: UIFont.systemFont(ofSize: count > 99 ? 8 : 10, weight: UIFont.Weight.bold),
       .foregroundColor: UIColor.white

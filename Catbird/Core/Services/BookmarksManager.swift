@@ -178,15 +178,15 @@ enum BookmarkError: LocalizedError, CustomStringConvertible, HTTPStatusCarrying 
     var errorDescription: String? {
         switch self {
         case .creationFailed:
-            return "Couldn’t save this post. Please try again."
+            return String(localized: "Couldn’t save this post. Please try again.", comment: "Error shown when bookmarking a post fails.")
         case .deletionFailed:
-            return "Couldn’t remove this saved post. Please try again."
+            return String(localized: "Couldn’t remove this saved post. Please try again.", comment: "Error shown when removing a bookmark fails.")
         case .fetchFailed:
-            return "Couldn’t load your saved posts. Pull to refresh to try again."
+            return String(localized: "Couldn’t load your saved posts. Pull to refresh to try again.", comment: "Error shown when loading bookmarks fails.")
         case .missingClient:
-            return "You’re signed out. Sign in to see saved posts."
+            return String(localized: "You’re signed out. Sign in to see saved posts.", comment: "Error shown when viewing bookmarks while signed out.")
         case .invalidUri:
-            return "This post can’t be saved."
+            return String(localized: "This post can’t be saved.", comment: "Error shown when post URI is invalid for bookmarking.")
         }
     }
 

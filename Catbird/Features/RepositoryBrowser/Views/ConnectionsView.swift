@@ -245,7 +245,10 @@ final class ConnectionsViewModel {
             )
             connections = try modelContext.fetch(descriptor)
         } catch {
-            errorMessage = "Failed to load connections: \(error.localizedDescription)"
+            errorMessage = String(
+                localized: "Failed to load connections: \(error.localizedDescription)",
+                comment: "Error shown when loading repository connections fails."
+            )
         }
         
         isLoading = false
@@ -269,7 +272,10 @@ private struct ExperimentalConnectionsHeader: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
-                    Text("Social connections parsed from \(repository.userHandle)'s repository data. Results may be incomplete.")
+                    Text(
+                        "Social connections parsed from \(repository.userHandle)'s repository data. Results may be incomplete.",
+                        comment: "Disclaimer header on connections analysis view. Placeholder is the repository owner's handle."
+                    )
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -279,9 +285,9 @@ private struct ExperimentalConnectionsHeader: View {
             
             // Statistics row
             HStack(spacing: 16) {
-                StatisticBadge(label: "Connections", value: "\(repository.connectionCount)")
+                StatisticBadge(label: "Connections", value: repository.connectionCount.formatted(.number))
                 StatisticBadge(label: "Success Rate", value: repository.successRate)
-                StatisticBadge(label: "Confidence", value: String(format: "%.0f%%", repository.parsingConfidenceScore * 100))
+                StatisticBadge(label: "Confidence", value: repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(0))))
                 Spacer()
             }
         }
@@ -314,11 +320,11 @@ private struct ConnectionTypeSummary: View {
     private var displayInfo: (name: String, icon: String, color: Color) {
         switch type.lowercased() {
         case "follow":
-            return ("Follows", "person.badge.plus", .blue)
+            return (String(localized: "Follows", comment: "Social connection category for accounts the user follows."), "person.badge.plus", .blue)
         case "block":
-            return ("Blocks", "person.badge.minus", .red)
+            return (String(localized: "Blocks", comment: "Social connection category for blocked accounts."), "person.badge.minus", .red)
         case "mute":
-            return ("Mutes", "speaker.slash", .orange)
+            return (String(localized: "Mutes", comment: "Social connection category for muted accounts."), "speaker.slash", .orange)
         default:
             return (type.capitalized, "person.2", .gray)
         }
@@ -336,7 +342,7 @@ private struct ConnectionTypeSummary: View {
             }
             
             HStack {
-                Text("\(count)")
+                Text(count, format: .number)
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(displayInfo.color)
@@ -391,7 +397,7 @@ private struct ConnectionRowView: View {
                     ConnectionTypeIcon(type: connection.connectionType)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(shortDID)
+                        Text(verbatim: shortDID)
                             .font(.body)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
@@ -415,7 +421,7 @@ private struct ConnectionRowView: View {
                 }
                 
                 if connection.targetUserDID != shortDID {
-                    Text(connection.targetUserDID)
+                    Text(verbatim: connection.targetUserDID)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -512,7 +518,10 @@ private struct ConnectionDetailView: View {
                                 .font(.headline)
                                 .foregroundColor(.red)
                             
-                            Text(connection.parseErrorMessage ?? "Unknown parsing error")
+                            Text(
+                                connection.parseErrorMessage
+                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a record failed to parse without a specific error message.")
+                            )
                                 .font(.body)
                                 .foregroundColor(.red)
                                 .padding()
@@ -558,9 +567,14 @@ private struct ConnectionMetadataGrid: View {
             MetadataItem(label: "Connection Type", value: connection.connectionType.capitalized)
             MetadataItem(label: "Record Key", value: connection.recordKey)
             MetadataItem(label: "Target DID", value: connection.targetUserDID)
-            MetadataItem(label: "Confidence", value: String(format: "%.1f%%", connection.parseConfidence * 100))
-            MetadataItem(label: "Parse Status", value: connection.parseSuccessful ? "Success" : "Failed")
-            MetadataItem(label: "Created", value: DateFormatter.localizedString(from: connection.createdAt, dateStyle: .medium, timeStyle: .short))
+            MetadataItem(label: "Confidence", value: connection.parseConfidence.formatted(.percent.precision(.fractionLength(1))))
+            MetadataItem(
+                label: "Parse Status",
+                value: connection.parseSuccessful
+                    ? String(localized: "Success", comment: "Record parse status when parsing succeeded.")
+                    : String(localized: "Failed", comment: "Record parse status when parsing failed.")
+            )
+            MetadataItem(label: "Created", value: connection.createdAt.formatted(date: .abbreviated, time: .shortened))
         }
     }
 }
@@ -571,10 +585,10 @@ private struct ConnectionTechnicalDetailsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("CID:")
+                Text("CID:", comment: "Label for Content Identifier (CID) of an AT Protocol record.")
                     .fontWeight(.medium)
                 Spacer()
-                Text(connection.recordCID)
+                Text(verbatim: connection.recordCID)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -584,7 +598,7 @@ private struct ConnectionTechnicalDetailsView: View {
                 Text("Data Size:")
                     .fontWeight(.medium)
                 Spacer()
-                Text("\(connection.rawCBORData.count) bytes")
+                Text("\(connection.rawCBORData.count) bytes", comment: "Byte size of raw CBOR record data.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -618,10 +632,10 @@ private struct ConnectionRawDataView: View {
                     
                     // Raw data
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("CBOR Data (\(connection.rawCBORData.count) bytes)")
+                        Text("CBOR Data (\(connection.rawCBORData.count) bytes)", comment: "Section header showing raw CBOR payload size in bytes.")
                             .font(.headline)
                         
-                        Text(connection.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
+                        Text(verbatim: connection.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
@@ -667,28 +681,28 @@ private struct ConnectionsAnalyticsView: View {
                         ], spacing: 12) {
                             AnalyticsCard(
                                 title: "Total Connections",
-                                value: "\(viewModel.connections.count)",
+                                value: viewModel.connections.count.formatted(.number),
                                 icon: "person.2",
                                 color: .blue
                             )
                             
                             AnalyticsCard(
                                 title: "Connection Types",
-                                value: "\(viewModel.connectionsByType.count)",
+                                value: viewModel.connectionsByType.count.formatted(.number),
                                 icon: "list.bullet",
                                 color: .green
                             )
                             
                             AnalyticsCard(
                                 title: "Parse Success",
-                                value: String(format: "%.1f%%", parseSuccessRate),
+                                value: parseSuccessRate.formatted(.percent.precision(.fractionLength(1))),
                                 icon: "checkmark.circle",
                                 color: .green
                             )
                             
                             AnalyticsCard(
                                 title: "Avg Confidence",
-                                value: String(format: "%.1f%%", averageConfidence * 100),
+                                value: averageConfidence.formatted(.percent.precision(.fractionLength(1))),
                                 icon: "chart.bar",
                                 color: .orange
                             )
@@ -714,10 +728,10 @@ private struct ConnectionsAnalyticsView: View {
                         ForEach(Array(viewModel.connectionsByType.keys.sorted()), id: \.self) { type in
                             HStack {
                                 ConnectionTypeIcon(type: type)
-                                Text(type.capitalized)
+                                Text(verbatim: type.capitalized)
                                     .fontWeight(.medium)
                                 Spacer()
-                                Text("\(viewModel.connectionsByType[type] ?? 0)")
+                                Text(viewModel.connectionsByType[type] ?? 0, format: .number)
                                     .fontWeight(.bold)
                             }
                             .padding()
@@ -745,7 +759,7 @@ private struct ConnectionsAnalyticsView: View {
     private var parseSuccessRate: Double {
         guard !viewModel.connections.isEmpty else { return 0 }
         let successful = viewModel.connections.filter { $0.parseSuccessful }.count
-        return (Double(successful) / Double(viewModel.connections.count)) * 100
+        return Double(successful) / Double(viewModel.connections.count)
     }
     
     private var averageConfidence: Double {
@@ -756,7 +770,7 @@ private struct ConnectionsAnalyticsView: View {
 }
 
 private struct AnalyticsCard: View {
-    let title: String
+    let title: LocalizedStringResource
     let value: String
     let icon: String
     let color: Color
@@ -772,7 +786,7 @@ private struct AnalyticsCard: View {
                 Spacer()
             }
             
-            Text(value)
+            Text(verbatim: value)
                 .font(.title2)
                 .fontWeight(.bold)
                 .foregroundColor(color)
@@ -800,15 +814,15 @@ enum ConnectionTypeFilter: String, CaseIterable {
     var displayName: String {
         switch self {
         case .all:
-            return "All Types"
+            return String(localized: "All Types", comment: "Filter option showing all social connection types.")
         case .follows:
-            return "Follows"
+            return String(localized: "Follows", comment: "Filter option showing only follow records.")
         case .blocks:
-            return "Blocks"
+            return String(localized: "Blocks", comment: "Filter option showing only block records.")
         case .mutes:
-            return "Mutes"
+            return String(localized: "Mutes", comment: "Filter option showing only mute records.")
         case .lists:
-            return "Lists"
+            return String(localized: "Lists", comment: "Filter option showing only list records.")
         }
     }
 }
@@ -822,13 +836,13 @@ enum ConnectionSortOrder: String, CaseIterable {
     var displayName: String {
         switch self {
         case .dateAscending:
-            return "Oldest First"
+            return String(localized: "Oldest First", comment: "Sort order option from oldest to newest.")
         case .dateDescending:
-            return "Newest First"
+            return String(localized: "Newest First", comment: "Sort order option from newest to oldest.")
         case .confidence:
-            return "Parse Confidence"
+            return String(localized: "Parse Confidence", comment: "Sort order option by record parsing confidence score.")
         case .type:
-            return "Connection Type"
+            return String(localized: "Connection Type", comment: "Sort order option grouping by social connection type.")
         }
     }
     
@@ -848,12 +862,12 @@ enum ConnectionSortOrder: String, CaseIterable {
 
 // Reuse some components from other views
 private struct StatisticBadge: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     
     var body: some View {
         VStack(alignment: .center, spacing: 2) {
-            Text(value)
+            Text(verbatim: value)
                 .font(.caption)
                 .fontWeight(.semibold)
             Text(label)
@@ -881,7 +895,7 @@ private struct ConfidenceBadge: View {
     }
     
     var body: some View {
-        Text(String(format: "%.0f%%", confidence * 100))
+        Text(confidence, format: .percent.precision(.fractionLength(0)))
             .font(.caption2)
             .fontWeight(.medium)
             .padding(.horizontal, 6)
@@ -893,7 +907,7 @@ private struct ConfidenceBadge: View {
 }
 
 private struct MetadataItem: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     
     var body: some View {
@@ -901,7 +915,7 @@ private struct MetadataItem: View {
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(value)
+            Text(verbatim: value)
                 .font(.body)
                 .fontWeight(.medium)
         }

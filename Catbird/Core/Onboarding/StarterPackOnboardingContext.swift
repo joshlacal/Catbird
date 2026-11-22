@@ -218,7 +218,7 @@ final class StarterPackOnboardingManager {
             throw NSError(
                 domain: "StarterPackOnboarding",
                 code: 409,
-                userInfo: [NSLocalizedDescriptionKey: "Starter pack onboarding context is stale or invalid"]
+                userInfo: [NSLocalizedDescriptionKey: String(localized: "Starter pack onboarding context is stale or invalid", comment: "Error when a pending starter pack join context is no longer valid.")]
             )
         }
         
@@ -227,7 +227,7 @@ final class StarterPackOnboardingManager {
             throw NSError(
                 domain: "StarterPackOnboarding",
                 code: 429,
-                userInfo: [NSLocalizedDescriptionKey: "Starter pack onboarding is already in progress"]
+                userInfo: [NSLocalizedDescriptionKey: String(localized: "Starter pack onboarding is already in progress", comment: "Error when starter pack finalization is already running.")]
             )
         }
         
@@ -244,7 +244,7 @@ final class StarterPackOnboardingManager {
             throw NSError(
                 domain: "StarterPackOnboarding",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid starter pack reference"]
+                userInfo: [NSLocalizedDescriptionKey: String(localized: "Invalid starter pack reference", comment: "Error when starter pack URI or CID is malformed.")]
             )
         }
         

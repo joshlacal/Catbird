@@ -46,24 +46,24 @@ enum AccountSwitchError: LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .invalidDID:
-      return "Couldn’t switch accounts. Try again."
+      return String(localized: "Couldn’t switch accounts. Try again.", comment: "Account switch error message.")
     case .databaseDrainFailed:
-      return "Couldn’t safely close the previous account’s data. Restart Catbird and try again."
+      return String(localized: "Couldn’t safely close the previous account’s data. Restart Catbird and try again.", comment: "Account switch error when database drain times out.")
     case .authSwitchFailed:
       // The underlying reason is logged where the switch fails.
-      return "Couldn’t switch to this account. If this keeps happening, sign in to it again."
+      return String(localized: "Couldn’t switch to this account. If this keeps happening, sign in to it again.", comment: "Account switch error when auth session switch fails.")
     case .clientUnavailable:
-      return "Couldn’t switch accounts. Try again."
+      return String(localized: "Couldn’t switch accounts. Try again.", comment: "Account switch error message.")
     case .transitionInProgress:
-      return "Another account switch is already in progress. Try again in a moment."
+      return String(localized: "Another account switch is already in progress. Try again in a moment.", comment: "Account switch error when another switch is running.")
     case .authenticatedAccountMismatch:
-      return "Sign-in finished for a different account. Try again."
+      return String(localized: "Sign-in finished for a different account. Try again.", comment: "Account switch error when authenticated DID mismatches.")
     case .accountRestricted:
-      return "This account is deactivated or suspended, so it can’t post right now."
+      return String(localized: "This account is deactivated or suspended, so it can’t post right now.", comment: "Account switch error when target account is deactivated or suspended.")
     case .recoveryFailed:
-      return "Restart Catbird to finish switching accounts."
+      return String(localized: "Restart Catbird to finish switching accounts.", comment: "Account switch error requiring app restart.")
     case .reauthenticationRequired:
-      return "Your session for this account has expired. Sign in again to switch to it."
+      return String(localized: "Your session for this account has expired. Sign in again to switch to it.", comment: "Account switch error when saved session expired.")
     }
   }
 }
@@ -610,9 +610,11 @@ final class AppStateManager {
       logger.critical(
         "🚨 Refusing authenticated transition for invalid DID: \(userDID, privacy: .private)")
       authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
-        title: "Couldn’t Sign In",
-        message:
-          "Catbird couldn’t confirm which account you signed in to, so it stopped to keep your data safe. Try signing in again."
+        title: String(localized: "Couldn’t Sign In", comment: "Alert title when sign-in cannot confirm account DID."),
+        message: String(
+          localized: "Catbird couldn’t confirm which account you signed in to, so it stopped to keep your data safe. Try signing in again.",
+          comment: "Alert message when sign-in cannot confirm account DID."
+        )
       )
       lifecycle = .unauthenticated
       throw AccountSwitchError.invalidDID
@@ -654,8 +656,11 @@ final class AppStateManager {
       if !closeSuccess {
         logger.critical("🚨 Previous database drain failed - aborting account transition to prevent corruption")
         authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
-          title: "Restart Required",
-          message: "Catbird couldn’t safely close the encrypted database for the previous account. Please restart the app and try switching again."
+          title: String(localized: "Restart Required", comment: "Alert title when app restart is required after account switch failure."),
+          message: String(
+            localized: "Catbird couldn’t safely close the encrypted database for the previous account. Please restart the app and try switching again.",
+            comment: "Alert message when previous account encrypted database could not close safely."
+          )
         )
         throw AccountSwitchError.databaseDrainFailed
       }
@@ -1173,10 +1178,16 @@ final class AppStateManager {
   }
 
   private func markAccountSwitchRestartRequired(
-    message: String = "Catbird couldn’t finish switching accounts. Your draft is saved. Quit and reopen Catbird to continue."
+    message: String = String(
+      localized: "Catbird couldn’t finish switching accounts. Your draft is saved. Quit and reopen Catbird to continue.",
+      comment: "Alert message when account switching requires restarting the app."
+    )
   ) {
     accountSwitchRequiresRestart = true
-    authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(title: "Restart Required", message: message)
+    authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
+      title: String(localized: "Restart Required", comment: "Alert title when app restart is required after account switch failure."),
+      message: message
+    )
     lifecycle = .unauthenticated
   }
 

@@ -1,0 +1,103 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%lld unread notifications" : {
+      "comment" : "Accessibility label for the notification widget showing unread notification count.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld unread notification"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld unread notifications"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "**%lld** unread notifications" : {
+      "comment" : "Lock Screen rectangular widget label showing unread notification count.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** unread notification"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** unread notifications"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Accent Color" : {
+      "comment" : "Parameter title for selecting the widget accent color."
+    },
+    "Blue" : {
+      "comment" : "Blue widget accent color option."
+    },
+    "Bluesky Notifications" : {
+      "comment" : "Header title in the medium Home Screen notifications widget."
+    },
+    "Catbird: %lld unread" : {
+      "comment" : "Lock Screen inline widget text showing unread notification count."
+    },
+    "Catbird: Not signed in" : {
+      "comment" : "Lock Screen inline widget text when no account is signed in."
+    },
+    "Green" : {
+      "comment" : "Green widget accent color option."
+    },
+    "Not signed in to Catbird" : {
+      "comment" : "Accessibility label for the notification widget when no account is signed in."
+    },
+    "Notification Settings" : {
+      "comment" : "Title of the configuration intent for the notifications widget."
+    },
+    "Notifications" : {
+      "comment" : "Widget gallery display name for the notifications widget."
+    },
+    "Open Catbird to sign in" : {
+      "comment" : "Prompt shown in the notification widget when no account is signed in."
+    },
+    "Orange" : {
+      "comment" : "Orange widget accent color option."
+    },
+    "Purple" : {
+      "comment" : "Purple widget accent color option."
+    },
+    "Red" : {
+      "comment" : "Red widget accent color option."
+    },
+    "Shows your unread Bluesky notifications." : {
+      "comment" : "Widget gallery description for the notifications widget."
+    },
+    "Updated %@" : {
+      "comment" : "Relative timestamp in the notification widget — variable is a relative time phrase such as '2 minutes ago'."
+    },
+    "Widget Color" : {
+      "comment" : "Type name for the notification widget accent color option."
+    },
+    "unread notifications" : {
+      "comment" : "Caption below the large unread notification count in the medium Home Screen widget.\nCaption below the large unread notification count in the small Home Screen widget."
+    }
+  },
+  "version" : "1.0"
+}

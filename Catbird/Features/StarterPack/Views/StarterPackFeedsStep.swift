@@ -44,6 +44,7 @@ struct StarterPackFeedsStep: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.secondary)
                     }
+                    .accessibilityLabel(Text("Clear search", comment: "Button to clear the feed search query."))
                 }
             }
             .padding(10)
@@ -54,7 +55,10 @@ struct StarterPackFeedsStep: View {
             
             // Header stats
             HStack {
-                Text("Selected Feeds (\(draft.feeds.count)/\(StarterPackDraft.maxFeedsCount))")
+                Text(
+                    "Selected Feeds (\(draft.feeds.count)/\(StarterPackDraft.maxFeedsCount))",
+                    comment: "Header showing how many custom feeds are selected out of the maximum allowed. First placeholder is selected count, second is maximum count."
+                )
                     .appFont(AppTextRole.headline)
                 
                 Spacer()
@@ -64,7 +68,10 @@ struct StarterPackFeedsStep: View {
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 } else {
-                    Text("Optional (up to \(StarterPackDraft.maxFeedsCount))")
+                    Text(
+                        "Optional (up to \(StarterPackDraft.maxFeedsCount))",
+                        comment: "Helper label showing the maximum number of optional feeds that can be added to a starter pack."
+                    )
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
@@ -134,7 +141,7 @@ struct StarterPackFeedsStep: View {
                                     .fontWeight(.semibold)
                                     .lineLimit(1)
                                 
-                                Text("By @\(feed.creator.handle)")
+                                Text("By @\(feed.creator.handle.description)", comment: "Feed creator attribution in starter pack wizard. Placeholder is the creator's Bluesky handle.")
                                     .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
@@ -152,7 +159,7 @@ struct StarterPackFeedsStep: View {
                                     .background(Circle().fill(Color.systemGray5))
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("Remove \(feed.displayName)")
+                            .accessibilityLabel(Text("Remove \(feed.displayName)", comment: "Accessibility label on button to remove a selected feed from the starter pack. Placeholder is the feed name."))
                         }
                         .padding(.vertical, 4)
                     }
@@ -197,7 +204,7 @@ struct StarterPackFeedsStep: View {
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 
-                Text("By @\(feed.creator.handle)")
+                Text("By @\(feed.creator.handle.description)", comment: "Feed creator attribution in starter pack wizard. Placeholder is the creator's Bluesky handle.")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -221,6 +228,7 @@ struct StarterPackFeedsStep: View {
                         .font(.title3)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text("Remove \(feed.displayName)", comment: "Accessibility label on button to remove a selected feed from the starter pack. Placeholder is the feed name."))
             } else {
                 Button {
                     _ = draft.addFeed(feed)
@@ -231,6 +239,7 @@ struct StarterPackFeedsStep: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canAdd)
+                .accessibilityLabel(Text("Add \(feed.displayName)", comment: "Accessibility label on button to add a feed to the starter pack. Placeholder is the feed name."))
             }
         }
         .padding(.vertical, 4)

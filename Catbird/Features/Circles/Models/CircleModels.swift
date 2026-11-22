@@ -234,8 +234,13 @@ public enum PostVisibilityContext: Equatable, Hashable, Sendable, CustomStringCo
 
   public var description: String {
     switch self {
-    case .public: return "public"
-    case .circle(let circle): return "circle(\(circle.name))"
+    case .public:
+      return String(localized: "Public", comment: "Visibility context description for a public post.")
+    case .circle(let circle):
+      return String(
+        localized: "Circle (\(circle.name))",
+        comment: "Visibility context description for a private Circle post — %1$@ is the Circle name."
+      )
     }
   }
 }
@@ -358,43 +363,49 @@ public enum CircleError: Error, LocalizedError, Equatable {
   public var errorDescription: String? {
     switch self {
     case .upstreamUnavailable:
-      return "The Circle service is temporarily unavailable."
+      return String(localized: "The Circle service is temporarily unavailable.", comment: "Error when the Circle backend service cannot be reached.")
     case .accessRemoved:
-      return "Your access to this Circle was removed."
+      return String(localized: "Your access to this Circle was removed.", comment: "Error when the user is no longer a member of the Circle.")
     case .accessExpired:
-      return "Your access to this Circle has expired. Reauthorize to continue."
+      return String(localized: "Your access to this Circle has expired. Reauthorize to continue.", comment: "Error when Circle authorization has expired.")
     case .unsupportedPDS:
-      return "This server does not support Spaces."
+      return String(localized: "This server does not support Spaces.", comment: "Error when the user's PDS server does not support AT Protocol Spaces.")
     case .protocolRevisionMismatch:
-      return "The server's Circle protocol revision is incompatible with this client."
+      return String(localized: "The server's Circle protocol revision is incompatible with this client.", comment: "Error when the server's Circle protocol version does not match the app.")
     case .authRequired:
-      return "Authentication is required to access this Circle."
+      return String(localized: "Authentication is required to access this Circle.", comment: "Error when authentication is needed to read or write a Circle.")
     case .clientNotInitialized:
-      return "The network client is not initialized."
+      return String(localized: "The network client is not initialized.", comment: "Error when the AT Protocol network client is not ready.")
     case .invalidResponse:
-      return "The Circle service returned an invalid response."
+      return String(localized: "The Circle service returned an invalid response.", comment: "Error when the Circle service returns a malformed response.")
     case .missingLikeUri:
-      return "Cannot unlike: missing like URI."
+      return String(localized: "Cannot unlike: missing like URI.", comment: "Error when removing a like fails because the like record URI is missing.")
     case .networkError(let message):
-      return "Network error: \(message)"
+      return String(
+        localized: "Network error: \(message)",
+        comment: "Error wrapper for a Circle network failure — %1$@ is the underlying error message."
+      )
     case .spaceWriteRejected(let message):
-      return "Circle write rejected: \(message)"
+      return String(
+        localized: "Circle write rejected: \(message)",
+        comment: "Error when writing to a Circle Space is rejected — %1$@ is the server rejection message."
+      )
     case .notAuthorized:
-      return "You are not authorized to perform this operation."
+      return String(localized: "You are not authorized to perform this operation.", comment: "Error when the user lacks permission for a Circle action.")
     case .invalidParameter(let message):
       return message
     case .keyVersionConflict:
-      return "This Circle's key changed on another device. Try again."
+      return String(localized: "This Circle's key changed on another device. Try again.", comment: "Error when a concurrent key rotation occurred on another device.")
     case .encryptionUnavailable:
-      return "Can't post to this Circle right now. Your draft was kept."
+      return String(localized: "Can't post to this Circle right now. Your draft was kept.", comment: "Error when an encrypted Circle post cannot be sealed.")
     case .ineligibleMember(let reason):
       return reason
     case .ownerMismatch:
-      return "This Circle's data looks inconsistent. Try again later."
+      return String(localized: "This Circle's data looks inconsistent. Try again later.", comment: "Error when a Circle summary's owner does not match its Space URI authority.")
     case .keysTemporarilyUnavailable:
-      return "Waiting to reach this Circle's keys. Your draft was kept; try again in a moment."
+      return String(localized: "Waiting to reach this Circle's keys. Your draft was kept; try again in a moment.", comment: "Retryable error when Circle encryption keys cannot be fetched while offline or busy.")
     case .keyStoreUnavailable:
-      return "This Circle's keys are unavailable on this device right now. Your draft was kept."
+      return String(localized: "This Circle's keys are unavailable on this device right now. Your draft was kept.", comment: "Retryable error when the device keychain cannot be read.")
     }
   }
 }
@@ -429,15 +440,35 @@ struct CirclePublishResult: Equatable, Sendable {
 
 enum CircleReportCopy {
   /// Spec §8 consent, shown before an encrypted post is reported.
-  static let disclosureConsent = "Reporting shares this post's decryption key with Catbird moderators."
+  static var disclosureConsent: String {
+    String(
+      localized: "Reporting shares this post's decryption key with Catbird moderators.",
+      comment: "Consent disclosure shown before reporting an end-to-end encrypted Circle post."
+    )
+  }
   /// The post was never opened on this device, so there is no key to share.
-  static let notOpened = "Open this post before reporting it."
+  static var notOpened: String {
+    String(
+      localized: "Open this post before reporting it.",
+      comment: "Error message when attempting to report an encrypted Circle post that has not been decrypted on this device."
+    )
+  }
 }
 
 enum CirclePostCopy {
   /// §4.4: one non-blocking line after a repost under a newer key.
-  static let repostedAfterKeyRefresh = "Reposted after key refresh"
-  static let keyCheckFailed = "Posted, but the Circle's key check didn't finish. If members can't read it, post again."
+  static var repostedAfterKeyRefresh: String {
+    String(
+      localized: "Reposted after key refresh",
+      comment: "Notice shown after an encrypted Circle post was re-sealed and reposted under a newly rotated key."
+    )
+  }
+  static var keyCheckFailed: String {
+    String(
+      localized: "Posted, but the Circle's key check didn't finish. If members can't read it, post again.",
+      comment: "Warning shown when a Circle post succeeded but the post-publish key freshness check could not complete."
+    )
+  }
 }
 
 /// The narrow network seam used by `CircleService`. Production uses

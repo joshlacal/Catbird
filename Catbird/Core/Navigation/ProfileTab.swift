@@ -13,19 +13,23 @@ enum ProfileTab: String, CaseIterable, Hashable {
   case videos
   case more
 
-  var title: String {
+  var localizedTitle: LocalizedStringResource {
     switch self {
-    case .labelerInfo: return "Labels"
-    case .posts: return "Posts"
-    case .replies: return "Replies"
-    case .media: return "Media"
-    case .likes: return "Likes"
-    case .lists: return "Lists"
-    case .starterPacks: return "Starter Packs"
-    case .feeds: return "Feeds"
-    case .videos: return "Streamplace Videos"
-    case .more: return "More"
+    case .labelerInfo: return LocalizedStringResource("Labels", comment: "Profile tab title for moderation labeler definitions.")
+    case .posts: return LocalizedStringResource("Posts", comment: "Profile tab title for authored posts.")
+    case .replies: return LocalizedStringResource("Replies", comment: "Profile tab title for replies.")
+    case .media: return LocalizedStringResource("Media", comment: "Profile tab title for photos and videos.")
+    case .likes: return LocalizedStringResource("Likes", comment: "Profile tab title for liked posts.")
+    case .lists: return LocalizedStringResource("Lists", comment: "Profile tab title for user lists.")
+    case .starterPacks: return LocalizedStringResource("Starter Packs", comment: "Profile tab title for starter packs.")
+    case .feeds: return LocalizedStringResource("Feeds", comment: "Profile tab title for custom feeds.")
+    case .videos: return LocalizedStringResource("Streamplace Videos", comment: "Profile tab title for Streamplace videos.")
+    case .more: return LocalizedStringResource("More", comment: "Profile tab title for additional sections.")
     }
+  }
+
+  var title: String {
+    String(localized: localizedTitle)
   }
   
   var systemImage: String {
@@ -43,19 +47,23 @@ enum ProfileTab: String, CaseIterable, Hashable {
     }
   }
   
-  var subtitle: String {
+  var localizedSubtitle: LocalizedStringResource {
     switch self {
-    case .labelerInfo: return "Labels and settings"
-    case .posts: return "View all posts"
-    case .replies: return "Replies to others"
-    case .media: return "Photos and videos"
-    case .likes: return "Liked posts"
-    case .lists: return "User lists"
-    case .starterPacks: return "Curated starter packs"
-    case .feeds: return "Custom feeds"
-    case .videos: return "Streamplace Video-on-Demand"
-    case .more: return "Additional options"
+    case .labelerInfo: return LocalizedStringResource("Labels and settings", comment: "Profile tab subtitle for labeler info.")
+    case .posts: return LocalizedStringResource("View all posts", comment: "Profile tab subtitle for posts.")
+    case .replies: return LocalizedStringResource("Replies to others", comment: "Profile tab subtitle for replies.")
+    case .media: return LocalizedStringResource("Photos and videos", comment: "Profile tab subtitle for media.")
+    case .likes: return LocalizedStringResource("Liked posts", comment: "Profile tab subtitle for likes.")
+    case .lists: return LocalizedStringResource("User lists", comment: "Profile tab subtitle for lists.")
+    case .starterPacks: return LocalizedStringResource("Curated starter packs", comment: "Profile tab subtitle for starter packs.")
+    case .feeds: return LocalizedStringResource("Custom feeds", comment: "Profile tab subtitle for custom feeds.")
+    case .videos: return LocalizedStringResource("Streamplace Video-on-Demand", comment: "Profile tab subtitle for Streamplace videos.")
+    case .more: return LocalizedStringResource("Additional options", comment: "Profile tab subtitle for extra profile sections.")
     }
+  }
+
+  var subtitle: String {
+    String(localized: localizedSubtitle)
   }
   
   /// Returns the tabs visible for a labeler profile

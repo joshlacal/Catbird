@@ -20,6 +20,7 @@ struct ResultsView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.locale) private var locale
   private let baseUnit: CGFloat = 3
 
   init(
@@ -115,7 +116,11 @@ struct ResultsView: View {
         headerView: AnyView(
           VStack(alignment: .leading, spacing: 0) {
             detectedLanguagesAdmonitionView
-            Text(selectedContentType == .top ? "Top Posts" : "Latest Posts")
+            Text(
+              selectedContentType == .top
+                ? LocalizedStringResource("Top Posts", comment: "Section header for top post search results")
+                : LocalizedStringResource("Latest Posts", comment: "Section header for latest post search results")
+            )
               .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
               .padding(.horizontal, baseUnit * 1.5)
@@ -178,7 +183,7 @@ struct ResultsView: View {
   @ViewBuilder
   private var detectedLanguagesAdmonitionView: some View {
     let readerLanguages = Set(
-      (appState.appSettings.contentLanguages + [Locale.current.language.languageCode?.identifier ?? ""])
+      (appState.appSettings.contentLanguages + [locale.language.languageCode?.identifier ?? ""])
         .map(Self.baseLanguageCode)
         .filter { !$0.isEmpty }
     )
@@ -220,7 +225,7 @@ struct ResultsView: View {
   }
 
   private var profileSection: some View {
-    Section(header: Text("People")) {
+    Section(header: Text("People", comment: "Section header for profile search results")) {
       ForEach(viewModel.profileResults, id: \.did) { profile in
         Button { path.append(NavigationDestination.profile(profile.did.didString())) } label: {
           VStack(spacing: 0) {
@@ -275,7 +280,7 @@ struct ResultsView: View {
   }
 
   private var feedSection: some View {
-    Section(header: Text("Feeds")) {
+    Section(header: Text("Feeds", comment: "Section header for custom feed search results")) {
       ForEach(viewModel.feedResults, id: \.uri) { feed in
         VStack(spacing: 0) {
           FeedDiscoveryHeaderView(
@@ -324,7 +329,7 @@ struct ResultsView: View {
   }
 
   private var starterPackSection: some View {
-    Section(header: Text("Starter Packs")) {
+    Section(header: Text("Starter Packs", comment: "Section header for starter pack search results")) {
       ForEach(viewModel.starterPackResults, id: \.uri) { pack in
         Button {
           path.append(NavigationDestination.starterPack(pack.uri))
@@ -450,7 +455,11 @@ struct ResultsView: View {
       Text(emptyResultsTitle(for: type))
         .appFont(AppTextRole.headline)
 
-      Text(hasActiveFilters ? "Try removing some filters." : "Try a different search term or check your spelling.")
+      Text(
+        hasActiveFilters
+          ? LocalizedStringResource("Try removing some filters.", comment: "Empty search results subtitle when active filters may be excluding posts")
+          : LocalizedStringResource("Try a different search term or check your spelling.", comment: "Empty search results subtitle suggesting a different query")
+      )
         .appFont(AppTextRole.subheadline)
         .foregroundColor(.secondary)
         .multilineTextAlignment(.center)
@@ -494,12 +503,16 @@ struct ResultsView: View {
     .padding(.vertical, 60)
   }
 
-  private func emptyResultsTitle(for type: ContentType) -> String {
+  private func emptyResultsTitle(for type: ContentType) -> LocalizedStringResource {
     switch type {
-    case .top, .latest: return "No Posts Found"
-    case .people: return "No People Found"
-    case .feeds: return "No Feeds Found"
-    case .starterPacks: return "No Starter Packs Found"
+    case .top, .latest:
+      return LocalizedStringResource("No Posts Found", comment: "Empty search results heading when no posts match")
+    case .people:
+      return LocalizedStringResource("No People Found", comment: "Empty search results heading when no profiles match")
+    case .feeds:
+      return LocalizedStringResource("No Feeds Found", comment: "Empty search results heading when no custom feeds match")
+    case .starterPacks:
+      return LocalizedStringResource("No Starter Packs Found", comment: "Empty search results heading when no starter packs match")
     }
   }
 

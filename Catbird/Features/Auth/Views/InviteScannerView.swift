@@ -68,7 +68,11 @@ public struct InviteScannerView: View {
                     scanSession += 1
                 }
             } message: {
-                Text(errorMessage ?? "This QR code doesn’t link to a Bluesky profile.")
+                if let errorMessage {
+                    Text(errorMessage)
+                } else {
+                    Text("This QR code doesn’t link to a Bluesky profile.", comment: "Alert message when a scanned QR code does not point to a valid Bluesky profile.")
+                }
             }
         }
     }
@@ -226,12 +230,13 @@ public struct InviteScannerView: View {
         NavigationStack {
             VStack(spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Bluesky Handle")
+                    Text("Bluesky Handle", comment: "Field label for manually entering a Bluesky handle.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
                     
-                    TextField("alice.bsky.social", text: $manualHandleInput)
+                    TextField(text: $manualHandleInput, prompt: Text(verbatim: "alice.bsky.social")) {
+                        Text("Bluesky Handle", comment: "Accessibility label for manually entering a Bluesky handle.")
+                    }
                         .font(.body)
                         #if os(iOS)
                         .autocapitalization(.none)
@@ -313,7 +318,10 @@ public struct InviteScannerView: View {
     private func handleScannedString(_ string: String) {
         guard let handleOrDID = InviteURLHelper.parseProfilePayload(string) else {
             logger.warning("Scanned invalid payload: \(string)")
-            self.errorMessage = "This QR code doesn’t link to a Bluesky profile."
+            self.errorMessage = String(
+                localized: "This QR code doesn’t link to a Bluesky profile.",
+                comment: "Alert message when a scanned QR code does not point to a valid Bluesky profile."
+            )
             return
         }
         

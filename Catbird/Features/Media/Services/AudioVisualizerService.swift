@@ -1801,9 +1801,7 @@ final class AudioVisualizerService {
   }
   
   private func formatTime(_ timeInterval: TimeInterval) -> String {
-    let minutes = Int(timeInterval) / 60
-    let seconds = Int(timeInterval) % 60
-    return String(format: "%d:%02d", minutes, seconds)
+    Duration.seconds(Int(max(0, timeInterval))).formatted(.time(pattern: .minuteSecond))
   }
   
   private func createPixelBuffer(from cgImage: CGImage, adaptor: AVAssetWriterInputPixelBufferAdaptor) -> CVPixelBuffer? {
@@ -1881,27 +1879,45 @@ enum VisualizerError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .writerSetupFailed(let error):
-      return "Failed to setup video writer" + (error != nil ? ": \(error!.localizedDescription)" : "")
+      if let error {
+        return String(localized: "Failed to setup video writer: \(error.localizedDescription)", comment: "Error with details when initializing the audio visualizer video writer fails")
+      }
+      return String(localized: "Failed to setup video writer", comment: "Error when initializing the audio visualizer video writer fails")
     case .writingFailed(let error):
-      return "Failed to write video" + (error != nil ? ": \(error!.localizedDescription)" : "")
+      if let error {
+        return String(localized: "Failed to write video: \(error.localizedDescription)", comment: "Error with details when writing the audio visualizer video fails")
+      }
+      return String(localized: "Failed to write video", comment: "Error when writing the audio visualizer video fails")
     case .frameCreationFailed(let error):
-      return "Failed to create video frame" + (error != nil ? ": \(error!.localizedDescription)" : "")
+      if let error {
+        return String(localized: "Failed to create video frame: \(error.localizedDescription)", comment: "Error with details when rendering an audio visualizer video frame fails")
+      }
+      return String(localized: "Failed to create video frame", comment: "Error when rendering an audio visualizer video frame fails")
     case .frameAppendFailed(let error):
-      return "Failed to append video frame" + (error != nil ? ": \(error!.localizedDescription)" : "")
+      if let error {
+        return String(localized: "Failed to append video frame: \(error.localizedDescription)", comment: "Error with details when appending a rendered frame to the audio visualizer video fails")
+      }
+      return String(localized: "Failed to append video frame", comment: "Error when appending a rendered frame to the audio visualizer video fails")
     case .noAudioTrack:
-      return "No audio track found in recording"
+      return String(localized: "No audio track found in recording", comment: "Error when recorded audio file has no audio track")
     case .generationTimeout:
-      return "Video generation timed out"
+      return String(localized: "Video generation timed out", comment: "Error when audio visualizer video generation exceeds the time limit")
     case .audioAnalysisFailed(let error):
-      return "Failed to analyze audio waveform" + (error != nil ? ": \(error!.localizedDescription)" : "")
+      if let error {
+        return String(localized: "Failed to analyze audio waveform: \(error.localizedDescription)", comment: "Error with details when waveform analysis fails")
+      }
+      return String(localized: "Failed to analyze audio waveform", comment: "Error when waveform analysis fails")
     case .profileImageLoadFailed(let error):
-      return "Failed to load profile image" + (error != nil ? ": \(error!.localizedDescription)" : "")
+      if let error {
+        return String(localized: "Failed to load profile image: \(error.localizedDescription)", comment: "Error with details when loading the avatar image for the audio visualizer fails")
+      }
+      return String(localized: "Failed to load profile image", comment: "Error when loading the avatar image for the audio visualizer fails")
     case .diskSpaceInsufficient:
-      return "Insufficient disk space for video generation"
+      return String(localized: "Insufficient disk space for video generation", comment: "Error when device does not have enough free storage to generate visualizer video")
     case .memoryPressure:
-      return "System memory pressure - please close other apps and try again"
+      return String(localized: "System memory pressure - please close other apps and try again", comment: "Error when device memory is too low to generate visualizer video")
     case .maxRetriesExceeded(let attempts):
-      return "Video generation failed after \(attempts) attempts"
+      return String(localized: "Video generation failed after \(attempts) attempts", comment: "Error shown when audio visualizer video generation fails after multiple retry attempts")
     }
   }
   

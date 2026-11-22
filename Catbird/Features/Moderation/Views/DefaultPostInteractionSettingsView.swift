@@ -16,16 +16,16 @@ struct DefaultPostInteractionSettingsView: View {
     var id: String { rawValue }
     var title: String {
       switch self {
-      case .everybody: "Everyone"
-      case .nobody: "No One"
-      case .custom: "Selected Groups and Lists"
+      case .everybody: String(localized: "Everyone", comment: "Default reply permission option.")
+      case .nobody: String(localized: "No One", comment: "Default reply permission option.")
+      case .custom: String(localized: "Selected Groups and Lists", comment: "Default reply permission option.")
       }
     }
     var explanation: String {
       switch self {
-      case .everybody: "Anyone can reply to new posts."
-      case .nobody: "New posts don’t allow replies."
-      case .custom: "People in any selected group or list can reply."
+      case .everybody: String(localized: "Anyone can reply to new posts.", comment: "Default reply permission description.")
+      case .nobody: String(localized: "New posts don’t allow replies.", comment: "Default reply permission description.")
+      case .custom: String(localized: "People in any selected group or list can reply.", comment: "Default reply permission description.")
       }
     }
   }
@@ -113,7 +113,7 @@ struct DefaultPostInteractionSettingsView: View {
               Text("The selected groups, lists, and any other saved rules are combined.")
                 .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
             }
-            Section("Lists") {
+            Section {
               if isLoadingLists {
                 ProgressView("Loading your lists…")
               } else if let listError {
@@ -137,6 +137,8 @@ struct DefaultPostInteractionSettingsView: View {
                   .accessibilityAddTraits(selected ? .isSelected : [])
                 }
               }
+            } header: {
+              Text("Lists", comment: "Section header for Bluesky user lists allowed to reply to new posts.")
             }
           }
           Section {
@@ -321,13 +323,13 @@ struct DefaultPostInteractionSettingsView: View {
               state.atProtoClient === client else { return }
         guard code == 200, let output else {
           throw NSError(domain: "DefaultRepliesLists", code: code,
-            userInfo: [NSLocalizedDescriptionKey: "Your lists couldn’t be loaded. Try again."])
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "Your lists couldn’t be loaded. Try again.", comment: "Error when loading user lists for default reply rules fails.")])
         }
         loaded.append(contentsOf: output.lists)
         cursor = output.cursor
         if let cursor, !seen.insert(cursor).inserted {
           throw NSError(domain: "DefaultRepliesLists", code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "Your lists couldn’t be loaded completely. Try again."])
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "Your lists couldn’t be loaded completely. Try again.", comment: "Error when paginating user lists repeats a cursor.")])
         }
       } while cursor != nil
       var unique: Set<String> = []
@@ -338,7 +340,7 @@ struct DefaultPostInteractionSettingsView: View {
             listLoadRevision == loadRevision, !state.isTransitioningAccounts else { return }
       listError = (error as NSError).domain == "DefaultRepliesLists"
         ? error.localizedDescription
-        : (UserFacingError.message(for: error, action: "load your lists") ?? "Your lists couldn’t be loaded. Try again.")
+        : (UserFacingError.message(for: error, action: "load your lists") ?? String(localized: "Your lists couldn’t be loaded. Try again.", comment: "Error when loading user lists for default reply rules fails."))
     }
   }
 }

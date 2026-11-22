@@ -36,7 +36,10 @@ enum MessagesSchemaRuntime {
 
     guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
       throw IntentError.serviceUnavailable(
-        "Catbird's secure chat service is unavailable or requires ATProto Spaces permissions. Open Catbird and try again."
+        LocalizedStringResource(
+          "Catbird's secure chat service is unavailable or requires ATProto Spaces permissions. Open Catbird and try again.",
+          comment: "Error spoken by Siri when MLS secure chat is not yet initialized or authorized."
+        )
       )
     }
 
@@ -47,7 +50,12 @@ enum MessagesSchemaRuntime {
     let text = String(attributedString.characters)
       .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
-      throw IntentError.invalidParameter("Message content cannot be empty.")
+      throw IntentError.invalidParameter(
+        LocalizedStringResource(
+          "Message content cannot be empty.",
+          comment: "Validation error when a Catbird chat message has empty body text."
+        )
+      )
     }
     return text
   }
@@ -66,22 +74,40 @@ enum MessagesSchemaRuntime {
 
     case .recipients(let entities):
       guard !entities.isEmpty else {
-        throw IntentError.invalidParameter("No recipients specified.")
+        throw IntentError.invalidParameter(
+          LocalizedStringResource(
+            "No recipients specified.",
+            comment: "Validation error when sending a Catbird chat message without any recipient."
+          )
+        )
       }
       return entities.map { ($0.id, $0.displayName) }
 
     case .persons(let persons):
       guard !persons.isEmpty else {
-        throw IntentError.invalidParameter("No recipients specified.")
+        throw IntentError.invalidParameter(
+          LocalizedStringResource(
+            "No recipients specified.",
+            comment: "Validation error when sending a Catbird chat message without any recipient."
+          )
+        )
       }
       return try persons.map { person in
         guard let name = spokenName(for: person) else {
           throw IntentError.invalidParameter(
-            "That contact has no name Catbird can match against your chats.")
+            LocalizedStringResource(
+              "That contact has no name Catbird can match against your chats.",
+              comment: "Error when a Siri contact lacks a displayable name to match against Catbird chat members."
+            )
+          )
         }
         guard let member = member(matchingName: name, in: directory) else {
           throw IntentError.invalidParameter(
-            "Couldn't find \"\(name)\" in your Catbird chats.")
+            LocalizedStringResource(
+              "Couldn't find \"\(name)\" in your Catbird chats.",
+              comment: "Error when no existing Catbird chat member matches a spoken contact name; placeholder is the contact's name."
+            )
+          )
         }
         return (member.did, directory.name(for: member))
       }
@@ -150,7 +176,14 @@ enum MessagesSchemaRuntime {
     coordinator _: MLSClientCoordinator,
     directory: ChatDirectory
   ) async throws -> ComposeDestination {
-    guard !recipients.isEmpty else { throw IntentError.invalidParameter("No recipients specified.") }
+    guard !recipients.isEmpty else {
+      throw IntentError.invalidParameter(
+        LocalizedStringResource(
+          "No recipients specified.",
+          comment: "Validation error when sending a Catbird chat message without any recipient."
+        )
+      )
+    }
     if let existing = conversationID(matching: recipients.map(\.did),
       in: directory.membersByConvoID.mapValues { $0.map(\.did) },
       conversationOrder: directory.conversations.map(\.conversationID), selfDID: directory.currentUserDID) {
@@ -158,7 +191,12 @@ enum MessagesSchemaRuntime {
       return .existing(existing)
     }
     guard recipients.count == 1 else {
-      throw IntentError.invalidParameter("Create a group in Catbird before sending to multiple recipients.")
+      throw IntentError.invalidParameter(
+        LocalizedStringResource(
+          "Create a group in Catbird before sending to multiple recipients.",
+          comment: "Error when attempting to start a new multi-person MLS group chat via Siri before creating the group in Catbird."
+        )
+      )
     }
     return .recipientDraft(MLSDirectComposeDraftStore.open(
       accountDID: directory.currentUserDID, recipientDID: recipients[0].did))
@@ -262,7 +300,12 @@ enum MessagesSchemaRuntime {
       let others = members(in: conversation.conversationID)
         .filter { $0.did != currentUserDID }
         .map { name(for: $0) }
-      return others.isEmpty ? "Conversation" : others.joined(separator: ", ")
+      return others.isEmpty
+        ? String(
+            localized: "Conversation",
+            comment: "Fallback title for an MLS chat conversation with no other participants."
+          )
+        : others.formatted(.list(type: .and, width: .narrow))
     }
   }
 
@@ -357,7 +400,12 @@ enum MessagesSchemaRuntime {
       id: model.conversationID,
       recipients: recipients,
       displayName: title,
-      previewText: AttributedString("MLS chat"),
+      previewText: AttributedString(
+        String(
+          localized: "MLS Chat",
+          comment: "Preview label for an encrypted MLS chat conversation."
+        )
+      ),
       conversationName: title,
       isRead: model.unreadCount == 0,
       attributes: members.count > 2 ? [.group] : [],
@@ -378,13 +426,24 @@ enum MessagesSchemaRuntime {
       sender = CatbirdMessagesPersonEntity(
         id: message.senderID, displayName: String(message.senderID.suffix(8)))
     }
-    let preview = AttributedString("MLS Chat")
-    let bodyText = message.parsedPayload()?.text ?? "Encrypted message"
+    let preview = AttributedString(
+      String(
+        localized: "MLS Chat",
+        comment: "Preview label for an encrypted MLS chat conversation."
+      )
+    )
+    let bodyText = message.parsedPayload()?.text ?? String(
+      localized: "Encrypted message",
+      comment: "Placeholder body text when an encrypted MLS message payload cannot be read."
+    )
 
     let convoEntity = CatbirdMessagesConversationEntity(
       id: conversationIDOverride ?? message.conversationID,
       recipients: [sender],
-      displayName: conversationTitle ?? "Conversation",
+      displayName: conversationTitle ?? String(
+        localized: "Conversation",
+        comment: "Fallback title for an MLS chat conversation."
+      ),
       previewText: preview,
       conversationName: conversationTitle,
       isRead: true,
@@ -426,7 +485,12 @@ enum MessagesSchemaRuntime {
         return MLSMessageModel(row: matchingRow, currentUserDID: userDID)
       }
     }
-    throw IntentError.invalidParameter("Catbird could not find that message.")
+    throw IntentError.invalidParameter(
+      LocalizedStringResource(
+        "Catbird could not find that message.",
+        comment: "Error spoken by Siri when a referenced chat message cannot be found in storage."
+      )
+    )
   }
 }
 

@@ -367,7 +367,9 @@ struct LinkCreationDialog: View {
       
       VStack(spacing: 8) {
         #if os(iOS)
-        TextField("https://example.com", text: $urlText)
+        TextField(text: $urlText, prompt: Text(verbatim: "https://example.com")) {
+          Text("Link URL")
+        }
           .textFieldStyle(.roundedBorder)
           .keyboardType(.URL)
           .autocapitalization(.none)
@@ -379,7 +381,9 @@ struct LinkCreationDialog: View {
             }
           }
         #else
-        TextField("https://example.com", text: $urlText)
+        TextField(text: $urlText, prompt: Text(verbatim: "https://example.com")) {
+          Text("Link URL")
+        }
           .textFieldStyle(.roundedBorder)
           .autocorrectionDisabled(true)
           .focused($isURLFieldFocused)
@@ -450,7 +454,12 @@ struct LinkCreationDialog: View {
               .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
             
-            TextField(selectedText.isEmpty ? "Optional custom text" : selectedText, text: $displayText)
+            TextField(
+              selectedText.isEmpty
+                ? String(localized: "Optional custom text", comment: "Placeholder for optional custom link display text")
+                : selectedText,
+              text: $displayText
+            )
               .textFieldStyle(.roundedBorder)
               .focused($isDisplayTextFocused)
             
@@ -577,14 +586,14 @@ struct LinkCreationDialog: View {
     
     guard let url = RichTextFacetUtils.validateAndStandardizeURL(urlString) else {
       showError = true
-      errorMessage = "Please enter a valid URL. URLs should include a domain name (e.g., example.com or https://example.com)"
+      errorMessage = String(localized: "Please enter a valid URL. URLs should include a domain name (e.g., example.com or https://example.com)", comment: "Validation error when entered link URL cannot be parsed")
       return
     }
     
     // Additional validation
     guard let host = url.host, !host.isEmpty else {
       showError = true
-      errorMessage = "URL must include a valid domain name"
+      errorMessage = String(localized: "URL must include a valid domain name", comment: "Validation error when entered link URL lacks a host domain")
       return
     }
     
@@ -596,7 +605,7 @@ struct LinkCreationDialog: View {
   private func createLink() {
     guard let url = validatedURL else {
       showError = true
-      errorMessage = "Please enter a valid URL"
+      errorMessage = String(localized: "Please enter a valid URL", comment: "Validation error when user submits link dialog without a valid URL")
       return
     }
     // Pass the chosen display text (may be empty). The caller can decide how to use it.

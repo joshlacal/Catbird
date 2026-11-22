@@ -72,7 +72,7 @@ extension PostComposerViewUIKit {
           .foregroundColor(.primary)
           .lineLimit(1)
 
-        Text("@\(profile.handle.description)")
+        Text(verbatim: "@\(profile.handle.description)")
           .appFont(AppTextRole.subheadline)
           .foregroundColor(.secondary)
           .lineLimit(1)

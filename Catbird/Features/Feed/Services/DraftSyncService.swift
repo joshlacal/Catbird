@@ -493,10 +493,14 @@ enum DraftSyncFailure: LocalizedError {
   case accountChanged, incompleteListing, http(Int), malformedResponse
   var errorDescription: String? {
     switch self {
-    case .accountChanged: return "Draft sync paused because the account changed."
-    case .incompleteListing: return "Bluesky’s draft list could not be read completely. Your drafts are safe on this device."
-    case .http: return "Bluesky could not sync drafts. Your drafts are safe on this device. Pull to retry."
-    case .malformedResponse: return "Bluesky returned a draft response that could not be read. Your local drafts are unchanged."
+    case .accountChanged:
+      return String(localized: "Draft sync paused because the account changed.", comment: "Status error when draft sync stops after switching accounts")
+    case .incompleteListing:
+      return String(localized: "Bluesky’s draft list could not be read completely. Your drafts are safe on this device.", comment: "Error when remote drafts cannot be listed completely")
+    case .http:
+      return String(localized: "Bluesky could not sync drafts. Your drafts are safe on this device. Pull to retry.", comment: "Error when syncing drafts with Bluesky fails over HTTP")
+    case .malformedResponse:
+      return String(localized: "Bluesky returned a draft response that could not be read. Your local drafts are unchanged.", comment: "Error when Bluesky returns an unreadable draft payload")
     }
   }
 }
@@ -886,7 +890,10 @@ final class DraftSyncService {
     let remoteChanged = state.baselineRemote != remote.payload
     if remoteChanged {
       if localChanged {
-        try persistence.preserveRecoveryCopy(of: local, reason: "Another app changed this draft. Your previous version was kept here.")
+        try persistence.preserveRecoveryCopy(
+          of: local,
+          reason: String(localized: "Another app changed this draft. Your previous version was kept here.", comment: "Reason shown on a local recovery copy of a draft modified remotely by another app")
+        )
       }
       try applyRemote(remote, to: local)
       return
@@ -899,7 +906,10 @@ final class DraftSyncService {
       return
     }
     guard DraftSyncTranslator.isSyncable(draft), let baseline = state.baselineLocal else {
-      state.issue = "Changes are saved on this device. This draft contains content that cannot be synced safely."
+      state.issue = String(
+        localized: "Changes are saved on this device. This draft contains content that cannot be synced safely.",
+        comment: "Notice when a draft uses local-only features that cannot sync to Bluesky"
+      )
       try persistence.saveSyncState(state, for: local)
       return
     }
@@ -926,7 +936,10 @@ final class DraftSyncService {
     }
     if changesUnavailableMedia || (originalPosts != beforePosts && !hasStableOrder
       && (draft.threadEntries.count != baseline.threadEntries.count || ambiguousReorder)) {
-      state.issue = "These changes need a new draft because some original content belongs to another app. Your edit is saved on this device."
+      state.issue = String(
+        localized: "These changes need a new draft because some original content belongs to another app. Your edit is saved on this device.",
+        comment: "Notice when editing a synced draft with foreign app fields keeps changes locally"
+      )
       try persistence.saveSyncState(state, for: local)
       return
     }
@@ -942,12 +955,18 @@ final class DraftSyncService {
     }
     state = try persistence.syncState(for: local)
     guard let current else {
-      state.recoveryReason = "No longer available on Bluesky. This device’s copy was kept."
+      state.recoveryReason = String(
+        localized: "No longer available on Bluesky. This device’s copy was kept.",
+        comment: "Reason shown when a remotely deleted draft is retained locally"
+      )
       try persistence.saveSyncState(state, for: local)
       return
     }
     guard current.payload == remote.payload else {
-      try persistence.preserveRecoveryCopy(of: local, reason: "Another app changed this draft. Your previous version was kept here.")
+      try persistence.preserveRecoveryCopy(
+        of: local,
+        reason: String(localized: "Another app changed this draft. Your previous version was kept here.", comment: "Reason shown on a local recovery copy of a draft modified remotely by another app")
+      )
       try applyRemote(current, to: local)
       return
     }

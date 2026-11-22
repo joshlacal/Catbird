@@ -206,12 +206,12 @@ enum FeedError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .clientNotAvailable:
-            return "You’re signed out. Sign in again to see this feed."
+            return String(localized: "You’re signed out. Sign in again to see this feed.", comment: "Error when fetching a feed while signed out")
         case .requestFailed(let statusCode):
             if statusCode == 429 {
-                return "Too many requests. Try again in a moment."
+                return String(localized: "Too many requests. Try again in a moment.", comment: "Error when rate limited while fetching a feed")
             }
-            return "This feed couldn’t be loaded. Try again."
+            return String(localized: "This feed couldn’t be loaded. Try again.", comment: "Error when a feed request fails")
         }
     }
 }

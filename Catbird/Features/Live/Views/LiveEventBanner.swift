@@ -91,7 +91,7 @@ struct LiveEventBanner: View {
                             Circle()
                                 .fill(Color.red)
                                 .frame(width: 8, height: 8)
-                            Text("LIVE")
+                            Text("LIVE", comment: "Badge indicating an active live event")
                                 .font(.caption2.bold())
                                 .foregroundColor(.white)
                         }
@@ -149,7 +149,11 @@ struct LiveEventBanner: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(errorMessage ?? "Failed to update live event preferences.")
+            if let errorMessage {
+                Text(errorMessage)
+            } else {
+                Text("Failed to update live event preferences.")
+            }
         }
     }
 
@@ -176,7 +180,11 @@ struct LiveEventBanner: View {
                 showingUndo = true
             }
             appState.toastManager.show(
-                ToastItem(message: "Live event hidden", icon: "eye.slash", duration: 3.0)
+                ToastItem(
+                    message: String(localized: "Live event hidden", comment: "Toast confirming a single live event banner was hidden"),
+                    icon: "eye.slash",
+                    duration: 3.0
+                )
             )
             Task {
                 try? await Task.sleep(for: .seconds(5))
@@ -190,7 +198,10 @@ struct LiveEventBanner: View {
             errorMessage = error.localizedDescription
             showErrorAlert = true
             appState.toastManager.show(
-                ToastItem(message: "Failed to hide live event: \(error.localizedDescription)", icon: "exclamationmark.triangle.fill")
+                ToastItem(
+                    message: String(localized: "Failed to hide live event: \(error.localizedDescription)", comment: "Toast shown when hiding a live event fails"),
+                    icon: "exclamationmark.triangle.fill"
+                )
             )
         }
     }
@@ -204,7 +215,11 @@ struct LiveEventBanner: View {
                 showingUndo = true
             }
             appState.toastManager.show(
-                ToastItem(message: "All live events hidden", icon: "xmark.circle", duration: 3.0)
+                ToastItem(
+                    message: String(localized: "All live events hidden", comment: "Toast confirming all live event banners were hidden"),
+                    icon: "xmark.circle",
+                    duration: 3.0
+                )
             )
             Task {
                 try? await Task.sleep(for: .seconds(5))
@@ -218,7 +233,10 @@ struct LiveEventBanner: View {
             errorMessage = error.localizedDescription
             showErrorAlert = true
             appState.toastManager.show(
-                ToastItem(message: "Failed to hide live events: \(error.localizedDescription)", icon: "exclamationmark.triangle.fill")
+                ToastItem(
+                    message: String(localized: "Failed to hide live events: \(error.localizedDescription)", comment: "Toast shown when hiding all live events fails"),
+                    icon: "exclamationmark.triangle.fill"
+                )
             )
         }
     }
@@ -230,13 +248,20 @@ struct LiveEventBanner: View {
                 showingUndo = false
             }
             appState.toastManager.show(
-                ToastItem(message: "Live event restored", icon: "arrow.uturn.backward.circle.fill", duration: 3.0)
+                ToastItem(
+                    message: String(localized: "Live event restored", comment: "Toast confirming hidden live event was restored"),
+                    icon: "arrow.uturn.backward.circle.fill",
+                    duration: 3.0
+                )
             )
         } catch {
             errorMessage = error.localizedDescription
             showErrorAlert = true
             appState.toastManager.show(
-                ToastItem(message: "Failed to undo: \(error.localizedDescription)", icon: "exclamationmark.triangle.fill")
+                ToastItem(
+                    message: String(localized: "Failed to undo: \(error.localizedDescription)", comment: "Toast shown when undoing live event hide fails"),
+                    icon: "exclamationmark.triangle.fill"
+                )
             )
         }
     }

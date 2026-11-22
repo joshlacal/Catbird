@@ -15,6 +15,7 @@ struct TrendingTopicsSection: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.locale) private var locale
     
     let topics: [AppBskyUnspeccedDefs.TrendView]
     let isLoading: Bool
@@ -45,7 +46,7 @@ struct TrendingTopicsSection: View {
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     if topics.count > maxItems {
                         Button(action: onSeeAll) {
-                            Label("All Topics", systemImage: "chevron.right")
+                            Label("All Topics", systemImage: "chevron.forward")
                                 .labelStyle(DisclosureLinkLabelStyle())
                                 .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
                                 .frame(minHeight: 44)
@@ -190,7 +191,7 @@ struct TrendingTopicsSection: View {
                     topicMedia(topic)
                     topicText(topic)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.right")
+                    Image(systemName: "chevron.forward")
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
@@ -248,14 +249,21 @@ struct TrendingTopicsSection: View {
     }
 
     private func formatPostCount(_ count: Int) -> String {
-        if count >= 1_000_000 {
-            let formatted = Double(count) / 1_000_000.0
-            return String(format: "%.1fM posts", formatted)
-        } else if count >= 1_000 {
-            let formatted = Double(count) / 1_000.0
-            return String(format: "%.1fK posts", formatted)
+        if count >= 1_000 {
+            let compact = count.formatted(.number.notation(.compactName).locale(locale))
+            var resource = LocalizedStringResource(
+                "\(compact) posts",
+                comment: "Compact post count (e.g. 1.2K) for a trending topic."
+            )
+            resource.locale = locale
+            return String(localized: resource)
         } else {
-            return "\(count) posts"
+            var resource = LocalizedStringResource(
+                "\(count) posts",
+                comment: "Post count for a trending topic."
+            )
+            resource.locale = locale
+            return String(localized: resource)
         }
     }
     
@@ -281,13 +289,20 @@ struct DisclosureLinkLabelStyle: LabelStyle {
 /// A common discovery heading with a second row when the title and actions need more room.
 struct DiscoverySectionHeader<Actions: View>: View {
   @Environment(\.fontManager) private var fontManager
-  let title: String
-  let subtitle: String?
+  private let titleText: Text
+  private let subtitleText: Text?
   @ViewBuilder let actions: Actions
 
+  init(_ title: LocalizedStringResource, subtitle: LocalizedStringResource? = nil, @ViewBuilder actions: () -> Actions) {
+    self.titleText = Text(title)
+    self.subtitleText = subtitle.map { Text($0) }
+    self.actions = actions()
+  }
+
+  @_disfavoredOverload
   init(_ title: String, subtitle: String? = nil, @ViewBuilder actions: () -> Actions) {
-    self.title = title
-    self.subtitle = subtitle
+    self.titleText = Text(verbatim: title)
+    self.subtitleText = subtitle.map { Text(verbatim: $0) }
     self.actions = actions()
   }
 
@@ -304,8 +319,8 @@ struct DiscoverySectionHeader<Actions: View>: View {
           actions
         }
       }
-      if let subtitle {
-        Text(subtitle)
+      if let subtitleText {
+        subtitleText
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -316,7 +331,7 @@ struct DiscoverySectionHeader<Actions: View>: View {
   }
 
   private var heading: some View {
-    Text(title)
+    titleText
       .appFont(fontManager.scaledCustomFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
       .foregroundStyle(.primary)
       .fixedSize(horizontal: false, vertical: true)

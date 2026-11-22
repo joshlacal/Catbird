@@ -25,12 +25,18 @@ struct LabelSelectorView: View {
   // Display name mapping function
   private func displayName(for label: ComAtprotoLabelDefs.LabelValue) -> String {
     switch label.rawValue {
-      case "!no-unauthenticated": return "Hide from Logged-out Users"
-      case "porn": return "Adult Content"
-      case "sexual": return "Sexual Content"
-      case "nudity": return "Contains Nudity"
-      case "graphic-media": return "Graphic Media"
-      default: return label.rawValue.capitalized
+      case "!no-unauthenticated":
+        return String(localized: "Hide from Logged-out Users", comment: "Self-label option hiding post from signed-out viewers")
+      case "porn":
+        return String(localized: "Adult Content", comment: "Self-label option for adult content")
+      case "sexual":
+        return String(localized: "Sexual Content", comment: "Self-label option for sexually suggestive content")
+      case "nudity":
+        return String(localized: "Contains Nudity", comment: "Self-label option for non-sexual nudity")
+      case "graphic-media":
+        return String(localized: "Graphic Media", comment: "Self-label option for graphic or violent media")
+      default:
+        return label.rawValue.localizedCapitalized
     }
   }
 

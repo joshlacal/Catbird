@@ -172,7 +172,7 @@ struct MLSGroupAvatarView: View {
   private func overflowBubble(count: Int) -> some View {
     ZStack {
       Circle().fill(Color.gray.opacity(0.25))
-      Text("+\(count)")
+      Text(verbatim: "+\(count.formatted())")
         .font(.system(size: bubbleSize * 0.4, weight: .semibold))
         .foregroundColor(.secondary)
         .rotationEffect(.degrees(-12))
@@ -240,14 +240,14 @@ struct MLSGroupAvatarView: View {
       if components.count >= 2 {
         let first = components[0].prefix(1)
         let last = components[1].prefix(1)
-        return "\(first)\(last)".uppercased()
+        return "\(first)\(last)".localizedUppercase
       } else {
-        return String(displayName.prefix(2)).uppercased()
+        return String(displayName.prefix(2)).localizedUppercase
       }
     }
 
     let handle = participant.handle.replacingOccurrences(of: "@", with: "")
-    return String(handle.prefix(2)).uppercased()
+    return String(handle.prefix(2)).localizedUppercase
   }
 }
 

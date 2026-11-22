@@ -1,0 +1,27 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Catbird can share text, links, up to 4 images, or 1 video." : {
+      "comment" : "Error message when shared content exceeds Catbird's attachment size or count limits."
+    },
+    "Couldn’t Add to Catbird" : {
+      "comment" : "Alert title when shared content cannot be imported into Catbird."
+    },
+    "Done" : {
+      "comment" : "Button dismissing the share extension confirmation alert."
+    },
+    "OK" : {
+      "comment" : "Button dismissing an error alert in the share extension."
+    },
+    "Open Catbird to finish your post." : {
+      "comment" : "Alert message instructing the user to open Catbird to publish their shared draft."
+    },
+    "Saved to Catbird" : {
+      "comment" : "Alert title confirming shared content was saved as a draft in Catbird."
+    },
+    "This item can’t be shared to Catbird." : {
+      "comment" : "Error message when a shared item has no supported text, link, image, or video."
+    }
+  },
+  "version" : "1.0"
+}

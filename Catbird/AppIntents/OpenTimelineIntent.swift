@@ -2,8 +2,16 @@ import AppIntents
 
 @available(iOS 18.0, *)
 struct OpenTimelineIntent: AppIntent {
-  static var title: LocalizedStringResource = "Open Timeline"
-  static var description = IntentDescription("Open Catbird to your Bluesky timeline.")
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Open Timeline",
+    comment: "App Intent title for opening Catbird's home timeline."
+  )
+  static var description = IntentDescription(
+    LocalizedStringResource(
+      "Open Catbird to your Bluesky timeline.",
+      comment: "App Intent description for Open Timeline."
+    )
+  )
   // iOS 18–25 read openAppWhenRun; iOS 26+ reads supportedModes, which replaces it.
   static let openAppWhenRun: Bool = true
 

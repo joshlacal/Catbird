@@ -112,21 +112,21 @@ struct CircleNotificationsSection: View {
   static func contentFreeErrorMessage(for error: CircleError) -> String {
     switch error {
     case .upstreamUnavailable:
-      return "Circle service is temporarily unavailable."
+      return String(localized: "Circle service is temporarily unavailable.", comment: "Content-free error message in Circle notifications when the service is down.")
     case .accessRemoved:
-      return "Access to Circle activity was removed."
+      return String(localized: "Access to Circle activity was removed.", comment: "Content-free error message in Circle notifications when membership was removed.")
     case .accessExpired:
-      return "Circle access expired. Please reauthorize."
+      return String(localized: "Circle access expired. Please reauthorize.", comment: "Content-free error message in Circle notifications when authorization expired.")
     case .unsupportedPDS, .protocolRevisionMismatch:
-      return "Circle features are not supported by this server."
+      return String(localized: "Circle features are not supported by this server.", comment: "Content-free error message in Circle notifications when server lacks Circle support.")
     case .authRequired:
-      return "Authentication required to view Circle activity."
+      return String(localized: "Authentication required to view Circle activity.", comment: "Content-free error message in Circle notifications when authentication is required.")
     case .notAuthorized:
-      return "Not authorized to view Circle activity."
+      return String(localized: "Not authorized to view Circle activity.", comment: "Content-free error message in Circle notifications when not authorized.")
     case .networkError, .clientNotInitialized, .invalidResponse, .missingLikeUri, .spaceWriteRejected, .invalidParameter,
       .keyVersionConflict, .encryptionUnavailable, .ineligibleMember, .ownerMismatch, .keysTemporarilyUnavailable,
       .keyStoreUnavailable:
-      return "Unable to load Circle activity. Please check your connection and try again."
+      return String(localized: "Unable to load Circle activity. Please check your connection and try again.", comment: "Generic content-free error message when Circle notifications fail to load.")
     }
   }
 
@@ -140,6 +140,7 @@ struct CircleNotificationRow: View {
   let notification: BlueCatbirdCircleDefs.Notification
   let onTap: () -> Void
   let onAvatarTap: () -> Void
+  @Environment(\.locale) private var locale
 
   var body: some View {
     Button(action: onTap) {
@@ -206,7 +207,7 @@ struct CircleNotificationRow: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel("\(notification.actor.displayName ?? notification.actor.handle.description) \(actionDescription) in \(notification.circle.name)")
+    .accessibilityLabel(accessibilitySummary)
     .accessibilityIdentifier("circle.notification.\(notification.id)")
   }
 
@@ -228,19 +229,41 @@ struct CircleNotificationRow: View {
     }
   }
 
-  private var actionDescription: String {
+  private var actionDescription: LocalizedStringResource {
     switch notification.reason {
     case .value_reply:
-      return "replied in"
+      return LocalizedStringResource("replied in", comment: "Verb phrase after actor name for a Circle reply notification (followed by the Circle name pill).")
     case .value_like:
-      return "liked your post in"
+      return LocalizedStringResource("liked your post in", comment: "Verb phrase after actor name for a Circle like notification (followed by the Circle name pill).")
     case .value_invite:
-      return "invited you to"
+      return LocalizedStringResource("invited you to", comment: "Verb phrase after actor name for a Circle invitation notification (followed by the Circle name pill).")
+    }
+  }
+
+  private var accessibilitySummary: Text {
+    let actorName = notification.actor.displayName ?? notification.actor.handle.description
+    switch notification.reason {
+    case .value_reply:
+      return Text(
+        "\(actorName) replied in \(notification.circle.name)",
+        comment: "Accessibility label for a Circle reply notification — %1$@ is the actor's name, %2$@ is the Circle name."
+      )
+    case .value_like:
+      return Text(
+        "\(actorName) liked your post in \(notification.circle.name)",
+        comment: "Accessibility label for a Circle like notification — %1$@ is the actor's name, %2$@ is the Circle name."
+      )
+    case .value_invite:
+      return Text(
+        "\(actorName) invited you to \(notification.circle.name)",
+        comment: "Accessibility label for a Circle invitation notification — %1$@ is the actor's name, %2$@ is the Circle name."
+      )
     }
   }
 
   private func formattedTimestamp(_ date: Date) -> String {
     let formatter = RelativeDateTimeFormatter()
+    formatter.locale = locale
     formatter.unitsStyle = .abbreviated
     return formatter.localizedString(for: date, relativeTo: Date())
   }

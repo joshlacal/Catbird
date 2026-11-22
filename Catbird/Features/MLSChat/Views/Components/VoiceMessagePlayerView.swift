@@ -42,6 +42,13 @@ struct VoiceMessagePlayerView: View {
           }
         }
         .disabled(isLoading)
+        .accessibilityLabel(
+          isPlaying
+            ? Text("Pause voice message", comment: "Accessibility label to pause voice message playback")
+            : (loadError != nil
+              ? Text("Retry voice message", comment: "Accessibility label to retry loading a voice message")
+              : Text("Play voice message", comment: "Accessibility label to play a voice message"))
+        )
 
         VoiceWaveformView(
           waveform: audioData.waveform,
@@ -74,9 +81,15 @@ struct VoiceMessagePlayerView: View {
           HStack(spacing: 4) {
             Image(systemName: "text.quote")
               .font(.caption2)
-            Text(showTranscript ? transcript : "Show transcript")
-              .font(.caption2)
-              .lineLimit(showTranscript ? nil : 1)
+            if showTranscript {
+              Text(transcript)
+                .font(.caption2)
+                .lineLimit(nil)
+            } else {
+              Text("Show transcript", comment: "Button to reveal the text transcript of a voice message")
+                .font(.caption2)
+                .lineLimit(1)
+            }
           }
           .foregroundStyle(isOwnMessage ? .white.opacity(0.7) : .secondary)
         }
@@ -136,14 +149,14 @@ struct VoiceMessagePlayerView: View {
       )
       guard (200..<300).contains(fetchResult.responseCode), let data = fetchResult.data else {
         voicePlayerLogger.error("[play] blob fetch failed: HTTP \(fetchResult.responseCode)")
-        loadError = "fetch: HTTP \(fetchResult.responseCode)"
+        loadError = String(localized: "Couldn’t load audio (HTTP \(fetchResult.responseCode))", comment: "Error when fetching an encrypted voice message fails. %lld is the HTTP status code.")
         isLoading = false
         return
       }
       encryptedData = data
       voicePlayerLogger.info("[play] blob fetched: \(encryptedData.count) bytes")
     } catch {
-      loadError = "fetch: \(error.localizedDescription)"
+      loadError = String(localized: "Couldn’t load audio: \(error.localizedDescription)", comment: "Error when downloading an encrypted voice message fails. %@ is the error description.")
       isLoading = false
       return
     }
@@ -161,7 +174,7 @@ struct VoiceMessagePlayerView: View {
       voicePlayerLogger.info("[play] decrypted: \(decrypted.count) bytes")
     } catch {
       voicePlayerLogger.error("[play] decrypt failed: \(error)")
-      loadError = "decrypt: \(error.localizedDescription)"
+      loadError = String(localized: "Couldn’t verify audio: \(error.localizedDescription)", comment: "Error when decrypting a voice message fails. %@ is the error description.")
       isLoading = false
       return
     }
@@ -198,7 +211,7 @@ struct VoiceMessagePlayerView: View {
 
       guard player.play() else {
         voicePlayerLogger.error("[play] player.play() returned false")
-        loadError = "play: refused (try again)"
+        loadError = String(localized: "Playback couldn’t start. Tap to try again.", comment: "Error when audio player refuses to start playback")
         audioPlayer = nil
         return
       }
@@ -207,7 +220,7 @@ struct VoiceMessagePlayerView: View {
       startProgressTimer()
     } catch {
       isLoading = false
-      loadError = "player: \(error.localizedDescription)"
+      loadError = String(localized: "Couldn’t play audio: \(error.localizedDescription)", comment: "Error when initializing the audio player fails. %@ is the error description.")
       voicePlayerLogger.error("[play] AVAudioPlayer init failed: \(error)")
     }
   }
@@ -256,9 +269,7 @@ struct VoiceMessagePlayerView: View {
     } else {
       totalSeconds = Int(audioData.durationMs / 1000)
     }
-    let m = totalSeconds / 60
-    let s = totalSeconds % 60
-    return String(format: "%d:%02d", m, s)
+    return Duration.seconds(max(0, totalSeconds)).formatted(.time(pattern: .minuteSecond))
   }
 }
 

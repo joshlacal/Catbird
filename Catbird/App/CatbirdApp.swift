@@ -214,7 +214,12 @@ enum CatbirdSwiftDataStore {
   static let lastLaunchTimeKey = "CatbirdLastLaunchTime"
   static let crashLoopThreshold = 3
   static let crashLoopWindowSeconds: TimeInterval = 60
-  static let safeModeReason = "Catbird had trouble opening its local data, so changes you make now won’t be saved after you close the app."
+  static var safeModeReason: String {
+    String(
+      localized: "Catbird had trouble opening its local data, so changes you make now won’t be saved after you close the app.",
+      comment: "Explanation shown in the Safe Mode banner when local SwiftData storage could not open."
+    )
+  }
 
   static var swiftDataStoreDirectory: URL? {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
@@ -763,34 +768,45 @@ struct CatbirdApp: App {
 
       #if targetEnvironment(macCatalyst)
       // Tab switching: Cmd-1 through Cmd-5
+      let tabTitles = [
+        String(localized: "Home", comment: "Mac Catalyst menu item to switch to Home tab."),
+        String(localized: "Search", comment: "Mac Catalyst menu item to switch to Search tab."),
+        String(localized: "Notifications", comment: "Mac Catalyst menu item to switch to Notifications tab."),
+        String(localized: "Profile", comment: "Mac Catalyst menu item to switch to Profile tab."),
+        String(localized: "Messages", comment: "Mac Catalyst menu item to switch to Messages tab.")
+      ]
       let tabCommands = (1...5).map { index in
         UIKeyCommand(
-          title: ["Home", "Search", "Notifications", "Profile", "Messages"][index - 1],
+          title: tabTitles[index - 1],
           action: #selector(handleTabShortcut(_:)),
           input: "\(index)",
           modifierFlags: .command,
           propertyList: index
         )
       }
-      let tabMenu = UIMenu(title: "Tabs", options: .displayInline, children: tabCommands)
+      let tabMenu = UIMenu(
+        title: String(localized: "Tabs", comment: "Mac Catalyst View menu group title for tab shortcuts."),
+        options: .displayInline,
+        children: tabCommands
+      )
       builder.insertChild(tabMenu, atStartOfMenu: .view)
 
       let refreshCommand = UIKeyCommand(
-        title: "Refresh",
+        title: String(localized: "Refresh", comment: "Mac Catalyst menu item to refresh current feed."),
         action: #selector(handleRefreshShortcut),
         input: "r",
         modifierFlags: .command
       )
 
       let composeCommand = UIKeyCommand(
-        title: "New Post",
+        title: String(localized: "New Post", comment: "Mac Catalyst menu item to compose a new post."),
         action: #selector(handleComposeShortcut),
         input: "n",
         modifierFlags: .command
       )
 
       let settingsCommand = UIKeyCommand(
-        title: "Settings\u{2026}",
+        title: String(localized: "Settings…", comment: "Mac Catalyst menu item to open Settings."),
         action: #selector(handleSettingsShortcut),
         input: ",",
         modifierFlags: .command
@@ -1032,7 +1048,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     }
     .defaultSize(width: 600, height: 500)
 
-    Window("Settings", id: "settings") {
+    Window(Text("Settings", comment: "macOS window title for Settings."), id: "settings") {
       CatbirdWindowRoot(
         appStateManager: appStateManager,
         onOpenURL: { url, scene in handleSceneURL(url, in: scene) },
@@ -1862,10 +1878,7 @@ private extension CatbirdApp {
         } label: {
           HStack {
             Image(systemName: "trash")
-            Text("Reset Local Data")
-            Text("(Recommended)")
-              .font(.caption)
-              .foregroundColor(.orange)
+            Text("Reset Local Data (Recommended)", comment: "Recommended recovery button to clear corrupted local cache and restart.")
           }
           .font(.headline)
           .foregroundColor(.orange)
@@ -3025,7 +3038,11 @@ struct BiometricAuthenticationOverlay: View {
               await authenticateWithBiometrics()
             }
           } label: {
-            Label("Unlock with \(authManager.biometricType.displayName)", systemImage: biometricIcon)
+            Label {
+              Text("Unlock with \(authManager.biometricType.displayName)", comment: "Button on lock screen to unlock app — variable is biometric method name such as Face ID or Touch ID.")
+            } icon: {
+              Image(systemName: biometricIcon)
+            }
               .font(.headline)
               .foregroundColor(.white)
               .padding()

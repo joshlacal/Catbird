@@ -15,7 +15,16 @@ import Petrel
 
 @available(iOS 18.0, *)
 struct BskyConversationEntity: AppEntity {
-  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Bluesky Conversation")
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource(
+      "Bluesky Conversation",
+      comment: "App Intents entity type name for a Bluesky direct-message conversation."
+    ),
+    numericFormat: LocalizedStringResource(
+      "\(placeholder: .int) Bluesky conversations",
+      comment: "Pluralized count of Bluesky direct-message conversations in Shortcuts."
+    )
+  )
   static var defaultQuery = BskyConversationQuery()
 
   let id: String
@@ -34,7 +43,12 @@ struct BskyConversationEntity: AppEntity {
       }
       return "@\(member.handle.value)"
     }
-    title = names.isEmpty ? "Conversation" : names.joined(separator: ", ")
+    title = names.isEmpty
+      ? String(
+          localized: "Conversation",
+          comment: "Fallback title for a Bluesky direct-message conversation with no other participants."
+        )
+      : names.formatted(.list(type: .and, width: .narrow))
     memberHandles = others.map { $0.handle.value }
     if case .chatBskyConvoDefsMessageView(let message)? = view.lastMessage {
       lastMessagePreview = message.text.isEmpty ? nil : message.text

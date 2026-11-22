@@ -96,7 +96,14 @@ struct ConversationManagementView: View {
             Button(role: .destructive) {
               showingBlockAlert = true
             } label: {
-              Label("Block @\(directMember.handle.description)", systemImage: "hand.raised")
+              Label {
+                Text(
+                  "Block @\(directMember.handle.description)",
+                  comment: "Button to block the other participant in a direct message (%@ = user handle without @)"
+                )
+              } icon: {
+                Image(systemName: "hand.raised")
+              }
             }
             .disabled(isProcessing)
           }
@@ -162,7 +169,15 @@ struct ConversationManagementView: View {
         Text("The conversation will be removed from your list. Your messages will be deleted for you, but not for the other participants.")
       }
       .alert(
-        "Block \(directMember.map { "@\($0.handle.description)" } ?? "This Account")?",
+        directMember.map {
+          String(
+            localized: "Block @\($0.handle.description)?",
+            comment: "Alert title confirming blocking a specific user (%@ = user handle without @)"
+          )
+        } ?? String(
+          localized: "Block This Account?",
+          comment: "Alert title confirming blocking an account"
+        ),
         isPresented: $showingBlockAlert
       ) {
         Button("Cancel", role: .cancel) { }
@@ -220,13 +235,17 @@ struct ConversationManagementView: View {
     Section {
       VStack(spacing: 20) {
         ConversationHeroView(conversation: convo, currentUserDID: appState.userDID)
-        Text(convo.isGroupConversation
-          ? "A group conversation on Bluesky."
-          : ChatConversationKind.bluesky.infoDetail)
-          .appFont(AppTextRole.footnote)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-          .accessibilityIdentifier("chatInfo.kind")
+        Group {
+          if convo.isGroupConversation {
+            Text("A group conversation on Bluesky.")
+          } else {
+            Text(ChatConversationKind.bluesky.infoDetail)
+          }
+        }
+        .appFont(AppTextRole.footnote)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .accessibilityIdentifier("chatInfo.kind")
         quickActionsRow
       }
       .frame(maxWidth: .infinity)
@@ -316,8 +335,11 @@ struct ConversationManagementView: View {
         Text("Members")
         Spacer()
         if let groupMetadata {
-          Text("\(groupMetadata.memberCount) of \(groupMetadata.memberLimit)")
-            .contentTransition(.numericText())
+          Text(
+            "\(groupMetadata.memberCount) of \(groupMetadata.memberLimit)",
+            comment: "Group member count out of maximum limit (%1$lld = current members, %2$lld = maximum members)"
+          )
+          .contentTransition(.numericText())
         }
       }
     } footer: {
@@ -418,10 +440,11 @@ struct ConversationManagementView: View {
           showingLeaveAlert = true
         }
       } label: {
-        Label(
-          isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation",
-          systemImage: "rectangle.portrait.and.arrow.right"
-        )
+        if isOwnedGroup {
+          Label("Lock & Leave Group", systemImage: "rectangle.portrait.and.arrow.right")
+        } else {
+          Label("Leave Conversation", systemImage: "rectangle.portrait.and.arrow.right")
+        }
       }
       .disabled(isProcessing)
     } footer: {
@@ -509,7 +532,12 @@ struct ConversationManagementView: View {
         throw GroupAdminError.underlying(
           NSError(
             domain: "ChatManager", code: 500,
-            userInfo: [NSLocalizedDescriptionKey: "Couldn’t lock this group. Please try again."]))
+            userInfo: [
+              NSLocalizedDescriptionKey: String(
+                localized: "Couldn’t lock this group. Please try again.",
+                comment: "Error when locking a Bluesky group conversation fails"
+              )
+            ]))
       }
     }
   }
@@ -539,7 +567,10 @@ struct ConversationManagementView: View {
         // Show the failure in-sheet; the global alert can't present over
         // this sheet, so move the message here instead.
         errorMessage = appState.chatManager.errorState?.localizedDescription
-          ?? "Couldn’t leave this conversation. Please try again."
+          ?? String(
+            localized: "Couldn’t leave this conversation. Please try again.",
+            comment: "Error when leaving a Bluesky conversation fails"
+          )
         appState.chatManager.errorState = nil
       }
     }
@@ -555,12 +586,23 @@ struct ConversationManagementView: View {
       defer { isProcessing = false }
       do {
         _ = try await appState.block(did: did)
-        appState.toastManager.show(ToastItem(message: "Blocked @\(handle)", icon: "hand.raised.fill"))
+        appState.toastManager.show(
+          ToastItem(
+            message: String(
+              localized: "Blocked @\(handle)",
+              comment: "Toast confirmation after blocking a user (%@ = user handle without @)"
+            ),
+            icon: "hand.raised.fill"
+          )
+        )
         await appState.chatManager.refreshConversation(convoId: convoId)
         appState.chatManager.errorState = nil
       } catch {
         logger.error("Failed to block from conversation info: \(error.localizedDescription)")
-        errorMessage = UserFacingError.message(for: error, action: "block this account")
+        errorMessage = UserFacingError.message(
+          for: error,
+          action: String(localized: "block this account", comment: "Action phrase when blocking a user fails")
+        )
       }
     }
   }
@@ -576,7 +618,10 @@ struct ConversationManagementView: View {
         // Show the failure in-sheet; the global alert can't present over
         // this sheet, so move the message here instead.
         errorMessage = appState.chatManager.errorState?.localizedDescription
-          ?? "Couldn’t lock and leave this group. Please try again."
+          ?? String(
+            localized: "Couldn’t lock and leave this group. Please try again.",
+            comment: "Error when locking and leaving an owned Bluesky group fails"
+          )
         appState.chatManager.errorState = nil
       }
     }
@@ -625,7 +670,7 @@ private struct ConversationHeroView: View {
         }
 
         if let contextLine {
-          Text(contextLine)
+          Text(verbatim: contextLine)
             .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
         }
@@ -649,7 +694,7 @@ private struct ConversationHeroView: View {
   private var contextLine: String? {
     if let group = conversation.groupMetadata {
       let created = group.createdAt.date.formatted(date: .abbreviated, time: .omitted)
-      return "Created \(created)"
+      return String(localized: "Created \(created)", comment: "Group creation date subtitle (%@ = formatted date)")
     }
 
     if conversation.isGroupConversation {
@@ -668,7 +713,7 @@ private struct ConversationHeroView: View {
 
 /// Circular glass action button with a caption, iMessage-details style.
 private struct QuickActionButton: View {
-  let title: String
+  let title: LocalizedStringKey
   let systemImage: String
   var tint: Color = .accentColor
   var isDisabled: Bool = false
@@ -685,7 +730,7 @@ private struct QuickActionButton: View {
     }
     .buttonStyle(.plain)
     .disabled(isDisabled)
-    .accessibilityLabel(title)
+    .accessibilityLabel(Text(title))
   }
 
   @ViewBuilder
@@ -724,12 +769,18 @@ private struct GroupMemberRow: View {
       ChatProfileAvatarView(profile: member, size: 40)
 
       VStack(alignment: .leading, spacing: 2) {
-        Text(isCurrentUser ? "You" : member.chatDisplayName)
-          .appFont(AppTextRole.body)
-          .fontWeight(.medium)
-          .lineLimit(1)
+        Group {
+          if isCurrentUser {
+            Text("You", comment: "Label for the current user in the group member list")
+          } else {
+            Text(member.chatDisplayName)
+          }
+        }
+        .appFont(AppTextRole.body)
+        .fontWeight(.medium)
+        .lineLimit(1)
 
-        Text(subtitle)
+        Text(verbatim: subtitle)
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -761,11 +812,13 @@ private struct GroupMemberRow: View {
   }
 
   private var subtitle: String {
-    var parts = ["@\(member.handle.description)"]
     if let addedBy = groupMemberInfo?.addedBy, !isOwner {
-      parts.append("Added by \(addedBy.chatDisplayName)")
+      return String(
+        localized: "@\(member.handle.description) · Added by \(addedBy.chatDisplayName)",
+        comment: "Group member row subtitle showing handle and inviter (%1$@ = handle without @, %2$@ = inviter display name)"
+      )
     }
-    return parts.joined(separator: " · ")
+    return "@\(member.handle.description)"
   }
 }
 
@@ -839,13 +892,28 @@ struct ConversationInvitationView: View {
           .fontWeight(.semibold)
         
         if otherMembers.count == 1 {
-          Text("@\(otherMembers.first?.handle.description ?? "unknown") wants to start a conversation with you")
+          if let handle = otherMembers.first?.handle.description {
+            Text(
+              "@\(handle) wants to start a conversation with you",
+              comment: "Invitation detail header when one user invites you (%@ = sender handle without @)"
+            )
             .multilineTextAlignment(.center)
             .foregroundColor(.secondary)
+          } else {
+            Text(
+              "Someone wants to start a conversation with you",
+              comment: "Fallback invitation detail header when sender handle is unavailable"
+            )
+            .multilineTextAlignment(.center)
+            .foregroundColor(.secondary)
+          }
         } else {
-          Text("\(otherMembers.count) people want to start a group conversation with you")
-            .multilineTextAlignment(.center)
-            .foregroundColor(.secondary)
+          Text(
+            "\(otherMembers.count) people want to start a group conversation with you",
+            comment: "Invitation detail header for a group chat (%lld = participant count)"
+          )
+          .multilineTextAlignment(.center)
+          .foregroundColor(.secondary)
         }
       }
       
@@ -859,10 +927,16 @@ struct ConversationInvitationView: View {
             ChatProfileAvatarView(profile: member, size: 40)
             
             VStack(alignment: .leading, spacing: 2) {
-              Text(member.displayName ?? "Unknown")
-                                .appFont(AppTextRole.body)
-                .fontWeight(.medium)
-              Text("@\(member.handle.description)")
+              Group {
+                if let displayName = member.displayName {
+                  Text(verbatim: displayName)
+                } else {
+                  Text("Unknown", comment: "Fallback participant name when display name is missing")
+                }
+              }
+              .appFont(AppTextRole.body)
+              .fontWeight(.medium)
+              Text(verbatim: "@\(member.handle.description)")
                 .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             }
@@ -872,9 +946,12 @@ struct ConversationInvitationView: View {
         }
         
         if otherMembers.count > 3 {
-          Text("and \(otherMembers.count - 3) more")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
+          Text(
+            "and \(otherMembers.count - 3) more",
+            comment: "Overflow count of additional participants in invitation preview (%lld = additional participant count)"
+          )
+          .appFont(AppTextRole.caption)
+          .foregroundColor(.secondary)
         }
       }
       .padding()
@@ -922,7 +999,11 @@ struct ConversationInvitationView: View {
         errorMessage = nil
       }
     } message: {
-      Text(errorMessage ?? "An unknown error occurred")
+      if let errorMessage {
+        Text(errorMessage)
+      } else {
+        Text("An unknown error occurred")
+      }
     }
   }
   
@@ -935,7 +1016,10 @@ struct ConversationInvitationView: View {
         if success {
           dismiss()
         } else {
-          errorMessage = "Failed to accept conversation invitation"
+          errorMessage = String(
+            localized: "Failed to accept conversation invitation",
+            comment: "Error message when accepting a conversation invitation fails"
+          )
         }
       }
     }

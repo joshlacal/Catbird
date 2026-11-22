@@ -145,7 +145,7 @@ struct NotificationSettingsView: View {
       NotificationPreferenceEditorView(category: category, manager: manager, accountDID: appState.userDID)
     } label: {
       NotificationCategoryRow(title: category.title,
-        summary: manager.hasConfirmedNotificationPreferences ? category.summary(in: manager.preferences) : "Not loaded")
+        summary: manager.hasConfirmedNotificationPreferences ? category.summary(in: manager.preferences) : String(localized: "Not loaded", comment: "Placeholder when notification category preferences have not loaded yet."))
     }
     .disabled(!manager.canEditNotificationPreferences)
     .settingsControl(.init(rawValue: "notifications.\(category.rawValue)"))
@@ -183,18 +183,18 @@ private enum NotificationPreferenceCategory: String, Identifiable {
   static let otherActivity: [Self] = [.starterpackJoined, .verified, .unverified]
   var title: String {
     switch self {
-    case .mention: "Mentions"
-    case .reply: "Replies"
-    case .like: "Likes"
-    case .follow: "New Followers"
-    case .repost: "Reposts"
-    case .quote: "Quotes"
-    case .likeViaRepost: "Likes of Your Reposts"
-    case .repostViaRepost: "Reposts of Your Reposts"
-    case .subscribedPost: "Posts from Your Subscriptions"
-    case .starterpackJoined: "Starter Pack Signups"
-    case .verified: "Account Verified"
-    case .unverified: "Verification Removed"
+    case .mention: String(localized: "Mentions", comment: "Notification preference category.")
+    case .reply: String(localized: "Replies", comment: "Notification preference category.")
+    case .like: String(localized: "Likes", comment: "Notification preference category.")
+    case .follow: String(localized: "New Followers", comment: "Notification preference category.")
+    case .repost: String(localized: "Reposts", comment: "Notification preference category.")
+    case .quote: String(localized: "Quotes", comment: "Notification preference category.")
+    case .likeViaRepost: String(localized: "Likes of Your Reposts", comment: "Notification preference category.")
+    case .repostViaRepost: String(localized: "Reposts of Your Reposts", comment: "Notification preference category.")
+    case .subscribedPost: String(localized: "Posts from Your Subscriptions", comment: "Notification preference category.")
+    case .starterpackJoined: String(localized: "Starter Pack Signups", comment: "Notification preference category.")
+    case .verified: String(localized: "Account Verified", comment: "Notification preference category.")
+    case .unverified: String(localized: "Verification Removed", comment: "Notification preference category.")
     }
   }
   var filterablePath: WritableKeyPath<NotificationPreferences, AppBskyNotificationDefs.FilterablePreference>? {
@@ -222,7 +222,7 @@ private enum NotificationPreferenceCategory: String, Identifiable {
   func summary(in preferences: NotificationPreferences) -> String {
     if let path = filterablePath { return preferences[keyPath: path].summaryDescription }
     if let path = plainPath { return preferences[keyPath: path].summaryDescription }
-    return "Not loaded"
+    return String(localized: "Not loaded", comment: "Placeholder when notification category preferences have not loaded yet.")
   }
 }
 
@@ -333,7 +333,7 @@ private struct NotificationPreferencesStatusSection: View {
       EmptyView()
     }
   }
-  private func statusSection(title: String, error: String, explanation: String, retry: String) -> some View {
+  private func statusSection(title: LocalizedStringKey, error: String, explanation: LocalizedStringKey, retry: LocalizedStringKey) -> some View {
     Section {
       Text(explanation).fixedSize(horizontal: false, vertical: true)
       Text(error).appFont(AppTextRole.caption).foregroundStyle(.secondary)

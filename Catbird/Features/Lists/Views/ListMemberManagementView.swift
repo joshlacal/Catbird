@@ -534,7 +534,10 @@ struct ListMemberManagementView: View {
                 }
             }
           } header: {
-            Text(MemberCountFormatter.format(count: viewModel.listDetails?.listItemCount ?? viewModel.members.count))
+            Text(
+              "\(viewModel.listDetails?.listItemCount ?? viewModel.members.count) members",
+              comment: "Section header showing number of members on a user list — %1$lld is the member count."
+            )
           }
         }
       }
@@ -555,9 +558,13 @@ struct ListMemberManagementView: View {
       Text("No Members Yet")
         .font(.headline)
       
-      Text(viewModel?.canAddMembers == true
-        ? "Search for people above to add them to this list."
-        : "This list doesn’t have anyone on it yet.")
+      Group {
+        if viewModel?.canAddMembers == true {
+          Text("Search for people above to add them to this list.")
+        } else {
+          Text("This list doesn’t have anyone on it yet.")
+        }
+      }
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -610,7 +617,7 @@ struct SearchResultRow: View {
           .fontWeight(.medium)
           .lineLimit(1)
         
-        Text("@\(user.handle)")
+        Text(verbatim: "@\(user.handle)")
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -669,7 +676,7 @@ struct MemberRow: View {
           .fontWeight(.medium)
           .lineLimit(1)
         
-        Text("@\(member.handle)")
+        Text(verbatim: "@\(member.handle)")
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -698,7 +705,10 @@ struct MemberRow: View {
         }
         .buttonStyle(.plain)
         .disabled(isRemovingInProgress)
-        .accessibilityLabel("Remove \(member.displayName ?? member.handle.description)")
+        .accessibilityLabel(Text(
+          "Remove \(member.displayName ?? member.handle.description)",
+          comment: "Accessibility label for button to remove a member from a list — %1$@ is the member's name or handle."
+        ))
       }
     }
     .contentShape(Rectangle())
@@ -754,11 +764,11 @@ enum InitializationError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidURI:
-      return "This list couldn’t be found."
+      return String(localized: "This list couldn’t be found.", comment: "Error message when a list URI is invalid or cannot be found.")
     case .notAuthenticated:
-      return "Sign in to manage this list."
+      return String(localized: "Sign in to manage this list.", comment: "Error message when attempting to manage list members while signed out.")
     case .clientNotAvailable:
-      return "Couldn’t connect. Try again."
+      return String(localized: "Couldn’t connect. Try again.", comment: "Error message when the network client fails to become ready for list management.")
     }
   }
 }

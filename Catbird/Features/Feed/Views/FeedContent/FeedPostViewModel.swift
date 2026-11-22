@@ -224,8 +224,9 @@ final class FeedPostViewModel {
         }
 
         guard let fvp = feedViewPost else {
-            _authorDisplayName = "Unknown"
-            return "Unknown"
+            let fallback = String(localized: "Unknown", comment: "Fallback author display name when post data is unavailable")
+            _authorDisplayName = fallback
+            return fallback
         }
 
         let name = fvp.post.author.displayName ?? fvp.post.author.handle.description
@@ -240,8 +241,9 @@ final class FeedPostViewModel {
         }
 
         guard let fvp = feedViewPost else {
-            _timeAgoString = "now"
-            return "now"
+            let nowText = String(localized: "now", comment: "Timestamp label for a post created less than a minute ago")
+            _timeAgoString = nowText
+            return nowText
         }
 
         let timeAgo = formatTimeAgo(from: fvp.post.indexedAt.iso8601String)
@@ -637,27 +639,9 @@ final class FeedPostViewModel {
     /// Formats date as time ago string
     private func formatTimeAgo(from iso8601String: String) -> String {
         guard let date = Self.iso8601Formatter.date(from: iso8601String) else {
-            return "now"
+            return String(localized: "now", comment: "Timestamp label for a post created less than a minute ago")
         }
-        
-        let now = Date()
-        let interval = now.timeIntervalSince(date)
-        
-        if interval < 60 {
-            return "now"
-        } else if interval < 3600 {
-            let minutes = Int(interval / 60)
-            return "\(minutes)m"
-        } else if interval < 86400 {
-            let hours = Int(interval / 3600)
-            return "\(hours)h"
-        } else if interval < 604800 {
-            let days = Int(interval / 86400)
-            return "\(days)d"
-        } else {
-            let weeks = Int(interval / 604800)
-            return "\(weeks)w"
-        }
+        return shortTimeAgoString(from: date)
     }
     
     /// Performs the actual like operation on the server
@@ -856,19 +840,19 @@ enum PostInteractionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .clientUnavailable:
-            return "AT Protocol client is not available"
+            return String(localized: "AT Protocol client is not available", comment: "Error when the network client is unavailable during a post interaction")
         case .serverError(let code):
-            return "Server error: \(code)"
+            return String(localized: "Server error: \(code)", comment: "Error when the server returns an HTTP error code — variable is the status code.")
         case .invalidURI:
-            return "Invalid URI format"
+            return String(localized: "Invalid URI format", comment: "Error when a post URI cannot be parsed")
         case .moderationFailed:
-            return "Moderation action failed"
+            return String(localized: "Moderation action failed", comment: "Error when muting or blocking an author fails")
         case .networkError:
-            return "Network connection error"
+            return String(localized: "Network connection error", comment: "Error when a network connection problem prevents a post interaction")
         case .rateLimited:
-            return "Too many requests - please try again later"
+            return String(localized: "Too many requests - please try again later", comment: "Error when rate limited during a post interaction")
         case .unauthorized:
-            return "Authentication required"
+            return String(localized: "Authentication required", comment: "Error when authentication is required for a post interaction")
         }
     }
 }

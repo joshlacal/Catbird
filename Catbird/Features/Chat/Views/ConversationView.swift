@@ -425,7 +425,8 @@ struct ConversationView: View {
 
   // Compute conversation title based on the other member
   private var conversationTitle: String {
-    currentConversation?.displayTitle(currentUserDID: appState.userDID) ?? "Chat"
+    currentConversation?.displayTitle(currentUserDID: appState.userDID)
+      ?? String(localized: "Chat", comment: "Fallback navigation title for a direct conversation")
   }
 }
 
@@ -444,13 +445,19 @@ private struct ConversationInputBar: View {
             .foregroundStyle(Color.accentColor)
 
           VStack(alignment: .leading, spacing: 2) {
-            Text("Replying to \(staged.senderDisplayName ?? "message")")
-              .font(.caption2)
-              .fontWeight(.semibold)
-              .foregroundStyle(.primary)
-              .lineLimit(1)
+            Group {
+              if let senderName = staged.senderDisplayName {
+                Text("Replying to \(senderName)", comment: "Reply banner header in chat composer (%@ = sender display name)")
+              } else {
+                Text("Replying to message", comment: "Reply banner header in chat composer when sender name is unavailable")
+              }
+            }
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(.primary)
+            .lineLimit(1)
 
-            Text(staged.text)
+            Text(verbatim: staged.text)
               .font(.caption2)
               .foregroundStyle(.secondary)
               .lineLimit(2)

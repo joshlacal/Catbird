@@ -35,6 +35,7 @@ struct Post: View, Equatable {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.legibilityWeight) private var legibilityWeight
+    @Environment(\.locale) private var locale
     @Environment(AppState.self) private var appState
     @Environment(\.adultContentEnabled) private var adultContentEnabled
     @Environment(\.invalidateFeedRowHeight) private var invalidateFeedRowHeight
@@ -92,7 +93,7 @@ struct Post: View, Equatable {
     }
     
     private var targetLanguage: Locale.Language {
-        Locale.current.language
+        locale.language
     }
     
     private var shouldShowTranslationButton: Bool {
@@ -266,7 +267,7 @@ struct Post: View, Equatable {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(tags, id: \.self) { tag in
-                            Text("#\(tag)")
+                            Text(verbatim: "#\(tag)")
                                 .customScaledFont(size: 13, weight: .medium, relativeTo: .footnote, design: .rounded)
                                 .foregroundColor(Color.accentColor)
                                 .padding(.horizontal, 10)
@@ -289,7 +290,7 @@ struct Post: View, Equatable {
     private var sourceLanguageNames: String {
         sourceLanguages
             .map { languageName(for: $0) }
-            .joined(separator: ", ")
+            .formatted()
     }
 
     private func displayAttributedString(
@@ -338,14 +339,17 @@ struct Post: View, Equatable {
     // Extract language name formatting to prevent type checker explosion in ForEach
     private func languageName(for language: Locale.Language) -> String {
         let identifier = language.languageCode?.identifier ?? ""
-        let localized = Locale.current.localizedString(forLanguageCode: identifier)
-        return localized ?? (identifier.isEmpty ? "Unknown" : identifier)
+        let localized = locale.localizedString(forLanguageCode: identifier)
+        return localized ?? (identifier.isEmpty ? String(localized: "Unknown", comment: "Fallback label when a post language code is unknown") : identifier)
     }
 
     private var languageMetadata: some View {
         Group {
             if shouldShowTranslationButton {
-                Text("From \(sourceLanguageNames) to \(languageName(for: targetLanguage))")
+                Text(
+                    "From \(sourceLanguageNames) to \(languageName(for: targetLanguage))",
+                    comment: "Post translation language pair — first variable is source language(s), second is target language"
+                )
             } else if let indicatorLanguage {
                 Text(languageName(for: indicatorLanguage))
             }
@@ -398,7 +402,10 @@ struct Post: View, Equatable {
 #if targetEnvironment(simulator)
         // Translation models and downloads are not available in Simulator.
         withoutRevealAnimation {
-            translationError = NSLocalizedString("Translation isn’t available in the iOS Simulator. Please test on a physical device.", comment: "")
+            translationError = String(
+                localized: "Translation isn’t available in the iOS Simulator. Please test on a physical device.",
+                comment: "Message shown when tapping Translate in the iOS Simulator"
+            )
             showTranslation = false
             translatedText = nil
             translationConfig = nil
@@ -440,7 +447,10 @@ struct Post: View, Equatable {
                         withoutRevealAnimation {
                             translationConfig = nil
                             shouldPrepareTranslation = false
-                            translationError = NSLocalizedString("Source language not identified.", comment: "")
+                            translationError = String(
+                                localized: "Source language not identified.",
+                                comment: "Error shown when a post's language cannot be determined for translation"
+                            )
                         }
                         invalidateFeedRowHeight?()
                     }
@@ -515,7 +525,10 @@ struct Post: View, Equatable {
                     withoutRevealAnimation {
                         shouldPrepareTranslation = false
                         translationConfig = nil
-                        translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                        translationError = String(
+                            localized: "Translation not supported for this language pair.",
+                            comment: "Error shown when Apple Translation does not support the source and target language pair"
+                        )
                     }
                     invalidateFeedRowHeight?()
                     Self.logger.debug("Translation unsupported for language pair")
@@ -523,7 +536,10 @@ struct Post: View, Equatable {
                     withoutRevealAnimation {
                         shouldPrepareTranslation = false
                         translationConfig = nil
-                        translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                        translationError = String(
+                            localized: "Translation not supported for this language pair.",
+                            comment: "Error shown when Apple Translation does not support the source and target language pair"
+                        )
                     }
                     invalidateFeedRowHeight?()
                     Self.logger.debug("Translation status unknown")
@@ -534,7 +550,10 @@ struct Post: View, Equatable {
                 withoutRevealAnimation {
                     translationConfig = nil
                     shouldPrepareTranslation = false
-                    translationError = NSLocalizedString("Translation requires iOS 18.0 or later.", comment: "")
+                    translationError = String(
+                        localized: "Translation requires iOS 18.0 or later.",
+                        comment: "Error shown when on-device post translation is unavailable on older OS versions"
+                    )
                 }
                 invalidateFeedRowHeight?()
                 Self.logger.debug("Translation not available - iOS version too old")
@@ -601,7 +620,10 @@ struct Post: View, Equatable {
             withoutRevealAnimation {
                 #if compiler(>=6.2)
                 if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
-                    translationError = NSLocalizedString("On‑device translation languages aren’t installed. When prompted, allow the download and try again.", comment: "")
+                    translationError = String(
+                        localized: "On‑device translation languages aren’t installed. When prompted, allow the download and try again.",
+                        comment: "Error shown when on-device translation language models need to be downloaded"
+                    )
                 } else {
                     let errorMessage = error.localizedDescription
                     let nsError = error as NSError
@@ -609,11 +631,20 @@ struct Post: View, Equatable {
                     let fullErrorText = "\(errorMessage) \(failureReason)"
 
                     if fullErrorText.contains("Offline models not available") || fullErrorText.localizedCaseInsensitiveContains("models not available") {
-                        translationError = NSLocalizedString("On‑device translation languages aren’t installed. Approve the download when prompted, then retry.", comment: "")
+                        translationError = String(
+                            localized: "On‑device translation languages aren’t installed. Approve the download when prompted, then retry.",
+                            comment: "Error shown when offline translation models are missing"
+                        )
                     } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
-                        translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
+                        translationError = String(
+                            localized: "Internet connection required to download translation models.",
+                            comment: "Error shown when translation models cannot be downloaded without internet"
+                        )
                     } else {
-                        translationError = "Translation isn’t available right now. Try again later."
+                        translationError = String(
+                            localized: "Translation isn’t available right now. Try again later.",
+                            comment: "Fallback error shown when post translation fails"
+                        )
                     }
                 }
                 #else
@@ -623,11 +654,20 @@ struct Post: View, Equatable {
                 let fullErrorText = "\(errorMessage) \(failureReason)"
 
                 if fullErrorText.contains("Offline models not available") || fullErrorText.localizedCaseInsensitiveContains("models not available") {
-                    translationError = NSLocalizedString("On‑device translation languages aren’t installed. Approve the download when prompted, then retry.", comment: "")
+                    translationError = String(
+                        localized: "On‑device translation languages aren’t installed. Approve the download when prompted, then retry.",
+                        comment: "Error shown when offline translation models are missing"
+                    )
                 } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
-                    translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
+                    translationError = String(
+                        localized: "Internet connection required to download translation models.",
+                        comment: "Error shown when translation models cannot be downloaded without internet"
+                    )
                 } else {
-                    translationError = "Translation isn’t available right now. Try again later."
+                    translationError = String(
+                        localized: "Translation isn’t available right now. Try again later.",
+                        comment: "Fallback error shown when post translation fails"
+                    )
                 }
                 #endif
                 isTranslating = false

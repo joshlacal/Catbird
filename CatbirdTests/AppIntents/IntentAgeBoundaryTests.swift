@@ -37,7 +37,14 @@ struct IntentAgeBoundaryTests {
         Issue.record("Expected the actionable age-check retry error.")
         return
       }
-      #expect(message == "This shortcut is unavailable under your device’s age requirements. Open Catbird to continue.")
+      #expect(
+        String(localized: message)
+          == "This shortcut is unavailable under your device’s age requirements. Open Catbird to continue."
+      )
+      #expect(
+        String(localized: error.localizedStringResource)
+          == "This shortcut is unavailable under your device’s age requirements. Open Catbird to continue."
+      )
     } catch {
       Issue.record("Unexpected error: \(error)")
     }

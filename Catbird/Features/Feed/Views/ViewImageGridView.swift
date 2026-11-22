@@ -223,7 +223,10 @@ struct ViewImageGridView: View {
       Button {
         altTextPreviewImage = image
       } label: {
-        MediaBadgeLabel(text: "ALT", isLarge: isLarge)
+        MediaBadgeLabel(
+          text: String(localized: "ALT", comment: "Short badge on an image indicating an alt-text description is available"),
+          isLarge: isLarge
+        )
       }
       .buttonStyle(.plain)
       .accessibilityLabel("Alt text available")
@@ -324,17 +327,32 @@ struct ViewImageGridView: View {
   }
 
   private var imageAccessibilityHint: String {
-    guard shouldBlur else { return "Opens image viewer" }
-    return isBlurred ? "Shows the hidden image" : "Hides the image"
+    guard shouldBlur else {
+      return String(localized: "Opens image viewer", comment: "Accessibility hint for tapping an image in a post")
+    }
+    return isBlurred
+      ? String(localized: "Shows the hidden image", comment: "Accessibility hint when tapping a blurred image")
+      : String(localized: "Hides the image", comment: "Accessibility hint when tapping a revealed sensitive image")
   }
 
   /// The author's alt text when there is one, otherwise the image's position.
   private func accessibilityLabel(for viewImage: AppBskyEmbedImages.ViewImage) -> String {
     let position = (viewImages.firstIndex(where: { $0.id == viewImage.id }) ?? 0) + 1
-    let fallback = "Image \(position) of \(viewImages.count)"
-    if isBlurred { return "Hidden image, \(fallback)" }
+    let count = viewImages.count
+    if isBlurred {
+      return String(
+        localized: "Hidden image, Image \(position) of \(count)",
+        comment: "Accessibility label for a blurred image — first variable is current image number, second is total images"
+      )
+    }
     let alt = viewImage.alt.trimmingCharacters(in: .whitespacesAndNewlines)
-    return alt.isEmpty ? fallback : alt
+    if alt.isEmpty {
+      return String(
+        localized: "Image \(position) of \(count)",
+        comment: "Fallback accessibility label for an image without alt text — first variable is current image number, second is total images"
+      )
+    }
+    return alt
   }
 
   @ViewBuilder
@@ -611,23 +629,25 @@ struct ImageViewerItemView: UIViewRepresentable {
 
     // Set up accessibility
     containerView.isAccessibilityElement = true
-    containerView.accessibilityLabel = image.alt.isEmpty ? "Image" : image.alt
+    containerView.accessibilityLabel = image.alt.isEmpty
+      ? String(localized: "Image", comment: "Fallback accessibility label for an image without alt text")
+      : image.alt
     containerView.accessibilityTraits = .image
 
     // Add accessibility actions for navigation
     containerView.accessibilityCustomActions = [
       UIAccessibilityCustomAction(
-        name: "Next Image",
+        name: String(localized: "Next Image", comment: "VoiceOver custom action to advance to the next image"),
         target: context.coordinator,
         selector: #selector(Coordinator.nextImage)
       ),
       UIAccessibilityCustomAction(
-        name: "Previous Image",
+        name: String(localized: "Previous Image", comment: "VoiceOver custom action to return to the previous image"),
         target: context.coordinator,
         selector: #selector(Coordinator.previousImage)
       ),
       UIAccessibilityCustomAction(
-        name: "Close Image Viewer",
+        name: String(localized: "Close Image Viewer", comment: "VoiceOver custom action to dismiss the fullscreen image viewer"),
         target: context.coordinator,
         selector: #selector(Coordinator.closeViewer)
       )
@@ -743,7 +763,7 @@ struct ImageViewerItemView: UIViewRepresentable {
       // Announce the navigation to the user
       UIAccessibility.post(
         notification: .announcement,
-        argument: "Moving to next image"
+        argument: String(localized: "Moving to next image", comment: "VoiceOver announcement when navigating to the next image")
       )
 
       return true
@@ -759,7 +779,7 @@ struct ImageViewerItemView: UIViewRepresentable {
       // Announce the navigation to the user
       UIAccessibility.post(
         notification: .announcement,
-        argument: "Moving to previous image"
+        argument: String(localized: "Moving to previous image", comment: "VoiceOver announcement when navigating to the previous image")
       )
 
       return true
@@ -774,7 +794,7 @@ struct ImageViewerItemView: UIViewRepresentable {
 
       UIAccessibility.post(
         notification: .announcement,
-        argument: "Closing image viewer"
+        argument: String(localized: "Closing image viewer", comment: "VoiceOver announcement when closing the image viewer")
       )
 
       return true
@@ -854,7 +874,11 @@ struct ImageViewerItemView: View {
         EmptyView()
       }
     }
-    .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
+    .accessibilityLabel(
+      image.alt.isEmpty
+        ? String(localized: "Image", comment: "Fallback accessibility label for an image without alt text")
+        : image.alt
+    )
   }
 }
 #endif
@@ -994,7 +1018,7 @@ struct EnhancedImageViewer: View {
                 currentIndex -= 1
               }
             }) {
-              Image(systemName: "chevron.left")
+              Image(systemName: "chevron.backward")
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
             }
@@ -1022,7 +1046,7 @@ struct EnhancedImageViewer: View {
                 currentIndex += 1
               }
             }) {
-              Image(systemName: "chevron.right")
+              Image(systemName: "chevron.forward")
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
             }
@@ -1042,7 +1066,10 @@ struct EnhancedImageViewer: View {
         if showControls {
           VStack {
             HStack {
-              Text("\(currentIndex + 1) of \(images.count)")
+              Text(
+                "\(currentIndex + 1) of \(images.count)",
+                comment: "Image viewer header counter — first variable is current image number, second is total images"
+              )
                 .foregroundColor(.white)
                 .padding(.leading)
 
@@ -1140,7 +1167,10 @@ struct EnhancedImageViewer: View {
         // Announce the image change to VoiceOver
         if UIAccessibility.isVoiceOverRunning {
           let imageCount = images.count
-          let announcement = "Image \(newValue + 1) of \(imageCount)"
+          let announcement = String(
+            localized: "Image \(newValue + 1) of \(imageCount)",
+            comment: "Fallback accessibility label for an image without alt text — first variable is current image number, second is total images"
+          )
 
           if let alt = images[safe: newValue]?.alt, !alt.isEmpty {
             UIAccessibility.post(
@@ -1157,7 +1187,7 @@ struct EnhancedImageViewer: View {
           // Post page scrolled notification for better VoiceOver feedback
           UIAccessibility.post(
             notification: .pageScrolled,
-            argument: "Image \(newValue + 1) of \(imageCount)"
+            argument: announcement
           )
         }
         #endif
@@ -1420,7 +1450,7 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
 
   init(uiImage: UIImage, altText: String?, liveTextEnabled: Bool = false, liveTextSupported: Bool) {
     self.imageSource = .loaded(uiImage)
-    self.accessibilityAltText = altText ?? "Image"
+    self.accessibilityAltText = altText ?? String(localized: "Image", comment: "Fallback accessibility label for an image without alt text")
     self.liveTextEnabled = liveTextEnabled
     self.liveTextSupported = liveTextSupported
     super.init(nibName: nil, bundle: nil)
@@ -1484,7 +1514,9 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
     ])
 
     imageView.isAccessibilityElement = true
-    imageView.accessibilityLabel = accessibilityAltText.isEmpty ? "Image" : accessibilityAltText
+    imageView.accessibilityLabel = accessibilityAltText.isEmpty
+      ? String(localized: "Image", comment: "Fallback accessibility label for an image without alt text")
+      : accessibilityAltText
     imageView.accessibilityTraits = .image
   }
 

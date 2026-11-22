@@ -543,14 +543,14 @@ extension Material {
       colorProvider: { _ in .blue }
     )
     .frame(height: 100)
-    .overlay(Text("Themed Background"))
+    .overlay(Text(verbatim: "Themed Background"))
 
     ThemedGlassBackground(
       themeManager: themeManager,
       intensity: .medium
     )
     .frame(height: 100)
-    .overlay(Text("Glass Background"))
+    .overlay(Text(verbatim: "Glass Background"))
   }
   .padding()
 }

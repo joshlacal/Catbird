@@ -148,7 +148,7 @@ struct AutomationLabelSettingsView: View {
                 }
                 
                 if let handle = profileDetailed?.handle.description {
-                    Text("@\(handle)")
+                    Text(verbatim: "@\(handle)")
                         .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }

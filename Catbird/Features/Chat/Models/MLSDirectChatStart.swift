@@ -29,9 +29,15 @@ enum MLSDirectChatStart {
       case .sentWithRequest, .sentAsMessage:
         return nil
       case .earlierRequestWaiting:
-        return "You’ve already sent this person a request. You can send more messages once they accept it."
+        return String(
+          localized: "You’ve already sent this person a request. You can send more messages once they accept it.",
+          comment: "Notice when an outgoing encrypted chat request is already pending for this recipient"
+        )
       case .theirRequestWaiting:
-        return "This person has sent you a request. Accept it in Requests to reply."
+        return String(
+          localized: "This person has sent you a request. Accept it in Requests to reply.",
+          comment: "Notice when an incoming encrypted chat request from this recipient is awaiting acceptance"
+        )
       }
     }
   }

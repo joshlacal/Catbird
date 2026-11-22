@@ -1,0 +1,92 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name — keep the 'Catbird' brand name untranslated across all locales.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "CFBundleName" : {
+      "comment" : "Bundle short name — keep the 'Catbird' brand name untranslated across all locales.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "NSCameraUsageDescription" : {
+      "comment" : "Privacy - Camera Usage Description — system permission prompt shown when taking photos or videos for a post or scanning a Bluesky profile QR code. Keep 'Catbird' and 'Bluesky' brand names untranslated.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes."
+          }
+        }
+      }
+    },
+    "NSContactsUsageDescription" : {
+      "comment" : "Privacy - Contacts Usage Description — system permission prompt shown when the user opts into finding friends from their address book. Keep 'Catbird' and 'Bluesky' brand names untranslated.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+          }
+        }
+      }
+    },
+    "NSFaceIDUsageDescription" : {
+      "comment" : "Privacy - Face ID Usage Description — system permission prompt shown when authenticating with Face ID to unlock the app with App Lock enabled. Keep 'Catbird' untranslated and use Apple's official localized term for 'Face ID'.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses Face ID to unlock the app when App Lock is turned on."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description — system permission prompt shown when recording audio or video to share in a post. Keep 'Catbird' brand name untranslated.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryAddUsageDescription" : {
+      "comment" : "Privacy - Photo Library Additions Usage Description — system permission prompt shown when saving an image from a post to the photo library. Keep 'Catbird' brand name untranslated and match the localized 'Save Image' action title.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird saves images to your photo library when you choose Save Image."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

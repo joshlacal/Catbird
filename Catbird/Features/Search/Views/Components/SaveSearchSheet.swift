@@ -13,6 +13,7 @@ struct SaveSearchSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var locale
     
     let query: String
     let filters: SearchFilterState
@@ -93,15 +94,28 @@ struct SaveSearchSheet: View {
     
     @ViewBuilder
     private var activeFiltersView: some View {
+        let items = filters.summaryItems(locale: locale)
         VStack(alignment: .leading, spacing: 12) {
             if filters.sort != .top {
-                filterRow(icon: "arrow.up.arrow.down", text: "Sorted by \(filters.sort.displayName)")
+                filterRow(icon: "arrow.up.arrow.down", text: localizedSortedByLabel)
             }
             
-            ForEach(filters.summaryItems) { item in
+            ForEach(items) { item in
                 filterRow(icon: item.icon, text: item.text)
             }
         }
+    }
+
+    private var localizedSortedByLabel: String {
+        var sortResource = filters.sort.localizedDisplayName
+        sortResource.locale = locale
+        let sortName = String(localized: sortResource)
+        var sortedByResource = LocalizedStringResource(
+            "Sorted by \(sortName)",
+            comment: "Saved search summary row showing sort order — variable is the localized sort mode name"
+        )
+        sortedByResource.locale = locale
+        return String(localized: sortedByResource)
     }
     
     @ViewBuilder
@@ -122,7 +136,7 @@ struct SaveSearchSheet: View {
     }
     
     private var hasActiveFilters: Bool {
-        filters.sort != .top || !filters.summaryItems.isEmpty
+        filters.sort != .top || !filters.summaryItems(locale: locale).isEmpty
     }
     
     private func generateSearchName() -> String {
@@ -130,7 +144,7 @@ struct SaveSearchSheet: View {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var name = trimmed.count > 30 ? String(trimmed.prefix(30)) + "…" : trimmed
         
-        if let summary = filters.summaryItems.first {
+        if let summary = filters.summaryItems(locale: locale).first {
             name += " (\(summary.text))"
         }
         

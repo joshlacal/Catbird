@@ -95,7 +95,7 @@ final class TrendingTopicCardView: TrendingCardControl {
     }
     isAccessibilityElement = true
     accessibilityTraits = .button
-    accessibilityHint = "Open posts about this topic"
+    accessibilityHint = String(localized: "Open posts about this topic", comment: "VoiceOver hint for a trending topic card")
   }
 
   @available(*, unavailable)

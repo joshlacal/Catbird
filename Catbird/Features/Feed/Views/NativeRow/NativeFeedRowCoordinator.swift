@@ -428,7 +428,12 @@ final class NativeFeedRowCoordinator {
             try await models.actionViewModel.toggleRepost(feedInteractionTarget: target)
           } catch {
             coordinatorLogger.error("Error toggling repost: \(error.localizedDescription, privacy: .public)")
-            self?.showFailureToast(for: error, action: wasReposted ? "remove your repost" : "repost this post")
+            self?.showFailureToast(
+              for: error,
+              action: wasReposted
+                ? String(localized: "remove your repost", comment: "Action phrase for error message when undoing a repost fails")
+                : String(localized: "repost this post", comment: "Action phrase for error message when reposting fails")
+            )
           }
         }
       },
@@ -450,7 +455,12 @@ final class NativeFeedRowCoordinator {
             try await models.actionViewModel.toggleLike(feedInteractionTarget: target)
           } catch {
             coordinatorLogger.error("Error toggling like: \(error.localizedDescription, privacy: .public)")
-            self?.showFailureToast(for: error, action: wasLiked ? "remove your like" : "like this post")
+            self?.showFailureToast(
+              for: error,
+              action: wasLiked
+                ? String(localized: "remove your like", comment: "Action phrase for error message when unliking a post fails")
+                : String(localized: "like this post", comment: "Action phrase for error message when liking a post fails")
+            )
           }
         }
       },

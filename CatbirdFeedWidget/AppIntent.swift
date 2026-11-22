@@ -18,14 +18,28 @@ public enum FeedTypeOption: String, CaseIterable, AppEnum {
     case savedFeed = "saved"
 
     public static var typeDisplayRepresentation: TypeDisplayRepresentation {
-        TypeDisplayRepresentation(name: "Feed Type")
+        TypeDisplayRepresentation(
+            name: LocalizedStringResource(
+                "Feed Type",
+                comment: "Widget configuration option label for choosing the feed source type."
+            )
+        )
     }
 
     public static var caseDisplayRepresentations: [FeedTypeOption: DisplayRepresentation] {
         [
-            .timeline: DisplayRepresentation(title: "Timeline", subtitle: "Posts from people you follow"),
-            .pinnedFeed: DisplayRepresentation(title: "Pinned Feed", subtitle: "Choose from your pinned feeds"),
-            .savedFeed: DisplayRepresentation(title: "Saved Feed", subtitle: "Choose from your saved feeds")
+            .timeline: DisplayRepresentation(
+                title: LocalizedStringResource("Timeline", comment: "Widget feed type option for the home Following timeline."),
+                subtitle: LocalizedStringResource("Posts from people you follow", comment: "Subtitle describing the Timeline widget feed option.")
+            ),
+            .pinnedFeed: DisplayRepresentation(
+                title: LocalizedStringResource("Pinned Feed", comment: "Widget feed type option for choosing a pinned custom feed."),
+                subtitle: LocalizedStringResource("Choose from your pinned feeds", comment: "Subtitle describing the Pinned Feed widget option.")
+            ),
+            .savedFeed: DisplayRepresentation(
+                title: LocalizedStringResource("Saved Feed", comment: "Widget feed type option for choosing a saved custom feed."),
+                subtitle: LocalizedStringResource("Choose from your saved feeds", comment: "Subtitle describing the Saved Feed widget option.")
+            )
         ]
     }
 }
@@ -39,14 +53,28 @@ public enum LayoutStyleOption: String, CaseIterable, AppEnum {
     case spacious = "spacious"
 
     public static var typeDisplayRepresentation: TypeDisplayRepresentation {
-        TypeDisplayRepresentation(name: "Layout Style")
+        TypeDisplayRepresentation(
+            name: LocalizedStringResource(
+                "Layout Style",
+                comment: "Widget configuration option label for choosing post spacing density."
+            )
+        )
     }
 
     public static var caseDisplayRepresentations: [LayoutStyleOption: DisplayRepresentation] {
         [
-            .compact: DisplayRepresentation(title: "Compact", subtitle: "More posts, less spacing"),
-            .comfortable: DisplayRepresentation(title: "Comfortable", subtitle: "Balanced layout"),
-            .spacious: DisplayRepresentation(title: "Spacious", subtitle: "Larger posts, more spacing")
+            .compact: DisplayRepresentation(
+                title: LocalizedStringResource("Compact", comment: "Widget layout density option showing more posts with tighter spacing."),
+                subtitle: LocalizedStringResource("More posts, less spacing", comment: "Subtitle describing the Compact widget layout option.")
+            ),
+            .comfortable: DisplayRepresentation(
+                title: LocalizedStringResource("Comfortable", comment: "Widget layout density option with balanced spacing."),
+                subtitle: LocalizedStringResource("Balanced layout", comment: "Subtitle describing the Comfortable widget layout option.")
+            ),
+            .spacious: DisplayRepresentation(
+                title: LocalizedStringResource("Spacious", comment: "Widget layout density option showing larger posts with more spacing."),
+                subtitle: LocalizedStringResource("Larger posts, more spacing", comment: "Subtitle describing the Spacious widget layout option.")
+            )
         ]
     }
 }
@@ -55,32 +83,102 @@ public enum LayoutStyleOption: String, CaseIterable, AppEnum {
 
 @available(iOS 17.0, *)
 public struct ConfigurationAppIntent: WidgetConfigurationIntent {
-    public static var title: LocalizedStringResource { "Widget Configuration" }
-    public static var description: IntentDescription { "Configure your Catbird feed widget to show the content you want to see." }
+    public static var title: LocalizedStringResource {
+        LocalizedStringResource(
+            "Widget Configuration",
+            comment: "Title for the Catbird Feed widget configuration intent."
+        )
+    }
+    public static var description: IntentDescription {
+        IntentDescription(
+            LocalizedStringResource(
+                "Configure your Catbird feed widget to show the content you want to see.",
+                comment: "Description for the Catbird Feed widget configuration intent."
+            )
+        )
+    }
 
-    @Parameter(title: "Account", description: "Which account to show")
+    @Parameter(
+        title: LocalizedStringResource("Account", comment: "Widget configuration parameter for selecting which signed-in Bluesky account to display."),
+        description: LocalizedStringResource("Which account to show", comment: "Description for the Account widget configuration parameter.")
+    )
     public var account: AccountEntity?
 
-    @Parameter(title: "Feed Type", description: "Choose what type of content to display", default: .timeline)
+    @Parameter(
+        title: LocalizedStringResource("Feed Type", comment: "Widget configuration parameter for selecting Timeline, Pinned Feed, or Saved Feed."),
+        description: LocalizedStringResource("Choose what type of content to display", comment: "Description for the Feed Type widget configuration parameter."),
+        default: .timeline,
+        requestDisambiguationDialog: IntentDialog(
+            LocalizedStringResource("Which feed type?", comment: "Disambiguation prompt asking which widget feed type to display.")
+        )
+    )
     public var feedType: FeedTypeOption
 
-    @Parameter(title: "Feed", description: "Choose which pinned or saved feed to display")
+    @Parameter(
+        title: LocalizedStringResource("Feed", comment: "Widget configuration parameter for selecting a specific pinned or saved feed."),
+        description: LocalizedStringResource("Choose which pinned or saved feed to display", comment: "Description for the Feed widget configuration parameter.")
+    )
     public var selectedFeed: SavedFeedEntity?
 
-    @Parameter(title: "Post Count", description: "Number of posts to display (1-10)", default: 3)
+    @Parameter(
+        title: LocalizedStringResource("Post Count", comment: "Widget configuration parameter for the number of posts to display."),
+        description: LocalizedStringResource("Number of posts to display (1-10)", comment: "Description for the Post Count widget configuration parameter."),
+        default: 3
+    )
     public var postCount: Int
 
-    @Parameter(title: "Layout Style", description: "Choose how posts are displayed", default: .comfortable)
+    @Parameter(
+        title: LocalizedStringResource("Layout Style", comment: "Widget configuration parameter for post density."),
+        description: LocalizedStringResource("Choose how posts are displayed", comment: "Description for the Layout Style widget configuration parameter."),
+        default: .comfortable,
+        requestDisambiguationDialog: IntentDialog(
+            LocalizedStringResource("Which layout style?", comment: "Disambiguation prompt asking which widget layout style to use.")
+        )
+    )
     public var layoutStyle: LayoutStyleOption
 
-    @Parameter(title: "Show Avatars", description: "Show an avatar beside each post", default: true)
+    @Parameter(
+        title: LocalizedStringResource("Show Avatars", comment: "Widget configuration toggle for displaying author avatars."),
+        description: LocalizedStringResource("Show an avatar beside each post", comment: "Description for the Show Avatars widget configuration parameter."),
+        default: true
+    )
     public var showAvatars: Bool
 
-    @Parameter(title: "Show Engagement Stats", description: "Display like, repost, and reply counts", default: true)
+    @Parameter(
+        title: LocalizedStringResource("Show Engagement Stats", comment: "Widget configuration toggle for displaying like, repost, and reply counts."),
+        description: LocalizedStringResource("Display like, repost, and reply counts", comment: "Description for the Show Engagement Stats widget configuration parameter."),
+        default: true
+    )
     public var showEngagementStats: Bool
 
-    @Parameter(title: "Show Timestamps", description: "Display when posts were created", default: true)
+    @Parameter(
+        title: LocalizedStringResource("Show Timestamps", comment: "Widget configuration toggle for displaying post creation times."),
+        description: LocalizedStringResource("Display when posts were created", comment: "Description for the Show Timestamps widget configuration parameter."),
+        default: true
+    )
     public var showTimestamps: Bool
+
+    public static var parameterSummary: some ParameterSummary {
+        When(\.$feedType, .equalTo, .timeline) {
+            Summary("Show \(\.$feedType)") {
+                \.$account
+                \.$postCount
+                \.$layoutStyle
+                \.$showAvatars
+                \.$showEngagementStats
+                \.$showTimestamps
+            }
+        } otherwise: {
+            Summary("Show \(\.$selectedFeed) from \(\.$feedType)") {
+                \.$account
+                \.$postCount
+                \.$layoutStyle
+                \.$showAvatars
+                \.$showEngagementStats
+                \.$showTimestamps
+            }
+        }
+    }
 
     public init() {
         account = nil
@@ -167,7 +265,16 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
 @available(iOS 17.0, *)
 public struct SavedFeedEntity: AppEntity {
     public static var typeDisplayRepresentation: TypeDisplayRepresentation {
-        TypeDisplayRepresentation(name: "Saved Feed")
+        TypeDisplayRepresentation(
+            name: LocalizedStringResource(
+                "Saved Feed",
+                comment: "Widget configuration entity type name for a saved or pinned Bluesky custom feed."
+            ),
+            numericFormat: LocalizedStringResource(
+                "\(placeholder: .int) saved feeds",
+                comment: "Pluralized count of saved Bluesky custom feeds."
+            )
+        )
     }
     
     public var displayRepresentation: DisplayRepresentation {
@@ -232,12 +339,18 @@ public struct SavedFeedQuery: EntityQuery {
         var entities: [SavedFeedEntity] = []
 
         for feed in pinnedFeeds {
-            let displayName = feedGenerators[feed] ?? "Pinned Feed"
+            let displayName = feedGenerators[feed] ?? String(
+                localized: "Pinned Feed",
+                comment: "Fallback name for a pinned Bluesky feed in widget configuration."
+            )
             entities.append(SavedFeedEntity(id: feed, displayName: "📌 \(displayName)", uri: feed))
         }
 
         for feed in savedFeeds {
-            let displayName = feedGenerators[feed] ?? "Saved Feed"
+            let displayName = feedGenerators[feed] ?? String(
+                localized: "Saved Feed",
+                comment: "Fallback name for a saved Bluesky feed in widget configuration."
+            )
             entities.append(SavedFeedEntity(id: feed, displayName: "⭐ \(displayName)", uri: feed))
         }
 

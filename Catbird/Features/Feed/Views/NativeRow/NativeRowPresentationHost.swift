@@ -56,7 +56,10 @@ final class NativeRowPostModels {
           try await viewModel.toggleBookmark()
         } catch {
           nativeRowModelsLogger.error("Failed to toggle bookmark: \(error.localizedDescription, privacy: .public)")
-          if let message = UserFacingError.message(for: error, action: "update your bookmarks") {
+          if let message = UserFacingError.message(
+            for: error,
+            action: String(localized: "update your bookmarks", comment: "Action phrase for error message when bookmarking or unbookmarking fails")
+          ) {
             appState.toastManager.show(ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
           }
         }

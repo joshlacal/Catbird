@@ -339,11 +339,17 @@ extension FeedDiscoveryBrowser {
     guard let feed = selectedFeed, let index = selectedIndex else { return "" }
     let status: String
     switch appState.feedLibraryActions.membership(for: feed.uri) {
-    case .absent: status = String(localized: "Not added")
-    case .saved: status = String(localized: "Saved")
-    case .pinned: status = String(localized: "Pinned")
+    case .absent:
+      status = String(localized: "Not added", comment: "Accessibility status when a discovered feed is not in the user's library")
+    case .saved:
+      status = String(localized: "Saved", comment: "Accessibility status when a feed is saved in the user's library")
+    case .pinned:
+      status = String(localized: "Pinned", comment: "Accessibility status when a feed is pinned")
     }
-    return String(localized: "\(feed.displayName), \(status), feed \(index + 1) of \(model.items.count)")
+    return String(
+      localized: "\(feed.displayName), \(status), feed \(index + 1) of \(model.items.count)",
+      comment: "Accessibility value for selected feed in browser — 1st is feed name, 2nd is library status, 3rd is current position, 4th is total feeds"
+    )
   }
 
   private func anchor(for feed: AppBskyFeedDefs.GeneratorView) -> Binding<String?> {

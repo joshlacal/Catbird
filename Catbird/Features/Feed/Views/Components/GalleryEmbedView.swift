@@ -206,7 +206,7 @@ struct GalleryEmbedView: View {
         .pipeline(ImageLoadingManager.shared.pipeline)
       }
       if total > 1 {
-        Text("\(index + 1)/\(total)")
+        Text(verbatim: "\(index + 1)/\(total)")
           .appFont(AppTextRole.caption2)
           .fontWeight(.medium)
           .foregroundStyle(.white)
@@ -219,7 +219,14 @@ struct GalleryEmbedView: View {
     }
     .frame(width: width, height: height)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(image.alt.isEmpty ? "Image \(index + 1) of \(total)" : image.alt)
+    .accessibilityLabel(
+      image.alt.isEmpty
+        ? String(
+          localized: "Image \(index + 1) of \(total)",
+          comment: "Fallback accessibility label for a gallery image without alt text — first variable is current image number, second is total images"
+        )
+        : image.alt
+    )
     .accessibilityAddTraits(.isImage)
     .imagePreviewContextMenu(image, isEnabled: !isBlurred && visibilityContext == .public) {
       currentIndex = index

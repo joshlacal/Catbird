@@ -13,7 +13,7 @@ struct SearchBarView: View {
   
   init(
     searchText: Binding<String>,
-    placeholder: String = "Search feeds...",
+    placeholder: String = String(localized: "Search feeds...", comment: "Default search bar placeholder for filtering feeds."),
     intensity: SolariumDesignSystem.GlassIntensity = .medium,
     autoFocus: Bool = false,
     onSearchChange: @escaping () async -> Void
@@ -84,7 +84,7 @@ extension SearchBarView {
   /// Navigation-style glass search bar
   static func navigation(
     searchText: Binding<String>,
-    placeholder: String = "Search...",
+    placeholder: String = String(localized: "Search...", comment: "Generic search bar placeholder."),
     onSearchChange: @escaping () async -> Void
   ) -> some View {
     SearchBarView(
@@ -100,7 +100,7 @@ extension SearchBarView {
   /// Floating search bar for overlays and modals
   static func floating(
     searchText: Binding<String>,
-    placeholder: String = "Search...",
+    placeholder: String = String(localized: "Search...", comment: "Generic search bar placeholder."),
     autoFocus: Bool = true,
     onSearchChange: @escaping () async -> Void
   ) -> some View {
@@ -117,7 +117,7 @@ extension SearchBarView {
   /// Subtle search bar for embedded contexts like feeds page
   static func embedded(
     searchText: Binding<String>,
-    placeholder: String = "Search feeds...",
+    placeholder: String = String(localized: "Search feeds...", comment: "Default search bar placeholder for filtering feeds."),
     onSearchChange: @escaping () async -> Void
   ) -> some View {
     SearchBarView(
@@ -132,7 +132,7 @@ extension SearchBarView {
   /// Dramatic search bar for primary search experiences
   static func primary(
     searchText: Binding<String>,
-    placeholder: String = "Search...",
+    placeholder: String = String(localized: "Search...", comment: "Generic search bar placeholder."),
     autoFocus: Bool = true,
     onSearchChange: @escaping () async -> Void
   ) -> some View {

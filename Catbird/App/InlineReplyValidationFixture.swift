@@ -28,27 +28,33 @@ struct InlineReplyValidationFixture: View {
         SceneNavigationHost(appState: appState, appStateManager: .shared, context: context) {
           NavigationStack {
             VStack(alignment: .leading, spacing: 20) {
-              Text("Offline inline reply validation").font(.headline)
-              Text("Local source, in-memory draft library and isolated session recovery. No authenticated account or external transport.")
+              Text(verbatim: "Offline inline reply validation").font(.headline)
+              Text(verbatim: "Local source, in-memory draft library and isolated session recovery. No authenticated account or external transport.")
                 .font(.caption)
-              Button("Reply to local source") {
+              Button {
                 context.presentPostComposer(parentPost: source)
+              } label: {
+                Text(verbatim: "Reply to local source")
               }
               .accessibilityIdentifier("inline-reply.open")
-              Button("Open new post") { context.presentPostComposer() }
+              Button { context.presentPostComposer() } label: {
+                Text(verbatim: "Open new post")
+              }
                 .accessibilityIdentifier("inline-reply.new-post")
               if let claim = context.composerEditingSession.activeClaim,
                  context.composerEditingSession.isMinimized {
-                Button("Resume local reply") {
+                Button {
                   guard context.composerEditingSession.resume(claim: claim) else { return }
                   context.postComposerRequest = ScenePostComposerRequest(editingClaim: claim)
+                } label: {
+                  Text(verbatim: "Resume local reply")
                 }
                 .accessibilityIdentifier("inline-reply.resume")
               }
               Spacer()
             }
             .padding()
-            .navigationTitle("Inline Reply Fixture")
+            .navigationTitle(Text(verbatim: "Inline Reply Fixture"))
           }
           .background {
             InlineReplyNativeProbe(session: context.composerEditingSession,
@@ -58,9 +64,11 @@ struct InlineReplyValidationFixture: View {
           }
         }
       } else if let issue {
-        Text(issue).accessibilityIdentifier("inline-reply.error")
+        Text(verbatim: issue).accessibilityIdentifier("inline-reply.error")
       } else {
-        ProgressView("Preparing offline reply")
+        ProgressView {
+          Text(verbatim: "Preparing offline reply")
+        }
       }
     }
     .task { await prepare() }

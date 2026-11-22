@@ -3423,7 +3423,9 @@ extension AuthenticationManager: AuthenticationDelegate {
       if self.expiredAccountInfo == nil {
         if self.pendingAuthAlert == nil {
           self.pendingAuthAlert = AuthAlert(
-            title: "Signed Out", message: "Your session has expired. Please sign in again.")
+            title: String(localized: "Signed Out", comment: "Alert title when user session expired."),
+            message: String(localized: "Your session has expired. Please sign in again.", comment: "Alert message when user session expired.")
+          )
         }
       } else {
         // Clear any existing alert so it doesn't block the auto-reauth flow
@@ -3456,8 +3458,11 @@ extension AuthenticationManager: AuthFailureDelegate {
 
     if isRetryable {
       if pendingAuthAlert == nil {
-        let message = "Your server is temporarily unavailable. Try again shortly."
-        pendingAuthAlert = AuthAlert(title: "Sign-In Unavailable", message: message)
+        let message = String(localized: "Your server is temporarily unavailable. Try again shortly.", comment: "Alert message when PDS server is temporarily unavailable.")
+        pendingAuthAlert = AuthAlert(
+          title: String(localized: "Sign-In Unavailable", comment: "Alert title when PDS server is temporarily unavailable."),
+          message: message
+        )
       }
     } else {
       // Terminal failure - prefer auto-reauth without alert if possible
@@ -3466,7 +3471,9 @@ extension AuthenticationManager: AuthFailureDelegate {
         logger.info(.catastrophicSkipAlert)
       } else if pendingAuthAlert == nil {
         pendingAuthAlert = AuthAlert(
-          title: "Signed Out", message: "Your session is no longer valid. Please sign in again.")
+          title: String(localized: "Signed Out", comment: "Alert title when session is no longer valid."),
+          message: String(localized: "Your session is no longer valid. Please sign in again.", comment: "Alert message when session is no longer valid.")
+        )
       }
     }
 
@@ -3478,9 +3485,11 @@ extension AuthenticationManager: AuthFailureDelegate {
     logger.warning(.circuitBreakerOpen)
     if pendingAuthAlert == nil {
       pendingAuthAlert = AuthAlert(
-        title: "Sign-In Paused",
-        message:
-          "We’re seeing repeated failures contacting your server. We’ll retry shortly, or you can sign in again now."
+        title: String(localized: "Sign-In Paused", comment: "Alert title when authentication circuit breaker opens."),
+        message: String(
+          localized: "We’re seeing repeated failures contacting your server. We’ll retry shortly, or you can sign in again now.",
+          comment: "Alert message when authentication circuit breaker opens."
+        )
       )
     }
   }
@@ -3497,31 +3506,31 @@ extension AuthenticationManager {
     }
     switch authError {
     case .networkError:
-      return "Couldn’t reach the server. Check your connection and try again."
+      return String(localized: "Couldn’t reach the server. Check your connection and try again.", comment: "Sign-in error message when offline.")
     case .timeout:
-      return "Signing in took too long. Try again."
+      return String(localized: "Signing in took too long. Try again.", comment: "Sign-in error message when request times out.")
     case .badResponse(let code) where code == 429:
-      return "Too many attempts. Wait a moment and try again."
+      return String(localized: "Too many attempts. Wait a moment and try again.", comment: "Sign-in error message when rate-limited.")
     case .badResponse(let code) where code >= 500:
-      return "Your server is having trouble right now. Try again in a moment."
+      return String(localized: "Your server is having trouble right now. Try again in a moment.", comment: "Sign-in error message for 5xx server failure.")
     case .badResponse:
-      return "Your server couldn’t finish signing you in. Try again."
+      return String(localized: "Your server couldn’t finish signing you in. Try again.", comment: "Sign-in error message for rejected server response.")
     case .invalidHandle:
-      return "That handle doesn’t look right. Check it and try again."
+      return String(localized: "That handle doesn’t look right. Check it and try again.", comment: "Sign-in error message for malformed handle.")
     case .invalidSession:
-      return "Your session has expired. Sign in again to continue."
+      return String(localized: "Your session has expired. Sign in again to continue.", comment: "Sign-in error message for expired session.")
     case .invalidCredentials:
-      return "Sign-in didn’t finish. Check your details and try again."
+      return String(localized: "Sign-in didn’t finish. Check your details and try again.", comment: "Sign-in error message for invalid credentials.")
     case .accountSwitchInProgress:
-      return "Another account is still switching. Try again in a moment."
+      return String(localized: "Another account is still switching. Try again in a moment.", comment: "Sign-in error message when account switch is in progress.")
     case .databaseDrainFailed:
-      return "Couldn’t safely close the database. Restart the app and try again."
+      return String(localized: "Couldn’t safely close the database. Restart the app and try again.", comment: "Sign-in error message when database drain fails.")
     case .cancelled:
-      return "Sign-in was canceled."
+      return String(localized: "Sign-in was canceled.", comment: "Sign-in message when user cancels login.")
     case .unknown(let underlying):
       return userFacingMessage(forUnderlying: underlying)
     case .clientNotInitialized, .invalidCallbackURL, .invalidUserDID:
-      return "Sign-in didn’t finish. Try again."
+      return String(localized: "Sign-in didn’t finish. Try again.", comment: "Generic fallback sign-in error message.")
     }
   }
 
@@ -3531,21 +3540,21 @@ extension AuthenticationManager {
     }
     switch UserFacingError.kind(of: error) {
     case .offline:
-      return "Couldn’t reach the server. Check your connection and try again."
+      return String(localized: "Couldn’t reach the server. Check your connection and try again.", comment: "Sign-in error message when offline.")
     case .timedOut:
-      return "Signing in took too long. Try again."
+      return String(localized: "Signing in took too long. Try again.", comment: "Sign-in error message when request times out.")
     case .rateLimited:
-      return "Too many attempts. Wait a moment and try again."
+      return String(localized: "Too many attempts. Wait a moment and try again.", comment: "Sign-in error message when rate-limited.")
     case .server:
-      return "Your server is having trouble right now. Try again in a moment."
+      return String(localized: "Your server is having trouble right now. Try again in a moment.", comment: "Sign-in error message for 5xx server failure.")
     case .notFound:
-      return "Couldn’t find that account. Check the handle and try again."
+      return String(localized: "Couldn’t find that account. Check the handle and try again.", comment: "Sign-in error message when account handle is not found.")
     case .signInRequired:
-      return "Your session has expired. Sign in again to continue."
+      return String(localized: "Your session has expired. Sign in again to continue.", comment: "Sign-in error message for expired session.")
     case .cancelled:
-      return "Sign-in was canceled."
+      return String(localized: "Sign-in was canceled.", comment: "Sign-in message when user cancels login.")
     case .notAllowed, .other:
-      return "Sign-in didn’t finish. Try again."
+      return String(localized: "Sign-in didn’t finish. Try again.", comment: "Generic fallback sign-in error message.")
     }
   }
 }
@@ -3555,8 +3564,8 @@ extension AuthenticationManager {
 enum AuthError: Error, LocalizedError {
   case clientNotInitialized
   case invalidSession
-  case invalidCredentials
   case invalidCallbackURL
+  case invalidCredentials
   case networkError(Error)
   case badResponse(Int)
   case timeout
@@ -3574,63 +3583,65 @@ enum AuthError: Error, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .clientNotInitialized:
-      return "Authentication client not initialized"
+      return String(localized: "Authentication client not initialized", comment: "Auth error description.")
     case .invalidSession:
-      return "Invalid session"
+      return String(localized: "Invalid session", comment: "Auth error description.")
     case .invalidCallbackURL:
-      return "Invalid OAuth callback URL"
+      return String(localized: "Invalid OAuth callback URL", comment: "Auth error description.")
     case .invalidCredentials:
-      return "Invalid credentials"
+      return String(localized: "Invalid credentials", comment: "Auth error description.")
     case .networkError(let error):
-      return "Network error: \(error.localizedDescription)"
+      return String(localized: "Network error: \(error.localizedDescription)", comment: "Auth error description wrapping network error.")
     case .badResponse(let code):
-      return "Bad response code: \(code)"
+      return String(localized: "Bad response code: \(code)", comment: "Auth error description with HTTP status code.")
     case .timeout:
-      return "Authentication timed out. Please try again."
+      return String(localized: "Authentication timed out. Please try again.", comment: "Auth error description when request times out.")
     case .cancelled:
-      return "Authentication was cancelled"
+      return String(localized: "Authentication was cancelled", comment: "Auth error description when user cancels.")
     case .unknown(let error):
-      return "Unknown error: \(error.localizedDescription)"
+      return String(localized: "Unknown error: \(error.localizedDescription)", comment: "Auth error description wrapping unknown error.")
     case .invalidUserDID:
-      return "Received an invalid account identifier"
+      return String(localized: "Received an invalid account identifier", comment: "Auth error description.")
     case .accountSwitchInProgress:
-      return "Please wait for the current account switch to complete"
+      return String(localized: "Please wait for the current account switch to complete", comment: "Auth error description.")
     case .databaseDrainFailed:
-      return "Could not safely close the database. Please restart the app and try again."
+      return String(localized: "Could not safely close the database. Please restart the app and try again.", comment: "Auth error description.")
     case .invalidHandle:
-      return "Received an invalid handle"
+      return String(localized: "Received an invalid handle", comment: "Auth error description.")
     }
   }
 
   var failureReason: String? {
     switch self {
     case .clientNotInitialized:
-      return "The authentication system has not been properly set up."
+      return String(localized: "The authentication system has not been properly set up.", comment: "Auth error failure reason.")
     case .invalidSession:
-      return "Your authentication session is no longer valid or has been corrupted."
+      return String(localized: "Your authentication session is no longer valid or has been corrupted.", comment: "Auth error failure reason.")
     case .invalidCredentials:
-      return "The provided username, password, or authentication token is incorrect."
+      return String(localized: "The provided username, password, or authentication token is incorrect.", comment: "Auth error failure reason.")
     case .networkError:
-      return "Unable to connect to the authentication server."
+      return String(localized: "Unable to connect to the authentication server.", comment: "Auth error failure reason.")
     case .badResponse(let code) where code >= 500:
-      return "The authentication server is experiencing technical difficulties."
+      return String(localized: "The authentication server is experiencing technical difficulties.", comment: "Auth error failure reason.")
     case .badResponse(let code) where code == 429:
-      return "Too many authentication attempts. Rate limit exceeded."
+      return String(localized: "Too many authentication attempts. Rate limit exceeded.", comment: "Auth error failure reason.")
     case .badResponse(let code) where code >= 400:
-      return "The authentication request was rejected by the server."
+      return String(localized: "The authentication request was rejected by the server.", comment: "Auth error failure reason.")
     case .timeout:
-      return "The authentication process took too long to complete."
+      return String(localized: "The authentication process took too long to complete.", comment: "Auth error failure reason.")
     case .cancelled:
-      return "Authentication was cancelled by the user."
+      return String(localized: "Authentication was cancelled by the user.", comment: "Auth error failure reason.")
     case .unknown:
-      return "An unexpected error occurred during authentication."
+      return String(localized: "An unexpected error occurred during authentication.", comment: "Auth error failure reason.")
     case .invalidUserDID:
-      return "The authentication response did not include a usable account identifier."
+      return String(localized: "The authentication response did not include a usable account identifier.", comment: "Auth error failure reason.")
     case .databaseDrainFailed:
-      return
-        "The app couldn’t acquire exclusive access to the encrypted database to flush and close it safely."
+      return String(
+        localized: "The app couldn’t acquire exclusive access to the encrypted database to flush and close it safely.",
+        comment: "Auth error failure reason."
+      )
     case .invalidHandle:
-      return "The handle is empty, malformed, or formatted as a DID."
+      return String(localized: "The handle is empty, malformed, or formatted as a DID.", comment: "Auth error failure reason.")
     default:
       return nil
     }
@@ -3639,35 +3650,35 @@ enum AuthError: Error, LocalizedError {
   var recoverySuggestion: String? {
     switch self {
     case .clientNotInitialized:
-      return "Please restart the app. If the problem persists, contact support."
+      return String(localized: "Please restart the app. If the problem persists, contact support.", comment: "Auth error recovery suggestion.")
     case .invalidSession:
-      return "Please log out and log back in to refresh your session."
+      return String(localized: "Please log out and log back in to refresh your session.", comment: "Auth error recovery suggestion.")
     case .invalidCredentials:
-      return "Please check your username and password, then try again."
+      return String(localized: "Please check your username and password, then try again.", comment: "Auth error recovery suggestion.")
     case .networkError:
-      return "Check your internet connection and try again."
+      return String(localized: "Check your internet connection and try again.", comment: "Auth error recovery suggestion.")
     case .badResponse(let code) where code >= 500:
-      return "Please wait a moment and try again. If the problem persists, contact support."
+      return String(localized: "Please wait a moment and try again. If the problem persists, contact support.", comment: "Auth error recovery suggestion.")
     case .badResponse(let code) where code == 429:
-      return "Please wait a few minutes before trying to authenticate again."
+      return String(localized: "Please wait a few minutes before trying to authenticate again.", comment: "Auth error recovery suggestion.")
     case .badResponse(let code) where code >= 400:
-      return "Check your login credentials and try again."
+      return String(localized: "Check your login credentials and try again.", comment: "Auth error recovery suggestion.")
     case .timeout:
-      return "Please try again with a stable internet connection."
+      return String(localized: "Please try again with a stable internet connection.", comment: "Auth error recovery suggestion.")
     case .cancelled:
-      return "You can try logging in again when ready."
+      return String(localized: "You can try logging in again when ready.", comment: "Auth error recovery suggestion.")
     case .unknown:
-      return "Please try again or contact support if the problem persists."
+      return String(localized: "Please try again or contact support if the problem persists.", comment: "Auth error recovery suggestion.")
     case .invalidUserDID:
-      return "Sign in again to re-establish a valid account session."
+      return String(localized: "Sign in again to re-establish a valid account session.", comment: "Auth error recovery suggestion.")
     case .accountSwitchInProgress:
-      return "Wait a moment for the current account switch to finish, then try again."
+      return String(localized: "Wait a moment for the current account switch to finish, then try again.", comment: "Auth error recovery suggestion.")
     case .databaseDrainFailed:
-      return "Restart the app, then try switching accounts again."
+      return String(localized: "Restart the app, then try switching accounts again.", comment: "Auth error recovery suggestion.")
     case .invalidHandle:
-      return "Please check the handle format and try again."
+      return String(localized: "Please check the handle format and try again.", comment: "Auth error recovery suggestion.")
     default:
-      return "Please try again or contact support if the problem persists."
+      return String(localized: "Please try again or contact support if the problem persists.", comment: "Auth error recovery suggestion.")
     }
   }
 }
@@ -3734,15 +3745,15 @@ extension LABiometryType {
   var displayName: String {
     switch self {
     case .none:
-      return "No biometric authentication"
+      return String(localized: "No biometric authentication", comment: "Biometric authentication type display name when none is available.")
     case .touchID:
-      return "Touch ID"
+      return String(localized: "Touch ID", comment: "Apple Touch ID biometric authentication display name.")
     case .faceID:
-      return "Face ID"
+      return String(localized: "Face ID", comment: "Apple Face ID biometric authentication display name.")
     case .opticID:
-      return "Optic ID"
+      return String(localized: "Optic ID", comment: "Apple Optic ID biometric authentication display name.")
     @unknown default:
-      return "Biometric authentication"
+      return String(localized: "Biometric authentication", comment: "Generic biometric authentication display name.")
     }
   }
 }
