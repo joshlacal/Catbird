@@ -54,9 +54,11 @@ public final class SceneOnboardingViewModel {
     public var isLoading: Bool
   }
 
-  public struct LineupRoleSection: Identifiable, Sendable {
-    public var id: CommunityRole { role }
-    public let role: CommunityRole
+  /// One picked scene in the starting lineup, holding the accounts that will be followed from it.
+  public struct LineupSceneSection: Identifiable, Sendable {
+    public var id: Int { communityId }
+    public let communityId: Int
+    public let title: String
     public let items: [BlueCatbirdOnboardingDefs.RecommendedFollow]
   }
 
@@ -133,6 +135,9 @@ public final class SceneOnboardingViewModel {
 
   public private(set) var isSolvingBundle: Bool = false
   public private(set) var solvedBundle: BlueCatbirdOnboardingSolveBundle.Output?
+  /// The accounts the lineup offers, in solve order: accounts already followed are left out, and a
+  /// blocked or muted pick is replaced by the next bench account from the same scene.
+  public private(set) var lineupFollows: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
   public private(set) var lineupProfilesByDID: [String: HydratedRecommendedProfile] = [:]
   public private(set) var hydratedFeeds: [HydratedFeedOption] = []
   public private(set) var hydratedStarterPacks: [HydratedStarterPackOption] = []
@@ -207,36 +212,44 @@ public final class SceneOnboardingViewModel {
     return calibrationCards[activeDuelIndex]
   }
 
-  public var lineupRoleSections: [LineupRoleSection] {
-    guard let follows = solvedBundle?.follows else { return [] }
-    var grouped: [CommunityRole: [BlueCatbirdOnboardingDefs.RecommendedFollow]] = [:]
-    for follow in follows {
-      let role = CommunityRole(rawRole: follow.role)
-      grouped[role, default: []].append(follow)
+  /// Lineup accounts grouped by scene: picked scenes first, in the order they were picked, then any
+  /// other scene (a pinned account's or an added neighbor's) in the order it first appears.
+  public var lineupSceneSections: [LineupSceneSection] {
+    var grouped: [Int: [BlueCatbirdOnboardingDefs.RecommendedFollow]] = [:]
+    var titles: [Int: String] = [:]
+    var appearanceOrder: [Int] = []
+    for follow in lineupFollows {
+      if grouped[follow.communityId] == nil {
+        appearanceOrder.append(follow.communityId)
+        titles[follow.communityId] = follow.communityTitle
+      }
+      grouped[follow.communityId, default: []].append(follow)
     }
-    return CommunityRole.allCases.compactMap { role in
-      guard let items = grouped[role], !items.isEmpty else { return nil }
-      return LineupRoleSection(role: role, items: items)
+    let selected = orderedSelectedCommunityIds.filter { grouped[$0] != nil }
+    let selectedSet = Set(selected)
+    let order = selected + appearanceOrder.filter { !selectedSet.contains($0) }
+    return order.compactMap { communityId in
+      guard let items = grouped[communityId] else { return nil }
+      let title = knownCommunitiesById[communityId]?.title ?? titles[communityId] ?? ""
+      return LineupSceneSection(communityId: communityId, title: title, items: items)
     }
   }
 
   public var activeFollowCount: Int {
-    guard let follows = solvedBundle?.follows else { return 0 }
-    return follows.filter { enabledFollowDIDs.contains($0.did.didString()) }.count
+    lineupFollows.filter { enabledFollowDIDs.contains($0.did.didString()) }.count
   }
 
   public var activeOriginalsOnlyCount: Int {
-    guard let follows = solvedBundle?.follows else { return 0 }
-    return follows.filter {
+    lineupFollows.filter {
       let did = $0.did.didString()
       return enabledFollowDIDs.contains(did) && originalsOnlyDIDs.contains(did)
     }.count
   }
 
   public var activeEstimatedDailyPosts: Int {
-    guard let follows = solvedBundle?.follows else { return 0 }
+    guard !lineupFollows.isEmpty else { return 0 }
     var weeklySum = 0.0
-    for item in follows {
+    for item in lineupFollows {
       let did = item.did.didString()
       guard enabledFollowDIDs.contains(did) else { continue }
       let factor = originalsOnlyDIDs.contains(did) ? 0.55 : 1.0
@@ -306,6 +319,7 @@ public final class SceneOnboardingViewModel {
     previewPosts = []
     previewEstimatedDailyPosts = 0
     solvedBundle = nil
+    lineupFollows = []
     lineupProfilesByDID = [:]
     hydratedFeeds = []
     hydratedStarterPacks = []
@@ -767,24 +781,28 @@ public final class SceneOnboardingViewModel {
       self.solvedBundle = output
       indexCommunities(output.harmoniousNeighbors)
 
-      let followDIDObjects = output.follows.map(\.did)
+      let bench = output.bench ?? []
+      let followDIDObjects = (output.follows + bench).map(\.did)
       async let profilesTask = service.hydrateProfiles(dids: followDIDObjects)
       async let feedsTask = service.hydrateFeeds(recommended: output.feeds)
       async let packsTask = service.hydrateStarterPacks(recommended: output.starterPacks)
       let (profiles, feeds, packs) = await (profilesTask, feedsTask, packsTask)
 
+      let lineup = Self.assembleLineup(
+        follows: output.follows,
+        bench: bench,
+        profilesByDID: profiles,
+        excludedDIDs: excludedDIDs
+      )
+      self.lineupFollows = lineup
       self.lineupProfilesByDID = profiles
       self.hydratedFeeds = feeds
       self.hydratedStarterPacks = packs
 
-      // Default enabled accounts: all solved accounts that aren't already followed or blocked/muted
       var nextEnabled = Set<String>()
       var nextOriginalsOnly = Set<String>()
-      for rec in output.follows {
+      for rec in lineup {
         let didStr = rec.did.didString()
-        if let hydrated = profiles[didStr], hydrated.alreadyFollowing || hydrated.isBlockedOrMuted {
-          continue
-        }
         nextEnabled.insert(didStr)
         if rec.hideReposts || rec.deliveryMode == "originals_only" {
           nextOriginalsOnly.insert(didStr)
@@ -854,16 +872,54 @@ public final class SceneOnboardingViewModel {
     }
   }
 
+  /// Builds the lineup from a solve: drops accounts the viewer already follows, and replaces a
+  /// blocked or muted pick with the first unused bench account from the same scene, or drops it
+  /// when that scene has no usable bench account left.
+  static func assembleLineup(
+    follows: [BlueCatbirdOnboardingDefs.RecommendedFollow],
+    bench: [BlueCatbirdOnboardingDefs.RecommendedFollow],
+    profilesByDID: [String: HydratedRecommendedProfile],
+    excludedDIDs: Set<String>
+  ) -> [BlueCatbirdOnboardingDefs.RecommendedFollow] {
+    var usedDIDs = Set(follows.map { $0.did.didString() })
+    var lineup: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
+    lineup.reserveCapacity(follows.count)
+
+    for follow in follows {
+      let did = follow.did.didString()
+      let profile = profilesByDID[did]
+      if profile?.alreadyFollowing == true { continue }
+      guard profile?.isBlockedOrMuted == true else {
+        lineup.append(follow)
+        continue
+      }
+      let replacement = bench.first { candidate in
+        let candidateDID = candidate.did.didString()
+        guard candidate.communityId == follow.communityId,
+              !usedDIDs.contains(candidateDID),
+              !excludedDIDs.contains(candidateDID)
+        else { return false }
+        let candidateProfile = profilesByDID[candidateDID]
+        return candidateProfile?.alreadyFollowing != true && candidateProfile?.isBlockedOrMuted != true
+      }
+      if let replacement {
+        usedDIDs.insert(replacement.did.didString())
+        lineup.append(replacement)
+      }
+    }
+    return lineup
+  }
+
   // MARK: - Beat 5 Actions: Commit & Celebration
 
   public func commitStartingLineup() async {
-    guard let bundle = solvedBundle, !isCommitting else { return }
+    guard solvedBundle != nil, !isCommitting else { return }
     isCommitting = true
     errorBannerMessage = nil
     defer { isCommitting = false }
 
     // Preserve deterministic bundle rank order
-    let orderedFollows = bundle.follows
+    let orderedFollows = lineupFollows
       .map { $0.did.didString() }
       .filter { enabledFollowDIDs.contains($0) }
     let orderedFeeds = hydratedFeeds

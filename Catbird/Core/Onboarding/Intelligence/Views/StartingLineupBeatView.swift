@@ -42,14 +42,14 @@ struct StartingLineupBeatView: View {
           if viewModel.isSolvingBundle {
             VStack(spacing: 12) {
               ProgressView()
-              Text("Solving role-balanced lineup across your scenes…")
+              Text("Picking voices from each of your scenes…")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 48)
           } else {
-            roleSectionsList
+            sceneSectionsList
             harmoniousNeighborsSection
             pinnableFeedsSection
             starterPacksReferenceSection
@@ -144,21 +144,17 @@ struct StartingLineupBeatView: View {
     )
   }
 
-  private var roleSectionsList: some View {
+  private var sceneSectionsList: some View {
     VStack(alignment: .leading, spacing: 22) {
-      ForEach(viewModel.lineupRoleSections) { section in
+      ForEach(viewModel.lineupSceneSections) { section in
         VStack(alignment: .leading, spacing: 10) {
           HStack(spacing: 8) {
-            Image(systemName: section.role.symbolName)
+            Image(systemName: "person.3.fill")
               .font(.subheadline.weight(.bold))
               .foregroundStyle(Color.accentColor)
-            VStack(alignment: .leading, spacing: 1) {
-              Text(section.role.displayTitle)
-                .font(.headline)
-              Text(section.role.subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+            Text(section.title)
+              .font(.headline)
+              .lineLimit(2)
             Spacer()
             Text("\(section.items.count)")
               .font(.caption.weight(.bold).monospacedDigit())
@@ -167,6 +163,7 @@ struct StartingLineupBeatView: View {
               .padding(.vertical, 4)
               .background(Color.secondary.opacity(0.12), in: Capsule())
           }
+          .accessibilityElement(children: .combine)
 
           VStack(spacing: 10) {
             ForEach(section.items, id: \.did) { rec in
@@ -420,6 +417,10 @@ private struct LineupAccountRowView: View {
   let onToggleOriginalsOnly: () -> Void
   let onSwap: () -> Void
 
+  private var role: CommunityRole {
+    CommunityRole(rawRole: recommendation.role)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top, spacing: 12) {
@@ -431,20 +432,9 @@ private struct LineupAccountRowView: View {
         )
 
         VStack(alignment: .leading, spacing: 3) {
-          HStack(spacing: 6) {
-            Text(profile?.displayName ?? "Community Voice")
-              .font(.subheadline.weight(.bold))
-              .lineLimit(1)
-
-            if profile?.alreadyFollowing == true {
-              Text("Following")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.green)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.green.opacity(0.12), in: Capsule())
-            }
-          }
+          Text(profile?.displayName ?? "Community Voice")
+            .font(.subheadline.weight(.bold))
+            .lineLimit(1)
 
           if let handle = profile?.handle {
             Text("@\(handle)")
@@ -478,13 +468,18 @@ private struct LineupAccountRowView: View {
       }
 
       HStack(spacing: 8) {
-        Text(recommendation.communityTitle)
-          .font(.caption2.weight(.medium))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.secondary.opacity(0.1), in: Capsule())
+        HStack(spacing: 4) {
+          Image(systemName: role.symbolName)
+            .font(.caption2)
+          Text(role.badgeTitle)
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.1), in: Capsule())
+        .accessibilityElement(children: .combine)
 
         Spacer()
 

@@ -104,7 +104,7 @@ struct TimelinePreviewBeatView: View {
           .foregroundStyle(Color.accentColor)
         Text("Ready to Assemble Your Lineup")
           .font(.headline)
-        Text("Continue to inspect your role-balanced creator lineup with per-account controls.")
+        Text("Continue to review the accounts picked from each of your scenes, with per-account controls.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)

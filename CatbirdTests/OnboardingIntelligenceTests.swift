@@ -62,6 +62,14 @@ struct OnboardingIntelligenceTests {
     var shouldThrowUnavailable = false
     /// Answers like a live server that personalizes communities for the viewer.
     var liveMode = false
+    /// Accounts hydrateProfiles reports as already followed by the viewer.
+    var followedDIDs: Set<String> = []
+    /// Accounts hydrateProfiles reports as blocked or muted.
+    var blockedDIDs: Set<String> = []
+    /// Scene per follow DID; a follow not listed here belongs to scene 497.
+    var sceneByFollowDID: [String: (id: Int, title: String)] = [:]
+    /// Alternates the solve returns in its bench, in order.
+    var benchFollows: [(did: String, communityId: Int, title: String)] = []
     var seedFollows: [String] = ["did:plc:synthseed1"]
     var lastSearchQuery: String?
     var lastMacroCategory: String?
@@ -253,11 +261,12 @@ struct OnboardingIntelligenceTests {
       for (didStr, role, mode, hideRT, perWeek) in candidates where !excludedSet.contains(didStr) {
         let did = try DID(didString: didStr)
         let effectiveHideRT = (input.controls?.originalsOnlyForHeavyReposters ?? true) && hideRT
+        let scene = sceneByFollowDID[didStr]
         follows.append(
           BlueCatbirdOnboardingDefs.RecommendedFollow(
             did: did,
-            communityId: 497,
-            communityTitle: "iOS & SwiftUI Builders",
+            communityId: scene?.id ?? 497,
+            communityTitle: scene?.title ?? "iOS & SwiftUI Builders",
             role: role,
             deliveryMode: effectiveHideRT ? "originals_only" : mode,
             hideReposts: effectiveHideRT,
@@ -265,6 +274,20 @@ struct OnboardingIntelligenceTests {
             estimatedPostsPerWeek: perWeek,
             samplePostUri: nil
           )
+        )
+      }
+
+      let bench = try benchFollows.map { entry in
+        try BlueCatbirdOnboardingDefs.RecommendedFollow(
+          did: DID(didString: entry.did),
+          communityId: entry.communityId,
+          communityTitle: entry.title,
+          role: "visual_maker",
+          deliveryMode: "follow_all",
+          hideReposts: false,
+          whyPicked: "Next in line for this scene",
+          estimatedPostsPerWeek: 9,
+          samplePostUri: nil
         )
       }
 
@@ -292,7 +315,8 @@ struct OnboardingIntelligenceTests {
           .init(uri: feedURI, communityId: 497, communityTitle: "iOS & SwiftUI Builders")
         ],
         starterPacks: [],
-        harmoniousNeighbors: [neighbor]
+        harmoniousNeighbors: [neighbor],
+        bench: bench.isEmpty ? nil : bench
       )
     }
 
@@ -327,7 +351,9 @@ struct OnboardingIntelligenceTests {
           did: key,
           handle: "\(key.suffix(8)).example",
           displayName: "Creator \(key.suffix(6))",
-          bio: "Building thoughtful apps and sharing notes."
+          bio: "Building thoughtful apps and sharing notes.",
+          alreadyFollowing: followedDIDs.contains(key),
+          isBlockedOrMuted: blockedDIDs.contains(key)
         )
       }
       return out
@@ -452,7 +478,7 @@ struct OnboardingIntelligenceTests {
     // Advance to Beat 4 (Starting Lineup)
     await vm.advanceToStartingLineup()
     #expect(vm.currentBeat == .lineup)
-    #expect(vm.lineupRoleSections.count == 4)
+    #expect(vm.lineupSceneSections.map(\.communityId) == [497])
     #expect(vm.activeFollowCount == 5)
     #expect(vm.activeOriginalsOnlyCount == 1)
     #expect(vm.originalsOnlyDIDs.contains("did:plc:synthcurator1"))
@@ -592,6 +618,114 @@ struct OnboardingIntelligenceTests {
     await vm.advanceToStartingLineup()
     #expect(mock.lastSolveInput != nil)
     #expect(mock.lastSolveInput?.targetSize == nil)
+  }
+
+  @Test("Lineup groups accounts by scene in the order the scenes were picked")
+  @MainActor
+  func lineupGroupsBySceneInSelectionOrder() async throws {
+    let mock = MockIntelligenceService()
+    mock.sceneByFollowDID = [
+      "did:plc:synthmaker1": (2421, "Indie Game Makers"),
+      "did:plc:synthbackup1": (2421, "Indie Game Makers"),
+    ]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let swiftScene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    let gameScene = try #require(vm.featuredCommunities.first { $0.communityId == 2421 })
+
+    vm.toggleCommunity(gameScene)
+    vm.toggleCommunity(swiftScene)
+    await vm.advanceToStartingLineup()
+
+    let sections = vm.lineupSceneSections
+    #expect(sections.map(\.communityId) == [2421, 497])
+    #expect(sections.map(\.title) == ["Indie Game Makers", "iOS & SwiftUI Builders"])
+    #expect(
+      sections.first?.items.map { $0.did.didString() } == ["did:plc:synthmaker1", "did:plc:synthbackup1"]
+    )
+    #expect(
+      sections.last?.items.map { $0.did.didString() }
+        == ["did:plc:synthanchor1", "did:plc:synthconvo1", "did:plc:synthcurator1"]
+    )
+    #expect(vm.activeFollowCount == 5)
+  }
+
+  @Test("Accounts the viewer already follows are neither listed nor counted nor followed again")
+  @MainActor
+  func lineupLeavesOutAlreadyFollowedAccounts() async throws {
+    let mock = MockIntelligenceService()
+    mock.followedDIDs = ["did:plc:synthanchor1", "did:plc:synthconvo1"]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    let listed = vm.lineupSceneSections.flatMap(\.items).map { $0.did.didString() }
+    #expect(listed == ["did:plc:synthmaker1", "did:plc:synthcurator1", "did:plc:synthbackup1"])
+    #expect(vm.activeFollowCount == 3)
+    #expect(!vm.enabledFollowDIDs.contains("did:plc:synthanchor1"))
+
+    await vm.commitStartingLineup()
+    #expect(!mock.committedFollows.contains("did:plc:synthanchor1"))
+    #expect(!mock.committedFollows.contains("did:plc:synthconvo1"))
+    #expect(vm.commitReceipt?.followedCount == mock.committedFollows.count)
+  }
+
+  @Test("A blocked or muted pick is replaced by the first usable bench account from its own scene")
+  @MainActor
+  func lineupReplacesBlockedPickFromBench() async throws {
+    let mock = MockIntelligenceService()
+    mock.blockedDIDs = ["did:plc:synthmaker1"]
+    mock.followedDIDs = ["did:plc:benchswift1"]
+    mock.benchFollows = [
+      ("did:plc:benchgame1", 2421, "Indie Game Makers"),
+      ("did:plc:benchswift1", 497, "iOS & SwiftUI Builders"),
+      ("did:plc:benchswift2", 497, "iOS & SwiftUI Builders"),
+      ("did:plc:benchswift3", 497, "iOS & SwiftUI Builders"),
+    ]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    let listed = vm.lineupSceneSections.flatMap(\.items).map { $0.did.didString() }
+    #expect(
+      listed == [
+        "did:plc:synthanchor1",
+        "did:plc:benchswift2",
+        "did:plc:synthconvo1",
+        "did:plc:synthcurator1",
+        "did:plc:synthbackup1",
+      ]
+    )
+    #expect(vm.activeFollowCount == 5)
+    #expect(vm.enabledFollowDIDs.contains("did:plc:benchswift2"))
+    #expect(vm.lineupProfilesByDID["did:plc:benchswift2"] != nil)
+  }
+
+  @Test("A blocked or muted pick is dropped when its scene has no usable bench account")
+  @MainActor
+  func lineupDropsBlockedPickWithoutBench() async throws {
+    let mock = MockIntelligenceService()
+    mock.blockedDIDs = ["did:plc:synthmaker1"]
+    mock.benchFollows = [("did:plc:benchgame1", 2421, "Indie Game Makers")]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    let listed = vm.lineupSceneSections.flatMap(\.items).map { $0.did.didString() }
+    #expect(!listed.contains("did:plc:synthmaker1"))
+    #expect(!listed.contains("did:plc:benchgame1"))
+    #expect(listed.count == 4)
+    #expect(vm.activeFollowCount == 4)
+
+    await vm.commitStartingLineup()
+    #expect(!mock.committedFollows.contains("did:plc:synthmaker1"))
+    #expect(vm.commitReceipt?.followedCount == 4)
   }
 
   @Test("Out-of-order listCommunities responses cannot overwrite newer search queries or resets")
