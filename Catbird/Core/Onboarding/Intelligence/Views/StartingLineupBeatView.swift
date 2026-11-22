@@ -85,7 +85,7 @@ struct StartingLineupBeatView: View {
           Label("Your Starting Lineup", systemImage: "person.3.sequence.fill")
             .font(.caption.weight(.semibold))
             .foregroundStyle(Color.accentColor)
-          Text("\(viewModel.activeFollowCount) Vetted Voices")
+          Text(viewModel.lineupHeadline)
             .font(.title2.weight(.bold))
         }
 
@@ -107,31 +107,24 @@ struct StartingLineupBeatView: View {
         }
       }
 
-      Text("Balanced across anchors, original makers, warm conversationalists, and curators — with zero hostile cluster collisions and repost floods automatically tamed.")
+      Text(viewModel.lineupSummaryLine)
         .font(.caption)
         .foregroundStyle(.secondary)
+        .accessibilityIdentifier("intel.lineup.summaryLine")
 
-      if let summary = viewModel.solvedBundle?.summary {
+      let tally = viewModel.activeLineupTally
+      if tally.sceneCount > 0 {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
             SummaryMetricPill(
-              label: "\(summary.coveredCommunities) scenes",
+              label: tally.sceneCount == 1 ? "1 scene" : "\(tally.sceneCount) scenes",
               symbol: "globe.desk"
             )
-            if summary.anchorCount > 0 {
-              SummaryMetricPill(label: "\(summary.anchorCount) anchors", symbol: "shield.checkered")
-            }
-            if summary.makerCount > 0 {
-              SummaryMetricPill(label: "\(summary.makerCount) makers", symbol: "hammer.fill")
-            }
-            if summary.conversationalCount > 0 {
-              SummaryMetricPill(
-                label: "\(summary.conversationalCount) conversational",
-                symbol: "bubble.left.and.bubble.right.fill"
-              )
-            }
-            if summary.curatorCount > 0 {
-              SummaryMetricPill(label: "\(summary.curatorCount) curators", symbol: "safari.fill")
+            ForEach(CommunityRole.allCases) { role in
+              let count = tally.count(for: role)
+              if count > 0 {
+                SummaryMetricPill(label: rolePillLabel(role, count: count), symbol: role.symbolName)
+              }
             }
           }
         }
@@ -382,10 +375,27 @@ struct StartingLineupBeatView: View {
     if viewModel.isCommitting {
       return "Setting Up Your Feed…"
     }
-    if viewModel.mode == .tuneExistingFeed {
-      return "Add \(viewModel.activeFollowCount) Voices to My Feed"
+    let count = viewModel.activeFollowCount
+    if count == 0 {
+      return viewModel.mode == .tuneExistingFeed ? "Add Feeds to My Feed" : "Launch with These Feeds"
     }
-    return "Follow \(viewModel.activeFollowCount) Voices & Launch"
+    let voices = SceneOnboardingViewModel.voiceCount(count)
+    if viewModel.mode == .tuneExistingFeed {
+      return "Add \(voices) to My Feed"
+    }
+    return "Follow \(voices) & Launch"
+  }
+
+  private func rolePillLabel(_ role: CommunityRole, count: Int) -> String {
+    let noun: String
+    switch role {
+    case .anchorCreator: noun = count == 1 ? "anchor" : "anchors"
+    case .visualMaker: noun = count == 1 ? "maker" : "makers"
+    case .conversationalist: noun = "conversational"
+    case .sceneCurator: noun = count == 1 ? "curator" : "curators"
+    case .projectOrStudio: noun = count == 1 ? "project" : "projects"
+    }
+    return "\(count) \(noun)"
   }
 }
 

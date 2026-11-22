@@ -62,6 +62,16 @@ public final class SceneOnboardingViewModel {
     public let items: [BlueCatbirdOnboardingDefs.RecommendedFollow]
   }
 
+  /// How many scenes and roles the switched-on lineup accounts cover.
+  public struct LineupTally: Equatable, Sendable {
+    public var sceneCount: Int = 0
+    public var roleCounts: [CommunityRole: Int] = [:]
+
+    public func count(for role: CommunityRole) -> Int {
+      roleCounts[role] ?? 0
+    }
+  }
+
   // MARK: - Dependencies & Mode
 
   public static let maxSelectedCommunities = 24
@@ -139,6 +149,9 @@ public final class SceneOnboardingViewModel {
   /// blocked or muted pick is replaced by the next bench account from the same scene.
   public private(set) var lineupFollows: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
   public private(set) var lineupProfilesByDID: [String: HydratedRecommendedProfile] = [:]
+  /// Accounts in the lineup's scenes that the viewer already follows. A live server reports this
+  /// directly; for other servers it is the number of solved picks the lineup left out as followed.
+  public private(set) var alreadyFollowedInLineupScenes: Int = 0
   public private(set) var hydratedFeeds: [HydratedFeedOption] = []
   public private(set) var hydratedStarterPacks: [HydratedStarterPackOption] = []
 
@@ -239,6 +252,59 @@ public final class SceneOnboardingViewModel {
     lineupFollows.filter { enabledFollowDIDs.contains($0.did.didString()) }.count
   }
 
+  public var activeLineupTally: LineupTally {
+    var tally = LineupTally()
+    var scenes = Set<Int>()
+    for follow in lineupFollows where enabledFollowDIDs.contains(follow.did.didString()) {
+      scenes.insert(follow.communityId)
+      tally.roleCounts[CommunityRole(rawRole: follow.role), default: 0] += 1
+    }
+    tally.sceneCount = scenes.count
+    return tally
+  }
+
+  /// The hero line above the lineup, such as "12 Vetted Voices".
+  public var lineupHeadline: String {
+    Self.voiceCount(activeFollowCount, describedAs: "Vetted")
+  }
+
+  /// One sentence under the hero line: how many scenes the switched-on accounts come from, and how
+  /// many accounts in those scenes were left out because the viewer already follows them.
+  public var lineupSummaryLine: String {
+    let scenes = activeLineupTally.sceneCount
+    var line: String
+    switch scenes {
+    case 0: line = "Switch accounts on below to follow them."
+    case 1: line = "Picked from 1 scene."
+    default: line = "Picked from \(scenes) scenes, in the order you chose them."
+    }
+    switch alreadyFollowedInLineupScenes {
+    case 0: break
+    case 1: line += " 1 account you already follow there is left out."
+    default: line += " \(alreadyFollowedInLineupScenes) accounts you already follow there are left out."
+    }
+    return line
+  }
+
+  /// The celebration line once the lineup is committed, stating how many accounts were followed.
+  public var celebrationSummaryLine: String {
+    guard let receipt = commitReceipt else {
+      return "Tailored to the scenes you chose."
+    }
+    switch receipt.followedCount {
+    case 0: return "Your feeds are set up for the scenes you chose."
+    case 1: return "You now follow 1 new voice from the scenes you chose."
+    default: return "You now follow \(receipt.followedCount) new voices from the scenes you chose."
+    }
+  }
+
+  /// "1 Voice" or "N Voices", with an optional word before the noun ("12 Vetted Voices").
+  public nonisolated static func voiceCount(_ count: Int, describedAs adjective: String? = nil) -> String {
+    let noun = count == 1 ? "Voice" : "Voices"
+    guard let adjective else { return "\(count) \(noun)" }
+    return "\(count) \(adjective) \(noun)"
+  }
+
   public var activeOriginalsOnlyCount: Int {
     lineupFollows.filter {
       let did = $0.did.didString()
@@ -321,6 +387,7 @@ public final class SceneOnboardingViewModel {
     solvedBundle = nil
     lineupFollows = []
     lineupProfilesByDID = [:]
+    alreadyFollowedInLineupScenes = 0
     hydratedFeeds = []
     hydratedStarterPacks = []
     pinnedDIDs = []
@@ -796,6 +863,8 @@ public final class SceneOnboardingViewModel {
       )
       self.lineupFollows = lineup
       self.lineupProfilesByDID = profiles
+      self.alreadyFollowedInLineupScenes = output.alreadyFollowingInScenes
+        ?? output.follows.filter { profiles[$0.did.didString()]?.alreadyFollowing == true }.count
       self.hydratedFeeds = feeds
       self.hydratedStarterPacks = packs
 

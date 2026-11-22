@@ -70,6 +70,8 @@ struct OnboardingIntelligenceTests {
     var sceneByFollowDID: [String: (id: Int, title: String)] = [:]
     /// Alternates the solve returns in its bench, in order.
     var benchFollows: [(did: String, communityId: Int, title: String)] = []
+    /// What the solve reports for followed accounts in the chosen scenes; nil leaves the field out.
+    var alreadyFollowingInScenes: Int?
     var seedFollows: [String] = ["did:plc:synthseed1"]
     var lastSearchQuery: String?
     var lastMacroCategory: String?
@@ -254,7 +256,7 @@ struct OnboardingIntelligenceTests {
         ("did:plc:synthmaker1", "visual_maker", "follow_all", false, 14),
         ("did:plc:synthconvo1", "conversationalist", "follow_all", false, 18),
         ("did:plc:synthcurator1", "scene_curator", "originals_only", true, 28),
-        ("did:plc:synthbackup1", "visual_maker", "follow_all", false, 12),
+        ("did:plc:synthbackup1", "visual_maker", "follow_all", false, 12)
       ]
 
       var follows: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
@@ -316,7 +318,8 @@ struct OnboardingIntelligenceTests {
         ],
         starterPacks: [],
         harmoniousNeighbors: [neighbor],
-        bench: bench.isEmpty ? nil : bench
+        bench: bench.isEmpty ? nil : bench,
+        alreadyFollowingInScenes: alreadyFollowingInScenes
       )
     }
 
@@ -626,7 +629,7 @@ struct OnboardingIntelligenceTests {
     let mock = MockIntelligenceService()
     mock.sceneByFollowDID = [
       "did:plc:synthmaker1": (2421, "Indie Game Makers"),
-      "did:plc:synthbackup1": (2421, "Indie Game Makers"),
+      "did:plc:synthbackup1": (2421, "Indie Game Makers")
     ]
     let vm = SceneOnboardingViewModel(service: mock)
     await vm.loadInitialCatalog()
@@ -682,7 +685,7 @@ struct OnboardingIntelligenceTests {
       ("did:plc:benchgame1", 2421, "Indie Game Makers"),
       ("did:plc:benchswift1", 497, "iOS & SwiftUI Builders"),
       ("did:plc:benchswift2", 497, "iOS & SwiftUI Builders"),
-      ("did:plc:benchswift3", 497, "iOS & SwiftUI Builders"),
+      ("did:plc:benchswift3", 497, "iOS & SwiftUI Builders")
     ]
     let vm = SceneOnboardingViewModel(service: mock)
     await vm.loadInitialCatalog()
@@ -697,7 +700,7 @@ struct OnboardingIntelligenceTests {
         "did:plc:benchswift2",
         "did:plc:synthconvo1",
         "did:plc:synthcurator1",
-        "did:plc:synthbackup1",
+        "did:plc:synthbackup1"
       ]
     )
     #expect(vm.activeFollowCount == 5)
@@ -726,6 +729,140 @@ struct OnboardingIntelligenceTests {
     await vm.commitStartingLineup()
     #expect(!mock.committedFollows.contains("did:plc:synthmaker1"))
     #expect(vm.commitReceipt?.followedCount == 4)
+  }
+
+  @Test("Voice counts read as singular for one account and plural otherwise")
+  func voiceCountWording() {
+    #expect(SceneOnboardingViewModel.voiceCount(0) == "0 Voices")
+    #expect(SceneOnboardingViewModel.voiceCount(1) == "1 Voice")
+    #expect(SceneOnboardingViewModel.voiceCount(12) == "12 Voices")
+    #expect(SceneOnboardingViewModel.voiceCount(1, describedAs: "Vetted") == "1 Vetted Voice")
+    #expect(SceneOnboardingViewModel.voiceCount(6, describedAs: "Vetted") == "6 Vetted Voices")
+  }
+
+  @Test("Lineup headline, summary and scene and role tallies follow the accounts switched on")
+  @MainActor
+  func lineupHeadlineAndTallyFollowSwitchedOnAccounts() async throws {
+    let mock = MockIntelligenceService()
+    mock.sceneByFollowDID = [
+      "did:plc:synthmaker1": (2421, "Indie Game Makers"),
+      "did:plc:synthbackup1": (2421, "Indie Game Makers")
+    ]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let swiftScene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    let gameScene = try #require(vm.featuredCommunities.first { $0.communityId == 2421 })
+    vm.toggleCommunity(swiftScene)
+    vm.toggleCommunity(gameScene)
+    await vm.advanceToStartingLineup()
+
+    #expect(vm.lineupHeadline == "5 Vetted Voices")
+    #expect(vm.lineupSummaryLine == "Picked from 2 scenes, in the order you chose them.")
+    var tally = vm.activeLineupTally
+    #expect(tally.sceneCount == 2)
+    #expect(tally.count(for: .anchorCreator) == 1)
+    #expect(tally.count(for: .visualMaker) == 2)
+    #expect(tally.count(for: .conversationalist) == 1)
+    #expect(tally.count(for: .sceneCurator) == 1)
+    #expect(tally.count(for: .projectOrStudio) == 0)
+
+    vm.toggleFollowAccount("did:plc:synthmaker1")
+    vm.toggleFollowAccount("did:plc:synthbackup1")
+    tally = vm.activeLineupTally
+    #expect(vm.lineupHeadline == "3 Vetted Voices")
+    #expect(vm.lineupSummaryLine == "Picked from 1 scene.")
+    #expect(tally.sceneCount == 1)
+    #expect(tally.count(for: .visualMaker) == 0)
+
+    vm.toggleFollowAccount("did:plc:synthanchor1")
+    vm.toggleFollowAccount("did:plc:synthconvo1")
+    #expect(vm.lineupHeadline == "1 Vetted Voice")
+
+    vm.toggleFollowAccount("did:plc:synthcurator1")
+    #expect(vm.lineupHeadline == "0 Vetted Voices")
+    #expect(vm.lineupSummaryLine == "Switch accounts on below to follow them.")
+    #expect(vm.activeLineupTally.sceneCount == 0)
+  }
+
+  @Test("Without a server count, the summary states how many solved picks were left out as followed")
+  @MainActor
+  func lineupSummaryCountsSkippedFollowsWithoutServerField() async throws {
+    let mock = MockIntelligenceService()
+    mock.followedDIDs = ["did:plc:synthanchor1", "did:plc:synthconvo1"]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    #expect(vm.alreadyFollowedInLineupScenes == 2)
+    #expect(
+      vm.lineupSummaryLine
+        == "Picked from 1 scene. 2 accounts you already follow there are left out."
+    )
+  }
+
+  @Test("A live server's alreadyFollowingInScenes count wins over the client's own count")
+  @MainActor
+  func lineupSummaryPrefersServerAlreadyFollowingCount() async throws {
+    let mock = MockIntelligenceService()
+    mock.followedDIDs = ["did:plc:synthanchor1", "did:plc:synthconvo1"]
+    mock.alreadyFollowingInScenes = 1
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    #expect(vm.alreadyFollowedInLineupScenes == 1)
+    #expect(
+      vm.lineupSummaryLine == "Picked from 1 scene. 1 account you already follow there is left out."
+    )
+
+    await vm.resetSession()
+    #expect(vm.alreadyFollowedInLineupScenes == 0)
+  }
+
+  @Test("The celebration line states the number of accounts the commit actually followed")
+  @MainActor
+  func celebrationLineStatesTrueFollowCount() async throws {
+    let mock = MockIntelligenceService()
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+    #expect(vm.celebrationSummaryLine == "Tailored to the scenes you chose.")
+
+    for did in ["did:plc:synthmaker1", "did:plc:synthconvo1", "did:plc:synthcurator1", "did:plc:synthbackup1"] {
+      vm.toggleFollowAccount(did)
+    }
+    await vm.commitStartingLineup()
+    #expect(vm.commitReceipt?.followedCount == 1)
+    #expect(vm.celebrationSummaryLine == "You now follow 1 new voice from the scenes you chose.")
+
+    let fullMock = MockIntelligenceService()
+    let fullVM = SceneOnboardingViewModel(service: fullMock)
+    await fullVM.loadInitialCatalog()
+    let fullScene = try #require(fullVM.featuredCommunities.first { $0.communityId == 497 })
+    fullVM.toggleCommunity(fullScene)
+    await fullVM.advanceToStartingLineup()
+    await fullVM.commitStartingLineup()
+    #expect(fullVM.commitReceipt?.followedCount == 5)
+    #expect(fullVM.celebrationSummaryLine == "You now follow 5 new voices from the scenes you chose.")
+
+    let feedsMock = MockIntelligenceService()
+    let feedsVM = SceneOnboardingViewModel(service: feedsMock)
+    await feedsVM.loadInitialCatalog()
+    let feedsScene = try #require(feedsVM.featuredCommunities.first { $0.communityId == 497 })
+    feedsVM.toggleCommunity(feedsScene)
+    await feedsVM.advanceToStartingLineup()
+    for did in feedsVM.enabledFollowDIDs {
+      feedsVM.toggleFollowAccount(did)
+    }
+    await feedsVM.commitStartingLineup()
+    #expect(feedsVM.commitReceipt?.followedCount == 0)
+    #expect(feedsVM.celebrationSummaryLine == "Your feeds are set up for the scenes you chose.")
   }
 
   @Test("Out-of-order listCommunities responses cannot overwrite newer search queries or resets")

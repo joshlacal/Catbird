@@ -239,7 +239,7 @@ public struct SceneIntelligenceOnboardingView: View {
             .font(.largeTitle.weight(.bold))
             .multilineTextAlignment(.center)
 
-          Text("Real voices, balanced roles, and calm pacing — tailored to the scenes you chose.")
+          Text(vm.celebrationSummaryLine)
             .font(.body)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -250,7 +250,7 @@ public struct SceneIntelligenceOnboardingView: View {
           HStack(spacing: 12) {
             CelebrationStatCard(
               value: "\(receipt.followedCount)",
-              label: "Voices Followed",
+              label: receipt.followedCount == 1 ? "Voice Followed" : "Voices Followed",
               symbol: "person.2.fill"
             )
             if receipt.originalsOnlyCount > 0 {
