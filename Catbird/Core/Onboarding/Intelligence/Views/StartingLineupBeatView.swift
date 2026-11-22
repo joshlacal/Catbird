@@ -42,14 +42,14 @@ struct StartingLineupBeatView: View {
           if viewModel.isSolvingBundle {
             VStack(spacing: 12) {
               ProgressView()
-              Text("Solving role-balanced lineup across your scenes…")
+              Text("Picking voices from each of your scenes…")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 48)
           } else {
-            roleSectionsList
+            sceneSectionsList
             harmoniousNeighborsSection
             pinnableFeedsSection
             starterPacksReferenceSection
@@ -85,7 +85,7 @@ struct StartingLineupBeatView: View {
           Label("Your Starting Lineup", systemImage: "person.3.sequence.fill")
             .font(.caption.weight(.semibold))
             .foregroundStyle(Color.accentColor)
-          Text("\(viewModel.activeFollowCount) Vetted Voices")
+          Text(viewModel.lineupHeadline)
             .font(.title2.weight(.bold))
         }
 
@@ -107,31 +107,24 @@ struct StartingLineupBeatView: View {
         }
       }
 
-      Text("Balanced across anchors, original makers, warm conversationalists, and curators — with zero hostile cluster collisions and repost floods automatically tamed.")
+      Text(viewModel.lineupSummaryLine)
         .font(.caption)
         .foregroundStyle(.secondary)
+        .accessibilityIdentifier("intel.lineup.summaryLine")
 
-      if let summary = viewModel.solvedBundle?.summary {
+      let tally = viewModel.activeLineupTally
+      if tally.sceneCount > 0 {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
             SummaryMetricPill(
-              label: "\(summary.coveredCommunities) scenes",
+              label: tally.sceneCount == 1 ? "1 scene" : "\(tally.sceneCount) scenes",
               symbol: "globe.desk"
             )
-            if summary.anchorCount > 0 {
-              SummaryMetricPill(label: "\(summary.anchorCount) anchors", symbol: "shield.checkered")
-            }
-            if summary.makerCount > 0 {
-              SummaryMetricPill(label: "\(summary.makerCount) makers", symbol: "hammer.fill")
-            }
-            if summary.conversationalCount > 0 {
-              SummaryMetricPill(
-                label: "\(summary.conversationalCount) conversational",
-                symbol: "bubble.left.and.bubble.right.fill"
-              )
-            }
-            if summary.curatorCount > 0 {
-              SummaryMetricPill(label: "\(summary.curatorCount) curators", symbol: "safari.fill")
+            ForEach(CommunityRole.allCases) { role in
+              let count = tally.count(for: role)
+              if count > 0 {
+                SummaryMetricPill(label: rolePillLabel(role, count: count), symbol: role.symbolName)
+              }
             }
           }
         }
@@ -144,21 +137,17 @@ struct StartingLineupBeatView: View {
     )
   }
 
-  private var roleSectionsList: some View {
+  private var sceneSectionsList: some View {
     VStack(alignment: .leading, spacing: 22) {
-      ForEach(viewModel.lineupRoleSections) { section in
+      ForEach(viewModel.lineupSceneSections) { section in
         VStack(alignment: .leading, spacing: 10) {
           HStack(spacing: 8) {
-            Image(systemName: section.role.symbolName)
+            Image(systemName: "person.3.fill")
               .font(.subheadline.weight(.bold))
               .foregroundStyle(Color.accentColor)
-            VStack(alignment: .leading, spacing: 1) {
-              Text(section.role.displayTitle)
-                .font(.headline)
-              Text(section.role.subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+            Text(section.title)
+              .font(.headline)
+              .lineLimit(2)
             Spacer()
             Text("\(section.items.count)")
               .font(.caption.weight(.bold).monospacedDigit())
@@ -167,6 +156,7 @@ struct StartingLineupBeatView: View {
               .padding(.vertical, 4)
               .background(Color.secondary.opacity(0.12), in: Capsule())
           }
+          .accessibilityElement(children: .combine)
 
           VStack(spacing: 10) {
             ForEach(section.items, id: \.did) { rec in
@@ -385,10 +375,27 @@ struct StartingLineupBeatView: View {
     if viewModel.isCommitting {
       return "Setting Up Your Feed…"
     }
-    if viewModel.mode == .tuneExistingFeed {
-      return "Add \(viewModel.activeFollowCount) Voices to My Feed"
+    let count = viewModel.activeFollowCount
+    if count == 0 {
+      return viewModel.mode == .tuneExistingFeed ? "Add Feeds to My Feed" : "Launch with These Feeds"
     }
-    return "Follow \(viewModel.activeFollowCount) Voices & Launch"
+    let voices = SceneOnboardingViewModel.voiceCount(count)
+    if viewModel.mode == .tuneExistingFeed {
+      return "Add \(voices) to My Feed"
+    }
+    return "Follow \(voices) & Launch"
+  }
+
+  private func rolePillLabel(_ role: CommunityRole, count: Int) -> String {
+    let noun: String
+    switch role {
+    case .anchorCreator: noun = count == 1 ? "anchor" : "anchors"
+    case .visualMaker: noun = count == 1 ? "maker" : "makers"
+    case .conversationalist: noun = "conversational"
+    case .sceneCurator: noun = count == 1 ? "curator" : "curators"
+    case .projectOrStudio: noun = count == 1 ? "project" : "projects"
+    }
+    return "\(count) \(noun)"
   }
 }
 
@@ -420,6 +427,10 @@ private struct LineupAccountRowView: View {
   let onToggleOriginalsOnly: () -> Void
   let onSwap: () -> Void
 
+  private var role: CommunityRole {
+    CommunityRole(rawRole: recommendation.role)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top, spacing: 12) {
@@ -431,20 +442,9 @@ private struct LineupAccountRowView: View {
         )
 
         VStack(alignment: .leading, spacing: 3) {
-          HStack(spacing: 6) {
-            Text(profile?.displayName ?? "Community Voice")
-              .font(.subheadline.weight(.bold))
-              .lineLimit(1)
-
-            if profile?.alreadyFollowing == true {
-              Text("Following")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.green)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.green.opacity(0.12), in: Capsule())
-            }
-          }
+          Text(profile?.displayName ?? "Community Voice")
+            .font(.subheadline.weight(.bold))
+            .lineLimit(1)
 
           if let handle = profile?.handle {
             Text("@\(handle)")
@@ -478,13 +478,18 @@ private struct LineupAccountRowView: View {
       }
 
       HStack(spacing: 8) {
-        Text(recommendation.communityTitle)
-          .font(.caption2.weight(.medium))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.secondary.opacity(0.1), in: Capsule())
+        HStack(spacing: 4) {
+          Image(systemName: role.symbolName)
+            .font(.caption2)
+          Text(role.badgeTitle)
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.1), in: Capsule())
+        .accessibilityElement(children: .combine)
 
         Spacer()
 

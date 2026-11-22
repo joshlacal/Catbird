@@ -68,7 +68,7 @@ struct TasteCalibrationBeatView: View {
         HStack(spacing: 8) {
           PaceOptionChip(
             title: "Calm",
-            subtitle: "~18 voices",
+            subtitle: viewModel.paceSubtitle(for: .value_calm),
             symbol: "leaf.fill",
             isSelected: viewModel.pace == .value_calm,
             action: { Task { await viewModel.updatePace(.value_calm) } }
@@ -77,7 +77,7 @@ struct TasteCalibrationBeatView: View {
 
           PaceOptionChip(
             title: "Balanced",
-            subtitle: "~25 voices",
+            subtitle: viewModel.paceSubtitle(for: .value_balanced),
             symbol: "sparkles",
             isSelected: viewModel.pace == .value_balanced,
             action: { Task { await viewModel.updatePace(.value_balanced) } }
@@ -86,12 +86,20 @@ struct TasteCalibrationBeatView: View {
 
           PaceOptionChip(
             title: "Lively",
-            subtitle: "~34 voices",
+            subtitle: viewModel.paceSubtitle(for: .value_lively),
             symbol: "bolt.fill",
             isSelected: viewModel.pace == .value_lively,
             action: { Task { await viewModel.updatePace(.value_lively) } }
           )
           .accessibilityIdentifier("intel.pace.lively")
+        }
+
+        if let paceFootnote = viewModel.paceFootnote {
+          Text(paceFootnote)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("intel.pace.footnote")
         }
       }
 

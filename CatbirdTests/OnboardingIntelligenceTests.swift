@@ -26,14 +26,16 @@ struct OnboardingIntelligenceTests {
     )
   }
 
-  private static func makeCommunity(
+  static func makeCommunity(
     id: Int,
     title: String,
     sceneSlug: String = "swift_apple",
-    category: String = "software_ai_tech"
+    category: String = "software_ai_tech",
+    alreadyFollowingCount: Int? = nil,
+    sampleAccountDids: [String]? = nil
   ) throws -> BlueCatbirdIntelDefs.CommunitySummary {
     let postURI = try ATProtocolURI(uriString: "at://did:plc:synthauthor\(id)/app.bsky.feed.post/3lsynth\(id)")
-    let did = try DID(didString: "did:plc:synthauthor\(id)")
+    let sampleDIDs = try (sampleAccountDids ?? ["did:plc:synthauthor\(id)"]).map { try DID(didString: $0) }
     return BlueCatbirdIntelDefs.CommunitySummary(
       communityId: id,
       title: title,
@@ -49,15 +51,28 @@ struct OnboardingIntelligenceTests {
       curatedListTags: ["swiftui", "indiedev"],
       neighborCommunityIds: [2421],
       samplePostUris: [postURI],
-      sampleAccountDids: [did],
+      sampleAccountDids: sampleDIDs,
       feedGeneratorUris: [],
-      starterPackUris: []
+      starterPackUris: [],
+      alreadyFollowingCount: alreadyFollowingCount
     )
   }
 
   @MainActor
-  private final class MockIntelligenceService: @unchecked Sendable, CatbirdIntelligenceServicing {
+  final class MockIntelligenceService: @unchecked Sendable, CatbirdIntelligenceServicing {
     var shouldThrowUnavailable = false
+    /// Answers like a live server that personalizes communities for the viewer.
+    var liveMode = false
+    /// Accounts hydrateProfiles reports as already followed by the viewer.
+    var followedDIDs: Set<String> = []
+    /// Accounts hydrateProfiles reports as blocked or muted.
+    var blockedDIDs: Set<String> = []
+    /// Scene per follow DID; a follow not listed here belongs to scene 497.
+    var sceneByFollowDID: [String: (id: Int, title: String)] = [:]
+    /// Alternates the solve returns in its bench, in order.
+    var benchFollows: [(did: String, communityId: Int, title: String)] = []
+    /// What the solve reports for followed accounts in the chosen scenes; nil leaves the field out.
+    var alreadyFollowingInScenes: Int?
     var seedFollows: [String] = ["did:plc:synthseed1"]
     var lastSearchQuery: String?
     var lastMacroCategory: String?
@@ -65,6 +80,12 @@ struct OnboardingIntelligenceTests {
     var committedFollows: [String] = []
     var committedOriginalsOnly: Set<String> = []
     var committedPinnedFeeds: [String] = []
+    /// The ordered members getCommunity returns, with their tiers; empty returns one member.
+    var peekMembers: [(did: String, tier: String?)] = []
+    /// The sample accounts getCommunity puts on the community it returns; nil keeps the default.
+    var peekSampleAccountDids: [String]?
+    /// Every hydrateProfiles call, in order, as the DIDs it asked for.
+    var hydrateCalls: [[String]] = []
 
     func fetchSeedFollowDIDs(limit: Int) async -> [String] {
       seedFollows
@@ -79,12 +100,17 @@ struct OnboardingIntelligenceTests {
       if shouldThrowUnavailable {
         throw CatbirdIntelligenceError.serviceUnavailable
       }
-      let c1 = try OnboardingIntelligenceTests.makeCommunity(id: 497, title: "iOS & SwiftUI Builders")
+      let c1 = try OnboardingIntelligenceTests.makeCommunity(
+        id: 497,
+        title: "iOS & SwiftUI Builders",
+        alreadyFollowingCount: liveMode ? 2 : nil
+      )
       let c2 = try OnboardingIntelligenceTests.makeCommunity(
         id: 2421,
         title: "Indie Game Makers",
         sceneSlug: "indie_games",
-        category: "games_interactive"
+        category: "games_interactive",
+        alreadyFollowingCount: liveMode ? 0 : nil
       )
       let warm = seedFollowDIDs.isEmpty ? [] : [c1]
       return BlueCatbirdOnboardingGetCatalog.Output(
@@ -105,12 +131,17 @@ struct OnboardingIntelligenceTests {
     ) async throws -> BlueCatbirdIntelListCommunities.Output {
       lastSearchQuery = query
       lastMacroCategory = macroCategory
-      let c1 = try OnboardingIntelligenceTests.makeCommunity(id: 497, title: "iOS & SwiftUI Builders")
+      let c1 = try OnboardingIntelligenceTests.makeCommunity(
+        id: 497,
+        title: "iOS & SwiftUI Builders",
+        alreadyFollowingCount: liveMode ? 2 : nil
+      )
       let c2 = try OnboardingIntelligenceTests.makeCommunity(
         id: 2421,
         title: "Indie Game Makers",
         sceneSlug: "indie_games",
-        category: "games_interactive"
+        category: "games_interactive",
+        alreadyFollowingCount: liveMode ? 0 : nil
       )
       let filtered = [c1, c2].filter { item in
         if let macroCategory, item.macroCategory != macroCategory { return false }
@@ -129,13 +160,17 @@ struct OnboardingIntelligenceTests {
     }
 
     func getCommunity(communityId: Int) async throws -> BlueCatbirdIntelGetCommunity.Output {
-      let comm = try OnboardingIntelligenceTests.makeCommunity(id: communityId, title: "iOS & SwiftUI Builders")
+      let comm = try OnboardingIntelligenceTests.makeCommunity(
+        id: communityId,
+        title: "iOS & SwiftUI Builders",
+        alreadyFollowingCount: liveMode ? 2 : nil,
+        sampleAccountDids: peekSampleAccountDids
+      )
       let memberDID = try DID(didString: "did:plc:synthmember1")
       let postURI = try ATProtocolURI(uriString: "at://did:plc:synthmember1/app.bsky.feed.post/3lpeek1")
-      return BlueCatbirdIntelGetCommunity.Output(
-        catalogVersion: "s17_rev6_synth",
-        community: comm,
-        members: [
+      let members: [BlueCatbirdIntelDefs.CommunityMemberRef]
+      if peekMembers.isEmpty {
+        members = [
           BlueCatbirdIntelDefs.CommunityMemberRef(
             did: memberDID,
             role: "anchor_creator",
@@ -147,7 +182,26 @@ struct OnboardingIntelligenceTests {
             estimatedPostsPerWeek: 10,
             samplePostUri: postURI
           )
-        ],
+        ]
+      } else {
+        members = try peekMembers.map { member in
+          BlueCatbirdIntelDefs.CommunityMemberRef(
+            did: try DID(didString: member.did),
+            role: "community_member",
+            recommendedMode: "follow_all",
+            whyPicked: "Posts often in iOS & SwiftUI Builders",
+            rankScoreBps: 5000,
+            repostShareBps: 1000,
+            mediaShareBps: 2000,
+            estimatedPostsPerWeek: 5,
+            tier: member.tier
+          )
+        }
+      }
+      return BlueCatbirdIntelGetCommunity.Output(
+        catalogVersion: "s17_rev6_synth",
+        community: comm,
+        members: members,
         samplePosts: [
           BlueCatbirdIntelDefs.PostSkeletonItem(
             post: postURI,
@@ -156,7 +210,9 @@ struct OnboardingIntelligenceTests {
             authorRole: "anchor_creator"
           )
         ],
-        neighborCommunities: []
+        neighborCommunities: [],
+        defaultLineupCount: liveMode ? 6 : nil,
+        boostedLineupCount: liveMode ? 12 : nil
       )
     }
 
@@ -226,18 +282,19 @@ struct OnboardingIntelligenceTests {
         ("did:plc:synthmaker1", "visual_maker", "follow_all", false, 14),
         ("did:plc:synthconvo1", "conversationalist", "follow_all", false, 18),
         ("did:plc:synthcurator1", "scene_curator", "originals_only", true, 28),
-        ("did:plc:synthbackup1", "visual_maker", "follow_all", false, 12),
+        ("did:plc:synthbackup1", "visual_maker", "follow_all", false, 12)
       ]
 
       var follows: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
       for (didStr, role, mode, hideRT, perWeek) in candidates where !excludedSet.contains(didStr) {
         let did = try DID(didString: didStr)
         let effectiveHideRT = (input.controls?.originalsOnlyForHeavyReposters ?? true) && hideRT
+        let scene = sceneByFollowDID[didStr]
         follows.append(
           BlueCatbirdOnboardingDefs.RecommendedFollow(
             did: did,
-            communityId: 497,
-            communityTitle: "iOS & SwiftUI Builders",
+            communityId: scene?.id ?? 497,
+            communityTitle: scene?.title ?? "iOS & SwiftUI Builders",
             role: role,
             deliveryMode: effectiveHideRT ? "originals_only" : mode,
             hideReposts: effectiveHideRT,
@@ -245,6 +302,20 @@ struct OnboardingIntelligenceTests {
             estimatedPostsPerWeek: perWeek,
             samplePostUri: nil
           )
+        )
+      }
+
+      let bench = try benchFollows.map { entry in
+        try BlueCatbirdOnboardingDefs.RecommendedFollow(
+          did: DID(didString: entry.did),
+          communityId: entry.communityId,
+          communityTitle: entry.title,
+          role: "visual_maker",
+          deliveryMode: "follow_all",
+          hideReposts: false,
+          whyPicked: "Next in line for this scene",
+          estimatedPostsPerWeek: 9,
+          samplePostUri: nil
         )
       }
 
@@ -272,7 +343,9 @@ struct OnboardingIntelligenceTests {
           .init(uri: feedURI, communityId: 497, communityTitle: "iOS & SwiftUI Builders")
         ],
         starterPacks: [],
-        harmoniousNeighbors: [neighbor]
+        harmoniousNeighbors: [neighbor],
+        bench: bench.isEmpty ? nil : bench,
+        alreadyFollowingInScenes: alreadyFollowingInScenes
       )
     }
 
@@ -300,6 +373,7 @@ struct OnboardingIntelligenceTests {
     }
 
     func hydrateProfiles(dids: [DID]) async -> [String: HydratedRecommendedProfile] {
+      hydrateCalls.append(dids.map { $0.didString() })
       var out: [String: HydratedRecommendedProfile] = [:]
       for did in dids {
         let key = did.didString()
@@ -307,7 +381,9 @@ struct OnboardingIntelligenceTests {
           did: key,
           handle: "\(key.suffix(8)).example",
           displayName: "Creator \(key.suffix(6))",
-          bio: "Building thoughtful apps and sharing notes."
+          bio: "Building thoughtful apps and sharing notes.",
+          alreadyFollowing: followedDIDs.contains(key),
+          isBlockedOrMuted: blockedDIDs.contains(key)
         )
       }
       return out
@@ -432,7 +508,7 @@ struct OnboardingIntelligenceTests {
     // Advance to Beat 4 (Starting Lineup)
     await vm.advanceToStartingLineup()
     #expect(vm.currentBeat == .lineup)
-    #expect(vm.lineupRoleSections.count == 4)
+    #expect(vm.lineupSceneSections.map(\.communityId) == [497])
     #expect(vm.activeFollowCount == 5)
     #expect(vm.activeOriginalsOnlyCount == 1)
     #expect(vm.originalsOnlyDIDs.contains("did:plc:synthcurator1"))
@@ -515,23 +591,305 @@ struct OnboardingIntelligenceTests {
     #expect(vm.selectedCount == 23)
     #expect(vm.errorBannerMessage == nil)
 
-    // Pin cap = 30
+    // Pin cap = 200 (the solveBundle pinnedDids limit)
     for idx in 1...SceneOnboardingViewModel.maxPinnedAuthors {
       vm.togglePinAuthor(did: "did:plc:synthpin\(idx)")
     }
-    #expect(vm.pinnedDIDs.count == 30)
-    vm.togglePinAuthor(did: "did:plc:synthpin31")
-    #expect(vm.pinnedDIDs.count == 30)
-    #expect(!vm.isAuthorPinned("did:plc:synthpin31"))
+    #expect(vm.pinnedDIDs.count == 200)
+    vm.togglePinAuthor(did: "did:plc:synthpin201")
+    #expect(vm.pinnedDIDs.count == 200)
+    #expect(!vm.isAuthorPinned("did:plc:synthpin201"))
 
-    // Exclusion cap = 100 (FIFO eviction preserves bounded payload)
-    for idx in 1...105 {
+    // Exclusion cap = 500 (FIFO eviction preserves bounded payload)
+    for idx in 1...505 {
       await vm.excludeAndSwapAccount("did:plc:synthexcl\(idx)")
     }
-    #expect(vm.excludedDIDs.count == 100)
-    #expect(mock.lastSolveInput?.excludedDids?.count == 100)
+    #expect(vm.excludedDIDs.count == 500)
+    #expect(mock.lastSolveInput?.excludedDids?.count == 500)
     #expect(!vm.excludedDIDs.contains("did:plc:synthexcl1"))
-    #expect(vm.excludedDIDs.contains("did:plc:synthexcl105"))
+    #expect(vm.excludedDIDs.contains("did:plc:synthexcl505"))
+  }
+
+  @Test("Solve request leaves out targetSize only when the server personalizes communities")
+  @MainActor
+  func solveSizingFollowsEngine() async throws {
+    let staticMock = MockIntelligenceService()
+    let staticVM = SceneOnboardingViewModel(service: staticMock)
+    await staticVM.startEntry(.lineup)
+    #expect(!staticVM.isLiveEngine)
+    #expect(staticVM.currentBeat == .lineup)
+    #expect(staticMock.lastSolveInput?.targetSize == staticVM.targetBundleSize)
+    #expect(staticMock.lastSolveInput?.targetSize == 25)
+
+    let liveMock = MockIntelligenceService()
+    liveMock.liveMode = true
+    let liveVM = SceneOnboardingViewModel(service: liveMock)
+    await liveVM.startEntry(.lineup)
+    #expect(liveVM.isLiveEngine)
+    #expect(liveVM.currentBeat == .lineup)
+    #expect(liveMock.lastSolveInput != nil)
+    #expect(liveMock.lastSolveInput?.targetSize == nil)
+  }
+
+  @Test("Opening a scene from a live server switches the solve to per-scene sizing")
+  @MainActor
+  func peekDetectsLiveEngine() async throws {
+    let mock = MockIntelligenceService()
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let community = try #require(vm.featuredCommunities.first)
+    #expect(!vm.isLiveEngine)
+
+    mock.liveMode = true
+    await vm.openPeek(for: community)
+    #expect(vm.isLiveEngine)
+
+    vm.toggleCommunity(community)
+    await vm.advanceToStartingLineup()
+    #expect(mock.lastSolveInput != nil)
+    #expect(mock.lastSolveInput?.targetSize == nil)
+  }
+
+  @Test("Lineup groups accounts by scene in the order the scenes were picked")
+  @MainActor
+  func lineupGroupsBySceneInSelectionOrder() async throws {
+    let mock = MockIntelligenceService()
+    mock.sceneByFollowDID = [
+      "did:plc:synthmaker1": (2421, "Indie Game Makers"),
+      "did:plc:synthbackup1": (2421, "Indie Game Makers")
+    ]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let swiftScene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    let gameScene = try #require(vm.featuredCommunities.first { $0.communityId == 2421 })
+
+    vm.toggleCommunity(gameScene)
+    vm.toggleCommunity(swiftScene)
+    await vm.advanceToStartingLineup()
+
+    let sections = vm.lineupSceneSections
+    #expect(sections.map(\.communityId) == [2421, 497])
+    #expect(sections.map(\.title) == ["Indie Game Makers", "iOS & SwiftUI Builders"])
+    #expect(
+      sections.first?.items.map { $0.did.didString() } == ["did:plc:synthmaker1", "did:plc:synthbackup1"]
+    )
+    #expect(
+      sections.last?.items.map { $0.did.didString() }
+        == ["did:plc:synthanchor1", "did:plc:synthconvo1", "did:plc:synthcurator1"]
+    )
+    #expect(vm.activeFollowCount == 5)
+  }
+
+  @Test("Accounts the viewer already follows are neither listed nor counted nor followed again")
+  @MainActor
+  func lineupLeavesOutAlreadyFollowedAccounts() async throws {
+    let mock = MockIntelligenceService()
+    mock.followedDIDs = ["did:plc:synthanchor1", "did:plc:synthconvo1"]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    let listed = vm.lineupSceneSections.flatMap(\.items).map { $0.did.didString() }
+    #expect(listed == ["did:plc:synthmaker1", "did:plc:synthcurator1", "did:plc:synthbackup1"])
+    #expect(vm.activeFollowCount == 3)
+    #expect(!vm.enabledFollowDIDs.contains("did:plc:synthanchor1"))
+
+    await vm.commitStartingLineup()
+    #expect(!mock.committedFollows.contains("did:plc:synthanchor1"))
+    #expect(!mock.committedFollows.contains("did:plc:synthconvo1"))
+    #expect(vm.commitReceipt?.followedCount == mock.committedFollows.count)
+  }
+
+  @Test("A blocked or muted pick is replaced by the first usable bench account from its own scene")
+  @MainActor
+  func lineupReplacesBlockedPickFromBench() async throws {
+    let mock = MockIntelligenceService()
+    mock.blockedDIDs = ["did:plc:synthmaker1"]
+    mock.followedDIDs = ["did:plc:benchswift1"]
+    mock.benchFollows = [
+      ("did:plc:benchgame1", 2421, "Indie Game Makers"),
+      ("did:plc:benchswift1", 497, "iOS & SwiftUI Builders"),
+      ("did:plc:benchswift2", 497, "iOS & SwiftUI Builders"),
+      ("did:plc:benchswift3", 497, "iOS & SwiftUI Builders")
+    ]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    let listed = vm.lineupSceneSections.flatMap(\.items).map { $0.did.didString() }
+    #expect(
+      listed == [
+        "did:plc:synthanchor1",
+        "did:plc:benchswift2",
+        "did:plc:synthconvo1",
+        "did:plc:synthcurator1",
+        "did:plc:synthbackup1"
+      ]
+    )
+    #expect(vm.activeFollowCount == 5)
+    #expect(vm.enabledFollowDIDs.contains("did:plc:benchswift2"))
+    #expect(vm.lineupProfilesByDID["did:plc:benchswift2"] != nil)
+  }
+
+  @Test("A blocked or muted pick is dropped when its scene has no usable bench account")
+  @MainActor
+  func lineupDropsBlockedPickWithoutBench() async throws {
+    let mock = MockIntelligenceService()
+    mock.blockedDIDs = ["did:plc:synthmaker1"]
+    mock.benchFollows = [("did:plc:benchgame1", 2421, "Indie Game Makers")]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    let listed = vm.lineupSceneSections.flatMap(\.items).map { $0.did.didString() }
+    #expect(!listed.contains("did:plc:synthmaker1"))
+    #expect(!listed.contains("did:plc:benchgame1"))
+    #expect(listed.count == 4)
+    #expect(vm.activeFollowCount == 4)
+
+    await vm.commitStartingLineup()
+    #expect(!mock.committedFollows.contains("did:plc:synthmaker1"))
+    #expect(vm.commitReceipt?.followedCount == 4)
+  }
+
+  @Test("Voice counts read as singular for one account and plural otherwise")
+  func voiceCountWording() {
+    #expect(SceneOnboardingViewModel.voiceCount(0) == "0 Voices")
+    #expect(SceneOnboardingViewModel.voiceCount(1) == "1 Voice")
+    #expect(SceneOnboardingViewModel.voiceCount(12) == "12 Voices")
+    #expect(SceneOnboardingViewModel.voiceCount(1, describedAs: "Vetted") == "1 Vetted Voice")
+    #expect(SceneOnboardingViewModel.voiceCount(6, describedAs: "Vetted") == "6 Vetted Voices")
+  }
+
+  @Test("Lineup headline, summary and scene and role tallies follow the accounts switched on")
+  @MainActor
+  func lineupHeadlineAndTallyFollowSwitchedOnAccounts() async throws {
+    let mock = MockIntelligenceService()
+    mock.sceneByFollowDID = [
+      "did:plc:synthmaker1": (2421, "Indie Game Makers"),
+      "did:plc:synthbackup1": (2421, "Indie Game Makers")
+    ]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let swiftScene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    let gameScene = try #require(vm.featuredCommunities.first { $0.communityId == 2421 })
+    vm.toggleCommunity(swiftScene)
+    vm.toggleCommunity(gameScene)
+    await vm.advanceToStartingLineup()
+
+    #expect(vm.lineupHeadline == "5 Vetted Voices")
+    #expect(vm.lineupSummaryLine == "Picked from 2 scenes, in the order you chose them.")
+    var tally = vm.activeLineupTally
+    #expect(tally.sceneCount == 2)
+    #expect(tally.count(for: .anchorCreator) == 1)
+    #expect(tally.count(for: .visualMaker) == 2)
+    #expect(tally.count(for: .conversationalist) == 1)
+    #expect(tally.count(for: .sceneCurator) == 1)
+    #expect(tally.count(for: .projectOrStudio) == 0)
+
+    vm.toggleFollowAccount("did:plc:synthmaker1")
+    vm.toggleFollowAccount("did:plc:synthbackup1")
+    tally = vm.activeLineupTally
+    #expect(vm.lineupHeadline == "3 Vetted Voices")
+    #expect(vm.lineupSummaryLine == "Picked from 1 scene.")
+    #expect(tally.sceneCount == 1)
+    #expect(tally.count(for: .visualMaker) == 0)
+
+    vm.toggleFollowAccount("did:plc:synthanchor1")
+    vm.toggleFollowAccount("did:plc:synthconvo1")
+    #expect(vm.lineupHeadline == "1 Vetted Voice")
+
+    vm.toggleFollowAccount("did:plc:synthcurator1")
+    #expect(vm.lineupHeadline == "0 Vetted Voices")
+    #expect(vm.lineupSummaryLine == "Switch accounts on below to follow them.")
+    #expect(vm.activeLineupTally.sceneCount == 0)
+  }
+
+  @Test("Without a server count, the summary states how many solved picks were left out as followed")
+  @MainActor
+  func lineupSummaryCountsSkippedFollowsWithoutServerField() async throws {
+    let mock = MockIntelligenceService()
+    mock.followedDIDs = ["did:plc:synthanchor1", "did:plc:synthconvo1"]
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    #expect(vm.alreadyFollowedInLineupScenes == 2)
+    #expect(
+      vm.lineupSummaryLine
+        == "Picked from 1 scene. 2 accounts you already follow there are left out."
+    )
+  }
+
+  @Test("A live server's alreadyFollowingInScenes count wins over the client's own count")
+  @MainActor
+  func lineupSummaryPrefersServerAlreadyFollowingCount() async throws {
+    let mock = MockIntelligenceService()
+    mock.followedDIDs = ["did:plc:synthanchor1", "did:plc:synthconvo1"]
+    mock.alreadyFollowingInScenes = 1
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+
+    #expect(vm.alreadyFollowedInLineupScenes == 1)
+    #expect(
+      vm.lineupSummaryLine == "Picked from 1 scene. 1 account you already follow there is left out."
+    )
+
+    await vm.resetSession()
+    #expect(vm.alreadyFollowedInLineupScenes == 0)
+  }
+
+  @Test("The celebration line states the number of accounts the commit actually followed")
+  @MainActor
+  func celebrationLineStatesTrueFollowCount() async throws {
+    let mock = MockIntelligenceService()
+    let vm = SceneOnboardingViewModel(service: mock)
+    await vm.loadInitialCatalog()
+    let scene = try #require(vm.featuredCommunities.first { $0.communityId == 497 })
+    vm.toggleCommunity(scene)
+    await vm.advanceToStartingLineup()
+    #expect(vm.celebrationSummaryLine == "Tailored to the scenes you chose.")
+
+    for did in ["did:plc:synthmaker1", "did:plc:synthconvo1", "did:plc:synthcurator1", "did:plc:synthbackup1"] {
+      vm.toggleFollowAccount(did)
+    }
+    await vm.commitStartingLineup()
+    #expect(vm.commitReceipt?.followedCount == 1)
+    #expect(vm.celebrationSummaryLine == "You now follow 1 new voice from the scenes you chose.")
+
+    let fullMock = MockIntelligenceService()
+    let fullVM = SceneOnboardingViewModel(service: fullMock)
+    await fullVM.loadInitialCatalog()
+    let fullScene = try #require(fullVM.featuredCommunities.first { $0.communityId == 497 })
+    fullVM.toggleCommunity(fullScene)
+    await fullVM.advanceToStartingLineup()
+    await fullVM.commitStartingLineup()
+    #expect(fullVM.commitReceipt?.followedCount == 5)
+    #expect(fullVM.celebrationSummaryLine == "You now follow 5 new voices from the scenes you chose.")
+
+    let feedsMock = MockIntelligenceService()
+    let feedsVM = SceneOnboardingViewModel(service: feedsMock)
+    await feedsVM.loadInitialCatalog()
+    let feedsScene = try #require(feedsVM.featuredCommunities.first { $0.communityId == 497 })
+    feedsVM.toggleCommunity(feedsScene)
+    await feedsVM.advanceToStartingLineup()
+    for did in feedsVM.enabledFollowDIDs {
+      feedsVM.toggleFollowAccount(did)
+    }
+    await feedsVM.commitStartingLineup()
+    #expect(feedsVM.commitReceipt?.followedCount == 0)
+    #expect(feedsVM.celebrationSummaryLine == "Your feeds are set up for the scenes you chose.")
   }
 
   @Test("Out-of-order listCommunities responses cannot overwrite newer search queries or resets")

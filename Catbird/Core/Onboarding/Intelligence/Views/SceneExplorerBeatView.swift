@@ -1,4 +1,3 @@
-import NukeUI
 import Petrel
 import PetrelCatbird
 import SwiftUI
@@ -263,9 +262,14 @@ struct SceneExplorerBeatView: View {
             CommunityCardTileView(
               community: community,
               selectionWeight: viewModel.selectionWeight(for: community.communityId),
+              faces: viewModel.sampleFaces(for: community),
+              alreadyFollowingLine: SceneOnboardingViewModel.alreadyFollowingLine(
+                count: community.alreadyFollowingCount
+              ),
               onTogglePick: { viewModel.toggleCommunity(community) },
               onToggleBoost: { viewModel.toggleHeartBoost(for: community) },
-              onPeek: { Task { await viewModel.openPeek(for: community) } }
+              onPeek: { Task { await viewModel.openPeek(for: community) } },
+              onAppear: { viewModel.requestSampleProfiles(for: community) }
             )
             .frame(width: 300)
           }
@@ -310,9 +314,14 @@ struct SceneExplorerBeatView: View {
             CommunityCardTileView(
               community: community,
               selectionWeight: viewModel.selectionWeight(for: community.communityId),
+              faces: viewModel.sampleFaces(for: community),
+              alreadyFollowingLine: SceneOnboardingViewModel.alreadyFollowingLine(
+                count: community.alreadyFollowingCount
+              ),
               onTogglePick: { viewModel.toggleCommunity(community) },
               onToggleBoost: { viewModel.toggleHeartBoost(for: community) },
-              onPeek: { Task { await viewModel.openPeek(for: community) } }
+              onPeek: { Task { await viewModel.openPeek(for: community) } },
+              onAppear: { viewModel.requestSampleProfiles(for: community) }
             )
           }
         }
@@ -421,150 +430,5 @@ struct SceneExplorerBeatView: View {
     )
     .padding(.horizontal, 12)
     .padding(.bottom, 6)
-  }
-}
-
-// MARK: - Narrow Value-Typed Community Card Tile
-
-struct CommunityCardTileView: View {
-  let community: BlueCatbirdIntelDefs.CommunitySummary
-  let selectionWeight: Int
-  let onTogglePick: () -> Void
-  let onToggleBoost: () -> Void
-  let onPeek: () -> Void
-
-  private var isPicked: Bool { selectionWeight >= 1 }
-  private var isBoosted: Bool { selectionWeight >= 2 }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      // Top bar: Scene badge + Peek + Boost
-      HStack(spacing: 6) {
-        HStack(spacing: 4) {
-          Image(systemName: community.symbolName)
-            .font(.caption2.weight(.semibold))
-          Text(community.sceneTitle)
-            .font(.caption2.weight(.semibold))
-            .lineLimit(1)
-        }
-        .foregroundStyle(isBoosted ? .pink : Color.accentColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-          (isBoosted ? Color.pink : Color.accentColor).opacity(0.12),
-          in: Capsule()
-        )
-
-        Spacer(minLength: 4)
-
-        Button(action: onPeek) {
-          HStack(spacing: 4) {
-            Image(systemName: "eye")
-              .font(.caption2.weight(.semibold))
-            Text("Peek")
-              .font(.caption2.weight(.semibold))
-          }
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 5)
-          .background(Color.secondary.opacity(0.12), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("intel.card.peek.\(community.communityId)")
-        .accessibilityLabel("Peek sample posts for \(community.title)")
-
-        Button(action: onToggleBoost) {
-          HStack(spacing: 3) {
-            Image(systemName: isBoosted ? "heart.fill" : "heart")
-              .font(.caption.weight(.semibold))
-            if isBoosted {
-              Text("2×")
-                .font(.caption2.weight(.bold))
-            }
-          }
-          .foregroundStyle(isBoosted ? .white : .pink)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 5)
-          .background(
-            isBoosted ? Color.pink : Color.pink.opacity(0.12),
-            in: Capsule()
-          )
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("intel.card.boost.\(community.communityId)")
-        .accessibilityLabel(isBoosted ? "Remove 2x boost for \(community.title)" : "Boost \(community.title) 2x")
-      }
-
-      // Main tappable body
-      Button(action: onTogglePick) {
-        VStack(alignment: .leading, spacing: 8) {
-          Text(community.title)
-            .font(.headline)
-            .foregroundStyle(.primary)
-            .multilineTextAlignment(.leading)
-            .lineLimit(2)
-
-          Text(community.description)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.leading)
-            .lineLimit(3)
-
-          if !community.curatedListTags.isEmpty {
-            HStack(spacing: 6) {
-              ForEach(Array(community.curatedListTags.prefix(3)), id: \.self) { tag in
-                Text("#\(tag.replacingOccurrences(of: "\\'", with: "'"))")
-                  .font(.caption2.weight(.medium))
-                  .foregroundStyle(.secondary)
-                  .padding(.horizontal, 7)
-                  .padding(.vertical, 3)
-                  .background(Color.secondary.opacity(0.09), in: Capsule())
-                  .lineLimit(1)
-              }
-            }
-          }
-
-          HStack {
-            Label("\(community.eligibleCount) voices", systemImage: "person.2.fill")
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-
-            Spacer()
-
-            HStack(spacing: 4) {
-              Image(systemName: isPicked ? "checkmark.circle.fill" : "plus.circle")
-                .font(.caption.weight(.semibold))
-              Text(isBoosted ? "Boosted 2×" : (isPicked ? "Picked" : "Pick"))
-                .font(.caption.weight(.semibold))
-            }
-            .foregroundStyle(isBoosted ? .pink : (isPicked ? Color.accentColor : .secondary))
-          }
-          .padding(.top, 2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .accessibilityIdentifier("intel.card.\(community.communityId)")
-    }
-    .padding(14)
-    .background(
-      RoundedRectangle(cornerRadius: 20, style: .continuous)
-        .fill(
-          isBoosted
-            ? Color.pink.opacity(0.08)
-            : (isPicked ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.06))
-        )
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 20, style: .continuous)
-        .strokeBorder(
-          isBoosted
-            ? Color.pink.opacity(0.75)
-            : (isPicked ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.08)),
-          lineWidth: isPicked ? 2 : 1
-        )
-    )
-    .animation(.spring(duration: 0.25), value: selectionWeight)
   }
 }

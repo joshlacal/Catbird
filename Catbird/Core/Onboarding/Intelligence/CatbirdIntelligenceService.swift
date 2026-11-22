@@ -502,8 +502,9 @@ enum OnboardingHydrationMapper {
   ) -> HydratedRecommendedProfile? {
     let did = profile.did.didString()
     if did == currentUserDID { return nil }
-    if hasBlockedLabels(profile.labels) { return nil }
-    let blockedOrMuted = isViewerBlockedOrMuted(profile.viewer)
+    // A hidden or blocked-label account is returned flagged, not dropped: callers treat a missing
+    // profile as "not looked up yet" and would otherwise offer and follow it.
+    let blockedOrMuted = hasBlockedLabels(profile.labels) || isViewerBlockedOrMuted(profile.viewer)
     let display = (profile.displayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     let bio = (profile.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return HydratedRecommendedProfile(
@@ -1003,7 +1004,9 @@ public final class LiveCatbirdIntelligenceService: CatbirdIntelligenceServicing 
     var map: [String: HydratedRecommendedProfile] = [:]
     for did in uniqueDIDs {
       let key = did.didString()
-      if let prof = await cache.cachedProfile(for: key), !prof.isBlockedOrMuted {
+      // Blocked and muted accounts stay in the result with their flag set, so every caller can
+      // tell them apart from accounts that were not found and leave them out.
+      if let prof = await cache.cachedProfile(for: key) {
         map[key] = prof
       }
     }
@@ -1199,6 +1202,8 @@ public struct UnavailableCatbirdIntelligenceService: CatbirdIntelligenceServicin
 
 public final class LoopbackShowcaseIntelligenceService: CatbirdIntelligenceServicing {
   private let intelOrigin: URL
+  /// Viewer DID a development intel server signs requests as, sent in `x-debug-viewer-did`.
+  private let debugViewerDID: String?
   private let publicAppViewClient: ATProtoClient
   private let currentUserDID: String
   @MainActor private weak var appState: AppState?
@@ -1208,10 +1213,12 @@ public final class LoopbackShowcaseIntelligenceService: CatbirdIntelligenceServi
   @MainActor
   init(
     intelOrigin: URL,
+    debugViewerDID: String? = nil,
     publicAppViewClient: ATProtoClient,
     appState: AppState
   ) {
     self.intelOrigin = intelOrigin
+    self.debugViewerDID = debugViewerDID
     self.publicAppViewClient = publicAppViewClient
     self.currentUserDID = appState.userDID
     self.appState = appState
@@ -1220,12 +1227,18 @@ public final class LoopbackShowcaseIntelligenceService: CatbirdIntelligenceServi
     self.session = URLSession(configuration: config)
   }
 
+  private func applyDebugViewer(to request: inout URLRequest) {
+    guard let debugViewerDID, !debugViewerDID.isEmpty else { return }
+    request.setValue(debugViewerDID, forHTTPHeaderField: "x-debug-viewer-did")
+  }
+
   private func getXRPC<Out: Decodable>(_ nsid: String, queryItems: [URLQueryItem]) async throws -> Out {
     var comps = URLComponents(url: intelOrigin.appendingPathComponent("xrpc/\(nsid)"), resolvingAgainstBaseURL: false)!
     comps.queryItems = queryItems.isEmpty ? nil : queryItems
     var req = URLRequest(url: comps.url!)
     req.httpMethod = "GET"
     req.setValue("application/json", forHTTPHeaderField: "Accept")
+    applyDebugViewer(to: &req)
     let (data, resp) = try await session.data(for: req)
     let code = (resp as? HTTPURLResponse)?.statusCode ?? 500
     if code == 503 { throw CatbirdIntelligenceError.serviceUnavailable }
@@ -1239,6 +1252,7 @@ public final class LoopbackShowcaseIntelligenceService: CatbirdIntelligenceServi
     req.httpMethod = "POST"
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.setValue("application/json", forHTTPHeaderField: "Accept")
+    applyDebugViewer(to: &req)
     req.httpBody = try JSONEncoder().encode(body)
     let (data, resp) = try await session.data(for: req)
     let code = (resp as? HTTPURLResponse)?.statusCode ?? 500

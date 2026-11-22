@@ -47,24 +47,41 @@ public final class SceneOnboardingViewModel {
   public struct PeekSheetState: Identifiable, Sendable {
     public var id: Int { community.communityId }
     public let community: BlueCatbirdIntelDefs.CommunitySummary
+    /// The scene's members in the server's order. A live server puts the accounts a pick follows
+    /// first; their profiles live in `sceneProfiles`.
     public var members: [BlueCatbirdIntelDefs.CommunityMemberRef]
-    public var profilesByDID: [String: HydratedRecommendedProfile]
     public var posts: [HydratedSamplePost]
     public var neighbors: [BlueCatbirdIntelDefs.CommunitySummary]
+    /// How many members picking the scene follows, and how many when it is hearted. Nil when the
+    /// server does not size lineups per scene.
+    public var defaultLineupCount: Int?
+    public var boostedLineupCount: Int?
     public var isLoading: Bool
   }
 
-  public struct LineupRoleSection: Identifiable, Sendable {
-    public var id: CommunityRole { role }
-    public let role: CommunityRole
+  /// One picked scene in the starting lineup, holding the accounts that will be followed from it.
+  public struct LineupSceneSection: Identifiable, Sendable {
+    public var id: Int { communityId }
+    public let communityId: Int
+    public let title: String
     public let items: [BlueCatbirdOnboardingDefs.RecommendedFollow]
+  }
+
+  /// How many scenes and roles the switched-on lineup accounts cover.
+  public struct LineupTally: Equatable, Sendable {
+    public var sceneCount: Int = 0
+    public var roleCounts: [CommunityRole: Int] = [:]
+
+    public func count(for role: CommunityRole) -> Int {
+      roleCounts[role] ?? 0
+    }
   }
 
   // MARK: - Dependencies & Mode
 
   public static let maxSelectedCommunities = 24
-  public static let maxPinnedAuthors = 30
-  public static let maxExcludedAuthors = 100
+  public static let maxPinnedAuthors = 200
+  public static let maxExcludedAuthors = 500
   public static let maxSeedFollows = 100
 
   public let mode: ExperienceMode
@@ -73,6 +90,8 @@ public final class SceneOnboardingViewModel {
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "SceneOnboardingVM")
   @ObservationIgnored private var searchDebounceTask: Task<Void, Never>?
   @ObservationIgnored private var searchGeneration: UInt64 = 0
+  /// Counts lineup solves, so a slower earlier solve cannot overwrite a newer one.
+  @ObservationIgnored private var solveGeneration: UInt64 = 0
   @ObservationIgnored private var orderedPinnedDIDs: [String] = []
   @ObservationIgnored private var orderedExcludedDIDs: [String] = []
 
@@ -104,8 +123,16 @@ public final class SceneOnboardingViewModel {
   public private(set) var selectionWeights: [Int: Int] = [:]
   public private(set) var knownCommunitiesById: [Int: BlueCatbirdIntelDefs.CommunitySummary] = [:]
 
+  /// True once the server has shown it personalizes communities for this viewer
+  /// (`alreadyFollowingCount` on a community, or lineup counts on a community detail).
+  /// A live server sizes the lineup per scene, so the solve request leaves out `targetSize`.
+  public private(set) var isLiveEngine: Bool = false
+
   /// Peek sheet state
   public var activePeek: PeekSheetState?
+
+  /// Profiles for the accounts shown on scene cards and in the scene sheet.
+  public let sceneProfiles: SceneProfileStore
 
   // MARK: - Beat 2: Calibration Duels & Rhythm Controls
 
@@ -128,7 +155,13 @@ public final class SceneOnboardingViewModel {
 
   public private(set) var isSolvingBundle: Bool = false
   public private(set) var solvedBundle: BlueCatbirdOnboardingSolveBundle.Output?
+  /// The accounts the lineup offers, in solve order: accounts already followed are left out, and a
+  /// blocked or muted pick is replaced by the next bench account from the same scene.
+  public private(set) var lineupFollows: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
   public private(set) var lineupProfilesByDID: [String: HydratedRecommendedProfile] = [:]
+  /// Accounts in the lineup's scenes that the viewer already follows. A live server reports this
+  /// directly; for other servers it is the number of solved picks the lineup left out as followed.
+  public private(set) var alreadyFollowedInLineupScenes: Int = 0
   public private(set) var hydratedFeeds: [HydratedFeedOption] = []
   public private(set) var hydratedStarterPacks: [HydratedStarterPackOption] = []
 
@@ -153,6 +186,9 @@ public final class SceneOnboardingViewModel {
     self.service = service
     self.mode = mode
     self.initialInterests = initialInterests
+    self.sceneProfiles = SceneProfileStore { [service] dids in
+      await service.hydrateProfiles(dids: dids)
+    }
   }
 
   // MARK: - Computed Properties
@@ -202,36 +238,97 @@ public final class SceneOnboardingViewModel {
     return calibrationCards[activeDuelIndex]
   }
 
-  public var lineupRoleSections: [LineupRoleSection] {
-    guard let follows = solvedBundle?.follows else { return [] }
-    var grouped: [CommunityRole: [BlueCatbirdOnboardingDefs.RecommendedFollow]] = [:]
-    for follow in follows {
-      let role = CommunityRole(rawRole: follow.role)
-      grouped[role, default: []].append(follow)
+  /// Lineup accounts grouped by scene: picked scenes first, in the order they were picked, then any
+  /// other scene (a pinned account's or an added neighbor's) in the order it first appears.
+  public var lineupSceneSections: [LineupSceneSection] {
+    var grouped: [Int: [BlueCatbirdOnboardingDefs.RecommendedFollow]] = [:]
+    var titles: [Int: String] = [:]
+    var appearanceOrder: [Int] = []
+    for follow in lineupFollows {
+      if grouped[follow.communityId] == nil {
+        appearanceOrder.append(follow.communityId)
+        titles[follow.communityId] = follow.communityTitle
+      }
+      grouped[follow.communityId, default: []].append(follow)
     }
-    return CommunityRole.allCases.compactMap { role in
-      guard let items = grouped[role], !items.isEmpty else { return nil }
-      return LineupRoleSection(role: role, items: items)
+    let selected = orderedSelectedCommunityIds.filter { grouped[$0] != nil }
+    let selectedSet = Set(selected)
+    let order = selected + appearanceOrder.filter { !selectedSet.contains($0) }
+    return order.compactMap { communityId in
+      guard let items = grouped[communityId] else { return nil }
+      let title = knownCommunitiesById[communityId]?.title ?? titles[communityId] ?? ""
+      return LineupSceneSection(communityId: communityId, title: title, items: items)
     }
   }
 
   public var activeFollowCount: Int {
-    guard let follows = solvedBundle?.follows else { return 0 }
-    return follows.filter { enabledFollowDIDs.contains($0.did.didString()) }.count
+    lineupFollows.filter { enabledFollowDIDs.contains($0.did.didString()) }.count
+  }
+
+  public var activeLineupTally: LineupTally {
+    var tally = LineupTally()
+    var scenes = Set<Int>()
+    for follow in lineupFollows where enabledFollowDIDs.contains(follow.did.didString()) {
+      scenes.insert(follow.communityId)
+      tally.roleCounts[CommunityRole(rawRole: follow.role), default: 0] += 1
+    }
+    tally.sceneCount = scenes.count
+    return tally
+  }
+
+  /// The hero line above the lineup, such as "12 Vetted Voices".
+  public var lineupHeadline: String {
+    Self.voiceCount(activeFollowCount, describedAs: "Vetted")
+  }
+
+  /// One sentence under the hero line: how many scenes the switched-on accounts come from, and how
+  /// many accounts in those scenes were left out because the viewer already follows them.
+  public var lineupSummaryLine: String {
+    let scenes = activeLineupTally.sceneCount
+    var line: String
+    switch scenes {
+    case 0: line = "Switch accounts on below to follow them."
+    case 1: line = "Picked from 1 scene."
+    default: line = "Picked from \(scenes) scenes, in the order you chose them."
+    }
+    switch alreadyFollowedInLineupScenes {
+    case 0: break
+    case 1: line += " 1 account you already follow there is left out."
+    default: line += " \(alreadyFollowedInLineupScenes) accounts you already follow there are left out."
+    }
+    return line
+  }
+
+  /// The celebration line once the lineup is committed, stating how many accounts were followed.
+  public var celebrationSummaryLine: String {
+    guard let receipt = commitReceipt else {
+      return "Tailored to the scenes you chose."
+    }
+    switch receipt.followedCount {
+    case 0: return "Your feeds are set up for the scenes you chose."
+    case 1: return "You now follow 1 new voice from the scenes you chose."
+    default: return "You now follow \(receipt.followedCount) new voices from the scenes you chose."
+    }
+  }
+
+  /// "1 Voice" or "N Voices", with an optional word before the noun ("12 Vetted Voices").
+  public nonisolated static func voiceCount(_ count: Int, describedAs adjective: String? = nil) -> String {
+    let noun = count == 1 ? "Voice" : "Voices"
+    guard let adjective else { return "\(count) \(noun)" }
+    return "\(count) \(adjective) \(noun)"
   }
 
   public var activeOriginalsOnlyCount: Int {
-    guard let follows = solvedBundle?.follows else { return 0 }
-    return follows.filter {
+    lineupFollows.filter {
       let did = $0.did.didString()
       return enabledFollowDIDs.contains(did) && originalsOnlyDIDs.contains(did)
     }.count
   }
 
   public var activeEstimatedDailyPosts: Int {
-    guard let follows = solvedBundle?.follows else { return 0 }
+    guard !lineupFollows.isEmpty else { return 0 }
     var weeklySum = 0.0
-    for item in follows {
+    for item in lineupFollows {
       let did = item.did.didString()
       guard enabledFollowDIDs.contains(did) else { continue }
       let factor = originalsOnlyDIDs.contains(did) ? 0.55 : 1.0
@@ -301,7 +398,9 @@ public final class SceneOnboardingViewModel {
     previewPosts = []
     previewEstimatedDailyPosts = 0
     solvedBundle = nil
+    lineupFollows = []
     lineupProfilesByDID = [:]
+    alreadyFollowedInLineupScenes = 0
     hydratedFeeds = []
     hydratedStarterPacks = []
     pinnedDIDs = []
@@ -366,7 +465,14 @@ public final class SceneOnboardingViewModel {
 
   private func indexCommunities(_ items: [BlueCatbirdIntelDefs.CommunitySummary]) {
     for item in items {
-      knownCommunitiesById[item.communityId] = item
+      rememberCommunity(item)
+    }
+  }
+
+  private func rememberCommunity(_ item: BlueCatbirdIntelDefs.CommunitySummary) {
+    knownCommunitiesById[item.communityId] = item
+    if item.alreadyFollowingCount != nil {
+      isLiveEngine = true
     }
   }
 
@@ -376,7 +482,7 @@ public final class SceneOnboardingViewModel {
 
   /// Toggles between 0 (unpicked) and 1 (picked). If boosted (2), tapping card body unpicks cleanly.
   public func toggleCommunity(_ community: BlueCatbirdIntelDefs.CommunitySummary) {
-    knownCommunitiesById[community.communityId] = community
+    rememberCommunity(community)
     let cid = community.communityId
     if selectionWeights[cid] != nil {
       selectionWeights.removeValue(forKey: cid)
@@ -396,7 +502,7 @@ public final class SceneOnboardingViewModel {
 
   /// Cycles Heart-Boost: unpicked -> 2x boosted; 1x picked -> 2x boosted; 2x boosted -> 1x picked.
   public func toggleHeartBoost(for community: BlueCatbirdIntelDefs.CommunitySummary) {
-    knownCommunitiesById[community.communityId] = community
+    rememberCommunity(community)
     let cid = community.communityId
     let current = selectionWeights[cid] ?? 0
     if current == 0 {
@@ -490,18 +596,22 @@ public final class SceneOnboardingViewModel {
   }
 
   public func openPeek(for summary: BlueCatbirdIntelDefs.CommunitySummary) async {
-    knownCommunitiesById[summary.communityId] = summary
+    rememberCommunity(summary)
     activePeek = PeekSheetState(
       community: summary,
       members: [],
-      profilesByDID: [:],
       posts: [],
       neighbors: [],
+      defaultLineupCount: nil,
+      boostedLineupCount: nil,
       isLoading: true
     )
 
     do {
       let detail = try await service.getCommunity(communityId: summary.communityId)
+      if detail.defaultLineupCount != nil {
+        isLiveEngine = true
+      }
       indexCommunities([detail.community])
       indexCommunities(detail.neighborCommunities)
 
@@ -514,19 +624,21 @@ public final class SceneOnboardingViewModel {
         )
         return item.post
       }
-      let topMemberDIDs = Array(detail.members.prefix(12).map(\.did))
+      // The first batch of members loads with the posts; the rest load as their rows appear.
+      let firstMemberBatch = Array(detail.members.prefix(SceneProfileStore.batchSize).map(\.did))
 
       async let postsTask = service.hydratePosts(uris: postURIs, attributionByURI: attrMap)
-      async let profilesTask = service.hydrateProfiles(dids: topMemberDIDs)
-      let (hydratedPosts, hydratedProfiles) = await (postsTask, profilesTask)
+      await sceneProfiles.load(firstMemberBatch)
+      let hydratedPosts = await postsTask
 
       guard activePeek?.community.communityId == summary.communityId else { return }
       activePeek = PeekSheetState(
         community: detail.community,
-        members: Array(detail.members.prefix(12)),
-        profilesByDID: hydratedProfiles,
+        members: detail.members,
         posts: hydratedPosts,
         neighbors: detail.neighborCommunities,
+        defaultLineupCount: detail.defaultLineupCount,
+        boostedLineupCount: detail.boostedLineupCount,
         isLoading: false
       )
     } catch {
@@ -726,9 +838,11 @@ public final class SceneOnboardingViewModel {
   public func solveStartingLineup() async {
     let selections = currentSelectionsPayload
     guard !selections.isEmpty else { return }
+    solveGeneration &+= 1
+    let generation = solveGeneration
     isSolvingBundle = true
     errorBannerMessage = nil
-    defer { isSolvingBundle = false }
+    defer { if generation == solveGeneration { isSolvingBundle = false } }
 
     let pinnedSource = orderedPinnedDIDs.isEmpty ? pinnedDIDs.sorted() : orderedPinnedDIDs
     let excludedSource = orderedExcludedDIDs.isEmpty ? excludedDIDs.sorted() : orderedExcludedDIDs
@@ -741,33 +855,43 @@ public final class SceneOnboardingViewModel {
         selections: selections,
         swipes: swipeAnswers.isEmpty ? nil : Array(swipeAnswers.prefix(8)),
         controls: currentBundleControls,
-        targetSize: targetBundleSize,
+        // A live server follows a fixed number of accounts from each scene; the
+        // pace-based total applies only to the static catalog engine.
+        targetSize: isLiveEngine ? nil : targetBundleSize,
         pinnedDids: pinned.isEmpty ? nil : pinned,
         excludedDids: excluded.isEmpty ? nil : excluded,
         seedFollowDids: seeds.isEmpty ? nil : seeds
       )
       let output = try await service.solveBundle(input: input)
+      guard generation == solveGeneration else { return }
       self.solvedBundle = output
       indexCommunities(output.harmoniousNeighbors)
 
-      let followDIDObjects = output.follows.map(\.did)
+      let bench = output.bench ?? []
+      let followDIDObjects = (output.follows + bench).map(\.did)
       async let profilesTask = service.hydrateProfiles(dids: followDIDObjects)
       async let feedsTask = service.hydrateFeeds(recommended: output.feeds)
       async let packsTask = service.hydrateStarterPacks(recommended: output.starterPacks)
       let (profiles, feeds, packs) = await (profilesTask, feedsTask, packsTask)
+      guard generation == solveGeneration else { return }
 
+      let lineup = Self.assembleLineup(
+        follows: output.follows,
+        bench: bench,
+        profilesByDID: profiles,
+        excludedDIDs: excludedDIDs
+      )
+      self.lineupFollows = lineup
       self.lineupProfilesByDID = profiles
+      self.alreadyFollowedInLineupScenes = output.alreadyFollowingInScenes
+        ?? output.follows.filter { profiles[$0.did.didString()]?.alreadyFollowing == true }.count
       self.hydratedFeeds = feeds
       self.hydratedStarterPacks = packs
 
-      // Default enabled accounts: all solved accounts that aren't already followed or blocked/muted
       var nextEnabled = Set<String>()
       var nextOriginalsOnly = Set<String>()
-      for rec in output.follows {
+      for rec in lineup {
         let didStr = rec.did.didString()
-        if let hydrated = profiles[didStr], hydrated.alreadyFollowing || hydrated.isBlockedOrMuted {
-          continue
-        }
         nextEnabled.insert(didStr)
         if rec.hideReposts || rec.deliveryMode == "originals_only" {
           nextOriginalsOnly.insert(didStr)
@@ -817,7 +941,7 @@ public final class SceneOnboardingViewModel {
   }
 
   public func addHarmoniousNeighborAndResolve(_ neighbor: BlueCatbirdIntelDefs.CommunitySummary) async {
-    knownCommunitiesById[neighbor.communityId] = neighbor
+    rememberCommunity(neighbor)
     if selectionWeights[neighbor.communityId] == nil {
       guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
         errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
@@ -837,16 +961,57 @@ public final class SceneOnboardingViewModel {
     }
   }
 
+  /// Builds the lineup from a solve: drops accounts the viewer already follows, and replaces a
+  /// blocked or muted pick with the first unused bench account from the same scene, or drops it
+  /// when that scene has no usable bench account left.
+  static func assembleLineup(
+    follows: [BlueCatbirdOnboardingDefs.RecommendedFollow],
+    bench: [BlueCatbirdOnboardingDefs.RecommendedFollow],
+    profilesByDID: [String: HydratedRecommendedProfile],
+    excludedDIDs: Set<String>
+  ) -> [BlueCatbirdOnboardingDefs.RecommendedFollow] {
+    var usedDIDs = Set(follows.map { $0.did.didString() })
+    var seenDIDs = Set<String>()
+    var lineup: [BlueCatbirdOnboardingDefs.RecommendedFollow] = []
+    lineup.reserveCapacity(follows.count)
+
+    for follow in follows {
+      let did = follow.did.didString()
+      // An account returned under two scenes is listed, counted and followed once.
+      guard seenDIDs.insert(did).inserted else { continue }
+      let profile = profilesByDID[did]
+      if profile?.alreadyFollowing == true { continue }
+      guard profile?.isBlockedOrMuted == true else {
+        lineup.append(follow)
+        continue
+      }
+      let replacement = bench.first { candidate in
+        let candidateDID = candidate.did.didString()
+        guard candidate.communityId == follow.communityId,
+              !usedDIDs.contains(candidateDID),
+              !excludedDIDs.contains(candidateDID)
+        else { return false }
+        let candidateProfile = profilesByDID[candidateDID]
+        return candidateProfile?.alreadyFollowing != true && candidateProfile?.isBlockedOrMuted != true
+      }
+      if let replacement {
+        usedDIDs.insert(replacement.did.didString())
+        lineup.append(replacement)
+      }
+    }
+    return lineup
+  }
+
   // MARK: - Beat 5 Actions: Commit & Celebration
 
   public func commitStartingLineup() async {
-    guard let bundle = solvedBundle, !isCommitting else { return }
+    guard solvedBundle != nil, !isCommitting else { return }
     isCommitting = true
     errorBannerMessage = nil
     defer { isCommitting = false }
 
     // Preserve deterministic bundle rank order
-    let orderedFollows = bundle.follows
+    let orderedFollows = lineupFollows
       .map { $0.did.didString() }
       .filter { enabledFollowDIDs.contains($0) }
     let orderedFeeds = hydratedFeeds
