@@ -133,6 +133,9 @@ public struct SceneIntelligenceOnboardingView: View {
       ScenePeekSheet(
         state: peek,
         selectionWeight: vm.selectionWeight(for: peek.community.communityId),
+        memberSections: vm.peekMemberSections,
+        lineupHeading: { count in vm.peekLineupHeading(count: count) },
+        profilesByDID: vm.sceneProfiles.profilesByDID,
         isAuthorPinned: { did in vm.isAuthorPinned(did) },
         onTogglePick: { vm.toggleCommunity(peek.community) },
         onToggleBoost: { vm.toggleHeartBoost(for: peek.community) },
@@ -140,6 +143,7 @@ public struct SceneIntelligenceOnboardingView: View {
         onOpenNeighbor: { neighbor in
           Task { await vm.openPeek(for: neighbor) }
         },
+        onMemberAppear: { did in vm.requestPeekProfiles(aroundMember: did) },
         onClose: { vm.closePeek() }
       )
       .presentationDetents([.medium, .large], selection: $peekDetent)
@@ -152,7 +156,7 @@ public struct SceneIntelligenceOnboardingView: View {
 
   private func beatNavigationHeader(vm: SceneOnboardingViewModel) -> some View {
     let interactiveBeats: [SceneOnboardingViewModel.Beat] = [
-      .explorer, .calibration, .preview, .lineup,
+      .explorer, .calibration, .preview, .lineup
     ]
 
     return VStack(spacing: 8) {

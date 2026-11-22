@@ -6,14 +6,18 @@ import SwiftUI
 struct ScenePeekSheet: View {
   let state: SceneOnboardingViewModel.PeekSheetState
   let selectionWeight: Int
+  /// The scene's members split where the lineup stops; nil while the sheet has no scene open.
+  let memberSections: SceneOnboardingViewModel.PeekMemberSections?
+  /// The heading over the members a pick follows, given how many there are.
+  let lineupHeading: (Int) -> String
+  let profilesByDID: [String: HydratedRecommendedProfile]
   let isAuthorPinned: (String) -> Bool
   let onTogglePick: () -> Void
   let onToggleBoost: () -> Void
   let onTogglePinAuthor: (String) -> Void
   let onOpenNeighbor: (BlueCatbirdIntelDefs.CommunitySummary) -> Void
+  let onMemberAppear: (String) -> Void
   let onClose: () -> Void
-
-  @Environment(\.displayScale) private var displayScale
 
   private var isPicked: Bool { selectionWeight >= 1 }
   private var isBoosted: Bool { selectionWeight >= 2 }
@@ -34,8 +38,8 @@ struct ScenePeekSheet: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 40)
           } else {
-            samplePostsSection
             membersSection
+            samplePostsSection
             if !state.neighbors.isEmpty {
               neighborsSection
             }
@@ -79,6 +83,15 @@ struct ScenePeekSheet: View {
       Text(state.community.description)
         .font(.subheadline)
         .foregroundStyle(.secondary)
+
+      if let alreadyFollowing = SceneOnboardingViewModel.alreadyFollowingLine(
+        count: state.community.alreadyFollowingCount
+      ) {
+        Label(alreadyFollowing, systemImage: "person.crop.circle.badge.checkmark")
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("intel.peek.alreadyFollowing")
+      }
 
       HStack(spacing: 10) {
         Button(action: onTogglePick) {
@@ -154,73 +167,15 @@ struct ScenePeekSheet: View {
 
   @ViewBuilder
   private var membersSection: some View {
-    if !state.members.isEmpty {
-      VStack(alignment: .leading, spacing: 10) {
-        Label("Representative Voices by Role", systemImage: "person.3.sequence.fill")
-          .font(.headline)
-
-        ForEach(state.members, id: \.did) { member in
-          let didStr = member.did.didString()
-          let profile = state.profilesByDID[didStr]
-          let role = CommunityRole(rawRole: member.role)
-          let pinned = isAuthorPinned(didStr)
-
-          HStack(spacing: 12) {
-            AvatarThumbView(
-              url: profile?.avatarURL,
-              fallbackText: profile?.displayName ?? didStr,
-              size: 40,
-              scale: displayScale
-            )
-
-            VStack(alignment: .leading, spacing: 2) {
-              HStack(spacing: 6) {
-                Text(profile?.displayName ?? "Community Creator")
-                  .font(.subheadline.weight(.semibold))
-                  .lineLimit(1)
-                Text(role.badgeTitle)
-                  .font(.caption2.weight(.semibold))
-                  .foregroundStyle(Color.accentColor)
-                  .padding(.horizontal, 6)
-                  .padding(.vertical, 2)
-                  .background(Color.accentColor.opacity(0.12), in: Capsule())
-              }
-              if let handle = profile?.handle {
-                Text("@\(handle)")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
-              }
-              Text(member.whyPicked)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-
-            Spacer()
-
-            Button {
-              onTogglePinAuthor(didStr)
-            } label: {
-              Label(pinned ? "Pinned" : "Pin", systemImage: pinned ? "pin.fill" : "pin")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(pinned ? .white : Color.accentColor)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                  pinned ? Color.accentColor : Color.accentColor.opacity(0.12),
-                  in: Capsule()
-                )
-            }
-            .buttonStyle(.plain)
-          }
-          .padding(10)
-          .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-              .fill(Color.secondary.opacity(0.06))
-          )
-        }
-      }
+    if let memberSections {
+      ScenePeekMembersSection(
+        sections: memberSections,
+        lineupHeading: lineupHeading(memberSections.lineup.count),
+        profilesByDID: profilesByDID,
+        isAuthorPinned: isAuthorPinned,
+        onTogglePinAuthor: onTogglePinAuthor,
+        onMemberAppear: onMemberAppear
+      )
     }
   }
 

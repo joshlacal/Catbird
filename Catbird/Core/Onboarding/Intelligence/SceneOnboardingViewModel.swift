@@ -47,10 +47,15 @@ public final class SceneOnboardingViewModel {
   public struct PeekSheetState: Identifiable, Sendable {
     public var id: Int { community.communityId }
     public let community: BlueCatbirdIntelDefs.CommunitySummary
+    /// The scene's members in the server's order. A live server puts the accounts a pick follows
+    /// first; their profiles live in `sceneProfiles`.
     public var members: [BlueCatbirdIntelDefs.CommunityMemberRef]
-    public var profilesByDID: [String: HydratedRecommendedProfile]
     public var posts: [HydratedSamplePost]
     public var neighbors: [BlueCatbirdIntelDefs.CommunitySummary]
+    /// How many members picking the scene follows, and how many when it is hearted. Nil when the
+    /// server does not size lineups per scene.
+    public var defaultLineupCount: Int?
+    public var boostedLineupCount: Int?
     public var isLoading: Bool
   }
 
@@ -124,6 +129,9 @@ public final class SceneOnboardingViewModel {
   /// Peek sheet state
   public var activePeek: PeekSheetState?
 
+  /// Profiles for the accounts shown on scene cards and in the scene sheet.
+  public let sceneProfiles: SceneProfileStore
+
   // MARK: - Beat 2: Calibration Duels & Rhythm Controls
 
   public private(set) var isLoadingSwipes: Bool = false
@@ -176,6 +184,9 @@ public final class SceneOnboardingViewModel {
     self.service = service
     self.mode = mode
     self.initialInterests = initialInterests
+    self.sceneProfiles = SceneProfileStore { [service] dids in
+      await service.hydrateProfiles(dids: dids)
+    }
   }
 
   // MARK: - Computed Properties
@@ -587,9 +598,10 @@ public final class SceneOnboardingViewModel {
     activePeek = PeekSheetState(
       community: summary,
       members: [],
-      profilesByDID: [:],
       posts: [],
       neighbors: [],
+      defaultLineupCount: nil,
+      boostedLineupCount: nil,
       isLoading: true
     )
 
@@ -610,19 +622,21 @@ public final class SceneOnboardingViewModel {
         )
         return item.post
       }
-      let topMemberDIDs = Array(detail.members.prefix(12).map(\.did))
+      // The first batch of members loads with the posts; the rest load as their rows appear.
+      let firstMemberBatch = Array(detail.members.prefix(SceneProfileStore.batchSize).map(\.did))
 
       async let postsTask = service.hydratePosts(uris: postURIs, attributionByURI: attrMap)
-      async let profilesTask = service.hydrateProfiles(dids: topMemberDIDs)
-      let (hydratedPosts, hydratedProfiles) = await (postsTask, profilesTask)
+      await sceneProfiles.load(firstMemberBatch)
+      let hydratedPosts = await postsTask
 
       guard activePeek?.community.communityId == summary.communityId else { return }
       activePeek = PeekSheetState(
         community: detail.community,
-        members: Array(detail.members.prefix(12)),
-        profilesByDID: hydratedProfiles,
+        members: detail.members,
         posts: hydratedPosts,
         neighbors: detail.neighborCommunities,
+        defaultLineupCount: detail.defaultLineupCount,
+        boostedLineupCount: detail.boostedLineupCount,
         isLoading: false
       )
     } catch {
