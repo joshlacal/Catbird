@@ -202,6 +202,7 @@ final class FeedManager {
 enum FeedError: LocalizedError {
     case clientNotAvailable
     case requestFailed(statusCode: Int)
+    case noResponse
     
     var errorDescription: String? {
         switch self {
@@ -211,6 +212,8 @@ enum FeedError: LocalizedError {
             if statusCode == 429 {
                 return "Too many requests. Try again in a moment."
             }
+            return "This feed couldn’t be loaded. Try again."
+        case .noResponse:
             return "This feed couldn’t be loaded. Try again."
         }
     }
