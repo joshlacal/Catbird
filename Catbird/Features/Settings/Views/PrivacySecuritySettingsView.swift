@@ -176,7 +176,7 @@ struct PrivacySecuritySettingsView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Encrypted Chat")
-                        Text("Backup & recovery, diagnostics")
+                        Text("Who can message you, backup & recovery")
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
