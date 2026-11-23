@@ -15,6 +15,7 @@ struct FeedView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
+  @Environment(\.scenePhase) private var scenePhase
   @Binding var path: NavigationPath
   @Binding var selectedTab: Int
 
@@ -76,7 +77,7 @@ struct FeedView: View {
           hasAttemptedInitialLoad = true
           Task { @MainActor in
             logger.debug("Loading initial data on appear for feed: \(fetch.identifier)")
-            await manager.loadInitialData()
+            await performInitialLoad(with: manager)
           }
         }
       }
@@ -103,9 +104,8 @@ struct FeedView: View {
       // Load initial data if posts are empty, but NOT during account transition
       // Account transition will trigger loading via StateInvalidationEvent
       if let manager = stateManager, manager.posts.isEmpty, !appState.isTransitioningAccounts {
-        hasAttemptedInitialLoad = true
         logger.debug("Loading initial data for feed: \(fetch.identifier)")
-        await manager.loadInitialData()
+        await performInitialLoad(with: manager)
       } else if stateManager != nil {
         hasAttemptedInitialLoad = true
         logger.debug("Skipping initial load - posts exist or transitioning accounts")
@@ -133,9 +133,8 @@ struct FeedView: View {
 
       // Load data for the new feed if empty, but NOT during account transition
       if newManager.posts.isEmpty, !appState.isTransitioningAccounts {
-        hasAttemptedInitialLoad = true
         logger.debug("Loading initial data for new feed: \(fetch.identifier)")
-        await newManager.loadInitialData()
+        await performInitialLoad(with: newManager)
       } else if !appState.isTransitioningAccounts {
         hasAttemptedInitialLoad = true
         logger.debug("New feed already has \(newManager.posts.count) posts")
@@ -146,15 +145,52 @@ struct FeedView: View {
       if wasTransitioning && !isTransitioning {
         logger.debug("Account transition completed - checking if initial load needed")
         Task { @MainActor in
-          if let manager = stateManager, manager.posts.isEmpty, !hasAttemptedInitialLoad {
-            hasAttemptedInitialLoad = true
+          if let manager = stateManager, needsInitialLoad(manager) {
             logger.debug("Loading initial data after account transition for feed: \(fetch.identifier)")
-            await manager.loadInitialData()
+            await performInitialLoad(with: manager)
           }
         }
       }
     }
+    .onChange(of: scenePhase) { _, phase in
+      // A first load that was held back or failed while the app was starting
+      // gets another attempt when the app comes back to the foreground.
+      guard phase == .active, !appState.isTransitioningAccounts,
+            let manager = stateManager, needsInitialLoad(manager) else { return }
+      Task { @MainActor in
+        logger.debug("Retrying initial load on scene activation for feed: \(fetch.identifier)")
+        await performInitialLoad(with: manager)
+      }
+    }
     .id((appState.userDID ?? "") + fetch.identifier) // Reset view when user or feed changes
+  }
+
+  // MARK: - Initial Load
+
+  /// Whether the feed is still empty because its first load never ran, was
+  /// skipped (cancelled or held back by an account switch), or failed.
+  private func needsInitialLoad(_ manager: FeedStateManager) -> Bool {
+    guard manager.posts.isEmpty else { return false }
+    switch manager.loadingState {
+    case .idle:
+      return !hasAttemptedInitialLoad
+    case .error:
+      return true
+    case .loading, .refreshing, .loadingMore:
+      return false
+    }
+  }
+
+  /// Runs the first load and leaves the feed eligible for another attempt when
+  /// the load returned without posts or an error, which happens when the view's
+  /// task is cancelled or an account switch is still settling during launch.
+  @MainActor
+  private func performInitialLoad(with manager: FeedStateManager) async {
+    hasAttemptedInitialLoad = true
+    await manager.loadInitialData()
+    if manager.posts.isEmpty, case .idle = manager.loadingState {
+      hasAttemptedInitialLoad = false
+    }
   }
 }
 
