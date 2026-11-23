@@ -175,8 +175,8 @@ struct PrivacySecuritySettingsView: View {
                     MLSChatSettingsView()
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Chat Privacy")
-                        Text("Who can message you, request expiration")
+                        Text("Encrypted Chat")
+                        Text("Backup & recovery, diagnostics")
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }

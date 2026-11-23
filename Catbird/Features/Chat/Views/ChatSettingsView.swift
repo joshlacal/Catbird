@@ -113,7 +113,7 @@ struct ChatSettingsView: View {
           }
         }
         
-        // Show MLS privacy settings link when opted in
+        // Show encrypted chat settings link when opted in
         #if os(iOS)
         if isOptedIn && !isLoadingOptInStatus {
           NavigationLink {
@@ -122,7 +122,7 @@ struct ChatSettingsView: View {
             HStack {
               Image(systemName: "lock.shield")
                 .foregroundColor(.blue)
-              Text("MLS Privacy Settings")
+              Text("Encrypted Chat Settings")
             }
           }
         }

@@ -588,26 +588,7 @@ struct MLSRequestConversationGate<Content: View>: View {
   }
 }
 
-// MARK: - Request Delivery Settings, Block Sheet, & Report Spam Sheet
-
-struct MLSRequestDeliverySettingsSection: View {
-  @AppStorage("mls.whoCanMessageMe") private var policyRaw: String = MLSWhoCanMessageMe.everyone.rawValue
-
-  var body: some View {
-    Section {
-      Picker("Encrypted Chat Requests", selection: $policyRaw) {
-        Text("Everyone").tag(MLSWhoCanMessageMe.everyone.rawValue)
-        Text("People I Follow").tag(MLSWhoCanMessageMe.following.rawValue)
-        Text("Mutuals Only").tag(MLSWhoCanMessageMe.mutuals.rawValue)
-        Text("No One").tag(MLSWhoCanMessageMe.nobody.rawValue)
-      }
-    } header: {
-      Text("Encrypted Requests")
-    } footer: {
-      Text("Controls who can send you end-to-end encrypted direct requests.")
-    }
-  }
-}
+// MARK: - Block Sheet & Report Spam Sheet
 
 struct BlockChatSenderSheet: View {
   @Environment(AppState.self) private var appState
