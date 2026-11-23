@@ -52,6 +52,8 @@ struct LoginView: View {
     @State private var showDebugInfo = false
     @State private var biometricAuthAvailable = false
     @State private var showSavedAccounts = false
+    @State private var authModeAwaitingAgreement: AuthMode?
+    @AppStorage(CommunityStandards.acceptedAgreementVersionKey) private var acceptedAgreementVersion = 0
     
     // Advanced AppView configuration
     @State private var customAppViewDID = "did:web:api.bsky.app#bsky_appview"
@@ -349,6 +351,19 @@ struct LoginView: View {
             AccountSwitcherView()
                 .environment(appStateManager)
         }
+        .sheet(isPresented: isShowingAgreement) {
+            CommunityStandardsAgreementView(
+                onAgree: {
+                    acceptedAgreementVersion = CommunityStandards.agreementVersion
+                    let mode = authModeAwaitingAgreement
+                    authModeAwaitingAgreement = nil
+                    if let mode {
+                        enterAuthMode(mode)
+                    }
+                },
+                onCancel: { authModeAwaitingAgreement = nil }
+            )
+        }
         .onChange(of: appStateManager.authentication.state) { _, newValue in
             // Update local error state based on auth manager errors
             if case .error(let message) = newValue {
@@ -405,6 +420,14 @@ struct LoginView: View {
         }
         .modifier(DebugInfoTapGesture(showDebugInfo: $showDebugInfo))
         .task {
+            // Entry points that open straight into sign-in or sign-up still ask for the
+            // Community Standards agreement first.
+            if authMode != .selection,
+               acceptedAgreementVersion < CommunityStandards.agreementVersion {
+                authModeAwaitingAgreement = authMode
+                authMode = .selection
+            }
+
             // Check biometric authentication availability
             biometricAuthAvailable = (appStateManager.authentication.biometricType != .none)
 
@@ -570,10 +593,7 @@ struct LoginView: View {
             // Login Button
             Button {
                 guard authMode == .selection, !isLoggingIn else { return }
-                withAnimation(navigationAnimation) {
-                    authMode = .login
-                    focusedField = .username
-                }
+                enterAuthModeAfterAgreement(.login)
             } label: {
                 Text("Sign In")
                     .appFont(AppTextRole.headline)
@@ -587,9 +607,7 @@ struct LoginView: View {
             // Sign Up Button
             Button {
                 guard authMode == .selection, !isLoggingIn else { return }
-                withAnimation(navigationAnimation) {
-                    authMode = .signup
-                }
+                enterAuthModeAfterAgreement(.signup)
             } label: {
                 Text("Create Account")
                     .appFont(AppTextRole.headline)
@@ -952,6 +970,32 @@ struct LoginView: View {
         .accessibilityIdentifier("login.continue")
     }
     
+    private var isShowingAgreement: Binding<Bool> {
+        Binding(
+            get: { authModeAwaitingAgreement != nil },
+            set: { if !$0 { authModeAwaitingAgreement = nil } }
+        )
+    }
+
+    /// Signing in and creating an account both require the current Community Standards
+    /// agreement; it is asked for once per agreement version on this device.
+    private func enterAuthModeAfterAgreement(_ mode: AuthMode) {
+        if acceptedAgreementVersion >= CommunityStandards.agreementVersion {
+            enterAuthMode(mode)
+        } else {
+            authModeAwaitingAgreement = mode
+        }
+    }
+
+    private func enterAuthMode(_ mode: AuthMode) {
+        withAnimation(navigationAnimation) {
+            authMode = mode
+            if mode == .login {
+                focusedField = .username
+            }
+        }
+    }
+
     private func handleActionButtonTap() {
         switch authMode {
         case .login:
