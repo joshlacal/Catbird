@@ -169,7 +169,7 @@ struct NotificationWidgetEntryView: View {
       // Count area with extra large number
       VStack(alignment: .center, spacing: 2) {
           
-          Text("Bluesky")
+          Text("Catbird")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
               .foregroundStyle(.tertiary)
               .textScale(.secondary)
@@ -221,7 +221,7 @@ struct NotificationWidgetEntryView: View {
       // Left section with icon and title
       VStack(alignment: .leading, spacing: 4) {
 
-        Text("Bluesky Notifications")
+        Text("Notifications")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
           .foregroundStyle(.secondary)
           .widgetAccentable()
