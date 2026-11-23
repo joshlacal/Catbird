@@ -354,7 +354,7 @@ struct LoginView: View {
         .sheet(isPresented: isShowingAgreement) {
             CommunityStandardsAgreementView(
                 onAgree: {
-                    acceptedAgreementVersion = CommunityStandards.agreementVersion
+                    CommunityStandards.recordAcceptanceBeforeSignIn()
                     let mode = authModeAwaitingAgreement
                     authModeAwaitingAgreement = nil
                     if let mode {
