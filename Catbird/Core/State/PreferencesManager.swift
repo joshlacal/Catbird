@@ -1864,7 +1864,8 @@ final class PreferencesManager {
     // Validate and save
     try validatePreferences(preferences)
     try await saveAndSyncPreferences(preferences)
-    if let restoredAdultContent {
+    // Adult content can only be turned on from the web, so a restored backup may only turn it off.
+    if let restoredAdultContent, !restoredAdultContent {
       try await updateAdultContentEnabled(restoredAdultContent, expectedAccountDID: restoringAccount)
     }
   }

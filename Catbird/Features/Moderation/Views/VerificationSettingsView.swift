@@ -64,7 +64,7 @@ struct VerificationSettingsView: View {
                 Text(error)
             }
         }
-        .task {
+        .task(id: appState.userDID) {
             await loadPreference()
         }
     }

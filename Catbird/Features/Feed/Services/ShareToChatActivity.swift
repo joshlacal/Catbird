@@ -1546,7 +1546,7 @@
                 .foregroundColor(.green)
             }
 
-            Text("\(participants.count) members • Epoch \(conversation.epoch)")
+            Text("\(participants.count) members")
               .font(.callout)
               .foregroundStyle(.secondary)
               .lineLimit(1)

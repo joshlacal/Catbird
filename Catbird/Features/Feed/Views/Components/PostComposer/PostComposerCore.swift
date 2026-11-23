@@ -1154,7 +1154,8 @@ extension PostComposerViewModel {
         var thumbBlob: Blob?
         if let previewURL = gif.media_formats.gifpreview?.url ?? gif.media_formats.tinygifpreview?.url {
             do {
-                let (data, _) = try await URLSession.shared.data(from: URL(string: previewURL)!)
+                guard let previewRequestURL = URL(string: previewURL) else { throw URLError(.badURL) }
+                let (data, _) = try await URLSession.shared.data(from: previewRequestURL)
                 let thumbMimeType = ImageMetadataStripper.detectMIMEType(from: data)
                 try appState.ageAccess.require(.generalContent)
                 guard !Task.isCancelled, appState.atProtoClient === client,

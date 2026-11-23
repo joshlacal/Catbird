@@ -564,6 +564,11 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             }
           }
 
+          Section("Details") {
+            DetailRow(label: "Sent At", value: info.sentAt.formatted(date: .abbreviated, time: .standard))
+          }
+
+          #if DEBUG
           Section("Debug") {
             DetailRow(label: "Message ID", value: info.messageID)
             DetailRow(label: "Conversation ID", value: info.conversationID)
@@ -574,8 +579,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             if let sequence = info.sequence {
               DetailRow(label: "Sequence", value: "\(sequence)")
             }
-            DetailRow(label: "Sent At", value: info.sentAt.formatted(date: .abbreviated, time: .standard))
           }
+          #endif
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
