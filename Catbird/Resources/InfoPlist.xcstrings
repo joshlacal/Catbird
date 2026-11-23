@@ -31,10 +31,244 @@
       "comment" : "Privacy - Camera Usage Description — system permission prompt shown when taking photos or videos for a post or scanning a Bluesky profile QR code. Keep 'Catbird' and 'Bluesky' brand names untranslated.",
       "extractionState" : "manual",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يستخدم Catbird الكاميرا لالتقاط الصور ومقاطع الفيديو لمنشوراتك ولمسح رموز QR الخاصة بالملفات الشخصية على Bluesky."
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilitza la càmera per fer fotos i vídeos per a les teves publicacions i per escanejar codis QR de perfils de Bluesky."
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používá fotoaparát k pořizování fotek a videí do vašich příspěvků a ke skenování QR kódů profilů na Bluesky."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruger kameraet til at tage billeder og videoer til dine opslag samt til at scanne QR-koder til Bluesky-profiler."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird verwendet die Kamera, um Fotos und Videos für deine Posts aufzunehmen und QR-Codes von Bluesky-Profilen zu scannen."
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Το Catbird χρησιμοποιεί την κάμερα για τη λήψη φωτογραφιών και βίντεο για τις δημοσιεύσεις σας και για τη σάρωση κωδικών QR προφίλ Bluesky."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes."
+          }
+        },
+        "en-AU" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes."
+          }
+        },
+        "en-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes."
+          }
+        },
+        "en-GB" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa la cámara para hacer fotos y grabar vídeos para tus publicaciones y para escanear códigos QR de perfiles de Bluesky."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa la cámara para tomar fotos y grabar videos para tus publicaciones y para escanear códigos QR de perfiles de Bluesky."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird käyttää kameraa kuvien ja videoiden ottamiseen julkaisuihisi sekä Bluesky-profiilien QR-koodien lukemiseen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise l’appareil photo pour prendre des photos et des vidéos pour vos publications et pour scanner les codes QR de profil Bluesky."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise l’appareil photo pour prendre des photos et des vidéos pour vos publications et pour scanner les codes QR de profil Bluesky."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird משתמשת במצלמה כדי לצלם תמונות וסרטונים עבור הפוסטים שלך וכדי לסרוק קודי QR של פרופילי Bluesky."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird आपके पोस्ट के लिए फ़ोटो और वीडियो लेने तथा Bluesky प्रोफ़ाइल QR कोड स्कैन करने के लिए कैमरे का उपयोग करता है।"
+          }
+        },
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird koristi kameru za snimanje fotografija i videozapisa za vaše objave te za skeniranje QR kodova profila na usluzi Bluesky."
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Catbird a kamerát használja fényképek és videók készítéséhez a bejegyzéseidhez, valamint a Bluesky-profilok QR-kódjainak beolvasásához."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan kamera untuk mengambil foto dan video bagi postingan Anda serta memindai kode QR profil Bluesky."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilizza la fotocamera per scattare foto e registrare video per i tuoi post e per scansionare i codici QR dei profili Bluesky."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbirdは、投稿用の写真や動画の撮影、およびBlueskyプロフィールのQRコードのスキャンにカメラを使用します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird에서 게시물용 사진 및 동영상을 촬영하고 Bluesky 프로필 QR 코드를 스캔하기 위해 카메라에 접근합니다."
+          }
+        },
+        "ms" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan kamera untuk mengambil foto dan video bagi siaran anda serta mengimbas kod QR profil Bluesky."
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruker kameraet til å ta bilder og videoer til innleggene dine, og til å skanne QR-koder for Bluesky-profiler."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird gebruikt de camera om foto’s en video’s te maken voor je berichten en om QR-codes van Bluesky-profielen te scannen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird używa aparatu do robienia zdjęć i nagrywania wideo do Twoich wpisów oraz do skanowania kodów QR profili Bluesky."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird usa a câmera para tirar fotos e gravar vídeos para suas publicações e para escanear códigos QR de perfis do Bluesky."
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird utiliza a câmara para tirar fotografias e gravar vídeos para as suas publicações e para ler códigos QR de perfis do Bluesky."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird folosește camera pentru a realiza fotografii și clipuri video pentru postările dvs. și pentru a scana coduri QR de profil Bluesky."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird использует камеру для съёмки фото и видео для ваших постов, а также для сканирования QR-кодов профилей Bluesky."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používa kameru na snímanie fotiek a videí pre vaše príspevky a na skenovanie QR kódov profilov na Bluesky."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird använder kameran för att ta bilder och spela in videor till dina inlägg samt för att skanna QR-koder för Bluesky-profiler."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird ใช้กล้องเพื่อถ่ายรูปและวิดีโอสำหรับโพสต์ของคุณ รวมถึงสแกนคิวอาร์โค้ดโปรไฟล์ Bluesky"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird, gönderilerin için fotoğraf ve video çekmek ve Bluesky profil QR kodlarını taramak amacıyla kamerayı kullanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird використовує камеру, щоб робити фото й відео для ваших дописів і сканувати QR-коди профілів Bluesky."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird sử dụng camera để chụp ảnh và quay video cho bài đăng của bạn cũng như quét mã QR hồ sơ Bluesky."
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird 會使用相機為你的帖文拍攝相片與影片，以及掃描 Bluesky 個人檔案 QR Code。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird 使用相机为你发布的帖子拍摄照片和视频，以及扫描 Bluesky 个人资料二维码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird 會使用相機為你的貼文拍攝照片與影片，以及掃描 Bluesky 個人檔案 QR 碼。"
           }
         }
       }
@@ -43,10 +277,244 @@
       "comment" : "Privacy - Contacts Usage Description — system permission prompt shown when the user opts into finding friends from their address book. Keep 'Catbird' and 'Bluesky' brand names untranslated.",
       "extractionState" : "manual",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يستخدم Catbird جهات اتصالك لمساعدتك في العثور على أصدقائك والتواصل معهم على Bluesky."
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilitza els teus contactes per ajudar-te a trobar amics i connectar-hi a Bluesky."
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používá vaše kontakty, aby vám pomohl najít přátele na Bluesky a spojit se s nimi."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruger dine kontakter til at hjælpe dig med at finde og få forbindelse til venner på Bluesky."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird verwendet deine Kontakte, damit du Freunde auf Bluesky finden und dich mit ihnen vernetzen kannst."
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Το Catbird χρησιμοποιεί τις επαφές σας για να σας βοηθήσει να βρείτε και να συνδεθείτε με φίλους στο Bluesky."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+          }
+        },
+        "en-AU" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+          }
+        },
+        "en-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+          }
+        },
+        "en-GB" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa tus contactos para ayudarte a encontrar amigos y conectar con ellos en Bluesky."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa tus contactos para ayudarte a encontrar amigos y conectar con ellos en Bluesky."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird käyttää yhteystietojasi auttaakseen sinua löytämään kaverisi Blueskyssa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise vos contacts pour vous aider à retrouver vos amis et à entrer en contact avec eux sur Bluesky."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise vos contacts pour vous aider à retrouver vos amis et à entrer en contact avec eux sur Bluesky."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird משתמשת באנשי הקשר שלך כדי לעזור לך למצוא חברים ולהתחבר אליהם ב-Bluesky."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird आपके संपर्कों का उपयोग Bluesky पर दोस्तों को खोजने और उनसे जुड़ने में आपकी मदद करने के लिए करता है।"
+          }
+        },
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird koristi vaše kontakte kako bi vam pomogao pronaći prijatelje i povezati se s njima na usluzi Bluesky."
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Catbird a névjegyeidet használja, hogy segítsen megtalálni az ismerőseidet a Bluesky-on és kapcsolatba lépni velük."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan kontak Anda untuk membantu Anda menemukan dan terhubung dengan teman di Bluesky."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilizza i tuoi contatti per aiutarti a trovare amici e connetterti con loro su Bluesky."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbirdは、Blueskyで友だちを見つけてつながるために連絡先を使用します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird에서 Bluesky의 친구를 찾고 연결할 수 있도록 연락처에 접근합니다."
+          }
+        },
+        "ms" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan kenalan anda untuk membantu anda mencari dan berhubung dengan rakan di Bluesky."
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruker kontaktene dine for å hjelpe deg med å finne og komme i kontakt med venner på Bluesky."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird gebruikt je contacten om je te helpen vrienden te vinden en met hen in contact te komen op Bluesky."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird używa Twoich kontaktów, aby pomóc Ci znaleźć znajomych na Bluesky i nawiązać z nimi kontakt."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird usa seus contatos para ajudar você a encontrar e se conectar com amigos no Bluesky."
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird utiliza os seus contactos para ajudar a encontrar amigos e a ligar-se a eles no Bluesky."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird vă folosește contactele pentru a vă ajuta să găsiți prieteni și să vă conectați cu ei pe Bluesky."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird использует ваши контакты, чтобы помочь вам найти друзей в Bluesky и подписаться на них."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používa vaše kontakty, aby vám pomohol nájsť priateľov na Bluesky a spojiť sa s nimi."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird använder dina kontakter för att hjälpa dig att hitta och få kontakt med vänner på Bluesky."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird ใช้รายชื่อติดต่อของคุณเพื่อช่วยค้นหาและเชื่อมต่อกับเพื่อนบน Bluesky"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird, Bluesky üzerindeki arkadaşlarını bulmana ve onlarla bağlantı kurmana yardımcı olmak için kişilerini kullanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird використовує ваші контакти, щоб допомогти вам знайти друзів у Bluesky та підписатися на них."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird sử dụng danh bạ của bạn để giúp bạn tìm và kết nối với bạn bè trên Bluesky."
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird 會使用你的通訊錄資料，協助你在 Bluesky 上尋找並聯繫朋友。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird 使用你的通讯录帮助你在 Bluesky 上查找并关注好友。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird 會使用你的聯絡人資訊，協助你在 Bluesky 上尋找並認識朋友。"
           }
         }
       }
@@ -55,10 +523,244 @@
       "comment" : "Privacy - Face ID Usage Description — system permission prompt shown when authenticating with Face ID to unlock the app with App Lock enabled. Keep 'Catbird' untranslated and use Apple's official localized term for 'Face ID'.",
       "extractionState" : "manual",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يستخدم Catbird بصمة الوجه (Face ID) لفتح قفل التطبيق عند تفعيل قفل التطبيق."
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilitza Face ID per desbloquejar l'aplicació quan el bloqueig de l'aplicació està activat."
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používá Face ID k odemykání aplikace, když je zapnutý Zámek aplikace."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruger Face ID til at låse appen op, når Applås er slået til."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird verwendet Face ID, um die App zu entsperren, wenn die App-Sperre aktiviert ist."
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Το Catbird χρησιμοποιεί το Face ID για το ξεκλείδωμα της εφαρμογής όταν είναι ενεργοποιημένο το Κλείδωμα εφαρμογής."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Catbird uses Face ID to unlock the app when App Lock is turned on."
+          }
+        },
+        "en-AU" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses Face ID to unlock the app when App Lock is turned on."
+          }
+        },
+        "en-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses Face ID to unlock the app when App Lock is turned on."
+          }
+        },
+        "en-GB" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses Face ID to unlock the app when App Lock is turned on."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa Face ID para desbloquear la app cuando el bloqueo de la app está activado."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa Face ID para desbloquear la app cuando el bloqueo de la app está activado."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird käyttää Face ID:tä sovelluksen lukituksen avaamiseen, kun sovelluslukitus on käytössä."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise Face ID pour déverrouiller l’application lorsque le verrouillage de l’app est activé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise Face ID pour déverrouiller l’application lorsque le verrouillage de l’app est activé."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird משתמשת ב-Face ID כדי לבטל את נעילת האפליקציה כאשר נעילת האפליקציה מופעלת."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ऐप लॉक चालू होने पर ऐप को अनलॉक करने के लिए Catbird Face ID का उपयोग करता है।"
+          }
+        },
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird koristi Face ID za otključavanje aplikacije kada je uključeno Zaključavanje aplikacije."
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Catbird a Face ID-t használja az alkalmazás feloldásához, amikor az Alkalmazászár be van kapcsolva."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan Face ID untuk membuka kunci aplikasi saat Kunci Aplikasi diaktifkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilizza Face ID per sbloccare l’app quando il Blocco app è attivo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbirdは、アプリロックがオンのときにアプリのロックを解除するためにFace IDを使用します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱 잠금이 켜져 있을 때 Face ID를 사용하여 Catbird의 잠금을 해제합니다."
+          }
+        },
+        "ms" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan Face ID untuk membuka kunci app apabila Kunci App diaktifkan."
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruker Face ID til å låse opp appen når Applås er slått på."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird gebruikt Face ID om de app te ontgrendelen wanneer appvergrendeling is ingeschakeld."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird używa Face ID do odblokowywania aplikacji, gdy włączona jest Blokada aplikacji."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird usa o Face ID para desbloquear o app quando o Bloqueio do app está ativado."
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird utiliza o Face ID para desbloquear a aplicação quando o Bloqueio da aplicação está ativado."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird folosește Face ID pentru a debloca aplicația atunci când funcția Blocare aplicație este activată."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird использует Face ID для разблокировки приложения, когда включена блокировка приложения."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používa Face ID na odomknutie aplikácie, keď je zapnuté Zamknutie aplikácie."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird använder Face ID för att låsa upp appen när Applås är aktiverat."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird ใช้ Face ID เพื่อปลดล็อกแอปเมื่อเปิดใช้งานการล็อกแอป"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird, Uygulama Kilidi açıkken uygulamanın kilidini açmak için Face ID kullanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird використовує Face ID для розблокування програми, коли ввімкнено блокування програми."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird sử dụng Face ID để mở khóa ứng dụng khi Khóa ứng dụng được bật."
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啟用「App 鎖定」時，Catbird 會使用 Face ID 解鎖 App。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用“应用锁”后，Catbird 会使用 Face ID 解锁应用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "啟用「App 鎖定」時，Catbird 會使用 Face ID 來解鎖 App。"
           }
         }
       }
@@ -67,10 +769,244 @@
       "comment" : "Privacy - Microphone Usage Description — system permission prompt shown when recording audio or video to share in a post. Keep 'Catbird' brand name untranslated.",
       "extractionState" : "manual",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يستخدم Catbird الميكروفون عند تسجيل الصوت أو الفيديو لمشاركته في منشور."
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilitza el micròfon quan graves àudio o vídeo per compartir-lo en una publicació."
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používá mikrofon při nahrávání zvuku nebo videa ke sdílení v příspěvku."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruger mikrofonen, når du optager lyd eller video for at dele det i et opslag."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird verwendet das Mikrofon, wenn du Audio oder Videos aufnimmst, um sie in einem Post zu teilen."
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Το Catbird χρησιμοποιεί το μικρόφωνο όταν ηχογραφείτε ήχο ή εγγράφετε βίντεο για κοινοποίηση σε μια δημοσίευση."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+          }
+        },
+        "en-AU" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+          }
+        },
+        "en-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+          }
+        },
+        "en-GB" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa el micrófono cuando grabas audio o vídeo para compartirlo en una publicación."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird usa el micrófono cuando grabas audio o video para compartirlo en una publicación."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird käyttää mikrofonia, kun tallennat ääntä tai videota jaettavaksi julkaisussa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise le microphone lorsque vous enregistrez de l’audio ou une vidéo à partager dans une publication."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilise le microphone lorsque vous enregistrez de l’audio ou une vidéo à partager dans une publication."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird משתמשת במיקרופון בעת הקלטת שמע או וידאו לשיתוף בפוסט."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "पोस्ट में शेयर करने के लिए ऑडियो या वीडियो रिकॉर्ड करते समय Catbird माइक्रोफ़ोन का उपयोग करता है।"
+          }
+        },
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird koristi mikrofon kada snimate zvuk ili videozapis za dijeljenje u objavi."
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Catbird a mikrofont használja, amikor hangot vagy videót veszel fel bejegyzésben való megosztáshoz."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan mikrofon saat Anda merekam audio atau video untuk dibagikan dalam postingan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird utilizza il microfono quando registri audio o video da condividere in un post."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbirdは、投稿で共有する音声や動画を録音・録画する際にマイクを使用します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird에서 게시물로 공유할 오디오 또는 동영상을 녹음할 때 마이크에 접근합니다."
+          }
+        },
+        "ms" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menggunakan mikrofon apabila anda merakam audio atau video untuk dikongsi dalam siaran."
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bruker mikrofonen når du tar opp lyd eller video som skal deles i et innlegg."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird gebruikt de microfoon wanneer je audio of video opneemt om te delen in een bericht."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird używa mikrofonu podczas nagrywania dźwięku lub wideo udostępnianego we wpisie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird usa o microfone quando você grava áudio ou vídeo para compartilhar em uma publicação."
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird utiliza o microfone quando grava áudio ou vídeo para partilhar numa publicação."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird folosește microfonul atunci când înregistrați conținut audio sau video pentru a-l partaja într-o postare."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird использует микрофон при записи аудио или видео для публикации в посте."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird používa mikrofón pri nahrávaní zvuku alebo videa na zdieľanie v príspevku."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird använder mikrofonen när du spelar in ljud eller video för att dela i ett inlägg."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird ใช้ไมโครโฟนเมื่อคุณบันทึกเสียงหรือวิดีโอเพื่อแชร์ในโพสต์"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird, bir gönderide paylaşmak üzere ses veya video kaydettiğinde mikrofonu kullanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird використовує мікрофон під час запису аудіо чи відео для публікації в дописі."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird sử dụng micrô khi bạn ghi âm hoặc quay video để chia sẻ trong bài đăng."
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當你錄製音訊或影片以分享至帖文時，Catbird 會使用咪高風。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当你录制要在帖子中分享的音频或视频时，Catbird 会使用麦克风。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當你錄製音訊或影片以分享至貼文時，Catbird 會使用麥克風。"
           }
         }
       }
@@ -79,10 +1015,244 @@
       "comment" : "Privacy - Photo Library Additions Usage Description — system permission prompt shown when saving an image from a post to the photo library. Keep 'Catbird' brand name untranslated and match the localized 'Save Image' action title.",
       "extractionState" : "manual",
       "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يحفظ Catbird الصور في مكتبة الصور عندما تختار «حفظ الصورة»."
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird desa imatges a la fototeca quan selecciones «Desa la imatge»."
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird ukládá obrázky do vaší knihovny fotek, když zvolíte Uložit obrázek."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird gemmer billeder i dit fotobibliotek, når du vælger Gem billede."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird sichert Bilder in deiner Fotomediathek, wenn du „Bild sichern“ auswählst."
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Το Catbird αποθηκεύει εικόνες στη βιβλιοθήκη φωτογραφιών σας όταν επιλέγετε «Αποθήκευση εικόνας»."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Catbird saves images to your photo library when you choose Save Image."
+          }
+        },
+        "en-AU" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird saves images to your photo library when you choose Save Image."
+          }
+        },
+        "en-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird saves images to your photo library when you choose Save Image."
+          }
+        },
+        "en-GB" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird saves images to your photo library when you choose Save Image."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird guarda imágenes en tu fototeca cuando seleccionas Guardar imagen."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird guarda imágenes en tu fototeca cuando seleccionas Guardar imagen."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird tallentaa kuvat kuvakirjastoosi, kun valitset Tallenna kuva."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird enregistre les images dans votre photothèque lorsque vous choisissez Enregistrer l’image."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird enregistre les images dans votre photothèque lorsque vous choisissez Enregistrer l’image."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird שומרת תמונות בספריית התמונות שלך בעת בחירה ב״שמירת תמונה״."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "जब आप इमेज सेव करें चुनते हैं, तो Catbird आपकी फ़ोटो लाइब्रेरी में इमेज सेव करता है।"
+          }
+        },
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird sprema slike u vašu medijateku fotografija kada odaberete Spremi sliku."
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Catbird képeket ment a fotókönyvtáradba, amikor a Kép mentése lehetőséget választod."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menyimpan gambar ke perpustakaan foto Anda saat Anda memilih Simpan Gambar."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird salva le immagini nella tua libreria foto quando scegli Salva immagine."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbirdは、「画像を保存」を選択したときに写真ライブラリへ画像を保存します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "‘이미지 저장’을 선택하면 Catbird에서 사진 보관함에 이미지를 저장합니다."
+          }
+        },
+        "ms" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird menyimpan imej ke pustaka foto anda apabila anda memilih Simpan Imej."
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird lagrer bilder i bildebiblioteket ditt når du velger Lagre bilde."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird bewaart afbeeldingen in je fotobibliotheek wanneer je ‘Bewaar afbeelding’ kiest."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird zapisuje obrazy w bibliotece zdjęć, gdy wybierzesz opcję Zapisz obraz."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird salva imagens na sua fototeca quando você escolhe Salvar imagem."
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Catbird guarda imagens na sua fototeca quando escolhe Guardar imagem."
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird salvează imagini în biblioteca dvs. foto atunci când alegeți Salvați imaginea."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird сохраняет изображения в вашу медиатеку, когда вы выбираете «Сохранить изображение»."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird ukladá obrázky do vašej knižnice fotiek, keď vyberiete možnosť Uložiť obrázok."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird sparar bilder i ditt bildbibliotek när du väljer Spara bild."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird จะบันทึกรูปภาพลงในคลังรูปภาพของคุณเมื่อคุณเลือกบันทึกรูปภาพ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird, Görseli Kaydet seçeneğini belirlediğinde görselleri fotoğraf arşivine kaydeder."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird зберігає зображення до вашої фототеки, коли ви вибираєте «Зберегти зображення»."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Catbird lưu hình ảnh vào thư viện ảnh của bạn khi bạn chọn Lưu hình ảnh."
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當你選擇「儲存圖片」時，Catbird 會將圖片儲存至你的相片圖庫。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当你选择“保存图片”时，Catbird 会将图片保存到你的照片图库。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "當你選擇「儲存圖片」時，Catbird 會將圖片儲存至你的照片圖庫。"
           }
         }
       }
