@@ -102,7 +102,14 @@ struct FeedProductPageView: View {
       if let client = appState.atProtoClient {
         let reportingService = ReportingService(client: client)
         let subject = reportingService.createFeedSubject(uri: feed.uri, cid: feed.cid)
-        ReportFormView(reportingService: reportingService, subject: subject, contentDescription: "Feed: \(feed.displayName)")
+        ReportFormView(
+          reportingService: reportingService,
+          subject: subject,
+          contentDescription: String(
+            localized: "Feed: \(feed.displayName)",
+            comment: "Report sheet target description for a custom feed — variable is the feed display name"
+          )
+        )
       }
     }
   }
@@ -119,7 +126,7 @@ struct FeedProductPageView: View {
             .fixedSize(horizontal: false, vertical: true)
           NavigationLink(value: NavigationDestination.profile(feed.creator.did.didString())) {
             HStack(spacing: 4) {
-              Text("@\(feed.creator.handle.description)")
+              Text(verbatim: "@\(feed.creator.handle.description)")
                 .appFont(AppTextRole.subheadline)
                 .foregroundStyle(Color.accentColor)
                 .lineLimit(1)
@@ -354,7 +361,7 @@ extension FeedProductPageView {
           likeURI = data?.uri
         } else {
           appState.toastManager.show(ToastItem(
-            message: "Couldn’t like this feed. Try again.",
+            message: String(localized: "Couldn’t like this feed. Try again.", comment: "Error toast when liking a feed fails"),
             icon: "exclamationmark.triangle.fill"
           ))
         }

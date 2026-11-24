@@ -212,7 +212,10 @@ struct RepositoryBrowserView: View {
 
             guard let backupRecord = try modelContext.fetch(descriptor).first else {
                 await MainActor.run {
-                    viewModel?.errorMessage = "Backup record not found"
+                    viewModel?.errorMessage = String(
+                        localized: "Backup record not found",
+                        comment: "Error when the selected CAR backup record cannot be found in storage."
+                    )
                 }
                 return
             }
@@ -235,7 +238,10 @@ struct RepositoryBrowserView: View {
         } catch {
             await MainActor.run {
                 viewModel?.isLoading = false
-                viewModel?.errorMessage = "Parsing failed: \(error.localizedDescription)"
+                viewModel?.errorMessage = String(
+                    localized: "Parsing failed: \(error.localizedDescription)",
+                    comment: "Error when repository CAR parsing fails. Placeholder is the error description."
+                )
             }
         }
     }
@@ -323,11 +329,11 @@ private struct RepositoryRowView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(repository.userHandle)
+                        Text(verbatim: repository.userHandle)
                             .font(.headline)
                             .foregroundColor(.primary)
 
-                        Text(repository.userDID)
+                        Text(verbatim: repository.userDID)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
@@ -346,9 +352,9 @@ private struct RepositoryRowView: View {
 
                 // Statistics row
                 HStack(spacing: 16) {
-                    StatisticView(label: "Posts", value: "\(repository.postCount)")
+                    StatisticView(label: "Posts", value: repository.postCount.formatted(.number))
                     StatisticView(label: "Success Rate", value: repository.successRate)
-                    StatisticView(label: "Confidence", value: String(format: "%.1f%%", repository.parsingConfidenceScore * 100))
+                    StatisticView(label: "Confidence", value: repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(1))))
 
                     Spacer()
 
@@ -376,11 +382,11 @@ private struct BackupRowView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(backup.userHandle)
+                        Text(verbatim: backup.userHandle)
                             .font(.headline)
                             .foregroundColor(.primary)
 
-                        Text(backup.userDID)
+                        Text(verbatim: backup.userDID)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
@@ -400,7 +406,7 @@ private struct BackupRowView: View {
                 // Backup info row
                 HStack(spacing: 16) {
                     StatisticView(label: "Size", value: ByteCountFormatter.string(fromByteCount: backup.fileSize, countStyle: .file))
-                    StatisticView(label: "Status", value: backup.status?.rawValue.capitalized ?? "Unknown")
+                    StatisticView(label: "Status", value: backup.status?.rawValue.capitalized ?? String(localized: "Unknown", comment: "Fallback backup status label when status is unknown."))
 
                     Spacer()
 
@@ -443,12 +449,12 @@ private struct StatusBadge: View {
 }
 
 private struct StatisticView: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value)
+            Text(verbatim: value)
                 .font(.caption)
                 .fontWeight(.semibold)
             Text(label)
@@ -482,7 +488,7 @@ private struct FilterSheetView: View {
                 Section("Data Type") {
                     Picker("Filter by", selection: $viewModel.dataTypeFilter) {
                         ForEach(DataTypeFilter.allCases, id: \.self) { filter in
-                            Text(filter.rawValue).tag(filter)
+                            Text(filter.displayName).tag(filter)
                         }
                     }
                 }
@@ -490,7 +496,7 @@ private struct FilterSheetView: View {
                 Section("Sort Order") {
                     Picker("Sort by", selection: $viewModel.sortOrder) {
                         ForEach(SortOrder.allCases, id: \.self) { order in
-                            Label(order.rawValue, systemImage: order.systemImage).tag(order)
+                            Label(order.displayName, systemImage: order.systemImage).tag(order)
                         }
                     }
                 }
@@ -553,7 +559,7 @@ private struct ExportSheetView: View {
     private var repositoryInfoSection: some View {
         Section("Repository") {
             VStack(alignment: .leading, spacing: 4) {
-                Text(repository.userHandle)
+                Text(verbatim: repository.userHandle)
                     .font(.headline)
                 repositoryStatsText
             }
@@ -561,7 +567,10 @@ private struct ExportSheetView: View {
     }
 
     private var repositoryStatsText: some View {
-        Text("\(repository.postCount) posts, \(repository.connectionCount) connections")
+        Text(
+            "\(repository.postCount) posts, \(repository.connectionCount) connections",
+            comment: "Summary of repository contents in export sheet. First placeholder is post count, second is connection count."
+        )
             .font(.caption)
             .foregroundColor(.secondary)
     }
@@ -579,7 +588,7 @@ private struct ExportSheetView: View {
     private func exportFormatRow(for format: ExportFormat) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(format.rawValue)
+                Text(verbatim: format.rawValue)
                     .fontWeight(.medium)
                 Text(format.description)
                     .font(.caption)

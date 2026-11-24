@@ -17,12 +17,28 @@ public enum SearchReplyMode: String, Codable, CaseIterable, Identifiable, Sendab
 
   public var id: String { rawValue }
 
-  public var displayName: String {
+  public var localizedDisplayName: LocalizedStringResource {
     switch self {
-    case .any: return "Any replies"
-    case .excludeReplies: return "Exclude replies"
-    case .repliesOnly: return "Replies only"
+    case .any:
+      return LocalizedStringResource(
+        "Any replies",
+        comment: "Search filter option to include both posts and replies"
+      )
+    case .excludeReplies:
+      return LocalizedStringResource(
+        "Exclude replies",
+        comment: "Search filter option to exclude replies from post results"
+      )
+    case .repliesOnly:
+      return LocalizedStringResource(
+        "Replies only",
+        comment: "Search filter option to show only replies in post results"
+      )
     }
+  }
+
+  public var displayName: String {
+    String(localized: localizedDisplayName)
   }
 }
 
@@ -37,15 +53,43 @@ public enum SearchDateRange: String, Codable, CaseIterable, Identifiable, Sendab
 
   public var id: String { rawValue }
 
-  public var displayName: String {
+  public var localizedDisplayName: LocalizedStringResource {
     switch self {
-    case .anytime: return "Anytime"
-    case .today: return "Today"
-    case .week: return "This week"
-    case .month: return "This month"
-    case .year: return "This year"
-    case .custom: return "Custom range"
+    case .anytime:
+      return LocalizedStringResource(
+        "Anytime",
+        comment: "Search date filter option for all dates"
+      )
+    case .today:
+      return LocalizedStringResource(
+        "Today",
+        comment: "Search date filter option for posts from today"
+      )
+    case .week:
+      return LocalizedStringResource(
+        "This week",
+        comment: "Search date filter option for posts from the past week"
+      )
+    case .month:
+      return LocalizedStringResource(
+        "This month",
+        comment: "Search date filter option for posts from the past month"
+      )
+    case .year:
+      return LocalizedStringResource(
+        "This year",
+        comment: "Search date filter option for posts from the past year"
+      )
+    case .custom:
+      return LocalizedStringResource(
+        "Custom range",
+        comment: "Search date filter option for a custom start and end date"
+      )
     }
+  }
+
+  public var displayName: String {
+    String(localized: localizedDisplayName)
   }
 }
 
@@ -147,28 +191,103 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
 
   /// One entry per active filter (sort excluded), matching what `activeFilterCount` counts.
   public var summaryItems: [SearchFilterSummaryItem] {
+    summaryItems(locale: .current)
+  }
+
+  /// Locale-aware active filter summary items so SwiftUI views can pass `@Environment(\.locale)`.
+  public func summaryItems(locale: Locale) -> [SearchFilterSummaryItem] {
     var items: [SearchFilterSummaryItem] = []
     func add(_ icon: String, _ text: String) {
       items.append(SearchFilterSummaryItem(icon: icon, text: text))
     }
-    if let value = Self.trimmedValue(author) { add("person", "From \(Self.handleText(value))") }
-    if let value = Self.trimmedValue(excludeAuthor) { add("person.slash", "Not from \(Self.handleText(value))") }
-    if let value = Self.trimmedValue(mentions) { add("at", "Mentions \(Self.handleText(value))") }
-    if let value = Self.trimmedValue(excludeMentions) { add("at", "Doesn’t mention \(Self.handleText(value))") }
-    if let value = Self.trimmedValue(domain) { add("globe", "Links to \(value)") }
-    if let value = Self.trimmedValue(excludeDomain) { add("globe", "No links to \(value)") }
-    if let value = Self.trimmedValue(url) { add("link", "Links to \(value)") }
-    if let value = Self.trimmedValue(excludeURL) { add("link", "Doesn’t link to \(value)") }
-    if let value = Self.trimmedValue(hashtag) { add("number", Self.hashtagText(value)) }
-    if let value = Self.trimmedValue(excludeHashtag) { add("number", "Without \(Self.hashtagText(value))") }
-    if hasDateFilter { add("calendar", dateRange.displayName) }
-    if let value = Self.trimmedValue(language) {
-      add("character.bubble", Locale.current.localizedString(forLanguageCode: value) ?? value.uppercased())
+    func localized(_ resource: LocalizedStringResource) -> String {
+      var localizedResource = resource
+      localizedResource.locale = locale
+      return String(localized: localizedResource)
     }
-    if replyMode != .any { add("arrowshape.turn.up.left", replyMode.displayName) }
-    if hasMedia { add("photo", "Has media") }
-    if hasVideo { add("video", "Has video") }
-    if following { add("person.2", "People you follow") }
+    if let value = Self.trimmedValue(author) {
+      let handle = Self.handleText(value)
+      add("person", localized(LocalizedStringResource(
+        "From \(handle)",
+        comment: "Active search filter chip for posts by a specific author — variable is an @handle or DID"
+      )))
+    }
+    if let value = Self.trimmedValue(excludeAuthor) {
+      let handle = Self.handleText(value)
+      add("person.slash", localized(LocalizedStringResource(
+        "Not from \(handle)",
+        comment: "Active search filter chip excluding posts by an author — variable is an @handle or DID"
+      )))
+    }
+    if let value = Self.trimmedValue(mentions) {
+      let handle = Self.handleText(value)
+      add("at", localized(LocalizedStringResource(
+        "Mentions \(handle)",
+        comment: "Active search filter chip for posts mentioning an account — variable is an @handle or DID"
+      )))
+    }
+    if let value = Self.trimmedValue(excludeMentions) {
+      let handle = Self.handleText(value)
+      add("at", localized(LocalizedStringResource(
+        "Doesn’t mention \(handle)",
+        comment: "Active search filter chip excluding posts mentioning an account — variable is an @handle or DID"
+      )))
+    }
+    if let value = Self.trimmedValue(domain) {
+      add("globe", localized(LocalizedStringResource(
+        "Links to \(value)",
+        comment: "Active search filter chip for posts linking to a domain or URL — variable is a domain or URL"
+      )))
+    }
+    if let value = Self.trimmedValue(excludeDomain) {
+      add("globe", localized(LocalizedStringResource(
+        "No links to \(value)",
+        comment: "Active search filter chip excluding posts linking to a domain — variable is a domain"
+      )))
+    }
+    if let value = Self.trimmedValue(url) {
+      add("link", localized(LocalizedStringResource(
+        "Links to \(value)",
+        comment: "Active search filter chip for posts linking to a domain or URL — variable is a domain or URL"
+      )))
+    }
+    if let value = Self.trimmedValue(excludeURL) {
+      add("link", localized(LocalizedStringResource(
+        "Doesn’t link to \(value)",
+        comment: "Active search filter chip excluding posts linking to a URL — variable is a URL"
+      )))
+    }
+    if let value = Self.trimmedValue(hashtag) { add("number", Self.hashtagText(value)) }
+    if let value = Self.trimmedValue(excludeHashtag) {
+      let tag = Self.hashtagText(value)
+      add("number", localized(LocalizedStringResource(
+        "Without \(tag)",
+        comment: "Active search filter chip excluding a hashtag — variable is a #hashtag"
+      )))
+    }
+    if hasDateFilter { add("calendar", localized(dateRange.localizedDisplayName)) }
+    if let value = Self.trimmedValue(language) {
+      add("character.bubble", locale.localizedString(forLanguageCode: value) ?? value.uppercased())
+    }
+    if replyMode != .any { add("arrowshape.turn.up.left", localized(replyMode.localizedDisplayName)) }
+    if hasMedia {
+      add("photo", localized(LocalizedStringResource(
+        "Has media",
+        comment: "Active search filter chip for posts containing media"
+      )))
+    }
+    if hasVideo {
+      add("video", localized(LocalizedStringResource(
+        "Has video",
+        comment: "Active search filter chip for posts containing video"
+      )))
+    }
+    if following {
+      add("person.2", localized(LocalizedStringResource(
+        "People you follow",
+        comment: "Active search filter chip for posts from followed accounts"
+      )))
+    }
     return items
   }
 
@@ -252,35 +371,59 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
   }
 
   public var authorValidationError: String? {
-    Self.validateIdentifier(author, fieldName: "Author")
+    Self.validateIdentifier(
+      author,
+      fieldName: String(localized: "Author", comment: "Search filter field name for post author")
+    )
   }
 
   public var mentionsValidationError: String? {
-    Self.validateIdentifier(mentions, fieldName: "Mentions")
+    Self.validateIdentifier(
+      mentions,
+      fieldName: String(localized: "Mentions", comment: "Search filter field name for mentioned account")
+    )
   }
 
   public var excludeAuthorValidationError: String? {
-    Self.validateIdentifier(excludeAuthor, fieldName: "Exclude Author")
+    Self.validateIdentifier(
+      excludeAuthor,
+      fieldName: String(localized: "Exclude Author", comment: "Search filter field name for excluded author")
+    )
   }
 
   public var excludeMentionsValidationError: String? {
-    Self.validateIdentifier(excludeMentions, fieldName: "Exclude Mentions")
+    Self.validateIdentifier(
+      excludeMentions,
+      fieldName: String(localized: "Exclude Mentions", comment: "Search filter field name for excluded mention")
+    )
   }
 
   public var domainValidationError: String? {
-    Self.validateDomain(domain, fieldName: "Domain")
+    Self.validateDomain(
+      domain,
+      fieldName: String(localized: "Domain", comment: "Search filter field name for linked domain")
+    )
   }
 
   public var excludeDomainValidationError: String? {
-    Self.validateDomain(excludeDomain, fieldName: "Exclude Domain")
+    Self.validateDomain(
+      excludeDomain,
+      fieldName: String(localized: "Exclude Domain", comment: "Search filter field name for excluded domain")
+    )
   }
 
   public var urlValidationError: String? {
-    Self.validateURL(url, fieldName: "URL")
+    Self.validateURL(
+      url,
+      fieldName: String(localized: "URL", comment: "Search filter field name for exact link URL")
+    )
   }
 
   public var excludeURLValidationError: String? {
-    Self.validateURL(excludeURL, fieldName: "Exclude URL")
+    Self.validateURL(
+      excludeURL,
+      fieldName: String(localized: "Exclude URL", comment: "Search filter field name for excluded link URL")
+    )
   }
 
   private static func validateIdentifier(_ value: String?, fieldName: String) -> String? {
@@ -289,13 +432,19 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
     }
     let sanitized = value.hasPrefix("@") ? String(value.dropFirst()) : value
     if sanitized.isEmpty {
-      return "\(fieldName) cannot be empty"
+      return String(
+        localized: "\(fieldName) cannot be empty",
+        comment: "Validation error when a handle filter field is empty — variable is the localized field name"
+      )
     }
     do {
       _ = try ATIdentifier(string: sanitized)
       return nil
     } catch {
-      return "Enter a handle like alice.bsky.social"
+      return String(
+        localized: "Enter a handle like alice.bsky.social",
+        comment: "Validation error when a search filter handle or DID is malformed"
+      )
     }
   }
 
@@ -304,7 +453,10 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
       return nil
     }
     if value.contains(" ") || value.contains("/") || value.contains(":") {
-      return "\(fieldName) must be a valid domain (e.g. nytimes.com)"
+      return String(
+        localized: "\(fieldName) must be a valid domain (e.g. nytimes.com)",
+        comment: "Validation error when a domain filter is invalid — variable is the localized field name"
+      )
     }
     return nil
   }
@@ -314,7 +466,10 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
       return nil
     }
     guard let url = URL(string: value), url.scheme != nil, (try? URI(uriString: value)) != nil else {
-      return "\(fieldName) must be a full link, like https://example.com/page"
+      return String(
+        localized: "\(fieldName) must be a full link, like https://example.com/page",
+        comment: "Validation error when a URL filter is invalid — variable is the localized field name"
+      )
     }
     return nil
   }

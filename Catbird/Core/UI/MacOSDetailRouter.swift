@@ -71,7 +71,7 @@ struct MacOSDetailRouter: View {
   private func feedName(for fetchType: FetchType) -> String {
     switch fetchType {
     case .timeline:
-      return "Timeline"
+      return String(localized: "Timeline", comment: "Navigation title for the primary Following timeline feed.")
     default:
       return fetchType.description
     }

@@ -196,7 +196,7 @@ final class BackupManager {
 
     isBackingUp = true
     backupProgress = 0.0
-    backupStatusMessage = "Starting backup..."
+    backupStatusMessage = String(localized: "Starting backup...", comment: "Progress status when starting a local repository backup.")
     lastBackupError = nil
 
     defer {
@@ -211,7 +211,7 @@ final class BackupManager {
       try FileManager.default.createDirectory(at: backupsDir, withIntermediateDirectories: true)
 
       backupProgress = 0.1
-      backupStatusMessage = "Fetching repository data..."
+      backupStatusMessage = String(localized: "Fetching repository data...", comment: "Progress status while downloading repository CAR data.")
 
       // Fetch repository data
       let (responseCode, repoData) = try await client.com.atproto.sync.getRepo(
@@ -223,7 +223,7 @@ final class BackupManager {
       }
 
       backupProgress = 0.5
-      backupStatusMessage = "Processing backup data..."
+      backupStatusMessage = String(localized: "Processing backup data...", comment: "Progress status while writing downloaded repository CAR file.")
 
       // Generate filename
       let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
@@ -235,7 +235,7 @@ final class BackupManager {
       try carData.write(to: backupURL)
 
       backupProgress = 0.8
-      backupStatusMessage = "Creating backup record..."
+      backupStatusMessage = String(localized: "Creating backup record...", comment: "Progress status while saving backup metadata.")
 
       // Calculate hash
       let hash = SHA256.hash(data: carData)
@@ -257,7 +257,7 @@ final class BackupManager {
       logger.info("Backup record saved successfully: \(record.id)")
 
       backupProgress = 0.9
-      backupStatusMessage = "Finalizing backup..."
+      backupStatusMessage = String(localized: "Finalizing backup...", comment: "Progress status while verifying and cleaning up backups.")
 
       // Update configuration if automatic backup
       if isAutomatic {
@@ -281,7 +281,7 @@ final class BackupManager {
       }
 
       backupProgress = 1.0
-      backupStatusMessage = "Backup completed successfully"
+      backupStatusMessage = String(localized: "Backup completed successfully", comment: "Completion status after creating a repository backup.")
 
       logger.info("Backup completed successfully: \(record.id)")
 
@@ -344,21 +344,21 @@ enum BackupError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .modelContextNotAvailable:
-      return "Database not available for backup operations"
+      return String(localized: "Database not available for backup operations", comment: "Backup error description.")
     case .backupInProgress:
-      return "A backup is already in progress"
+      return String(localized: "A backup is already in progress", comment: "Backup error description.")
     case .tooSoonForNewBackup:
-      return "Please wait before creating another backup"
+      return String(localized: "Please wait before creating another backup", comment: "Backup error description.")
     case .repositoryFetchFailed:
-      return "Failed to fetch repository data from server"
+      return String(localized: "Failed to fetch repository data from server", comment: "Backup error description.")
     case .backupFileNotFound:
-      return "Backup file not found on disk"
+      return String(localized: "Backup file not found on disk", comment: "Backup error description.")
     case .integrityCheckFailed:
-      return "Backup integrity verification failed"
+      return String(localized: "Backup integrity verification failed", comment: "Backup error description.")
     case .invalidUserDID:
-      return "Invalid user identifier"
+      return String(localized: "Invalid user identifier", comment: "Backup error description.")
     case .invalidCarData:
-      return "Invalid CAR file data"
+      return String(localized: "Invalid CAR file data", comment: "Backup error description.")
     }
   }
 }

@@ -14,19 +14,46 @@ enum GroupAdminError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .noClient:
-      return "You’re not signed in. Sign in and try again."
+      return String(
+        localized: "You’re not signed in. Sign in and try again.",
+        comment: "Group administration error when user is signed out"
+      )
     case .network(let code):
       switch code {
-      case 401: return "Your session expired. Sign in again."
-      case 403: return "You don’t have permission to do that."
-      default: return "Something went wrong. Please try again."
+      case 401:
+        return String(
+          localized: "Your session expired. Sign in again.",
+          comment: "Group administration error on HTTP 401"
+        )
+      case 403:
+        return String(
+          localized: "You don’t have permission to do that.",
+          comment: "Group administration error on HTTP 403"
+        )
+      default:
+        return String(
+          localized: "Something went wrong. Please try again.",
+          comment: "Generic group administration error"
+        )
       }
     case .emptyResponse:
-      return "Something went wrong. Please try again."
+      return String(
+        localized: "Something went wrong. Please try again.",
+        comment: "Generic group administration error"
+      )
     case .invalidDID:
-      return "One of the selected accounts couldn’t be found."
+      return String(
+        localized: "One of the selected accounts couldn’t be found.",
+        comment: "Group administration error when a selected member DID is invalid"
+      )
     case .underlying(let error):
-      return UserFacingError.message(for: error, action: "make this change") ?? "Something went wrong. Please try again."
+      return UserFacingError.message(
+        for: error,
+        action: String(localized: "make this change", comment: "Action phrase when updating group settings fails")
+      ) ?? String(
+        localized: "Something went wrong. Please try again.",
+        comment: "Generic group administration error"
+      )
     }
   }
 }

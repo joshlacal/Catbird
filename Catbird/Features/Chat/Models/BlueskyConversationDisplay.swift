@@ -79,7 +79,9 @@ extension ChatBskyConvoDefs.ConvoView {
   func displayTitle(currentUserDID: String) -> String {
     if let groupMetadata {
       let groupName = groupMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
-      return groupName.isEmpty ? "Group Chat" : groupName
+      return groupName.isEmpty
+        ? String(localized: "Group Chat", comment: "Fallback title for an unnamed group conversation")
+        : groupName
     }
 
     if isGroupConversation {
@@ -87,35 +89,49 @@ extension ChatBskyConvoDefs.ConvoView {
         .map { $0.chatDisplayName }
         .filter { !$0.isEmpty }
 
-      guard !names.isEmpty else { return "Group Chat" }
-
-      if names.count <= 2 {
-        return names.joined(separator: ", ")
+      guard !names.isEmpty else {
+        return String(localized: "Group Chat", comment: "Fallback title for an unnamed group conversation")
       }
 
-      return "\(names.prefix(2).joined(separator: ", ")) and \(names.count - 2) other\(names.count == 3 ? "" : "s")"
+      if names.count <= 2 {
+        return names.formatted(.list(type: .and))
+      }
+
+      let others = names.count - 2
+      return String(
+        localized: "\(names[0]), \(names[1]), and \(others) others",
+        comment: "Fallback title for an unnamed group chat (%1$@ = first member, %2$@ = second member, %3$lld = remaining member count)"
+      )
     }
 
     guard let member = directDisplayMember(currentUserDID: currentUserDID) else {
-      return "Chat"
+      return String(localized: "Chat", comment: "Fallback title for a direct conversation")
     }
 
     if member.isDeletedBlueskyChatAccount {
-      return "Deleted Account"
+      return String(localized: "Deleted Account", comment: "Placeholder display name for a deleted Bluesky account")
     }
 
-    return member.chatDisplayName.isEmpty ? "Chat" : member.chatDisplayName
+    return member.chatDisplayName.isEmpty
+      ? String(localized: "Chat", comment: "Fallback title for a direct conversation")
+      : member.chatDisplayName
   }
 
   func displaySubtitle(currentUserDID: String) -> String? {
     if let groupMetadata {
       let count = groupMetadata.memberCount
-      return "\(count) member\(count == 1 ? "" : "s")"
+      return String(
+        localized: "\(count) members",
+        comment: "Subtitle showing number of members in a group conversation"
+      )
     }
 
     if isGroupConversation {
       let count = members.count
-      return "\(count) member\(count == 1 ? "" : "s")"
+      return String(
+        localized: "\(count) members",
+        comment: "Subtitle showing number of members in a group conversation"
+      )
     }
 
     guard let member = directDisplayMember(currentUserDID: currentUserDID),
@@ -217,7 +233,9 @@ extension ChatBskyActorDefs.ProfileViewBasic {
       return displayName
     }
 
-    guard !isDeletedBlueskyChatAccount else { return "Deleted Account" }
+    guard !isDeletedBlueskyChatAccount else {
+      return String(localized: "Deleted Account", comment: "Placeholder display name for a deleted Bluesky account")
+    }
     return "@\(handle.description)"
   }
 }

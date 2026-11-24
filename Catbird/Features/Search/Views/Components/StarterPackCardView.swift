@@ -41,12 +41,15 @@ struct StarterPackCardView: View {
                                 .appFont(AppTextRole.headline)
                                 .lineLimit(1)
                         } else {
-                            Text("Starter Pack")
+                            Text("Starter Pack", comment: "Fallback title for a starter pack card")
                                 .appFont(AppTextRole.headline)
                         }
                         
                         EmbeddedAuthorNameView(
-                            name: "By @\(starterPack.creator.handle)",
+                            name: String(
+                                localized: "By @\(starterPack.creator.handle.description)",
+                                comment: "Starter pack creator attribution — variable is the creator's handle"
+                            ),
                             verification: starterPack.creator.verification,
                             isAutomated: AutomationBadge.isSelfDeclared(labels: starterPack.creator.labels, authorDID: starterPack.creator.did)
                         )
@@ -56,7 +59,7 @@ struct StarterPackCardView: View {
                     
                     Spacer()
                     
-                    Image(systemName: "chevron.right")
+                    Image(systemName: "chevron.forward")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
@@ -64,15 +67,24 @@ struct StarterPackCardView: View {
                 // Stats row - dynamically show what's available
                 HStack(spacing: 16) {
                     if let count = starterPack.listItemCount {
-                        statView(count: count, label: "Profiles")
+                        statView(
+                            count: count,
+                            label: LocalizedStringResource("Profiles", comment: "Label under member count in a starter pack card")
+                        )
                     }
                     
                     if let weekCount = starterPack.joinedWeekCount {
-                        statView(count: weekCount, label: "Joined This Week")
+                        statView(
+                            count: weekCount,
+                            label: LocalizedStringResource("Joined This Week", comment: "Label under weekly join count in a starter pack card")
+                        )
                     }
                     
                     if let allTimeCount = starterPack.joinedAllTimeCount {
-                        statView(count: allTimeCount, label: "Total Joins")
+                        statView(
+                            count: allTimeCount,
+                            label: LocalizedStringResource("Total Joins", comment: "Label under all-time join count in a starter pack card")
+                        )
                     }
                     
                     Spacer()
@@ -106,9 +118,9 @@ struct StarterPackCardView: View {
         .buttonStyle(.plain)
     }
     
-    private func statView(count: Int, label: String) -> some View {
+    private func statView(count: Int, label: LocalizedStringResource) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(count)")
+            Text(count, format: .number)
                 .appFont(AppTextRole.subheadline)
                 .fontWeight(.semibold)
             

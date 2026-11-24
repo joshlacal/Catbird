@@ -9,7 +9,7 @@ import SwiftUI
 
 struct FollowsBadgeView: View {
     var body: some View {
-        Text("Follows you")
+        Text("Follows you", comment: "Badge shown on a profile when that account follows the signed-in user.")
             .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 6)

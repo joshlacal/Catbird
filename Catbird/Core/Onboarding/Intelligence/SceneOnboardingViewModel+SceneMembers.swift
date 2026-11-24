@@ -108,9 +108,15 @@ extension SceneOnboardingViewModel {
   public func peekLineupHeading(count: Int) -> String {
     guard let communityId = activePeek?.community.communityId,
           selectionWeight(for: communityId) > 0 else {
-      return "Joins your lineup if picked (\(count))"
+      return String(
+        localized: "Joins your lineup if picked (\(count))",
+        comment: "Section heading in scene peek sheet before scene is picked — variable is member count."
+      )
     }
-    return "In your lineup (\(count))"
+    return String(
+      localized: "In your lineup (\(count))",
+      comment: "Section heading in scene peek sheet after scene is picked — variable is member count."
+    )
   }
 
   // MARK: - Copy
@@ -119,16 +125,23 @@ extension SceneOnboardingViewModel {
   /// lineup's own terms.
   nonisolated public static func tierLabel(_ tier: String?) -> String? {
     switch tier {
-    case "headliner": "Headliner"
-    case "core": "Regular"
-    case "rising": "Rising"
-    default: nil
+    case "headliner":
+      String(localized: "Headliner", comment: "Badge label for a top-tier prominent member of a community scene.")
+    case "core":
+      String(localized: "Regular", comment: "Badge label for a core regular member of a community scene.")
+    case "rising":
+      String(localized: "Rising", comment: "Badge label for an emerging member of a community scene.")
+    default:
+      nil
     }
   }
 
   /// "You already follow N here", or nil when the server reports none or does not report a count.
   nonisolated public static func alreadyFollowingLine(count: Int?) -> String? {
     guard let count, count > 0 else { return nil }
-    return "You already follow \(count) here"
+    return String(
+      localized: "You already follow \(count) here",
+      comment: "Note on a community scene card showing how many members the viewer already follows — variable is account count."
+    )
   }
 }

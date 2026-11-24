@@ -157,7 +157,7 @@ struct RepositoryMediaGalleryView: View {
                         
                         Spacer()
                         
-                        Text("\(group.mediaItems.count) items")
+                        Text("\(group.mediaItems.count) items", comment: "Count of media items for a specific date in the repository media gallery.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -308,7 +308,10 @@ final class MediaGalleryViewModel {
             let allMedia = try modelContext.fetch(descriptor)
             mediaItems = allMedia.filter { $0.repositoryRecordID == repositoryID }
         } catch {
-            errorMessage = "Failed to load media: \(error.localizedDescription)"
+            errorMessage = String(
+                localized: "Failed to load media: \(error.localizedDescription)",
+                comment: "Error shown when loading repository media references fails."
+            )
         }
         
         isLoading = false
@@ -332,7 +335,10 @@ private struct ExperimentalMediaHeader: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
-                    Text("Media references parsed from \(repository.userHandle)'s repository. Actual media files not available.")
+                    Text(
+                        "Media references parsed from \(repository.userHandle)'s repository. Actual media files not available.",
+                        comment: "Disclaimer header on repository media gallery. Placeholder is the repository owner's handle."
+                    )
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -342,9 +348,9 @@ private struct ExperimentalMediaHeader: View {
             
             // Statistics row
             HStack(spacing: 16) {
-                StatisticBadge(label: "Media Items", value: "\(repository.mediaCount)")
+                StatisticBadge(label: "Media Items", value: repository.mediaCount.formatted(.number))
                 StatisticBadge(label: "Success Rate", value: repository.successRate)
-                StatisticBadge(label: "Confidence", value: String(format: "%.0f%%", repository.parsingConfidenceScore * 100))
+                StatisticBadge(label: "Confidence", value: repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(0))))
                 Spacer()
             }
         }
@@ -399,9 +405,9 @@ private struct MediaTypeSummary: View {
     private var displayInfo: (name: String, icon: String, color: Color) {
         let lowercaseType = type.lowercased()
         if lowercaseType.contains("image") {
-            return ("Images", "photo", .blue)
+            return (String(localized: "Images", comment: "Media category label for images."), "photo", .blue)
         } else if lowercaseType.contains("video") {
-            return ("Videos", "video", .red)
+            return (String(localized: "Videos", comment: "Media category label for videos."), "video", .red)
         } else {
             return (type.capitalized, "doc", .gray)
         }
@@ -413,7 +419,7 @@ private struct MediaTypeSummary: View {
                 .font(.title2)
                 .foregroundColor(displayInfo.color)
             
-            Text("\(count)")
+            Text(count, format: .number)
                 .font(.title3)
                 .fontWeight(.bold)
                 .foregroundColor(displayInfo.color)
@@ -521,12 +527,12 @@ private struct MediaListItem: View {
                 
                 // Media info
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(media.mediaType.capitalized)
+                    Text(verbatim: media.mediaType.capitalized)
                         .font(.headline)
                         .foregroundColor(.primary)
                     
                     if let mimeType = media.mimeType {
-                        Text(mimeType)
+                        Text(verbatim: mimeType)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -612,7 +618,10 @@ private struct MediaDetailView: View {
                             MediaTypeIcon(type: media.mediaType)
                         }
                         
-                        Text("Discovered \(media.discoveredAt, style: .relative) ago")
+                        Text(
+                            "Discovered \(media.discoveredAt.formatted(.relative(presentation: .named)))",
+                            comment: "Relative time label showing when a media reference was discovered, e.g. 'Discovered 2 hours ago'."
+                        )
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
@@ -669,7 +678,10 @@ private struct MediaDetailView: View {
                                 .font(.headline)
                                 .foregroundColor(.red)
                             
-                            Text(media.parseErrorMessage ?? "Unknown parsing error")
+                            Text(
+                                media.parseErrorMessage
+                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a media record failed to parse without a specific error message.")
+                            )
                                 .font(.body)
                                 .foregroundColor(.red)
                                 .padding()
@@ -745,11 +757,22 @@ private struct MediaMetadataGrid: View {
             GridItem(.flexible())
         ], spacing: 12) {
             MetadataItem(label: "Media Type", value: media.mediaType)
-            MetadataItem(label: "MIME Type", value: media.mimeType ?? "Unknown")
+            MetadataItem(
+                label: "MIME Type",
+                value: media.mimeType ?? String(localized: "Unknown", comment: "Fallback label when media MIME type is unknown.")
+            )
             MetadataItem(label: "Size", value: media.formattedSize)
-            MetadataItem(label: "Confidence", value: String(format: "%.1f%%", media.parseConfidence * 100))
-            MetadataItem(label: "Alt Text", value: media.altText ?? "None")
-            MetadataItem(label: "Parse Status", value: media.parseSuccessful ? "Success" : "Failed")
+            MetadataItem(label: "Confidence", value: media.parseConfidence.formatted(.percent.precision(.fractionLength(1))))
+            MetadataItem(
+                label: "Alt Text",
+                value: media.altText ?? String(localized: "None", comment: "Fallback label when media has no alt text.")
+            )
+            MetadataItem(
+                label: "Parse Status",
+                value: media.parseSuccessful
+                    ? String(localized: "Success", comment: "Record parse status when parsing succeeded.")
+                    : String(localized: "Failed", comment: "Record parse status when parsing failed.")
+            )
         }
     }
 }
@@ -760,10 +783,10 @@ private struct MediaTechnicalDetailsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Blob CID:")
+                Text("Blob CID:", comment: "Label for the blob Content Identifier (CID) of a media attachment.")
                     .fontWeight(.medium)
                 Spacer()
-                Text(media.blobCID)
+                Text(verbatim: media.blobCID)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -773,7 +796,7 @@ private struct MediaTechnicalDetailsView: View {
                 Text("Record Key:")
                     .fontWeight(.medium)
                 Spacer()
-                Text(media.recordKey)
+                Text(verbatim: media.recordKey)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -784,7 +807,7 @@ private struct MediaTechnicalDetailsView: View {
                     Text("Aspect Ratio:")
                         .fontWeight(.medium)
                     Spacer()
-                    Text(aspectRatio)
+                    Text(verbatim: aspectRatio)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -819,10 +842,10 @@ private struct MediaRawDataView: View {
                     
                     // Raw data
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("CBOR Data (\(media.rawCBORData.count) bytes)")
+                        Text("CBOR Data (\(media.rawCBORData.count) bytes)", comment: "Section header showing raw CBOR payload size in bytes.")
                             .font(.headline)
                         
-                        Text(media.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
+                        Text(verbatim: media.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
@@ -868,14 +891,14 @@ private struct MediaAnalyticsView: View {
                         ], spacing: 12) {
                             AnalyticsCard(
                                 title: "Total Media",
-                                value: "\(viewModel.mediaItems.count)",
+                                value: viewModel.mediaItems.count.formatted(.number),
                                 icon: "photo.stack",
                                 color: .blue
                             )
                             
                             AnalyticsCard(
                                 title: "Media Types",
-                                value: "\(viewModel.mediaByType.count)",
+                                value: viewModel.mediaByType.count.formatted(.number),
                                 icon: "list.bullet",
                                 color: .green
                             )
@@ -889,7 +912,7 @@ private struct MediaAnalyticsView: View {
                             
                             AnalyticsCard(
                                 title: "Avg Confidence",
-                                value: String(format: "%.1f%%", averageConfidence * 100),
+                                value: averageConfidence.formatted(.percent.precision(.fractionLength(1))),
                                 icon: "chart.bar",
                                 color: .orange
                             )
@@ -904,10 +927,10 @@ private struct MediaAnalyticsView: View {
                         ForEach(Array(viewModel.mediaByType.keys.sorted()), id: \.self) { type in
                             HStack {
                                 MediaTypeIcon(type: type)
-                                Text(type.capitalized)
+                                Text(verbatim: type.capitalized)
                                     .fontWeight(.medium)
                                 Spacer()
-                                Text("\(viewModel.mediaByType[type] ?? 0)")
+                                Text(viewModel.mediaByType[type] ?? 0, format: .number)
                                     .fontWeight(.bold)
                             }
                             .padding()
@@ -940,7 +963,7 @@ private struct MediaAnalyticsView: View {
 }
 
 private struct AnalyticsCard: View {
-    let title: String
+    let title: LocalizedStringResource
     let value: String
     let icon: String
     let color: Color
@@ -956,7 +979,7 @@ private struct AnalyticsCard: View {
                 Spacer()
             }
             
-            Text(value)
+            Text(verbatim: value)
                 .font(.title2)
                 .fontWeight(.bold)
                 .foregroundColor(color)
@@ -982,11 +1005,11 @@ enum MediaLayoutMode: String, CaseIterable {
     var displayName: String {
         switch self {
         case .grid:
-            return "Grid"
+            return String(localized: "Grid", comment: "Media gallery layout option showing a photo grid.")
         case .list:
-            return "List"
+            return String(localized: "List", comment: "Media gallery layout option showing a vertical list.")
         case .timeline:
-            return "Timeline"
+            return String(localized: "Timeline", comment: "Media gallery layout option grouped by date.")
         }
     }
     
@@ -1011,13 +1034,13 @@ enum MediaTypeFilter: String, CaseIterable {
     var displayName: String {
         switch self {
         case .all:
-            return "All Types"
+            return String(localized: "All Types", comment: "Media filter option showing all media types.")
         case .images:
-            return "Images"
+            return String(localized: "Images", comment: "Media filter option showing only images.")
         case .videos:
-            return "Videos"
+            return String(localized: "Videos", comment: "Media filter option showing only videos.")
         case .unknown:
-            return "Unknown"
+            return String(localized: "Unknown", comment: "Media filter option showing unrecognized media types.")
         }
     }
 }
@@ -1032,15 +1055,15 @@ enum MediaSortOrder: String, CaseIterable {
     var displayName: String {
         switch self {
         case .dateAscending:
-            return "Oldest First"
+            return String(localized: "Oldest First", comment: "Sort order option from oldest to newest.")
         case .dateDescending:
-            return "Newest First"
+            return String(localized: "Newest First", comment: "Sort order option from newest to oldest.")
         case .size:
-            return "File Size"
+            return String(localized: "File Size", comment: "Sort order option by media file size.")
         case .confidence:
-            return "Parse Confidence"
+            return String(localized: "Parse Confidence", comment: "Sort order option by record parsing confidence score.")
         case .type:
-            return "Media Type"
+            return String(localized: "Media Type", comment: "Sort order option grouping by media type.")
         }
     }
     
@@ -1062,12 +1085,12 @@ enum MediaSortOrder: String, CaseIterable {
 
 // Reuse components from other views
 private struct StatisticBadge: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     
     var body: some View {
         VStack(alignment: .center, spacing: 2) {
-            Text(value)
+            Text(verbatim: value)
                 .font(.caption)
                 .fontWeight(.semibold)
             Text(label)
@@ -1095,7 +1118,7 @@ private struct ConfidenceBadge: View {
     }
     
     var body: some View {
-        Text(String(format: "%.0f%%", confidence * 100))
+        Text(confidence, format: .percent.precision(.fractionLength(0)))
             .font(.caption2)
             .fontWeight(.medium)
             .padding(.horizontal, 6)
@@ -1107,7 +1130,7 @@ private struct ConfidenceBadge: View {
 }
 
 private struct MetadataItem: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     
     var body: some View {
@@ -1115,7 +1138,7 @@ private struct MetadataItem: View {
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(value)
+            Text(verbatim: value)
                 .font(.body)
                 .fontWeight(.medium)
         }

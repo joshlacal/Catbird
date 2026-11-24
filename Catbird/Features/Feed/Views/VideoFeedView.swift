@@ -636,7 +636,7 @@ private struct VideoFeedItemView: View {
             .font(.subheadline.bold())
             .lineLimit(1)
           if !compact {
-            Text("@\(item.post.author.handle)")
+            Text(verbatim: "@\(item.post.author.handle)")
               .font(.caption2)
               .foregroundStyle(.white.opacity(0.8))
               .lineLimit(1)
@@ -857,7 +857,7 @@ struct VideoFeedNavigationControls: View {
   var body: some View {
     HStack(spacing: 12) {
       Button(action: onBack) {
-        Image(systemName: "chevron.left")
+        Image(systemName: "chevron.backward")
           .font(.system(size: 18, weight: .bold))
           .frame(width: 44, height: 44)
           .background(.white.opacity(0.12), in: Circle())
@@ -955,25 +955,57 @@ struct VideoFeedReactionControls: View {
   let onRepost: () -> Void
 
   var body: some View {
+    let safeReplyCount = max(0, replyCount)
+    let safeLikeCount = max(0, likeCount)
+    let safeRepostCount = max(0, repostCount)
     VideoFeedReactionLayout(horizontal: horizontal) {
       VideoFeedReactionButton(
-        icon: "bubble.right.fill", count: replyCount, label: "Comments",
-        color: .white, identifier: "videoComments", action: onComments
+        icon: "bubble.right.fill",
+        count: replyCount,
+        accessibilityLabel: String(
+          localized: "Comments, \(safeReplyCount) replies",
+          comment: "Accessibility label for the Comments button in the video feed — variable is the reply count"
+        ),
+        color: .white,
+        identifier: "videoComments",
+        action: onComments
       )
       .accessibilityHint("Opens the thread")
 
       VideoFeedReactionButton(
-        icon: isLiked ? "heart.fill" : "heart", count: likeCount,
-        label: isLiked ? "Unlike" : "Like", color: isLiked ? .red : .white,
-        identifier: "videoLike", action: onLike
+        icon: isLiked ? "heart.fill" : "heart",
+        count: likeCount,
+        accessibilityLabel: isLiked
+          ? String(
+            localized: "Unlike, \(safeLikeCount) likes",
+            comment: "Accessibility label for the Like button when already liked — variable is the number of likes"
+          )
+          : String(
+            localized: "Like, \(safeLikeCount) likes",
+            comment: "Accessibility label for the Like button — variable is the number of likes"
+          ),
+        color: isLiked ? .red : .white,
+        identifier: "videoLike",
+        action: onLike
       )
       .disabled(!canAct)
       .opacity(canAct ? 1 : 0.45)
 
       VideoFeedReactionButton(
-        icon: "arrow.2.squarepath", count: repostCount,
-        label: isReposted ? "Undo repost" : "Repost", color: isReposted ? .green : .white,
-        identifier: "videoRepost", action: onRepost
+        icon: "arrow.2.squarepath",
+        count: repostCount,
+        accessibilityLabel: isReposted
+          ? String(
+            localized: "Undo repost, \(safeRepostCount) reposts",
+            comment: "Accessibility label for the Repost button in the video feed when already reposted — variable is the repost count"
+          )
+          : String(
+            localized: "Repost, \(safeRepostCount) reposts",
+            comment: "Accessibility label for the Repost button in the video feed — variable is the repost count"
+          ),
+        color: isReposted ? .green : .white,
+        identifier: "videoRepost",
+        action: onRepost
       )
       .disabled(!canAct)
       .opacity(canAct ? 1 : 0.45)
@@ -1035,7 +1067,7 @@ private struct VideoFeedReactionLayout: Layout {
 private struct VideoFeedReactionButton: View {
   let icon: String
   let count: Int
-  let label: String
+  let accessibilityLabel: String
   let color: Color
   let identifier: String
   let action: () -> Void
@@ -1055,7 +1087,7 @@ private struct VideoFeedReactionButton: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel("\(label). Count: \(max(0, count))")
+    .accessibilityLabel(accessibilityLabel)
     .accessibilityIdentifier(identifier)
   }
 }

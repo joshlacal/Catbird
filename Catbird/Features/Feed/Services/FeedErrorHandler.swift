@@ -130,17 +130,17 @@ struct FeedErrorHandler {
     /// Creates user-friendly error message
     static func userFriendlyMessage(for error: Error, context: String) -> String {
         if isNetworkTimeoutError(error) {
-            return "Network connection issue. Please check your connection and try again."
+            return String(localized: "Network connection issue. Please check your connection and try again.", comment: "Error message when a feed network request times out")
         }
         
         let nsError = error as NSError
         switch nsError.code {
         case NSURLErrorNotConnectedToInternet:
-            return "No internet connection. Please connect to the internet and try again."
+            return String(localized: "No internet connection. Please connect to the internet and try again.", comment: "Error message when the device is offline")
         case NSURLErrorCannotConnectToHost:
-            return "Unable to connect to server. Please try again later."
+            return String(localized: "Unable to connect to server. Please try again later.", comment: "Error message when the server host is unreachable")
         default:
-            return "Something went wrong. Please try again."
+            return String(localized: "Something went wrong. Please try again.", comment: "Generic error message for feed operations")
         }
     }
 }

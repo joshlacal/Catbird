@@ -74,7 +74,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     videosHeaderLabel.numberOfLines = 0
 
     optionsButton.showsMenuAsPrimaryAction = true
-    optionsButton.accessibilityLabel = "Trending options"
+    optionsButton.accessibilityLabel = String(localized: "Trending options", comment: "VoiceOver label for the trending interstitial options menu button")
     optionsButton.menu = UIMenu(children: [
       UIDeferredMenuElement.uncached { [weak self] completion in
         MainActor.assumeIsolated { completion(self?.optionsMenuItems() ?? []) }
@@ -82,7 +82,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     ])
 
     openVideosButton.accessibilityLabel = TrendingInterstitialLayoutEngine.openVideosTitle
-    openVideosButton.accessibilityHint = "Open the full-screen Bluesky video feed"
+    openVideosButton.accessibilityHint = String(localized: "Open the full-screen Bluesky video feed", comment: "VoiceOver hint for the Open The Vids button")
     openVideosButton.addTarget(self, action: #selector(openVideosTapped), for: .touchUpInside)
 
     for scrollView in [topicsScrollView, videosScrollView] {
@@ -650,18 +650,49 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   private enum HideTarget {
     case topics, videos
 
-    var name: String { self == .topics ? "trending topics" : "trending videos" }
+    var menuActionTitle: String {
+      switch self {
+      case .topics:
+        return String(localized: "Hide trending topics…", comment: "Menu action to hide the trending topics carousel in Feeds and Search")
+      case .videos:
+        return String(localized: "Hide trending videos…", comment: "Menu action to hide the trending videos carousel in Feeds and Search")
+      }
+    }
+
+    var confirmationTitle: String {
+      switch self {
+      case .topics:
+        return String(localized: "Hide trending topics?", comment: "Confirmation dialog title when hiding trending topics")
+      case .videos:
+        return String(localized: "Hide trending videos?", comment: "Confirmation dialog title when hiding trending videos")
+      }
+    }
+
+    var confirmationMessage: String {
+      switch self {
+      case .topics:
+        return String(
+          localized: "This hides trending topics for this account in Feeds and Search. You can turn them back on in Settings › Feeds & Discovery › Discovery.",
+          comment: "Confirmation dialog message explaining how to re-enable trending topics after hiding them"
+        )
+      case .videos:
+        return String(
+          localized: "This hides trending videos for this account in Feeds and Search. You can turn them back on in Settings › Feeds & Discovery › Discovery.",
+          comment: "Confirmation dialog message explaining how to re-enable trending videos after hiding them"
+        )
+      }
+    }
   }
 
   private func optionsMenuItems() -> [UIMenuElement] {
     var items: [UIMenuElement] = []
     if model.showTopics {
-      items.append(UIAction(title: "Hide trending topics…", image: UIImage(systemName: "eye.slash")) { [weak self] _ in
+      items.append(UIAction(title: HideTarget.topics.menuActionTitle, image: UIImage(systemName: "eye.slash")) { [weak self] _ in
         self?.confirmHide(.topics)
       })
     }
     if model.showVideos {
-      items.append(UIAction(title: "Hide trending videos…", image: UIImage(systemName: "eye.slash")) { [weak self] _ in
+      items.append(UIAction(title: HideTarget.videos.menuActionTitle, image: UIImage(systemName: "eye.slash")) { [weak self] _ in
         self?.confirmHide(.videos)
       })
     }
@@ -672,13 +703,19 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   private func confirmHide(_ target: HideTarget) {
     guard let presenter = presentingViewController else { return }
     let alert = UIAlertController(
-      title: "Hide \(target.name)?",
-      message: "This hides \(target.name) for this account in Feeds and Search. You can turn them back on in Settings › Feeds & Discovery › Discovery.",
+      title: target.confirmationTitle,
+      message: target.confirmationMessage,
       preferredStyle: .actionSheet)
-    alert.addAction(UIAlertAction(title: "Hide in Feeds and Search", style: .destructive) { [weak self] _ in
+    alert.addAction(UIAlertAction(
+      title: String(localized: "Hide in Feeds and Search", comment: "Destructive action button confirming hiding a trending section"),
+      style: .destructive
+    ) { [weak self] _ in
       MainActor.assumeIsolated { self?.hide(target) }
     })
-    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+    alert.addAction(UIAlertAction(
+      title: String(localized: "Cancel", comment: "Cancel button in confirmation action sheet"),
+      style: .cancel
+    ))
     if let popover = alert.popoverPresentationController {
       popover.sourceView = optionsButton
       popover.sourceRect = optionsButton.bounds

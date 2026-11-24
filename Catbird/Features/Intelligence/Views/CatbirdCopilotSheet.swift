@@ -574,7 +574,7 @@ struct CatbirdCopilotSheet: View {
     @MainActor
     private func routeSource(_ source: CopilotSource) {
         guard let uriString = source.uri?.trimmingCharacters(in: .whitespacesAndNewlines), !uriString.isEmpty else {
-            errorMessage = "This source does not have a valid link."
+            errorMessage = String(localized: "This source does not have a valid link.", comment: "Error when an Ask Catbird citation has no link.")
             return
         }
 
@@ -585,7 +585,7 @@ struct CatbirdCopilotSheet: View {
 
         if uriString.hasPrefix("at://") {
             guard let atURI = try? ATProtocolURI(uriString: uriString) else {
-                errorMessage = "This source link is invalid."
+                errorMessage = String(localized: "This source link is invalid.", comment: "Error when an Ask Catbird citation URI cannot be parsed.")
                 return
             }
             switch atURI.collection {
@@ -596,7 +596,7 @@ struct CatbirdCopilotSheet: View {
             case "app.bsky.graph.list":
                 navigationPath.append(NavigationDestination.list(atURI))
             default:
-                errorMessage = "This type of source cannot be opened yet."
+                errorMessage = String(localized: "This type of source cannot be opened yet.", comment: "Error when an Ask Catbird citation points to an unsupported ATProto collection.")
             }
             return
         }
@@ -605,12 +605,12 @@ struct CatbirdCopilotSheet: View {
             if let url = URL(string: uriString) {
                 _ = sceneContext.urlHandler.handle(url)
             } else {
-                errorMessage = "This source link is invalid."
+                errorMessage = String(localized: "This source link is invalid.", comment: "Error when an Ask Catbird citation URI cannot be parsed.")
             }
             return
         }
 
-        errorMessage = "This source link cannot be opened."
+        errorMessage = String(localized: "This source link cannot be opened.", comment: "Error when an Ask Catbird citation has an unknown URL scheme.")
     }
 
     private func startNewChat() {
@@ -632,7 +632,7 @@ struct CatbirdCopilotSheet: View {
         guard !Task.isCancelled, activeHistoryIdentity != nil else { return }
         guard conversation.accountDID == appState.userDID, conversation.accountDID == conversationAccountDID,
             conversation.context.matchesHistoryContext(context) else {
-            errorMessage = "Cannot load conversation from a different account."
+            errorMessage = String(localized: "Cannot load conversation from a different account.", comment: "Error when loading an Ask Catbird conversation belonging to another account.")
             return
         }
         stopGeneration()

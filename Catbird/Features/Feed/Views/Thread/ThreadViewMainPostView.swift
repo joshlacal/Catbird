@@ -31,13 +31,6 @@ struct ThreadViewMainPostView: View, Equatable {
   fileprivate static let avatarSize: CGFloat = 48
   fileprivate static let avatarContainerWidth: CGFloat = 54
 
-  fileprivate static let dateTimeFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    // Weekday, date and time in the user's locale, honoring their 12/24-hour preference
-    formatter.setLocalizedDateFormatFromTemplate("EEEEMMMdyyyyjmm")
-    return formatter
-  }()
-
   init(
     post: AppBskyFeedDefs.PostView,
     showLine: Bool,
@@ -157,7 +150,10 @@ struct ThreadViewMainPostView: View, Equatable {
           let handle = post.value.author.handle.description
           LabelsOnMeView(
             labels: allPostLabels,
-            targetDescription: "Post by @\(handle)",
+            targetDescription: String(
+              localized: "Post by @\(handle)",
+              comment: "Description of a post when viewing moderation labels — variable is the author's handle."
+            ),
             viewerDID: appState.userDID,
             reportingService: reportingService
           )
@@ -248,7 +244,10 @@ struct ThreadViewMainPostView: View, Equatable {
       }
     } else {
       appState.toastManager.show(
-        ToastItem(message: "Couldn’t delete post. Try again.", icon: "exclamationmark.triangle")
+        ToastItem(
+          message: String(localized: "Couldn’t delete post. Try again.", comment: "Error toast when deleting a post fails"),
+          icon: "exclamationmark.triangle"
+        )
       )
     }
   }
@@ -366,7 +365,7 @@ private struct ThreadMainPostLayout: View {
           // The anchor cell drops its hosted view on reuse; the body and media
           // gates restore a reveal for this post from `ModerationRevealStore`.
           .environment(\.moderationRevealSubject, post.value.uri.uriString())
-          Text(ThreadViewMainPostView.dateTimeFormatter.string(from: summary.createdAt))
+          Text(summary.createdAt, format: .dateTime.weekday(.wide).month().day().year().hour().minute())
             .appSubheadline()
             .textScale(.secondary)
             .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
@@ -501,7 +500,7 @@ private struct ThreadMainPostHeader: View {
         }
 
         if let pronouns = post.value.author.pronouns, !pronouns.isEmpty {
-          Text("\(pronouns)")
+          Text(pronouns)
             .appSubheadline()
             .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             .lineLimit(1)
@@ -543,8 +542,9 @@ private struct ThreadMainPostHeader: View {
     }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
-      "\(authorDisplayName), @\(post.value.author.handle.description)"
-      + (isSelfDeclaredAutomated ? ", \(AutomationBadge.accessibilityLabel)" : "")
+      isSelfDeclaredAutomated
+        ? Text("\(authorDisplayName), @\(post.value.author.handle.description), \(AutomationBadge.accessibilityLabel)", comment: "VoiceOver label for automated post author header — first variable is display name, second is handle, third is automated account badge.")
+        : Text(verbatim: "\(authorDisplayName), @\(post.value.author.handle.description)")
     )
     .accessibilityAddTraits(.isButton)
     .accessibilityHint("Opens profile")

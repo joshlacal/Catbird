@@ -50,7 +50,7 @@ struct LiveStatusBadge: View {
   }
 
   private var badgeLabel: some View {
-    Text("LIVE")
+    Text("LIVE", comment: "Uppercase badge overlaid on a profile avatar when the user is currently live streaming.")
       .designFont(
         size: DesignTokens.FontSize.micro,
         weight: .bold,

@@ -15,7 +15,10 @@ struct ModernFeedRow: View {
                 Text(feed.displayName)
                     .appFont(AppTextRole.headline)
                 
-                Text("by @\(feed.creator.handle)")
+                Text(
+                    "by @\(feed.creator.handle.description)",
+                    comment: "Feed creator attribution — variable is the creator's handle"
+                )
                     .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                 

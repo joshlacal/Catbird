@@ -1,5 +1,8 @@
 import SwiftUI
 import OSLog
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Language Model
 
@@ -14,10 +17,19 @@ struct Language: Identifiable, Hashable, Codable {
     private static let logger = Logger(subsystem: "blue.catbird", category: "LanguageSettings")
     
     var displayName: String {
-        if englishName == nativeName {
-            return englishName
+        localizedDisplayName(in: .current)
+    }
+
+    func localizedName(in locale: Locale) -> String {
+        locale.localizedString(forIdentifier: id) ?? englishName
+    }
+
+    func localizedDisplayName(in locale: Locale) -> String {
+        let localized = localizedName(in: locale)
+        if localized == nativeName {
+            return localized
         }
-        return "\(englishName) - \(nativeName)"
+        return "\(localized) - \(nativeName)"
     }
     
     // Common languages sorted by global usage
@@ -153,7 +165,7 @@ class LanguageManager {
                 contentLanguages: contentLanguages, expectedAccountDID: expectedAccountDID)
             addToRecentLanguages(primaryLanguage)
         } catch {
-            self.error = "Your reading languages are saved in Catbird, but couldn’t be applied everywhere. Try again."
+            self.error = String(localized: "Your reading languages are saved in Catbird, but couldn’t be applied everywhere. Try again.", comment: "Error shown when reading-language preferences are saved locally in Catbird but could not sync everywhere.")
             Self.logger.error("Local reading-language publication failed: \(error.localizedDescription)")
         }
     }
@@ -182,7 +194,7 @@ class LanguageManager {
             }
         } catch {
             // Refusal must leave the existing compatibility error available for a later Retry.
-            self.error = self.error ?? "Your reading languages are saved in Catbird, but couldn’t be applied everywhere. Try again."
+            self.error = self.error ?? String(localized: "Your reading languages are saved in Catbird, but couldn’t be applied everywhere. Try again.", comment: "Error shown when reading-language preferences are saved locally in Catbird but could not sync everywhere.")
             Self.logger.error("Confirmed reading-language Retry did not complete: \(error.localizedDescription)")
         }
     }
@@ -191,6 +203,7 @@ class LanguageManager {
 
 struct LanguageSettingsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.locale) private var locale
     @State private var languageManager: LanguageManager?
     @State private var interfaceLanguage = "system"
     @State private var confirmsShowingAllLanguages = false
@@ -203,21 +216,55 @@ struct LanguageSettingsView: View {
             && appState.appSettings.confirmedReadingLanguages(for: appState.userDID) != nil
     }
 
+    private var currentAppLanguageSummary: String {
+        let identifier = Bundle.main.preferredLocalizations.first ?? locale.identifier
+        return locale.localizedString(forIdentifier: identifier)
+            ?? locale.localizedString(forLanguageCode: locale.language.languageCode?.identifier ?? "en")
+            ?? identifier
+    }
+
     var body: some View {
         SettingsFocusedForm(initialFocus: initialFocus) {
+            #if os(iOS)
+            Section {
+                Button(action: openSystemAppLanguageSettings) {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        SettingsNavigationRow(
+                            title: "App Language",
+                            summary: currentAppLanguageSummary,
+                            systemImage: "globe",
+                            family: .language
+                        )
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .settingsControl(.init(rawValue: "languages.interface"))
+            } header: {
+                Text("App Language", comment: "Section header for Catbird's per-app UI language setting on this device.")
+            } footer: {
+                Text("Choose the language for Catbird’s menus, buttons, and controls in iOS Settings for this device. Post and feed languages below are separate and control which Bluesky posts appear in your timeline.", comment: "Footer explaining that App Language in iOS Settings changes UI text, separate from Bluesky post/feed reading languages.")
+            }
+            #else
             // Only offer an interface language choice when Catbird ships more than one translation.
             if InterfaceLanguagePreferences.availableLanguages().count > 1 {
                 Section {
                     NavigationLink {
                         InterfaceLanguageSelectionView(selectedLanguage: $interfaceLanguage, preferences: interfacePreferences)
                     } label: {
-                        SettingsNavigationRow(title: "Interface Language", summary: languageName(interfaceLanguage), systemImage: "globe", family: .language)
+                        SettingsNavigationRow(title: "App Language", summary: languageName(interfaceLanguage), systemImage: "globe", family: .language)
                     }
                     .settingsControl(.init(rawValue: "languages.interface"))
-                } header: { Text("This Device") } footer: {
-                    Text("Interface language applies to every account on this device. Available choices reflect the translations included in Catbird. Some interface text may remain in English.")
+                } header: {
+                    Text("App Language", comment: "Section header for Catbird's UI language setting on this device.")
+                } footer: {
+                    Text("App language changes Catbird’s menus, buttons, and controls for every account on this device. Post and feed languages below are separate and control which Bluesky posts appear in your timeline.", comment: "Footer explaining that App Language changes UI text on this device, separate from Bluesky post/feed reading languages.")
                 }
             }
+            #endif
 
             SettingsPersistenceStatusSection(settings: appState.appSettings)
             if let error = languageManager?.error {
@@ -262,7 +309,7 @@ struct LanguageSettingsView: View {
                             applyReadingLanguagesAfterSaving()
                         }), primaryLanguage: appState.appSettings.primaryLanguage, recentLanguages: languageManager?.recentlyUsedLanguages ?? [])
                 } label: {
-                    SettingsNavigationRow(title: "Preferred Reading Languages", summary: appState.appSettings.contentLanguages.map(languageName).joined(separator: ", "), systemImage: "character.bubble", family: .language)
+                    SettingsNavigationRow(title: "Preferred Reading Languages", summary: appState.appSettings.contentLanguages.map(languageName).formatted(), systemImage: "character.bubble", family: .language)
                 }
                 .settingsControl(.init(rawValue: "languages.content"))
                 Toggle("Hide Posts in Other Languages", isOn: Binding(
@@ -276,8 +323,10 @@ struct LanguageSettingsView: View {
                     get: { appState.appSettings.showLanguageIndicators },
                     set: { appState.appSettings.showLanguageIndicators = $0 }))
                     .settingsControl(.init(rawValue: "languages.indicators"))
-            } header: { Text("This Account in Catbird") } footer: {
-                Text("Hide posts in languages you haven’t selected. Posts with no language are always shown. Indicators mark posts outside your reading languages. These choices are stored in Catbird on this device and don’t change other Bluesky apps.")
+            } header: {
+                Text("Post & Feed Languages", comment: "Section header for Bluesky content and post language preferences on the current account.")
+            } footer: {
+                Text("Controls which languages appear in your Bluesky feeds and the default language for new posts on this account — separate from Catbird’s App Language above. Posts with no language tag are always shown, and indicators mark posts outside your reading languages.", comment: "Footer explaining Bluesky post and feed language preferences for the current account.")
             }
             .disabled(!canEdit)
         }
@@ -306,12 +355,20 @@ struct LanguageSettingsView: View {
         #endif
     }
 
+    private func openSystemAppLanguageSettings() {
+        #if os(iOS)
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+        #endif
+    }
+
     private func showAllReadingLanguages() {
         guard canEdit else { return }
         let capturedState = appState
         let capturedDID = appState.userDID
         appState.appSettings.hideNonPreferredLanguages = false
-        appState.appSettings.afterPendingSave(key: "language-filter", description: "Show posts in all reading languages") { @MainActor in
+        appState.appSettings.afterPendingSave(key: "language-filter", description: String(localized: "Show posts in all reading languages", comment: "Pending change description when turning off the reading language filter.")) { @MainActor in
             guard AppStateManager.shared.lifecycle.appState === capturedState,
                   AppStateManager.shared.lifecycle.userDID == capturedDID else { return }
             capturedState.feedFilterSettings.setFilter(id: "Filter by Language", enabled: false)
@@ -331,13 +388,15 @@ struct LanguageSettingsView: View {
     }
 
     private func languageName(_ code: String) -> String {
-        if code == "system" { return "System Default" }
-        return Language.allLanguages.first { $0.id == code }?.englishName
-            ?? Locale.current.localizedString(forIdentifier: code) ?? code
+        if code == "system" { return String(localized: "System Default", comment: "Option to follow the system default language.") }
+        return locale.localizedString(forIdentifier: code)
+            ?? Language.allLanguages.first { $0.id == code }?.englishName
+            ?? code
     }
 }
 
 struct InterfaceLanguageSelectionView: View {
+    @Environment(\.locale) private var locale
     @Binding var selectedLanguage: String
     let preferences: InterfaceLanguagePreferences
     private var available: [String] { InterfaceLanguagePreferences.availableLanguages() }
@@ -345,16 +404,16 @@ struct InterfaceLanguageSelectionView: View {
     var body: some View {
         Form {
             Section {
-                languageRow("system", title: "System Default")
+                languageRow("system", title: String(localized: "System Default", comment: "Option to follow the system default language."))
                 ForEach(available, id: \.self) { code in
-                    languageRow(code, title: Locale.current.localizedString(forIdentifier: code) ?? code)
+                    languageRow(code, title: locale.localizedString(forIdentifier: code) ?? code)
                 }
             } footer: {
                 Text("Applies to every account on this device. Only translations included in this build are offered.")
             }
             if selectedLanguage != "system" && !available.contains(selectedLanguage) {
                 Section {
-                    LabeledContent("Current language", value: Locale.current.localizedString(forIdentifier: selectedLanguage) ?? selectedLanguage)
+                    LabeledContent("Current language", value: locale.localizedString(forIdentifier: selectedLanguage) ?? selectedLanguage)
                 } header: {
                     Text("Saved Selection")
                 } footer: {
@@ -362,7 +421,7 @@ struct InterfaceLanguageSelectionView: View {
                 }
             }
         }
-        .navigationTitle("Interface Language")
+        .navigationTitle("App Language")
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -387,7 +446,8 @@ struct InterfaceLanguageSelectionView: View {
 
 struct EnhancedLanguageSelectionView: View {
     @Environment(AppState.self) private var appState
-    let title: String
+    @Environment(\.locale) private var locale
+    let title: LocalizedStringKey
     @Binding var selectedLanguage: String
     let allowSystemDefault: Bool
     let recentLanguages: [String]
@@ -398,9 +458,9 @@ struct EnhancedLanguageSelectionView: View {
     private var systemOption: (id: String, display: String, flag: String)? {
         guard allowSystemDefault else { return nil }
         if let detected = Language.detectSystemLanguage() {
-            return ("system", "System (\(detected.englishName))", "⚙️")
+            return ("system", String(localized: "System (\(detected.localizedName(in: locale)))", comment: "System default language option showing detected language name."), "⚙️")
         }
-        return ("system", "System Default", "⚙️")
+        return ("system", String(localized: "System Default", comment: "Option to follow the system default language."), "⚙️")
     }
     
     private var filteredLanguages: [Language] {
@@ -410,6 +470,7 @@ struct EnhancedLanguageSelectionView: View {
         
         let search = searchText.lowercased()
         return Language.allLanguages.filter { lang in
+            lang.localizedName(in: locale).lowercased().contains(search) ||
             lang.englishName.lowercased().contains(search) ||
             lang.nativeName.lowercased().contains(search) ||
             lang.id.lowercased().contains(search)
@@ -441,7 +502,7 @@ struct EnhancedLanguageSelectionView: View {
                         selectedLanguage = system.id
                     } label: {
                         HStack {
-                            Text(system.flag)
+                            Text(verbatim: system.flag)
                             Text(system.display)
                                 .foregroundStyle(.primary)
                             Spacer()
@@ -511,22 +572,24 @@ struct EnhancedLanguageSelectionView: View {
 }
 
 struct LanguageRow: View {
+    @Environment(\.locale) private var locale
     let language: Language
     let isSelected: Bool
     let onSelect: () -> Void
     
     var body: some View {
+        let localizedName = language.localizedName(in: locale)
         Button(action: onSelect) {
             HStack {
-                Text(language.flag)
+                Text(verbatim: language.flag)
                     .appFont(AppTextRole.title3)
                     .accessibilityHidden(true)
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(language.englishName)
+                    Text(localizedName)
                         .foregroundStyle(.primary)
-                    if language.englishName != language.nativeName {
-                        Text(language.nativeName)
+                    if localizedName != language.nativeName {
+                        Text(verbatim: language.nativeName)
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -550,6 +613,7 @@ struct LanguageRow: View {
 
 struct EnhancedContentLanguagesView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.locale) private var locale
     @Binding var selectedLanguages: [String]
     let primaryLanguage: String
     let recentLanguages: [String]
@@ -563,6 +627,7 @@ struct EnhancedContentLanguagesView: View {
         
         let search = searchText.lowercased()
         return Language.allLanguages.filter { lang in
+            lang.localizedName(in: locale).lowercased().contains(search) ||
             lang.englishName.lowercased().contains(search) ||
             lang.nativeName.lowercased().contains(search) ||
             lang.id.lowercased().contains(search)
@@ -603,15 +668,15 @@ struct EnhancedContentLanguagesView: View {
             if !selectedLanguageObjects.isEmpty && searchText.isEmpty {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Selected Languages (\(selectedLanguageObjects.count))")
+                        Text("Selected Languages (\(selectedLanguageObjects.count))", comment: "Header showing how many preferred reading languages are selected.")
                             .appFont(AppTextRole.headline)
                         
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(selectedLanguageObjects) { language in
                                     HStack(spacing: 4) {
-                                        Text(language.flag)
-                                        Text(language.englishName)
+                                        Text(verbatim: language.flag)
+                                        Text(language.localizedName(in: locale))
                                             .appFont(AppTextRole.caption)
                                     }
                                     .padding(.horizontal, 8)
@@ -677,24 +742,26 @@ struct EnhancedContentLanguagesView: View {
 }
 
 struct ContentLanguageRow: View {
+    @Environment(\.locale) private var locale
     let language: Language
     let isSelected: Bool
     let isPrimary: Bool
     let onToggle: () -> Void
     
     var body: some View {
+        let localizedName = language.localizedName(in: locale)
         Button(action: onToggle) {
             HStack {
-                Text(language.flag)
+                Text(verbatim: language.flag)
                     .appFont(AppTextRole.title3)
                     .accessibilityHidden(true)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
-                        Text(language.englishName)
+                        Text(localizedName)
                             .foregroundStyle(.primary)
                         if isPrimary {
-                            Text("Primary")
+                            Text("Primary", comment: "Badge indicating the user's primary reading language.")
                                 .appFont(AppTextRole.caption2)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -702,8 +769,8 @@ struct ContentLanguageRow: View {
                                 .clipShape(Capsule())
                         }
                     }
-                    if language.englishName != language.nativeName {
-                        Text(language.nativeName)
+                    if localizedName != language.nativeName {
+                        Text(verbatim: language.nativeName)
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }

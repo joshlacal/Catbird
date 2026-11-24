@@ -804,7 +804,11 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
 
     /// The line-spacing choices Settings offers, Tight only where it can be drawn.
     static func lineSpacingOptions(supportsLineHeight: Bool) -> [(value: String, title: String)] {
-        let options: [(value: String, title: String)] = [("tight", "Tight"), ("normal", "Normal"), ("relaxed", "Relaxed")]
+        let options: [(value: String, title: String)] = [
+            ("tight", String(localized: "Tight", comment: "Line spacing option in typography settings.")),
+            ("normal", String(localized: "Normal", comment: "Line spacing option in typography settings.")),
+            ("relaxed", String(localized: "Relaxed", comment: "Line spacing option in typography settings."))
+        ]
         return supportsLineHeight ? options : options.filter { $0.value != "tight" }
     }
 

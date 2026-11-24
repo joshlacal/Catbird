@@ -3,7 +3,7 @@ import SwiftUI
 
 /// An enhanced results section with customizable styling
 struct EnhancedResultsSection<Content: View>: View {
-    let title: String
+    let title: LocalizedStringResource
     let icon: String
     let count: Int?
     let showDivider: Bool
@@ -13,7 +13,7 @@ struct EnhancedResultsSection<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     
     init(
-        title: String,
+        title: LocalizedStringResource,
         icon: String,
         count: Int? = nil,
         showDivider: Bool = true,
@@ -39,7 +39,7 @@ struct EnhancedResultsSection<Content: View>: View {
                     .appFont(AppTextRole.headline)
                 
                 if let count = count {
-                    Text("(\(count))")
+                    Text(verbatim: "(\(count.formatted(.number)))")
                         .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                         .padding(.leading, 2)

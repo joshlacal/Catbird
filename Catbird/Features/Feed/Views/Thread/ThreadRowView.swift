@@ -128,9 +128,9 @@ struct ThreadRowView: View {
         path.append(NavigationDestination.post(target))
       } label: {
         HStack(spacing: 6) {
-          Text(count == 1 ? "Show 1 More Reply" : "Show \(count) More Replies")
+          Text("Show \(count) More Replies", comment: "Button to expand nested replies in a thread — variable is the number of additional replies.")
             .appFont(AppTextRole.subheadline)
-          Image(systemName: "chevron.right")
+          Image(systemName: "chevron.forward")
             .appFont(AppTextRole.caption)
         }
         .foregroundStyle(Color("AccentTextColor"))
@@ -162,7 +162,7 @@ struct ThreadRowView: View {
   /// Extra hit area around compact text controls so they reach the 44pt minimum.
   private static let hitAreaOutset: CGFloat = max(0, (44 - ThreadReplyGeometry.readMoreHeight) / 2)
 
-  private func actionButton(title: String, loadingTitle: String, alignment: Alignment) -> some View {
+  private func actionButton(title: LocalizedStringResource, loadingTitle: LocalizedStringResource, alignment: Alignment) -> some View {
     Button {
       onAction?()
     } label: {
@@ -243,7 +243,7 @@ private struct ThreadReplyPostRow: View {
   }
 
   private var replyLevel: Text? {
-    usesTreeGeometry ? Text("\(indentLevel + 1)") : nil
+    usesTreeGeometry ? Text(indentLevel + 1, format: .number) : nil
   }
 }
 

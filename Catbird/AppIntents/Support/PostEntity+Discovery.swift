@@ -38,7 +38,10 @@ extension PostEntity {
 extension PostEntity: Transferable {
   static var transferRepresentation: some TransferRepresentation {
     ProxyRepresentation(exporting: { entity in
-      entity.text ?? "Post by @\(entity.authorHandle)"
+      entity.text ?? String(
+        localized: "Post by @\(entity.authorHandle)",
+        comment: "Fallback plain-text export for a post with no body text; placeholder is the author's Bluesky handle."
+      )
     })
   }
 }

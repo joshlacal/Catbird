@@ -36,12 +36,18 @@ enum VideoUploadFileError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .invalidSource: return "The prepared video is not available locally. Keep this attachment and try loading it again."
-    case .sourceChanged: return "The video changed since this upload began. Start a new upload for the changed attachment."
-    case .snapshotChanged: return "The saved upload file changed. The original attachment has been preserved."
-    case .ownerChanged: return "This upload belongs to a different account or attachment."
-    case .invalidCheckpoint: return "The saved video upload could not be recovered. The attachment has been preserved."
-    case .uploadAlreadyActive: return "The previous video upload is still stopping. Your attachment is preserved; try again."
+    case .invalidSource:
+      return String(localized: "The prepared video is not available locally. Keep this attachment and try loading it again.", comment: "Error when local video file is missing before upload")
+    case .sourceChanged:
+      return String(localized: "The video changed since this upload began. Start a new upload for the changed attachment.", comment: "Error when source video file changed during resumable upload")
+    case .snapshotChanged:
+      return String(localized: "The saved upload file changed. The original attachment has been preserved.", comment: "Error when upload snapshot checksum changed")
+    case .ownerChanged:
+      return String(localized: "This upload belongs to a different account or attachment.", comment: "Error when resumable video upload checkpoint owner mismatches")
+    case .invalidCheckpoint:
+      return String(localized: "The saved video upload could not be recovered. The attachment has been preserved.", comment: "Error when saved video upload checkpoint cannot be restored")
+    case .uploadAlreadyActive:
+      return String(localized: "The previous video upload is still stopping. Your attachment is preserved; try again.", comment: "Error when previous video upload lease is still shutting down")
     }
   }
 }

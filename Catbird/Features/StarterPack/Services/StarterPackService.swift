@@ -181,7 +181,12 @@ public final class StarterPackService: Sendable {
                 throw NSError(
                     domain: "StarterPackService",
                     code: responseCode,
-                    userInfo: [NSLocalizedDescriptionKey: "Couldn’t follow everyone. Try again."]
+                    userInfo: [
+                        NSLocalizedDescriptionKey: String(
+                            localized: "Couldn’t follow everyone. Try again.",
+                            comment: "Error when bulk-following accounts in a starter pack fails."
+                        )
+                    ]
                 )
             }
             
@@ -242,7 +247,12 @@ public final class StarterPackService: Sendable {
                 throw NSError(
                     domain: "StarterPackService",
                     code: responseCode,
-                    userInfo: [NSLocalizedDescriptionKey: "Couldn’t load the people in this starter pack."]
+                    userInfo: [
+                        NSLocalizedDescriptionKey: String(
+                            localized: "Couldn’t load the people in this starter pack.",
+                            comment: "Error when fetching members of a starter pack fails."
+                        )
+                    ]
                 )
             }
             allItems.append(contentsOf: data.items)
@@ -278,7 +288,10 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: draft.validationError ?? "Invalid starter pack draft"]
+                userInfo: [
+                    NSLocalizedDescriptionKey: draft.validationError
+                        ?? String(localized: "Invalid starter pack draft", comment: "Fallback error when a starter pack draft fails validation.")
+                ]
             )
         }
         
@@ -348,7 +361,10 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: draft.validationError ?? "Invalid starter pack draft"]
+                userInfo: [
+                    NSLocalizedDescriptionKey: draft.validationError
+                        ?? String(localized: "Invalid starter pack draft", comment: "Fallback error when a starter pack draft fails validation.")
+                ]
             )
         }
         
@@ -383,7 +399,12 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: firstCode,
-                userInfo: [NSLocalizedDescriptionKey: "Couldn’t create the starter pack. Try again."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "Couldn’t create the starter pack. Try again.",
+                        comment: "Error when creating a starter pack fails."
+                    )
+                ]
             )
         }
         
@@ -404,7 +425,12 @@ public final class StarterPackService: Sendable {
                     throw NSError(
                         domain: "StarterPackService",
                         code: chunkCode,
-                        userInfo: [NSLocalizedDescriptionKey: "Couldn’t add everyone to the starter pack. Try again."]
+                        userInfo: [
+                            NSLocalizedDescriptionKey: String(
+                                localized: "Couldn’t add everyone to the starter pack. Try again.",
+                                comment: "Error when adding member items while creating a starter pack fails."
+                            )
+                        ]
                     )
                 }
             }
@@ -420,7 +446,12 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: finalCode,
-                userInfo: [NSLocalizedDescriptionKey: "Couldn’t create the starter pack. Try again."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "Couldn’t create the starter pack. Try again.",
+                        comment: "Error when creating a starter pack fails."
+                    )
+                ]
             )
         }
         
@@ -440,21 +471,34 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 403,
-                userInfo: [NSLocalizedDescriptionKey: "You can only edit your own starter packs."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "You can only edit your own starter packs.",
+                        comment: "Error when attempting to edit a starter pack owned by another user."
+                    )
+                ]
             )
         }
         guard draft.isValid else {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: draft.validationError ?? "Invalid starter pack draft"]
+                userInfo: [
+                    NSLocalizedDescriptionKey: draft.validationError
+                        ?? String(localized: "Invalid starter pack draft", comment: "Fallback error when a starter pack draft fails validation.")
+                ]
             )
         }
         guard let listUri = starterPack.list?.uri else {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: "This starter pack can’t be edited."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "This starter pack can’t be edited.",
+                        comment: "Error when a starter pack is missing required metadata for editing."
+                    )
+                ]
             )
         }
         
@@ -508,7 +552,12 @@ public final class StarterPackService: Sendable {
                     throw NSError(
                         domain: "StarterPackService",
                         code: code,
-                        userInfo: [NSLocalizedDescriptionKey: "Couldn’t update the people in this starter pack. Try again."]
+                        userInfo: [
+                            NSLocalizedDescriptionKey: String(
+                                localized: "Couldn’t update the people in this starter pack. Try again.",
+                                comment: "Error when updating starter pack member list fails."
+                            )
+                        ]
                     )
                 }
             }
@@ -519,7 +568,12 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: "This starter pack can’t be edited."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "This starter pack can’t be edited.",
+                        comment: "Error when a starter pack is missing required metadata for editing."
+                    )
+                ]
             )
         }
         
@@ -555,7 +609,12 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: putCode,
-                userInfo: [NSLocalizedDescriptionKey: "Couldn’t save the starter pack. Try again."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "Couldn’t save the starter pack. Try again.",
+                        comment: "Error when saving updated starter pack metadata fails."
+                    )
+                ]
             )
         }
         
@@ -576,14 +635,24 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 403,
-                userInfo: [NSLocalizedDescriptionKey: "You can only delete your own starter packs."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "You can only delete your own starter packs.",
+                        comment: "Error when attempting to delete a starter pack owned by another user."
+                    )
+                ]
             )
         }
         guard let packRkey = starterPack.uri.recordKey else {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: "This starter pack can’t be deleted."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "This starter pack can’t be deleted.",
+                        comment: "Error when a starter pack record key is missing for deletion."
+                    )
+                ]
             )
         }
 
@@ -601,7 +670,12 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: deleteCode,
-                userInfo: [NSLocalizedDescriptionKey: "Couldn’t delete the starter pack. Try again."]
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "Couldn’t delete the starter pack. Try again.",
+                        comment: "Error when deleting a starter pack fails."
+                    )
+                ]
             )
         }
 
@@ -698,7 +772,12 @@ public final class StarterPackService: Sendable {
                 throw NSError(
                     domain: "StarterPackService",
                     code: code,
-                    userInfo: [NSLocalizedDescriptionKey: "Couldn’t copy everyone to the list. Try again."]
+                    userInfo: [
+                        NSLocalizedDescriptionKey: String(
+                            localized: "Couldn’t copy everyone to the list. Try again.",
+                            comment: "Error when copying starter pack members into a curated list fails."
+                        )
+                    ]
                 )
             }
             totalCopied += chunk.count

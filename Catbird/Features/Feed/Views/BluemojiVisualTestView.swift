@@ -46,11 +46,11 @@
       ZStack {
         Color(.systemBackground).ignoresSafeArea()
         VStack(spacing: 28) {
-          Text("Bluemoji Visual Test").font(.headline)
-          Text("real post 3mqchxbzgqh2k").font(.caption2).foregroundStyle(.secondary)
-          Text("SwiftUI Text").font(.caption).foregroundStyle(.tertiary)
+          Text(verbatim: "Bluemoji Visual Test").font(.headline)
+          Text(verbatim: "real post 3mqchxbzgqh2k").font(.caption2).foregroundStyle(.secondary)
+          Text(verbatim: "SwiftUI Text").font(.caption).foregroundStyle(.tertiary)
           Text(rendered).font(.system(size: 40))
-          Text("UIKit SelectableSelfSizingTextView").font(.caption).foregroundStyle(.tertiary)
+          Text(verbatim: "UIKit SelectableSelfSizingTextView").font(.caption).foregroundStyle(.tertiary)
           HarnessSelectableText(attributedString: rendered)
             .fixedSize(horizontal: false, vertical: true)
           Text(status).font(.footnote).foregroundStyle(.secondary)

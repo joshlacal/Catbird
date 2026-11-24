@@ -31,15 +31,24 @@ enum VideoMultipartError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .alreadyRunning: return "This video already has an active upload."
-    case .ownerChanged: return "The account or attachment changed while the video was uploading."
-    case .invalidPlan: return "The video service returned an invalid upload plan."
-    case .invalidReceipt: return "The video service did not acknowledge the expected video part."
-    case .invalidStatus: return "The video service returned an inconsistent upload status."
-    case .startUncertain: return "The video service may have started an upload, but its response was lost. Your video is preserved. A new explicit retry may temporarily use another upload allowance."
-    case .sessionTerminal(let reason): return "This video upload cannot continue: \(reason). Your attachment is preserved for a new attempt."
-    case .transferTimedOut: return "Video upload is taking too long. Your attachment and upload progress are preserved for retry."
-    case .processingTimedOut: return "The video is still processing. Retry to check the saved job without uploading the file again."
+    case .alreadyRunning:
+      return String(localized: "This video already has an active upload.", comment: "Error when attempting to start a duplicate upload for the same video")
+    case .ownerChanged:
+      return String(localized: "The account or attachment changed while the video was uploading.", comment: "Error when account or video attachment changes mid-upload")
+    case .invalidPlan:
+      return String(localized: "The video service returned an invalid upload plan.", comment: "Error when multipart video upload part plan from server is invalid")
+    case .invalidReceipt:
+      return String(localized: "The video service did not acknowledge the expected video part.", comment: "Error when multipart video upload receipt is invalid")
+    case .invalidStatus:
+      return String(localized: "The video service returned an inconsistent upload status.", comment: "Error when multipart video upload status check returns inconsistent state")
+    case .startUncertain:
+      return String(localized: "The video service may have started an upload, but its response was lost. Your video is preserved. A new explicit retry may temporarily use another upload allowance.", comment: "Error when multipart upload initiation response is lost")
+    case .sessionTerminal(let reason):
+      return String(localized: "This video upload cannot continue: \(reason). Your attachment is preserved for a new attempt.", comment: "Error when a multipart video upload session terminates; variable is server reason")
+    case .transferTimedOut:
+      return String(localized: "Video upload is taking too long. Your attachment and upload progress are preserved for retry.", comment: "Error when multipart video transfer exceeds time limit")
+    case .processingTimedOut:
+      return String(localized: "The video is still processing. Retry to check the saved job without uploading the file again.", comment: "Error when video transcoding exceeds polling timeout")
     case .processingFailed(let code, let message):
       return code.map { "\(message) (\($0))" } ?? message
     }

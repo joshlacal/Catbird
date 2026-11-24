@@ -39,12 +39,12 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .catbird: return "Catbird"
-        case .twilight: return "Twilight"
-        case .lavender: return "Lavender"
-        case .sunrise: return "Sunrise"
-        case .aurora: return "Aurora"
-        case .dusk: return "Dusk"
-        case .midnight: return "Midnight"
+        case .twilight: return String(localized: "Twilight", comment: "Accent color palette name.")
+        case .lavender: return String(localized: "Lavender", comment: "Accent color palette name.")
+        case .sunrise: return String(localized: "Sunrise", comment: "Accent color palette name.")
+        case .aurora: return String(localized: "Aurora", comment: "Accent color palette name.")
+        case .dusk: return String(localized: "Dusk", comment: "Accent color palette name.")
+        case .midnight: return String(localized: "Midnight", comment: "Accent color palette name.")
         }
     }
 

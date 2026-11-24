@@ -48,8 +48,18 @@ struct NewConversationKindHandlers {
 @MainActor
 @Observable
 final class NewConversationKindModel {
-  static let incapableNotice = "Encrypted chat isn’t available for this person yet."
-  static let unknownNotice = "Couldn’t check encrypted chat"
+  nonisolated static var incapableNotice: String {
+    String(
+      localized: "Encrypted chat isn’t available for this person yet.",
+      comment: "Notice shown when a selected recipient cannot receive encrypted chats"
+    )
+  }
+  nonisolated static var unknownNotice: String {
+    String(
+      localized: "Couldn’t check encrypted chat",
+      comment: "Notice shown when checking a recipient's encrypted chat capability fails"
+    )
+  }
 
   let recipient: NewConversationRecipient
   private(set) var state: NewConversationKindState = .checking

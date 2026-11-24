@@ -56,8 +56,10 @@ struct NuxAnnouncementView: View {
                             .foregroundColor(.red)
                             .multilineTextAlignment(.leading)
                         Spacer()
-                        Button("Try Again") {
+                        Button {
                             retryCompletion()
+                        } label: {
+                            Text("Try Again", comment: "Button retrying saving the feature announcement dismissal.")
                         }
                         .font(.caption.bold())
                     }
@@ -85,8 +87,10 @@ struct NuxAnnouncementView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(isSaving)
 
-                    Button("Got It") {
+                    Button {
                         completeAndDismiss()
+                    } label: {
+                        Text("Got It", comment: "Button acknowledging and dismissing a feature announcement sheet.")
                     }
                     .buttonStyle(.borderless)
                     .foregroundColor(.secondary)
@@ -103,7 +107,7 @@ struct NuxAnnouncementView: View {
                             .font(.system(size: 20))
                             .foregroundColor(.secondary)
                     }
-                    .accessibilityLabel("Close")
+                    .accessibilityLabel(Text("Close", comment: "Accessibility label for the button closing a feature announcement sheet."))
                     .disabled(isSaving)
                 }
             }
@@ -144,42 +148,42 @@ struct NuxAnnouncementView: View {
         }
     }
 
-    private var title: String {
+    private var title: LocalizedStringResource {
         switch nuxID {
         case .draftsAnnouncement:
-            return "Post Drafts"
+            return LocalizedStringResource("Post Drafts", comment: "Feature announcement title for post drafts.")
         case .bookmarksAnnouncement:
-            return "Introducing Bookmarks"
+            return LocalizedStringResource("Introducing Bookmarks", comment: "Feature announcement title for bookmarks.")
         case .groupChatsAnnouncement:
-            return "Group Chats Are Here"
+            return LocalizedStringResource("Group Chats Are Here", comment: "Feature announcement title for group chats.")
         case .activitySubscriptions:
-            return "Activity Alerts"
+            return LocalizedStringResource("Activity Alerts", comment: "Feature announcement title for activity alerts.")
         }
     }
 
-    private var description: String {
+    private var description: LocalizedStringResource {
         switch nuxID {
         case .draftsAnnouncement:
-            return "Save your posts as drafts to edit and publish whenever you’re ready. Find them in the composer."
+            return LocalizedStringResource("Save your posts as drafts to edit and publish whenever you’re ready. Find them in the composer.", comment: "Feature announcement description for post drafts.")
         case .bookmarksAnnouncement:
-            return "Save posts privately to read later. Find them anytime in Bookmarks, from the feeds menu."
+            return LocalizedStringResource("Save posts privately to read later. Find them anytime in Bookmarks, from the feeds menu.", comment: "Feature announcement description for bookmarks.")
         case .groupChatsAnnouncement:
-            return "Chat privately with multiple people at once. Create groups, share invite links, and stay connected."
+            return LocalizedStringResource("Chat privately with multiple people at once. Create groups, share invite links, and stay connected.", comment: "Feature announcement description for group chats.")
         case .activitySubscriptions:
-            return "Get notified when your favorite accounts post or reply."
+            return LocalizedStringResource("Get notified when your favorite accounts post or reply.", comment: "Feature announcement description for activity alerts.")
         }
     }
 
-    private var actionButtonTitle: String {
+    private var actionButtonTitle: LocalizedStringResource {
         switch nuxID {
         case .draftsAnnouncement:
-            return "Try It Out"
+            return LocalizedStringResource("Try It Out", comment: "Primary action button on the post drafts feature announcement.")
         case .bookmarksAnnouncement:
-            return "View Bookmarks"
+            return LocalizedStringResource("View Bookmarks", comment: "Primary action button on the bookmarks feature announcement.")
         case .groupChatsAnnouncement:
-            return "Open Messages"
+            return LocalizedStringResource("Open Messages", comment: "Primary action button on the group chats feature announcement.")
         case .activitySubscriptions:
-            return "Manage Alerts"
+            return LocalizedStringResource("Manage Alerts", comment: "Primary action button on the activity alerts feature announcement.")
         }
     }
 
@@ -216,7 +220,10 @@ struct NuxAnnouncementView: View {
                     prefs.setNuxCompleted(nuxID.rawValue, completed: false)
                     try? await appState.preferencesManager.savePreferences(prefs)
                 }
-                errorMessage = UserFacingError.message(for: error, action: "save this")
+                errorMessage = UserFacingError.message(
+                    for: error,
+                    action: String(localized: "save this", comment: "Action phrase when saving a feature announcement state.")
+                )
                 isSaving = false
             }
         }

@@ -445,11 +445,11 @@ enum SmartRefreshError: Error, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .offline:
-      return "No internet connection"
+      return String(localized: "No internet connection", comment: "Error when background feed refresh cannot run offline")
     case .timeout:
-      return "Request timed out"
+      return String(localized: "Request timed out", comment: "Error when background feed refresh times out")
     case .serverError:
-      return "Server error"
+      return String(localized: "Server error", comment: "Error when background feed refresh encounters a server error")
     }
   }
 }

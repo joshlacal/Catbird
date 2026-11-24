@@ -20,11 +20,8 @@ public enum NewskieHelper {
     }
     
     /// Formats the join date string for display in the Newskie dialog.
-    public static func formattedJoinDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter.string(from: date)
+    public static func formattedJoinDate(_ date: Date, locale: Locale = .current) -> String {
+        date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, locale: locale))
     }
     
     /// Generates dialog description text for the account.
@@ -32,21 +29,69 @@ public enum NewskieHelper {
         handle: String,
         isSelf: Bool,
         createdAt: Date?,
-        hasStarterPack: Bool
+        hasStarterPack: Bool,
+        locale: Locale = .current
     ) -> String {
-        let dateString = createdAt.map { formattedJoinDate($0) } ?? "recently"
-        
-        if isSelf {
-            if hasStarterPack {
-                return "You joined Bluesky on \(dateString) using a starter pack."
+        if let createdAt {
+            let dateString = formattedJoinDate(createdAt, locale: locale)
+            if isSelf {
+                if hasStarterPack {
+                    return String(
+                        localized: "You joined Bluesky on \(dateString) using a starter pack.",
+                        locale: locale,
+                        comment: "New user dialog message for the signed-in user who joined via a starter pack — %1$@ is the formatted join date."
+                    )
+                } else {
+                    return String(
+                        localized: "You joined Bluesky on \(dateString). Welcome!",
+                        locale: locale,
+                        comment: "New user dialog message for the signed-in user — %1$@ is the formatted join date."
+                    )
+                }
             } else {
-                return "You joined Bluesky on \(dateString). Welcome!"
+                if hasStarterPack {
+                    return String(
+                        localized: "@\(handle) joined Bluesky on \(dateString) using a starter pack.",
+                        locale: locale,
+                        comment: "New user dialog message for another account that joined via a starter pack — %1$@ is the user's handle (without @), %2$@ is the formatted join date."
+                    )
+                } else {
+                    return String(
+                        localized: "@\(handle) joined Bluesky on \(dateString).",
+                        locale: locale,
+                        comment: "New user dialog message for another account — %1$@ is the user's handle (without @), %2$@ is the formatted join date."
+                    )
+                }
             }
         } else {
-            if hasStarterPack {
-                return "@\(handle) joined Bluesky on \(dateString) using a starter pack."
+            if isSelf {
+                if hasStarterPack {
+                    return String(
+                        localized: "You joined Bluesky recently using a starter pack.",
+                        locale: locale,
+                        comment: "New user dialog message for the signed-in user who joined via a starter pack when join date is unknown."
+                    )
+                } else {
+                    return String(
+                        localized: "You joined Bluesky recently. Welcome!",
+                        locale: locale,
+                        comment: "New user dialog message for the signed-in user when join date is unknown."
+                    )
+                }
             } else {
-                return "@\(handle) joined Bluesky on \(dateString)."
+                if hasStarterPack {
+                    return String(
+                        localized: "@\(handle) joined Bluesky recently using a starter pack.",
+                        locale: locale,
+                        comment: "New user dialog message for another account that joined via a starter pack when join date is unknown — %1$@ is the user's handle (without @)."
+                    )
+                } else {
+                    return String(
+                        localized: "@\(handle) joined Bluesky recently.",
+                        locale: locale,
+                        comment: "New user dialog message for another account when join date is unknown — %1$@ is the user's handle (without @)."
+                    )
+                }
             }
         }
     }
@@ -85,7 +130,7 @@ public struct NewskieBadge: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.green)
                     
-                    Text("New")
+                    Text("New", comment: "Short badge label shown beside the handle of a newly created account.")
                         .appFont(AppTextRole.caption2)
                         .fontWeight(.bold)
                         .foregroundColor(.green)
@@ -118,6 +163,7 @@ public struct NewskieDialog: View {
     @Binding var path: NavigationPath
     
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     
     public var body: some View {
         NavigationStack {
@@ -135,7 +181,7 @@ public struct NewskieDialog: View {
                 .padding(.top, 24)
                 
                 // Title
-                Text("New User")
+                Text("New User", comment: "Heading in the new-account info sheet.")
                     .appFont(AppTextRole.title2)
                     .fontWeight(.bold)
                 
@@ -145,7 +191,8 @@ public struct NewskieDialog: View {
                         handle: profile.handle.description,
                         isSelf: isSelf,
                         createdAt: profile.createdAt?.date,
-                        hasStarterPack: profile.joinedViaStarterPack != nil
+                        hasStarterPack: profile.joinedViaStarterPack != nil,
+                        locale: locale
                     )
                 )
                 .appFont(AppTextRole.subheadline)

@@ -11,11 +11,11 @@ enum CustomMessageMenuAction: String, CaseIterable {
   var title: String {
     switch self {
     case .copy:
-      return "Copy"
+      return String(localized: "Copy", comment: "Context menu action to copy message text")
     case .deleteForMe:
-      return "Delete for me"
+      return String(localized: "Delete for me", comment: "Context menu action to delete a message locally")
     case .report:
-      return "Report"
+      return String(localized: "Report", comment: "Context menu action to report a message")
     }
   }
 

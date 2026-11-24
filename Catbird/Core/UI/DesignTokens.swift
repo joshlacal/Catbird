@@ -432,12 +432,12 @@ extension HStack {
         VStack(spacing: DesignTokens.Spacing.section) {
             // Spacing examples
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
-                Text("Spacing Scale (3pt Grid)")
+                Text(verbatim: "Spacing Scale (3pt Grid)")
                     .designHeadline()
                 
                 VStack(spacing: DesignTokens.Spacing.xs) {
                     HStack {
-                        Text("XS (3pt)")
+                        Text(verbatim: "XS (3pt)")
                             .designCaption()
                         Spacer()
                         Rectangle()
@@ -446,7 +446,7 @@ extension HStack {
                     }
                     
                     HStack {
-                        Text("Base (12pt)")
+                        Text(verbatim: "Base (12pt)")
                             .designCaption()
                         Spacer()
                         Rectangle()
@@ -455,7 +455,7 @@ extension HStack {
                     }
                     
                     HStack {
-                        Text("XL (18pt)")
+                        Text(verbatim: "XL (18pt)")
                             .designCaption()
                         Spacer()
                         Rectangle()
@@ -470,26 +470,26 @@ extension HStack {
             
             // Typography examples
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
-                Text("Typography Scale")
+                Text(verbatim: "Typography Scale")
                     .designHeadline()
                 
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    Text("Title 1")
+                    Text(verbatim: "Title 1")
                         .designTitle1()
                     
-                    Text("Title 2")
+                    Text(verbatim: "Title 2")
                         .designTitle2()
                     
-                    Text("Headline")
+                    Text(verbatim: "Headline")
                         .designHeadline()
                     
-                    Text("Body text with proper line height and spacing for readability")
+                    Text(verbatim: "Body text with proper line height and spacing for readability")
                         .designBody()
                     
-                    Text("Callout text")
+                    Text(verbatim: "Callout text")
                         .designCallout()
                     
-                    Text("Caption text")
+                    Text(verbatim: "Caption text")
                         .designCaption()
                 }
             }
@@ -499,16 +499,20 @@ extension HStack {
             
             // Component examples
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
-                Text("Component Examples")
+                Text(verbatim: "Component Examples")
                     .designHeadline()
                 
                 HStack(spacing: DesignTokens.Spacing.base) {
                     // Button examples
-                    Button("Primary") {}
+                    Button {} label: {
+                        Text(verbatim: "Primary")
+                    }
                         .buttonStyle(.borderedProminent)
                         .frame(height: DesignTokens.Size.buttonMD)
                     
-                    Button("Secondary") {}
+                    Button {} label: {
+                        Text(verbatim: "Secondary")
+                    }
                         .buttonStyle(.bordered)
                         .frame(height: DesignTokens.Size.buttonMD)
                 }

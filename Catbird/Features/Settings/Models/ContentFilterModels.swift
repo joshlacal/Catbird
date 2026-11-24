@@ -14,9 +14,9 @@ extension LabelPreference {
   /// The segmented-control title Bluesky uses for this preference.
   var settingsOptionTitle: String {
     switch self {
-    case .ignore: "Show"
-    case .warn: "Warn"
-    case .hide: "Hide"
+    case .ignore: String(localized: "Show", comment: "Moderation label preference option to show labeled content normally.")
+    case .warn: String(localized: "Warn", comment: "Moderation label preference option to warn/blur labeled content.")
+    case .hide: String(localized: "Hide", comment: "Moderation label preference option to hide labeled content from feeds.")
     }
   }
 }
@@ -96,15 +96,15 @@ enum ContentFilterPreview {
     var summary: String {
       switch self {
       case .shown:
-        "Shown without a warning."
+        String(localized: "Shown without a warning.", comment: "Moderation preview summary when labeled posts are shown normally.")
       case .mediaBlurred(true):
-        "Post text is shown. Images and video are blurred until you choose to show them."
+        String(localized: "Post text is shown. Images and video are blurred until you choose to show them.", comment: "Moderation preview summary when media is blurred with a reveal button.")
       case .mediaBlurred(false):
-        "Post text is shown. Images and video stay blurred."
+        String(localized: "Post text is shown. Images and video stay blurred.", comment: "Moderation preview summary when media stays permanently blurred.")
       case .removedFromFeeds(true):
-        "Removed from feeds. If you open the post, its images and video are blurred until you choose to show them."
+        String(localized: "Removed from feeds. If you open the post, its images and video are blurred until you choose to show them.", comment: "Moderation preview summary when post is filtered from feeds and media can be revealed if opened.")
       case .removedFromFeeds(false):
-        "Removed from feeds. If you open the post, its images and video stay blurred."
+        String(localized: "Removed from feeds. If you open the post, its images and video stay blurred.", comment: "Moderation preview summary when post is filtered from feeds and media stays blurred.")
       }
     }
 

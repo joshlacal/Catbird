@@ -99,7 +99,7 @@ struct TrendingInterstitialTypography: Equatable, @unchecked Sendable {
     let authorLineSpacing = fontManager.getLineSpacing(for: Typography.Size.caption)
     let bodyLineSpacing = fontManager.getLineSpacing(for: Typography.Size.body)
     let videosButton = role(Typography.Size.subheadline, .medium, .subheadline)
-    let disclosure = UIImage(systemName: "chevron.right",
+    let disclosure = UIImage(systemName: "chevron.forward",
       withConfiguration: UIImage.SymbolConfiguration(font: videosButton, scale: .small))
 
     let resolved = TrendingInterstitialTypography(

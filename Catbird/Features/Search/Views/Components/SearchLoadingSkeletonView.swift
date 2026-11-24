@@ -17,7 +17,7 @@ struct SearchLoadingSkeletonView: View {
             VStack(spacing: 16) {
                 // Profiles section skeleton
                 SearchSectionSkeleton(
-                    title: "Profiles",
+                    title: LocalizedStringResource("Profiles", comment: "Search loading skeleton section header for user profiles"),
                     icon: "person",
                     itemCount: 3,
                     itemType: .profile
@@ -25,7 +25,7 @@ struct SearchLoadingSkeletonView: View {
                 
                 // Posts section skeleton
                 SearchSectionSkeleton(
-                    title: "Posts", 
+                    title: LocalizedStringResource("Posts", comment: "Search loading skeleton section header for posts"),
                     icon: "text.bubble",
                     itemCount: 3,
                     itemType: .post
@@ -33,7 +33,7 @@ struct SearchLoadingSkeletonView: View {
                 
                 // Feeds section skeleton
                 SearchSectionSkeleton(
-                    title: "Feeds",
+                    title: LocalizedStringResource("Feeds", comment: "Search loading skeleton section header for custom feeds"),
                     icon: "rectangle.on.rectangle.angled", 
                     itemCount: 2,
                     itemType: .feed
@@ -48,7 +48,7 @@ struct SearchLoadingSkeletonView: View {
 
 /// Individual section skeleton for search results
 struct SearchSectionSkeleton: View {
-    let title: String
+    let title: LocalizedStringResource
     let icon: String
     let itemCount: Int
     let itemType: SearchSkeletonItemType

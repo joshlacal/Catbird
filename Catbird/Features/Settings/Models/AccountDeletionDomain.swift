@@ -143,27 +143,27 @@ enum PDSDirectDeletionError: Error, LocalizedError, Equatable, Sendable {
   var errorDescription: String? {
     switch self {
     case .invalidPDSEndpoint:
-      return "Your hosting provider endpoint is invalid or insecure."
+      return String(localized: "Your hosting provider endpoint is invalid or insecure.", comment: "Account deletion error when PDS URL is invalid.")
     case .missingPassword:
-      return "Enter your account password to continue."
+      return String(localized: "Enter your account password to continue.", comment: "Account deletion validation error.")
     case .missingConfirmationToken:
-      return "Enter the confirmation code sent to your email."
+      return String(localized: "Enter the confirmation code sent to your email.", comment: "Account deletion validation error.")
     case .authFactorTokenRequired:
-      return "Two-factor sign-in is enabled on your account. Check your email for a 2FA code, enter it above, and try again."
+      return String(localized: "Two-factor sign-in is enabled on your account. Check your email for a 2FA code, enter it above, and try again.", comment: "Account deletion error when 2FA code is required.")
     case .invalidCredentials(_, _, let message):
       if let message, !message.isEmpty {
-        return "Incorrect password or credentials (\(message)). If your hosting provider uses passwordless OAuth only, use the provider website option below."
+        return String(localized: "Incorrect password or credentials (\(message)). If your hosting provider uses passwordless OAuth only, use the provider website option below.", comment: "Account deletion error when credentials fail — variable is the server message.")
       }
-      return "Incorrect account password. Verify your password or use the provider website option below if your provider uses passwordless sign-in."
+      return String(localized: "Incorrect account password. Verify your password or use the provider website option below if your provider uses passwordless sign-in.", comment: "Account deletion error when password is wrong.")
     case .expiredToken:
-      return "That confirmation code has expired. Request a new email confirmation code and try again."
+      return String(localized: "That confirmation code has expired. Request a new email confirmation code and try again.", comment: "Account deletion error when confirmation code expired.")
     case .invalidToken:
-      return "That confirmation code is invalid. Check the code from your email and try again."
+      return String(localized: "That confirmation code is invalid. Check the code from your email and try again.", comment: "Account deletion error when confirmation code is invalid.")
     case .pdsRejected(let statusCode, _, let message):
       if let message, !message.isEmpty {
-        return "Your hosting provider declined the deletion request (HTTP \(statusCode): \(message))."
+        return String(localized: "Your hosting provider declined the deletion request (HTTP \(statusCode): \(message)).", comment: "Account deletion error — first variable is HTTP status code, second is server message.")
       }
-      return "Your hosting provider declined the deletion request (HTTP \(statusCode))."
+      return String(localized: "Your hosting provider declined the deletion request (HTTP \(statusCode)).", comment: "Account deletion error — variable is HTTP status code.")
     }
   }
 }

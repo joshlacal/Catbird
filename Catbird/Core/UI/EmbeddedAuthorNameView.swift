@@ -24,8 +24,27 @@ struct EmbeddedAuthorNameView: View {
 
   var body: some View {
     let kind = badgeKind
-    let accessibilityName = (kind.map { "\(name), \($0.accessibilityLabel)" } ?? name)
-      + (isAutomated ? ", \(AutomationBadge.accessibilityLabel)" : "")
+    let accessibilityName: String = {
+      switch (kind, isAutomated) {
+      case (let kind?, true):
+        return String(
+          localized: "\(name), \(kind.accessibilityLabel), \(AutomationBadge.accessibilityLabel)",
+          comment: "Accessibility label for an embedded post author with verification and automation badges — %1$@ is author name, %2$@ is verification label, %3$@ is automation label."
+        )
+      case (let kind?, false):
+        return String(
+          localized: "\(name), \(kind.accessibilityLabel)",
+          comment: "Accessibility label for an embedded post author with verification badge — %1$@ is author name, %2$@ is verification label."
+        )
+      case (nil, true):
+        return String(
+          localized: "\(name), \(AutomationBadge.accessibilityLabel)",
+          comment: "Accessibility label for an embedded post author with automation badge — %1$@ is author name, %2$@ is automation label."
+        )
+      case (nil, false):
+        return name
+      }
+    }()
     HStack(spacing: 4) {
       Text(name)
         .lineLimit(1)

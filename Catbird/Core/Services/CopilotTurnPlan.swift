@@ -184,7 +184,10 @@ actor CopilotReadBudget {
     case exhausted
 
     var errorDescription: String? {
-      "Ask Catbird reached the read limit for this request. Ask a follow-up to load more context."
+      String(
+        localized: "Ask Catbird reached the read limit for this request. Ask a follow-up to load more context.",
+        comment: "Error shown when Ask Catbird exhausts its per-turn read budget."
+      )
     }
   }
   private var remaining: Int

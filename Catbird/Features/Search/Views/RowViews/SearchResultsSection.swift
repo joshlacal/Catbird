@@ -10,7 +10,7 @@ import SwiftUI
 
 /// A generic section wrapper for search results
 struct ResultsSection<Content: View>: View {
-    let title: String
+    let title: LocalizedStringResource
     @ViewBuilder let content: () -> Content
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
@@ -101,9 +101,18 @@ struct NoResultsView: View {
             } else {
                 // Default suggestions
                 VStack(spacing: 12) {
-                    suggestionRow(icon: "checkmark.circle", text: "Try different keywords")
-                    suggestionRow(icon: "checkmark.circle", text: "Check your spelling")
-                    suggestionRow(icon: "checkmark.circle", text: "Use fewer or more general words")
+                    suggestionRow(
+                        icon: "checkmark.circle",
+                        text: LocalizedStringResource("Try different keywords", comment: "Search empty state suggestion")
+                    )
+                    suggestionRow(
+                        icon: "checkmark.circle",
+                        text: LocalizedStringResource("Check your spelling", comment: "Search empty state suggestion")
+                    )
+                    suggestionRow(
+                        icon: "checkmark.circle",
+                        text: LocalizedStringResource("Use fewer or more general words", comment: "Search empty state suggestion")
+                    )
                 }
                 .padding(.horizontal, 32)
             }
@@ -138,7 +147,7 @@ struct NoResultsView: View {
     }
     
     // SRCH-011: Helper view for suggestions
-    private func suggestionRow(icon: String, text: String) -> some View {
+    private func suggestionRow(icon: String, text: LocalizedStringResource) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .appFont(AppTextRole.caption)
@@ -218,9 +227,18 @@ struct SearchErrorView: View {
     private var errorMessage: String {
         switch UserFacingError.kind(of: error) {
         case .notFound, .server:
-            return "Search is temporarily unavailable. Try again later."
+            return String(
+                localized: "Search is temporarily unavailable. Try again later.",
+                comment: "Error message shown when the search service returns a server error"
+            )
         default:
-            return UserFacingError.message(for: error, action: "search right now") ?? "Couldn’t search right now. Try again."
+            return UserFacingError.message(
+                for: error,
+                action: String(localized: "search right now", comment: "Action phrase for search error fallback")
+            ) ?? String(
+                localized: "Couldn’t search right now. Try again.",
+                comment: "Generic error message when a search request fails"
+            )
         }
     }
 }

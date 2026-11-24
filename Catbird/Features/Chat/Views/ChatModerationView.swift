@@ -96,20 +96,20 @@ struct ActorMetadataView: View {
 
       if let metadata = metadata {
         Section("Usage Statistics") {
-          StatRow(title: "Messages Sent (24h)", value: "\(metadata.day.messagesSent)")
-          StatRow(title: "Messages Received (24h)", value: "\(metadata.day.messagesReceived)")
-          StatRow(title: "Conversations (24h)", value: "\(metadata.day.convos)")
-          StatRow(title: "Conversations Started (24h)", value: "\(metadata.day.convosStarted)")
+          StatRow(title: "Messages Sent (24h)", count: metadata.day.messagesSent)
+          StatRow(title: "Messages Received (24h)", count: metadata.day.messagesReceived)
+          StatRow(title: "Conversations (24h)", count: metadata.day.convos)
+          StatRow(title: "Conversations Started (24h)", count: metadata.day.convosStarted)
 
-          StatRow(title: "Messages Sent (30d)", value: "\(metadata.month.messagesSent)")
-          StatRow(title: "Messages Received (30d)", value: "\(metadata.month.messagesReceived)")
-          StatRow(title: "Conversations (30d)", value: "\(metadata.month.convos)")
-          StatRow(title: "Conversations Started (30d)", value: "\(metadata.month.convosStarted)")
+          StatRow(title: "Messages Sent (30d)", count: metadata.month.messagesSent)
+          StatRow(title: "Messages Received (30d)", count: metadata.month.messagesReceived)
+          StatRow(title: "Conversations (30d)", count: metadata.month.convos)
+          StatRow(title: "Conversations Started (30d)", count: metadata.month.convosStarted)
 
-          StatRow(title: "Total Messages Sent", value: "\(metadata.all.messagesSent)")
-          StatRow(title: "Total Messages Received", value: "\(metadata.all.messagesReceived)")
-          StatRow(title: "Total Conversations", value: "\(metadata.all.convos)")
-          StatRow(title: "Total Conversations Started", value: "\(metadata.all.convosStarted)")
+          StatRow(title: "Total Messages Sent", count: metadata.all.messagesSent)
+          StatRow(title: "Total Messages Received", count: metadata.all.messagesReceived)
+          StatRow(title: "Total Conversations", count: metadata.all.convos)
+          StatRow(title: "Total Conversations Started", count: metadata.all.convosStarted)
         }
       }
     }
@@ -118,7 +118,11 @@ struct ActorMetadataView: View {
         errorMessage = nil
       }
     } message: {
-      Text(errorMessage ?? "An unknown error occurred")
+      if let errorMessage {
+        Text(errorMessage)
+      } else {
+        Text("An unknown error occurred")
+      }
     }
   }
 
@@ -133,7 +137,10 @@ struct ActorMetadataView: View {
           errorMessage = nil
         } else {
           metadata = nil
-          errorMessage = "Failed to fetch user metadata. Please check the DID/handle and try again."
+          errorMessage = String(
+            localized: "Failed to fetch user metadata. Please check the DID/handle and try again.",
+            comment: "Moderation tool error when loading user chat metadata fails"
+          )
         }
       }
     }
@@ -191,7 +198,7 @@ struct MessageContextView: View {
 
       if let context = context {
         Section("Message Context") {
-          Text("Found \(context.messages.count) messages in context")
+          Text("Found \(context.messages.count) messages in context", comment: "Summary count of messages returned in moderation context (%lld = message count)")
             .foregroundColor(.secondary)
 
           // Display messages in context
@@ -227,7 +234,11 @@ struct MessageContextView: View {
         errorMessage = nil
       }
     } message: {
-      Text(errorMessage ?? "An unknown error occurred")
+      if let errorMessage {
+        Text(errorMessage)
+      } else {
+        Text("An unknown error occurred")
+      }
     }
   }
 
@@ -247,7 +258,10 @@ struct MessageContextView: View {
           errorMessage = nil
         } else {
           context = nil
-          errorMessage = "Failed to fetch message context. Please check the IDs and try again."
+          errorMessage = String(
+            localized: "Failed to fetch message context. Please check the IDs and try again.",
+            comment: "Moderation tool error when loading message context fails"
+          )
         }
       }
     }
@@ -312,7 +326,11 @@ struct AccessControlView: View {
         errorMessage = nil
       }
     } message: {
-      Text(errorMessage ?? "An unknown error occurred")
+      if let errorMessage {
+        Text(errorMessage)
+      } else {
+        Text("An unknown error occurred")
+      }
     }
   }
 
@@ -327,13 +345,19 @@ struct AccessControlView: View {
       await MainActor.run {
         isUpdating = false
         if success {
-          successMessage = "Successfully updated chat access for user"
+          successMessage = String(
+            localized: "Successfully updated chat access for user",
+            comment: "Moderation tool confirmation message when user chat access is updated"
+          )
           // Clear form
           userDID = ""
           reference = ""
           allowAccess = true
         } else {
-          errorMessage = "Failed to update chat access. Please check the DID/handle and try again."
+          errorMessage = String(
+            localized: "Failed to update chat access. Please check the DID/handle and try again.",
+            comment: "Moderation tool error when updating user chat access fails"
+          )
         }
       }
     }
@@ -342,14 +366,14 @@ struct AccessControlView: View {
 
 /// Helper view for displaying statistics
 struct StatRow: View {
-  let title: String
-  let value: String
+  let title: LocalizedStringKey
+  let count: Int
 
   var body: some View {
     HStack {
       Text(title)
       Spacer()
-      Text(value)
+      Text(count, format: .number)
         .fontWeight(.medium)
         .foregroundColor(.primary)
     }
@@ -366,13 +390,13 @@ struct MessageContextRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        Text("@\(senderHandle.isEmpty ? messageView.sender.did.didString() : senderHandle)")
+        Text(verbatim: "@\(senderHandle.isEmpty ? messageView.sender.did.didString() : senderHandle)")
           .appFont(AppTextRole.caption)
           .fontWeight(.medium)
           .foregroundColor(isTargetMessage ? .white : .primary)
 
         if isTargetMessage {
-          Text("TARGET")
+          Text("Target", comment: "Badge marking the target message in moderation context")
             .appFont(AppTextRole.caption2)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

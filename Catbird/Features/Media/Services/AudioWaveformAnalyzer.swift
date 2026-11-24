@@ -281,16 +281,15 @@ enum WaveformError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .noAudioTrack:
-      return "No audio track found in file"
+      return String(localized: "No audio track found in file", comment: "Error when audio file contains no audio track for waveform analysis")
     case .readerError:
-      return "Failed to read audio data"
+      return String(localized: "Failed to read audio data", comment: "Error when AVAssetReader fails to start reading audio samples")
     case .analysisError:
-      return "Failed to analyze audio waveform"
+      return String(localized: "Failed to analyze audio waveform", comment: "Error when audio waveform analysis fails before completion")
     case .bufferError:
-      return "Failed to process audio buffer"
+      return String(localized: "Failed to process audio buffer", comment: "Error when extracting PCM samples from an audio buffer fails")
     case .custom(let message):
       return message
-
     }
   }
 }

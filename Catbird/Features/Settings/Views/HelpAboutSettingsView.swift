@@ -38,7 +38,7 @@ struct HelpAboutSettingsView: View {
             Button("Replay Tips") {
                 appState.onboardingManager.resetAllOnboarding(for: appState.userDID)
                 appState.toastManager.show(ToastItem(
-                    message: "Onboarding and tips will appear again the next time you open Catbird.",
+                    message: String(localized: "Onboarding and tips will appear again the next time you open Catbird.", comment: "Toast shown after resetting onboarding and tips."),
                     icon: "lightbulb.fill"
                 ))
             }

@@ -28,7 +28,7 @@ struct SimpleGifView: View {
                     Spacer()
                     HStack {
                         Spacer()
-                        Text("GIF")
+                        Text("GIF", comment: "Badge overlay indicating animated GIF media")
                             .appFont(AppTextRole.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 6)
@@ -41,6 +41,7 @@ struct SimpleGifView: View {
             }
         }
         .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(gif.content_description.isEmpty ? Text("GIF", comment: "Accessibility label for GIF without description") : Text(gif.content_description))
     }
     
     @ViewBuilder

@@ -62,7 +62,11 @@ struct ConversationToolbarMenu: View {
             Task { await appState.chatManager.muteConversation(convoId: convo.id) }
           }
         } label: {
-          Label(convo.muted ? "Unmute" : "Mute", systemImage: convo.muted ? "bell" : "bell.slash")
+          if convo.muted {
+            Label("Unmute", systemImage: "bell")
+          } else {
+            Label("Mute", systemImage: "bell.slash")
+          }
         }
         
         Divider()
@@ -122,7 +126,11 @@ struct ConversationContextMenu: ViewModifier {
             Task { await appState.chatManager.muteConversation(convoId: conversation.id) }
           }
         } label: {
-          Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
+          if conversation.muted {
+            Label("Unmute", systemImage: "bell")
+          } else {
+            Label("Mute", systemImage: "bell.slash")
+          }
         }
 
         Divider()
@@ -140,7 +148,11 @@ struct ConversationContextMenu: ViewModifier {
             showingDeleteAlert = true
           }
         } label: {
-          Label(isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation", systemImage: "rectangle.portrait.and.arrow.right")
+          if isOwnedGroup {
+            Label("Lock & Leave Group", systemImage: "rectangle.portrait.and.arrow.right")
+          } else {
+            Label("Leave Conversation", systemImage: "rectangle.portrait.and.arrow.right")
+          }
         }
       }
       .sheet(isPresented: $showingSettings) {
@@ -194,7 +206,7 @@ struct MessageRequestsButton: View {
         
         if requestsCount > 0 {
           // Badge for total requests count
-          Text("\(requestsCount)")
+          Text(requestsCount, format: .number)
             .appCaption()
             .fontWeight(.bold)
             .foregroundColor(.white)
@@ -206,7 +218,11 @@ struct MessageRequestsButton: View {
         }
       }
     }
-    .accessibilityLabel(requestsCount == 0 ? "Message requests" : "Message requests, \(requestsCount) pending")
+    .accessibilityLabel(
+      requestsCount == 0
+        ? Text("Message requests", comment: "Accessibility label for message requests button when there are no pending requests")
+        : Text("Message requests, \(requestsCount) pending", comment: "Accessibility label for message requests button (%lld = pending request count)")
+    )
     .accessibilityIdentifier("messageRequests.open")
     .modifier(MessageRequestSheet(isPresented: $isShowingRequests, onDismiss: {
       Task { await refreshCatbirdCount() }

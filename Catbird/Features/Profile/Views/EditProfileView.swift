@@ -98,7 +98,10 @@ struct EditProfileView: View {
 
               HStack {
                 Spacer()
-                Text("\(description.count)/\(bioCharLimit)")
+                Text(
+                  "\(description.count)/\(bioCharLimit)",
+                  comment: "Character count indicator — %1$lld is the current character count, %2$lld is the maximum allowed."
+                )
                   .font(.caption2)
                   .foregroundStyle(description.count > bioCharLimit ? .red : .secondary)
               }
@@ -278,10 +281,10 @@ struct EditProfileView: View {
   // MARK: - Reusable Field
 
   private func profileTextField(
-    _ title: String,
+    _ title: LocalizedStringKey,
     text: Binding<String>,
     icon: String,
-    placeholder: String? = nil,
+    placeholder: LocalizedStringKey? = nil,
     limit: Int? = nil
   ) -> some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -303,7 +306,10 @@ struct EditProfileView: View {
       if let limit {
         HStack {
           Spacer()
-          Text("\(text.wrappedValue.count)/\(limit)")
+          Text(
+            "\(text.wrappedValue.count)/\(limit)",
+            comment: "Character count indicator — %1$lld is the current character count, %2$lld is the maximum allowed."
+          )
             .font(.caption2)
             .foregroundStyle(text.wrappedValue.count > limit ? .red : .secondary)
         }
@@ -338,7 +344,10 @@ struct EditProfileView: View {
         }
       } catch {
         await MainActor.run {
-          self.errorMessage = "Couldn’t load that image. Try a different one."
+          self.errorMessage = String(
+            localized: "Couldn’t load that image. Try a different one.",
+            comment: "Error message when a selected profile or banner photo fails to load."
+          )
           logger.error("Failed to load image: \(error.localizedDescription)")
         }
       }
@@ -440,7 +449,10 @@ struct EditProfileView: View {
         await MainActor.run {
           isUploading = false
           errorMessage = UserFacingError.message(for: error, action: "save your profile")
-            ?? "Couldn’t save your profile. Try again."
+            ?? String(
+              localized: "Couldn’t save your profile. Try again.",
+              comment: "Error message when saving profile edits fails."
+            )
           logger.error("Failed to save profile: \(error.localizedDescription)")
         }
       }

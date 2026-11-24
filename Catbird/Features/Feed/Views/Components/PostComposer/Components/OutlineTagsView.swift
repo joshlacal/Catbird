@@ -49,7 +49,7 @@ struct OutlineTagsView: View {
               .fontWeight(.semibold)
               .foregroundColor(.primary)
             if !tags.isEmpty {
-              Text("\(tags.count)/\(maxTags)")
+              Text(verbatim: "\(tags.count.formatted(.number))/\(maxTags.formatted(.number))")
                 .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
             }
@@ -62,6 +62,7 @@ struct OutlineTagsView: View {
               .appFont(size: 18)
               .foregroundColor(.accentColor)
           }
+          .accessibilityLabel(isAddingTag ? Text("Cancel Adding Hashtag") : Text("Add Hashtag"))
           .disabled(tags.count >= maxTags && !isAddingTag)
           .opacity(tags.count >= maxTags && !isAddingTag ? 0.5 : 1.0)
         }
@@ -75,7 +76,7 @@ struct OutlineTagsView: View {
               .foregroundColor(.secondary)
             
             if !tags.isEmpty {
-              Text("\(tags.count)/\(maxTags)")
+              Text(verbatim: "\(tags.count.formatted(.number))/\(maxTags.formatted(.number))")
                 .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             }
@@ -93,7 +94,7 @@ struct OutlineTagsView: View {
               .frame(minWidth: 44, minHeight: 44)
               .contentShape(Rectangle())
           }
-          .accessibilityLabel(isAddingTag ? "Cancel Adding Hashtag" : "Add Hashtag")
+          .accessibilityLabel(isAddingTag ? Text("Cancel Adding Hashtag") : Text("Add Hashtag"))
           .disabled(tags.count >= maxTags && !isAddingTag)
           .opacity(tags.count >= maxTags && !isAddingTag ? 0.5 : 1.0)
         }
@@ -164,9 +165,13 @@ struct OutlineTagsView: View {
                 .appFont(AppTextRole.caption)
                 .foregroundColor(.orange)
             } else if newTag.count > maxTagLength {
-              Label("Maximum \(maxTagLength) characters", systemImage: "exclamationmark.circle.fill")
-                .appFont(AppTextRole.caption)
-                .foregroundColor(.red)
+              Label {
+                Text("Maximum \(maxTagLength) characters", comment: "Validation message when hashtag exceeds character limit")
+              } icon: {
+                Image(systemName: "exclamationmark.circle.fill")
+              }
+              .appFont(AppTextRole.caption)
+              .foregroundColor(.red)
             } else if !compact {
               Text("Enter a hashtag without the # symbol")
                 .appFont(AppTextRole.caption)
@@ -174,9 +179,13 @@ struct OutlineTagsView: View {
             }
             
             if tags.count >= maxTags {
-              Label("Maximum \(maxTags) hashtags allowed", systemImage: "info.circle.fill")
-                .appFont(AppTextRole.caption)
-                .foregroundColor(.orange)
+              Label {
+                Text("Maximum \(maxTags) hashtags allowed", comment: "Validation message when maximum number of hashtags is reached")
+              } icon: {
+                Image(systemName: "info.circle.fill")
+              }
+              .appFont(AppTextRole.caption)
+              .foregroundColor(.orange)
             }
           }
         }
@@ -290,7 +299,7 @@ struct EnhancedTagChip: View {
   
   var body: some View {
     HStack(spacing: compact ? 6 : 8) {
-      Text("#\(tag)")
+      Text(verbatim: "#\(tag)")
         .appFont(compact ? AppTextRole.caption : AppTextRole.subheadline)
         .fontWeight(.medium)
         .foregroundColor(.accentColor)
@@ -302,6 +311,7 @@ struct EnhancedTagChip: View {
           .foregroundColor(.systemGray2)
       }
       .buttonStyle(PlainButtonStyle())
+      .accessibilityLabel(Text("Remove hashtag \(tag)", comment: "Accessibility label to remove a hashtag chip"))
     }
     .padding(.horizontal, compact ? 10 : 14)
     .padding(.vertical, compact ? 6 : 8)

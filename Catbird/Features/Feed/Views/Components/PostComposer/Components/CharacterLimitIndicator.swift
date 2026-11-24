@@ -66,19 +66,18 @@ struct CharacterLimitIndicator: View {
     }
   }
   
-  private var displayText: String {
+  private var accessibilityLabel: LocalizedStringResource {
     if isOverLimit {
-      return "+\(abs(remainingCount))"
+      let over = abs(remainingCount)
+      return LocalizedStringResource(
+        "Character limit exceeded by \(over)",
+        comment: "Accessibility label when post exceeds character limit; variable is number of extra characters"
+      )
     } else {
-      return "\(remainingCount)"
-    }
-  }
-  
-  private var accessibilityLabel: String {
-    if isOverLimit {
-      return "Character limit exceeded by \(abs(remainingCount))"
-    } else {
-      return "\(remainingCount) characters remaining"
+      return LocalizedStringResource(
+        "\(remainingCount) characters remaining",
+        comment: "Accessibility label for remaining characters in post composer"
+      )
     }
   }
   
@@ -98,7 +97,7 @@ struct CharacterLimitIndicator: View {
           .font(.system(size: 12, weight: .bold))
           .foregroundStyle(tintColor)
       } else if ComposerCounterDisplay.showsNumeral(currentCount: currentCount, maxCount: maxCount) {
-        Text(displayText)
+        Text(remainingCount, format: .number)
           .font(.system(size: 11, weight: .semibold, design: .rounded))
           .foregroundStyle(tintColor)
           .monospacedDigit()
@@ -154,11 +153,18 @@ struct CharacterLimitIndicatorLegacy: View {
     }
   }
   
-  private var displayText: String {
+  private var accessibilityLabel: LocalizedStringResource {
     if isOverLimit {
-      return "+\(abs(remainingCount))"
+      let over = abs(remainingCount)
+      return LocalizedStringResource(
+        "Character limit exceeded by \(over)",
+        comment: "Accessibility label when post exceeds character limit; variable is number of extra characters"
+      )
     } else {
-      return "\(remainingCount)"
+      return LocalizedStringResource(
+        "\(remainingCount) characters remaining",
+        comment: "Accessibility label for remaining characters in post composer"
+      )
     }
   }
   
@@ -178,7 +184,7 @@ struct CharacterLimitIndicatorLegacy: View {
           .font(.system(size: 12, weight: .bold))
           .foregroundStyle(tintColor)
       } else if ComposerCounterDisplay.showsNumeral(currentCount: currentCount, maxCount: maxCount) {
-        Text(displayText)
+        Text(remainingCount, format: .number)
           .font(.system(size: 11, weight: .semibold, design: .rounded))
           .foregroundStyle(tintColor)
           .monospacedDigit()
@@ -192,7 +198,7 @@ struct CharacterLimitIndicatorLegacy: View {
     )
     .opacity(currentCount <= 260 ? 0.9 : 1)
     .transition(.scale.combined(with: .opacity))
-    .accessibilityLabel(isOverLimit ? "Character limit exceeded by \(abs(remainingCount))" : "\(remainingCount) characters remaining")
+    .accessibilityLabel(accessibilityLabel)
   }
 }
 

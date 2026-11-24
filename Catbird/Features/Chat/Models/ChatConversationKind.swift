@@ -18,15 +18,25 @@ enum ChatConversationKind: String, Equatable, Hashable, Sendable, CaseIterable, 
   /// The name of the kind where the user picks one.
   var optionTitle: String {
     switch self {
-    case .encrypted: return "Encrypted chat"
-    case .bluesky: return "Bluesky DM"
+    case .encrypted:
+      return String(localized: "Encrypted chat", comment: "Option title for starting an end-to-end encrypted chat")
+    case .bluesky:
+      return String(localized: "Bluesky DM", comment: "Option title for starting a Bluesky direct message")
     }
   }
 
   var optionDetail: String {
     switch self {
-    case .encrypted: return "End-to-end encrypted. Only the people in the chat can read it."
-    case .bluesky: return "A direct message on Bluesky."
+    case .encrypted:
+      return String(
+        localized: "End-to-end encrypted. Only the people in the chat can read it.",
+        comment: "Description for the encrypted chat option when starting a conversation"
+      )
+    case .bluesky:
+      return String(
+        localized: "A direct message on Bluesky.",
+        comment: "Description for the Bluesky DM option when starting a conversation"
+      )
     }
   }
 
@@ -40,15 +50,25 @@ enum ChatConversationKind: String, Equatable, Hashable, Sendable, CaseIterable, 
   /// The conversation type as the thread info screen states it.
   var infoTitle: String {
     switch self {
-    case .encrypted: return "Encrypted chat"
-    case .bluesky: return "Bluesky DM"
+    case .encrypted:
+      return String(localized: "Encrypted chat", comment: "Conversation type label on the thread info screen")
+    case .bluesky:
+      return String(localized: "Bluesky DM", comment: "Conversation type label on the thread info screen")
     }
   }
 
   var infoDetail: String {
     switch self {
-    case .encrypted: return "Messages are end-to-end encrypted. Only the people in this chat can read them."
-    case .bluesky: return "A direct message conversation on Bluesky."
+    case .encrypted:
+      return String(
+        localized: "Messages are end-to-end encrypted. Only the people in this chat can read them.",
+        comment: "Conversation type explanation for encrypted chats on the thread info screen"
+      )
+    case .bluesky:
+      return String(
+        localized: "A direct message conversation on Bluesky.",
+        comment: "Conversation type explanation for Bluesky DMs on the thread info screen"
+      )
     }
   }
 }

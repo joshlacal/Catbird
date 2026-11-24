@@ -716,7 +716,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       )
       failPendingSend(
         id: pendingID,
-        reason: "Sending is paused while this conversation's secure session is restored."
+        reason: String(
+          localized: "Sending is paused while this conversation's secure session is restored.",
+          comment: "Error status when sending an encrypted message is paused during MLS session recovery"
+        )
       )
       return
     }
@@ -727,11 +730,15 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       clientMessageID: clientMessageID
     )
     guard let coordinator = activeCoordinator else {
-      failPendingSend(id: pendingID, reason: "MLS service not available")
+      let unavailableMessage = String(
+        localized: "MLS service not available",
+        comment: "Error message when the encrypted messaging service is unavailable"
+      )
+      failPendingSend(id: pendingID, reason: unavailableMessage)
       error = NSError(
         domain: "MLS",
         code: -1,
-        userInfo: [NSLocalizedDescriptionKey: "MLS service not available"]
+        userInfo: [NSLocalizedDescriptionKey: unavailableMessage]
       )
       return
     }
@@ -942,7 +949,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           throw NSError(
             domain: "MLS",
             code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "MLS service not available"]
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "MLS service not available")]
           )
         }
         let payload = try MLSMessagePayload.edit(targetMessageId: resolvedMessageID, newText: trimmedText).encodeToJSON()
@@ -999,7 +1006,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           throw NSError(
             domain: "MLS",
             code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "MLS service not available"]
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "MLS service not available")]
           )
         }
         _ = try await coordinator.unsendMessage(

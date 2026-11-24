@@ -146,7 +146,7 @@ final class PostContextMenuViewModel {
                         }
                         appState.toastManager.show(
                             ToastItem(
-                                message: "Post deleted",
+                                message: String(localized: "Post deleted", comment: "Toast shown when a post is deleted"),
                                 icon: "trash.fill",
                                 duration: 2.5
                             )
@@ -154,7 +154,7 @@ final class PostContextMenuViewModel {
                     }
                 } else {
                     logger.error("Deleting post returned status \(responseCode ?? -1)")
-                    await showFailureToast("Couldn’t delete this post. Try again.")
+                    await showFailureToast(String(localized: "Couldn’t delete this post. Try again.", comment: "Error toast when post deletion fails"))
                 }
             } catch {
                 logger.error("Error deleting post: \(error)")
@@ -177,7 +177,7 @@ final class PostContextMenuViewModel {
                     }
                     appState.toastManager.show(
                         ToastItem(
-                            message: "Post deleted",
+                            message: String(localized: "Post deleted", comment: "Toast shown when a post is deleted"),
                             icon: "trash.fill",
                             duration: 2.5
                         )
@@ -198,11 +198,17 @@ final class PostContextMenuViewModel {
                 try await coordinator.block(did: targetDid)
             } else {
                 guard try await appState.graphManager.block(did: targetDid) else {
-                    await showFailureToast("Couldn’t block this account. Try again.")
+                    await showFailureToast(String(localized: "Couldn’t block this account. Try again.", comment: "Error toast when blocking a user fails"))
                     return
                 }
             }
-            appState.toastManager.show(ToastItem(message: "User blocked", icon: "hand.raised.fill", duration: 2.5))
+            appState.toastManager.show(
+                ToastItem(
+                    message: String(localized: "User blocked", comment: "Toast shown after blocking an account"),
+                    icon: "hand.raised.fill",
+                    duration: 2.5
+                )
+            )
         } catch {
             logger.error("Error blocking user: \(error)")
             await showFailureToast(
@@ -214,10 +220,16 @@ final class PostContextMenuViewModel {
     func muteUser() async {
         do {
             guard try await appState.graphManager.mute(did: post.author.did.didString()) else {
-                await showFailureToast("Couldn’t mute this account. Try again.")
+                await showFailureToast(String(localized: "Couldn’t mute this account. Try again.", comment: "Error toast when muting a user fails"))
                 return
             }
-            appState.toastManager.show(ToastItem(message: "User muted", icon: "speaker.slash.fill", duration: 2.5))
+            appState.toastManager.show(
+                ToastItem(
+                    message: String(localized: "User muted", comment: "Toast shown after muting an account"),
+                    icon: "speaker.slash.fill",
+                    duration: 2.5
+                )
+            )
         } catch {
             logger.error("Error muting user: \(error)")
             await showFailureToast(
@@ -233,10 +245,16 @@ final class PostContextMenuViewModel {
         }
         do {
             guard try await appState.graphManager.muteThread(threadRootUri: resolvedRootPostURI ?? post.uri) else {
-                await showFailureToast("Couldn’t mute this thread. Try again.")
+                await showFailureToast(String(localized: "Couldn’t mute this thread. Try again.", comment: "Error toast when muting a thread fails"))
                 return
             }
-            appState.toastManager.show(ToastItem(message: "Thread muted", icon: "bell.slash.fill", duration: 2.5))
+            appState.toastManager.show(
+                ToastItem(
+                    message: String(localized: "Thread muted", comment: "Toast shown after muting a thread"),
+                    icon: "bell.slash.fill",
+                    duration: 2.5
+                )
+            )
         } catch {
             logger.error("Error muting thread: \(error)")
             await showFailureToast(
@@ -270,8 +288,8 @@ final class PostContextMenuViewModel {
                 NotificationCenter.default.post(name: .feedPostVisibilityChanged, object: nil)
             }
             appState.toastManager.show(saved
-                ? ToastItem(message: "Post hidden", icon: "checkmark.circle.fill")
-                : ToastItem(message: "Couldn’t hide post. Try again.", icon: "exclamationmark.triangle.fill"))
+                ? ToastItem(message: String(localized: "Post hidden", comment: "Toast shown after hiding a post"), icon: "checkmark.circle.fill")
+                : ToastItem(message: String(localized: "Couldn’t hide post. Try again.", comment: "Error toast when hiding a post fails"), icon: "exclamationmark.triangle.fill"))
         }
     }
     
@@ -286,8 +304,8 @@ final class PostContextMenuViewModel {
                 NotificationCenter.default.post(name: .feedPostVisibilityChanged, object: nil)
             }
             appState.toastManager.show(saved
-                ? ToastItem(message: "Post unhidden", icon: "checkmark.circle.fill")
-                : ToastItem(message: "Couldn’t unhide post. Try again.", icon: "exclamationmark.triangle.fill"))
+                ? ToastItem(message: String(localized: "Post unhidden", comment: "Toast shown after unhiding a post"), icon: "checkmark.circle.fill")
+                : ToastItem(message: String(localized: "Couldn’t unhide post. Try again.", comment: "Error toast when unhiding a post fails"), icon: "exclamationmark.triangle.fill"))
         }
     }
     
@@ -316,7 +334,7 @@ final class PostContextMenuViewModel {
                     appState.stateInvalidationBus.notify(.feedUpdated(.author(did)))
                     appState.toastManager.show(
                         ToastItem(
-                            message: "Post unpinned from profile",
+                            message: String(localized: "Post unpinned from profile", comment: "Toast shown after unpinning a post from the user's profile"),
                             icon: "pin.slash.fill",
                             duration: 2.5
                         )
@@ -356,7 +374,7 @@ final class PostContextMenuViewModel {
                     appState.stateInvalidationBus.notify(.feedUpdated(.author(did)))
                     appState.toastManager.show(
                         ToastItem(
-                            message: "Post pinned to profile",
+                            message: String(localized: "Post pinned to profile", comment: "Toast shown after pinning a post to the user's profile"),
                             icon: "pin.fill",
                             duration: 2.5
                         )
@@ -369,7 +387,7 @@ final class PostContextMenuViewModel {
                 appState.toastManager.show(
                     ToastItem(
                         message: UserFacingError.message(for: error, action: "update your pinned post")
-                            ?? "Couldn’t update your pinned post. Try again.",
+                            ?? String(localized: "Couldn’t update your pinned post. Try again.", comment: "Error toast when pinning or unpinning a post fails"),
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -471,7 +489,7 @@ final class PostContextMenuViewModel {
                 isQuoteDetachedOverride = true
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Quote detached",
+                        message: String(localized: "Quote detached", comment: "Toast shown after detaching a quote post"),
                         icon: "checkmark.circle.fill",
                         duration: 2.5
                     )
@@ -483,7 +501,7 @@ final class PostContextMenuViewModel {
             await MainActor.run {
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Couldn’t detach the quote. Try again.",
+                        message: String(localized: "Couldn’t detach the quote. Try again.", comment: "Error toast when detaching a quote post fails"),
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -508,7 +526,7 @@ final class PostContextMenuViewModel {
                 isQuoteDetachedOverride = false
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Quote re-attached",
+                        message: String(localized: "Quote re-attached", comment: "Toast shown after re-attaching a quote post"),
                         icon: "checkmark.circle.fill",
                         duration: 2.5
                     )
@@ -520,7 +538,7 @@ final class PostContextMenuViewModel {
             await MainActor.run {
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Couldn’t re-attach the quote. Try again.",
+                        message: String(localized: "Couldn’t re-attach the quote. Try again.", comment: "Error toast when re-attaching a quote post fails"),
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -543,7 +561,7 @@ final class PostContextMenuViewModel {
                 isReplyHiddenByThreadgate = true
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Reply hidden for everyone",
+                        message: String(localized: "Reply hidden for everyone", comment: "Toast shown after hiding a reply for all viewers"),
                         icon: "eye.slash",
                         duration: 2.5
                     )
@@ -556,7 +574,7 @@ final class PostContextMenuViewModel {
                 appState.toastManager.show(
                     ToastItem(
                         message: UserFacingError.message(for: error, action: "hide this reply")
-                            ?? "Couldn’t hide this reply. Try again.",
+                            ?? String(localized: "Couldn’t hide this reply. Try again.", comment: "Error toast when hiding a reply for everyone fails"),
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -577,7 +595,7 @@ final class PostContextMenuViewModel {
                 isReplyHiddenByThreadgate = false
                 appState.toastManager.show(
                     ToastItem(
-                        message: "Reply visible to everyone",
+                        message: String(localized: "Reply visible to everyone", comment: "Toast shown after making a reply visible to all viewers"),
                         icon: "eye",
                         duration: 2.5
                     )
@@ -590,7 +608,7 @@ final class PostContextMenuViewModel {
                 appState.toastManager.show(
                     ToastItem(
                         message: UserFacingError.message(for: error, action: "show this reply")
-                            ?? "Couldn’t show this reply. Try again.",
+                            ?? String(localized: "Couldn’t show this reply. Try again.", comment: "Error toast when unhiding a reply for everyone fails"),
                         icon: "exclamationmark.triangle.fill",
                         duration: 2.5
                     )
@@ -619,7 +637,7 @@ final class PostContextMenuViewModel {
         // Show confirmation toast
         appState.toastManager.show(
             ToastItem(
-                message: "Feedback sent",
+                message: String(localized: "Feedback sent", comment: "Toast shown after sending custom feed feedback"),
                 icon: "checkmark.circle.fill"
             )
         )
@@ -634,7 +652,7 @@ final class PostContextMenuViewModel {
         // Show confirmation toast
         appState.toastManager.show(
             ToastItem(
-                message: "Feedback sent",
+                message: String(localized: "Feedback sent", comment: "Toast shown after sending custom feed feedback"),
                 icon: "checkmark.circle.fill"
             )
         )
@@ -649,7 +667,10 @@ final class PostContextMenuViewModel {
     
     /// Returns a description of the post for reporting purposes
     func getReportDescription() -> String {
-        return "Post by @\(post.author.handle)"
+        return String(
+            localized: "Post by @\(post.author.handle)",
+            comment: "Description of a reported post — variable is the author's handle"
+        )
     }
 }
 

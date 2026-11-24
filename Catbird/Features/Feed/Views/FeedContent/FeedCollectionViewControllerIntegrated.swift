@@ -860,7 +860,7 @@ import os
             // Show confirmation toast
             self.stateManager.appState.toastManager.show(
               ToastItem(
-                message: "Feedback sent",
+                message: String(localized: "Feedback sent", comment: "Toast confirming feed Show More/Less preference feedback was sent"),
                 icon: "checkmark.circle.fill"
               )
             )
@@ -870,7 +870,7 @@ import os
         }
         showMoreAction.backgroundColor = .systemGreen
         showMoreAction.image = UIImage(systemName: "hand.thumbsup.fill")
-        showMoreAction.accessibilityLabel = "Show More Like This"
+        showMoreAction.accessibilityLabel = String(localized: "Show More Like This", comment: "Swipe action VoiceOver label to request more similar posts in a feed")
 
         // Create Show Less action
         let showLessAction = UIContextualAction(style: .normal, title: nil) {
@@ -889,7 +889,7 @@ import os
             // Show confirmation toast
             self.stateManager.appState.toastManager.show(
               ToastItem(
-                message: "Feedback sent",
+                message: String(localized: "Feedback sent", comment: "Toast confirming feed Show More/Less preference feedback was sent"),
                 icon: "checkmark.circle.fill"
               )
             )
@@ -899,7 +899,7 @@ import os
         }
         showLessAction.backgroundColor = .systemRed
         showLessAction.image = UIImage(systemName: "hand.thumbsdown.fill")
-        showLessAction.accessibilityLabel = "Show Less Like This"
+        showLessAction.accessibilityLabel = String(localized: "Show Less Like This", comment: "Swipe action VoiceOver label to request fewer similar posts in a feed")
 
         let configuration = UISwipeActionsConfiguration(actions: [showLessAction, showMoreAction])
         configuration.performsFirstActionWithFullSwipe = false
@@ -1185,7 +1185,7 @@ import os
         if case .error = manager.loadingState, !manager.posts.isEmpty {
           manager.appState.toastManager.show(
             ToastItem(
-              message: "Couldn’t refresh. Check your connection and try again.",
+              message: String(localized: "Couldn’t refresh. Check your connection and try again.", comment: "Error toast when pull-to-refresh fails in a feed"),
               icon: "wifi.exclamationmark"
             )
           )
@@ -1971,8 +1971,11 @@ import os
       switch stateManager.contentState {
       case .error:
         let message = stateManager.feedLoadError.flatMap {
-          UserFacingError.message(for: $0, action: "load this feed")
-        } ?? "Couldn’t load this feed. Try again."
+          UserFacingError.message(
+            for: $0,
+            action: String(localized: "load this feed", comment: "Action phrase for error message when loading a feed fails")
+          )
+        } ?? String(localized: "Couldn’t load this feed. Try again.", comment: "Fallback error message when loading a feed fails")
         return .error(message: message) { [weak self] in
           guard let self else { return }
           Task { @MainActor in
@@ -1980,7 +1983,7 @@ import os
           }
         }
       case .loading:
-        return .loading(message: "Loading feed…")
+        return .loading(message: String(localized: "Loading feed…", comment: "Status message shown while loading a feed"))
       case .empty:
         switch stateManager.currentFeedType {
         case .timeline:
@@ -2010,10 +2013,10 @@ import os
           .background(Color.clear)
       case .error(let message, let retry):
         ContentUnavailableStateView(
-          title: "Couldn’t Load Feed",
+          title: String(localized: "Couldn’t Load Feed", comment: "Empty state title when loading a feed fails"),
           description: message,
           systemImage: "wifi.exclamationmark",
-          actionTitle: "Try Again",
+          actionTitle: String(localized: "Try Again", comment: "Button to retry loading a failed feed"),
           action: retry
         )
         .background(Color.clear)
@@ -2022,10 +2025,10 @@ import os
           .background(Color.clear)
       case .emptyFeed(let action):
         ContentUnavailableStateView(
-          title: "No Posts Yet",
-          description: "There’s nothing in this feed right now. Pull down to refresh or try again later.",
+          title: String(localized: "No Posts Yet", comment: "Empty state title when a custom feed has no posts"),
+          description: String(localized: "There’s nothing in this feed right now. Pull down to refresh or try again later.", comment: "Empty state description when a custom feed has no posts"),
           systemImage: "tray",
-          actionTitle: "Refresh",
+          actionTitle: String(localized: "Refresh", comment: "Button to refresh an empty feed"),
           action: action
         )
         .background(Color.clear)

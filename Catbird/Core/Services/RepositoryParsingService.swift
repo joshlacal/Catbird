@@ -1207,15 +1207,26 @@ final class ParsingOperation {
   }
 
   var formattedDuration: String {
-    guard let duration = duration else { return "In progress..." }
-
-    if duration < 60 {
-      return String(format: "%.1fs", duration)
-    } else if duration < 3600 {
-      return String(format: "%.1fm", duration / 60)
-    } else {
-      return String(format: "%.1fh", duration / 3600)
+    guard let duration = duration else {
+      return String(localized: "In progress...", comment: "Duration placeholder while repository parsing is still running.")
     }
+
+    let allowedUnits: Set<Duration.UnitsFormatStyle.Unit>
+    if duration < 60 {
+      allowedUnits = [.seconds]
+    } else if duration < 3600 {
+      allowedUnits = [.minutes, .seconds]
+    } else {
+      allowedUnits = [.hours, .minutes]
+    }
+
+    return Duration.seconds(duration).formatted(
+      .units(
+        allowed: allowedUnits,
+        width: .narrow,
+        fractionalPart: duration < 60 ? .show(length: 1) : .hide
+      )
+    )
   }
 }
 
@@ -1232,19 +1243,19 @@ enum ParsingStatus: String, CaseIterable {
   var displayName: String {
     switch self {
     case .starting:
-      return "Starting..."
+      return String(localized: "Starting...", comment: "Repository parsing status display name.")
     case .readingCarFile:
-      return "Reading CAR file..."
+      return String(localized: "Reading CAR file...", comment: "Repository parsing status display name.")
     case .parsingStructure:
-      return "Parsing repository structure..."
+      return String(localized: "Parsing repository structure...", comment: "Repository parsing status display name.")
     case .savingToDatabase:
-      return "Saving to database..."
+      return String(localized: "Saving to database...", comment: "Repository parsing status display name.")
     case .completed:
-      return "Completed"
+      return String(localized: "Completed", comment: "Repository parsing status display name.")
     case .failed:
-      return "Failed"
+      return String(localized: "Failed", comment: "Repository parsing status display name.")
     case .cancelled:
-      return "Cancelled"
+      return String(localized: "Cancelled", comment: "Repository parsing status display name.")
     }
   }
 
@@ -1294,17 +1305,17 @@ public enum RepositoryParsingError: LocalizedError {
   public var errorDescription: String? {
     switch self {
     case .modelContextNotAvailable:
-      return "Database not available for parsing operations"
+      return String(localized: "Database not available for parsing operations", comment: "Repository parsing error description.")
     case .backupRecordNotFound:
-      return "Backup record not found"
+      return String(localized: "Backup record not found", comment: "Repository parsing error description.")
     case .parsingAlreadyInProgress:
-      return "Repository parsing is already in progress for this backup"
+      return String(localized: "Repository parsing is already in progress for this backup", comment: "Repository parsing error description.")
     case .backupFileNotFound:
-      return "Backup file not found on disk"
+      return String(localized: "Backup file not found on disk", comment: "Repository parsing error description.")
     case .invalidRecordData(let message):
-      return "Invalid record data: \(message)"
+      return String(localized: "Invalid record data: \(message)", comment: "Repository parsing error description.")
     case .memoryLimitExceeded(let message):
-      return "Memory limit exceeded: \(message)"
+      return String(localized: "Memory limit exceeded: \(message)", comment: "Repository parsing error description.")
     }
   }
 }

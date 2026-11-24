@@ -112,7 +112,7 @@ struct AskCatbirdContextPresentation {
     }()
     switch context {
     case .post(_, _, _, let text, let evidence):
-      title = "Selected post"
+      title = String(localized: "Selected post", comment: "Context card header for a selected Bluesky post in Ask Catbird.")
       symbol = "text.bubble"
       let authoredText = evidence?.selectedPost.text ?? text
       excerpt = String(CopilotReferencePresentation.render(authoredText, sources: []).characters)
@@ -121,18 +121,26 @@ struct AskCatbirdContextPresentation {
       let videoCount = media.filter { $0.kind == .video }.count
       let linkCount = media.filter { $0.kind == .externalLink }.count
       var descriptions: [String] = []
-      if imageCount > 0 { descriptions.append(imageCount == 1 ? "1 image" : "\(imageCount) images") }
-      if videoCount > 0 { descriptions.append(videoCount == 1 ? "1 video" : "\(videoCount) videos") }
-      if linkCount > 0 { descriptions.append(linkCount == 1 ? "1 link preview" : "\(linkCount) link previews") }
-      if let evidence, !evidence.quotedPosts.isEmpty { descriptions.append("quoted post") }
+      if imageCount > 0 {
+        descriptions.append(String(localized: "\(imageCount) images", comment: "Count of image attachments on a selected post in Ask Catbird."))
+      }
+      if videoCount > 0 {
+        descriptions.append(String(localized: "\(videoCount) videos", comment: "Count of video attachments on a selected post in Ask Catbird."))
+      }
+      if linkCount > 0 {
+        descriptions.append(String(localized: "\(linkCount) link previews", comment: "Count of external link previews on a selected post in Ask Catbird."))
+      }
+      if let evidence, !evidence.quotedPosts.isEmpty {
+        descriptions.append(String(localized: "quoted post", comment: "Attachment indicator when a selected post quotes another post."))
+      }
       attachmentSummary = descriptions.isEmpty ? nil : descriptions.joined(separator: " · ")
     case .topic(let name, let description, _):
-      title = "Selected topic"
+      title = String(localized: "Selected topic", comment: "Context card header for a selected trending topic in Ask Catbird.")
       symbol = "number"
       excerpt = [name, description].compactMap { $0 }.joined(separator: "\n")
       attachmentSummary = nil
     default:
-      title = "Selected context"
+      title = String(localized: "Selected context", comment: "Fallback context card header in Ask Catbird.")
       symbol = "scope"
       excerpt = CopilotReferencePresentation.contextLabel(context)
       attachmentSummary = nil
@@ -191,10 +199,27 @@ struct AskCatbirdEmptyState: View {
 
   private var suggestions: [String] {
     switch context {
-    case .post, .thread: ["Summarize this conversation", "What context am I missing?", "Help me draft a reply"]
-    case .profile: ["Tell me about this profile", "What do they post about?"]
-    case .feed, .topic, .search: ["Give me an overview", "What are people discussing?"]
-    case .smartFilter: ["Explain this filter", "Help me refine this filter"]
+    case .post, .thread:
+      [
+        String(localized: "Summarize this conversation", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "What context am I missing?", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "Help me draft a reply", comment: "Suggested Ask Catbird prompt.")
+      ]
+    case .profile:
+      [
+        String(localized: "Tell me about this profile", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "What do they post about?", comment: "Suggested Ask Catbird prompt.")
+      ]
+    case .feed, .topic, .search:
+      [
+        String(localized: "Give me an overview", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "What are people discussing?", comment: "Suggested Ask Catbird prompt.")
+      ]
+    case .smartFilter:
+      [
+        String(localized: "Explain this filter", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "Help me refine this filter", comment: "Suggested Ask Catbird prompt.")
+      ]
     }
   }
 }

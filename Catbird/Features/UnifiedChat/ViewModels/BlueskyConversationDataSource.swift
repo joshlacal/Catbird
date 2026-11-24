@@ -272,7 +272,10 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     pendingSends.removeAll { $0.id == pendingID }
   }
 
-  func failPendingSend(id pendingID: String, reason: String = "Failed to send") {
+  func failPendingSend(
+    id pendingID: String,
+    reason: String = String(localized: "Failed to send", comment: "Short error status on a chat message that failed to send")
+  ) {
     guard let index = pendingSends.firstIndex(where: { $0.id == pendingID }) else { return }
     pendingSends[index].sendState = .failed(reason)
     updateMessagesFromManager()
@@ -295,8 +298,17 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       pendingSends.removeAll { $0.id == pendingID }
       updateMessagesFromManager()
     } else if !Task.isCancelled, pendingSends.contains(where: { $0.id == pendingID }) {
-      failPendingSend(id: pendingID, reason: "Failed to send")
-      self.error = NSError(domain: "ChatError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to send message"])
+      failPendingSend(id: pendingID)
+      self.error = NSError(
+        domain: "ChatError",
+        code: -1,
+        userInfo: [
+          NSLocalizedDescriptionKey: String(
+            localized: "Failed to send message",
+            comment: "Error message when sending a chat message fails"
+          )
+        ]
+      )
     }
     return success
   }
@@ -367,7 +379,16 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     if success {
       updateMessagesFromManager()
     } else {
-      self.error = NSError(domain: "ChatError", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to delete message"])
+      self.error = NSError(
+        domain: "ChatError",
+        code: -2,
+        userInfo: [
+          NSLocalizedDescriptionKey: String(
+            localized: "Failed to delete message",
+            comment: "Error message when deleting a chat message fails"
+          )
+        ]
+      )
     }
   }
 

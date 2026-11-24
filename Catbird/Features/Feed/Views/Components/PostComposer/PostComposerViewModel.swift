@@ -296,7 +296,9 @@ final class PostComposerViewModel {
   /// Replaces the encrypted blob upload in tests.
   var encryptedBlobUploadForTesting: ((Data, String) async throws -> Blob)?
 
-  static let droppedLinkCardMessage = "Link cards aren’t included in encrypted Circle posts"
+  static var droppedLinkCardMessage: String {
+    String(localized: "Link cards aren’t included in encrypted Circle posts", comment: "Notice shown when a link preview card is omitted from an encrypted Circle post")
+  }
 
   /// Public and plaintext Circles always; an encrypted Circle only once it
   /// has been evaluated ready (spec §9: no key, no encrypted posting).
@@ -722,7 +724,7 @@ final class PostComposerViewModel {
 
   func editingOwnershipError() -> NSError {
     NSError(domain: "ComposerEditingSession", code: 1, userInfo: [
-      NSLocalizedDescriptionKey: "This draft is no longer open in this window."
+      NSLocalizedDescriptionKey: String(localized: "This draft is no longer open in this window.", comment: "Error when attempting to publish a draft whose editing ownership moved to another window")
     ])
   }
 
@@ -797,7 +799,8 @@ final class PostComposerViewModel {
       self.videoUploadBlockedCode = nil
     } else {
       logger.warning("PostComposerViewModel: Video upload blocked - code: \(result.code ?? "none"), message: \(result.message ?? "none")")
-      self.videoUploadBlockedReason = result.message ?? "Video uploads are currently unavailable"
+      self.videoUploadBlockedReason = result.message
+        ?? String(localized: "Video uploads are currently unavailable", comment: "Fallback message when video upload eligibility check blocks uploads")
       self.videoUploadBlockedCode = result.code
     }
   }
@@ -813,7 +816,7 @@ final class PostComposerViewModel {
       try await manager.requestEmailConfirmation()
       logger.info("PostComposerViewModel: Email verification request successful")
       await MainActor.run {
-        self.videoUploadBlockedReason = "Verification email sent. Check your inbox."
+        self.videoUploadBlockedReason = String(localized: "Verification email sent. Check your inbox.", comment: "Confirmation message after resending account verification email")
         self.videoUploadBlockedCode = nil
       }
       // Optionally trigger a forced re-check after a short delay (user may confirm quickly)
@@ -823,7 +826,7 @@ final class PostComposerViewModel {
     } catch {
       logger.error("PostComposerViewModel: Failed to send verification email - error: \(error.localizedDescription)")
       await MainActor.run {
-        self.videoUploadBlockedReason = "Failed to send verification email. Please try again."
+        self.videoUploadBlockedReason = String(localized: "Failed to send verification email. Please try again.", comment: "Error message when resending account verification email fails")
       }
     }
   }
@@ -1257,7 +1260,10 @@ final class PostComposerViewModel {
   func ensureDraftReferencesReadyForPosting() throws {
     guard let reason = draftReferenceLoadingReason else { return }
     let validation = PostComposerSubmitValidationState(canSubmit: false, reason: reason)
-    throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: validation.message ?? "The saved post must load before posting."])
+    throw NSError(domain: "PostError", code: 0, userInfo: [
+      NSLocalizedDescriptionKey: validation.message
+        ?? String(localized: "The saved post must load before posting.", comment: "Error when parent or quoted post referenced by a draft has not loaded yet")
+    ])
   }
 
   private func effectiveDraftInteractionRules() -> (

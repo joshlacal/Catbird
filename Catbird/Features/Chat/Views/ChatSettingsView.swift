@@ -13,11 +13,11 @@ enum ChatPrivacyOption: String, CaseIterable, Identifiable, Sendable {
   var title: String {
     switch self {
     case .all:
-      return "Everyone"
+      return String(localized: "Everyone", comment: "Chat privacy option allowing messages from anyone")
     case .following:
-      return "People I Follow"
+      return String(localized: "People I Follow", comment: "Chat privacy option allowing messages only from followed accounts")
     case .none:
-      return "No One"
+      return String(localized: "No One", comment: "Chat privacy option blocking incoming messages from everyone")
     }
   }
 }
@@ -274,7 +274,15 @@ struct ChatSettingsView: View {
           ProgressView("Loading chat privacy settings…")
         case .loadFailed:
           Text("Chat privacy settings couldn’t be loaded.")
-          Text(editor.errorMessage ?? "Try again.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
+          Group {
+            if let message = editor.errorMessage {
+              Text(message)
+            } else {
+              Text("Try again.")
+            }
+          }
+          .appFont(AppTextRole.footnote)
+          .foregroundStyle(.secondary)
           Button("Try Again") { Task { await editor.load() } }
               .settingsControl(.init(rawValue: "privacy.chatRetryLoad"))
         case .ready, .saving, .saveFailed:
@@ -290,7 +298,15 @@ struct ChatSettingsView: View {
             ProgressView("Saving chat privacy settings…")
           } else if editor.state == .saveFailed {
             Text("This change couldn’t be confirmed. The last loaded rules are shown.")
-            Text(editor.errorMessage ?? "Try the change again or reload the saved rules.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
+            Group {
+              if let message = editor.errorMessage {
+                Text(message)
+              } else {
+                Text("Try the change again or reload the saved rules.")
+              }
+            }
+            .appFont(AppTextRole.footnote)
+            .foregroundStyle(.secondary)
             Button("Try This Change Again") { editor.retrySave() }
                 .settingsControl(.init(rawValue: "privacy.chatRetrySave"))
             Button("Reload Saved Rules") { Task { await editor.load() } }
@@ -308,7 +324,7 @@ struct ChatSettingsView: View {
   }
 
   private func privacyPicker(
-    _ title: String, groupInvites: Bool,
+    _ title: LocalizedStringKey, groupInvites: Bool,
     editor: AccountSettingsEditSession<ChatPrivacySettingsRecord>
   ) -> some View {
     let raw = groupInvites
@@ -432,7 +448,10 @@ struct ChatSettingsView: View {
         logger.error("Failed to toggle opt-in status: \(error.localizedDescription)")
         await MainActor.run {
           isTogglingOptIn = false
-          errorMessage = "Failed to update MLS chat settings: \(error.localizedDescription)"
+          errorMessage = String(
+            localized: "Failed to update MLS chat settings: \(error.localizedDescription)",
+            comment: "Error alert when toggling encrypted chat settings fails (%@ = error details)"
+          )
         }
       }
     }
@@ -446,10 +465,20 @@ struct ChatSettingsView: View {
       let success = bskySuccess && mlsSuccess
       isMarkingAllRead = false
       if success {
-        appState.toastManager.show(ToastItem(message: "All conversations marked as read"))
+        appState.toastManager.show(
+          ToastItem(
+            message: String(
+              localized: "All conversations marked as read",
+              comment: "Toast confirmation after marking all chat conversations as read"
+            )
+          )
+        )
       } else {
         appState.chatManager.errorState = nil
-        errorMessage = "Couldn’t mark your conversations as read. Try again."
+        errorMessage = String(
+          localized: "Couldn’t mark your conversations as read. Try again.",
+          comment: "Error message when marking all conversations as read fails"
+        )
       }
     }
   }
@@ -461,7 +490,10 @@ struct ChatSettingsView: View {
       isExporting = false
       guard let data else {
         appState.chatManager.errorState = nil
-        errorMessage = "Couldn’t export your chat data. Try again."
+        errorMessage = String(
+          localized: "Couldn’t export your chat data. Try again.",
+          comment: "Error message when exporting Bluesky chat data fails"
+        )
         return
       }
       let stamp = Date().formatted(.iso8601.year().month().day())
@@ -473,7 +505,10 @@ struct ChatSettingsView: View {
         showingExportData = true
       } catch {
         logger.error("Failed to write chat export: \(error.localizedDescription)")
-        errorMessage = "Couldn’t save your chat data. Try again."
+        errorMessage = String(
+          localized: "Couldn’t save your chat data. Try again.",
+          comment: "Error message when writing exported chat data file fails"
+        )
       }
     }
   }
@@ -487,7 +522,10 @@ struct ChatSettingsView: View {
         showingDeletedConfirmation = true
       } else {
         appState.chatManager.errorState = nil
-        errorMessage = "Couldn’t delete your chat account. Try again."
+        errorMessage = String(
+          localized: "Couldn’t delete your chat account. Try again.",
+          comment: "Error message when deleting Bluesky chat account fails"
+        )
       }
     }
   }
@@ -497,9 +535,12 @@ private enum ChatPrivacySettingsError: LocalizedError {
   case notAuthenticated, accountChanged, response(Int)
   var errorDescription: String? {
     switch self {
-    case .notAuthenticated: "Sign in to load chat privacy settings."
-    case .accountChanged: "The account changed. Open these settings again."
-    case .response: "Chat privacy settings couldn’t be confirmed. Try again."
+    case .notAuthenticated:
+      String(localized: "Sign in to load chat privacy settings.", comment: "Error when loading chat privacy settings while signed out")
+    case .accountChanged:
+      String(localized: "The account changed. Open these settings again.", comment: "Error when active account switches while editing chat privacy settings")
+    case .response:
+      String(localized: "Chat privacy settings couldn’t be confirmed. Try again.", comment: "Error when chat privacy settings request fails")
     }
   }
 }
@@ -541,7 +582,7 @@ struct ChatDataExportView: View {
 
         VStack(spacing: 12) {
           if let fileSize {
-            Text("File size: \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))")
+            Text("File size: \(fileSize.formatted(.byteCount(style: .file)))", comment: "Exported chat data file size label (%@ = formatted byte count)")
               .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
           }

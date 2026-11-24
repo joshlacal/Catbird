@@ -74,7 +74,10 @@ struct FeedDiscoveryHeaderView: View {
         ReportFormView(
           reportingService: reportingService,
           subject: subject,
-          contentDescription: "Feed: \(feed.displayName)"
+          contentDescription: String(
+            localized: "Feed: \(feed.displayName)",
+            comment: "Report sheet target description for a custom feed — variable is the feed display name"
+          )
         )
       }
     }
@@ -183,8 +186,27 @@ struct FeedDiscoveryHeaderView: View {
   }
 
   private var subtitleLine: some View {
-    let handle = "by @\(feed.creator.handle.description)"
-    let text = displayedLikeCount.map { "\(handle) · \(formatCount($0)) likes" } ?? handle
+    let creatorHandle = feed.creator.handle.description
+    let text: String
+    if let likes = displayedLikeCount {
+      if likes < 1_000 {
+        text = String(
+          localized: "by @\(creatorHandle) · \(likes) likes",
+          comment: "Feed creator handle and like count — first variable is handle, second is number of likes"
+        )
+      } else {
+        let formattedLikes = FeedCountFormatter.compact(likes)
+        text = String(
+          localized: "by @\(creatorHandle) · \(formattedLikes) likes",
+          comment: "Feed creator handle and abbreviated like count — first variable is handle, second is compact count like 1.2K"
+        )
+      }
+    } else {
+      text = String(
+        localized: "by @\(creatorHandle)",
+        comment: "Feed creator attribution — variable is the creator's handle"
+      )
+    }
     return Text(text)
       .appFont(AppTextRole.subheadline)
       .foregroundStyle(.secondary)
@@ -284,7 +306,7 @@ struct FeedDiscoveryHeaderView: View {
             }
           }
         } else {
-          showFailureToast("Couldn’t like this feed. Try again.")
+          showFailureToast(String(localized: "Couldn’t like this feed. Try again.", comment: "Error toast when liking a feed fails"))
         }
       } catch {
         logger.error("Like feed failed: \(error.localizedDescription)")
@@ -323,7 +345,7 @@ struct FeedDiscoveryHeaderView: View {
           }
         } else {
           logger.error("Unlike feed returned status \(responseCode)")
-          showFailureToast("Couldn’t remove your like. Try again.")
+          showFailureToast(String(localized: "Couldn’t remove your like. Try again.", comment: "Error toast when unliking a feed fails"))
         }
       } catch {
         logger.error("Unlike feed failed: \(error.localizedDescription)")
@@ -377,13 +399,7 @@ struct FeedDiscoveryHeaderView: View {
     }
   }
   private func formatCount(_ count: Int) -> String {
-    if count >= 1000000 {
-      return String(format: "%.1fM", Double(count) / 1000000)
-    } else if count >= 1000 {
-      return String(format: "%.1fK", Double(count) / 1000)
-    } else {
-      return "\(count)"
-    }
+    FeedCountFormatter.compact(count)
   }
 }
 

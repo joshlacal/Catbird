@@ -254,9 +254,9 @@ enum DraftError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .draftNotFound:
-      return "Draft not found"
+      return String(localized: "Draft not found", comment: "Error when a saved post draft cannot be found")
     case .noModelContext:
-      return "Model context not available"
+      return String(localized: "Model context not available", comment: "Error when local database storage is unavailable for drafts")
     }
   }
 }

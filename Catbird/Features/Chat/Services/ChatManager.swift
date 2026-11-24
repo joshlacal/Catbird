@@ -3261,59 +3261,140 @@ final class ChatManager: StateInvalidationSubscriber {
     var errorDescription: String? {
       switch self {
       case .noClient:
-        return NSLocalizedString("Sign in to use Messages.", comment: "Chat error")
+        return String(localized: "Sign in to use Messages.", comment: "Chat error when not signed in")
       case .networkError(let code):
         switch code {
         case 401:
-          return NSLocalizedString("Your session expired. Sign in again.", comment: "Chat error")
+          return String(localized: "Your session expired. Sign in again.", comment: "Chat error on HTTP 401")
         case 403:
-          return NSLocalizedString("You don’t have permission to do that.", comment: "Chat error")
+          return String(localized: "You don’t have permission to do that.", comment: "Chat error on HTTP 403")
         case 400:
-          return NSLocalizedString("This action isn’t allowed right now.", comment: "Chat error")
+          return String(localized: "This action isn’t allowed right now.", comment: "Chat error on HTTP 400")
         case 429:
-          return NSLocalizedString("Too many requests. Wait a moment and try again.", comment: "Chat error")
+          return String(localized: "Too many requests. Wait a moment and try again.", comment: "Chat error on HTTP 429")
         default:
-          return NSLocalizedString(
-            "Couldn’t reach Bluesky chat. Check your connection and try again.", comment: "Chat error")
+          return String(
+            localized: "Couldn’t reach Bluesky chat. Check your connection and try again.",
+            comment: "Chat network error"
+          )
         }
       case .emptyResponse:
-        return NSLocalizedString(
-          "Bluesky chat didn’t respond. Try again.", comment: "Chat error")
+        return String(
+          localized: "Bluesky chat didn’t respond. Try again.",
+          comment: "Chat error when server returns empty response"
+        )
       case .generalError(let error):
-        return UserFacingError.message(for: error, action: "reach Bluesky chat")
-          ?? NSLocalizedString("Something went wrong. Try again.", comment: "Chat error")
+        return UserFacingError.message(
+          for: error,
+          action: String(localized: "reach Bluesky chat", comment: "Action phrase when connecting to Bluesky chat fails")
+        ) ?? String(localized: "Something went wrong. Try again.", comment: "Generic chat error")
       case .ownerCannotLeave:
-        return NSLocalizedString(
-          "You own this group, so you need to lock it before you can leave.",
-          comment: "Chat error")
+        return String(
+          localized: "You own this group, so you need to lock it before you can leave.",
+          comment: "Chat error when group owner attempts to leave unlocked group"
+        )
       case .conversationLocked:
-        return NSLocalizedString(
-          "This conversation is locked. New messages and reactions are disabled.",
-          comment: "Chat error")
+        return String(
+          localized: "This conversation is locked. New messages and reactions are disabled.",
+          comment: "Chat error when sending into a locked conversation"
+        )
       case .messageDeleteNotAllowed:
-        return NSLocalizedString("This message can’t be deleted.", comment: "Chat error")
+        return String(localized: "This message can’t be deleted.", comment: "Chat error when message deletion is disallowed")
       case .reactionNotAllowed:
-        return NSLocalizedString(
-          "Reactions aren’t allowed on this message.", comment: "Chat error")
+        return String(
+          localized: "Reactions aren’t allowed on this message.",
+          comment: "Chat error when adding a reaction is disallowed"
+        )
       case .reactionLimitReached:
-        return NSLocalizedString(
-          "You’ve reached the maximum number of reactions for this message.",
-          comment: "Chat error")
+        return String(
+          localized: "You’ve reached the maximum number of reactions for this message.",
+          comment: "Chat error when per-message reaction limit is reached"
+        )
       case .messageTooLong:
-        return NSLocalizedString(
-          "Messages can be up to 1,000 characters.", comment: "Chat error")
+        return String(
+          localized: "Messages can be up to 1,000 characters.",
+          comment: "Chat error when message exceeds maximum character limit"
+        )
       case .recipientNotAccepting:
-        return NSLocalizedString(
-          "This person isn’t accepting messages from you.", comment: "Chat error")
+        return String(
+          localized: "This person isn’t accepting messages from you.",
+          comment: "Chat error when recipient's chat privacy settings block messages"
+        )
       case .groupMembersUnavailable:
-        return NSLocalizedString(
-          "Some of these people can’t be added to a group.", comment: "Chat error")
+        return String(
+          localized: "Some of these people can’t be added to a group.",
+          comment: "Chat error when selected group members cannot receive group invites"
+        )
       case .invalidInput(let message):
         return message
       case .operationFailed(let operation):
-        return String(
-          format: NSLocalizedString("Couldn’t %@. Please try again.", comment: "Chat error"),
-          operation)
+        switch operation {
+        case "start this conversation":
+          return String(
+            localized: "Couldn’t start this conversation. Please try again.",
+            comment: "Chat error when starting a conversation fails"
+          )
+        case "create this group":
+          return String(
+            localized: "Couldn’t create this group. Please try again.",
+            comment: "Chat error when creating a group conversation fails"
+          )
+        case "leave this conversation":
+          return String(
+            localized: "Couldn’t leave this conversation. Please try again.",
+            comment: "Chat error when leaving a conversation fails"
+          )
+        case "lock this group":
+          return String(
+            localized: "Couldn’t lock this group. Please try again.",
+            comment: "Chat error when locking a group conversation fails"
+          )
+        case "mute this conversation":
+          return String(
+            localized: "Couldn’t mute this conversation. Please try again.",
+            comment: "Chat error when muting a conversation fails"
+          )
+        case "unmute this conversation":
+          return String(
+            localized: "Couldn’t unmute this conversation. Please try again.",
+            comment: "Chat error when unmuting a conversation fails"
+          )
+        case "check messaging availability":
+          return String(
+            localized: "Couldn’t check messaging availability. Please try again.",
+            comment: "Chat error when checking whether a user can receive messages fails"
+          )
+        case "open this conversation":
+          return String(
+            localized: "Couldn’t open this conversation. Please try again.",
+            comment: "Chat error when opening a conversation fails"
+          )
+        case "send this message":
+          return String(
+            localized: "Couldn’t send this message. Please try again.",
+            comment: "Chat error when sending a message fails"
+          )
+        case "delete this message":
+          return String(
+            localized: "Couldn’t delete this message. Please try again.",
+            comment: "Chat error when deleting a message fails"
+          )
+        case "add this reaction":
+          return String(
+            localized: "Couldn’t add this reaction. Please try again.",
+            comment: "Chat error when adding an emoji reaction fails"
+          )
+        case "remove this reaction":
+          return String(
+            localized: "Couldn’t remove this reaction. Please try again.",
+            comment: "Chat error when removing an emoji reaction fails"
+          )
+        default:
+          return String(
+            localized: "Couldn’t \(operation). Please try again.",
+            comment: "Fallback chat operation failure message (%@ = operation description)"
+          )
+        }
       }
     }
 

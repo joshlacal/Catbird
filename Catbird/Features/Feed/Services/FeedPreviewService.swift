@@ -90,11 +90,11 @@ enum FeedPreviewError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .clientNotAvailable:
-      return "Sign in to preview this feed."
+      return String(localized: "Sign in to preview this feed.", comment: "Error when previewing a feed while signed out")
     case .fetchFailed:
-      return "This feed’s recent posts couldn’t be loaded. Try again."
+      return String(localized: "This feed’s recent posts couldn’t be loaded. Try again.", comment: "Error when fetching preview posts for a feed fails")
     case .invalidFeedURI:
-      return "This feed couldn’t be opened."
+      return String(localized: "This feed couldn’t be opened.", comment: "Error when a feed URI is invalid")
     }
   }
 }

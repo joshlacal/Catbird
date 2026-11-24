@@ -92,7 +92,7 @@ struct CommunityCardTileView: View {
           Image(systemName: isBoosted ? "heart.fill" : "heart")
             .font(.caption.weight(.semibold))
           if isBoosted {
-            Text("2×")
+            Text(verbatim: "2×")
               .font(.caption2.weight(.bold))
           }
         }
@@ -106,7 +106,11 @@ struct CommunityCardTileView: View {
       }
       .buttonStyle(.plain)
       .accessibilityIdentifier("intel.card.boost.\(community.communityId)")
-      .accessibilityLabel(isBoosted ? "Remove 2x boost for \(community.title)" : "Boost \(community.title) 2x")
+      .accessibilityLabel(
+        isBoosted
+          ? Text("Remove 2× boost for \(community.title)", comment: "Accessibility action to remove 2x weight from a community scene — variable is scene title.")
+          : Text("Boost \(community.title) 2×", comment: "Accessibility action to double-weight a community scene — variable is scene title.")
+      )
     }
   }
 
@@ -130,7 +134,7 @@ struct CommunityCardTileView: View {
         if !community.curatedListTags.isEmpty {
           HStack(spacing: 6) {
             ForEach(Array(community.curatedListTags.prefix(3)), id: \.self) { tag in
-              Text("#\(tag.replacingOccurrences(of: "\\'", with: "'"))")
+              Text(verbatim: "#\(tag.replacingOccurrences(of: "\\'", with: "'"))")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 7)
@@ -158,23 +162,41 @@ struct CommunityCardTileView: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel(pickAccessibilityLabel)
-    .accessibilityValue(isBoosted ? "Boosted 2×" : (isPicked ? "Picked" : "Not picked"))
+    .accessibilityValue(
+      isBoosted
+        ? Text("Boosted 2×", comment: "Accessibility value when scene is heart-boosted 2x.")
+        : (isPicked
+          ? Text("Picked", comment: "Accessibility value when scene is selected.")
+          : Text("Not picked", comment: "Accessibility value when scene is not selected."))
+    )
     .accessibilityIdentifier("intel.card.\(community.communityId)")
   }
 
   private var footer: some View {
     HStack {
-      Label("\(community.eligibleCount) voices", systemImage: "person.2.fill")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
+      Label {
+        Text("\(community.eligibleCount) voices", comment: "Count of vetted accounts in a community scene.")
+      } icon: {
+        Image(systemName: "person.2.fill")
+      }
+      .font(.caption2)
+      .foregroundStyle(.secondary)
 
       Spacer()
 
       HStack(spacing: 4) {
         Image(systemName: isPicked ? "checkmark.circle.fill" : "plus.circle")
           .font(.caption.weight(.semibold))
-        Text(isBoosted ? "Boosted 2×" : (isPicked ? "Picked" : "Pick"))
-          .font(.caption.weight(.semibold))
+        if isBoosted {
+          Text("Boosted 2×", comment: "Badge label when scene is double-weighted.")
+            .font(.caption.weight(.semibold))
+        } else if isPicked {
+          Text("Picked", comment: "Badge label when scene is selected.")
+            .font(.caption.weight(.semibold))
+        } else {
+          Text("Pick", comment: "Button label on scene card to select the scene.")
+            .font(.caption.weight(.semibold))
+        }
       }
       .foregroundStyle(isBoosted ? .pink : (isPicked ? Color.accentColor : .secondary))
     }
@@ -191,7 +213,7 @@ struct CommunityCardTileView: View {
     if let alreadyFollowingLine {
       parts.append(alreadyFollowingLine)
     }
-    parts.append("\(community.eligibleCount) voices")
+    parts.append(String(localized: "\(community.eligibleCount) voices", comment: "Count of vetted accounts in a community scene."))
     return parts.joined(separator: ". ")
   }
 }
@@ -245,7 +267,12 @@ struct SceneCardFacesRow: View {
 
   private func leadNames(startingWith lead: HydratedRecommendedProfile) -> String {
     let others = faces.profiles.count - 1
-    return others > 0 ? "\(lead.displayName) and \(others) more" : lead.displayName
+    return others > 0
+      ? String(
+        localized: "\(lead.displayName) and \(others) more",
+        comment: "Summary of sample voices on a scene card — %1$@ is lead creator name, %2$lld is additional creator count."
+      )
+      : lead.displayName
   }
 
   /// "You'll follow A, B and C" for VoiceOver, naming every face that has loaded; nil when none
@@ -253,7 +280,16 @@ struct SceneCardFacesRow: View {
   nonisolated static func accessibilitySummary(for faces: SceneOnboardingViewModel.SceneCardFaces) -> String? {
     let names = faces.profiles.map(\.displayName)
     guard let last = names.last else { return nil }
-    guard names.count > 1 else { return "You'll follow \(last)" }
-    return "You'll follow \(names.dropLast().joined(separator: ", ")) and \(last)"
+    guard names.count > 1 else {
+      return String(
+        localized: "You'll follow \(last)",
+        comment: "Accessibility summary naming 1 creator picking this scene will follow — variable is creator display name."
+      )
+    }
+    let leadingNames = names.dropLast().joined(separator: ", ")
+    return String(
+      localized: "You'll follow \(leadingNames) and \(last)",
+      comment: "Accessibility summary naming creators picking this scene will follow — %1$@ is comma-separated leading names, %2$@ is final name."
+    )
   }
 }

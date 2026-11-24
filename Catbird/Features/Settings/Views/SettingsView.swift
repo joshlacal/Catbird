@@ -151,13 +151,13 @@ struct SettingsView: View {
         let handle = profile?.handle.description ?? cached?.handle
         let displayName = (profile?.displayName ?? cached?.displayName).flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         // Without a display name the handle becomes the title, so it isn't repeated underneath.
-        let name = displayName ?? handle.map { "@" + $0 } ?? "Current Account"
+        let name = displayName ?? handle.map { "@\($0)" } ?? String(localized: "Current Account", comment: "Fallback header name when account display name and handle are unavailable.")
         return Button { requestDeparture(.accounts) } label: {
             HStack(spacing: DesignTokens.Spacing.base) {
                 ProfileAvatarView(url: profile?.finalAvatarURL() ?? cached?.avatarURL, fallbackText: String((handle ?? "?").prefix(1)).uppercased(), size: 44)
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     Text(name).appFont(AppTextRole.headline).foregroundStyle(Color.primary)
-                    if let handle, displayName != nil { Text("@" + handle).appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary) }
+                    if let handle, displayName != nil { Text(verbatim: "@\(handle)").appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary) }
                     Text("Switch or add an account").appFont(AppTextRole.caption).foregroundStyle(Color.secondary)
                     if isLoadingProfile && handle == nil { Text("Loading account…").appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
                     if let profileError { Text(profileError).appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
@@ -191,7 +191,7 @@ struct SettingsView: View {
         } catch is CancellationError { }
         catch {
             guard appState.userDID == did, SettingsAccountBoundary.isCurrent(did, revision: revision) else { return }
-            profileError = "Couldn’t refresh account details."
+            profileError = String(localized: "Couldn’t refresh account details.", comment: "Error caption when loading account profile in Settings fails.")
         }
     }
 
@@ -216,13 +216,13 @@ struct SettingsView: View {
             if draftGuard.hasChanges {
                 guard draftGuard.accountDID == did, let resolve = draftGuard.resolve, await resolve(save) else {
                     resolvingDeparture = false
-                    departureError = "The staged changes could not be saved. Stay in Settings and review them."
+                    departureError = String(localized: "The staged changes could not be saved. Stay in Settings and review them.", comment: "Error alert message when staged settings changes fail to save before leaving.")
                     return
                 }
             }
             guard appState.userDID == did, SettingsAccountBoundary.isCurrent(did, revision: revision) else {
                 resolvingDeparture = false
-                departureError = "The originating account has changed. Review the current account before leaving."
+                departureError = String(localized: "The originating account has changed. Review the current account before leaving.", comment: "Error alert message when the active account changed while resolving settings.")
                 return
             }
             guard appState.appSettings.hasPendingChanges else {
@@ -236,8 +236,8 @@ struct SettingsView: View {
             pendingAccountDID = nil
             switch result {
             case .resolved: completeDeparture(action)
-            case .saveFailed: departureError = "Your changes are still pending. Try saving again or discard them to continue."
-            case .accountChanged, .unavailable: departureError = "The originating account is no longer available. Stay in Settings and review the current account."
+            case .saveFailed: departureError = String(localized: "Your changes are still pending. Try saving again or discard them to continue.", comment: "Error alert message when pending settings changes fail to save.")
+            case .accountChanged, .unavailable: departureError = String(localized: "The originating account is no longer available. Stay in Settings and review the current account.", comment: "Error alert message when the originating account becomes unavailable.")
             }
         }
     }
@@ -245,43 +245,63 @@ struct SettingsView: View {
         switch action { case .close: dismiss(); case .accounts: showingAccounts = true }
     }
     private func resultSummary(_ entry: SettingsSearchEntry) -> String {
-        let location = entry.breadcrumb + " · " + entry.scope
+        let location = "\(entry.breadcrumb) · \(entry.scope)"
         guard let value = confirmedValue(for: entry.target) else { return location }
-        return location + " · " + value
+        return "\(location) · \(value)"
     }
     private func confirmedValue(for target: SettingsTarget) -> String? {
+        let onLabel = String(localized: "On", comment: "Toggle state value shown in Settings search results.")
+        let offLabel = String(localized: "Off", comment: "Toggle state value shown in Settings search results.")
         guard let id = target.control?.rawValue else { return target.screen == .notifications ? appState.notificationManager.settingsSummary : nil }
-        if id == "account.appLock" { return AppStateManager.shared.authentication.biometricAuthEnabled ? "On" : "Off" }
+        if id == "account.appLock" { return AppStateManager.shared.authentication.biometricAuthEnabled ? onLabel : offLabel }
         guard appState.appSettings.persistenceState == .ready else { return nil }
         let settings = appState.appSettings
         switch id {
-        case "media.autoplayVideos": return settings.autoplayVideos ? "On" : "Off"
-        case "appearance.theme": return settings.theme.capitalized
+        case "media.autoplayVideos": return settings.autoplayVideos ? onLabel : offLabel
+        case "appearance.theme":
+            switch settings.theme {
+            case "system": return String(localized: "Follow System", comment: "Theme setting value.")
+            case "light": return String(localized: "Light", comment: "Theme setting value.")
+            case "dark": return String(localized: "Dark", comment: "Theme setting value.")
+            default: return settings.theme.localizedCapitalized
+            }
         case "text.fontSize":
-            let sizes = ["small": "Small", "default": "Default", "large": "Large", "extraLarge": "Extra Large"]
-            return sizes[settings.fontSize] ?? settings.fontSize.capitalized
-        case "accessibility.altText": return settings.requireAltText ? "On" : "Off"
-        case "accessibility.reduceMotion": return settings.effectiveReduceMotion ? "On" : "Off"
-        case "accessibility.increaseContrast": return settings.effectiveIncreaseContrast ? "On" : "Off"
-        case "accessibility.boldText": return settings.effectiveBoldText ? "On" : "Off"
-        case "languages.hideOtherLanguages": return (settings.hideNonPreferredLanguages || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language")) ? "On" : "Off"
-        case "privacy.attribution": return settings.enableViaAttribution ? "On" : "Off"
+            switch settings.fontSize {
+            case "small": return String(localized: "Small", comment: "Font size setting value.")
+            case "default": return String(localized: "Default", comment: "Font size setting value.")
+            case "large": return String(localized: "Large", comment: "Font size setting value.")
+            case "extraLarge": return String(localized: "Extra Large", comment: "Font size setting value.")
+            default: return settings.fontSize.localizedCapitalized
+            }
+        case "accessibility.altText": return settings.requireAltText ? onLabel : offLabel
+        case "accessibility.reduceMotion": return settings.effectiveReduceMotion ? onLabel : offLabel
+        case "accessibility.increaseContrast": return settings.effectiveIncreaseContrast ? onLabel : offLabel
+        case "accessibility.boldText": return settings.effectiveBoldText ? onLabel : offLabel
+        case "languages.hideOtherLanguages": return (settings.hideNonPreferredLanguages || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language")) ? onLabel : offLabel
+        case "privacy.attribution": return settings.enableViaAttribution ? onLabel : offLabel
         default: return nil
         }
     }
     private func summary(for screen: SettingsScreenID) -> String {
         switch screen {
-        case .accountSecurity: "Handle, hosted account, sign out"
-        case .privacyInteractions: "Visibility, replies, messages"
+        case .accountSecurity: String(localized: "Handle, hosted account, sign out", comment: "Settings home row summary.")
+        case .privacyInteractions: String(localized: "Visibility, replies, messages", comment: "Settings home row summary.")
         case .notifications: appState.notificationManager.settingsSummary
-        case .feedsDiscovery: "Feed preferences, threads, interests"
-        case .moderation: "Warnings, mutes, blocks"
-        case .mediaLinks: "Playback, external media, browser"
-        case .language: InterfaceLanguagePreferences.availableLanguages().count > 1 ? "Interface and reading languages" : "Reading languages and language filter"
-        case .appearance: "Theme and app icon"
-        case .accessibility: "Text, motion, image descriptions"
-        case .helpAbout: "Get help, support Catbird, app info"
-        case .advanced: "Service providers and cache"
+        case .feedsDiscovery: String(localized: "Feed preferences, threads, interests", comment: "Settings home row summary.")
+        case .moderation: String(localized: "Warnings, mutes, blocks", comment: "Settings home row summary.")
+        case .mediaLinks: String(localized: "Playback, external media, browser", comment: "Settings home row summary.")
+        case .language:
+            #if os(iOS)
+            String(localized: "App language and post reading languages", comment: "Settings home row summary for Language on iOS.")
+            #else
+            InterfaceLanguagePreferences.availableLanguages().count > 1
+                ? String(localized: "App language and post reading languages", comment: "Settings home row summary for Language.")
+                : String(localized: "Reading languages and language filter", comment: "Settings home row summary for Language.")
+            #endif
+        case .appearance: String(localized: "Theme and app icon", comment: "Settings home row summary.")
+        case .accessibility: String(localized: "Text, motion, image descriptions", comment: "Settings home row summary.")
+        case .helpAbout: String(localized: "Get help, support Catbird, app info", comment: "Settings home row summary.")
+        case .advanced: String(localized: "Service providers and cache", comment: "Settings home row summary.")
         default: ""
         }
     }

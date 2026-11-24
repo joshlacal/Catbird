@@ -67,12 +67,21 @@ struct SceneExplorerBeatView: View {
   private var heroHeader: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
-        Label(
-          viewModel.totalCommunitiesCount > 0
-            ? "\(viewModel.totalCommunitiesCount.formatted()) Live Communities"
-            : "Living Network Map",
-          systemImage: "sparkles"
-        )
+        Group {
+          if viewModel.totalCommunitiesCount > 0 {
+            Label {
+              Text("\(viewModel.totalCommunitiesCount) Live Communities", comment: "Badge count of live communities in scene explorer.")
+            } icon: {
+              Image(systemName: "sparkles")
+            }
+          } else {
+            Label {
+              Text("Living Network Map", comment: "Badge title in scene explorer when count is loading.")
+            } icon: {
+              Image(systemName: "sparkles")
+            }
+          }
+        }
         .font(.caption.weight(.semibold))
         .foregroundStyle(Color.accentColor)
         .padding(.horizontal, 10)
@@ -80,12 +89,16 @@ struct SceneExplorerBeatView: View {
         .background(Color.accentColor.opacity(0.12), in: Capsule())
 
         if viewModel.boostedCount > 0 {
-          Label("\(viewModel.boostedCount) Boosted 2×", systemImage: "heart.fill")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.pink)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.pink.opacity(0.12), in: Capsule())
+          Label {
+            Text("\(viewModel.boostedCount) Boosted 2×", comment: "Badge count of heart-boosted 2x scenes in explorer.")
+          } icon: {
+            Image(systemName: "heart.fill")
+          }
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.pink)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 5)
+          .background(Color.pink.opacity(0.12), in: Capsule())
         }
       }
 
@@ -157,7 +170,7 @@ struct SceneExplorerBeatView: View {
                 viewModel.searchQuery = term
                 Task { await viewModel.performSearchNow() }
               } label: {
-                Text(term)
+                Text(verbatim: term)
                   .font(.caption.weight(.medium))
                   .foregroundStyle(.primary)
                   .padding(.horizontal, 10)
@@ -223,7 +236,7 @@ struct SceneExplorerBeatView: View {
                   .font(.caption2)
                 Text(scene.sceneTitle)
                   .font(.caption.weight(.medium))
-                Text("\(scene.cardCount)")
+                Text(scene.cardCount, format: .number)
                   .font(.caption2.monospacedDigit())
                   .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
               }
@@ -287,7 +300,7 @@ struct SceneExplorerBeatView: View {
         Text(gridSectionTitle)
           .font(.headline)
         Spacer()
-        Text("\(viewModel.displayedCommunities.count) shown")
+        Text("\(viewModel.displayedCommunities.count) shown", comment: "Count of community cards currently displayed in explorer grid.")
           .font(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
       }
@@ -331,12 +344,12 @@ struct SceneExplorerBeatView: View {
 
   private var gridSectionTitle: String {
     if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return "Search Results"
+      return String(localized: "Search Results", comment: "Section header in scene explorer when showing search results.")
     }
     if viewModel.selectedMacroCategory != .all {
       return viewModel.selectedMacroCategory.title
     }
-    return "Diverse Scenes Across Bluesky"
+    return String(localized: "Diverse Scenes Across Bluesky", comment: "Default section header for featured scenes in scene explorer.")
   }
 
   // MARK: - Floating Liquid Glass Orbit Dock
@@ -380,18 +393,24 @@ struct SceneExplorerBeatView: View {
 
       HStack(spacing: 12) {
         VStack(alignment: .leading, spacing: 2) {
-          Text(
-            viewModel.selectedCount == 0
-              ? "Pick 1–5 scenes to start"
-              : "\(viewModel.selectedCount) \(viewModel.selectedCount == 1 ? "scene" : "scenes") in your orbit"
-          )
+          Group {
+            if viewModel.selectedCount == 0 {
+              Text("Pick 1–5 scenes to start", comment: "Bottom dock prompt in scene explorer before any scenes are picked.")
+            } else {
+              Text("\(viewModel.selectedCount) scenes in your orbit", comment: "Bottom dock status showing how many scenes the user picked.")
+            }
+          }
           .font(.subheadline.weight(.semibold))
 
-          Text(
-            viewModel.selectedCount == 0
-              ? "Peek inside any card to preview real posts"
-              : (viewModel.selectedCount < 3 ? "Add \(3 - viewModel.selectedCount) more for richer variety, or continue now" : "Great mix — ready to tune your feed rhythm")
-          )
+          Group {
+            if viewModel.selectedCount == 0 {
+              Text("Peek inside any card to preview real posts", comment: "Bottom dock hint in scene explorer when 0 scenes are picked.")
+            } else if viewModel.selectedCount < 3 {
+              Text("Add \(3 - viewModel.selectedCount) more for richer variety, or continue now", comment: "Bottom dock hint suggesting how many more scenes to pick.")
+            } else {
+              Text("Great mix — ready to tune your feed rhythm", comment: "Bottom dock hint when 3 or more scenes are picked.")
+            }
+          }
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -403,9 +422,9 @@ struct SceneExplorerBeatView: View {
           Task { await viewModel.advanceFromExplorerToCalibration() }
         } label: {
           HStack(spacing: 6) {
-            Text("Tune My Taste")
+            Text("Tune My Taste", comment: "Primary button to advance from scene explorer to taste calibration.")
               .font(.subheadline.weight(.bold))
-            Image(systemName: "arrow.right")
+            Image(systemName: "arrow.forward")
               .font(.caption.weight(.bold))
           }
           .foregroundStyle(.white)

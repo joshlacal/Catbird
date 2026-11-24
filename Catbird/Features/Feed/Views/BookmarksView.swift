@@ -45,10 +45,10 @@ struct BookmarksView: View {
         bookmarksListView
       } else if let loadError, !isLoading {
         ContentUnavailableStateView(
-          title: "Couldn’t Load Bookmarks",
+          title: String(localized: "Couldn’t Load Bookmarks", comment: "Error state title when bookmarks fail to load"),
           description: loadError,
           systemImage: "bookmark.slash",
-          actionTitle: "Try Again"
+          actionTitle: String(localized: "Try Again", comment: "Retry button title")
         ) {
           Task { await loadInitialBookmarks() }
         }
@@ -167,7 +167,10 @@ struct BookmarksView: View {
   private func loadInitialBookmarks() async {
     guard !isLoading else { return }
     guard let client = appState.atProtoClient else {
-      loadError = "Couldn’t load your bookmarks. Sign in again and try again."
+      loadError = String(
+        localized: "Couldn’t load your bookmarks. Sign in again and try again.",
+        comment: "Error message when bookmarks cannot be loaded due to missing session"
+      )
       return
     }
     
@@ -278,7 +281,12 @@ struct BookmarksView: View {
 
     do {
       try await appState.bookmarksManager.deleteBookmark(postUri: postUri, client: client)
-      appState.toastManager.show(ToastItem(message: "Bookmark removed", icon: "bookmark"))
+      appState.toastManager.show(
+        ToastItem(
+          message: String(localized: "Bookmark removed", comment: "Toast shown when a post is removed from bookmarks"),
+          icon: "bookmark"
+        )
+      )
       return true
     } catch {
       withAnimation { bookmarks.insert(bookmarkView, at: min(index, bookmarks.count)) }

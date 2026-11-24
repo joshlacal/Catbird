@@ -215,15 +215,15 @@ enum TilePublishError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .missingManifest:
-      return "manifest.json not found in tile directory"
+      return String(localized: "manifest.json not found in tile directory", comment: "Error when publishing a web tile directory without manifest.json")
     case .missingRootDocument:
-      return "index.html (root document) not found"
+      return String(localized: "index.html (root document) not found", comment: "Error when publishing a web tile directory without index.html")
     case .cannotReadDirectory:
-      return "Cannot read tile directory"
+      return String(localized: "Cannot read tile directory", comment: "Error when web tile source directory cannot be enumerated")
     case .blobUploadFailed(let path):
-      return "Failed to upload blob for: \(path)"
+      return String(localized: "Failed to upload blob for: \(path)", comment: "Error when uploading a web tile resource file fails")
     case .recordCreationFailed:
-      return "Failed to create tile record on AT Protocol"
+      return String(localized: "Failed to create tile record on AT Protocol", comment: "Error when creating the published web tile AT Protocol record fails")
     }
   }
 }

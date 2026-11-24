@@ -42,10 +42,10 @@ struct MessageReactionsView: View {
               handleReaction(emoji: emoji)
             }) {
               HStack(spacing: 4) {
-                Text(emoji)
+                Text(verbatim: emoji)
                   .font(.caption)
                 if count > 1 {
-                  Text("\(count)")
+                  Text(count, format: .number)
                     .font(.caption2)
                     .fontWeight(.medium)
                 }

@@ -35,12 +35,12 @@ struct ExpandableAltTextCaption: View {
 
       if !isExpanded && isTruncatable {
         Button(action: expand) {
-          Text("Show More")
+          Text("Show More", comment: "Button to expand truncated image alt text caption.")
             .appFont(AppTextRole.caption2)
             .foregroundColor(Color.accentColor)
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel("Show more alt text")
+        .accessibilityLabel(Text("Show more alt text", comment: "Accessibility label for button expanding truncated image alt text."))
       }
     }
     .padding(10)
@@ -106,13 +106,15 @@ struct ExpandableAltTextCaption: View {
 
   private var accessibilityLabel: String {
     if isExpanded || !isTruncatable {
-      return "Alt text"
+      return String(localized: "Alt text", comment: "Accessibility label for image alt text caption.")
     }
-    return "Alt text (collapsed)"
+    return String(localized: "Alt text (collapsed)", comment: "Accessibility label for collapsed image alt text caption.")
   }
 
   private var accessibilityHint: String {
     guard canToggle else { return "" }
-    return isExpanded ? "Double tap to collapse" : "Double tap to expand"
+    return isExpanded
+      ? String(localized: "Double tap to collapse", comment: "Accessibility hint to collapse expanded image alt text.")
+      : String(localized: "Double tap to expand", comment: "Accessibility hint to expand truncated image alt text.")
   }
 }

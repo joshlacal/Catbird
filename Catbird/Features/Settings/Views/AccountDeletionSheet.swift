@@ -46,10 +46,10 @@ struct AccountDeletionSheet: View {
       Form {
         Section("Account") {
           if let handle = flow.target.handle, !handle.isEmpty {
-            Text("@\(handle)")
+            Text(verbatim: "@\(handle)")
               .appFont(AppTextRole.headline)
           } else {
-            Text(flow.target.did)
+            Text(verbatim: flow.target.did)
               .appFont(AppTextRole.footnote)
               .foregroundStyle(.secondary)
               .textSelection(.enabled)

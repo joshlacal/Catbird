@@ -92,15 +92,19 @@ struct StartingLineupBeatView: View {
         Spacer()
 
         VStack(alignment: .trailing, spacing: 4) {
-          Label("~\(viewModel.activeEstimatedDailyPosts) posts/day", systemImage: "metronome.fill")
-            .font(.caption.weight(.bold).monospacedDigit())
-            .foregroundStyle(Color.accentColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.accentColor.opacity(0.12), in: Capsule())
+          Label {
+            Text("~\(viewModel.activeEstimatedDailyPosts) posts/day", comment: "Estimated daily post volume badge.")
+          } icon: {
+            Image(systemName: "metronome.fill")
+          }
+          .font(.caption.weight(.bold).monospacedDigit())
+          .foregroundStyle(Color.accentColor)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 5)
+          .background(Color.accentColor.opacity(0.12), in: Capsule())
 
           if viewModel.activeOriginalsOnlyCount > 0 {
-            Text("\(viewModel.activeOriginalsOnlyCount) in Originals Only")
+            Text("\(viewModel.activeOriginalsOnlyCount) in Originals Only", comment: "Count of lineup accounts set to Originals Only mode.")
               .font(.caption2.weight(.semibold))
               .foregroundStyle(.secondary)
           }
@@ -117,7 +121,7 @@ struct StartingLineupBeatView: View {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
             SummaryMetricPill(
-              label: tally.sceneCount == 1 ? "1 scene" : "\(tally.sceneCount) scenes",
+              label: String(localized: "\(tally.sceneCount) scenes", comment: "Count of chosen scenes represented in starting lineup."),
               symbol: "globe.desk"
             )
             ForEach(CommunityRole.allCases) { role in
@@ -149,7 +153,7 @@ struct StartingLineupBeatView: View {
               .font(.headline)
               .lineLimit(2)
             Spacer()
-            Text("\(section.items.count)")
+            Text(section.items.count, format: .number)
               .font(.caption.weight(.bold).monospacedDigit())
               .foregroundStyle(.secondary)
               .padding(.horizontal, 8)
@@ -244,7 +248,7 @@ struct StartingLineupBeatView: View {
                 Text(feed.displayName)
                   .font(.subheadline.weight(.semibold))
                   .foregroundStyle(.primary)
-                Text("by @\(feed.creatorHandle) · \(feed.communityTitle)")
+                Text("by @\(feed.creatorHandle) · \(feed.communityTitle)", comment: "Feed attribution line — %1$@ is creator handle, %2$@ is community title.")
                   .font(.caption2)
                   .foregroundStyle(.secondary)
                 if !feed.description.isEmpty {
@@ -296,15 +300,18 @@ struct StartingLineupBeatView: View {
                 Text(pack.name)
                   .font(.caption.weight(.semibold))
                   .foregroundStyle(.primary)
-                Text("Curated by @\(pack.creatorHandle) · \(pack.joinedAllTimeCount) joined")
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
+                Text(
+                  "Curated by @\(pack.creatorHandle) · \(pack.joinedAllTimeCount) joined",
+                  comment: "Starter pack attribution and join count — %1$@ is creator handle, %2$lld is number of users who joined."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
               }
               Spacer()
               HStack(spacing: 4) {
-                Text("Inspect")
+                Text("Inspect", comment: "Button label to inspect starter pack members.")
                   .font(.caption2.weight(.semibold))
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.forward")
                   .font(.caption2.weight(.bold))
               }
               .foregroundStyle(Color.accentColor)
@@ -373,29 +380,39 @@ struct StartingLineupBeatView: View {
 
   private var commitButtonTitle: String {
     if viewModel.isCommitting {
-      return "Setting Up Your Feed…"
+      return String(localized: "Setting Up Your Feed…", comment: "Progress button title while committing onboarding starting lineup.")
     }
     let count = viewModel.activeFollowCount
     if count == 0 {
-      return viewModel.mode == .tuneExistingFeed ? "Add Feeds to My Feed" : "Launch with These Feeds"
+      return viewModel.mode == .tuneExistingFeed
+        ? String(localized: "Add Feeds to My Feed", comment: "Commit button title when adding feeds without new follows in tuning mode.")
+        : String(localized: "Launch with These Feeds", comment: "Commit button title when launching onboarding with feeds only.")
     }
-    let voices = SceneOnboardingViewModel.voiceCount(count)
     if viewModel.mode == .tuneExistingFeed {
-      return "Add \(voices) to My Feed"
+      return String(
+        localized: "Add \(count) Voices to My Feed",
+        comment: "Commit button title to follow selected voices in tuning mode — variable is account count."
+      )
     }
-    return "Follow \(voices) & Launch"
+    return String(
+      localized: "Follow \(count) Voices & Launch",
+      comment: "Commit button title to follow selected voices and launch onboarding — variable is account count."
+    )
   }
 
   private func rolePillLabel(_ role: CommunityRole, count: Int) -> String {
-    let noun: String
     switch role {
-    case .anchorCreator: noun = count == 1 ? "anchor" : "anchors"
-    case .visualMaker: noun = count == 1 ? "maker" : "makers"
-    case .conversationalist: noun = "conversational"
-    case .sceneCurator: noun = count == 1 ? "curator" : "curators"
-    case .projectOrStudio: noun = count == 1 ? "project" : "projects"
+    case .anchorCreator:
+      String(localized: "\(count) anchors", comment: "Count pill of community anchors in starting lineup.")
+    case .visualMaker:
+      String(localized: "\(count) makers", comment: "Count pill of original makers in starting lineup.")
+    case .conversationalist:
+      String(localized: "\(count) conversational", comment: "Count pill of conversationalists in starting lineup.")
+    case .sceneCurator:
+      String(localized: "\(count) curators", comment: "Count pill of curators in starting lineup.")
+    case .projectOrStudio:
+      String(localized: "\(count) projects", comment: "Count pill of projects or studios in starting lineup.")
     }
-    return "\(count) \(noun)"
   }
 }
 
@@ -442,12 +459,12 @@ private struct LineupAccountRowView: View {
         )
 
         VStack(alignment: .leading, spacing: 3) {
-          Text(profile?.displayName ?? "Community Voice")
+          Text(profile?.displayName ?? String(localized: "Community Voice", comment: "Fallback display name for a lineup creator whose profile is loading."))
             .font(.subheadline.weight(.bold))
             .lineLimit(1)
 
           if let handle = profile?.handle {
-            Text("@\(handle)")
+            Text(verbatim: "@\(handle)")
               .font(.caption)
               .foregroundStyle(.secondary)
               .lineLimit(1)
@@ -474,7 +491,11 @@ private struct LineupAccountRowView: View {
             .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isEnabled ? "Included in lineup" : "Excluded from lineup")
+        .accessibilityLabel(
+          isEnabled
+            ? Text("Included in lineup", comment: "Accessibility label when account is switched on in starting lineup.")
+            : Text("Excluded from lineup", comment: "Accessibility label when account is switched off in starting lineup.")
+        )
       }
 
       HStack(spacing: 8) {
@@ -498,8 +519,13 @@ private struct LineupAccountRowView: View {
             HStack(spacing: 4) {
               Image(systemName: isOriginalsOnly ? "sparkles" : "arrow.2.squarepath")
                 .font(.caption2)
-              Text(isOriginalsOnly ? "Originals Only" : "All Posts")
-                .font(.caption2.weight(.semibold))
+              if isOriginalsOnly {
+                Text("Originals Only", comment: "Delivery mode chip hiding reposts from this creator.")
+                  .font(.caption2.weight(.semibold))
+              } else {
+                Text("All Posts", comment: "Delivery mode chip showing both posts and reposts from this creator.")
+                  .font(.caption2.weight(.semibold))
+              }
             }
             .foregroundStyle(isOriginalsOnly ? Color.accentColor : .secondary)
             .padding(.horizontal, 9)
@@ -510,7 +536,11 @@ private struct LineupAccountRowView: View {
             )
           }
           .buttonStyle(.plain)
-          .accessibilityLabel(isOriginalsOnly ? "Originals Only enabled" : "All Posts including reposts")
+          .accessibilityLabel(
+            isOriginalsOnly
+              ? Text("Originals Only enabled", comment: "Accessibility label when reposts are hidden for this creator.")
+              : Text("All Posts including reposts", comment: "Accessibility label when reposts are shown for this creator.")
+          )
         }
 
         Button(action: onSwap) {

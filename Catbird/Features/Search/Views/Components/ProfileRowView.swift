@@ -114,7 +114,7 @@ struct ProfileRowView: View {
     @ViewBuilder
     private var handleLine: some View {
         HStack(spacing: 6) {
-            Text("@\(profile.handle)")
+            Text(verbatim: "@\(profile.handle)")
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
@@ -168,16 +168,23 @@ struct ProfileRowView: View {
             Button {
                 showUnblockConfirmation = true
             } label: {
-                buttonLabel("Unblock", color: .white, backgroundColor: .red)
+                buttonLabel(
+                    LocalizedStringResource("Unblock", comment: "Button to unblock a blocked user account"),
+                    color: .white,
+                    backgroundColor: .red
+                )
             }
             .buttonStyle(.plain)
-            .accessibilityHint("You blocked this account")
+            .accessibilityHint(Text("You blocked this account", comment: "Accessibility hint on unblock button in profile search row"))
             .confirmationDialog(
-                "Unblock @\(profile.handle)?",
+                Text(
+                    "Unblock @\(profile.handle.description)?",
+                    comment: "Confirmation dialog title to unblock a user — variable is the user's handle"
+                ),
                 isPresented: $showUnblockConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("Unblock", role: .destructive) {
+                Button(role: .destructive) {
                     Task {
                         let previous = effectiveStatus
                         optimisticStatus = .notFollowing
@@ -187,6 +194,8 @@ struct ProfileRowView: View {
                             optimisticStatus = previous
                         }
                     }
+                } label: {
+                    Text("Unblock", comment: "Destructive confirmation action to unblock an account")
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -205,7 +214,11 @@ struct ProfileRowView: View {
                     }
                 }
             } label: {
-                buttonLabel("Following", color: .primary, backgroundColor: Color.secondary.opacity(0.15))
+                buttonLabel(
+                    LocalizedStringResource("Following", comment: "Button label indicating the user is currently following this account"),
+                    color: .primary,
+                    backgroundColor: Color.secondary.opacity(0.15)
+                )
             }
             .buttonStyle(.plain)
             
@@ -221,7 +234,11 @@ struct ProfileRowView: View {
                     }
                 }
             } label: {
-                buttonLabel("Follow", color: .white, backgroundColor: .accentColor)
+                buttonLabel(
+                    LocalizedStringResource("Follow", comment: "Button action to follow an account"),
+                    color: .white,
+                    backgroundColor: .accentColor
+                )
             }
             .buttonStyle(.plain)
         }
@@ -247,7 +264,7 @@ struct ProfileRowView: View {
     
     // Reusable button label
     @ViewBuilder
-    private func buttonLabel(_ text: String, color: Color, backgroundColor: Color, outlined: Bool = false) -> some View {
+    private func buttonLabel(_ text: LocalizedStringResource, color: Color, backgroundColor: Color, outlined: Bool = false) -> some View {
         Text(text)
             .appFont(AppTextRole.subheadline)
             .fontWeight(.semibold)

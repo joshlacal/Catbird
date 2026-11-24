@@ -39,12 +39,21 @@ struct UnifiedMessageReactions: View {
               }
           )
           .accessibilityElement(children: .ignore)
-          .accessibilityLabel("\(emoji), \(count) reactions")
-          .accessibilityValue(userReacted ? "You reacted" : "")
+          .accessibilityLabel(
+            Text(
+              "\(emoji), \(count) reactions",
+              comment: "Accessibility label for a reaction pill on a chat message. %1$@ is the emoji, %2$lld is the reaction count."
+            )
+          )
+          .accessibilityValue(
+            userReacted
+              ? Text("You reacted", comment: "Accessibility value indicating the current user added this reaction")
+              : Text(verbatim: "")
+          )
           .accessibilityHint("Double tap to toggle your reaction. Use Show reactors to see who reacted.")
           .accessibilityAddTraits(.isButton)
           .accessibilityAction { onReactionTapped?(emoji) }
-          .accessibilityAction(named: "Show reactors") { onReactionLongPress?(emoji) }
+          .accessibilityAction(named: Text("Show reactors", comment: "Accessibility action to view who reacted to a message")) { onReactionLongPress?(emoji) }
       }
 
       if let onReactionLongPress, let emoji = groupedReactions.keys.sorted().first {
@@ -69,11 +78,11 @@ struct UnifiedMessageReactions: View {
   @ViewBuilder
   private func reactionPill(emoji: String, count: Int, userReacted: Bool) -> some View {
     HStack(spacing: 4) {
-      Text(emoji)
+      Text(verbatim: emoji)
         .font(.caption)
 
       if count > 1 {
-        Text("\(count)")
+        Text(count, format: .number)
           .font(.caption2)
           .fontWeight(.medium)
           .foregroundStyle(userReacted ? Color.accentColor : Color.secondary)
@@ -170,7 +179,7 @@ struct UnifiedReactionDetailsSheet<Source: UnifiedChatDataSource>: View {
               reactorRow(reaction)
             }
           } header: {
-            Text("\(group.emoji) · \(group.reactions.count)")
+            Text(verbatim: "\(group.emoji) · \(group.reactions.count.formatted())")
           }
         }
       }
@@ -222,7 +231,7 @@ struct UnifiedReactionDetailsSheet<Source: UnifiedChatDataSource>: View {
         Text(profile?.displayName.flatMap { $0.isEmpty ? nil : $0 }
           ?? profile?.handle ?? reaction.senderDID)
         if let handle = profile?.handle {
-          Text("@\(handle)").font(.subheadline).foregroundStyle(.secondary)
+          Text(verbatim: "@\(handle)").font(.subheadline).foregroundStyle(.secondary)
         }
         if reaction.isFromCurrentUser {
           Text("You").font(.caption).foregroundStyle(.secondary)

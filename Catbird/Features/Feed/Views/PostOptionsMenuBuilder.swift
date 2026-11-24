@@ -40,7 +40,10 @@ enum PostOptionsMenuBuilder {
 
     if CopilotAvailability.isAvailable {
       sections.append([
-        UIAction.postOption("Ask Catbird", systemImage: "sparkles") {
+        UIAction.postOption(
+          String(localized: "Ask Catbird", comment: "Post options menu item to ask Catbird intelligence about this post"),
+          systemImage: "sparkles"
+        ) {
           postState.copilotContextToPresent = postState.copilotContext
           postState.isShowingCopilot = true
         }
@@ -49,7 +52,10 @@ enum PostOptionsMenuBuilder {
 
     if !postState.isOwnPost {
       sections.append([
-        UIAction.postOption("Add Author to List", systemImage: "list.bullet.rectangle") {
+        UIAction.postOption(
+          String(localized: "Add Author to List", comment: "Post options menu item to add the post author to a Bluesky list"),
+          systemImage: "list.bullet.rectangle"
+        ) {
           contextMenuViewModel.addAuthorToList()
         }
       ])
@@ -66,7 +72,10 @@ enum PostOptionsMenuBuilder {
         rootURI = post.uri.uriString()
       }
       sections.append([
-        UIAction.postOption("Ask Catbird About Thread", systemImage: "sparkles") {
+        UIAction.postOption(
+          String(localized: "Ask Catbird About Thread", comment: "Post options menu item to ask Catbird intelligence about the thread"),
+          systemImage: "sparkles"
+        ) {
           postState.copilotContextToPresent = .thread(anchorURI: rootURI)
           postState.isShowingCopilot = true
         }
@@ -76,7 +85,9 @@ enum PostOptionsMenuBuilder {
 
     sections.append([
       UIAction.postOption(
-        viewModel.isBookmarked ? "Remove Bookmark" : "Bookmark",
+        viewModel.isBookmarked
+          ? String(localized: "Remove Bookmark", comment: "Post options menu item to remove a bookmark")
+          : String(localized: "Bookmark", comment: "Post options menu item to bookmark a post"),
         systemImage: viewModel.isBookmarked ? "bookmark.fill" : "bookmark"
       ) {
         contextMenuViewModel.toggleBookmark()
@@ -85,10 +96,16 @@ enum PostOptionsMenuBuilder {
 
     if let feedInteractionTarget {
       sections.append([
-        UIAction.postOption("Show More Like This", systemImage: "hand.thumbsup") {
+        UIAction.postOption(
+          String(localized: "Show More Like This", comment: "Custom feed feedback action requesting more posts like this"),
+          systemImage: "hand.thumbsup"
+        ) {
           contextMenuViewModel.sendShowMore(target: feedInteractionTarget)
         },
-        UIAction.postOption("Show Less Like This", systemImage: "hand.thumbsdown") {
+        UIAction.postOption(
+          String(localized: "Show Less Like This", comment: "Custom feed feedback action requesting fewer posts like this"),
+          systemImage: "hand.thumbsdown"
+        ) {
           contextMenuViewModel.sendShowLess(target: feedInteractionTarget)
         },
       ])
@@ -96,20 +113,30 @@ enum PostOptionsMenuBuilder {
 
     var moderation: [UIMenuElement] = []
     if !postState.isOwnPost {
-      moderation.append(UIAction.postOption("Mute User", systemImage: "speaker.slash") {
+      moderation.append(UIAction.postOption(
+        String(localized: "Mute User", comment: "Post options menu item to mute the post's author"),
+        systemImage: "speaker.slash"
+      ) {
         if DestructiveActionConfirmation.shouldConfirm(isEnabled: appState.appSettings.confirmBeforeActions) {
           postState.showMuteUserConfirmation = true
         } else {
           Task { await contextMenuViewModel.muteUser() }
         }
       })
-      moderation.append(UIAction.postOption("Block User", systemImage: "exclamationmark.octagon", destructive: true) {
+      moderation.append(UIAction.postOption(
+        String(localized: "Block User", comment: "Post options menu item to block the post's author"),
+        systemImage: "exclamationmark.octagon",
+        destructive: true
+      ) {
         postState.showBlockConfirmation = true
       })
     }
 
     if case .public = visibilityContext {
-      moderation.append(UIAction.postOption("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill") {
+      moderation.append(UIAction.postOption(
+        String(localized: "Mute Thread", comment: "Post options menu item to mute notifications from this thread"),
+        systemImage: "bubble.left.and.bubble.right.fill"
+      ) {
         if DestructiveActionConfirmation.shouldConfirm(isEnabled: appState.appSettings.confirmBeforeActions) {
           postState.showMuteThreadConfirmation = true
         } else {
@@ -121,7 +148,10 @@ enum PostOptionsMenuBuilder {
     if !postState.isOwnPost {
       let isHidden = contextMenuViewModel.isPostHidden
       moderation.append(UIAction.postOption(
-        isHidden ? "Unhide Post" : "Hide Post", systemImage: isHidden ? "eye" : "eye.slash"
+        isHidden
+          ? String(localized: "Unhide Post", comment: "Post options menu item to unhide a hidden post")
+          : String(localized: "Hide Post", comment: "Post options menu item to hide a post from feeds"),
+        systemImage: isHidden ? "eye" : "eye.slash"
       ) {
         Task {
           if isHidden {
@@ -131,7 +161,10 @@ enum PostOptionsMenuBuilder {
           }
         }
       })
-      moderation.append(UIAction.postOption("Report Post", systemImage: "flag") {
+      moderation.append(UIAction.postOption(
+        String(localized: "Report Post", comment: "Post options menu item to report a post to moderators"),
+        systemImage: "flag"
+      ) {
         postState.showingReportView = true
       })
 
@@ -139,7 +172,9 @@ enum PostOptionsMenuBuilder {
       if contextMenuViewModel.isRootAuthor {
         let isHiddenForEveryone = contextMenuViewModel.isReplyHiddenByThreadgate
         moderation.append(UIAction.postOption(
-          isHiddenForEveryone ? "Show Reply for Everyone" : "Hide Reply for Everyone",
+          isHiddenForEveryone
+            ? String(localized: "Show Reply for Everyone", comment: "Thread author moderation action to unhide a reply for all viewers")
+            : String(localized: "Hide Reply for Everyone", comment: "Thread author moderation action to hide a reply for all viewers"),
           systemImage: isHiddenForEveryone ? "eye" : "eye.slash"
         ) {
           Task {
@@ -156,7 +191,10 @@ enum PostOptionsMenuBuilder {
       if contextMenuViewModel.quotedPostURI != nil {
         let isDetached = contextMenuViewModel.isQuoteDetached
         moderation.append(UIAction.postOption(
-          isDetached ? "Re-attach Quote" : "Detach Quote", systemImage: isDetached ? "link" : "arrow.branch"
+          isDetached
+            ? String(localized: "Re-attach Quote", comment: "Quoted post author action to re-attach a detached quote post")
+            : String(localized: "Detach Quote", comment: "Quoted post author action to detach their post from a quote post"),
+          systemImage: isDetached ? "link" : "arrow.branch"
         ) {
           Task {
             if isDetached {
@@ -172,17 +210,30 @@ enum PostOptionsMenuBuilder {
     if postState.isOwnPost {
       let isPinned = contextMenuViewModel.isPinned
       moderation.append(UIAction.postOption(
-        isPinned ? "Unpin from Profile" : "Pin to Profile", systemImage: isPinned ? "pin.slash" : "pin"
+        isPinned
+          ? String(localized: "Unpin from Profile", comment: "Post options menu item to unpin a post from the user's profile")
+          : String(localized: "Pin to Profile", comment: "Post options menu item to pin a post to the user's profile"),
+        systemImage: isPinned ? "pin.slash" : "pin"
       ) {
         Task { await contextMenuViewModel.togglePin() }
       })
-      moderation.append(UIAction.postOption("Edit Interaction Settings", systemImage: "slider.horizontal.3") {
+      moderation.append(UIAction.postOption(
+        String(localized: "Edit Interaction Settings", comment: "Post options menu item to edit reply and quote permissions"),
+        systemImage: "slider.horizontal.3"
+      ) {
         postState.showingInteractionSettings = true
       })
-      moderation.append(UIAction.postOption("View Labels", systemImage: "tag") {
+      moderation.append(UIAction.postOption(
+        String(localized: "View Labels", comment: "Post options menu item to inspect moderation labels applied to the post"),
+        systemImage: "tag"
+      ) {
         postState.showingLabelsOnPost = true
       })
-      moderation.append(UIAction.postOption("Delete Post", systemImage: "trash", destructive: true) {
+      moderation.append(UIAction.postOption(
+        String(localized: "Delete Post", comment: "Post options menu item to permanently delete the user's post"),
+        systemImage: "trash",
+        destructive: true
+      ) {
         postState.showDeleteConfirmation = true
       })
     }

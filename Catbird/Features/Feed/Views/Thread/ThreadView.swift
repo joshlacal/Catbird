@@ -54,16 +54,20 @@ struct ThreadView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Picker("Sort Replies", selection: sortSelection) {
-                        Text("Top").tag("top")
-                        Text("Latest").tag("newest")
-                        Text("Oldest").tag("oldest")
+                    Picker(selection: sortSelection) {
+                        Text("Top", comment: "Thread reply sort option: highest-ranked replies first").tag("top")
+                        Text("Latest", comment: "Thread reply sort option: newest replies first").tag("newest")
+                        Text("Oldest", comment: "Thread reply sort option: oldest replies first").tag("oldest")
+                    } label: {
+                        Text("Sort Replies", comment: "Menu picker title for sorting thread replies")
                     }
                     .pickerStyle(.inline)
 
-                    Picker("Layout", selection: threadedRepliesSelection) {
-                        Text("Linear").tag(false)
-                        Text("Threaded").tag(true)
+                    Picker(selection: threadedRepliesSelection) {
+                        Text("Linear", comment: "Thread layout option: flat chronological list").tag(false)
+                        Text("Threaded", comment: "Thread layout option: nested tree replies").tag(true)
+                    } label: {
+                        Text("Layout", comment: "Menu picker title for thread display layout")
                     }
                     .pickerStyle(.inline)
                 } label: {
@@ -103,7 +107,10 @@ struct ThreadView: View {
             } catch {
                 logger.error("Failed to save reply order: \(error.localizedDescription)")
                 appState.toastManager.show(
-                    ToastItem(message: "Couldn’t save reply order. Try again.", icon: "exclamationmark.triangle")
+                    ToastItem(
+                        message: String(localized: "Couldn’t save reply order. Try again.", comment: "Error toast when saving thread reply sort preference fails"),
+                        icon: "exclamationmark.triangle"
+                    )
                 )
             }
         }
@@ -215,7 +222,7 @@ private struct SwiftUIThreadView: View {
                 }
             }
         }
-        .navigationTitle("Thread")
+        .navigationTitle(Text("Thread", comment: "Navigation bar title for a conversation thread"))
         .modifier(NavigationTitleDisplayModeModifier())
         .task {
             guard !hasInitialized else { return }

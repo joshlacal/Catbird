@@ -274,7 +274,12 @@ final class MediaUploadManager {
       }
       // Could not decode; return generic
       return (
-        false, "Server error when checking upload limits (HTTP \(httpResponse.statusCode))", nil
+        false,
+        String(
+          localized: "Server error when checking upload limits (HTTP \(httpResponse.statusCode))",
+          comment: "Error when video upload limits check fails; variable is HTTP status code"
+        ),
+        nil
       )
     }
   }
@@ -290,7 +295,11 @@ final class MediaUploadManager {
     }
     // If a check is already in flight, return the last known result (if any)
     if isCheckingLimits {
-      return lastPreflight?.result ?? (false, "Checking upload eligibility…", nil)
+      return lastPreflight?.result ?? (
+        false,
+        String(localized: "Checking upload eligibility…", comment: "Status message while checking whether account can upload videos"),
+        nil
+      )
     }
     isCheckingLimits = true
     defer { isCheckingLimits = false }
@@ -394,7 +403,7 @@ final class MediaUploadManager {
         throw CancellationError()
       }
       let message = PostComposerErrorCopy.message(for: error, isThread: false)
-        ?? "Couldn’t upload your video. Your attachment is still here."
+        ?? String(localized: "Couldn’t upload your video. Your attachment is still here.", comment: "Fallback error when video upload fails")
       videoError = message
       uploadStatus = .failed(error: message)
       throw error
@@ -510,7 +519,7 @@ final class MediaUploadManager {
     guard code == 200, let output else {
       throw VideoMultipartTransportError(
         statusCode: code, code: "ServiceAuthDenied",
-        message: "Your account could not authorize this video upload. Your draft has been kept."
+        message: String(localized: "Your account could not authorize this video upload. Your draft has been kept.", comment: "Error when PDS service auth denies video upload")
       )
     }
     return output.token
@@ -907,26 +916,26 @@ enum VideoUploadError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .noClientAvailable, .authenticationFailed:
-      return "Couldn’t upload your video. Sign in again and try again."
+      return String(localized: "Couldn’t upload your video. Sign in again and try again.", comment: "Error when video upload fails due to missing authentication")
     case .uploadFailed, .processingFailed:
-      return "Couldn’t upload your video. Try again."
+      return String(localized: "Couldn’t upload your video. Try again.", comment: "Generic error when video upload or processing fails")
     case .processingTimeout:
-      return "Your video is taking too long to process. Try again later."
+      return String(localized: "Your video is taking too long to process. Try again later.", comment: "Error when video server processing times out")
     case .tooLarge:
       return VideoUploadPolicy.sizeMessage
     case .tooLong:
       return VideoUploadPolicy.durationMessage
     case .legacyTooLarge:
-      return "The legacy uploader supports videos up to 100 MB."
+      return String(localized: "The legacy uploader supports videos up to 100 MB.", comment: "Error when video exceeds 100 MB limit on legacy upload path")
     case .legacyTooLong:
-      return "The legacy uploader supports videos up to 3 minutes."
+      return String(localized: "The legacy uploader supports videos up to 3 minutes.", comment: "Error when video exceeds 3 minute limit on legacy upload path")
     case .unsupportedFormat:
-      return "This video’s format isn’t supported."
+      return String(localized: "This video’s format isn’t supported.", comment: "Error when selected video uses an unsupported container or codec")
     case .uploadLimitReached(let message):
       if let message, !message.isEmpty {
         return message
       }
-      return "You can’t upload more videos right now. Try again later."
+      return String(localized: "You can’t upload more videos right now. Try again later.", comment: "Error when daily video upload quota is reached")
     }
   }
 }

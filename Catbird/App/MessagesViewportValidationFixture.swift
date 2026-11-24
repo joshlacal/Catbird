@@ -109,68 +109,96 @@ struct MessagesViewportValidationFixture: View {
           .environment(sceneContext)
           .environment(\.fontManager, account.fontManager)
           .environment(\.openURL, OpenURLAction { _ in .discarded })
-          .navigationTitle(source.messages.count == 2 ? "Short local chat" : "Long local chat")
+          .navigationTitle(Text(verbatim: source.messages.count == 2 ? "Short local chat" : "Long local chat"))
           .toolbarTitleDisplayMode(.inline)
           .toolbar {
             if Self.isPresentationFixture {
               ToolbarItemGroup(placement: .topBarTrailing) {
-                Button("Narrow", systemImage: "arrow.left.and.right") { presentationNarrow.toggle() }
+                Button { presentationNarrow.toggle() } label: {
+                  Label { Text(verbatim: "Narrow") } icon: { Image(systemName: "arrow.left.and.right") }
+                }
                   .accessibilityIdentifier("chat.fixture.narrow")
-                Button("Larger Text", systemImage: "textformat.size") { presentationLargeText.toggle() }
+                Button { presentationLargeText.toggle() } label: {
+                  Label { Text(verbatim: "Larger Text") } icon: { Image(systemName: "textformat.size") }
+                }
                   .accessibilityIdentifier("chat.fixture.typeSize")
                 if source.presentationScenario?.hasPrefix("menu-") == true {
-                  Menu("Fixture actions", systemImage: "ellipsis.circle") {
-                    Button("Accessible actions") { source.presentationAccessibleRequest += 1 }
+                  Menu {
+                    Button { source.presentationAccessibleRequest += 1 } label: {
+                      Text(verbatim: "Accessible actions")
+                    }
                       .accessibilityIdentifier("chat.fixture.accessibleActions")
+                  } label: {
+                    Label { Text(verbatim: "Fixture actions") } icon: { Image(systemName: "ellipsis.circle") }
                   }
                   .accessibilityIdentifier("chat.fixture.controls")
                 } else {
-                  Button("Change record", systemImage: "rectangle.expand.vertical") {
+                  Button {
                     source.changePresentationRecord()
+                  } label: {
+                    Label { Text(verbatim: "Change record") } icon: { Image(systemName: "rectangle.expand.vertical") }
                   }
                   .accessibilityIdentifier("chat.fixture.changeRecord")
                 }
-                Button("Keyboard", systemImage: "keyboard.chevron.compact.down") {
+                Button {
                   UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                     to: nil, from: nil, for: nil)
+                } label: {
+                  Label { Text(verbatim: "Keyboard") } icon: { Image(systemName: "keyboard.chevron.compact.down") }
                 }
                 .accessibilityIdentifier("messages.fixture.dismissKeyboard")
               }
             } else {
             ToolbarItemGroup(placement: .topBarTrailing) {
-              Button("Backdrop", systemImage: "paintpalette") {
+              Button {
                 coralBackdrop.toggle()
                 measurements.backdrop = coralBackdrop ? "coral" : "cyan"
+              } label: {
+                Label { Text(verbatim: "Backdrop") } icon: { Image(systemName: "paintpalette") }
               }
               .accessibilityIdentifier("messages.fixture.backdrop")
-              Button("Grow local row", systemImage: "rectangle.expand.vertical") {
+              Button {
                 source.growRow(id: measurements.latest?.anchorID)
+              } label: {
+                Label { Text(verbatim: "Grow local row") } icon: { Image(systemName: "rectangle.expand.vertical") }
               }
               .accessibilityIdentifier("messages.fixture.grow")
-              Button("Reset drag witnesses", systemImage: "arrow.counterclockwise") {
+              Button {
                 measurements.resetSequence += 1
+              } label: {
+                Label { Text(verbatim: "Reset drag witnesses") } icon: { Image(systemName: "arrow.counterclockwise") }
               }
               .accessibilityIdentifier("messages.fixture.resetDrags")
-              Button("Keyboard", systemImage: "keyboard.chevron.compact.down") {
+              Button {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                   to: nil, from: nil, for: nil)
+              } label: {
+                Label { Text(verbatim: "Keyboard") } icon: { Image(systemName: "keyboard.chevron.compact.down") }
               }
               .accessibilityIdentifier("messages.fixture.dismissKeyboard")
-              Menu("Record native gestures", systemImage: "waveform.path") {
-                Button("Record center drag") { measurements.requestGestureTrace(kind: "center") }
+              Menu {
+                Button { measurements.requestGestureTrace(kind: "center") } label: {
+                  Text(verbatim: "Record center drag")
+                }
                   .accessibilityIdentifier("messages.fixture.armCenter")
-                Button("Record gutter drag") { measurements.requestGestureTrace(kind: "gutter") }
+                Button { measurements.requestGestureTrace(kind: "gutter") } label: {
+                  Text(verbatim: "Record gutter drag")
+                }
                   .accessibilityIdentifier("messages.fixture.armGutter")
+              } label: {
+                Label { Text(verbatim: "Record native gestures") } icon: { Image(systemName: "waveform.path") }
               }
               .accessibilityIdentifier("messages.fixture.gesturesMenu")
             }
             }
           }
       } else if let failure {
-        Text("Messages fixture failed: \(failure)")
+        Text(verbatim: "Messages fixture failed: \(failure)")
           .accessibilityIdentifier("messages.fixture.failure")
       } else {
-        ProgressView("Preparing local messages")
+        ProgressView {
+          Text(verbatim: "Preparing local messages")
+        }
       }
     }
     .preferredColorScheme(.light)

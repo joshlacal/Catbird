@@ -217,7 +217,7 @@ struct ExternalEmbedView: View {
         .deferredPresentations(when: showingConsentDialog || consentSaveFailed) { anchor in
             anchor
                 .confirmationDialog(
-                    "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
+                    "Enable \(pendingConsentProvider?.displayName ?? String(localized: "External Media", comment: "Fallback provider name in external media permission dialog"))?",
                     isPresented: $showingConsentDialog,
                     titleVisibility: .visible,
                     presenting: pendingConsentProvider
@@ -289,7 +289,10 @@ struct ExternalEmbedView: View {
         .frame(maxWidth: .infinity)
         .frame(maxHeight: mediaMaximumHeight)
         .overlay(alignment: .bottomTrailing) {
-            MediaBadgeLabel(text: "GIF", isLarge: appState.appSettings.largerAltTextBadges)
+            MediaBadgeLabel(
+                text: String(localized: "GIF", comment: "Short badge indicating animated GIF media"),
+                isLarge: appState.appSettings.largerAltTextBadges
+            )
                 .padding(10)
                 .allowsHitTesting(false)
                 .accessibilityLabel("Animated GIF")
@@ -587,13 +590,13 @@ struct ExternalEmbedView: View {
                 Self.logger.debug("❌ Failed to create MP4 URL for Tenor video ID: \(videoId)")
                 guard !Task.isCancelled else { return }
                 isLoadingGif = false
-                gifError = "Failed to create MP4 URL"
+                gifError = String(localized: "Failed to create MP4 URL", comment: "Error when building a playable MP4 URL for an embedded GIF fails")
             }
         } else {
             Self.logger.debug("❌ No path components found in Tenor URL: \(url.path)")
             guard !Task.isCancelled else { return }
             isLoadingGif = false
-            gifError = "Failed to parse Tenor GIF URL"
+            gifError = String(localized: "Failed to parse Tenor GIF URL", comment: "Error when parsing a Tenor GIF link fails")
         }
     }
     
@@ -648,7 +651,10 @@ struct ExternalEmbedView: View {
                     Self.logger.debug("❌ Tenor MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
                     guard !Task.isCancelled else { return }
                     isLoadingGif = false
-                    gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
+                    gifError = String(
+                        localized: "MP4 conversion failed (status \(httpResponse.statusCode))",
+                        comment: "Error when fetching MP4 stream for GIF returns an HTTP error — variable is HTTP status code"
+                    )
                 }
             }
         } catch {
@@ -658,7 +664,7 @@ struct ExternalEmbedView: View {
             else { return }
             Self.logger.debug("❌ Failed to validate Tenor MP4 URL: \(error)")
             isLoadingGif = false
-            gifError = "Unable to load MP4 version"
+            gifError = String(localized: "Unable to load MP4 version", comment: "Error when loading the MP4 video version of a GIF fails")
         }
     }
 
@@ -761,7 +767,7 @@ struct ExternalEmbedView: View {
             Self.logger.debug("❌ No Giphy ID found, cannot convert to MP4")
             guard !Task.isCancelled else { return }
             isLoadingGif = false
-            gifError = "Failed to parse Giphy GIF URL"
+            gifError = String(localized: "Failed to parse Giphy GIF URL", comment: "Error when parsing a Giphy GIF link fails")
             return
         }
         
@@ -773,7 +779,7 @@ struct ExternalEmbedView: View {
             Self.logger.debug("❌ Failed to create MP4 URL for Giphy ID: \(gifId)")
             guard !Task.isCancelled else { return }
             isLoadingGif = false
-            gifError = "Failed to create MP4 URL"
+            gifError = String(localized: "Failed to create MP4 URL", comment: "Error when building a playable MP4 URL for an embedded GIF fails")
         }
     }
     
@@ -824,7 +830,10 @@ struct ExternalEmbedView: View {
                     Self.logger.debug("❌ Giphy MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
                     guard !Task.isCancelled else { return }
                     isLoadingGif = false
-                    gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
+                    gifError = String(
+                        localized: "MP4 conversion failed (status \(httpResponse.statusCode))",
+                        comment: "Error when fetching MP4 stream for GIF returns an HTTP error — variable is HTTP status code"
+                    )
                 }
             }
         } catch {
@@ -834,7 +843,7 @@ struct ExternalEmbedView: View {
             else { return }
             Self.logger.debug("❌ Failed to validate Giphy MP4 URL: \(error)")
             isLoadingGif = false
-            gifError = "Unable to load MP4 version"
+            gifError = String(localized: "Unable to load MP4 version", comment: "Error when loading the MP4 video version of a GIF fails")
         }
     }
     

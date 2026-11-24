@@ -100,21 +100,34 @@ public struct StarterPackLandingView: View {
                             .clipShape(Circle())
                         }
                         
-                        Text("Curated by \(pack.creator.displayName ?? "@" + pack.creator.handle.description)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        if let displayName = pack.creator.displayName, !displayName.isEmpty {
+                            Text("Curated by \(displayName)", comment: "Attribution showing who created the starter pack. Placeholder is the creator's display name.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            Text("Curated by @\(pack.creator.handle.description)", comment: "Attribution showing who created the starter pack when only their handle is available. Placeholder is the creator's handle.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     
-                    let (packName, packDesc): (String, String?) = {
+                    let (packName, packDesc): (String?, String?) = {
                         if case .knownType(let recordValue) = pack.record,
                            let starterpack = recordValue as? AppBskyGraphStarterpack {
                             return (starterpack.name, starterpack.description)
                         }
-                        return ("Starter Pack", nil)
+                        return (nil, nil)
                     }()
                     
-                    Text(packName)
+                    Group {
+                        if let packName, !packName.isEmpty {
+                            Text(packName)
+                        } else {
+                            Text("Starter Pack", comment: "Fallback title when a starter pack has no custom name.")
+                        }
+                    }
                         .font(.title)
                         .fontWeight(.bold)
                         .multilineTextAlignment(.center)
@@ -132,9 +145,9 @@ public struct StarterPackLandingView: View {
                 // Stats Card
                 HStack(spacing: 32) {
                     VStack(spacing: 4) {
-                        Text("\(totalMemberCount)")
+                        Text(totalMemberCount, format: .number)
                             .font(.title2.bold())
-                        Text("People")
+                        Text("People", comment: "Stat label below the member count in a starter pack.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -142,9 +155,9 @@ public struct StarterPackLandingView: View {
                     if let feeds = pack.feeds, !feeds.isEmpty {
                         Divider().frame(height: 32)
                         VStack(spacing: 4) {
-                            Text("\(feeds.count)")
+                            Text(feeds.count, format: .number)
                                 .font(.title2.bold())
-                            Text("Feeds")
+                            Text("Feeds", comment: "Stat label below the custom feed count in a starter pack.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -153,9 +166,9 @@ public struct StarterPackLandingView: View {
                     if let joinedCount = pack.joinedAllTimeCount {
                         Divider().frame(height: 32)
                         VStack(spacing: 4) {
-                            Text("\(joinedCount)")
+                            Text(joinedCount, format: .number)
                                 .font(.title2.bold())
-                            Text("Joined")
+                            Text("Joined", comment: "Stat label below the count of users who joined via this starter pack.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -257,7 +270,7 @@ public struct StarterPackLandingView: View {
                 Text(member.displayName ?? member.handle.description)
                     .font(.subheadline.bold())
                     .lineLimit(1)
-                Text("@\(member.handle.description)")
+                Text(verbatim: "@\(member.handle.description)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -292,7 +305,7 @@ public struct StarterPackLandingView: View {
                     .font(.subheadline.bold())
                     .lineLimit(1)
                 if let creator = feed.creator.displayName {
-                    Text("by \(creator)")
+                    Text("by \(creator)", comment: "Feed creator attribution in starter pack preview. Placeholder is the creator's display name.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -360,12 +373,13 @@ public struct StarterPackLandingView: View {
     
     private func joinStarterPackAction() {
         guard let pack = starterPack else { return }
-        let packName: String = {
+        let packName: String? = {
             if case .knownType(let recordValue) = pack.record,
-               let starterpack = recordValue as? AppBskyGraphStarterpack {
+               let starterpack = recordValue as? AppBskyGraphStarterpack,
+               !starterpack.name.isEmpty {
                 return starterpack.name
             }
-            return "Starter Pack"
+            return nil
         }()
         
         let pending = StarterPackPendingContext(
@@ -383,12 +397,13 @@ public struct StarterPackLandingView: View {
     }
     private func signinWithPackAction() {
         guard let pack = starterPack else { return }
-        let packName: String = {
+        let packName: String? = {
             if case .knownType(let recordValue) = pack.record,
-               let starterpack = recordValue as? AppBskyGraphStarterpack {
+               let starterpack = recordValue as? AppBskyGraphStarterpack,
+               !starterpack.name.isEmpty {
                 return starterpack.name
             }
-            return "Starter Pack"
+            return nil
         }()
         
         let pending = StarterPackPendingContext(
@@ -425,7 +440,10 @@ public struct StarterPackLandingView: View {
             guard code == 200, let packData = output else {
                 await MainActor.run {
                     self.isLoading = false
-                    self.errorMessage = "This starter pack is unavailable or may have been deleted."
+                    self.errorMessage = String(
+                        localized: "This starter pack is unavailable or may have been deleted.",
+                        comment: "Error shown when a starter pack link cannot be found."
+                    )
                     StarterPackOnboardingManager.shared.clearPendingContext()
                 }
                 return
@@ -452,7 +470,10 @@ public struct StarterPackLandingView: View {
         } catch {
             await MainActor.run {
                 self.logger.error("Failed to fetch starter pack: \(error)")
-                self.errorMessage = "Couldn’t load this starter pack. Check your connection and try again."
+                self.errorMessage = String(
+                    localized: "Couldn’t load this starter pack. Check your connection and try again.",
+                    comment: "Error shown when loading a starter pack fails due to a network error."
+                )
                 self.isLoading = false
                 StarterPackOnboardingManager.shared.clearPendingContext()
             }

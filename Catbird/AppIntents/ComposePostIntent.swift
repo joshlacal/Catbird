@@ -25,16 +25,39 @@ enum ComposeDraftStasher {
 
 @available(iOS 18.0, *)
 struct ComposePostIntent: AppIntent {
-  static var title: LocalizedStringResource = "Draft Post"
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Draft Post",
+    comment: "App Intent title for saving a post draft to open in Catbird's composer."
+  )
   static var description = IntentDescription(
-    "Save a Bluesky post draft with optional text and URL. The draft opens in the composer in Catbird."
+    LocalizedStringResource(
+      "Save a Bluesky post draft with optional text and URL. The draft opens in the composer in Catbird.",
+      comment: "App Intent description for Draft Post."
+    )
   )
 
-  @Parameter(title: "Text")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Text",
+      comment: "Parameter title for the body text of a drafted Bluesky post."
+    )
+  )
   var text: String?
 
-  @Parameter(title: "URL", default: nil)
+  @Parameter(
+    title: LocalizedStringResource(
+      "URL",
+      comment: "Parameter title for an optional link attached to a drafted Bluesky post."
+    ),
+    default: nil
+  )
   var url: URL?
+
+  static var parameterSummary: some ParameterSummary {
+    Summary("Draft post \(\.$text)") {
+      \.$url
+    }
+  }
 
   func perform() async throws -> some IntentResult & ProvidesDialog {
     var combined = text ?? ""
@@ -56,7 +79,12 @@ struct ComposePostIntent: AppIntent {
     )
 
     guard let defaults = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName) else {
-      throw IntentError.serviceUnavailable("Catbird's shared storage is unavailable.")
+      throw IntentError.serviceUnavailable(
+        LocalizedStringResource(
+          "Catbird's shared storage is unavailable.",
+          comment: "Error spoken by Siri or shown in Shortcuts when the App Group UserDefaults container cannot be accessed."
+        )
+      )
     }
     try ComposeDraftStasher.stash(draft, defaults: defaults)
 
@@ -68,7 +96,14 @@ struct ComposePostIntent: AppIntent {
       }
     }
 
-    return .result(dialog: "Draft saved. Open Catbird to continue composing.")
+    return .result(
+      dialog: IntentDialog(
+        LocalizedStringResource(
+          "Draft saved. Open Catbird to continue composing.",
+          comment: "Confirmation spoken by Siri or shown in Shortcuts after saving a post draft."
+        )
+      )
+    )
   }
 }
 

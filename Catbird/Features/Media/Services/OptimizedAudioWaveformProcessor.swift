@@ -325,6 +325,10 @@ final class OptimizedAudioWaveformProcessor {
 // MARK: - Error Handling
 
 extension WaveformError {
-  static let processingTimeout = WaveformError.custom("Audio processing timed out")
-  static let memoryError = WaveformError.custom("Insufficient memory for processing")
+  static var processingTimeout: WaveformError {
+    .custom(String(localized: "Audio processing timed out", comment: "Error when audio waveform processing exceeds the time limit"))
   }
+  static var memoryError: WaveformError {
+    .custom(String(localized: "Insufficient memory for processing", comment: "Error when device lacks memory to process audio waveform"))
+  }
+}

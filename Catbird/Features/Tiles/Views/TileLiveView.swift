@@ -75,6 +75,7 @@ struct TileLiveView: View {
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Close Tile")
       }
     }
     .padding(.horizontal, 10)
@@ -131,7 +132,7 @@ struct TileLiveView: View {
 
     // Register custom scheme handler
     guard let urlScheme = URLScheme(scheme) else {
-      loadError = "Invalid tile scheme"
+      loadError = String(localized: "Invalid tile scheme", comment: "Error when custom URL scheme for a web tile is invalid")
       isLoading = false
       return
     }
@@ -144,7 +145,7 @@ struct TileLiveView: View {
 
     // Load the root resource
     guard let rootURL = URL(string: "\(scheme):///") else {
-      loadError = "Invalid tile root URL"
+      loadError = String(localized: "Invalid tile root URL", comment: "Error when root URL for a web tile cannot be constructed")
       isLoading = false
       return
     }

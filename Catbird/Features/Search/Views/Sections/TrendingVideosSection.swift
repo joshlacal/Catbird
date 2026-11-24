@@ -78,19 +78,23 @@ public struct TrendingVideosSection: View {
         subtitle: presentation == .discovery ? "A preview of The Vids, Bluesky’s video feed." : nil
       ) {
         Button { openVideoFeed(startingAt: nil) } label: {
-          Label("Open The Vids", systemImage: "chevron.right")
+          Label("Open The Vids", systemImage: "chevron.forward")
             .labelStyle(DisclosureLinkLabelStyle())
             .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
             .fixedSize(horizontal: false, vertical: true)
             .frame(minHeight: 44)
             .videoFeedZoomSource(postURI: nil, namespace: videoTransitionNamespace, cornerRadius: 12)
         }
-        .accessibilityHint("Open the full-screen Bluesky video feed")
+        .accessibilityHint(Text("Open the full-screen Bluesky video feed", comment: "Accessibility hint for Open The Vids button"))
       }
       if videos.isEmpty {
         HStack(spacing: DesignTokens.Spacing.md) {
           if isLoading { ProgressView() }
-          Text(isLoading ? "Loading video previews…" : "No video previews right now. Pull to refresh, or open The Vids.")
+          Text(
+            isLoading
+              ? LocalizedStringResource("Loading video previews…", comment: "Loading placeholder message in Trending Videos section")
+              : LocalizedStringResource("No video previews right now. Pull to refresh, or open The Vids.", comment: "Empty state message when no trending video previews are available")
+          )
             .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -176,8 +180,21 @@ public struct TrendingVideosSection: View {
     .accessibilityElement(children: .ignore)
     // The replacement element drops the Button trait on iOS 27; restore it for VoiceOver.
     .accessibilityAddTraits(.isButton)
-    .accessibilityLabel("Video by \(author)\((coverTitle ?? altText).map { ", \($0)" } ?? "")")
-    .accessibilityHint("Play this video in The Vids")
+    .accessibilityLabel(videoAccessibilityLabel(author: author, detail: coverTitle ?? altText))
+    .accessibilityHint(Text("Play this video in The Vids", comment: "Accessibility hint for a trending video preview card"))
+  }
+
+  private func videoAccessibilityLabel(author: String, detail: String?) -> Text {
+    if let detail, !detail.isEmpty {
+      return Text(
+        "Video by \(author), \(detail)",
+        comment: "Accessibility label for a trending video card — first variable is the creator name or handle, second is the video description or moderation warning"
+      )
+    }
+    return Text(
+      "Video by \(author)",
+      comment: "Accessibility label for a trending video card — variable is the creator name or handle"
+    )
   }
 
   private func openVideoFeed(startingAt post: AppBskyFeedDefs.PostView?) {

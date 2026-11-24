@@ -84,7 +84,12 @@ struct ContentLabelView: View {
             .buttonStyle(.plain)
             // The button stays the accessibility element, so VoiceOver announces a button and
             // activating it opens the details; a replacement element would drop both.
-            .accessibilityLabel(Text("Post labels: \(names.joined(separator: ", "))"))
+            .accessibilityLabel(
+                Text(
+                    "Post labels: \(names.formatted())",
+                    comment: "Accessibility label listing moderation labels on a post — variable is the formatted list of label names"
+                )
+            )
             .accessibilityHint("Shows label descriptions and who applied them")
             .accessibilityIdentifier("postLabelSummary")
             .sheet(isPresented: $showsDetails) {
@@ -122,7 +127,7 @@ struct ModerationCauseDetailsView: View {
                 .padding(.vertical, 4)
                 .accessibilityElement(children: .combine)
             }
-            .navigationTitle(String(localized: "Post Labels"))
+            .navigationTitle("Post Labels")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
             }
@@ -136,13 +141,23 @@ struct ModerationCauseDetailsView: View {
     private func attribution(for cause: ModerationCause) -> String {
         switch cause.source {
         case .user:
-            return String(localized: "Self-applied by the author")
+            return String(
+                localized: "Self-applied by the author",
+                comment: "Label attribution when the post's author applied the content label themselves"
+            )
         case .labeler(let did):
             if let creator = services[did]?.creator {
                 let name = creator.displayName.flatMap { $0.isEmpty ? nil : $0 }
-                return String(localized: "Issued by \(name.map { "\($0) (@\(creator.handle))" } ?? "@\(creator.handle)")")
+                let issuer = name.map { "\($0) (@\(creator.handle))" } ?? "@\(creator.handle)"
+                return String(
+                    localized: "Issued by \(issuer)",
+                    comment: "Label attribution naming the moderation service — variable is the labeler name or handle"
+                )
             }
-            return String(localized: "Issued by \(did)")
+            return String(
+                localized: "Issued by \(did)",
+                comment: "Label attribution naming the moderation service — variable is the labeler name or DID"
+            )
         }
     }
 

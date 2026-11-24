@@ -29,7 +29,7 @@ struct ModernTextEditor: View {
     
     @Environment(\.fontResolutionContext) private var fontResolutionContext
     
-    var placeholder: String = "What’s on your mind?"
+    var placeholder: String = String(localized: "What’s on your mind?", comment: "Placeholder text in the post composer")
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([Data]) -> Void)?
     var onTextChanged: ((AttributedString) -> Void)?
@@ -377,6 +377,7 @@ struct ModernTextEditor: View {
                         .background(Circle().fill(.regularMaterial))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Edit Link")
                 
                 Button {
                     rtLogger.debug("Inline Remove Link button tapped")
@@ -389,6 +390,7 @@ struct ModernTextEditor: View {
                         .background(Circle().fill(.regularMaterial))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Remove Link")
             }
         }
         .padding(.horizontal, 12)
@@ -415,7 +417,7 @@ struct ModernTextEditor: View {
                     insertMention(suggestion)
                 }) {
                     HStack {
-                        Text("@\(suggestion)")
+                        Text(verbatim: "@\(suggestion)")
                             .foregroundColor(.primary)
                         Spacer()
                     }
@@ -913,7 +915,7 @@ struct LegacyTextEditor: View {
     @Binding var attributedText: NSAttributedString
     @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
     
-    var placeholder: String = "What’s on your mind?"
+    var placeholder: String = String(localized: "What’s on your mind?", comment: "Placeholder text in the post composer")
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([String]) -> Void)?
     var onTextChanged: ((NSAttributedString) -> Void)?
@@ -942,7 +944,7 @@ struct ModernEnhancedRichTextEditor: View {
     @Binding var attributedText: NSAttributedString
     @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
     
-    var placeholder: String = "What’s on your mind?"
+    var placeholder: String = String(localized: "What’s on your mind?", comment: "Placeholder text in the post composer")
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([String]) -> Void)?
     var onTextChanged: ((NSAttributedString) -> Void)?
@@ -1048,7 +1050,7 @@ struct EnhancedTextEditor: View {
     @Binding var attributedText: AttributedString
     @Binding var textSelection: AttributedTextSelection
     
-    var placeholder: String = "What’s on your mind?"
+    var placeholder: String = String(localized: "What’s on your mind?", comment: "Placeholder text in the post composer")
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([Data]) -> Void)?
     var onTextChanged: ((AttributedString) -> Void)?
@@ -1077,7 +1079,7 @@ struct EnhancedTextEditor: View {
     @Binding var attributedText: AttributedString
     @Binding var textSelection: AttributedTextSelection
     
-    var placeholder: String = "What’s on your mind?"
+    var placeholder: String = String(localized: "What’s on your mind?", comment: "Placeholder text in the post composer")
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([Data]) -> Void)?
     var onTextChanged: ((AttributedString) -> Void)?

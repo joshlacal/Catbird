@@ -13,11 +13,11 @@ struct SectionHeaderView: View {
                                            relativeTo: .title3))
                 .foregroundColor(.primary)
             Spacer()
-            if title == "Pinned" {
+            if title == "Pinned" || title == String(localized: "Pinned", comment: "Section header title for pinned feeds.") {
                 Image(systemName: "pin.fill")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
-            } else if title == "Saved" {
+            } else if title == "Saved" || title == String(localized: "Saved", comment: "Section header title for saved feeds.") {
                 Image(systemName: "bookmark.fill")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)

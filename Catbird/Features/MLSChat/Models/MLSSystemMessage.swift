@@ -74,7 +74,7 @@ struct MLSSystemMessage: Identifiable, Sendable {
       timestamp: Date(),
       actorDID: nil,
       targetDID: nil,
-      infoText: "Encryption was reset"
+      infoText: String(localized: "Encryption was reset", comment: "System message when conversation encryption keys are reset")
     )
   }
 }
@@ -86,73 +86,96 @@ extension MLSSystemMessage {
     profiles: [String: MLSProfileEnricher.ProfileData],
     currentUserDID: String
   ) -> String {
-    let actorName = actorDID.flatMap { did -> String? in
-      if did == currentUserDID {
-        return "You"
-      }
-      return profiles[did]?.displayName ?? profiles[did]?.handle ?? shortDID(did)
-    }
+    let actorIsCurrentUser = actorDID == currentUserDID && !currentUserDID.isEmpty
+    let targetIsCurrentUser = targetDID == currentUserDID && !currentUserDID.isEmpty
 
-    let targetName = targetDID.flatMap { did -> String? in
-      if did == currentUserDID {
-        return "you"
-      }
-      return profiles[did]?.displayName ?? profiles[did]?.handle ?? shortDID(did)
+    let actorDisplayName = actorDID.map { did in
+      profiles[did]?.displayName ?? profiles[did]?.handle ?? shortDID(did)
+    }
+    let targetDisplayName = targetDID.map { did in
+      profiles[did]?.displayName ?? profiles[did]?.handle ?? shortDID(did)
     }
 
     switch type {
     case .memberJoined:
-      if let target = targetName {
-        return "\(target) joined the conversation"
+      if targetIsCurrentUser {
+        return String(localized: "You joined the conversation", comment: "System message when the current user joins a conversation")
+      } else if let target = targetDisplayName {
+        return String(localized: "\(target) joined the conversation", comment: "System message when a member joins a conversation. %@ is the member's name.")
       }
-      return "A member joined the conversation"
+      return String(localized: "A member joined the conversation", comment: "System message when an unnamed member joins a conversation")
 
     case .memberLeft:
-      if let target = targetName {
-        return "\(target) left the conversation"
+      if targetIsCurrentUser {
+        return String(localized: "You left the conversation")
+      } else if let target = targetDisplayName {
+        return String(localized: "\(target) left the conversation", comment: "System message when a member leaves a conversation. %@ is the member's name.")
       }
-      return "A member left the conversation"
+      return String(localized: "A member left the conversation", comment: "System message when an unnamed member leaves a conversation")
 
     case .memberKicked, .memberRemoved:
-      // Simplified: Always show as "left" regardless of reason
-      if let target = targetName {
-        return "\(target) left"
+      if targetIsCurrentUser {
+        return String(localized: "You left", comment: "System message when the current user leaves or is removed from a conversation")
+      } else if let target = targetDisplayName {
+        return String(localized: "\(target) left", comment: "System message when a member leaves or is removed from a conversation. %@ is the member's name.")
       }
-      return "A member left"
+      return String(localized: "A member left", comment: "System message when an unnamed member leaves or is removed")
 
     case .epochRotated:
-      return "Security keys were updated"
+      return String(localized: "Security keys were updated", comment: "System message when MLS epoch encryption keys rotate")
 
     case .groupCreated:
-      if let actor = actorName {
-        return "\(actor) created this conversation"
+      if actorIsCurrentUser {
+        return String(localized: "You created this conversation", comment: "System message when the current user created the conversation")
+      } else if let actor = actorDisplayName {
+        return String(localized: "\(actor) created this conversation", comment: "System message when another member created the conversation. %@ is the creator's name.")
       }
-      return "Conversation created"
+      return String(localized: "Conversation created", comment: "System message when a conversation is created")
 
     case .adminPromoted:
-      if let target = targetName, let actor = actorName {
-        return "\(actor) promoted \(target) to admin"
-      } else if let target = targetName {
-        return "\(target) was promoted to admin"
+      if actorIsCurrentUser, let target = targetDisplayName {
+        return String(localized: "You promoted \(target) to admin", comment: "System message when the current user promotes a member to admin. %@ is the promoted member's name.")
+      } else if targetIsCurrentUser, let actor = actorDisplayName {
+        return String(localized: "\(actor) promoted you to admin", comment: "System message when another member promotes the current user to admin. %@ is the actor's name.")
+      } else if targetIsCurrentUser {
+        return String(localized: "You were promoted to admin", comment: "System message when the current user is promoted to admin")
+      } else if let target = targetDisplayName, let actor = actorDisplayName {
+        return String(localized: "\(actor) promoted \(target) to admin", comment: "System message when one member promotes another to admin. %1$@ is the actor's name, %2$@ is the target's name.")
+      } else if let target = targetDisplayName {
+        return String(localized: "\(target) was promoted to admin", comment: "System message when a member is promoted to admin. %@ is the member's name.")
       }
-      return "A member was promoted to admin"
+      return String(localized: "A member was promoted to admin", comment: "System message when an unnamed member is promoted to admin")
 
     case .deviceAdded:
-      if let target = targetName {
-        let deviceInfo = infoText.map { " (\($0))" } ?? ""
-        return "\(target) added a new device\(deviceInfo)"
+      if targetIsCurrentUser {
+        if let infoText, !infoText.isEmpty {
+          return String(localized: "You added a new device (\(infoText))", comment: "System message when the current user adds a named device. %@ is the device name.")
+        }
+        return String(localized: "You added a new device", comment: "System message when the current user adds a new device")
+      } else if let target = targetDisplayName {
+        if let infoText, !infoText.isEmpty {
+          return String(localized: "\(target) added a new device (\(infoText))", comment: "System message when a member adds a named device. %1$@ is the member's name, %2$@ is the device name.")
+        }
+        return String(localized: "\(target) added a new device", comment: "System message when a member adds a new device. %@ is the member's name.")
       }
-      return "A new device was added"
+      return String(localized: "A new device was added", comment: "System message when a new device is added to the conversation")
 
     case .groupReset:
-      if let actor = actorName {
-        let reasonInfo = infoText.map { " (\($0))" } ?? ""
-        return "\(actor) reset the encryption for this conversation\(reasonInfo)"
+      if actorIsCurrentUser {
+        if let infoText, !infoText.isEmpty {
+          return String(localized: "You reset the encryption for this conversation (\(infoText))", comment: "System message when the current user resets group encryption with a reason. %@ is the reason.")
+        }
+        return String(localized: "You reset the encryption for this conversation", comment: "System message when the current user resets group encryption")
+      } else if let actor = actorDisplayName {
+        if let infoText, !infoText.isEmpty {
+          return String(localized: "\(actor) reset the encryption for this conversation (\(infoText))", comment: "System message when a member resets group encryption with a reason. %1$@ is the member's name, %2$@ is the reason.")
+        }
+        return String(localized: "\(actor) reset the encryption for this conversation", comment: "System message when a member resets group encryption. %@ is the member's name.")
       }
-      return "Encryption was reset for this conversation"
+      return String(localized: "Encryption was reset for this conversation", comment: "System message when conversation encryption is reset")
 
     case .infoMessage:
-      return infoText ?? "System message"
+      return infoText ?? String(localized: "System message", comment: "Fallback label for a chat system event")
     }
   }
 

@@ -224,14 +224,22 @@ struct LabyrinthSettingsAndRestoreView: View {
   /// "On" only once the engine has opened or created this account's archive on the server.
   /// A new account's local default says enabled before anything exists anywhere.
   nonisolated static func backupStatusLabel(enabled: Bool, established: Bool) -> String {
-    guard enabled else { return "Off" }
-    return established ? "On" : "Setting Up"
+    guard enabled else {
+      return String(localized: "Off")
+    }
+    return established
+      ? String(localized: "On", comment: "Labyrinth encrypted backup status when active and established")
+      : String(localized: "Setting Up", comment: "Labyrinth encrypted backup status before initial archive creation")
   }
 
   private var lastBackupAttemptLabel: String {
-    guard let outcome = lastFlushOutcome else { return "Not Run Yet" }
+    guard let outcome = lastFlushOutcome else {
+      return String(localized: "Not Run Yet", comment: "Labyrinth last backup attempt status before any backup has run")
+    }
     let time = outcome.date.formatted(date: .omitted, time: .shortened)
-    return outcome.failure == nil ? "Completed \(time)" : "Failed \(time)"
+    return outcome.failure == nil
+      ? String(localized: "Completed \(time)", comment: "Labyrinth last backup attempt status on success. %@ is the formatted time.")
+      : String(localized: "Failed \(time)", comment: "Labyrinth last backup attempt status on failure. %@ is the formatted time.")
   }
 
   private var lastBackupAttemptColor: Color {
@@ -253,7 +261,7 @@ struct LabyrinthSettingsAndRestoreView: View {
     Section("Encrypted Spaces Backup") {
       if let coordinator {
         LabeledContent("Account") {
-          Text(accountLabel(for: coordinator))
+          Text(verbatim: accountLabel(for: coordinator))
             .lineLimit(1)
             .truncationMode(.middle)
         }
@@ -271,7 +279,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             .foregroundStyle(.secondary)
         }
         LabeledContent("Mailbox Space") {
-          Text(status.mailboxSpaceUri)
+          Text(verbatim: status.mailboxSpaceUri)
             .font(.caption2.monospaced())
             .lineLimit(1)
             .truncationMode(.middle)
@@ -283,24 +291,22 @@ struct LabyrinthSettingsAndRestoreView: View {
           }
         }
         LabeledContent("Recovery Code Saved") {
-          Text(
-            hasUnacknowledgedRecoveryAttention
-              ? "Not Ready (Replacement Required)"
-              : (status.hasRecoveryCode ? "Yes" : "Optional (Not Set)")
-          )
-          .foregroundStyle(
-            hasUnacknowledgedRecoveryAttention ? .red : (status.hasRecoveryCode ? .green : .secondary)
-          )
+          if hasUnacknowledgedRecoveryAttention {
+            Text("Not Ready (Replacement Required)").foregroundStyle(.red)
+          } else if status.hasRecoveryCode {
+            Text("Yes").foregroundStyle(.green)
+          } else {
+            Text("Optional (Not Set)").foregroundStyle(.secondary)
+          }
         }
         LabeledContent("Passkey PRF Linked") {
-          Text(
-            hasUnacknowledgedRecoveryAttention
-              ? "Not Ready (Replacement Required)"
-              : (status.hasPasskeyPrf ? "Yes" : "Not Configured")
-          )
-          .foregroundStyle(
-            hasUnacknowledgedRecoveryAttention ? .red : (status.hasPasskeyPrf ? .green : .secondary)
-          )
+          if hasUnacknowledgedRecoveryAttention {
+            Text("Not Ready (Replacement Required)").foregroundStyle(.red)
+          } else if status.hasPasskeyPrf {
+            Text("Yes").foregroundStyle(.green)
+          } else {
+            Text("Not Configured").foregroundStyle(.secondary)
+          }
         }
         LabeledContent("Last Backup Attempt") {
           Text(lastBackupAttemptLabel)
@@ -309,14 +315,14 @@ struct LabyrinthSettingsAndRestoreView: View {
         .accessibilityIdentifier("labyrinth-last-backup-attempt")
         if let failure = lastFlushOutcome?.failure {
           // The engine's own error text: endpoints and status codes, not secrets.
-          Text(failure)
+          Text(verbatim: failure)
             .font(.caption2)
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-last-backup-failure")
         }
         DisclosureGroup("Details for Support") {
-          Text(supportDetails(status))
+          Text(verbatim: supportDetails(status))
             .font(.caption2.monospaced())
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
@@ -375,7 +381,8 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
 
         ForEach(Array(status.rotationExclusions.enumerated()), id: \.offset) { offset, exclusion in
-          let method = exclusion.recoveryMethod?.capitalized ?? "Device"
+          let method = exclusion.recoveryMethod?.localizedCapitalized
+            ?? String(localized: "Device", comment: "Fallback recovery method name when a device key is excluded during rotation")
           VStack(alignment: .leading, spacing: 4) {
             Label(
               "\(method) recovery was removed during rotation",
@@ -427,7 +434,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           Text("Save this 40-character recovery code in your password manager:")
             .font(.caption)
             .foregroundStyle(.secondary)
-          Text(generatedRecoveryCode)
+          Text(verbatim: generatedRecoveryCode)
             .font(.footnote.monospaced())
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-generated-recovery-code")
@@ -534,7 +541,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           Text("One-Time Code")
             .foregroundStyle(.secondary)
           Spacer()
-          Text(activeOtcOffer.formattedCode)
+          Text(verbatim: activeOtcOffer.formattedCode)
             .font(.title3.monospaced().bold())
             .accessibilityIdentifier("labyrinth-otc-formatted-code")
         }
@@ -560,7 +567,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           Text("Session ID (enter on authorized device):")
             .font(.caption)
             .foregroundStyle(.secondary)
-          Text(initiatedOtcSession.sessionIdHex)
+          Text(verbatim: initiatedOtcSession.sessionIdHex)
             .font(.caption2.monospaced())
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-otc-session-id")
@@ -609,7 +616,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       .accessibilityIdentifier("labyrinth-respond-otc-button")
 
       if let lastOtcCompletion {
-        Text("Paired with hybrid CPace + ML-KEM-768 (Epoch \(lastOtcCompletion.newEpochSeq)).")
+        Text(
+          "Paired with hybrid CPace + ML-KEM-768 (Epoch \(Int(lastOtcCompletion.newEpochSeq))).",
+          comment: "Status text after post-quantum OTC device pairing completes. %lld is the new Labyrinth epoch number."
+        )
           .font(.caption)
           .foregroundStyle(.green)
       }
@@ -694,7 +704,10 @@ struct LabyrinthSettingsAndRestoreView: View {
           let displayName = meta?.deviceName
             ?? (isThisDevice
               ? AppState.localMLSDeviceDisplayName(shortDeviceId: deviceId)
-              : "Device \(deviceId.prefix(8))")
+              : String(
+                localized: "Device \(String(deviceId.prefix(8)))",
+                comment: "Fallback display name for an enrolled MLS device. %@ is the 8-character device ID prefix."
+              ))
           let state = meta?.activityState ?? .active
           let allowRevoke = Self.canRevokeDevice(
             deviceId,
@@ -726,7 +739,7 @@ struct LabyrinthSettingsAndRestoreView: View {
                   .foregroundStyle(state.badgeTint)
                   .clipShape(Capsule())
               }
-              Text(deviceId)
+              Text(verbatim: deviceId)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -766,7 +779,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       .disabled(coordinator == nil || isLoading || importConversationId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
       if let importedCount {
-        Text("Verified \(importedCount) Space history messages.")
+        Text(
+          "Verified \(Int(importedCount)) Space history messages.",
+          comment: "Status label showing how many Space history messages were verified. %lld is the message count."
+        )
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -850,7 +866,10 @@ struct LabyrinthSettingsAndRestoreView: View {
   private func generateRecoveryCode() {
     guard let coordinator else { return }
     guard status != nil, !hasPersistedDeviceRevocationReceipt && !hasPersistedRecoveryCodeReceipt else {
-      self.errorMessage = "Save and acknowledge the pending recovery report before generating another recovery code."
+      self.errorMessage = String(
+        localized: "Save and acknowledge the pending recovery report before generating another recovery code.",
+        comment: "Error message when attempting to generate a new recovery code while an unacknowledged recovery report exists"
+      )
       return
     }
     let requiresDeviceSafetyConfirmation = hasUnacknowledgedRecoveryAttention
@@ -883,16 +902,22 @@ struct LabyrinthSettingsAndRestoreView: View {
         let refreshed = try await coordinator.labyrinthStatus()
         self.applyRecoveryStatus(refreshed)
         guard self.recoveryCodeReceipt == receipt else { return }
-        self.warningBanner =
-          "Save the new recovery code, then explicitly confirm it below. Recovery remains not ready until confirmation."
+        self.warningBanner = String(
+          localized: "Save the new recovery code, then explicitly confirm it below. Recovery remains not ready until confirmation.",
+          comment: "Warning banner after generating a new Labyrinth recovery code"
+        )
         if !refreshed.recoveryNeedsAttention {
-          self.errorMessage =
-            "The recovery code is stored, but recovery safety status could not be confirmed. Keep the code and retry acknowledgement."
+          self.errorMessage = String(
+            localized: "The recovery code is stored, but recovery safety status could not be confirmed. Keep the code and retry acknowledgement.",
+            comment: "Error message when recovery safety state cannot be verified after generating a code"
+          )
         }
       } catch {
         await self.refreshRecoveryMaterial()
-        self.warningBanner =
-          "Recovery remains not ready. If secure code storage failed, retry generation; the previous recovery code may no longer work."
+        self.warningBanner = String(
+          localized: "Recovery remains not ready. If secure code storage failed, retry generation; the previous recovery code may no longer work.",
+          comment: "Warning banner when generating or storing a Labyrinth recovery code fails"
+        )
         self.errorMessage = error.localizedDescription
       }
     }
@@ -915,8 +940,10 @@ struct LabyrinthSettingsAndRestoreView: View {
         )
         guard acknowledged else {
           await self.refreshRecoveryMaterial()
-          self.errorMessage =
-            "Couldn’t finish acknowledgement. The recovery code remains stored on this device; retry after resolving the error."
+          self.errorMessage = String(
+            localized: "Couldn’t finish acknowledgement. The recovery code remains stored on this device; retry after resolving the error.",
+            comment: "Error message when acknowledging a saved Labyrinth recovery code fails"
+          )
           return
         }
       } else {
@@ -935,7 +962,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       await self.refreshRecoveryMaterial()
       self.confirmedRevokedDeviceSecured = false
       self.warningBanner = nil
-      self.statusBanner = "Recovery code saved and recovery attention cleared."
+      self.statusBanner = String(
+        localized: "Recovery code saved and recovery attention cleared.",
+        comment: "Success banner after acknowledging a saved Labyrinth recovery code"
+      )
     }
   }
 
@@ -950,11 +980,20 @@ struct LabyrinthSettingsAndRestoreView: View {
         let restored = try await coordinator.restoreWithRecoveryCode(trimmed)
         self.applyRecoveryStatus(restored)
         self.restoreCodeInput = ""
-        self.statusBanner = "Restored Labyrinth epoch keys and rotated virtual device."
+        self.statusBanner = String(
+          localized: "Restored Labyrinth epoch keys and rotated virtual device.",
+          comment: "Success banner after restoring Labyrinth backup from a recovery code"
+        )
         if restored.recoveryMethodStale {
-          self.warningBanner = "This recovery method is stale but still valid. Recreate it before a future rotation removes it."
+          self.warningBanner = String(
+            localized: "This recovery method is stale but still valid. Recreate it before a future rotation removes it.",
+            comment: "Warning banner when a restored recovery method is older than the rotation threshold"
+          )
         } else if !restored.rotationExclusions.isEmpty {
-          self.warningBanner = "Some recovery methods were removed during rotation. Recreate the affected methods below."
+          self.warningBanner = String(
+            localized: "Some recovery methods were removed during rotation. Recreate the affected methods below.",
+            comment: "Warning banner when stale recovery methods were excluded during epoch rotation"
+          )
         } else {
           self.warningBanner = nil
         }
@@ -969,8 +1008,10 @@ struct LabyrinthSettingsAndRestoreView: View {
   private func enrollPasskeyPrf() {
     guard let coordinator else { return }
     guard !hasUnacknowledgedRecoveryAttention else {
-      self.errorMessage =
-        "Save and acknowledge the pending recovery report before registering another passkey."
+      self.errorMessage = String(
+        localized: "Save and acknowledge the pending recovery report before registering another passkey.",
+        comment: "Error message when attempting to register a passkey while recovery attention is unacknowledged"
+      )
       return
     }
     self.isLoading = true
@@ -990,7 +1031,10 @@ struct LabyrinthSettingsAndRestoreView: View {
           prfOutput32: passkey.prfOutput
         )
         self.applyRecoveryStatus(latest)
-        self.statusBanner = "Passkey PRF recovery secret registered."
+        self.statusBanner = String(
+          localized: "Passkey PRF recovery secret registered.",
+          comment: "Success banner after registering a passkey PRF recovery key"
+        )
         self.warningBanner = nil
         self.errorMessage = nil
       } catch {
@@ -1019,7 +1063,10 @@ struct LabyrinthSettingsAndRestoreView: View {
         )
         self.applyRecoveryStatus(restored)
         self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
-        self.statusBanner = "Restored Labyrinth backup using Passkey PRF."
+        self.statusBanner = String(
+          localized: "Restored Labyrinth backup using Passkey PRF.",
+          comment: "Success banner after restoring Labyrinth backup via Passkey PRF"
+        )
         self.warningBanner = nil
         self.errorMessage = nil
         await self.refreshDeviceMetadata()
@@ -1053,7 +1100,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       do {
         let session = try await coordinator.startOtcPairing(sixDigitCode: digits)
         self.initiatedOtcSession = session
-        self.statusBanner = "Started OTC pairing session. Approve it on an authorized device."
+        self.statusBanner = String(
+          localized: "Started OTC pairing session. Approve it on an authorized device.",
+          comment: "Status banner after starting a 6-digit OTC device pairing session"
+        )
         self.errorMessage = nil
       } catch {
         self.errorMessage = error.localizedDescription
@@ -1074,7 +1124,10 @@ struct LabyrinthSettingsAndRestoreView: View {
         self.respondOtcSessionIdInput = ""
         self.respondOtcCodeInput = ""
         self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
-        self.statusBanner = "Approved OTC pairing session and sealed epoch keys."
+        self.statusBanner = String(
+          localized: "Approved OTC pairing session and sealed epoch keys.",
+          comment: "Status banner after approving an OTC device pairing session"
+        )
         self.errorMessage = nil
         await self.refreshDeviceMetadata()
       } catch {
@@ -1096,7 +1149,10 @@ struct LabyrinthSettingsAndRestoreView: View {
         self.initiatedOtcSession = nil
         self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
         self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
-        self.statusBanner = "Device paired at Labyrinth epoch \(completion.newEpochSeq)."
+        self.statusBanner = String(
+          localized: "Device paired at Labyrinth epoch \(Int(completion.newEpochSeq)).",
+          comment: "Status banner after completing OTC device pairing. %lld is the new Labyrinth epoch number."
+        )
         self.errorMessage = nil
         await self.refreshDeviceMetadata()
       } catch {
@@ -1149,9 +1205,14 @@ struct LabyrinthSettingsAndRestoreView: View {
         self.fetchedDeviceMetadataByID.removeValue(
           forKey: targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         )
-        self.statusBanner = "Revoked device \(targetDeviceId) and rotated Labyrinth epoch."
+        self.statusBanner = String(
+          localized: "Revoked device \(targetDeviceId) and rotated Labyrinth epoch.",
+          comment: "Status banner after revoking an MLS device. %@ is the revoked device ID."
+        )
         if self.status?.rotationExclusions.isEmpty == false {
-          self.warningBanner = "Some recovery methods were removed during rotation. Recreate the affected methods below."
+          self.warningBanner = String(
+            localized: "Some recovery methods were removed during rotation. Recreate the affected methods below."
+          )
         } else {
           self.warningBanner = nil
         }
@@ -1181,7 +1242,11 @@ struct LabyrinthSettingsAndRestoreView: View {
             messages: existing
           )
         }
-        self.statusBanner = "Verified \(self.importedCount ?? 0) messages in \(convoId)."
+        let verifiedCount = Int(self.importedCount ?? 0)
+        self.statusBanner = String(
+          localized: "Verified \(verifiedCount) messages in \(convoId).",
+          comment: "Status banner after verifying Space conversation history. %1$lld is the message count, %2$@ is the conversation ID."
+        )
         self.errorMessage = nil
       } catch {
         self.errorMessage = error.localizedDescription
@@ -1239,15 +1304,15 @@ private enum LabyrinthPasskeyRegistrationError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidCredential:
-      "The passkey provider returned an invalid credential."
+      String(localized: "The passkey provider returned an invalid credential.", comment: "Error when WebAuthn passkey registration returns invalid credential data")
     case .backupIneligible:
-      "This passkey cannot be verified as backup eligible. Choose a synced passkey or use another recovery method."
+      String(localized: "This passkey cannot be verified as backup eligible. Choose a synced passkey or use another recovery method.", comment: "Error when a passkey is not backup-eligible for Labyrinth recovery")
     case .missingPresentationAnchor:
-      "Catbird cannot present passkey registration right now."
+      String(localized: "Catbird cannot present passkey registration right now.", comment: "Error when no window is available to present passkey registration")
     case .prfUnsupported:
-      "This passkey provider does not support encrypted PRF recovery."
+      String(localized: "This passkey provider does not support encrypted PRF recovery.", comment: "Error when the passkey authenticator does not support the WebAuthn PRF extension")
     case .unsupportedPlatform:
-      "Passkey PRF recovery requires iOS 18 or macOS 15."
+      String(localized: "Passkey PRF recovery requires iOS 18 or macOS 15.", comment: "Error when the OS version does not support WebAuthn PRF")
     }
   }
 }

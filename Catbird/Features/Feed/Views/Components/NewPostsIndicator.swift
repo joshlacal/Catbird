@@ -22,7 +22,10 @@ struct NewPostsIndicator: View {
   var reappearCooldown: TimeInterval = 3 // Reduced from 8 to 3 seconds
   var maxAvatarCount: Int = 3
   var allowSilentDismiss: Bool = true
-  var accessibilityLabelPrefix: String = "New posts available"
+  var accessibilityLabelPrefix: String = String(
+    localized: "New posts available",
+    comment: "Accessibility prefix for the floating new posts indicator"
+  )
 
   // Internal state
   @State private var isVisible = false
@@ -115,10 +118,17 @@ struct NewPostsIndicator: View {
     .scaleEffect(isVisible ? 1.0 : 0.85)
     .opacity(isVisible ? 1.0 : 0.0)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(accessibilityLabelPrefix + ", " + accessibilityCountLabel)
+    .accessibilityLabel(
+      Text(
+        "\(accessibilityLabelPrefix), \(accessibilityCountLabel)",
+        comment: "Accessibility label for new posts indicator — first variable is prefix, second is new post count phrase"
+      )
+    )
     .accessibilityAddTraits([.isButton])
     .accessibilityHint(
-      "Tap to jump to newest posts" + (allowSilentDismiss ? ", long press to dismiss" : "")
+      allowSilentDismiss
+        ? Text("Tap to jump to newest posts, long press to dismiss", comment: "Accessibility hint for dismissible new posts indicator")
+        : Text("Tap to jump to newest posts", comment: "Accessibility hint for new posts indicator")
     )
     .onTapGesture { activate() }
     .onLongPressGesture(minimumDuration: 0.35) {
@@ -128,11 +138,17 @@ struct NewPostsIndicator: View {
   }
 
   private var labelText: String {
-    newPostsCount == 1 ? "1 New Post" : "\(newPostsCount) New Posts"
+    String(
+      localized: "\(newPostsCount) New Posts",
+      comment: "Floating pill button label showing count of new posts — variable is the number of new posts"
+    )
   }
 
   private var accessibilityCountLabel: String {
-    newPostsCount == 1 ? "1 new post" : "\(newPostsCount) new posts"
+    String(
+      localized: "\(newPostsCount) new posts",
+      comment: "Floating banner title showing how many new posts arrived — variable is the number of new posts"
+    )
   }
 
   // MARK: - Actions / Lifecycle

@@ -190,7 +190,7 @@ final class ThreadManager {
       guard let client = client else {
         self.error = NSError(
           domain: "ThreadManager", code: -1,
-          userInfo: [NSLocalizedDescriptionKey: "Couldn’t load this thread. Check your connection and try again."]
+          userInfo: [NSLocalizedDescriptionKey: String(localized: "Couldn’t load this thread. Check your connection and try again.", comment: "Error when loading a thread fails because no network client is available")]
         )
         isLoading = false
         return
@@ -238,20 +238,20 @@ final class ThreadManager {
         if responseCode == 404 {
           self.error = NSError(
             domain: "ThreadManager", code: 404,
-            userInfo: [NSLocalizedDescriptionKey: "This post may have been deleted."])
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "This post may have been deleted.", comment: "Error when a thread's post returns HTTP 404")])
         } else if responseCode == 403 {
           // Genuine forbidden fetch (no body). A blocked *anchor* is NOT this
           // case — it arrives as a 200 with a `threadItemBlocked` at depth 0 and
           // is surfaced via `blockedAnchor`, not as an error.
           self.error = NSError(
             domain: "ThreadManager", code: 403,
-            userInfo: [NSLocalizedDescriptionKey: "This post isn’t available."])
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "This post isn’t available.", comment: "Error when a thread's post returns HTTP 403")])
         } else {
           logger.error("Thread fetch failed with response code \(responseCode)")
           self.error = NSError(
             domain: "ThreadManager", code: responseCode,
             userInfo: [
-              NSLocalizedDescriptionKey: "Couldn’t load this thread. Please try again."
+              NSLocalizedDescriptionKey: String(localized: "Couldn’t load this thread. Please try again.", comment: "Generic error when fetching a thread fails")
             ])
         }
       }

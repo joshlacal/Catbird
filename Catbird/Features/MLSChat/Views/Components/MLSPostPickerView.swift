@@ -133,7 +133,7 @@ struct MLSPostPickerView: View {
   private func loadPosts() async {
     guard let client = appState.atProtoClient,
           let currentUser = appState.currentUserProfile else {
-      error = "Not authenticated"
+      error = String(localized: "Not authenticated", comment: "Error when loading posts while signed out")
       return
     }
 
@@ -151,7 +151,7 @@ struct MLSPostPickerView: View {
       )
 
       guard responseCode == 200, let feed = response?.feed else {
-        error = "Failed to load posts (HTTP \(responseCode))"
+        error = String(localized: "Failed to load posts (HTTP \(responseCode))", comment: "Error when loading posts to share in chat fails. %lld is the HTTP status code.")
         isLoading = false
         return
       }
@@ -192,13 +192,21 @@ private struct PostPickerRow: View {
             .foregroundColor(.secondary)
 
           if let likeCount = post.likeCount, likeCount > 0 {
-            Label("\(likeCount)", systemImage: "heart")
+            Label {
+              Text(likeCount, format: .number)
+            } icon: {
+              Image(systemName: "heart")
+            }
               .designCaption()
               .foregroundColor(.secondary)
           }
 
           if let replyCount = post.replyCount, replyCount > 0 {
-            Label("\(replyCount)", systemImage: "bubble.left")
+            Label {
+              Text(replyCount, format: .number)
+            } icon: {
+              Image(systemName: "bubble.left")
+            }
               .designCaption()
               .foregroundColor(.secondary)
           }

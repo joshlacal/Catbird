@@ -118,7 +118,9 @@ extension ChatManager {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             logger.error("Cannot start group conversation: missing group name")
-            errorState = .invalidInput("Enter a name for the group.")
+            errorState = .invalidInput(
+                String(localized: "Enter a name for the group.", comment: "Validation error when group name is blank")
+            )
             return nil
         }
 
@@ -141,7 +143,9 @@ extension ChatManager {
 
         guard !uniqueMemberDIDs.isEmpty else {
             logger.error("Cannot start group conversation: no members selected")
-            errorState = .invalidInput("Select at least one person.")
+            errorState = .invalidInput(
+                String(localized: "Select at least one person.", comment: "Validation error when no group members are selected")
+            )
             return nil
         }
 

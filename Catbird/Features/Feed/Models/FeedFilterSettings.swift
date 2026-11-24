@@ -13,6 +13,35 @@ struct FeedFilter: Identifiable, Hashable {
   let isEnabled: Bool
   let filterBlock: (AppBskyFeedDefs.FeedViewPost) -> Bool
 
+  var displayName: String {
+    Self.localizedName(for: name)
+  }
+
+  static func localizedName(for id: String) -> String {
+    switch id {
+    case "Hide Reposts":
+      return String(localized: "Hide Reposts", comment: "Feed filter toggle title to hide reposted posts")
+    case "Hide Replies":
+      return String(localized: "Hide Replies", comment: "Feed filter toggle title to hide reply posts")
+    case "Hide Quote Posts":
+      return String(localized: "Hide Quote Posts", comment: "Feed filter toggle title to hide quote posts")
+    case "Hide Duplicate Posts":
+      return String(localized: "Hide Duplicate Posts", comment: "Feed filter toggle title to hide duplicate parent posts")
+    case "Only Text Posts":
+      return String(localized: "Only Text Posts", comment: "Feed filter toggle title to show text-only posts")
+    case "Only Media Posts":
+      return String(localized: "Only Media Posts", comment: "Feed filter toggle title to show media-only posts")
+    case "Hide Link Posts":
+      return String(localized: "Hide Link Posts", comment: "Feed filter toggle title to hide posts containing external links")
+    case "Filter by Language":
+      return String(localized: "Filter by Language", comment: "Feed filter toggle title to restrict posts to preferred content languages")
+    case "Content Filter":
+      return String(localized: "Content Filter", comment: "Generic label for an active feed content processor filter")
+    default:
+      return id
+    }
+  }
+
   func hash(into hasher: inout Hasher) {
     hasher.combine(id)
   }
@@ -32,6 +61,15 @@ struct FeedFilter: Identifiable, Hashable {
     case latest
     case relevant
     var id: String { rawValue }
+
+    var displayName: String {
+      switch self {
+      case .latest:
+        return String(localized: "Latest", comment: "Feed sort mode showing chronological posts")
+      case .relevant:
+        return String(localized: "Relevant", comment: "Feed sort mode ranking posts by relevance")
+      }
+    }
   }
 
   var sortMode: FeedSortMode = .latest {
@@ -100,7 +138,7 @@ struct FeedFilter: Identifiable, Hashable {
     filters = [
       FeedFilter(
         name: "Hide Reposts",
-        description: "Hide reposts from your feed",
+        description: String(localized: "Hide reposts from your feed", comment: "Feed filter description for hiding reposts"),
         isEnabled: false,
         filterBlock: { post in
           // Return true to keep, false to filter out
@@ -112,7 +150,7 @@ struct FeedFilter: Identifiable, Hashable {
       ),
       FeedFilter(
         name: "Hide Replies",
-        description: "Hide reply posts except your own replies",
+        description: String(localized: "Hide reply posts except your own replies", comment: "Feed filter description for hiding replies"),
         isEnabled: false,
         filterBlock: { post in
           // Only filter out replies that aren't self-threads
@@ -154,7 +192,7 @@ struct FeedFilter: Identifiable, Hashable {
       ),
       FeedFilter(
         name: "Hide Quote Posts",
-        description: "Hide posts that quote other posts",
+        description: String(localized: "Hide posts that quote other posts", comment: "Feed filter description for hiding quote posts"),
         isEnabled: false,
         filterBlock: { post in
           if case .appBskyFeedDefsPostView(let parent) = post.reply?.parent {
@@ -183,14 +221,14 @@ struct FeedFilter: Identifiable, Hashable {
       ),
       FeedFilter(
         name: "Hide Duplicate Posts",
-        description: "Hide standalone posts that also appear as parent posts in replies",
+        description: String(localized: "Hide standalone posts that also appear as parent posts in replies", comment: "Feed filter description for hiding duplicate parent posts"),
         isEnabled: true,
         // The actual logic is handled in FeedModel, this block is a placeholder
         filterBlock: { _ in true }
       ),
       FeedFilter(
         name: "Only Text Posts",
-        description: "Show only posts with text (no images, videos, or links)",
+        description: String(localized: "Show only posts with text (no images, videos, or links)", comment: "Feed filter description for text-only posts"),
         isEnabled: false,
         filterBlock: { post in
           return post.post.embed == nil
@@ -198,7 +236,7 @@ struct FeedFilter: Identifiable, Hashable {
       ),
       FeedFilter(
         name: "Only Media Posts",
-        description: "Show only posts with images or videos",
+        description: String(localized: "Show only posts with images or videos", comment: "Feed filter description for media-only posts"),
         isEnabled: false,
         filterBlock: { post in
           // Check the main post's embed
@@ -223,7 +261,7 @@ struct FeedFilter: Identifiable, Hashable {
       ),
       FeedFilter(
         name: "Hide Link Posts",
-        description: "Hide posts with external links",
+        description: String(localized: "Hide posts with external links", comment: "Feed filter description for hiding external link posts"),
         isEnabled: false,
         filterBlock: { post in
           // Check the main post for external links in embeds
@@ -267,7 +305,7 @@ struct FeedFilter: Identifiable, Hashable {
       ),
       FeedFilter(
         name: "Filter by Language",
-        description: "Only show posts in your selected content languages",
+        description: String(localized: "Only show posts in your selected content languages", comment: "Feed filter description for filtering posts by language"),
         isEnabled: false,
         // The actual filtering is done by LanguageFilterProcessor
         filterBlock: { _ in true }

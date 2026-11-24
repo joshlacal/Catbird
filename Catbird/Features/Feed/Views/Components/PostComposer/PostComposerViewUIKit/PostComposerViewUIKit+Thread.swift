@@ -77,7 +77,7 @@ extension PostComposerViewUIKit {
                 .buttonStyle(.plain)
                 .padding(.top, -10)
                 .padding(.trailing, -12)
-                .accessibilityLabel("Remove Post \(index + 1)")
+                .accessibilityLabel(Text("Remove Post \(index + 1)", comment: "Accessibility label to remove a numbered post from a thread; variable is 1-based post number"))
                 .disabled(hasPendingMediaIntent)
               }
             }
@@ -136,7 +136,7 @@ extension PostComposerViewUIKit {
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
-        placeholder: "What’s on your mind?",
+        placeholder: String(localized: "What’s on your mind?", comment: "Placeholder text in the post composer"),
         onImagePasted: { image in
           #if os(iOS)
           pendingPasteCount += 1
@@ -216,16 +216,23 @@ extension PostComposerViewUIKit {
           .fontWeight(.semibold)
       }
 
-      Text(entry.text.isEmpty ? "Write post…" : entry.text)
-        .appFont(AppTextRole.body)
-        .foregroundColor(entry.text.isEmpty ? .secondary : .primary)
-        .multilineTextAlignment(.leading)
-        .lineLimit(6)
-        .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+      Group {
+        if entry.text.isEmpty {
+          Text("Write post…", comment: "Placeholder for an empty post in a thread")
+            .foregroundColor(.secondary)
+        } else {
+          Text(entry.text)
+            .foregroundColor(.primary)
+        }
+      }
+      .appFont(AppTextRole.body)
+      .multilineTextAlignment(.leading)
+      .lineLimit(6)
+      .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
 
       if entry.text.count > vm.maxCharacterCount {
         let over = entry.text.count - vm.maxCharacterCount
-        Text("\(over) character\(over == 1 ? "" : "s") over the limit")
+        Text("\(over) characters over the limit", comment: "Validation message when a thread post exceeds character limit; variable is number of extra characters")
           .appFont(AppTextRole.caption)
           .foregroundStyle(Color.red)
       }
@@ -336,7 +343,14 @@ extension PostComposerViewUIKit {
   private func inactiveEntryEmbedSummary(entry: ThreadEntry) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       if let quoted = entry.quotedPost {
-        Label("Quoting @\(quoted.author.handle.description)", systemImage: "quote.bubble")
+        Label {
+          Text(
+            "Quoting \(Text(verbatim: "@\(quoted.author.handle.description)"))",
+            comment: "Compact summary on an inactive thread post indicating which user handle it quotes"
+          )
+        } icon: {
+          Image(systemName: "quote.bubble")
+        }
       } else if entry.draftQuotedPostURI != nil {
         Label("Quoting a post", systemImage: "quote.bubble")
       }
@@ -408,13 +422,14 @@ extension PostComposerViewUIKit {
               HStack(spacing: 6) {
                 ForEach(vm.outlineTags, id: \.self) { tag in
                   HStack(spacing: 4) {
-                    Text("#\(tag)")
+                    Text(verbatim: "#\(tag)")
                       .font(.system(size: 11, weight: .medium))
                     Button(action: { vm.outlineTags.removeAll { $0 == tag } }) {
                       Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                     }
+                    .accessibilityLabel(Text("Remove hashtag \(tag)", comment: "Accessibility label to remove a hashtag chip"))
                   }
                   .padding(.horizontal, 8)
                   .padding(.vertical, 4)
@@ -432,6 +447,7 @@ extension PostComposerViewUIKit {
                       .font(.system(size: 12))
                       .foregroundColor(.secondary)
                   }
+                  .accessibilityLabel("Add Hashtag")
                 }
               }
               .padding(.horizontal, 1)
@@ -449,14 +465,16 @@ extension PostComposerViewUIKit {
               ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                   ForEach(vm.selectedLanguages, id: \.self) { lang in
+                    let langName = locale.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier
                     HStack(spacing: 4) {
-                      Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                      Text(langName)
                         .font(.system(size: 11, weight: .medium))
                       Button(action: { vm.toggleLanguage(lang) }) {
                         Image(systemName: "xmark.circle.fill")
                           .font(.system(size: 10))
                           .foregroundColor(.secondary)
                       }
+                      .accessibilityLabel(Text("Remove language \(langName)", comment: "Accessibility label to remove a selected post language chip"))
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -498,7 +516,7 @@ extension PostComposerViewUIKit {
           ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
               ForEach(entry.outlineTags, id: \.self) { tag in
-                Text("#\(tag)")
+                Text(verbatim: "#\(tag)")
                   .font(.system(size: 11, weight: .medium))
                   .padding(.horizontal, 8)
                   .padding(.vertical, 4)
@@ -528,7 +546,7 @@ extension PostComposerViewUIKit {
             ScrollView(.horizontal, showsIndicators: false) {
               HStack(spacing: 6) {
                 ForEach(entry.selectedLanguages, id: \.self) { lang in
-                  Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                  Text(locale.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
                     .font(.system(size: 11, weight: .medium))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

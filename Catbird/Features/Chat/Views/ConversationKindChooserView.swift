@@ -14,9 +14,9 @@ struct ConversationKindChooserView: View {
           AsyncProfileImage(url: model.recipient.avatarURL, size: 44)
           VStack(alignment: .leading, spacing: 2) {
             if let displayName = model.recipient.displayName, !displayName.isEmpty {
-              Text(displayName).font(.headline).lineLimit(1)
+              Text(verbatim: displayName).font(.headline).lineLimit(1)
             }
-            Text("@\(model.recipient.handle)")
+            Text(verbatim: "@\(model.recipient.handle)")
               .font(.subheadline)
               .foregroundStyle(.secondary)
               .lineLimit(1)
@@ -73,7 +73,7 @@ struct ConversationKindChooserView: View {
         if model.isStarting {
           ProgressView()
         } else {
-          Image(systemName: "chevron.right")
+          Image(systemName: "chevron.forward")
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.tertiary)
         }

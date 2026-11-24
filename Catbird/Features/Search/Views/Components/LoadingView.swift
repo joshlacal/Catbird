@@ -2,7 +2,7 @@ import SwiftUI
 
 /// A view that displays a loading indicator with an optional message
 struct LoadingWithMessageView: View {
-    let message: String
+    let message: LocalizedStringResource
     
     var body: some View {
         VStack(spacing: 16) {

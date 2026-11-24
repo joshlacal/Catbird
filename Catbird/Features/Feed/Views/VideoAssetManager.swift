@@ -421,13 +421,20 @@ final class VideoAssetManager {
 
     var errorDescription: String? {
       switch self {
-      case .timeout: return "Video loading timed out"
-      case .notPlayable: return "Video is not playable"
-      case .noTracks: return "No playable tracks found"
-      case .noPlayerItem: return "Unable to create player item"
-      case .playerFailed: return "Player initialization failed"
-      case .unknown: return "An unknown error occurred"
-      case .trackCreationFailed: return "Video track creation failed"
+      case .timeout:
+        return String(localized: "Video loading timed out", comment: "Error when a video stream takes too long to load")
+      case .notPlayable:
+        return String(localized: "Video is not playable", comment: "Error when a video asset cannot be played")
+      case .noTracks:
+        return String(localized: "No playable tracks found", comment: "Error when a video asset contains no media tracks")
+      case .noPlayerItem:
+        return String(localized: "Unable to create player item", comment: "Error when AVPlayerItem creation fails")
+      case .playerFailed:
+        return String(localized: "Player initialization failed", comment: "Error when the video player fails to initialize")
+      case .unknown:
+        return String(localized: "An unknown error occurred", comment: "Fallback video playback error")
+      case .trackCreationFailed:
+        return String(localized: "Video track creation failed", comment: "Error when video track composition fails")
       }
     }
   }

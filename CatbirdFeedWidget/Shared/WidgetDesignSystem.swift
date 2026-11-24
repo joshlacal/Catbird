@@ -52,7 +52,7 @@ struct WidgetAvatar: View {
 
   private var initial: String {
     let trimmed = (name ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "@ "))
-    return trimmed.first.map { String($0).uppercased() } ?? ""
+    return trimmed.first.map { String($0).localizedUppercase } ?? ""
   }
 
   var body: some View {
@@ -72,14 +72,14 @@ struct WidgetAvatar: View {
 
 struct WidgetHeader: View {
   let avatarName: String?
-  let title: String
-  let subtitle: String?
+  let title: LocalizedStringResource
+  let subtitle: Text?
   let lastUpdated: Date?
 
   init(
     avatarName: String? = nil,
-    title: String,
-    subtitle: String? = nil,
+    title: LocalizedStringResource,
+    subtitle: Text? = nil,
     lastUpdated: Date? = nil
   ) {
     self.avatarName = avatarName
@@ -99,7 +99,7 @@ struct WidgetHeader: View {
           .lineLimit(1)
 
         if let subtitle {
-          Text(subtitle)
+          subtitle
             .font(.system(size: 9))
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -133,22 +133,25 @@ struct EngagementRow: View {
 
   var body: some View {
     HStack(spacing: WidgetSpacing.md) {
-      Label(formatCount(likes), systemImage: WidgetSymbol.like)
-      Label(formatCount(reposts), systemImage: WidgetSymbol.repost)
-      Label(formatCount(replies), systemImage: WidgetSymbol.reply)
+      Label {
+        Text(likes, format: .number.notation(.compactName))
+      } icon: {
+        Image(systemName: WidgetSymbol.like)
+      }
+      Label {
+        Text(reposts, format: .number.notation(.compactName))
+      } icon: {
+        Image(systemName: WidgetSymbol.repost)
+      }
+      Label {
+        Text(replies, format: .number.notation(.compactName))
+      } icon: {
+        Image(systemName: WidgetSymbol.reply)
+      }
     }
     .font(.system(size: fontSize))
     .foregroundStyle(.secondary)
     .labelStyle(WidgetCompactLabelStyle())
-  }
-
-  private func formatCount(_ count: Int) -> String {
-    if count >= 10_000 {
-      return String(format: "%.1fK", Double(count) / 1000.0)
-    } else if count >= 1000 {
-      return String(format: "%.1fK", Double(count) / 1000.0)
-    }
-    return "\(count)"
   }
 }
 
@@ -198,7 +201,7 @@ struct PostRow: View {
             .font(.system(size: fontSize - 1.5))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-          Text("·")
+          Text(verbatim: "·")
             .font(.system(size: fontSize - 1.5))
             .foregroundStyle(.secondary)
           Text(post.timestamp, style: .relative)
@@ -209,9 +212,16 @@ struct PostRow: View {
 
         // Repost indicator
         if post.isRepost, let repostAuthor = post.repostAuthorName {
-          Label("Reposted by \(repostAuthor)", systemImage: WidgetSymbol.repost)
-            .font(.system(size: fontSize - 2))
-            .foregroundStyle(.secondary)
+          Label {
+            Text(
+              "Reposted by \(repostAuthor)",
+              comment: "Indicates who reposted a post in the feed widget; placeholder is the reposter's display name."
+            )
+          } icon: {
+            Image(systemName: WidgetSymbol.repost)
+          }
+          .font(.system(size: fontSize - 2))
+          .foregroundStyle(.secondary)
         }
 
         // Post text

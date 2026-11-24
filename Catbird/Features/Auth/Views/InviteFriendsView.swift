@@ -15,6 +15,23 @@ public enum InviteTheme: String, CaseIterable, Identifiable, Sendable {
     
     public var id: String { rawValue }
     
+    public var displayName: LocalizedStringResource {
+        switch self {
+        case .dawn:
+            return LocalizedStringResource("Dawn", comment: "Name of the Dawn color theme for the QR invite card.")
+        case .sunlight:
+            return LocalizedStringResource("Sunlight", comment: "Name of the Sunlight color theme for the QR invite card.")
+        case .day:
+            return LocalizedStringResource("Day", comment: "Name of the Day color theme for the QR invite card.")
+        case .dusk:
+            return LocalizedStringResource("Dusk", comment: "Name of the Dusk color theme for the QR invite card.")
+        case .twilight:
+            return LocalizedStringResource("Twilight", comment: "Name of the Twilight color theme for the QR invite card.")
+        case .night:
+            return LocalizedStringResource("Night", comment: "Name of the Night color theme for the QR invite card.")
+        }
+    }
+    
     public var gradientColors: [Color] {
         switch self {
         case .dawn:
@@ -199,8 +216,8 @@ public struct InviteFriendsView: View {
                         // Share Card Link / Image
                         ShareLink(
                             item: inviteURL,
-                            subject: Text("Connect with me on Bluesky"),
-                            message: Text("Find me on Bluesky @\(currentHandle): \(inviteURL.absoluteString)")
+                            subject: Text("Connect with me on Bluesky", comment: "Subject line when sharing a Bluesky profile invite link."),
+                            message: Text("Find me on Bluesky @\(currentHandle): \(inviteURL.absoluteString)", comment: "Share message when inviting friends to Bluesky. First placeholder is the user's handle, second is the profile URL.")
                         ) {
                             HStack(spacing: 8) {
                                 Image(systemName: "square.and.arrow.up")
@@ -317,7 +334,7 @@ public struct InviteFriendsView: View {
                         .foregroundStyle(selectedTheme.foregroundColor)
                         .lineLimit(1)
                     
-                    Text("@\(currentHandle)")
+                    Text(verbatim: "@\(currentHandle)")
                         .font(.subheadline)
                         .foregroundStyle(selectedTheme.secondaryForegroundColor)
                         .lineLimit(1)
@@ -379,10 +396,9 @@ public struct InviteFriendsView: View {
     
     private var themeSelector: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Card Theme")
+            Text("Card Theme", comment: "Section header for choosing a visual theme on the QR invite card.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .textCase(.uppercase)
                 .padding(.horizontal, 8)
             
             ScrollView(.horizontal, showsIndicators: false) {
@@ -409,7 +425,7 @@ public struct InviteFriendsView: View {
                                             .stroke(Color.primary.opacity(0.15), lineWidth: 1)
                                     )
                                 
-                                Text(theme.rawValue)
+                                Text(theme.displayName)
                                     .font(.subheadline)
                                     .fontWeight(selectedTheme == theme ? .semibold : .regular)
                                     .foregroundStyle(.primary)

@@ -21,9 +21,9 @@ struct LikesView: View {
             return title
         }
         if postUri.contains("app.bsky.labeler.service") {
-            return "Liked By"
+            return String(localized: "Liked By", comment: "Navigation bar title for users who liked a labeler service")
         }
-        return "Likes"
+        return String(localized: "Likes", comment: "Navigation bar title for users who liked a post")
     }
 
     private var contentMaxWidth: CGFloat {

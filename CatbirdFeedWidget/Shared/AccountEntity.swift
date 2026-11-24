@@ -9,7 +9,16 @@ import Foundation
 
 @available(iOS 17.0, *)
 public struct AccountEntity: AppEntity {
-  public static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Account")
+  public static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource(
+      "Account",
+      comment: "Widget configuration entity type name for a signed-in Bluesky account."
+    ),
+    numericFormat: LocalizedStringResource(
+      "\(placeholder: .int) accounts",
+      comment: "Pluralized count of signed-in Bluesky accounts."
+    )
+  )
     public static var defaultQuery = AccountEntityQuery()
 
     public let id: String  // DID
@@ -18,9 +27,10 @@ public struct AccountEntity: AppEntity {
   let avatarURL: URL?
 
     public var displayRepresentation: DisplayRepresentation {
-    DisplayRepresentation(
+    let formattedHandle = "@\(handle)"
+    return DisplayRepresentation(
       title: "\(displayName)",
-      subtitle: "@\(handle)"
+      subtitle: "\(formattedHandle)"
     )
   }
 }

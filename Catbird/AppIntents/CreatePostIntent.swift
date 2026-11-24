@@ -54,38 +54,102 @@ enum CreatePostEmbedBuilder {
 
 @available(iOS 18.0, *)
 struct CreatePostIntent: AppIntent {
-  static let title: LocalizedStringResource = "Create Post"
+  static let title: LocalizedStringResource = LocalizedStringResource(
+    "Create Post",
+    comment: "App Intent title for publishing a new Bluesky post."
+  )
   static let description = IntentDescription(
-    "Publish a Bluesky post. Mentions, hashtags, and links in the text are detected automatically; optionally reply to or quote a post and attach up to 4 images."
+    LocalizedStringResource(
+      "Publish a Bluesky post. Mentions, hashtags, and links in the text are detected automatically; optionally reply to or quote a post and attach up to 4 images.",
+      comment: "App Intent description for Create Post."
+    )
   )
 
-  @Parameter(title: "Account")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Account",
+      comment: "Parameter title for choosing which signed-in Bluesky account publishes the post."
+    )
+  )
   var account: AccountEntity?
 
-  @Parameter(title: "Text", requestValueDialog: IntentDialog("What do you want to post?"))
+  @Parameter(
+    title: LocalizedStringResource(
+      "Text",
+      comment: "Parameter title for the body text of a Bluesky post."
+    ),
+    requestValueDialog: IntentDialog(
+      LocalizedStringResource(
+        "What do you want to post?",
+        comment: "Prompt spoken by Siri asking for the post body text."
+      )
+    )
+  )
   var text: String
 
-  @Parameter(title: "Reply To")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Reply To",
+      comment: "Parameter title for an optional parent post to reply to."
+    )
+  )
   var replyTo: PostEntity?
 
-  @Parameter(title: "Quote")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Quote",
+      comment: "Parameter title for an optional post to quote."
+    )
+  )
   var quote: PostEntity?
 
-  @Parameter(title: "Images", default: [], supportedContentTypes: [.image])
+  @Parameter(
+    title: LocalizedStringResource(
+      "Images",
+      comment: "Parameter title for image attachments on a new Bluesky post."
+    ),
+    default: [],
+    supportedContentTypes: [.image]
+  )
   var images: [IntentFile]
 
-  @Parameter(title: "Alt Text")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Alt Text",
+      comment: "Parameter title for accessibility description text on the attached image."
+    )
+  )
   var altText: String?
+
+  static var parameterSummary: some ParameterSummary {
+    Summary("Post \(\.$text)") {
+      \.$replyTo
+      \.$quote
+      \.$images
+      \.$altText
+      \.$account
+    }
+  }
 
   init() {}
 
   func perform() async throws -> some IntentResult & ReturnsValue<PostEntity?> & ProvidesDialog {
     let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedText.isEmpty || !images.isEmpty else {
-      throw IntentError.invalidParameter("A post needs text or at least one image.")
+      throw IntentError.invalidParameter(
+        LocalizedStringResource(
+          "A post needs text or at least one image.",
+          comment: "Validation error when Create Post is run with neither text nor images."
+        )
+      )
     }
     guard images.count <= 4 else {
-      throw IntentError.invalidParameter("Bluesky posts support at most 4 images.")
+      throw IntentError.invalidParameter(
+        LocalizedStringResource(
+          "Bluesky posts support at most 4 images.",
+          comment: "Validation error when more than 4 images are attached to Create Post."
+        )
+      )
     }
 
     let did = account?.id ?? IntentAccountResolver.activeDID()
@@ -111,13 +175,23 @@ struct CreatePostIntent: AppIntent {
       }
       if let replyTo {
         guard let view = byURI[replyTo.id] else {
-          throw IntentError.invalidParameter("Catbird couldn't load the post you're replying to.")
+          throw IntentError.invalidParameter(
+            LocalizedStringResource(
+              "Catbird couldn't load the post you're replying to.",
+              comment: "Error when the reply target post cannot be fetched before publishing."
+            )
+          )
         }
         parentView = view
       }
       if let quote {
         guard let view = byURI[quote.id] else {
-          throw IntentError.invalidParameter("Catbird couldn't load the post you're quoting.")
+          throw IntentError.invalidParameter(
+            LocalizedStringResource(
+              "Catbird couldn't load the post you're quoting.",
+              comment: "Error when the quoted post cannot be fetched before publishing."
+            )
+          )
         }
         quoteRef = ComAtprotoRepoStrongRef(uri: view.uri, cid: view.cid)
       }
@@ -182,9 +256,19 @@ struct CreatePostIntent: AppIntent {
 
     let dialog: IntentDialog
     if parentView == nil {
-      dialog = IntentDialog("Posted.")
+      dialog = IntentDialog(
+        LocalizedStringResource(
+          "Posted.",
+          comment: "Spoken confirmation after publishing a new Bluesky post."
+        )
+      )
     } else {
-      dialog = IntentDialog("Reply posted.")
+      dialog = IntentDialog(
+        LocalizedStringResource(
+          "Reply posted.",
+          comment: "Spoken confirmation after publishing a reply on Bluesky."
+        )
+      )
     }
     return .result(value: createdEntity, dialog: dialog)
   }

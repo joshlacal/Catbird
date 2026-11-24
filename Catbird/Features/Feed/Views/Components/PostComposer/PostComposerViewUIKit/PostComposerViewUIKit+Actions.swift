@@ -47,7 +47,8 @@ extension PostComposerViewUIKit {
           isSubmitting = false
           vm.saveDraftIfNeeded()
           appState.toastManager.show(ToastItem(
-            message: "Your newer draft changes have been kept.", icon: "doc.text"
+            message: String(localized: "Your newer draft changes have been kept.", comment: "Toast shown when newer edits made during submission are preserved"),
+            icon: "doc.text"
           ))
           return
         }

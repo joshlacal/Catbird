@@ -8,13 +8,25 @@ enum TrendStartedLabel {
     let hours = minutes / 60
     let days = hours / 24
     if days > 0 {
-      return days == 1 ? "1 day ago" : "\(days) days ago"
+      return String(
+        localized: "\(days) days ago",
+        comment: "Relative time since a trending topic started, in days."
+      )
     } else if hours > 0 {
-      return hours == 1 ? "1 hour ago" : "\(hours) hours ago"
+      return String(
+        localized: "\(hours) hours ago",
+        comment: "Relative time since a trending topic started, in hours."
+      )
     } else if minutes > 0 {
-      return minutes == 1 ? "1 min ago" : "\(minutes) mins ago"
+      return String(
+        localized: "\(minutes) mins ago",
+        comment: "Relative time since a trending topic started, in minutes."
+      )
     } else {
-      return "just now"
+      return String(
+        localized: "just now",
+        comment: "Relative time when a trending topic started less than a minute ago."
+      )
     }
   }
 }
