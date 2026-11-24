@@ -180,12 +180,12 @@ actor ManagementRecordingCircleTransport: CircleTransport {
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
     if let error { throw error }
-    return try! ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/test123")
+    return try! ATProtocolURI(uriString: "\(destination.uri.uriString())/did:plc:alice/app.bsky.feed.post/test123")
   }
 
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
     if let error { throw error }
-    return try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.like/like123")
+    return try! ATProtocolURI(uriString: "\(circle.uri.uriString())/did:plc:alice/app.bsky.feed.like/like123")
   }
 
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {

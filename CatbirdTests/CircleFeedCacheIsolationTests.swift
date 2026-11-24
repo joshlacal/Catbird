@@ -93,7 +93,7 @@ struct CircleFeedCacheIsolationTests {
       id: "n1",
       reason: .value_reply,
       actor: Self.makeProfile(),
-      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/123"),
+      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/123"),
       indexedAt: ATProtocolDate(date: Date()),
       circle: CircleTestFixtures.family
     )
@@ -114,7 +114,7 @@ struct CircleFeedCacheIsolationTests {
       id: "n1",
       reason: .value_reply,
       actor: Self.makeProfile(),
-      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/123"),
+      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/123"),
       indexedAt: ATProtocolDate(date: Date()),
       circle: CircleTestFixtures.family
     )
@@ -122,7 +122,7 @@ struct CircleFeedCacheIsolationTests {
       id: "n2",
       reason: .value_like,
       actor: Self.makeProfile(),
-      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.workURI.uriString())/app.bsky.feed.post/456"),
+      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.workURI.uriString())/did:plc:alice/app.bsky.feed.post/456"),
       indexedAt: ATProtocolDate(date: Date()),
       circle: CircleTestFixtures.work
     )

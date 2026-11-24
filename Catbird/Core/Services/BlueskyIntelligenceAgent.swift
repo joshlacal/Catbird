@@ -62,7 +62,30 @@ enum AskCatbirdToolPolicy {
             }
         }
 
-        var toolResultReserve: Int { reads * (resultTokens + 64) }
+        var toolResultReserve: Int { toolResultReserve(reads: reads) }
+
+        func toolResultReserve(reads: Int) -> Int { reads * (resultTokens + 64) }
+
+        /// Ways to run a turn, richest first: every planned lookup, then half as many
+        /// down to one, then no tools. Each reserves instructions, tool definitions,
+        /// the results of its lookups and the answer.
+        func reserves(
+            instructionsWithTools: Int, instructionsWithoutTools: Int, toolDefinitions: Int, offersTools: Bool
+        ) -> [CopilotReserve] {
+            var options: [CopilotReserve] = []
+            if offersTools {
+                var count = reads
+                while count >= 1 {
+                    options.append(CopilotReserve(
+                        level: .tools(reads: count),
+                        tokens: instructionsWithTools + toolDefinitions + responseTokens + toolResultReserve(reads: count)
+                    ))
+                    count = count == 1 ? 0 : max(1, count / 2)
+                }
+            }
+            options.append(CopilotReserve(level: .noTools, tokens: instructionsWithoutTools + responseTokens))
+            return options
+        }
     }
 
     static func postURI(_ input: String) throws -> ATProtocolURI {
@@ -363,9 +386,10 @@ actor BlueskyIntelligenceAgent {
         let plan = CopilotTurnPlan.make(prompt: prompt, context: context, route: .privateCloudCompute)
         let budget = AskCatbirdToolPolicy.Budget(route: .privateCloudCompute)
         let linkRegistry = AskCatbirdLinkRegistry(seedText: [prompt, Self.formatContextualPrompt(context: context, history: history, prompt: prompt)])
+        let readBudget = CopilotReadBudget(maximumReads: budget.reads)
         let toolContext = ToolContext(
             client: client, logger: logger, sourceCollector: sourceCollector,
-            readBudget: CopilotReadBudget(maximumReads: budget.reads),
+            readBudget: readBudget,
             maximumResultTokens: budget.resultTokens,
             linkRegistry: linkRegistry,
             tokenCounter: { text in
@@ -383,54 +407,56 @@ actor BlueskyIntelligenceAgent {
         )
 
         let maxResponseTokens = budget.responseTokens
-        let instructionsText = AskCatbirdInstructions.text(
-            skill: plan.skill, route: .privateCloudCompute, hasTools: !turnTools.isEmpty
+        let toolInstructionsText = AskCatbirdInstructions.text(skill: plan.skill, route: .privateCloudCompute, hasTools: true)
+        let plainInstructionsText = AskCatbirdInstructions.text(skill: plan.skill, route: .privateCloudCompute, hasTools: false)
+        let toolInstructionsTokens = turnTools.isEmpty
+            ? 0 : try await tokenizerModel.tokenCount(for: Instructions { toolInstructionsText })
+        let plainInstructionsTokens = try await tokenizerModel.tokenCount(for: Instructions { plainInstructionsText })
+        let toolsTokens = turnTools.isEmpty ? 0 : try await tokenizerModel.tokenCount(for: turnTools)
+        let reserves = budget.reserves(
+            instructionsWithTools: toolInstructionsTokens, instructionsWithoutTools: plainInstructionsTokens,
+            toolDefinitions: toolsTokens, offersTools: !turnTools.isEmpty
         )
-        let instructions = Instructions { instructionsText }
-        let instructionsTokens = try await tokenizerModel.tokenCount(for: instructions)
-        let toolsTokens = try await tokenizerModel.tokenCount(for: turnTools)
-        let reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
-            + (turnTools.isEmpty ? 0 : budget.toolResultReserve)
 
+        // The cloud model's own window, never a fixed cap.
         let contextSize = try await model.contextSize
-
-        let selection = try await CopilotContextBudget.selectHistory(
-            turns: history,
-            modelContextSize: contextSize,
-            reservedTokenCount: reservedCost,
-            candidateTokenCount: { candidateHistory in
+        let fit = try await CopilotPromptFitter.fit(
+            content: CopilotPromptContent(context: context, evidence: evidence, history: history),
+            window: contextSize,
+            reserves: reserves,
+            promptTokens: { candidate in
                 let promptText = Self.formatContextualPrompt(
-                    context: context,
-                    history: candidateHistory,
-                    prompt: prompt,
-                evidence: evidence
+                    context: candidate.context, history: candidate.history, prompt: prompt, evidence: candidate.evidence
                 )
                 return try await tokenizerModel.tokenCount(for: Prompt(promptText))
             }
         )
 
-        guard selection.fits else {
-            let basePrompt = Self.formatContextualPrompt(context: context, history: [], prompt: prompt, evidence: evidence)
-            let basePromptTokens = try await tokenizerModel.tokenCount(for: Prompt(basePrompt))
-            throw BlueskyAgentError.contextLimitExceeded(
-                limit: selection.tokenLimit,
-                required: reservedCost + basePromptTokens
-            )
+        let sessionTools: [any Tool]
+        let instructionsText: String
+        switch fit.reserve.level {
+        case .tools(let reads):
+            await readBudget.limit(to: reads)
+            sessionTools = turnTools
+            instructionsText = toolInstructionsText
+        case .noTools:
+            sessionTools = []
+            instructionsText = plainInstructionsText
         }
 
-        await sourceCollector.addHistorySources(selection.retainedTurns)
+        await sourceCollector.addHistorySources(fit.content.history)
         let fullPrompt = Self.formatContextualPrompt(
-            context: context,
-            history: selection.retainedTurns,
+            context: fit.content.context,
+            history: fit.content.history,
             prompt: prompt,
-            evidence: evidence
+            evidence: fit.content.evidence
         )
 
         try Task.checkCancellation()
         let session = LanguageModelSession(
             model: model,
-            tools: turnTools,
-            instructions: instructions
+            tools: sessionTools,
+            instructions: Instructions { instructionsText }
         )
 
         let options = GenerationOptions(
@@ -443,7 +469,7 @@ actor BlueskyIntelligenceAgent {
                 session: session, input: CopilotTurnInput(text: fullPrompt, image: nil, selectedImageID: nil),
                 options: options, reasoningLevel: .moderate
             ),
-            removedTurnCount: selection.removedTurnCount,
+            trim: fit.trim,
             sourceCollector: sourceCollector,
             proposalSink: proposalSink,
             continuation: continuation,
@@ -465,9 +491,10 @@ actor BlueskyIntelligenceAgent {
         let plan = CopilotTurnPlan.make(prompt: prompt, context: context, route: .onDevice)
         let budget = AskCatbirdToolPolicy.Budget(route: .onDevice)
         let linkRegistry = AskCatbirdLinkRegistry(seedText: [prompt, Self.formatContextualPrompt(context: context, history: history, prompt: prompt)])
+        let readBudget = CopilotReadBudget(maximumReads: budget.reads)
         let toolContext = ToolContext(
             client: client, logger: logger, sourceCollector: sourceCollector,
-            readBudget: CopilotReadBudget(maximumReads: budget.reads),
+            readBudget: readBudget,
             maximumResultTokens: budget.resultTokens,
             linkRegistry: linkRegistry,
             tokenCounter: { text in
@@ -498,54 +525,55 @@ actor BlueskyIntelligenceAgent {
             guard let model else { throw BlueskyAgentError.modelUnavailable }
             let turnTools = makePerTurnTools(toolContext: toolContext, context: context, accountDID: accountDID,
                                              plan: plan, proposalSink: proposalSink)
-            let instructionsText = AskCatbirdInstructions.text(
-                skill: plan.skill, route: .onDevice, hasTools: !turnTools.isEmpty
-            )
-            let instructions = Instructions { instructionsText }
+            let toolInstructionsText = AskCatbirdInstructions.text(skill: plan.skill, route: .onDevice, hasTools: true)
+            let plainInstructionsText = AskCatbirdInstructions.text(skill: plan.skill, route: .onDevice, hasTools: false)
             let maxResponseTokens = budget.responseTokens
-            let reservedCost: Int
+            let reserves: [CopilotReserve]
             let countsFullPrompt: Bool
             if #available(iOS 26.4, macOS 26.4, *) {
-                let instructionsTokens: Int
-                if let cached = cachedInstructionsTokens[instructionsText] {
-                    instructionsTokens = cached
-                } else {
-                    let count = try await model.tokenCount(for: instructions)
-                    cachedInstructionsTokens[instructionsText] = count
-                    instructionsTokens = count
-                }
-                
+                let toolInstructionsTokens = turnTools.isEmpty ? 0 : try await instructionsTokenCount(toolInstructionsText, model: model)
+                let plainInstructionsTokens = try await instructionsTokenCount(plainInstructionsText, model: model)
                 let toolsTokens: Int
-                if let cached = cachedToolTokens[plan.toolKinds] {
+                if turnTools.isEmpty {
+                    toolsTokens = 0
+                } else if let cached = cachedToolTokens[plan.toolKinds] {
                     toolsTokens = cached
                 } else {
                     let count = try await model.tokenCount(for: turnTools)
                     cachedToolTokens[plan.toolKinds] = count
                     toolsTokens = count
                 }
-                
-                reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
-                    + (turnTools.isEmpty ? 0 : budget.toolResultReserve)
+                reserves = budget.reserves(
+                    instructionsWithTools: toolInstructionsTokens, instructionsWithoutTools: plainInstructionsTokens,
+                    toolDefinitions: toolsTokens, offersTools: !turnTools.isEmpty
+                )
                 countsFullPrompt = true
             } else {
-                reservedCost = 0
+                reserves = [CopilotReserve(level: turnTools.isEmpty ? .noTools : .tools(reads: budget.reads), tokens: 0)]
                 countsFullPrompt = false
             }
             try turnGeneration.check(generation)
             let reason: String?
             if #available(iOS 27.0, macOS 27.0, *) { reason = CopilotImageSupport.unavailableReason(model: model) } else { reason = CopilotImageSupport.unavailableReason() }
-            let session = LanguageModelSession(model: model, tools: turnTools, instructions: instructions)
-            session.prewarm(promptPrefix: Prompt("You are the Bluesky client app \"Catbird\"'s agent."))
+            let toolSession = LanguageModelSession(
+                model: model, tools: turnTools,
+                instructions: Instructions { turnTools.isEmpty ? plainInstructionsText : toolInstructionsText }
+            )
+            toolSession.prewarm(promptPrefix: Prompt("You are the Bluesky client app \"Catbird\"'s agent."))
             let options = GenerationOptions(temperature: 0.25, maximumResponseTokens: maxResponseTokens)
             runtime = CopilotTurnRuntime(
-                contextSize: model.contextSize, reservedTokenCount: reservedCost, countsFullPrompt: countsFullPrompt,
+                contextSize: model.contextSize, reserves: reserves, countsFullPrompt: countsFullPrompt,
                 imageUnavailableReason: reason,
                 tokenCount: { input in
                     if #available(iOS 26.4, macOS 26.4, *) { return try await model.tokenCount(for: input.prompt) }
                     return input.text.utf8.count
                 },
-                stream: { input in
-                    CopilotTurnRuntime.stream(session: session, input: input, options: options,
+                stream: { input, level in
+                    // A turn fitted without tools runs in a session that offers none.
+                    let session = level == .noTools && !turnTools.isEmpty
+                        ? LanguageModelSession(model: model, instructions: Instructions { plainInstructionsText })
+                        : toolSession
+                    return CopilotTurnRuntime.stream(session: session, input: input, options: options,
                         validateImageAccess: {
                             try await imageAuthorization.require(context: context, accountDID: accountDID)
                         })
@@ -560,67 +588,65 @@ actor BlueskyIntelligenceAgent {
         )
         try turnGeneration.check(generation)
         let fullInput: CopilotTurnInput
-        let selection: CopilotHistorySelection
+        let retainedTurns: [CopilotStoredTurn]
+        let level: CopilotReserveLevel
+        let trim: CopilotContextTrim
         if runtime.countsFullPrompt {
-            // Each representation/history candidate is built once. The accepted
-            // object counted below is exactly the object submitted to generation.
+            // Each candidate prompt is built once. The accepted object counted
+            // below is exactly the object submitted to generation.
             var countedInputs: [String: CopilotTurnInput] = [:]
-            func key(_ turns: [CopilotStoredTurn], _ image: CopilotPreparedImage) -> String {
-                turns.map { $0.id.uuidString }.joined(separator: ",") + "|"
-                    + (image.image == nil ? "metadata" : "image") + "|" + (image.evidence?.text ?? "")
-            }
-            func input(_ turns: [CopilotStoredTurn], _ image: CopilotPreparedImage) -> CopilotTurnInput {
-                let inputKey = key(turns, image)
+            func input(_ content: CopilotPromptContent, _ image: CopilotPreparedImage) -> CopilotTurnInput {
+                let evidence = content.evidence + (image.evidence.map { [$0] } ?? [])
+                let text = Self.formatContextualPrompt(
+                    context: content.context, history: content.history, prompt: prompt, evidence: evidence
+                )
+                let inputKey = (image.image == nil ? "metadata|" : "image|") + text
                 if let existing = countedInputs[inputKey] { return existing }
-                let evidence = retrievedEvidence + (image.evidence.map { [$0] } ?? [])
-                let text = Self.formatContextualPrompt(context: context, history: turns, prompt: prompt, evidence: evidence)
                 let result = CopilotTurnInput(text: text, image: image.image, selectedImageID: image.candidate?.id)
                 countedInputs[inputKey] = result
                 return result
             }
-            let budget = try await CopilotImageSupport.selectHistory(
-                turns: history, preparedImage: preparedImage, modelContextSize: runtime.contextSize,
-                reservedTokenCount: runtime.reservedTokenCount,
-                candidateTokenCount: { turns, image in
+            let fitted = try await CopilotImageSupport.fitPrompt(
+                content: CopilotPromptContent(context: context, evidence: retrievedEvidence, history: history),
+                preparedImage: preparedImage, window: runtime.contextSize, reserves: runtime.reserves,
+                promptTokens: { content, image in
                     if image.image != nil {
                         try await imageAuthorization.require(context: context, accountDID: accountDID)
                     }
                     try self.turnGeneration.check(generation)
-                    return try await runtime.tokenCount(input(turns, image))
+                    return try await runtime.tokenCount(input(content, image))
                 }
             )
             try turnGeneration.check(generation)
-            preparedImage = budget.image
-            selection = budget.history
-            guard selection.fits else {
-                if preparedImage.image != nil {
-                    try await imageAuthorization.require(context: context, accountDID: accountDID)
-                }
-                let required = try await runtime.tokenCount(input([], preparedImage))
-                try turnGeneration.check(generation)
-                throw BlueskyAgentError.contextLimitExceeded(limit: selection.tokenLimit, required: runtime.reservedTokenCount + required)
-            }
-            fullInput = input(selection.retainedTurns, preparedImage)
+            preparedImage = fitted.image
+            retainedTurns = fitted.fit.content.history
+            level = fitted.fit.reserve.level
+            trim = fitted.fit.trim
+            fullInput = input(fitted.fit.content, preparedImage)
         } else {
-            selection = try await CopilotContextBudget.selectLegacyHistory(
+            let selection = try await CopilotContextBudget.selectLegacyHistory(
                 turns: history, modelContextSize: 1536, reservedTokenCount: 0,
                 candidatePrompt: { CopilotContextBudget.formatHistory(turns: $0) }
             )
+            retainedTurns = selection.retainedTurns
+            level = runtime.reserves[0].level
+            trim = CopilotContextTrim(removedTurnCount: selection.removedTurnCount)
             let evidence = retrievedEvidence + (preparedImage.evidence.map { [$0] } ?? [])
             fullInput = CopilotTurnInput(
-                text: Self.formatContextualPrompt(context: context, history: selection.retainedTurns, prompt: prompt, evidence: evidence),
+                text: Self.formatContextualPrompt(context: context, history: retainedTurns, prompt: prompt, evidence: evidence),
                 image: nil, selectedImageID: nil
             )
         }
+        if case .tools(let reads) = level { await readBudget.limit(to: reads) }
         try turnGeneration.check(generation)
-        await sourceCollector.addHistorySources(selection.retainedTurns)
+        await sourceCollector.addHistorySources(retainedTurns)
         if let evidence = preparedImage.evidence { await sourceCollector.recordEvidence(evidence) }
         try turnGeneration.check(generation)
         if fullInput.image != nil {
             try await imageAuthorization.require(context: context, accountDID: accountDID)
             try turnGeneration.check(generation)
         }
-        try await streamAndEmit(stream: runtime.stream(fullInput), removedTurnCount: selection.removedTurnCount,
+        try await streamAndEmit(stream: runtime.stream(fullInput, level), trim: trim,
                                 sourceCollector: sourceCollector, proposalSink: proposalSink,
                                 continuation: continuation, generation: generation,
                                 validateImageAccess: {
@@ -630,10 +656,18 @@ actor BlueskyIntelligenceAgent {
                                 })
     }
 
+    @available(iOS 26.4, macOS 26.4, *)
+    private func instructionsTokenCount(_ text: String, model: SystemLanguageModel) async throws -> Int {
+        if let cached = cachedInstructionsTokens[text] { return cached }
+        let count = try await model.tokenCount(for: Instructions { text })
+        cachedInstructionsTokens[text] = count
+        return count
+    }
+
     /// Shared streaming + post-processing used by both on-device and PCC turns.
     private func streamAndEmit(
         stream: AsyncThrowingStream<String, Error>,
-        removedTurnCount: Int,
+        trim: CopilotContextTrim,
         sourceCollector: TurnSourceCollector,
         proposalSink: TurnProposalSink,
         continuation: AsyncThrowingStream<CopilotTurnEvent, Error>.Continuation,
@@ -660,8 +694,8 @@ actor BlueskyIntelligenceAgent {
 
         try await validateImageAccess()
         try turnGeneration.check(generation)
-        if removedTurnCount > 0 {
-            continuation.yield(.contextTrimmed(removedTurnCount: removedTurnCount))
+        if !trim.isEmpty {
+            continuation.yield(.contextTrimmed(trim))
         }
 
         let sources = await sourceCollector.allSources()
@@ -736,7 +770,7 @@ actor BlueskyIntelligenceAgent {
         }
     }
 
-    private static func formatContextualPrompt(
+    static func formatContextualPrompt(
         context: CopilotContext,
         history: [CopilotStoredTurn],
         prompt: String,

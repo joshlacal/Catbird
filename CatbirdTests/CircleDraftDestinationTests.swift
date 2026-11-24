@@ -12,8 +12,8 @@ import UIKit
 @MainActor
 struct CircleDraftDestinationTests {
   private let account = "did:plc:alice"
-  private var parentURI: String { "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent123" }
-  private var rootURI: String { "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/root456" }
+  private var parentURI: String { "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/parent123" }
+  private var rootURI: String { "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/root456" }
 
   // MARK: - Saving and decoding
 
@@ -621,10 +621,10 @@ struct CircleDraftDestinationTests {
   private func savedReply() -> CircleDraftDestination.Reply {
     CircleDraftDestination.Reply(AppBskyFeedPost.ReplyRef(
       root: ComAtprotoRepoStrongRef(
-        uri: try! ATProtocolURI(uriString: rootURI), cid: CID.fromDAGCBOR(Data("saved-root".utf8))
+        uri: try! ATProtocolURI(uriString: rootURI), cid: CIDString(CID.fromDAGCBOR(Data("saved-root".utf8)))
       ),
       parent: ComAtprotoRepoStrongRef(
-        uri: try! ATProtocolURI(uriString: parentURI), cid: CID.fromDAGCBOR(Data("saved-parent".utf8))
+        uri: try! ATProtocolURI(uriString: parentURI), cid: CIDString(CID.fromDAGCBOR(Data("saved-parent".utf8)))
       )
     ))
   }
@@ -648,13 +648,6 @@ struct CircleDraftDestinationTests {
     }
     try #require(condition())
   }
-}
-
-private struct NoAgeRequirement: AgeRegulatoryChecking {
-  func preflight() async -> PlatformAgeSignal { .none }
-  #if canImport(UIKit)
-  func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
-  #endif
 }
 
 /// Lets a test hold a call until it is released, and know when the call arrived.
@@ -705,7 +698,7 @@ private actor GatedCircleTransport: CircleTransport {
     await publishing.pass()
     if let publishError { throw publishError }
     publishedCount += 1
-    return try ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/published")
+    return try ATProtocolURI(uriString: "\(destination.uri.uriString())/did:plc:alice/app.bsky.feed.post/published")
   }
 
   func capabilities() async throws -> CircleCapability {

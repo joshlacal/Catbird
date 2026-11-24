@@ -134,31 +134,35 @@ struct CopilotImageSupportTests {
       CopilotStoredTurn(role: index.isMultiple(of: 2) ? .user : .assistant, text: "Turn",
                         createdAt: Date(timeIntervalSince1970: Double(index)))
     }
-    let trimmed = try await CopilotImageSupport.selectHistory(turns: turns, preparedImage: prepared,
-      modelContextSize: 4_096, reservedTokenCount: 1_000, candidateTokenCount: { history, image in
-        100 + history.count * 700 + (image.image == nil ? 0 : 1_000)
+    let content = CopilotPromptContent(context: context(), evidence: [], history: turns)
+    let reserves = [CopilotReserve(level: .tools(reads: 3), tokens: 1_000)]
+    let trimmed = try await CopilotImageSupport.fitPrompt(content: content, preparedImage: prepared,
+      window: 4_096, reserves: reserves, promptTokens: { content, image in
+        100 + content.history.count * 700 + (image.image == nil ? 0 : 1_000)
       })
     #expect(trimmed.image.image != nil)
-    #expect(trimmed.history.retainedTurns.map(\.id) == Array(turns.suffix(2)).map(\.id))
-    let fallback = try await CopilotImageSupport.selectHistory(turns: turns, preparedImage: prepared,
-      modelContextSize: 4_096, reservedTokenCount: 1_000, candidateTokenCount: { history, image in
+    #expect(trimmed.fit.content.history.map(\.id) == Array(turns.suffix(2)).map(\.id))
+    #expect(trimmed.fit.trim.removedTurnCount == 2)
+    let fallback = try await CopilotImageSupport.fitPrompt(content: content, preparedImage: prepared,
+      window: 4_096, reserves: reserves, promptTokens: { content, image in
         if image.image == nil {
           #expect(image.evidence?.text.contains("Image not inspected") == true)
-          return 100 + history.count * 700
+          return 100 + content.history.count * 700
         }
-        return 4_000 + history.count * 700
+        return 4_000 + content.history.count * 700
       })
-    #expect(fallback.history.fits)
     #expect(fallback.image.image == nil)
     #expect(fallback.image.evidence?.text.contains("context budget") == true)
-    #expect(fallback.history.retainedTurns.count == 4)
+    #expect(fallback.fit.content.history.count == 4)
+    #expect(fallback.fit.trim.isEmpty)
   }
 
   @Test func cancellationDuringImageTokenCountingStopsBeforeFallback() async throws {
     let prepared = CopilotPreparedImage(candidate: nil, image: try Self.image(), evidence: nil)
+    let content = CopilotPromptContent(context: context(), evidence: [], history: [])
     let task = Task {
-      try await CopilotImageSupport.selectHistory(turns: [], preparedImage: prepared,
-        modelContextSize: 4_096, reservedTokenCount: 1_000, candidateTokenCount: { _, _ in
+      try await CopilotImageSupport.fitPrompt(content: content, preparedImage: prepared,
+        window: 4_096, reserves: [CopilotReserve(level: .noTools, tokens: 1_000)], promptTokens: { _, _ in
           withUnsafeCurrentTask { $0?.cancel() }
           return 4_000
         })
