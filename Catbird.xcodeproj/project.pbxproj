@@ -1119,7 +1119,7 @@
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = "Catbird/App/Info-Debug.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird uses Face ID to unlock the app when App Lock is turned on.";
@@ -1212,7 +1212,7 @@
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Catbird/App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird uses Face ID to unlock the app when App Lock is turned on.";
