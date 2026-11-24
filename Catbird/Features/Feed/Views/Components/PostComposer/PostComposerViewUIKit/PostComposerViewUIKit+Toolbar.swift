@@ -29,7 +29,7 @@ extension PostComposerViewUIKit {
             if vm.isThreadMode {
               Text("Post All", comment: "Button to publish all posts in a thread")
             } else {
-              Text("Post", comment: "Button to publish a post")
+              Text(LocalizedStringResource("composer.publish.button", defaultValue: "Post", comment: "Button to publish a post (a verb, not the noun)."))
             }
           }
           .appFont(AppTextRole.subheadline)

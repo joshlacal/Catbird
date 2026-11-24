@@ -795,7 +795,7 @@ private struct BubbleAccessibilityModifier: ViewModifier {
       .modifier(LabelIfCombined(label: label, isCombined: combinesChildren))
       .accessibilityActions {
         if let onReply {
-          Button("Reply", action: onReply)
+          Button(String(localized: "chat.message.reply.action", defaultValue: "Reply", comment: "Action to reply to a chat message (a verb, not the noun)."), action: onReply)
         }
         if let onMoreActions {
           Button("React and More", action: onMoreActions)

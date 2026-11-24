@@ -841,7 +841,7 @@ private struct ComposerPostToolbarButton: View {
       .accessibilityLabel(
         vm.isThreadMode
           ? Text("Post All", comment: "Accessibility label for button that publishes all posts in a thread")
-          : Text("Post", comment: "Accessibility label for button that publishes a post")
+          : Text(LocalizedStringResource("composer.publish.button", defaultValue: "Post", comment: "Button to publish a post (a verb, not the noun)."))
       )
     } else {
       Button(action: action) {
@@ -861,7 +861,7 @@ private struct ComposerPostToolbarButton: View {
       .accessibilityLabel(
         vm.isThreadMode
           ? Text("Post All", comment: "Accessibility label for button that publishes all posts in a thread")
-          : Text("Post", comment: "Accessibility label for button that publishes a post")
+          : Text(LocalizedStringResource("composer.publish.button", defaultValue: "Post", comment: "Button to publish a post (a verb, not the noun)."))
       )
     }
     #else
@@ -882,7 +882,7 @@ private struct ComposerPostToolbarButton: View {
     .accessibilityLabel(
       vm.isThreadMode
         ? Text("Post All", comment: "Accessibility label for button that publishes all posts in a thread")
-        : Text("Post", comment: "Accessibility label for button that publishes a post")
+        : Text(LocalizedStringResource("composer.publish.button", defaultValue: "Post", comment: "Button to publish a post (a verb, not the noun)."))
     )
     #endif
   }
