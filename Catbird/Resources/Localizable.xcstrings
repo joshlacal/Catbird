@@ -272898,6 +272898,9 @@
         }
       }
     },
+    "Circles you own are deleted for everyone in them, and your posts and likes are removed from other people's Circles." : {
+
+    },
     "Cities, Craft & Food" : {
       "comment" : "Onboarding macro category title.",
       "localizations" : {
