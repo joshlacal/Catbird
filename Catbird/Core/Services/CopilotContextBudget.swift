@@ -14,10 +14,14 @@ enum CopilotContextBudget {
         let assistantTextStatus = "Previous answer, not factual evidence."
     }
 
-    static let maximumTokens: Int = 8192
-
     static func formatHistory(turns: [CopilotStoredTurn]) -> String {
         CopilotPrompt.sourceJSON(extractPairs(from: turns))
+    }
+
+    /// The most recent complete question-and-answer pair, oldest first.
+    static func latestPairTurns(in turns: [CopilotStoredTurn]) -> [CopilotStoredTurn] {
+        guard let pair = extractPairs(from: turns).last else { return [] }
+        return [pair.user, pair.previousAssistantAnswer]
     }
 
     static func extractPairs(from turns: [CopilotStoredTurn]) -> [TurnPair] {
@@ -49,7 +53,8 @@ enum CopilotContextBudget {
         candidateTokenCount: ([CopilotStoredTurn]) async throws -> Int
     ) async throws -> CopilotHistorySelection {
         try Task.checkCancellation()
-        let tokenLimit = min(modelContextSize, maximumTokens)
+        // The model's real window; each route reports its own size.
+        let tokenLimit = modelContextSize
 
         let baseCandidateTokens = try await candidateTokenCount([])
         try Task.checkCancellation()

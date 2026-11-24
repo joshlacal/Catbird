@@ -451,10 +451,8 @@ struct CatbirdCopilotSheet: View {
                             // the person's choice for later turns.
                             turns[turnIndex].route = modelRoute
 
-                        case .contextTrimmed(let removedTurnCount):
-                            contextTrimmedNotice = removedTurnCount == 1
-                                ? "An earlier message was left out to keep this conversation within limits."
-                                : "Some earlier messages were left out to keep this conversation within limits."
+                        case .contextTrimmed(let trim):
+                            contextTrimmedNotice = trim.notice
 
                         case .completed:
                             if !deltaBuffer.isEmpty {

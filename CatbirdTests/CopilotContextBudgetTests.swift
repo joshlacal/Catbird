@@ -4,25 +4,37 @@ import XCTest
 final class CopilotContextBudgetTests: XCTestCase {
     private let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
 
-    func testMaximumTokensConstantIs8192() {
-        XCTAssertEqual(CopilotContextBudget.maximumTokens, 8192)
-    }
-
-    func testEffectiveCapCapsAt8192WhenModelContextIsLarger() async throws {
+    func testLargeModelWindowIsUsedWithoutAFixedCap() async throws {
+        // 9,000 reserved tokens exceed the old 8,192 cap; a 32K cloud window still fits.
         let turns = makeTurnPairs(count: 3, tokenCostPerTurn: 500)
         let selection = try await CopilotContextBudget.selectHistory(
             turns: turns,
-            modelContextSize: 16384,
+            modelContextSize: 32768,
+            reservedTokenCount: 9000,
+            candidateTokenCount: { candidateTurns in
+                candidateTurns.count * 500
+            }
+        )
+        XCTAssertTrue(selection.fits)
+        XCTAssertEqual(selection.tokenLimit, 32768)
+        XCTAssertEqual(selection.retainedTurns.count, 6)
+    }
+
+    func testModelWindowLimitsHistory() async throws {
+        let turns = makeTurnPairs(count: 3, tokenCostPerTurn: 500)
+        let selection = try await CopilotContextBudget.selectHistory(
+            turns: turns,
+            modelContextSize: 3000,
             reservedTokenCount: 1000,
             candidateTokenCount: { candidateTurns in
                 candidateTurns.count * 500
             }
         )
 
-        XCTAssertEqual(selection.tokenLimit, 8192)
+        XCTAssertEqual(selection.tokenLimit, 3000)
         XCTAssertTrue(selection.fits)
-        XCTAssertEqual(selection.retainedTurns.count, turns.count)
-        XCTAssertEqual(selection.removedTurnCount, 0)
+        XCTAssertEqual(selection.retainedTurns.map(\.id), turns.suffix(4).map(\.id))
+        XCTAssertEqual(selection.removedTurnCount, 2)
     }
 
     func testSmallerModelContextSizeDeterminesTokenLimit() async throws {
