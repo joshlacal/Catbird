@@ -5491,836 +5491,494 @@
         }
       }
     },
-    "widget.unread.caption" : {
-      "comment" : "Caption below the large unread notification count in the Home Screen widget. The count is shown above it, so the caption omits the number and only agrees with it.",
+    "widget.unread.caption.one" : {
+      "comment" : "Caption below the large unread notification count in the Home Screen widget, used when the count is exactly 1. The count is shown above it, so the caption has no number.",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "ar" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "إشعارات غير مقروءة"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "إشعارًا غير مقروء"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "إشعار غير مقروء"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "إشعار غير مقروء"
-                }
-              },
-              "two" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "إشعاران غير مقروءين"
-                }
-              },
-              "zero" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "إشعار غير مقروء"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "إشعار غير مقروء"
           }
         },
         "ca" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificacions sense llegir"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificació sense llegir"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificacions sense llegir"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificació sense llegir"
           }
         },
         "cs" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepřečtená oznámení"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepřečteného oznámení"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepřečtené oznámení"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepřečtených oznámení"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nepřečtené oznámení"
           }
         },
         "da" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ulæst notifikation"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ulæste notifikationer"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ulæst notifikation"
           }
         },
         "de" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ungelesene Mitteilung"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ungelesene Mitteilungen"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ungelesene Mitteilung"
           }
         },
         "el" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "μη αναγνωσμένη ειδοποίηση"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "μη αναγνωσμένες ειδοποιήσεις"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "μη αναγνωσμένη ειδοποίηση"
           }
         },
         "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "new",
-                  "value" : "unread notification"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "new",
-                  "value" : "unread notifications"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "unread notification"
           }
         },
         "en-AU" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "unread notification"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "unread notifications"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unread notification"
           }
         },
         "en-CA" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "unread notification"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "unread notifications"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unread notification"
           }
         },
         "en-GB" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "unread notification"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "unread notifications"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unread notification"
           }
         },
         "es" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificaciones sin leer"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificación sin leer"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificaciones sin leer"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificación sin leer"
           }
         },
         "es-419" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificaciones sin leer"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificación sin leer"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificaciones sin leer"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificación sin leer"
           }
         },
         "fi" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "lukematon ilmoitus"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "lukematonta ilmoitusta"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "lukematon ilmoitus"
           }
         },
         "fr" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifications non lues"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notification non lue"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifications non lues"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notification non lue"
           }
         },
         "fr-CA" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifications non lues"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notification non lue"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifications non lues"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notification non lue"
           }
         },
         "he" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "התראות שלא נקראו"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "התראה שלא נקראה"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "התראות שלא נקראו"
-                }
-              },
-              "two" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "התראות שלא נקראו"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "התראה שלא נקראה"
           }
         },
         "hi" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "अपठित सूचना"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "अपठित सूचनाएँ"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "अपठित सूचना"
           }
         },
         "hr" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepročitane obavijesti"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepročitanih obavijesti"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepročitana obavijest"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nepročitanih obavijesti"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nepročitana obavijest"
           }
         },
         "hu" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "olvasatlan értesítés"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "olvasatlan értesítés"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "olvasatlan értesítés"
           }
         },
         "id" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifikasi belum dibaca"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notifikasi belum dibaca"
           }
         },
         "it" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifiche non lette"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifica non letta"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notifiche non lette"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notifica non letta"
           }
         },
         "ja" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "未読通知"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未読通知"
           }
         },
         "ko" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "읽지 않은 알림"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "읽지 않은 알림"
           }
         },
         "ms" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "pemberitahuan belum dibaca"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pemberitahuan belum dibaca"
           }
         },
         "nb" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ulest varsel"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "uleste varsler"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ulest varsel"
           }
         },
         "nl" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ongelezen melding"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "ongelezen meldingen"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ongelezen melding"
           }
         },
         "pl" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nieprzeczytane powiadomienia"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nieprzeczytanych powiadomień"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nieprzeczytane powiadomienie"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "nieprzeczytanego powiadomienia"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nieprzeczytane powiadomienie"
           }
         },
         "pt-BR" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificações não lidas"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificação não lida"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificações não lidas"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificação não lida"
           }
         },
         "pt-PT" : {
-          "variations" : {
-            "plural" : {
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificações não lidas"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificação não lida"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificações não lidas"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificação não lida"
           }
         },
         "ro" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificări necitite"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificare necitită"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "notificări necitite"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificare necitită"
           }
         },
         "ru" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитанных уведомления"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитанных уведомлений"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитанное уведомление"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитанного уведомления"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанное уведомление"
           }
         },
         "sk" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "neprečítané upozornenia"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "neprečítaného upozornenia"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "neprečítané upozornenie"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "neprečítaných upozornení"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "neprečítané upozornenie"
           }
         },
         "sv" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "oläst notis"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "olästa notiser"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "oläst notis"
           }
         },
         "th" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "การแจ้งเตือนที่ยังไม่ได้อ่าน"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "การแจ้งเตือนที่ยังไม่ได้อ่าน"
           }
         },
         "tr" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "okunmamış bildirim"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "okunmamış bildirim"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "okunmamış bildirim"
           }
         },
         "uk" : {
-          "variations" : {
-            "plural" : {
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитані сповіщення"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитаних сповіщень"
-                }
-              },
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитане сповіщення"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "непрочитаного сповіщення"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитане сповіщення"
           }
         },
         "vi" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "thông báo chưa đọc"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "thông báo chưa đọc"
           }
         },
         "zh-HK" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "未讀通知"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未讀通知"
           }
         },
         "zh-Hans" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "未读通知"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未读通知"
           }
         },
         "zh-Hant" : {
-          "variations" : {
-            "plural" : {
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "未讀通知"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未讀通知"
+          }
+        }
+      }
+    },
+    "widget.unread.caption.other" : {
+      "comment" : "Caption below the large unread notification count in the Home Screen widget, used when the count is anything but 1. The count is shown above it, so the caption has no number.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "إشعارات غير مقروءة"
+          }
+        },
+        "ca" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificacions sense llegir"
+          }
+        },
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nepřečtených oznámení"
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ulæste notifikationer"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ungelesene Mitteilungen"
+          }
+        },
+        "el" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "μη αναγνωσμένες ειδοποιήσεις"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "unread notifications"
+          }
+        },
+        "en-AU" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unread notifications"
+          }
+        },
+        "en-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unread notifications"
+          }
+        },
+        "en-GB" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "unread notifications"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificaciones sin leer"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificaciones sin leer"
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "lukematonta ilmoitusta"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notifications non lues"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notifications non lues"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "התראות שלא נקראו"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "अपठित सूचनाएँ"
+          }
+        },
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nepročitanih obavijesti"
+          }
+        },
+        "hu" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "olvasatlan értesítés"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notifikasi belum dibaca"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notifiche non lette"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未読通知"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "읽지 않은 알림"
+          }
+        },
+        "ms" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pemberitahuan belum dibaca"
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "uleste varsler"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ongelezen meldingen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "nieprzeczytanych powiadomień"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificações não lidas"
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificações não lidas"
+          }
+        },
+        "ro" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "notificări necitite"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитанных уведомлений"
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "neprečítaných upozornení"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "olästa notiser"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "การแจ้งเตือนที่ยังไม่ได้อ่าน"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "okunmamış bildirim"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "непрочитаних сповіщень"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "thông báo chưa đọc"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未讀通知"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未读通知"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未讀通知"
           }
         }
       }
