@@ -17,18 +17,19 @@ struct CatbirdCopilotSheet: View {
     @State private var turns: [CopilotStoredTurn] = []
     @State private var prompt: String = ""
     @State private var isResponding: Bool = false
-    @State private var activeStreamTask: Task<Void, Never>? = nil
-    @State private var streamingUserTurnID: UUID? = nil
-    @State private var streamingAssistantTurnID: UUID? = nil
+    @State private var activeStreamTask: Task<Void, Never>?
+    @State private var streamingUserTurnID: UUID?
+    @State private var streamingAssistantTurnID: UUID?
     @State private var isExecutingProposal: Bool = false
-    @State private var errorMessage: String? = nil
-    @State private var contextTrimmedNotice: String? = nil
+    @State private var errorMessage: String?
+    @State private var contextTrimmedNotice: String?
     @State private var route: CopilotModelRoute = .onDevice
+    @State private var cloudStatus: CopilotCloudStatus?
     @State private var confirmingClearAll: Bool = false
     @State private var exactContextConversations: [CopilotConversation] = []
     @State private var navigationPath = NavigationPath()
     @State private var selectedTab: Int = 0
-    @State private var successMessage: String? = nil
+    @State private var successMessage: String?
     @State private var selectedImageID: String?
     @State private var imageRevealSession = CopilotImageRevealSession()
     @State private var imageUnavailableReason: String?
@@ -49,6 +50,28 @@ struct CatbirdCopilotSheet: View {
 
     private var hasUnresolvedProposal: Bool {
         turns.contains { $0.proposal != nil }
+    }
+
+    /// The model the next turn uses. A stored Private Cloud Compute choice applies
+    /// only while it is selectable; the picker shows why when it is not.
+    private var effectiveRoute: CopilotModelRoute {
+        route == .privateCloudCompute && cloudStatus?.isSelectable == true ? .privateCloudCompute : .onDevice
+    }
+
+    private var routeSelection: Binding<CopilotModelRoute> {
+        Binding(
+            get: { effectiveRoute },
+            set: { newRoute in
+                guard newRoute == .onDevice || cloudStatus?.isSelectable == true else { return }
+                route = newRoute
+                CopilotRoutePreference().setRoute(newRoute, for: conversationAccountDID)
+            }
+        )
+    }
+
+    @MainActor
+    private func refreshCloudStatus() async {
+        cloudStatus = await CopilotCloudStatus.current()
     }
 
     var body: some View {
@@ -86,6 +109,18 @@ struct CatbirdCopilotSheet: View {
                     }
                 }
 
+                if effectiveRoute == .privateCloudCompute, let cloudStatus, cloudStatus.quota != .available {
+                    AskCatbirdQuotaNotice(
+                        quota: cloudStatus.quota,
+                        canRequestMore: cloudStatus.canRequestMoreQuota,
+                        onSwitchToDevice: { routeSelection.wrappedValue = .onDevice },
+                        onRequestMore: {
+                            CopilotCloudStatus.showLimitIncreaseSuggestion()
+                            Task { await refreshCloudStatus() }
+                        }
+                    )
+                }
+
                 if !context.imageCandidates.isEmpty {
                     CopilotImageModerationNotice(snapshot: imageModerationSnapshot,
                         reveal: effectiveImageReveal, onReveal: revealImages, onHide: hideImages)
@@ -120,6 +155,10 @@ struct CatbirdCopilotSheet: View {
                 }
 
                 ToolbarItem(placement: .primaryAction) {
+                    AskCatbirdRoutePicker(route: routeSelection, cloudStatus: cloudStatus, isDisabled: isResponding)
+                }
+
+                ToolbarItem(placement: .primaryAction) {
                     historyMenu
                 }
             }
@@ -132,6 +171,8 @@ struct CatbirdCopilotSheet: View {
                 let did = appState.userDID
                 conversationID = UUID()
                 conversationAccountDID = did
+                route = CopilotRoutePreference().route(for: did)
+                await refreshCloudStatus()
                 historySession.activate(accountDID: did, context: context, conversationID: conversationID)
                 turns = []
                 isExecutingProposal = false
@@ -301,7 +342,7 @@ struct CatbirdCopilotSheet: View {
         prompt = ""
         selectedImageID = nil
         let assistantTurnID = UUID()
-        let emptyAssistantTurn = CopilotStoredTurn(id: assistantTurnID, role: .assistant, text: "", createdAt: Date(), route: route)
+        let emptyAssistantTurn = CopilotStoredTurn(id: assistantTurnID, role: .assistant, text: "", createdAt: Date(), route: chosenImageID == nil ? effectiveRoute : .onDevice)
 
         turns.append(userTurn)
         turns.append(emptyAssistantTurn)
@@ -314,7 +355,7 @@ struct CatbirdCopilotSheet: View {
         contextTrimmedNotice = nil
         let targetConversationID = conversationID
         let accountDID = conversationAccountDID
-        let chosenRoute = route
+        let chosenRoute = effectiveRoute
         let currentContext = context
         let currentClient = appState.atProtoClient
         let clientID = currentClient.map(ObjectIdentifier.init)
@@ -406,8 +447,9 @@ struct CatbirdCopilotSheet: View {
                             turns[turnIndex].proposalOutcome = "Proposed for confirmation; not executed."
 
                         case .route(let modelRoute):
+                            // Record which model answered this turn without changing
+                            // the person's choice for later turns.
                             turns[turnIndex].route = modelRoute
-                            self.route = modelRoute
 
                         case .contextTrimmed(let removedTurnCount):
                             contextTrimmedNotice = removedTurnCount == 1
@@ -424,6 +466,9 @@ struct CatbirdCopilotSheet: View {
                             streamingAssistantTurnID = nil
                             streamingUserTurnID = nil
                             await persistCurrentConversation()
+                            if turns.first(where: { $0.id == assistantTurnID })?.route == .privateCloudCompute {
+                                await refreshCloudStatus()
+                            }
 
                         case .failed(let failure):
                             if !deltaBuffer.isEmpty {
@@ -447,6 +492,9 @@ struct CatbirdCopilotSheet: View {
                         activeStreamTask = nil
                         if !Task.isCancelled {
                             errorMessage = error.localizedDescription
+                            if error is CopilotCloudTurnError || error is CopilotCloudUnavailableError {
+                                await refreshCloudStatus()
+                            }
                         }
                     }
                 }

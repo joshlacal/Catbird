@@ -201,19 +201,26 @@ struct AskCatbirdEmptyState: View {
     switch context {
     case .post, .thread:
       [
-        String(localized: "Summarize this conversation", comment: "Suggested Ask Catbird prompt."),
-        String(localized: "What context am I missing?", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "Explain this thread and the context behind it", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "Is this true? Fact-check it", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "How are people reacting to this?", comment: "Suggested Ask Catbird prompt."),
         String(localized: "Help me draft a reply", comment: "Suggested Ask Catbird prompt.")
       ]
     case .profile:
       [
-        String(localized: "Tell me about this profile", comment: "Suggested Ask Catbird prompt."),
-        String(localized: "What do they post about?", comment: "Suggested Ask Catbird prompt.")
+        String(localized: "Who is this and what do they post about?", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "Suggest similar accounts", comment: "Suggested Ask Catbird prompt.")
       ]
-    case .feed, .topic, .search:
+    case .feed:
       [
-        String(localized: "Give me an overview", comment: "Suggested Ask Catbird prompt."),
-        String(localized: "What are people discussing?", comment: "Suggested Ask Catbird prompt.")
+        String(localized: "What does this feed show, and who is it for?", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "Find feeds like this one", comment: "Suggested Ask Catbird prompt.")
+      ]
+    case .topic, .search:
+      [
+        String(localized: "Catch me up on what's happening", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "What are the different viewpoints on this?", comment: "Suggested Ask Catbird prompt."),
+        String(localized: "What's trending on Bluesky right now?", comment: "Suggested Ask Catbird prompt.")
       ]
     case .smartFilter:
       [
@@ -277,6 +284,9 @@ struct AskCatbirdTurnView: View {
         if turn.proposal == nil, let outcome = turn.proposalOutcome {
           Text(CopilotReferencePresentation.render(outcome, sources: turn.sources ?? []))
             .font(.caption).foregroundStyle(.secondary)
+        }
+        if !isStreaming, !turn.text.isEmpty, let route = turn.route {
+          AskCatbirdRouteBadge(route: route)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -508,7 +518,6 @@ struct AskCatbirdURLRouting: ViewModifier {
     onOpenURL(url)
   }
 }
-
 
 struct AskCatbirdNotice: View {
   let text: String

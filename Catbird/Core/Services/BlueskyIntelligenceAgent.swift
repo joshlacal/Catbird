@@ -40,9 +40,30 @@ enum BlueskyAgentError: LocalizedError {
 
 /// Deterministic input and transcript bounds shared by the read tools.
 enum AskCatbirdToolPolicy {
-    // Two reads return at most 512 tokens each; the remaining headroom covers
-    // tool-call framing. Runtime context errors remain explicit.
-    static let onDeviceToolResultTokenReserve = 1536
+    /// Per-route read limits. Each read result is bounded, and the reserve covers
+    /// every permitted result plus tool-call framing, so a turn that uses its whole
+    /// budget still fits the model's context. Runtime context errors remain explicit.
+    struct Budget: Equatable, Sendable {
+        let reads: Int
+        let resultTokens: Int
+        let responseTokens: Int
+
+        init(route: CopilotModelRoute) {
+            switch route {
+            case .onDevice:
+                // The on-device model has a 4K context window.
+                reads = CopilotReadBudget.maximumReads(for: .onDevice)
+                resultTokens = 384
+                responseTokens = 640
+            case .privateCloudCompute:
+                reads = CopilotReadBudget.maximumReads(for: .privateCloudCompute)
+                resultTokens = 1536
+                responseTokens = 2048
+            }
+        }
+
+        var toolResultReserve: Int { reads * (resultTokens + 64) }
+    }
 
     static func postURI(_ input: String) throws -> ATProtocolURI {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -126,7 +147,7 @@ actor BlueskyIntelligenceAgent {
     private var model: SystemLanguageModel?
     private var session: LanguageModelSession?
     private var cachedTools: [any Tool]?
-    private var cachedInstructionsTokens: Int?
+    private var cachedInstructionsTokens: [String: Int] = [:]
     private var cachedToolTokens: [[CopilotTurnPlan.ToolKind]: Int] = [:]
     private var turnGeneration = CopilotTurnGeneration()
     private let turnHooks: CopilotTurnHooks?
@@ -167,7 +188,6 @@ actor BlueskyIntelligenceAgent {
         let response = try await session.respond(to: Prompt(prompt), options: options)
         return response.content
     }
-
 
     /// Compiles only Catbird's bounded Smart Filter grammar. The returned rule
     /// remains a proposal and must be confirmed by the user before persistence.
@@ -223,7 +243,10 @@ actor BlueskyIntelligenceAgent {
                         continuation.finish()
                         return
                     }
-                    if route == .privateCloudCompute,
+                    // Selected images are inspected only by the on-device model. The
+                    // route event tells the person which model answered.
+                    let effectiveRoute: CopilotModelRoute = selectedImageID == nil ? route : .onDevice
+                    if effectiveRoute == .privateCloudCompute,
                        let reason = CopilotCloudAvailability.unavailableReason {
                         throw CopilotCloudUnavailableError(reason: reason)
                     }
@@ -231,51 +254,17 @@ actor BlueskyIntelligenceAgent {
                         throw BlueskyAgentError.missingClient
                     }
 
-                    var usedPCC = false
-                    if route == .privateCloudCompute {
-                        if #available(iOS 27.0, macOS 27.0, *) {
-                            let cloudModel = PrivateCloudComputeLanguageModel()
-                            if cloudModel.isAvailable, let tokenizerModel = prepareModel() {
-                                let deltaTracker = TurnDeltaTracker()
-                                do {
-                                    try turnGeneration.check(generation)
-                                    continuation.yield(.route(.privateCloudCompute))
-                                    try await runPrivateCloudComputeTurn(
-                                        model: cloudModel,
-                                        tokenizerModel: tokenizerModel,
-                                        client: client,
-                                        accountDID: accountDID,
-                                        prompt: prompt,
-                                        context: context,
-                                        history: history,
-                                        continuation: continuation,
-                                        deltaTracker: deltaTracker,
-                                        generation: generation
-                                    )
-                                    usedPCC = true
-                                } catch {
-                                    try turnGeneration.check(generation)
-                                    guard !Task.isCancelled else {
-                                        continuation.finish()
-                                        return
-                                    }
-                                    let hasEmittedDelta = await deltaTracker.hasEmittedDelta
-                                    try turnGeneration.check(generation)
-                                    if hasEmittedDelta {
-                                        continuation.yield(.responseReset)
-                                    }
-                                    logger.warning("PCC streaming failed: \(error.localizedDescription); falling back to onDevice")
-                                }
-                            }
+                    if effectiveRoute == .privateCloudCompute {
+                        // The person chose Private Cloud Compute. A failure is reported,
+                        // never silently answered by a different model.
+                        guard #available(iOS 27.0, macOS 27.0, *) else {
+                            throw CopilotCloudUnavailableError(reason: CopilotCloudAvailability.operatingSystemRequirement)
                         }
-                    }
-
-                    guard !Task.isCancelled else {
-                        continuation.finish()
-                        return
-                    }
-
-                    if !usedPCC {
+                        try await runCloudTurn(
+                            client: client, accountDID: accountDID, prompt: prompt, context: context,
+                            history: history, continuation: continuation, generation: generation
+                        )
+                    } else {
                         try turnGeneration.check(generation)
                         continuation.yield(.route(.onDevice))
                         let localModel = turnHooks == nil ? prepareModel() : nil
@@ -318,6 +307,45 @@ actor BlueskyIntelligenceAgent {
     }
 
     @available(iOS 27.0, macOS 27.0, *)
+    private func runCloudTurn(
+        client: ATProtoClient,
+        accountDID: String,
+        prompt: String,
+        context: CopilotContext,
+        history: [CopilotStoredTurn],
+        continuation: AsyncThrowingStream<CopilotTurnEvent, Error>.Continuation,
+        generation: UInt64
+    ) async throws {
+        let cloudModel = PrivateCloudComputeLanguageModel()
+        if let failure = CopilotCloudTurnError(availability: cloudModel.availability) { throw failure }
+        if cloudModel.quotaUsage.isLimitReached {
+            throw CopilotCloudTurnError.quotaReached(resetDate: cloudModel.quotaUsage.resetDate)
+        }
+        guard try await cloudModel.supportsLocale() else { throw CopilotCloudTurnError.unsupportedLanguage }
+        // Token counts use the on-device tokenizer, which Private Cloud Compute shares.
+        guard let tokenizerModel = prepareModel() else { throw BlueskyAgentError.modelUnavailable }
+        try turnGeneration.check(generation)
+        continuation.yield(.route(.privateCloudCompute))
+        do {
+            try await runPrivateCloudComputeTurn(
+                model: cloudModel,
+                tokenizerModel: tokenizerModel,
+                client: client,
+                accountDID: accountDID,
+                prompt: prompt,
+                context: context,
+                history: history,
+                continuation: continuation,
+                deltaTracker: TurnDeltaTracker(),
+                generation: generation
+            )
+        } catch let error as PrivateCloudComputeLanguageModel.Error {
+            logger.warning("Private Cloud Compute turn failed: \(String(describing: error), privacy: .public)")
+            throw CopilotCloudTurnError(error)
+        }
+    }
+
+    @available(iOS 27.0, macOS 27.0, *)
     private func runPrivateCloudComputeTurn(
         model: PrivateCloudComputeLanguageModel,
         tokenizerModel: SystemLanguageModel,
@@ -332,10 +360,14 @@ actor BlueskyIntelligenceAgent {
     ) async throws {
         let proposalSink = TurnProposalSink()
         let sourceCollector = TurnSourceCollector()
-        let plan = CopilotTurnPlan.make(prompt: prompt, context: context)
+        let plan = CopilotTurnPlan.make(prompt: prompt, context: context, route: .privateCloudCompute)
+        let budget = AskCatbirdToolPolicy.Budget(route: .privateCloudCompute)
+        let linkRegistry = AskCatbirdLinkRegistry(seedText: [prompt, Self.formatContextualPrompt(context: context, history: history, prompt: prompt)])
         let toolContext = ToolContext(
             client: client, logger: logger, sourceCollector: sourceCollector,
-            readBudget: CopilotReadBudget(),
+            readBudget: CopilotReadBudget(maximumReads: budget.reads),
+            maximumResultTokens: budget.resultTokens,
+            linkRegistry: linkRegistry,
             tokenCounter: { text in
                 if #available(iOS 26.4, macOS 26.4, *) {
                     return try await tokenizerModel.tokenCount(for: Prompt(text))
@@ -350,12 +382,15 @@ actor BlueskyIntelligenceAgent {
             plan: plan, proposalSink: proposalSink
         )
 
-        let maxResponseTokens = 768
-        let instructions = Instructions { Self.instructionsText }
+        let maxResponseTokens = budget.responseTokens
+        let instructionsText = AskCatbirdInstructions.text(
+            skill: plan.skill, route: .privateCloudCompute, hasTools: !turnTools.isEmpty
+        )
+        let instructions = Instructions { instructionsText }
         let instructionsTokens = try await tokenizerModel.tokenCount(for: instructions)
         let toolsTokens = try await tokenizerModel.tokenCount(for: turnTools)
         let reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
-            + (turnTools.isEmpty ? 0 : AskCatbirdToolPolicy.onDeviceToolResultTokenReserve)
+            + (turnTools.isEmpty ? 0 : budget.toolResultReserve)
 
         let contextSize = try await model.contextSize
 
@@ -399,12 +434,15 @@ actor BlueskyIntelligenceAgent {
         )
 
         let options = GenerationOptions(
-            temperature: 0.25,
+            temperature: 0.3,
             maximumResponseTokens: maxResponseTokens
         )
 
         try await streamAndEmit(
-            stream: CopilotTurnRuntime.stream(session: session, input: CopilotTurnInput(text: fullPrompt, image: nil, selectedImageID: nil), options: options),
+            stream: CopilotTurnRuntime.stream(
+                session: session, input: CopilotTurnInput(text: fullPrompt, image: nil, selectedImageID: nil),
+                options: options, reasoningLevel: .moderate
+            ),
             removedTurnCount: selection.removedTurnCount,
             sourceCollector: sourceCollector,
             proposalSink: proposalSink,
@@ -424,9 +462,14 @@ actor BlueskyIntelligenceAgent {
         try turnGeneration.check(generation)
         let proposalSink = TurnProposalSink()
         let sourceCollector = TurnSourceCollector()
-        let plan = CopilotTurnPlan.make(prompt: prompt, context: context)
+        let plan = CopilotTurnPlan.make(prompt: prompt, context: context, route: .onDevice)
+        let budget = AskCatbirdToolPolicy.Budget(route: .onDevice)
+        let linkRegistry = AskCatbirdLinkRegistry(seedText: [prompt, Self.formatContextualPrompt(context: context, history: history, prompt: prompt)])
         let toolContext = ToolContext(
-            client: client, logger: logger, sourceCollector: sourceCollector, readBudget: CopilotReadBudget(),
+            client: client, logger: logger, sourceCollector: sourceCollector,
+            readBudget: CopilotReadBudget(maximumReads: budget.reads),
+            maximumResultTokens: budget.resultTokens,
+            linkRegistry: linkRegistry,
             tokenCounter: { text in
                 if #available(iOS 26.4, macOS 26.4, *), let model {
                     return try await model.tokenCount(for: Prompt(text))
@@ -455,17 +498,20 @@ actor BlueskyIntelligenceAgent {
             guard let model else { throw BlueskyAgentError.modelUnavailable }
             let turnTools = makePerTurnTools(toolContext: toolContext, context: context, accountDID: accountDID,
                                              plan: plan, proposalSink: proposalSink)
-            let instructions = Instructions { Self.instructionsText }
-            let maxResponseTokens = 768
+            let instructionsText = AskCatbirdInstructions.text(
+                skill: plan.skill, route: .onDevice, hasTools: !turnTools.isEmpty
+            )
+            let instructions = Instructions { instructionsText }
+            let maxResponseTokens = budget.responseTokens
             let reservedCost: Int
             let countsFullPrompt: Bool
             if #available(iOS 26.4, macOS 26.4, *) {
                 let instructionsTokens: Int
-                if let cached = cachedInstructionsTokens {
+                if let cached = cachedInstructionsTokens[instructionsText] {
                     instructionsTokens = cached
                 } else {
                     let count = try await model.tokenCount(for: instructions)
-                    cachedInstructionsTokens = count
+                    cachedInstructionsTokens[instructionsText] = count
                     instructionsTokens = count
                 }
                 
@@ -479,7 +525,7 @@ actor BlueskyIntelligenceAgent {
                 }
                 
                 reservedCost = instructionsTokens + toolsTokens + maxResponseTokens
-                    + (turnTools.isEmpty ? 0 : AskCatbirdToolPolicy.onDeviceToolResultTokenReserve)
+                    + (turnTools.isEmpty ? 0 : budget.toolResultReserve)
                 countsFullPrompt = true
             } else {
                 reservedCost = 0
@@ -487,8 +533,7 @@ actor BlueskyIntelligenceAgent {
             }
             try turnGeneration.check(generation)
             let reason: String?
-            if #available(iOS 27.0, macOS 27.0, *) { reason = CopilotImageSupport.unavailableReason(model: model) }
-            else { reason = CopilotImageSupport.unavailableReason() }
+            if #available(iOS 27.0, macOS 27.0, *) { reason = CopilotImageSupport.unavailableReason(model: model) } else { reason = CopilotImageSupport.unavailableReason() }
             let session = LanguageModelSession(model: model, tools: turnTools, instructions: instructions)
             session.prewarm(promptPrefix: Prompt("You are the Bluesky client app \"Catbird\"'s agent."))
             let options = GenerationOptions(temperature: 0.25, maximumResponseTokens: maxResponseTokens)
@@ -605,8 +650,7 @@ actor BlueskyIntelligenceAgent {
                 let delta = String(latestContent.dropFirst(previousContent.count))
                 if !(previousContent.isEmpty
                     && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased() == "null")
-                {
+                        .lowercased() == "null") {
                     continuation.yield(.textDelta(delta))
                     await deltaTracker?.markDeltaEmitted()
                 }
@@ -677,6 +721,14 @@ actor BlueskyIntelligenceAgent {
             case .searchPosts: PostSearchTool(context: toolContext)
             case .searchFeeds: FeedSearchTool(context: toolContext)
             case .searchProfiles: ProfileSearchTool(context: toolContext)
+            case .getProfile: ProfileFetchTool(context: toolContext)
+            case .getAuthorPosts: AuthorFeedTool(context: toolContext)
+            case .getSimilarAccounts: SimilarAccountsTool(context: toolContext)
+            case .getPosts: PostsFetchTool(context: toolContext)
+            case .getQuotes: QuotesFetchTool(context: toolContext)
+            case .getFeedPosts: FeedPostsTool(context: toolContext)
+            case .getTrends: TrendingTopicsTool(context: toolContext)
+            case .fetchWebPage: WebPageFetchTool(context: toolContext)
             case .proposeAction:
                 ProposeActionTool(context: context, accountDID: accountDID,
                                   sink: proposalSink, allowedActions: plan.allowedActions)
@@ -895,8 +947,7 @@ actor BlueskyIntelligenceAgent {
                         let delta = String(latestContent.dropFirst(previousContent.count))
                         if !(previousContent.isEmpty
                             && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                                .lowercased() == "null")
-                        {
+                                .lowercased() == "null") {
                             continuation.yield(delta)
                         }
                         previousContent = latestContent
@@ -1043,9 +1094,10 @@ actor BlueskyIntelligenceAgent {
     func prewarm(client: ATProtoClient? = nil) async {
         guard let model = prepareModel() else { return }
         if #available(iOS 26.4, macOS 26.4, *) {
-            if cachedInstructionsTokens == nil {
-                let instructions = Instructions { Self.instructionsText }
-                cachedInstructionsTokens = try? await model.tokenCount(for: instructions)
+            let text = Self.instructionsText
+            if cachedInstructionsTokens[text] == nil {
+                let instructions = Instructions { text }
+                cachedInstructionsTokens[text] = try? await model.tokenCount(for: instructions)
             }
         }
         if let client {
@@ -1066,30 +1118,9 @@ actor BlueskyIntelligenceAgent {
         return tools
     }
 
-    static let instructionsText = """
-    You are Ask Catbird, the Bluesky assistant inside Catbird.
-
-    Trust boundary:
-    \(CopilotPrompt.sourceBoundary)
-    - Never invent Bluesky data, identifiers, sources, or action results.
-
-    Answers:
-    - Use only the available read tools when the user needs more evidence; a read limit is final.
-    - Supplied context may be partial. Explain omissions; never invent missing quote, image, article or reply contents.
-    - Drafts are suggestions for review. Distinguish interpretation from supported facts.
-    - Ground factual claims in the supplied context or tool results.
-    - Be concise, neutral, and explicit when information is unavailable.
-    - Refer to posts by their author and a short excerpt, profiles by name or @handle, and feeds by title. Never use AT URIs, DIDs, or CIDs as visible labels.
-    - Navigation identifiers in context and tool results are only for tool arguments and link destinations. Use readable labels for links.
-    - A tool reporting unavailable data is not evidence about the post contents. Explain the limitation without inventing a result.
-
-    Actions:
-    - You cannot mutate Catbird or Bluesky state.
-    - When the user explicitly requests a change, call `propose_action` once with a typed desired state for the current Catbird subject.
-    - Questions, hypotheticals, and recommendations are not action requests.
-    - Never claim a proposal was executed. Catbird revalidates it and requires user confirmation.
-    - Publishing, reporting, blocking with MLS consequences, and deletion continue in Catbird's existing dedicated review flows.
-    """
+    static var instructionsText: String {
+        AskCatbirdInstructions.text(skill: .general, route: .onDevice, hasTools: true)
+    }
     
         private static let summarizationInstructionsText = """
             Role: You are a text summarization assistant for Catbird.
@@ -1135,7 +1166,7 @@ private actor TurnProposalSink {
 }
 
 @available(iOS 26.0, macOS 26.0, *)
-private actor TurnSourceCollector {
+actor TurnSourceCollector {
     private var collectedSources: [CopilotSource] = []
     private var seenURIs: Set<String> = []
     private var evidence: [CopilotEvidence] = []
@@ -1167,28 +1198,41 @@ private actor TurnSourceCollector {
 }
 
 @available(iOS 26.0, macOS 26.0, *)
-private struct ToolContext: @unchecked Sendable {
+struct ToolContext: @unchecked Sendable {
     let client: ATProtoClient
     let logger: Logger
     let sourceCollector: TurnSourceCollector?
     let readBudget: CopilotReadBudget?
+    let maximumResultTokens: Int
+    let linkRegistry: AskCatbirdLinkRegistry?
     let tokenCounter: @Sendable (String) async throws -> Int
 
     init(client: ATProtoClient, logger: Logger, sourceCollector: TurnSourceCollector? = nil,
          readBudget: CopilotReadBudget? = nil,
+         maximumResultTokens: Int = CopilotToolResult.maximumTokens,
+         linkRegistry: AskCatbirdLinkRegistry? = nil,
          tokenCounter: @escaping @Sendable (String) async throws -> Int = { $0.utf8.count }) {
         self.client = client
         self.logger = logger
         self.sourceCollector = sourceCollector
         self.readBudget = readBudget
+        self.maximumResultTokens = maximumResultTokens
+        self.linkRegistry = linkRegistry
         self.tokenCounter = tokenCounter
     }
+
+    static let readLimitReachedMessage = """
+    Read limit reached for this request. Do not call more tools. Answer now with the evidence already \
+    gathered, and say what could not be checked.
+    """
 
     func read(_ name: String, bounded: Bool = true,
               operation: () async throws -> String) async throws -> String {
         try Task.checkCancellation()
-        // Exhaustion escapes the model tool call, ending the turn instead of encouraging retries.
-        try await readBudget?.consume()
+        // A spent budget asks the model to answer; persistent retries end the turn.
+        if let readBudget, try await !readBudget.tryConsume() {
+            return Self.readLimitReachedMessage
+        }
         let previousSources = await sourceCollector?.allSources() ?? []
         var result: String
         do {
@@ -1205,7 +1249,7 @@ private struct ToolContext: @unchecked Sendable {
             }
         }
         let output = bounded && readBudget != nil
-            ? try await CopilotToolResult.bounded(result, tokenCount: tokenCounter)
+            ? try await CopilotToolResult.bounded(result, maximumTokens: maximumResultTokens, tokenCount: tokenCounter)
             : (text: result, wasTruncated: false)
         try Task.checkCancellation()
         let sources = await sourceCollector?.allSources() ?? []
@@ -1214,6 +1258,8 @@ private struct ToolContext: @unchecked Sendable {
             sources: sources.filter { !previousSources.contains($0) },
             wasTruncated: output.wasTruncated
         ))
+        // Links the model has now seen may be read later in the same turn.
+        await linkRegistry?.ingest(output.text)
         try Task.checkCancellation()
         return output.text
     }
@@ -1224,7 +1270,7 @@ private struct ToolContext: @unchecked Sendable {
     }
 }
 @available(iOS 26.0, macOS 26.0, *)
-private enum ToolFormatter {
+enum ToolFormatter {
     static func sourceLabel(post: AppBskyFeedDefs.PostView) -> String {
         let author = post.author.handle.description
         if case .knownType(let record) = post.record,
@@ -1358,7 +1404,7 @@ private enum ToolFormatter {
         return "• @\(handle) (\(displayName))\(sanitized)"
     }
 
-    private static func sanitize(_ text: String, limit: Int) -> String {
+    static func sanitize(_ text: String, limit: Int) -> String {
         let collapsed = text
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
@@ -1369,7 +1415,7 @@ private enum ToolFormatter {
         return collapsed[..<index].trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    private static func formatTimestamp(_ date: Date) -> String {
+    static func formatTimestamp(_ date: Date) -> String {
         let now = Date()
         let interval = now.timeIntervalSince(date)
         
@@ -1580,10 +1626,19 @@ private struct PostSearchTool: Tool {
     @available(iOS 26.0, macOS 26.0, *)
     @Generable
     struct Arguments {
-        @Guide(description: "Free text query to search for.")
+        @Guide(description: "Free text query to search for. Use specific names, terms or phrases.")
         let query: String
 
-        @Guide(description: "Maximum number of posts to return", .range(1 ... 5))
+        @Guide(description: "Ranking: top for the most engaged posts, latest for the newest.", .anyOf(["top", "latest"]))
+        let sort: String?
+
+        @Guide(description: "Only posts by this handle or DID, when the request is about one account.")
+        let author: String?
+
+        @Guide(description: "Only posts linking to this web domain, such as nytimes.com.")
+        let domain: String?
+
+        @Guide(description: "Maximum number of posts to return", .range(1 ... 10))
         let limit: Int?
     }
 
@@ -1594,8 +1649,17 @@ private struct PostSearchTool: Tool {
     }
 
     private func fetch(arguments: Arguments) async throws -> String {
-        let limit = min(max(arguments.limit ?? 5, 1), 5)
-        let params = AppBskyFeedSearchPosts.Parameters(q: arguments.query, limit: limit)
+        let ceiling = context.maximumResultTokens >= 1024 ? 10 : 5
+        let limit = min(max(arguments.limit ?? ceiling, 1), ceiling)
+        let author = arguments.author.flatMap { $0.isEmpty ? nil : try? AskCatbirdIdentifiers.actor($0) }
+        let domain = arguments.domain?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let params = AppBskyFeedSearchPosts.Parameters(
+            q: arguments.query,
+            sort: arguments.sort == "latest" ? "latest" : "top",
+            author: author,
+            domain: domain?.isEmpty == false ? domain : nil,
+            limit: limit
+        )
         let (code, output) = try await context.client.app.bsky.feed.searchPosts(input: params)
         guard (200 ... 299).contains(code), let posts = output?.posts, !posts.isEmpty else {
             throw BlueskyAgentError.emptyResult("post search")
