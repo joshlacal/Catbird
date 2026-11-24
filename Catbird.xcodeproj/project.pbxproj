@@ -1120,7 +1120,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes.";
-				INFOPLIST_KEY_NSContactsUsageDescription = "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird uses Face ID to unlock the app when App Lock is turned on.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird uses the microphone when you record audio or video for a post, or a voice message in a chat.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
@@ -1214,7 +1214,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes.";
-				INFOPLIST_KEY_NSContactsUsageDescription = "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird uses Face ID to unlock the app when App Lock is turned on.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird uses the microphone when you record audio or video for a post, or a voice message in a chat.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
