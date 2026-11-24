@@ -311,6 +311,36 @@ struct ChatConversationKindPresentationTests {
       == "Check your connection and try again.")
   }
 
+  @Test("A device waiting for approval is told so, not asked to try again")
+  func pendingDeviceIsNamed() {
+    let pending = ChatFailureMessage.text(
+      for: MlsError.PendingDeviceAccess(message: "DevicePendingApproval"), context: .startEncryptedChat)
+    #expect(pending == ChatFailureMessage.pendingDeviceText)
+    #expect(pending.contains("Settings > Devices"))
+  }
+
+  @Test("Delivery service refusal codes become specific sentences")
+  func serviceRefusalCodes() {
+    let generic = ChatFailureMessage.text(
+      for: MlsError.Internal(message: "x"), context: .startEncryptedChat)
+    for code in [
+      "NotAuthorized", "RecipientKeysUnavailable", "RequestPolicyDenied", "ExistingDirect",
+      "CapacityUnavailable", "AccountTakedown", "CutoverRequired"
+    ] {
+      let text = ChatFailureMessage.text(
+        for: MlsError.InvalidState(message: "Invalid state: \(code)"), context: .startEncryptedChat)
+      #expect(text != generic, "\(code)")
+      #expect(!text.contains(code), "\(code)")
+    }
+    // Engine detail that is not a bare service code stays generic.
+    #expect(ChatFailureMessage.text(
+      for: MlsError.InvalidState(message: "Invalid state: MLS device signer not enrolled"),
+      context: .startEncryptedChat) == generic)
+    #expect(ChatFailureMessage.serviceRefusalCode(in: "Invalid state: PreparationConflict")
+      == "PreparationConflict")
+    #expect(ChatFailureMessage.serviceRefusalCode(in: "Invalid state: a b") == nil)
+  }
+
   @Test("Capability answers map to the same lines the new conversation screen shows")
   func capabilityText() {
     #expect(ChatFailureMessage.text(for: .capable) == nil)
